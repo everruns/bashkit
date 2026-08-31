@@ -52,7 +52,8 @@ comment/string-aware split of SQL & dot-commands) → `dot_commands` →
 
 All layers retain the host request's `ExecutionBudget`. SQL and database file
 bytes consume aggregate input, statement splitting consumes shared work, and
-every Turso `Statement::step()` consumes another work unit. Recursive `.read`,
+every Turso `Statement::step()` consumes another work unit, as does every 1024
+VM instructions executed *inside* a step (see TM-SQL-014). Recursive `.read`,
 cached file-backed engines, dot-commands, and query materialisation receive
 clones of the same budget rather than new counters. SQLite-specific size,
 statement, row, result, and duration ceilings remain independently enforced.
@@ -76,6 +77,38 @@ wasm targets this builtin ships to. Upstream documents that callers which do
 not track time may treat `Sleep` exactly like `IO`. Spinning stays bounded by
 the wall-clock deadline (TM-SQL-005a) and by the `ExecutionBudget` work unit
 consumed on every loop iteration.
+
+### Bounding work *inside* one step (TM-SQL-014)
+
+The step loop can only check limits **between** `step()` calls, and a step
+returns only when a row is produced, the program halts, or IO is needed. A
+query whose rows are consumed inside the VDBE never comes back:
+
+```sql
+WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r)
+SELECT count(*) FROM r;         -- aggregate swallows every row
+SELECT count(*) FROM a, b, c WHERE 0;  -- same shape, no CTE involved
+```
+
+Both spin forever inside a single `Statement::step()`, so `max_duration` and
+the `ExecutionBudget` never get a turn. Recursion is not the distinguishing
+property, "produces no rows for a long time" is; denying `WITH RECURSIVE`
+would leave the class open while removing a supported feature.
+
+`engine::ProgressHandlerGuard` installs turso's SQLite-compatible progress
+handler (`Connection::set_progress_handler`, available since 0.8.0-pre.7),
+which the VDBE consults every `PROGRESS_HANDLER_OPS` (1024) instructions from
+inside its instruction loop. The callback:
+
+- charges the request `ExecutionBudget` one work unit per callback, so in-VDBE
+  instructions are counted rather than free;
+- returns `true` once the invocation deadline has passed or the budget is
+  exhausted, which makes the VDBE return `StepResult::Interrupt`;
+- records *why* it interrupted, so the step loop reports `query timed out` or
+  the budget error instead of a generic "interrupted".
+
+The guard clears the handler on drop, so an early return never leaves a stale
+callback (holding a cloned budget) on a cached file-backed connection.
 
 The match over `StepResult` is kept **exhaustive on purpose**: a new upstream
 variant must break the build so its pacing semantics get reviewed rather than
@@ -220,6 +253,7 @@ rows → `[]\n`), `markdown`. Empty column list → empty string; empty row set
 | TM-SQL-011    | Information leakage via host-side error strings      | `sanitize()` strips ` at /…:N:M` annotations from turso errors          |
 | TM-SQL-012    | Sandbox escape via `VACUUM INTO` writing host files  | Policy rejects `VACUUM` (with/without `INTO`) at the keyword sniffer; tested via `vacuum_into_blocked`/`vacuum_plain_blocked`/`vacuum_blocked_with_leading_comment` |
 | TM-SQL-013    | DoS via `.dump` cumulative output bypass            | `.dump` previously built the full string before `max_output_bytes` was applied; `bounded_append()` enforces the cap after each schema/row chunk with the remaining budget passed from `run_statements`; `THREAT[TM-DOS-091]`; tested via `dump_respects_output_cap` and `dump_output_cap_enforced_across_multiple_tables` |
+| TM-SQL-014    | DoS via work performed inside a single `Statement::step()` (recursive CTE feeding an aggregate, filtered cross join) | turso progress handler every 1024 VM instructions charges the `ExecutionBudget` and interrupts on deadline/budget breach; tested via `unbounded_recursive_cte_hits_deadline`, `rowless_cross_join_hits_deadline`, `unbounded_recursive_cte_consumes_shared_work_budget` |
 
 ## Test Plan
 

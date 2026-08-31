@@ -1019,3 +1019,63 @@ mod prop {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// TM-SQL-014: work performed inside a single `Statement::step()` is bounded.
+//
+// A recursive CTE whose rows are consumed by an aggregate never yields a row,
+// so the pre-step deadline/budget checks in `SqliteEngine::execute` are never
+// reached: the whole recursion runs inside one `step()` call. The turso
+// progress handler is what makes these terminate.
+// ---------------------------------------------------------------------------
+
+const UNBOUNDED_RECURSIVE_CTE: &str =
+    "WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r) SELECT count(*) FROM r;";
+
+#[tokio::test]
+async fn unbounded_recursive_cte_hits_deadline() {
+    let limits = SqliteLimits::default().max_duration(std::time::Duration::from_millis(250));
+    let r = run_with_limits(&[":memory:", UNBOUNDED_RECURSIVE_CTE], None, limits).await;
+    assert_eq!(r.exit_code, 1);
+    assert!(r.stderr.contains("timed out"), "stderr was: {}", r.stderr);
+}
+
+/// Recursion is not the distinguishing property: any query that produces no
+/// rows for a long time hides its work inside one step. Denying
+/// `WITH RECURSIVE` would leave this shape open, so the bound has to live in
+/// the VM, not in the SQL policy.
+#[tokio::test]
+async fn rowless_cross_join_hits_deadline() {
+    let limits = SqliteLimits::default().max_duration(std::time::Duration::from_millis(250));
+    let r = run_with_limits(
+        &[
+            ":memory:",
+            "CREATE TABLE t(n); \
+             WITH RECURSIVE seed(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM seed WHERE n < 400) \
+             INSERT INTO t SELECT n FROM seed; \
+             SELECT * FROM t a, t b, t c, t d WHERE a.n < 0;",
+        ],
+        None,
+        limits,
+    )
+    .await;
+    assert_eq!(r.exit_code, 1);
+    assert!(r.stderr.contains("timed out"), "stderr was: {}", r.stderr);
+}
+
+/// The bound must not cost us the feature: a terminating recursive CTE still
+/// runs and returns every row.
+#[tokio::test]
+async fn bounded_recursive_cte_still_runs() {
+    let r = run(
+        &[
+            ":memory:",
+            "WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r WHERE n < 5) \
+             SELECT n FROM r;",
+        ],
+        None,
+    )
+    .await;
+    assert_eq!(r.exit_code, 0, "stderr: {}", r.stderr);
+    assert_eq!(r.stdout, "1\n2\n3\n4\n5\n");
+}

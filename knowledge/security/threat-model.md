@@ -1356,7 +1356,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | Log injection prevention | TM-LOG-005, TM-LOG-006 | `logging.rs` | Yes |
 | Log value truncation | TM-LOG-007, TM-LOG-008 | `logging.rs` | Yes |
 | Python resource limits | TM-PY-001 to TM-PY-003 | `builtins/python.rs` | Yes |
-| SQLite opt-in and limits | TM-SQL-001 to TM-SQL-011 | `builtins/sqlite/` | Yes |
+| SQLite opt-in and limits | TM-SQL-001 to TM-SQL-014 | `builtins/sqlite/` | Yes |
 | Path char validation (bidi) | TM-DOS-015, TM-UNI-003, TM-UNI-011 | `fs/limits.rs` | Partial (bidi yes, zero-width/tags no) |
 | Builtin panic catching | TM-INT-001, TM-UNI-001, TM-UNI-002, TM-UNI-015, TM-UNI-016, TM-UNI-017 | `interpreter/mod.rs` | Yes (catch_unwind) |
 | Reviewed competitor fixtures | TM-INF-032 | `tests/fixtures/competitor-regressions/`, `competitor_regression_tests.rs` | Yes |
@@ -1879,6 +1879,7 @@ filesystem.
 | TM-SQL-009 | Cross-database access via `ATTACH`/`DETACH` | High | Case/comment-aware policy rejection | `tm_sql_009_attach_detach_rejected`, `attach_blocked_even_with_leading_comment` |
 | TM-SQL-010 | DoS or fingerprinting via dangerous PRAGMAs | High | `SqliteLimits::pragma_deny` default deny list; policy parser handles comments plus quoted/schema-qualified names | `tm_sql_010_pragma_deny_blocks_resource_knobs`, `pragma_schema_qualified_match` |
 | TM-SQL-011 | Host-side error string disclosure | Medium | `sanitize()` strips host path annotations from Turso errors | Manual exploratory review |
+| TM-SQL-014 | DoS via work performed inside a single `Statement::step()` (recursive CTE feeding an aggregate, filtered cross join) | High | turso progress handler consulted every 1024 VM instructions charges the `ExecutionBudget` and interrupts on deadline/budget breach | `unbounded_recursive_cte_hits_deadline`, `rowless_cross_join_hits_deadline`, `unbounded_recursive_cte_consumes_shared_work_budget` |
 
 ### Test Shape
 

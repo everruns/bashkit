@@ -213,3 +213,29 @@ async fn sqlite_steps_consume_shared_work_budget() {
     let sql = "SELECT 1;".repeat(400);
     assert_budget_exhausted(bash.exec(&format!("sqlite :memory: '{sql}'")).await);
 }
+
+#[cfg(feature = "sqlite")]
+#[tokio::test]
+/// TM-SQL-014: work done inside a single `Statement::step()` is charged too.
+///
+/// The rows of this recursive CTE are swallowed by the aggregate, so the query
+/// never returns from its first step. Without the VM progress handler the
+/// request would spin forever with the budget untouched.
+async fn unbounded_recursive_cte_consumes_shared_work_budget() {
+    let limits = ExecutionLimits::new()
+        .max_work_units(2_000)
+        .max_aggregate_input_bytes(100_000);
+    let mut bash = Bash::builder()
+        .limits(limits)
+        .sqlite()
+        .env("BASHKIT_ALLOW_INPROCESS_SQLITE", "1")
+        .build();
+
+    assert_budget_exhausted(
+        bash.exec(
+            "sqlite :memory: 'WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r) \
+             SELECT count(*) FROM r;'",
+        )
+        .await,
+    );
+}

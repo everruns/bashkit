@@ -16,8 +16,8 @@
 //! which backend is active.
 
 use crate::time_compat::Instant;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use turso_core::{
     Connection, Database, IO, MemoryIO, Numeric, OpenFlags, SqliteDialect, StepResult, Value,
@@ -47,6 +47,77 @@ impl Deadline {
     /// Returns true once the budget is exhausted.
     pub(super) fn expired(&self) -> bool {
         self.deadline.map(|d| Instant::now() >= d).unwrap_or(false)
+    }
+}
+
+/// VM instructions between progress-handler callbacks.
+///
+/// Design: the step loop in [`SqliteEngine::execute`] can only check limits
+/// *between* `Statement::step()` calls, and a step returns only when a row is
+/// produced, the program halts, or IO is needed. A query whose rows are all
+/// consumed inside the VDBE (a recursive CTE feeding an aggregate, a filtered
+/// cross join) therefore performs unbounded work inside one step. Turso's
+/// SQLite-compatible progress handler is consulted every N VM instructions
+/// *inside* the instruction loop, which is the only place work of that shape
+/// can be counted and interrupted. `THREAT[TM-SQL-014]`.
+///
+/// 1024 keeps the callback cost in the noise (one `Instant::now()` plus two
+/// atomic loads per 1024 instructions) while bounding overshoot past the
+/// deadline to microseconds.
+const PROGRESS_HANDLER_OPS: u64 = 1024;
+
+/// Why the VDBE was interrupted from inside a step, recorded by the progress
+/// handler so the step loop can report the real limit rather than a generic
+/// "interrupted".
+type InterruptReason = Arc<Mutex<Option<String>>>;
+
+/// Installs a progress handler on a connection and clears it on drop, so an
+/// early `?` return never leaves a stale callback (and its cloned budget)
+/// attached to a pooled connection.
+struct ProgressHandlerGuard<'a> {
+    conn: &'a Connection,
+}
+
+impl<'a> ProgressHandlerGuard<'a> {
+    /// Install a handler that interrupts the VDBE once the invocation deadline
+    /// passes or the request's execution budget is exhausted.
+    fn install(
+        conn: &'a Connection,
+        deadline: Deadline,
+        budget: Option<crate::limits::ExecutionBudget>,
+    ) -> (Self, InterruptReason) {
+        let reason: InterruptReason = Arc::new(Mutex::new(None));
+        let callback_reason = Arc::clone(&reason);
+        conn.set_progress_handler(
+            PROGRESS_HANDLER_OPS,
+            Some(Box::new(move || {
+                let stop = if deadline.expired() {
+                    Some("query timed out".to_string())
+                } else if let Some(budget) = &budget {
+                    budget
+                        .consume_work(1)
+                        .err()
+                        .map(|failure| failure.to_string())
+                } else {
+                    None
+                };
+                match stop {
+                    Some(message) => {
+                        let mut slot = callback_reason.lock().expect("interrupt reason lock");
+                        slot.get_or_insert(message);
+                        true
+                    }
+                    None => false,
+                }
+            })),
+        );
+        (Self { conn }, reason)
+    }
+}
+
+impl Drop for ProgressHandlerGuard<'_> {
+    fn drop(&mut self) {
+        self.conn.set_progress_handler(0, None);
     }
 }
 
@@ -172,13 +243,21 @@ impl SqliteEngine {
     ///
     /// `deadline` carries the wall-clock budget shared across all statements
     /// in this invocation. Once it expires, we issue `stmt.interrupt()` and
-    /// return a timeout error rather than continuing the step loop.
+    /// return a timeout error rather than continuing the step loop. Work done
+    /// inside a single `step()` is bounded by the progress handler installed
+    /// here, which charges the execution budget one unit per
+    /// [`PROGRESS_HANDLER_OPS`] VM instructions and interrupts the VDBE when
+    /// the deadline or the budget is exhausted.
     pub(super) fn execute(
         &self,
         sql: &str,
         deadline: Deadline,
         limits: QueryLimits,
     ) -> EngineResult<StatementOutcome> {
+        // Bounds work done *inside* a step; the loop below bounds work
+        // *between* steps. Both are needed: see `PROGRESS_HANDLER_OPS`.
+        let (_progress_guard, interrupt_reason) =
+            ProgressHandlerGuard::install(&self.conn, deadline, limits.execution_budget.clone());
         let mut stmt = self.conn.prepare(sql).map_err(turso_msg)?;
         let mut outcome = StatementOutcome::default();
         for idx in 0..stmt.num_columns() {
@@ -250,8 +329,18 @@ impl SqliteEngine {
                 StepResult::IO | StepResult::Yield | StepResult::Sleep { .. } => {
                     self.io_step()?;
                 }
-                StepResult::Busy | StepResult::Interrupt => {
-                    return Err("query was interrupted or database is busy".to_string());
+                // The progress handler records why it asked for the
+                // interrupt, so a deadline or budget breach inside one step
+                // reports the same message it would between steps.
+                StepResult::Interrupt => {
+                    let reason = interrupt_reason
+                        .lock()
+                        .expect("interrupt reason lock")
+                        .take();
+                    return Err(reason.unwrap_or_else(|| "query was interrupted".to_string()));
+                }
+                StepResult::Busy => {
+                    return Err("database is busy".to_string());
                 }
             }
         }
