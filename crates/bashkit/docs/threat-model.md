@@ -715,6 +715,7 @@ Both paths are tested so SQL cannot intentionally read host files.
 | Cross-database access (TM-SQL-009) | `ATTACH DATABASE '/tmp/x'` | `ATTACH`/`DETACH` rejected by policy | MITIGATED |
 | Dangerous PRAGMAs (TM-SQL-010) | `PRAGMA main."cache_size"=...` | Default `pragma_deny` list, including quoted/schema-qualified names | MITIGATED |
 | Host path errors (TM-SQL-011) | Upstream error includes `/rustc/...` | Sanitizer strips host path annotations | MITIGATED |
+| Unbounded work inside one engine step (TM-SQL-014) | `WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM r) SELECT count(*) FROM r` | VM progress handler charges the execution budget every 1024 instructions and interrupts on deadline/budget breach | MITIGATED |
 
 Black-box coverage drives `Bash::exec` through
 `tests/sqlite_integration_tests.rs` and `tests/sqlite_security_tests.rs`.
