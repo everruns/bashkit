@@ -21,16 +21,13 @@ and real audit trails.
     <rect x="24" y="68" width="150" height="52" rx="4" fill="#f5f5f5" stroke="#0a1636" stroke-opacity="0.3"/>
     <text x="99" y="90" text-anchor="middle">Bashkit agent</text>
     <text x="99" y="108" text-anchor="middle" fill="#404040" font-size="11">private seed (zeroized)</text>
-
     <rect x="546" y="68" width="150" height="52" rx="4" fill="#0a1636"/>
     <text x="621" y="90" text-anchor="middle" fill="#ffffff">target server</text>
     <text x="621" y="108" text-anchor="middle" fill="#d4a43a" font-size="11">verifies signature</text>
-
     <g stroke="#0a1636" stroke-opacity="0.6" fill="none">
       <path d="M174 86 H540" marker-end="url(#ar2)"/>
     </g>
     <text x="357" y="78" text-anchor="middle" fill="#0a1636" font-size="11">signed request + Signature-Agent: agent.example</text>
-
     <rect x="300" y="132" width="280" height="40" rx="4" fill="#fff" stroke="#d4a43a" stroke-width="1.5"/>
     <text x="440" y="150" text-anchor="middle" font-size="11">well-known key directory</text>
     <text x="440" y="164" text-anchor="middle" fill="#404040" font-size="11">JWK Thumbprint → public key</text>

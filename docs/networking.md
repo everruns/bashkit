@@ -14,18 +14,14 @@ boundary, not a convenience.
     <rect x="20" y="44" width="118" height="44" rx="4" fill="#f5f5f5" stroke="#0a1636" stroke-opacity="0.3"/>
     <text x="79" y="64" text-anchor="middle">curl / wget</text>
     <text x="79" y="80" text-anchor="middle" fill="#404040">http</text>
-
     <rect x="190" y="44" width="138" height="44" rx="4" fill="#fff" stroke="#d4a43a" stroke-width="1.5"/>
     <text x="259" y="64" text-anchor="middle">allowlist</text>
     <text x="259" y="80" text-anchor="middle" fill="#404040" font-size="11">+ private-IP block</text>
-
     <rect x="380" y="44" width="138" height="44" rx="4" fill="#fff" stroke="#0a1636" stroke-opacity="0.3"/>
     <text x="449" y="64" text-anchor="middle">sign (opt-in)</text>
     <text x="449" y="80" text-anchor="middle" fill="#404040" font-size="11">bot-auth</text>
-
     <rect x="570" y="44" width="128" height="44" rx="4" fill="#0a1636"/>
     <text x="634" y="70" text-anchor="middle" fill="#ffffff">send →</text>
-
     <g stroke="#0a1636" stroke-opacity="0.5" fill="none">
       <path d="M138 66 H190" marker-end="url(#ar)"/>
       <path d="M328 66 H380" marker-end="url(#ar)"/>

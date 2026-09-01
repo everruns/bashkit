@@ -48,6 +48,10 @@ Repo-root `docs/` is for user-facing site articles.
   (`site/src/pages/docs/_meta.ts`), never in markdown frontmatter: the canonical
   files must stay frontmatter-free so `crates/bashkit/docs/*.md` embed cleanly
   via `include_str!` into rustdoc.
+- Inline SVG diagrams must not contain blank lines between `<svg>` and `</svg>`.
+  CommonMark ends raw HTML blocks at blank lines, which renders the remaining
+  SVG elements as code. `site/scripts/verify-inline-svg.mjs` enforces this for
+  both canonical guide trees during the site postbuild checks.
 
 ## Code Examples
 

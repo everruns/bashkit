@@ -28,7 +28,6 @@ over an in-memory base, and swap mounts at runtime.
     <text x="180" y="198" text-anchor="middle" fill="#0a1636">MountableFs · real mounts</text>
     <rect x="40" y="224" width="280" height="44" rx="4" fill="#fff" stroke="#d4a43a" stroke-width="1.5"/>
     <text x="180" y="250" text-anchor="middle" fill="#0a1636">base · InMemoryFs or custom</text>
-
     <g font-size="11" fill="#404040">
       <text x="338" y="42">Bash::mount() / unmount()</text>
       <text x="338" y="94">readonly_filesystem()</text>

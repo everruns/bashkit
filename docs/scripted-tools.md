@@ -17,12 +17,10 @@ tool calls.
     <rect x="24" y="74" width="120" height="48" rx="4" fill="#f5f5f5" stroke="#0a1636" stroke-opacity="0.3"/>
     <text x="84" y="94" text-anchor="middle">LLM</text>
     <text x="84" y="111" text-anchor="middle" fill="#404040" font-size="11">one call</text>
-
     <rect x="214" y="58" width="170" height="80" rx="4" fill="#fff" stroke="#d4a43a" stroke-width="1.5"/>
     <text x="299" y="84" text-anchor="middle">bash script</text>
     <text x="299" y="104" text-anchor="middle" fill="#404040" font-size="11">pipes · vars · loops</text>
     <text x="299" y="121" text-anchor="middle" fill="#404040" font-size="11">logic-only shell</text>
-
     <g font-size="12">
       <rect x="468" y="20" width="228" height="34" rx="4" fill="#f5f5f5" stroke="#0a1636" stroke-opacity="0.3"/>
       <text x="482" y="42" fill="#0a1636">get_user --id 1  →  callback</text>
@@ -31,7 +29,6 @@ tool calls.
       <rect x="468" y="140" width="228" height="34" rx="4" fill="#f5f5f5" stroke="#0a1636" stroke-opacity="0.3"/>
       <text x="482" y="162" fill="#0a1636">create_discount --pct 10</text>
     </g>
-
     <g stroke="#0a1636" stroke-opacity="0.5" fill="none">
       <path d="M144 98 H214" marker-end="url(#ar3)"/>
       <path d="M384 92 C 420 92, 430 37, 468 37" marker-end="url(#ar3)"/>
