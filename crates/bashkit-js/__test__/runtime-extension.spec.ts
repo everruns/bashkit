@@ -124,6 +124,18 @@ test("Bash: unmount retracts the replay, so reset does not resurrect it", (t) =>
   t.not(bash.executeSync("cat /skills/my-skill/SKILL.md 2>&1").exitCode, 0);
 });
 
+test("Bash: unmount retracts an equivalent normalized mount path", (t) => {
+  const data = new FileSystem();
+  data.writeFile("/SKILL.md", "# my-skill\n");
+
+  const bash = new Bash();
+  bash.mount("/skills/staging/../my-skill", data);
+  bash.unmount("/skills/my-skill");
+  bash.reset();
+
+  t.not(bash.executeSync("cat /skills/my-skill/SKILL.md 2>&1").exitCode, 0);
+});
+
 test("Bash: reset preserves a runtime host directory mount", (t) => {
   const dir = mkdtempSync(path.join(tmpdir(), "bashkit-ext-"));
   try {

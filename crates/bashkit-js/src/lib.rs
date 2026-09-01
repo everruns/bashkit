@@ -1639,15 +1639,33 @@ fn record_runtime_env(log: &RuntimeEnvLog, key: &str, value: &str) {
 /// A mount at an already-recorded path replaces that record: the live VFS keeps
 /// one filesystem per mount point, so the replay must too.
 fn record_runtime_mount(log: &RuntimeMountLog, mount: RuntimeMount) {
+    let normalized = bashkit::normalize_path(Path::new(mount.vfs_path()))
+        .to_string_lossy()
+        .into_owned();
     let mut mounts = log.lock().expect("runtime mount log poisoned");
-    mounts.retain(|existing| existing.vfs_path() != mount.vfs_path());
-    mounts.push(mount);
+    mounts.retain(|existing| existing.vfs_path() != normalized);
+    mounts.push(match mount {
+        RuntimeMount::Real {
+            host_path,
+            writable,
+            ..
+        } => RuntimeMount::Real {
+            host_path,
+            vfs_path: normalized,
+            writable,
+        },
+        RuntimeMount::Fs { fs, .. } => RuntimeMount::Fs {
+            vfs_path: normalized,
+            fs,
+        },
+    });
 }
 
 /// Retract a recorded mount so `reset()` does not resurrect it after `unmount()`.
 fn forget_runtime_mount(log: &RuntimeMountLog, vfs_path: &str) {
+    let normalized = bashkit::normalize_path(Path::new(vfs_path));
     let mut mounts = log.lock().expect("runtime mount log poisoned");
-    mounts.retain(|existing| existing.vfs_path() != vfs_path);
+    mounts.retain(|existing| Path::new(existing.vfs_path()) != normalized);
 }
 
 /// Wrapper for the external handler that can be stored and cloned.
