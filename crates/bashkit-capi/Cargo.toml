@@ -17,7 +17,7 @@ crate-type = ["cdylib", "rlib"]
 # `tzdata` is listed explicitly: the C ABI is a general-purpose embedding
 # surface, so `date` must keep honouring named `TZ=` zones the way it did
 # before that became a feature.
-bashkit = { path = "../bashkit", default-features = false, features = ["git", "jq", "tzdata"] }
+bashkit = { path = "../bashkit", default-features = false, features = ["git", "jq", "tzdata", "realfs"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }

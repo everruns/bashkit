@@ -345,3 +345,172 @@ fn null_destructors_and_accessors_are_safe() {
         assert_eq!(bashkit_error_message(ptr::null()).len, 0);
     }
 }
+
+fn temp_dir(name: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("bashkit-capi-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+#[test]
+fn config_mounts_expose_host_dir_read_only() {
+    unsafe {
+        let host = temp_dir("mount-ro");
+        std::fs::write(host.join("note.txt"), b"host-bytes").unwrap();
+        let config = serde_json::json!({
+            "schema_version": 1,
+            "allowed_mount_paths": [host.to_string_lossy()],
+            "mounts": [{"path": "/data", "root": host.to_string_lossy()}],
+        })
+        .to_string();
+
+        let mut bash = ptr::null_mut();
+        let mut error = ptr::null_mut();
+        assert_eq!(
+            bashkit_create_json(bytes(config.as_bytes()), &mut bash, &mut error),
+            BashkitStatus::Ok
+        );
+
+        let mut result = ptr::null_mut();
+        assert_eq!(
+            bashkit_execute(bash, bytes(b"cat /data/note.txt"), &mut result, &mut error),
+            BashkitStatus::Ok
+        );
+        assert_eq!(borrowed(bashkit_result_stdout(result)), b"host-bytes");
+        bashkit_result_free(result);
+
+        // Read-only mount: writes through the mount never reach the host.
+        let mut result = ptr::null_mut();
+        assert_eq!(
+            bashkit_execute(
+                bash,
+                bytes(b"echo nope > /data/denied.txt"),
+                &mut result,
+                &mut error,
+            ),
+            BashkitStatus::Ok
+        );
+        bashkit_result_free(result);
+        assert!(!host.join("denied.txt").exists());
+
+        bashkit_free(bash);
+        let _ = std::fs::remove_dir_all(&host);
+    }
+}
+
+#[test]
+fn runtime_mount_and_unmount_round_trip() {
+    unsafe {
+        let host = temp_dir("mount-rt");
+        std::fs::write(host.join("f.txt"), b"rt").unwrap();
+        let config = serde_json::json!({
+            "schema_version": 1,
+            "allowed_mount_paths": [host.to_string_lossy()],
+        })
+        .to_string();
+
+        let mut bash = ptr::null_mut();
+        let mut error = ptr::null_mut();
+        assert_eq!(
+            bashkit_create_json(bytes(config.as_bytes()), &mut bash, &mut error),
+            BashkitStatus::Ok
+        );
+
+        let mut result = ptr::null_mut();
+        assert_eq!(
+            bashkit_execute(bash, bytes(b"cat /mnt/f.txt"), &mut result, &mut error),
+            BashkitStatus::Ok
+        );
+        assert_ne!(bashkit_result_exit_code(result), 0);
+        bashkit_result_free(result);
+
+        assert_eq!(
+            bashkit_mount(
+                bash,
+                bytes(b"/mnt"),
+                bytes(host.to_string_lossy().as_bytes()),
+                0,
+                &mut error,
+            ),
+            BashkitStatus::Ok
+        );
+        let mut result = ptr::null_mut();
+        assert_eq!(
+            bashkit_execute(bash, bytes(b"cat /mnt/f.txt"), &mut result, &mut error),
+            BashkitStatus::Ok
+        );
+        assert_eq!(borrowed(bashkit_result_stdout(result)), b"rt");
+        bashkit_result_free(result);
+
+        assert_eq!(
+            bashkit_unmount(bash, bytes(b"/mnt"), &mut error),
+            BashkitStatus::Ok
+        );
+        let mut result = ptr::null_mut();
+        assert_eq!(
+            bashkit_execute(bash, bytes(b"cat /mnt/f.txt"), &mut result, &mut error),
+            BashkitStatus::Ok
+        );
+        assert_ne!(bashkit_result_exit_code(result), 0);
+        bashkit_result_free(result);
+
+        bashkit_free(bash);
+        let _ = std::fs::remove_dir_all(&host);
+    }
+}
+
+#[test]
+fn mounts_require_allowlist_and_containment() {
+    unsafe {
+        // No allowed_mount_paths: config mount is rejected outright.
+        let host = temp_dir("mount-denied");
+        let config = serde_json::json!({
+            "schema_version": 1,
+            "mounts": [{"path": "/data", "root": host.to_string_lossy()}],
+        })
+        .to_string();
+        let mut bash = ptr::null_mut();
+        let mut error = ptr::null_mut();
+        assert_eq!(
+            bashkit_create_json(bytes(config.as_bytes()), &mut bash, &mut error),
+            BashkitStatus::InvalidConfig
+        );
+        assert_eq!(
+            bashkit_error_code(error),
+            BashkitStatus::InvalidConfig as u32
+        );
+        bashkit_error_free(error);
+
+        // Root outside every allowed prefix is rejected at mount time.
+        let allowed = temp_dir("mount-allowed");
+        let outside = temp_dir("mount-outside");
+        let config = serde_json::json!({
+            "schema_version": 1,
+            "allowed_mount_paths": [allowed.to_string_lossy()],
+        })
+        .to_string();
+        let mut bash = ptr::null_mut();
+        let mut error = ptr::null_mut();
+        assert_eq!(
+            bashkit_create_json(bytes(config.as_bytes()), &mut bash, &mut error),
+            BashkitStatus::Ok
+        );
+        assert_ne!(
+            bashkit_mount(
+                bash,
+                bytes(b"/data"),
+                bytes(outside.to_string_lossy().as_bytes()),
+                0,
+                &mut error,
+            ),
+            BashkitStatus::Ok
+        );
+        assert!(!error.is_null());
+        bashkit_error_free(error);
+        bashkit_free(bash);
+        let _ = std::fs::remove_dir_all(&host);
+        let _ = std::fs::remove_dir_all(&allowed);
+        let _ = std::fs::remove_dir_all(&outside);
+    }
+}

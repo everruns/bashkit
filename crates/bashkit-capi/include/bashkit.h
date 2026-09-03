@@ -91,6 +91,19 @@ BASHKIT_API BashkitStatus bashkit_remove(
     uint32_t recursive,
     BashkitError **out_error);
 
+/* Mounts require the `realfs-mounts` capability; host roots must resolve under
+   an `allowed_mount_paths` prefix from the session config. */
+BASHKIT_API BashkitStatus bashkit_mount(
+    Bashkit *bash,
+    BashkitBytes vfs_path,
+    BashkitBytes host_root,
+    uint32_t writable,
+    BashkitError **out_error);
+BASHKIT_API BashkitStatus bashkit_unmount(
+    Bashkit *bash,
+    BashkitBytes vfs_path,
+    BashkitError **out_error);
+
 /* Buffer byte views remain valid until bashkit_buffer_free(buffer). */
 BASHKIT_API BashkitBytes bashkit_buffer_bytes(const BashkitBuffer *buffer);
 BASHKIT_API void bashkit_buffer_free(BashkitBuffer *buffer);

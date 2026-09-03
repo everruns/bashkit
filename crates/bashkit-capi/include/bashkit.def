@@ -12,6 +12,7 @@ EXPORTS
     bashkit_execute
     bashkit_free
     bashkit_mkdir
+    bashkit_mount
     bashkit_read_file
     bashkit_remove
     bashkit_result_exit_code
@@ -20,5 +21,6 @@ EXPORTS
     bashkit_result_free
     bashkit_result_stderr
     bashkit_result_stdout
+    bashkit_unmount
     bashkit_version
     bashkit_write_file

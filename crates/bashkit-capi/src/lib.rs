@@ -5,15 +5,18 @@
 // boundary and reports a generic error so unwinding cannot enter the foreign
 // caller and the returned error does not include panic details.
 
-use bashkit::{Bash, Error as BashError, ExecutionLimits, FileSystem, LimitExceeded};
+use bashkit::{
+    Bash, Error as BashError, ExecutionLimits, FileSystem, LimitExceeded, PosixFs, RealFs,
+    RealFsMode,
+};
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::ptr;
 use std::slice;
 use std::str;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::runtime::{Builder, Runtime};
 
@@ -23,7 +26,7 @@ pub const BASHKIT_RESULT_STDOUT_TRUNCATED: u32 = 1 << 0;
 pub const BASHKIT_RESULT_STDERR_TRUNCATED: u32 = 1 << 1;
 
 const MAX_ERROR_BYTES: usize = 1024;
-const CAPABILITIES_JSON: &[u8] = br#"{"abi":1,"features":["git","jq","vfs"]}"#;
+const CAPABILITIES_JSON: &[u8] = br#"{"abi":1,"features":["git","jq","vfs","realfs-mounts"]}"#;
 const VERSION: &[u8] = env!("CARGO_PKG_VERSION").as_bytes();
 
 #[repr(u32)]
@@ -68,6 +71,7 @@ struct State {
     runtime: Runtime,
     bash: Bash,
     max_input_bytes: usize,
+    allowed_mount_paths: Arc<[String]>,
 }
 
 pub struct Bashkit {
@@ -139,6 +143,18 @@ struct ConfigV1 {
     readonly_filesystem: bool,
     #[serde(default)]
     capture_final_env: bool,
+    #[serde(default)]
+    mounts: Vec<MountConfigV1>,
+    #[serde(default)]
+    allowed_mount_paths: Vec<String>,
+}
+
+#[derive(Clone, Deserialize)]
+struct MountConfigV1 {
+    path: String,
+    root: String,
+    #[serde(default)]
+    writable: bool,
 }
 
 #[derive(Clone, Copy, Default, Deserialize)]
@@ -191,7 +207,80 @@ fn make_runtime() -> Result<Runtime, ApiFailure> {
         })
 }
 
-fn build_from_config(config: ConfigV1) -> Result<(Bash, usize), ApiFailure> {
+// THREAT[TM-SBX-XXX]: host-directory mounts pierce the sandbox boundary, so
+// every mount root must resolve under a configured `allowed_mount_paths`
+// prefix. Canonicalization defuses `..` segments and symlinks before the
+// prefix check; comparison is case-folded on Windows filesystems.
+fn fold_path(path: &str) -> String {
+    let trimmed = path.trim_end_matches(std::path::MAIN_SEPARATOR);
+    let folded = if trimmed.is_empty() {
+        path
+    } else {
+        trimmed
+    };
+    if cfg!(windows) {
+        folded.to_ascii_lowercase()
+    } else {
+        folded.to_string()
+    }
+}
+
+fn validate_mount_root(root: &str, allowed: &[String]) -> Result<PathBuf, ApiFailure> {
+    if allowed.is_empty() {
+        return Err(ApiFailure::new(
+            BashkitStatus::InvalidConfig,
+            "mount rejected: session has no allowed_mount_paths".to_string(),
+        ));
+    }
+    let path = PathBuf::from(root);
+    let canonical = std::fs::canonicalize(&path).unwrap_or(path);
+    let candidate = fold_path(&canonical.to_string_lossy());
+    let candidate = candidate.as_bytes();
+    for prefix in allowed {
+        let prefix_path = PathBuf::from(prefix);
+        let prefix_canonical = std::fs::canonicalize(&prefix_path).unwrap_or(prefix_path);
+        let prefix_folded = fold_path(&prefix_canonical.to_string_lossy());
+        let prefix = prefix_folded.as_bytes();
+        let exactly = candidate == prefix;
+        let under = candidate.len() > prefix.len()
+            && candidate.starts_with(prefix)
+            && candidate[prefix.len()] == std::path::MAIN_SEPARATOR as u8;
+        if exactly || under {
+            return Ok(canonical);
+        }
+    }
+    Err(ApiFailure::new(
+        BashkitStatus::InvalidConfig,
+        format!("mount root {root:?} is not under any allowed_mount_paths prefix"),
+    ))
+}
+
+fn apply_config_mounts(
+    bash: &mut Bash,
+    mounts: &[MountConfigV1],
+    allowed: &[String],
+) -> Result<(), ApiFailure> {
+    for mount in mounts {
+        let root = validate_mount_root(&mount.root, allowed)?;
+        let mode = if mount.writable {
+            RealFsMode::ReadWrite
+        } else {
+            RealFsMode::ReadOnly
+        };
+        let fs = RealFs::new(&root, mode).map_err(|error| {
+            ApiFailure::new(
+                BashkitStatus::InvalidConfig,
+                format!("failed to open mount root {:?}: {error}", mount.root),
+            )
+        })?;
+        let fs: Arc<dyn FileSystem> = Arc::new(PosixFs::new(fs));
+        bash.mount(Path::new(&mount.path), fs)
+            .map_err(ApiFailure::from_bash)?;
+    }
+    Ok(())
+}
+
+fn build_from_config(config: ConfigV1) -> Result<(Bash, usize, Arc<[String]>), ApiFailure> {
     if config.schema_version != 1 {
         return Err(ApiFailure::new(
             BashkitStatus::InvalidConfig,
@@ -243,7 +332,10 @@ fn build_from_config(config: ConfigV1) -> Result<(Bash, usize), ApiFailure> {
     for (path, content) in config.files {
         builder = builder.mount_text(path, content);
     }
-    Ok((builder.build(), max_input_bytes))
+    let mut bash = builder.build();
+    let allowed: Arc<[String]> = Arc::from(config.allowed_mount_paths);
+    apply_config_mounts(&mut bash, &config.mounts, &allowed)?;
+    Ok((bash, max_input_bytes, allowed))
 }
 
 fn truncate_error(message: String) -> Vec<u8> {
@@ -375,6 +467,7 @@ pub unsafe extern "C" fn bashkit_create_default(
                     runtime: make_runtime()?,
                     bash: Bash::new(),
                     max_input_bytes: ExecutionLimits::default().max_input_bytes,
+                    allowed_mount_paths: Arc::from(Vec::<String>::new()),
                 }),
             };
             *out_bash = Box::into_raw(Box::new(bash));
@@ -408,12 +501,13 @@ pub unsafe extern "C" fn bashkit_create_json(
                     format!("invalid configuration: {error}"),
                 )
             })?;
-            let (bash, max_input_bytes) = build_from_config(config)?;
+            let (bash, max_input_bytes, allowed_mount_paths) = build_from_config(config)?;
             let bash = Bashkit {
                 state: Mutex::new(State {
                     runtime: make_runtime()?,
                     bash,
                     max_input_bytes,
+                    allowed_mount_paths,
                 }),
             };
             *out_bash = Box::into_raw(Box::new(bash));
@@ -638,6 +732,77 @@ pub unsafe extern "C" fn bashkit_remove(
             with_filesystem(bash, |runtime, fs| {
                 runtime.block_on(fs.remove(Path::new(path), recursive != 0))
             })
+        })
+    }
+}
+
+/// Mounts a host directory at `vfs_path` for the duration of the session.
+/// Requires the `realfs-mounts` capability and a `host_root` that resolves
+/// under one of the session's `allowed_mount_paths` prefixes.
+///
+/// # Safety
+/// `bash` must be live; path bytes must remain readable for the call.
+/// `out_error`, when non-null, must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn bashkit_mount(
+    bash: *mut Bashkit,
+    vfs_path: BashkitBytes,
+    host_root: BashkitBytes,
+    writable: u32,
+    out_error: *mut *mut BashkitError,
+) -> BashkitStatus {
+    unsafe {
+        ffi_boundary(out_error, || {
+            let bash = handle(bash)?;
+            let vfs_path = input_str(vfs_path, "vfs_path")?;
+            let host_root = input_str(host_root, "host_root")?;
+            let state = bash.state.lock().map_err(|_| {
+                ApiFailure::new(BashkitStatus::InternalError, "bash instance is unavailable")
+            })?;
+            let root = validate_mount_root(host_root, &state.allowed_mount_paths)?;
+            let mode = if writable != 0 {
+                RealFsMode::ReadWrite
+            } else {
+                RealFsMode::ReadOnly
+            };
+            let fs = RealFs::new(&root, mode).map_err(|error| {
+                ApiFailure::new(
+                    BashkitStatus::InvalidArgument,
+                    format!("failed to open mount root {host_root:?}: {error}"),
+                )
+            })?;
+            let fs: Arc<dyn FileSystem> = Arc::new(PosixFs::new(fs));
+            state
+                .bash
+                .mount(Path::new(vfs_path), fs)
+                .map_err(ApiFailure::from_bash)
+        })
+    }
+}
+
+/// Removes the mount at `vfs_path`. Shell state is preserved; paths under
+/// `vfs_path` fall back to the underlying filesystem.
+///
+/// # Safety
+/// `bash` must be live; path bytes must remain readable for the call.
+/// `out_error`, when non-null, must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn bashkit_unmount(
+    bash: *mut Bashkit,
+    vfs_path: BashkitBytes,
+    out_error: *mut *mut BashkitError,
+) -> BashkitStatus {
+    unsafe {
+        ffi_boundary(out_error, || {
+            let bash = handle(bash)?;
+            let vfs_path = input_str(vfs_path, "vfs_path")?;
+            let state = bash.state.lock().map_err(|_| {
+                ApiFailure::new(BashkitStatus::InternalError, "bash instance is unavailable")
+            })?;
+            state
+                .bash
+                .unmount(Path::new(vfs_path))
+                .map_err(ApiFailure::from_bash)
         })
     }
 }
