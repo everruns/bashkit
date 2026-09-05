@@ -18,6 +18,20 @@ Implemented
 Requirements for pre-release maintenance. Ensures no regressions, stale docs,
 dependency rot, or security gaps ship in a release.
 
+## Invocation contract
+
+"Run maintenance", "maintain", and common misspellings such as "maintainace"
+and "maintaiance" mean **analyze, fix, and ship**. The request includes local
+validation, pushing, PR creation, fixing CI/review findings, and squash-merging
+with every required check green. A local commit or a set of deferred issues is
+not a completed pass. Only an explicit analysis-only request narrows this outcome.
+
+The maintain skill and command implement this contract; the ship skill completes
+it. Do not stop because a fix is large, audits remain, or a build is slow. Preserve
+security contracts and audit criteria. Validate platform-specific behavior in a
+suitable environment. Proven upstream incompatibilities may require a tested,
+documented safe-version pin; they must not justify weaker execution limits.
+
 ## When to Run
 
 - Before every minor or major release
@@ -33,8 +47,9 @@ dependency rot, or security gaps ship in a release.
   1. Bump version constraint in `Cargo.toml` (workspace or crate-level)
   2. Run `cargo build`, fix any compilation errors from API changes
   3. Run `cargo test`, fix any test failures
-  4. If upgrade requires non-trivial refactoring (>50 lines changed), defer to a
-     tracked GitHub issue instead of blocking the maintenance pass
+  4. Resolve API changes and validate the upgrade. If upstream cannot preserve a
+     required security contract, document and test the newest safe-version pin;
+     diff size alone is not grounds for deferral.
 - `cargo update` run after all version bumps to lock latest patch versions
 - No known CVEs in dependency tree
 - License and advisory checks pass (`deny.toml`)
@@ -310,16 +325,13 @@ The aggregate CI gate must depend on every validation job, including `wasm`,
 condition with each dependency failing, preventing a green gate from hiding
 an omitted platform failure.
 
-## Deferred Items
+## Findings and external blockers
 
-When a maintenance pass identifies issues too large to fix inline (e.g.
-multi-file refactors, cross-cutting changes), the pass must:
-
-1. Create a GitHub issue for each deferred item with clear scope and reproduction steps
-2. Record the issue numbers in the summary below so they are tracked
-
-Deferred items are **not** failures, they are expected for large-scope
-improvements. The requirement is that they are **tracked**, not silently skipped.
+Keep findings in the active maintenance pass and resolve them before shipping.
+Do not create follow-up issues as a substitute for authorized fixes, audits, or
+checks. A genuine external blocker or a user-requested scope split may be tracked
+explicitly; report the evidence and continue independent work. Never mark a pass
+complete or merge while required CI is red.
 
 ### Deferred items
 

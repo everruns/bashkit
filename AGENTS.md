@@ -106,6 +106,13 @@ export GH_TOKEN=$(curl -s "https://api.doppler.com/v3/configs/config/secret?name
   -u "$DOPPLER_TOKEN:" | python3 -c "import sys,json; print(json.load(sys.stdin)['value']['raw'])")
 ```
 
+### Maintenance invocation
+
+"Run maintenance" (including "maintainace" / "maintaiance") means analyze, fix,
+validate, and ship through green CI and squash-merge. Use the maintain and ship
+skills. Do not stop at a report, local commit, or deferral issues. Analysis-only
+requires an explicit request. Preserve security contracts and never merge red CI.
+
 ### Local Dev
 
 ```bash
