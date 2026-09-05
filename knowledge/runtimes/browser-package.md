@@ -20,6 +20,17 @@ tags:
 > wasm", not "any wasm runtime". The spec filename stays `browser-package.md`
 > for continuity; the browser is still the primary target.
 
+## Bindgen CLI compatibility
+
+The CLI schema version must exactly match `wasm-bindgen` in `Cargo.lock`.
+`scripts/install-wasm-bindgen.sh` reads that version, reuses a matching installed
+binary, forcibly replaces an older cached CLI, and checks the executable on
+`PATH` after installation. CI and npm publication invoke this same installer;
+there is no separate workflow version pin to drift. It requires Python 3.11+
+(`tomllib`), available on the Ubuntu runners. Missing/ambiguous lock entries or
+a shadowing mismatched executable fail before bundle generation. Regression
+coverage: `scripts/tests/test_wasm_bindgen_version.py`.
+
 ## Status
 
 Implemented (reduced feature set). Local build + headless smoke test green.
@@ -172,7 +183,7 @@ core already gates off under `cfg(target_family = "wasm")` (see
 
 ```bash
 rustup target add wasm32-unknown-unknown
-cargo install wasm-bindgen-cli
+bash scripts/install-wasm-bindgen.sh
 sudo ./scripts/install-binaryen.sh                       # optional, -Oz pass
 bash crates/bashkit-wasm/scripts/build.sh                          # -> pkg/
 node --test "crates/bashkit-wasm/__test__/*.test.mjs"                # verify
@@ -204,7 +215,10 @@ published, builds `pkg/`, runs the smoke test, and `npm publish`es
 `@everruns/bashkit-wasm` with provenance (`NPM_TOKEN`, `id-token: write`), same
 pattern as `publish-js.yml`. Browser example smoke testing writes a file under
 `/home/user`, reloads the page, and verifies `browserLocal` restores it from
-`localStorage`.
+`localStorage`. The text-only example adapter commits only a complete traversal;
+unreadable files, non-UTF-8 bytes, or directory errors return `false` and leave
+the previous snapshot intact. A root confirmed absent through `exists()` saves
+an empty snapshot, so deleting the root still clears persisted files.
 
 ## Limitations (see [Known Limitations](../operations/limitations.md))
 

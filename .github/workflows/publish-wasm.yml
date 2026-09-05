@@ -6,8 +6,7 @@
 #   - NPM_TOKEN secret with publish access
 #   - id-token: write permission for npm provenance (OIDC attestation)
 #
-# Keep WASM_BINDGEN_VERSION in lockstep with the wasm-bindgen version in
-# Cargo.lock — a CLI/crate mismatch fails the bindgen step.
+# Derive the bindgen CLI from Cargo.lock; never duplicate its schema version.
 
 name: Publish Web
 
@@ -21,7 +20,6 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  WASM_BINDGEN_VERSION: "0.2.126"
 
 jobs:
   verify-source:
@@ -59,7 +57,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
 
       - name: Install wasm-bindgen-cli
-        run: cargo install wasm-bindgen-cli --version "$WASM_BINDGEN_VERSION" --locked
+        run: bash scripts/install-wasm-bindgen.sh
 
       # Pinned + checksummed, because this job's output is what ships to npm.
       # See scripts/install-binaryen.sh.

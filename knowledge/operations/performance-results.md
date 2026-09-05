@@ -43,6 +43,15 @@ are the aggregation input for benchmark and eval summaries.
 Default benchmark recipes that represent a real run MUST save artifacts in the
 directories above: `just bench`, `just bench-parallel`, `just bench-sqlite`.
 
+The comparison harness resolves `bash` from `PATH` and requires Bash 4 or newer
+(case conversion and associative arrays are benchmarked). A missing or older
+requested Bash oracle aborts the run instead of publishing misleading output
+mismatches; macOS `/bin/bash` 3.2 is unsupported, so put an installed modern Bash
+first on `PATH`. JSON reports include optional `runner_versions` metadata and
+Markdown records the selected Bash path and version. The site transformer ignores
+this additive field; historical reports remain readable. Regression tests in
+`crates/bashkit-bench/src/runners.rs` cover PATH precedence and missing/old Bash.
+
 `bashkit-eval` runs through the `mira` host (`just eval`, `just eval-scripting`);
 mira writes its own run folder under `./results/<run_id>/` and is not part of the
 benchmark save contract above.
@@ -52,7 +61,8 @@ clear that they do not update the site.
 
 After a successful saved run, the recipe MUST refresh generated site data:
 `pnpm --dir site run data:performance` (updates local `/benches` without a full
-site build).
+site build). The equivalent dependency-free command is
+`node site/scripts/build-performance-data.mjs`.
 
 ## Site Data Build
 

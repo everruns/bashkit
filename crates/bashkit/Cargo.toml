@@ -114,16 +114,22 @@ os_display = "0.1.3"
 # exact pin; the matching `ignore` entries in .github/dependabot.yml stop the
 # bump PRs from being regenerated.
 #
-# 0.0.21 moves `max_memory` enforcement from host-side accounting to a probe of
+# 0.0.20–0.0.22 move `max_memory` enforcement from host-side accounting to a probe of
 # the `LIVE_MEMORY`/`BASELINE_MEMORY` globals, which only the separate
 # `monty-alloc` crate writes — and only when installed as the process-wide
 # global allocator. Bashkit is an embeddable library (and bashkit-python is a
 # CPython extension module), so it cannot impose a global allocator on its
 # hosts. Without one, `probe_memory()` is `0.saturating_sub(usize::MAX)` == 0
 # and the Python sandbox's memory ceiling silently stops being enforced.
+# These versions also remove the ResourceTracker trait used for shared work
+# and cancellation checkpoints; charging only around start/resume loses that
+# enforcement during an uninterrupted VM loop.
 # See knowledge/runtimes/python-builtin.md § Upgrade blocker.
-monty = { version = "0.0.19", optional = true }
-monty-types = { version = "0.0.19", optional = true }
+monty = { version = "=0.0.19", optional = true }
+monty-types = { version = "=0.0.19", optional = true }
+# Monty's ruff AST uses compact_str 0.9; get-size2 >=0.10.2 only implements
+# GetSize for compact_str 0.10. Enforce downstream too, not only in Cargo.lock.
+get-size2 = { version = "=0.10.1", optional = true }
 
 # Embedded TypeScript interpreter (optional)
 zapcode-core = { version = "1.5.1", optional = true }
@@ -210,7 +216,7 @@ ssh = ["russh"]
 scripted_tool = ["bash_tool"]
 # Enable python/python3 builtins via embedded Monty interpreter
 # Usage: cargo build --features python
-python = ["dep:monty", "dep:monty-types"]
+python = ["dep:monty", "dep:monty-types", "dep:get-size2"]
 # Enable ts/node/deno/bun builtins via embedded ZapCode TypeScript interpreter
 # Usage: cargo build --features typescript
 typescript = ["dep:zapcode-core"]

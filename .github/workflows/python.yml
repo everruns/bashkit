@@ -99,6 +99,10 @@ jobs:
           pip install bashkit --no-index --find-links crates/bashkit-python/dist --force-reinstall
           pip install pytest pytest-asyncio langchain-core langgraph fastapi httpx maturin
 
+      - name: Install Deep Agents integration dependencies
+        if: matrix.python-version != '3.9' && matrix.python-version != '3.10'
+        run: pip install 'bashkit[deepagents]' --find-links crates/bashkit-python/dist
+
       # random-fs is a separate, non-abi3 pyo3 extension (own workspace, no
       # abi3-py39), so it must be built against each interpreter.
       - name: Build random filesystem fixture

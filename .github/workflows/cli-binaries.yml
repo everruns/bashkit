@@ -1,3 +1,4 @@
+# THREAT[TM-INF-027]: build only the immutable SHA exported by tag validation.
 # Prebuilt CLI binaries — dispatched by release.yml after GitHub Release is created.
 # GITHUB_TOKEN-created releases don't trigger `release: published` (anti-recursion).
 # The Release workflow dispatches this workflow explicitly, same pattern as everruns/everruns.
@@ -22,6 +23,7 @@ jobs:
       contents: read
     outputs:
       tag: ${{ steps.validate.outputs.tag }}
+      sha: ${{ steps.source.outputs.sha }}
     steps:
       - name: Validate workflow input
         id: validate
@@ -40,19 +42,22 @@ jobs:
           fetch-depth: 0
 
       - name: Verify tag source
+        id: source
         env:
           RELEASE_TAG: ${{ steps.validate.outputs.tag }}
         run: |
           TAG="$RELEASE_TAG"
+
+          git fetch --force origin main:refs/remotes/origin/main "refs/tags/$TAG:refs/tags/$TAG"
+          TAG_SHA=$(git rev-list -n 1 "$TAG")
+          # Validate and build this exact commit even if the tag later moves.
+          git checkout --detach "$TAG_SHA"
           VERSION="${TAG#v}"
           CARGO_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
           if [ "$VERSION" != "$CARGO_VERSION" ]; then
             echo "Error: tag $TAG does not match Cargo.toml version $CARGO_VERSION" >&2
             exit 1
           fi
-
-          git fetch --force origin main:refs/remotes/origin/main "refs/tags/$TAG:refs/tags/$TAG"
-          TAG_SHA=$(git rev-list -n 1 "$TAG")
           if [ "$TAG_SHA" != "$GITHUB_SHA" ]; then
             echo "Error: workflow ref $GITHUB_SHA does not match tag $TAG at $TAG_SHA" >&2
             exit 1
@@ -62,6 +67,7 @@ jobs:
             exit 1
           fi
           echo "Release tag $TAG verified at $TAG_SHA and reachable from origin/main"
+          echo "sha=$TAG_SHA" >> "$GITHUB_OUTPUT"
 
   build:
     name: Build CLI (${{ matrix.target }})
@@ -86,7 +92,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.validate-tag.outputs.tag }}
+          ref: ${{ needs.validate-tag.outputs.sha }}
           persist-credentials: false
 
       - name: Install Rust toolchain

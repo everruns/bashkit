@@ -62,6 +62,13 @@ multiple-versions = "warn"
 # Deny specific crates (security or legal issues)
 deny = []
 
+# Jiter's local audit covers Monty's Rust parser features only. Its optional
+# Python ASCII allocator dereferences PyUnicode_New without checking for OOM.
+[[bans.features]]
+name = "jiter"
+deny = ["python"]
+reason = "The local jiter audit excludes the optional Python FFI; re-audit before enabling it."
+
 [sources]
 # Ensure all dependencies come from crates.io or known Git repos
 unknown-registry = "deny"

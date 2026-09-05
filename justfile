@@ -19,7 +19,7 @@ build:
     cargo build
 
 # Build the browser wasm package (@everruns/bashkit-wasm) and run its tests.
-# Requires: rustup target add wasm32-unknown-unknown; cargo install wasm-bindgen-cli
+# Requires: rustup target add wasm32-unknown-unknown; bash scripts/install-wasm-bindgen.sh
 build-wasm:
     bash crates/bashkit-wasm/scripts/build.sh release
     node --test "crates/bashkit-wasm/__test__/*.test.mjs"

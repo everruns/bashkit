@@ -14,7 +14,7 @@ Homepage: [bashkit.sh](https://bashkit.sh)
 
 - **Secure by default** - No process spawning, no filesystem access, no network access unless explicitly enabled. [280+ threats](knowledge/security/threat-model.md) analyzed and mitigated
 - **POSIX compliant** - Substantial IEEE 1003.1-2024 Shell Command Language compliance
-- **Sandboxed, in-process execution** - All 164 commands reimplemented in Rust, no `fork`/`exec`
+- **Sandboxed, in-process execution** - All 167 commands reimplemented in Rust, no `fork`/`exec`
 - **Virtual filesystem** - InMemoryFs, OverlayFs, MountableFs with optional RealFs backend (`realfs` feature)
 - **Resource limits** - Command count, loop iterations, function depth, output size, filesystem size, parser fuel
 - **Network allowlist** - HTTP access denied by default, per-domain control
@@ -150,7 +150,7 @@ check must consult it. Available in Rust, Node (`bash.analyze()`), and Python
   </a>
 </div>
 
-## Built-in Commands (164)
+## Built-in Commands (167)
 
 | Category | Commands |
 |----------|----------|
@@ -604,10 +604,10 @@ Bashkit is built for running untrusted scripts from AI agents and users. Securit
 
 | Layer | Protection |
 |-------|------------|
-| **No process spawning** | All 164 commands are reimplemented in Rust, no `fork`, `exec`, or shell escape |
+| **No process spawning** | All 167 commands are reimplemented in Rust, no `fork`, `exec`, or shell escape |
 | **Virtual filesystem** | Scripts see an in-memory FS by default; no host filesystem access unless explicitly mounted |
 | **Network allowlist** | HTTP access is denied by default; each domain must be explicitly allowed |
-| **Resource limits** | Configurable caps on commands (10K), loop iterations (100K), function depth (100), output (10MB), input (10MB) |
+| **Resource limits** | Configurable caps on commands (10K), loop iterations (10K per loop, 1M total), function depth (100), stdout/stderr (1MiB each), input (10MB) |
 | **Filesystem limits** | Max total bytes (100MB), max file size (10MB), max file count (10K), prevents zip bombs, tar bombs, and append floods |
 | **Parser limits** | Timeout (5s), fuel budget (100K ops), AST depth (100), prevents pathological input from hanging the interpreter |
 | **Multi-tenant isolation** | Each `Bash` instance is fully isolated, no shared state between tenants |

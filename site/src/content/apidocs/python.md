@@ -1732,6 +1732,8 @@ True
 - **`stderr`** — `str`
 - **`exit_code`** — `int`
 - **`error`** — `str | None`
+- **`stdout_truncated`** — `bool`
+- **`stderr_truncated`** — `bool`
 - **`success`** — `bool`
 
 ### `to_dict`

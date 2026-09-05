@@ -237,6 +237,35 @@ invocation regardless of mechanism.
 `bashkit[langchain]`, `bashkit[deepagents]`, `bashkit[pydantic-ai]`,
 `bashkit[dev]` (pytest, pytest-asyncio).
 
+## Deep Agents backend
+
+The optional `deepagents` extra requires Deep Agents 0.7.13 or later and Python
+3.11+ (the upstream framework minimum); the base package remains Python 3.9+.
+CI installs the extra on Python 3.11–3.14 so protocol tests cannot silently skip. `BashkitBackend`
+implements its structured `read`, `ls`, `glob`, `grep`, `write`, `edit`, and
+`delete` results; obsolete `ls_info`, `glob_info`, and `grep_raw` are removed.
+`execute` propagates either native stream's truncation flag. Timeout policy
+remains configured on construction (`timeout_seconds`); per-call timeout
+support is not advertised to the framework.
+
+File operations use the live native VFS directly, avoiding shell output caps,
+newline insertion, option injection, and colon-delimited path parsing. They
+never access the host filesystem. Transfers preserve arbitrary bytes; writes
+refuse existing files, edits report replacement counts, and uploads replace
+files. Relative paths resolve against the shared shell's current directory;
+discovery always returns absolute paths. Reads return raw selected lines with
+pagination metadata, leaving line-number formatting to the framework.
+
+Grep uses literal substring matching and the framework's shared include-glob
+matcher: basename globs at any depth, rooted/path globs relative to the search
+root, recursive `**`, braces, and character classes. Traversal patterns are
+errors. A total `max_count` reports truncation only when a match is omitted.
+Recursive discovery skips symlink entries to avoid cyclic walks. Async methods
+use protocol thread dispatch, sharing the same VFS with Bashkit middleware.
+`test_deepagents_backend.py` exercises the installed framework protocol and
+native extension, including stream caps, exact transfers, malicious names,
+search filters, and shared async state.
+
 ## CI
 
 `.github/workflows/python.yml`, on push to main and PRs (path-filtered).

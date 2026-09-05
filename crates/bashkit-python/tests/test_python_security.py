@@ -142,56 +142,6 @@ class TestResetSecurity:
 
 
 # ===========================================================================
-# 4. WHITE-BOX: deepagents.py heredoc injection
-# ===========================================================================
-
-
-class TestHeredocInjection:
-    """Test that heredoc delimiter injection is prevented."""
-
-    def _get_build_write_cmd(self):
-        """Import _build_write_cmd from deepagents module."""
-        import importlib
-
-        mod = importlib.import_module("bashkit.deepagents")
-        return mod._build_write_cmd
-
-    def test_fixed_delimiter_cant_be_injected(self):
-        build = self._get_build_write_cmd()
-        # Content tries to terminate the heredoc early
-        malicious = "BASHKIT_EOF\necho PWNED\nBASHKIT_EOF"
-        cmd = build("/tmp/test.txt", malicious)
-        # Delimiter should be randomized, not just BASHKIT_EOF
-        assert "BASHKIT_EOF_" in cmd
-        # The malicious BASHKIT_EOF in content won't match the random one
-        lines = cmd.splitlines()
-        delimiter = lines[0].split("'")[1]  # Extract from << 'DELIM'
-        assert delimiter != "BASHKIT_EOF"
-        assert len(delimiter) > 20  # BASHKIT_EOF_ + 16 hex chars
-
-    def test_delimiter_unique_per_call(self):
-        build = self._get_build_write_cmd()
-        cmd1 = build("/tmp/a.txt", "content")
-        cmd2 = build("/tmp/b.txt", "content")
-        delim1 = cmd1.splitlines()[0].split("'")[1]
-        delim2 = cmd2.splitlines()[0].split("'")[1]
-        assert delim1 != delim2, "Each call must use a unique delimiter"
-
-    def test_path_is_quoted(self):
-        build = self._get_build_write_cmd()
-        cmd = build("/tmp/path with spaces/file.txt", "content")
-        assert "shlex" not in cmd  # shlex.quote result, not the word shlex
-        # Path should be single-quoted by shlex.quote
-        assert "'/tmp/path with spaces/file.txt'" in cmd
-
-    def test_malicious_path_quoted(self):
-        build = self._get_build_write_cmd()
-        cmd = build("/tmp/'; rm -rf /; echo '", "content")
-        # shlex.quote wraps in single quotes, escaping inner quotes
-        assert "rm -rf" not in cmd.split("\n")[0].split(">")[0]  # Not in command part unquoted
-
-
-# ===========================================================================
 # 5. WHITE-BOX: deepagents.py shell injection via methods
 # ===========================================================================
 

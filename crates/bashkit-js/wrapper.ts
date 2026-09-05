@@ -1666,6 +1666,7 @@ export class BashTool {
       toNativeOptions(options, resolved),
       toNativeSnapshotOptions(snapshotOptions),
     );
+    registerCustomBuiltins(instance.native, options?.customBuiltins);
     instance.maxInputBytes = options?.maxInputBytes ?? DEFAULT_MAX_INPUT_BYTES;
     return instance;
   }
@@ -1685,6 +1686,7 @@ export class BashTool {
       Buffer.from(key),
       toNativeOptions(options, resolved),
     );
+    registerCustomBuiltins(instance.native, options?.customBuiltins);
     instance.maxInputBytes = options?.maxInputBytes ?? DEFAULT_MAX_INPUT_BYTES;
     return instance;
   }

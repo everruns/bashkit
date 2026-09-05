@@ -7,7 +7,7 @@
 // - bashkit-cli: out-of-process via bashkit binary (subprocess per run)
 // - bashkit-js: in-process via Node.js + @everruns/bashkit (persistent child)
 // - bashkit-py: in-process via Python + bashkit package (persistent child)
-// - bash: out-of-process via /bin/bash (subprocess per run)
+// - bash: PATH-selected Bash >=4 (subprocess per run; macOS system Bash is too old)
 // - gbash: out-of-process via gbash binary (subprocess per run)
 // - just-bash: out-of-process via just-bash CLI (subprocess per run)
 // - just-bash-inproc: in-process via Node.js + just-bash library (persistent child)
@@ -164,27 +164,51 @@ pub struct BashRunner;
 
 impl BashRunner {
     pub async fn create() -> Result<Runner> {
-        let path = which_bash().await?;
+        let path = which_bash(&std::env::var_os("PATH").unwrap_or_default()).await?;
         Ok(Runner::NativeBash(path))
     }
 }
 
-async fn which_bash() -> Result<String> {
-    for path in &["/bin/bash", "/usr/bin/bash", "/usr/local/bin/bash"] {
-        if Path::new(path).exists() {
-            return Ok(path.to_string());
+async fn which_bash(search_path: &std::ffi::OsStr) -> Result<String> {
+    // Honor the user's shell selection; /bin/bash is still 3.2 on macOS.
+    for directory in std::env::split_paths(search_path) {
+        let candidate = directory.join(if cfg!(windows) { "bash.exe" } else { "bash" });
+        if !candidate.is_file() {
+            continue;
         }
-    }
-
-    let output = Command::new("which").arg("bash").output().await?;
-    if output.status.success() {
-        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if !path.is_empty() {
-            return Ok(path);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if candidate.metadata()?.permissions().mode() & 0o111 == 0 {
+                continue;
+            }
         }
+        let path = std::path::absolute(candidate)?
+            .to_string_lossy()
+            .into_owned();
+        bash_version(&path).await?;
+        return Ok(path);
     }
+    anyhow::bail!("bash not found on PATH; install Bash >=4 for the benchmark oracle")
+}
 
-    anyhow::bail!("bash not found")
+pub async fn bash_version(path: &str) -> Result<String> {
+    let output = Command::new(path)
+        .args(["-c", "printf '%s' \"$BASH_VERSION\""])
+        .output()
+        .await
+        .with_context(|| format!("cannot execute benchmark Bash {path}"))?;
+    let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let major = version
+        .split('.')
+        .next()
+        .and_then(|v| v.parse::<u32>().ok());
+    if !output.status.success() || !matches!(major, Some(4..)) {
+        anyhow::bail!(
+            "benchmark oracle requires Bash >=4 (case conversion and associative arrays); {path} reports {version:?}. Put a supported Bash first on PATH"
+        );
+    }
+    Ok(version)
 }
 
 // === Gbash (out-of-process) ===
@@ -471,8 +495,45 @@ fn scripts_dir() -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    use super::which_bash;
     use super::{run_subprocess, subprocess_program};
     use std::path::PathBuf;
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn bash_selection_uses_path_before_system_shell() {
+        let directory = tempfile::tempdir().unwrap();
+        let shell = directory.path().join("bash");
+        std::fs::write(&shell, "#!/bin/sh\nprintf '5.3.0\\n'\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&shell, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        assert_eq!(
+            which_bash(directory.path().as_os_str()).await.unwrap(),
+            shell.to_str().unwrap()
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn bash_selection_rejects_missing_and_old_oracles() {
+        let directory = tempfile::tempdir().unwrap();
+        let error = which_bash(directory.path().as_os_str()).await.unwrap_err();
+        assert!(error.to_string().contains("bash not found on PATH"));
+        let shell = directory.path().join("bash");
+        std::fs::write(&shell, "#!/bin/sh\nprintf '3.2.57'\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&shell, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let error = which_bash(directory.path().as_os_str()).await.unwrap_err();
+        assert!(error.to_string().contains("requires Bash >=4"));
+        assert!(error.to_string().contains("3.2.57"));
+    }
 
     #[test]
     fn subprocess_program_resolves_relative_paths_before_cwd_isolation() {

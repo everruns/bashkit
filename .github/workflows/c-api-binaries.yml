@@ -1,3 +1,4 @@
+# THREAT[TM-INF-027]: build only the immutable SHA exported by tag validation.
 # Native C ABI archives, dispatched from the verified release workflow.
 # Windows must initialize the Visual Studio environment before using lib.exe/cl.exe.
 # Existing tags may be rebuilt only with the tagged or current main workflow definition.
@@ -20,6 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.validate.outputs.tag }}
+      sha: ${{ steps.source.outputs.sha }}
     steps:
       - name: Validate workflow input
         id: validate
@@ -38,18 +40,21 @@ jobs:
           fetch-depth: 0
 
       - name: Verify tag source
+        id: source
         env:
           RELEASE_TAG: ${{ steps.validate.outputs.tag }}
         run: |
+          git fetch --force origin main:refs/remotes/origin/main \
+            "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
+          TAG_SHA=$(git rev-list -n 1 "$RELEASE_TAG")
+          # Validate and build this exact commit even if the tag later moves.
+          git checkout --detach "$TAG_SHA"
           VERSION="${RELEASE_TAG#v}"
           CARGO_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
           if [ "$VERSION" != "$CARGO_VERSION" ]; then
             echo "Error: tag $RELEASE_TAG does not match Cargo.toml $CARGO_VERSION" >&2
             exit 1
           fi
-          git fetch --force origin main:refs/remotes/origin/main \
-            "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
-          TAG_SHA=$(git rev-list -n 1 "$RELEASE_TAG")
           MAIN_SHA=$(git rev-parse origin/main)
           if [ "$GITHUB_SHA" != "$TAG_SHA" ] && [ "$GITHUB_SHA" != "$MAIN_SHA" ]; then
             echo "Error: workflow ref must be $RELEASE_TAG or current main" >&2
@@ -59,6 +64,7 @@ jobs:
             echo "Error: $RELEASE_TAG is not reachable from origin/main" >&2
             exit 1
           fi
+          echo "sha=$TAG_SHA" >> "$GITHUB_OUTPUT"
 
   build:
     name: Build C API (${{ matrix.target }})
@@ -94,7 +100,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.validate-tag.outputs.tag }}
+          ref: ${{ needs.validate-tag.outputs.sha }}
           persist-credentials: false
 
       - name: Install Rust toolchain

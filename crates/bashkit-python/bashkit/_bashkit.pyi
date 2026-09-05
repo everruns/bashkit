@@ -1046,6 +1046,8 @@ class ExecResult:
     stderr: str
     exit_code: int
     error: str | None
+    stdout_truncated: bool
+    stderr_truncated: bool
     success: bool
 
     def to_dict(self) -> dict[str, Any]:

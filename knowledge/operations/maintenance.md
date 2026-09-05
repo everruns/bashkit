@@ -18,6 +18,20 @@ Implemented
 Requirements for pre-release maintenance. Ensures no regressions, stale docs,
 dependency rot, or security gaps ship in a release.
 
+## Invocation contract
+
+"Run maintenance", "maintain", and common misspellings such as "maintainace"
+and "maintaiance" mean **analyze, fix, and ship**. The request includes local
+validation, pushing, PR creation, fixing CI/review findings, and squash-merging
+with every required check green. A local commit or a set of deferred issues is
+not a completed pass. Only an explicit analysis-only request narrows this outcome.
+
+The maintain skill and command implement this contract; the ship skill completes
+it. Do not stop because a fix is large, audits remain, or a build is slow. Preserve
+security contracts and audit criteria. Validate platform-specific behavior in a
+suitable environment. Proven upstream incompatibilities may require a tested,
+documented safe-version pin; they must not justify weaker execution limits.
+
 ## When to Run
 
 - Before every minor or major release
@@ -33,8 +47,9 @@ dependency rot, or security gaps ship in a release.
   1. Bump version constraint in `Cargo.toml` (workspace or crate-level)
   2. Run `cargo build`, fix any compilation errors from API changes
   3. Run `cargo test`, fix any test failures
-  4. If upgrade requires non-trivial refactoring (>50 lines changed), defer to a
-     tracked GitHub issue instead of blocking the maintenance pass
+  4. Resolve API changes and validate the upgrade. If upstream cannot preserve a
+     required security contract, document and test the newest safe-version pin;
+     diff size alone is not grounds for deferral.
 - `cargo update` run after all version bumps to lock latest patch versions
 - No known CVEs in dependency tree
 - License and advisory checks pass (`deny.toml`)
@@ -108,8 +123,8 @@ these files with it.
   - Run `cd .deepsec && pnpm update deepsec@latest`
   - Run `pnpm deepsec scan --project-id bashkit`
   - Run `pnpm deepsec process --project-id bashkit --agent codex`
-  - Review `pnpm deepsec report --project-id bashkit` and create GitHub issues
-    for any deferred findings
+  - Review `pnpm deepsec report --project-id bashkit`, fix findings, and verify
+    regressions before shipping; use the external-blocker policy below only when needed
 - Security tests exist for every MITIGATED threat
 - Failpoint tests pass
 - Unsafe usage reviewed (`cargo geiger`)
@@ -263,26 +278,96 @@ See [Coreutils Argument Port](../runtimes/coreutils-args-port.md).
 #### Escalation Policy
 
 Failures persisting **>2 consecutive days** on any workflow (CI, nightly, fuzz)
-are blocking:
-1. Open GitHub issue with label `ci:nightly`
-2. Link failing run(s)
-3. Assign to most recent contributor in failing area
-4. If upstream dep change: pin to known-good rev, open follow-up issue
+are blocking. Inspect failing runs, fix the root cause, and verify recovery in
+this pass. Preserve evidence in the PR. If upstream breaks a required contract,
+validate and document a known-good pin. Only a genuine external blocker or an
+explicitly requested scope split warrants a follow-up issue; include the failing
+runs and concrete reason work cannot proceed.
 
-**This section is a hard gate.** The maintenance pass MUST NOT be marked
-complete or merged while any of the above checks are red. If the agent cannot
-fix a failure, it must open a GitHub issue and report the pass as blocked.
+**This section is a hard gate.** Never mark maintenance complete or merge while
+required checks are red. Resolve ordinary failures rather than deferring them.
 
-## Deferred Items
+## September 2026 pass
 
-When a maintenance pass identifies issues too large to fix inline (e.g.
-multi-file refactors, cross-cutting changes), the pass must:
+The 2026-09-05 pass starts at `ab04bca2` with main CI and seven daily nightly/fuzz
+runs green. It refreshes Rust/npm dependencies and updates DeepSec to 2.3.9.
+Monty 0.0.19 and get-size2 0.10.1 are exact compatibility constraints, not an
+unimplemented upgrade: newer Monty releases remove the required per-VM tracker,
+and newer get-size2 releases conflict with the pinned Ruff AST. Isolated
+compatibility builds and 284 Python-feature tests verify the safe versions;
+see [Dependency Policy](dependencies.md) and [Python Builtin](../runtimes/python-builtin.md).
 
-1. Create a GitHub issue for each deferred item with clear scope and reproduction steps
-2. Record the issue numbers in the summary below so they are tracked
+DeepSec analyzed 44 files after 54 matcher hits and reported six findings.
+Fixes cover CI credentials, the aggregate WASM gate, Anthropic escaped-output
+expansion, and Deep Agents truncation metadata/grep glob filters. Credential-fetch
+steps now exit before repository execution; only scoped API keys cross the step
+boundary. Tests execute the actual workflow scripts and check process environments.
+Deep Agents now implements the current structured protocol through native VFS
+operations, with a real `create_deep_agent` integration using a deterministic model.
+A matcher scan is not a complete Rust security audit; DeepSec reported low Rust coverage.
 
-Deferred items are **not** failures, they are expected for large-scope
-improvements. The requirement is that they are **tracked**, not silently skipped.
+Local verification includes 5,564 workspace unit/integration tests, 167 rustdoc
+tests, 17 failpoint tests, 29 security property tests, 77 repository-script tests,
+831 Python tests (four Linux-only skips on macOS), 573 JS tests, and 63 browser
+WASM tests. The JS/Python native security suites use release builds, matching
+published artifacts and CI; debug native stack-stress builds are not interchangeable
+with that validation profile. Strict Linux/GNU Bash parity passes all 1,859 cases.
+The macOS strict comparison exposes BSD utility/path differences and is not the
+GNU compatibility baseline.
+
+The WASM bindgen installer derives its exact schema version from Cargo.lock,
+replaces stale cached CLIs, and verifies the executable on PATH in CI and
+publication. Regression tests cover cache mismatch and ambiguous lock versions.
+
+All-feature clippy/rustdoc, site build and generated-page checks, locked fuzz
+compilation/advisory checks, and standalone-workspace dependency/advisory checks
+pass. Coreutils regeneration produces no drift. CLI sort/jq/SQLite smoke tests
+pass, as do embedded Python/TypeScript external callbacks. The published 0.17.1
+browser example executes `jq` and the bundled child-shell script successfully.
+
+Unsafe-code review covers the changed dependency deltas and existing native
+FFI/callback ownership boundaries; this pass adds no Rust unsafe code. Geiger
+reports 449 packages but cannot parse two upstream files (signal-hook-registry
+and an aws-lc benchmark helper), and generated includes require source review.
+Its successful exit is not proof of complete unsafe coverage.
+
+The earlier August DeepSec tracking findings are also reproduced and fixed:
+browser persistence retains the previous complete snapshot after traversal errors;
+BashTool snapshot constructors register supplied custom builtins; SQLite setup
+installs only when absent; binary release jobs validate and build one immutable
+commit; Cargo publication verifies without registry credentials; CI grants no
+write permission or persisted checkout credential; release examples install the
+reviewed lockfile rather than resolving fresh dependencies. Regression tests cover
+failed/successful browser saves, keyed/unkeyed callbacks, SQLite present/missing
+branches, moved release tags, compiler environments, and release package links.
+
+Supply-chain validation passes with 57 individually reviewed dependency deltas
+and a non-importable jiter Rust-only baseline audit. The patched Git revision is
+explicitly audited, and `deny.toml` bans jiter's unused Python FFI feature after
+review found an unchecked allocation failure there. A negative fixture proves
+the feature ban rejects that configuration. Existing exemptions and publisher
+trust were not broadened.
+
+Performance baselines are saved in the respective Criterion and comparison
+result directories, and the site timeline is regenerated. The comparison harness
+now selects Bash from `PATH`, requires Bash >=4, and records the executable/version;
+it previously forced macOS Bash 3.2 and produced invalid oracle errors. The GNU
+Bash 5.3.15 run matches all 96 cases with zero errors. Parallel and SQLite
+Criterion runs complete successfully. These local measurements are observational,
+not a controlled before/after dependency performance claim.
+
+The aggregate CI gate must depend on every validation job, including `wasm`,
+`wasm-component`, and `wasm-web`. The maintenance security tests execute its
+condition with each dependency failing, preventing a green gate from hiding
+an omitted platform failure.
+
+## Findings and external blockers
+
+Keep findings in the active maintenance pass and resolve them before shipping.
+Do not create follow-up issues as a substitute for authorized fixes, audits, or
+checks. A genuine external blocker or a user-requested scope split may be tracked
+explicitly; report the evidence and continue independent work. Never mark a pass
+complete or merge while required CI is red.
 
 ### Deferred items
 

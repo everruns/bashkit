@@ -1,6 +1,6 @@
 ---
 name: ship
-description: Run the full ship flow — verify quality, ensure test coverage, update artifacts, smoke test, push, create PR, and merge when CI is green. Trigger when user says "ship", "ship it", "fix and ship", or asks to push and merge a branch.
+description: Run the full ship flow — verify quality, ensure test coverage, update artifacts, smoke test, push, create PR, and merge when CI is green. Trigger when user says "ship", "ship it", "fix and ship", asks to push and merge a branch, or runs Bashkit maintenance.
 user_invocable: true
 metadata:
   internal: true
@@ -106,14 +106,13 @@ If smoke testing reveals issues, fix them and loop back to Phase 2 (tests must s
 git fetch origin main && git rebase origin/main
 ```
 
-- If rebase fails with conflicts, abort and tell the user to resolve manually
+- Resolve rebase conflicts and rerun affected checks. Ask only when an unresolved conflict requires a user decision.
 
 ```bash
 just pre-pr
 ```
 
-- If it fails, run `just fmt` to auto-fix, then retry once
-- If still failing, stop and report
+- Diagnose failing checks, fix their root causes, and rerun. Do not bypass hooks or weaken tests/audit policy.
 
 ### Phase 6: Push and PR
 
@@ -138,9 +137,9 @@ If a PR already exists, update it if needed and report its URL.
 
 ### Phase 7: Wait for CI and Merge
 
-- Check CI status with `gh pr checks` (poll every 30s, up to 15 minutes)
-- If CI is green, merge with `gh pr merge --squash --auto`
-- If CI fails, report the failing checks and stop
+- Check CI status with bounded waits. Continue until the checks finish; elapsed time alone is not a blocker.
+- If all required CI is green and review comments are resolved, squash-merge and verify the PR actually merged. Enabling auto-merge alone is not completion.
+- If CI fails, inspect logs, fix the root cause, push the fix, and wait for the new checks.
 - **NEVER** merge when CI is red
 
 ### Phase 8: Post-merge

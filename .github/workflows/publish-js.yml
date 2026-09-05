@@ -220,31 +220,27 @@ jobs:
         run: node --test __test__/runtime-compat/*.test.mjs
         working-directory: crates/bashkit-js
 
-      - name: Run examples
+      # Use the same reviewed dependency graph as CI; test the downloaded
+      # release binding after installation, never a freshly resolved npm build.
+      - name: Install example dependencies and link local build
         shell: bash
+        working-directory: examples
         run: |
-          mkdir -p node_modules/@everruns
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            cp -r crates/bashkit-js node_modules/@everruns/bashkit
-          else
-            ln -s ${{ github.workspace }}/crates/bashkit-js node_modules/@everruns/bashkit
-          fi
-          node examples/bash_basics.mjs
-          node examples/data_pipeline.mjs
-          node examples/llm_tool.mjs
-
-      - name: Install AI SDK dependencies and re-link
-        shell: bash
-        run: |
-          echo '{"type":"module","private":true}' > package.json
-          pnpm add --ignore-scripts openai ai @ai-sdk/openai @langchain/core @langchain/langgraph @langchain/openai zod
+          pnpm install --frozen-lockfile --ignore-scripts
           rm -rf node_modules/@everruns/bashkit
           mkdir -p node_modules/@everruns
           if [ "$RUNNER_OS" = "Windows" ]; then
-            cp -r crates/bashkit-js node_modules/@everruns/bashkit
+            cp -r ../crates/bashkit-js node_modules/@everruns/bashkit
           else
             ln -s ${{ github.workspace }}/crates/bashkit-js node_modules/@everruns/bashkit
           fi
+
+      - name: Run examples
+        shell: bash
+        run: |
+          node examples/bash_basics.mjs
+          node examples/data_pipeline.mjs
+          node examples/llm_tool.mjs
 
       - name: Detect Doppler availability
         id: doppler
@@ -253,26 +249,33 @@ jobs:
       - name: Install Doppler CLI
         if: steps.doppler.outputs.available == 'true'
         uses: dopplerhq/cli-action@4819d808ab99e5cde19a0637a16536a4038fad73 # v4
-        env:
-          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
 
-      # `--only-secrets OPENAI_API_KEY` keeps the runtime env scoped to
-      # just the key these scripts need, instead of injecting every
-      # secret in the Doppler config. DOPPLER_TOKEN stays scoped to this
-      # trusted secret-fetch step, not npm install/build/test/example code.
       # Skipped on Windows + Node 24: libuv hits an assertion failure
       # (`!(handle->flags & UV_HANDLE_CLOSING)` in src/win/async.c) during
       # process shutdown of the example scripts on that combination; the
       # same examples pass on every other platform/Node combination.
-      - name: Run AI examples
+      # Resolve only the required key; this token-bearing process exits before
+      # repository code runs. Mask the output before crossing the step boundary.
+      - name: Fetch OpenAI example key
+        id: openai
         if: steps.doppler.outputs.available == 'true' && !(runner.os == 'Windows' && matrix.node == '24')
         shell: bash
         env:
           DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
         run: |
-          doppler run --only-secrets OPENAI_API_KEY -- node examples/openai_tool.mjs
-          doppler run --only-secrets OPENAI_API_KEY -- node examples/vercel_ai_tool.mjs
-          doppler run --only-secrets OPENAI_API_KEY -- node examples/langchain_agent.mjs
+          key=$(doppler secrets get OPENAI_API_KEY --plain)
+          printf '::add-mask::%s\n' "$key"
+          printf 'OPENAI_API_KEY=%s\n' "$key" >> "$GITHUB_OUTPUT"
+
+      - name: Run AI examples
+        if: steps.doppler.outputs.available == 'true' && !(runner.os == 'Windows' && matrix.node == '24')
+        shell: bash
+        env:
+          OPENAI_API_KEY: ${{ steps.openai.outputs.OPENAI_API_KEY }}
+        run: |
+          node examples/openai_tool.mjs
+          node examples/vercel_ai_tool.mjs
+          node examples/langchain_agent.mjs
 
   # ============================================================================
   # Test bindings on Linux
@@ -312,14 +315,14 @@ jobs:
             } else {
               console.log('PLATFORM=linux/amd64')
             }
-          " >> $GITHUB_OUTPUT
+          " >> "$GITHUB_OUTPUT"
           node -e "
             if ('${{ matrix.target }}'.endsWith('-musl')) {
               console.log('IMAGE=node:${{ matrix.node }}-alpine')
             } else {
               console.log('IMAGE=node:${{ matrix.node }}-slim')
             }
-          " >> $GITHUB_OUTPUT
+          " >> "$GITHUB_OUTPUT"
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -357,8 +360,12 @@ jobs:
           ${{ steps.docker.outputs.IMAGE }}
           sh -c "node --test __test__/runtime-compat/*.test.mjs"
 
-      - name: Link package for examples
+      # Match CI's committed dependency graph, then select the release artifact.
+      - name: Install example dependencies and link local build
+        working-directory: examples
         run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          rm -rf node_modules/@everruns/bashkit
           mkdir -p node_modules/@everruns
           ln -s ${{ github.workspace }}/crates/bashkit-js node_modules/@everruns/bashkit
 
@@ -370,14 +377,6 @@ jobs:
           ${{ steps.docker.outputs.IMAGE }}
           sh -c "node examples/bash_basics.mjs && node examples/data_pipeline.mjs && node examples/llm_tool.mjs"
 
-      - name: Install AI SDK dependencies and re-link
-        run: |
-          echo '{"type":"module","private":true}' > package.json
-          pnpm add --ignore-scripts openai ai @ai-sdk/openai @langchain/core @langchain/langgraph @langchain/openai zod
-          rm -rf node_modules/@everruns/bashkit
-          mkdir -p node_modules/@everruns
-          ln -s ${{ github.workspace }}/crates/bashkit-js node_modules/@everruns/bashkit
-
       - name: Detect Doppler availability
         id: doppler
         run: echo "available=${{ secrets.DOPPLER_TOKEN != '' }}" >> "$GITHUB_OUTPUT"
@@ -385,17 +384,28 @@ jobs:
       - name: Install Doppler CLI
         if: steps.doppler.outputs.available == 'true'
         uses: dopplerhq/cli-action@4819d808ab99e5cde19a0637a16536a4038fad73 # v4
+
+      # Resolve only the required key; this token-bearing process exits before
+      # repository code runs. Mask the output before crossing the step boundary.
+      - name: Fetch OpenAI example key
+        id: openai
+        if: steps.doppler.outputs.available == 'true'
+        shell: bash
         env:
           DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+        run: |
+          key=$(doppler secrets get OPENAI_API_KEY --plain)
+          printf '::add-mask::%s\n' "$key"
+          printf 'OPENAI_API_KEY=%s\n' "$key" >> "$GITHUB_OUTPUT"
 
       - name: Run AI examples
         if: steps.doppler.outputs.available == 'true'
         env:
-          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+          OPENAI_API_KEY: ${{ steps.openai.outputs.OPENAI_API_KEY }}
         run: >
           docker run --rm -v ${{ github.workspace }}:${{ github.workspace }}
           -w ${{ github.workspace }}
-          -e OPENAI_API_KEY=$(doppler secrets get OPENAI_API_KEY --plain)
+          -e OPENAI_API_KEY
           --platform ${{ steps.docker.outputs.PLATFORM }}
           ${{ steps.docker.outputs.IMAGE }}
           sh -c "node examples/openai_tool.mjs && node examples/vercel_ai_tool.mjs && node examples/langchain_agent.mjs"

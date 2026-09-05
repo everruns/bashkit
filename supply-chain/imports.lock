@@ -16,8 +16,8 @@ user-login = "Darksonn"
 user-name = "Alice Ryhl"
 
 [[publisher.toml]]
-version = "1.1.4+spec-1.1.0"
-when = "2026-07-28"
+version = "1.1.5+spec-1.1.0"
+when = "2026-09-02"
 user-id = 6743
 user-login = "epage"
 user-name = "Ed Page"

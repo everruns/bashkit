@@ -1,4 +1,5 @@
 // browserLocal persists the browser example's /home/user tree in localStorage.
+// Commit only complete traversals; read errors must not replace the last good save.
 const DEFAULT_KEY = "bashkit:fs";
 const DEFAULT_ROOT = "/home/user";
 const FORMAT_VERSION = 1;
@@ -63,9 +64,10 @@ export function browserLocal({ storage: configuredStorage, key = DEFAULT_KEY, ro
     save(fs) {
       const files = {};
       try {
-        snapshotDirectory(fs, root, files);
+        // An explicitly deleted root is a complete empty snapshot.
+        if (fs.exists(root)) snapshotDirectory(fs, root, files);
       } catch {
-        // The persisted root may have been removed by the last command.
+        return false;
       }
 
       try {

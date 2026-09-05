@@ -36,7 +36,7 @@ Wrap a ScriptedTool for multi-tool orchestration::
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 try:
     from langchain_core.tools import BaseTool, ToolException
@@ -45,14 +45,15 @@ try:
     LANGCHAIN_AVAILABLE = True
 except ImportError:
     LANGCHAIN_AVAILABLE = False
-    BaseTool = object
-    BaseModel = object
+    if not TYPE_CHECKING:
+        BaseTool = object
+        BaseModel = object
 
-    def Field(*args, **kwargs):
-        return None
+        def Field(*args, **kwargs):
+            return None
 
-    def PrivateAttr(*args, **kwargs):
-        return None
+        def PrivateAttr(*args, **kwargs):
+            return None
 
 
 from bashkit import BashTool as NativeBashTool

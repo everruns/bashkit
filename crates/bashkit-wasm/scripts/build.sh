@@ -4,7 +4,7 @@
 # Produces an ES-module package under `pkg/` via `wasm-bindgen --target web`,
 # which needs NO bundler and NO cross-origin isolation headers to load.
 #
-# Requires: rustup target add wasm32-unknown-unknown; cargo install wasm-bindgen-cli
+# Requires: rustup target add wasm32-unknown-unknown; bash scripts/install-wasm-bindgen.sh
 # Optional (smaller output): wasm-opt (binaryen) on PATH.
 set -euo pipefail
 

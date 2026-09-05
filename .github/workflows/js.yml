@@ -216,22 +216,29 @@ jobs:
       - name: Install Doppler CLI
         if: steps.doppler.outputs.available == 'true'
         uses: dopplerhq/cli-action@4819d808ab99e5cde19a0637a16536a4038fad73 # v4
+
+      # Resolve only the required key; this token-bearing process exits before
+      # repository code runs. Mask the output before crossing the step boundary.
+      - name: Fetch OpenAI example key
+        id: openai
+        if: steps.doppler.outputs.available == 'true'
+        shell: bash
         env:
           DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+        run: |
+          key=$(doppler secrets get OPENAI_API_KEY --plain)
+          printf '::add-mask::%s\n' "$key"
+          printf 'OPENAI_API_KEY=%s\n' "$key" >> "$GITHUB_OUTPUT"
 
-      # `--only-secrets OPENAI_API_KEY` keeps the runtime env scoped to
-      # just the key these scripts need, instead of injecting every
-      # secret in the Doppler config. DOPPLER_TOKEN stays scoped to this
-      # trusted secret-fetch step, not npm install/build/test/example code.
       - name: Run AI examples
         if: steps.doppler.outputs.available == 'true'
         working-directory: examples
         env:
-          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+          OPENAI_API_KEY: ${{ steps.openai.outputs.OPENAI_API_KEY }}
         run: |
-          doppler run --only-secrets OPENAI_API_KEY -- ${{ matrix.run }} openai_tool.mjs
-          doppler run --only-secrets OPENAI_API_KEY -- ${{ matrix.run }} vercel_ai_tool.mjs
-          doppler run --only-secrets OPENAI_API_KEY -- ${{ matrix.run }} langchain_agent.mjs
+          ${{ matrix.run }} openai_tool.mjs
+          ${{ matrix.run }} vercel_ai_tool.mjs
+          ${{ matrix.run }} langchain_agent.mjs
 
   # Gate job for branch protection
   js-check:
