@@ -332,6 +332,101 @@ fn configured_deadline_aborts_execution() {
 }
 
 #[test]
+fn cancellation_aborts_running_execution_and_stays_sticky_until_cleared() {
+    unsafe {
+        let capabilities: serde_json::Value =
+            serde_json::from_slice(&borrowed(bashkit_capabilities_json())).unwrap();
+        assert!(
+            capabilities["features"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|feature| feature == "cancellation")
+        );
+
+        let mut bash = ptr::null_mut();
+        let mut error = ptr::null_mut();
+        assert_eq!(
+            bashkit_create_default(&mut bash, &mut error),
+            BashkitStatus::Ok
+        );
+
+        // Cancellation lands at command boundaries, so the script must reach
+        // one quickly without tripping the profile's command/iteration caps:
+        // a loop of 1-second sleeps gives a boundary every second while
+        // burning almost no budget. (A pending single sleep is NOT
+        // interruptible; only the profile deadline ends it.)
+        // Raw pointers are not Send and edition-2021 closures would capture the
+        // inner field of any wrapper anyway, so cross the thread as a usize.
+        let handle = bash as usize;
+
+        let observed = std::sync::Arc::new(std::sync::Mutex::new(None::<BashkitStatus>));
+        let writer = observed.clone();
+        let worker = std::thread::spawn(move || {
+            let bash = handle as *mut Bashkit;
+            // No inner `unsafe` block: the closure literal is lexically nested
+            // under the test's `unsafe` block, which covers the body.
+            let mut result = ptr::null_mut();
+            let mut thread_error = ptr::null_mut();
+            let status = bashkit_execute(
+                bash,
+                bytes(b"while true; do sleep 1; done"),
+                &mut result,
+                &mut thread_error,
+            );
+            assert!(result.is_null());
+            *writer.lock().unwrap() = Some(status);
+            if !thread_error.is_null() {
+                bashkit_error_free(thread_error);
+            }
+        });
+
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert_eq!(bashkit_cancel(bash), BashkitStatus::Ok);
+        worker.join().unwrap();
+        assert_eq!(
+            observed.lock().unwrap().take(),
+            Some(BashkitStatus::Cancelled)
+        );
+
+        // Sticky: the next execute aborts immediately until the flag is cleared.
+        let mut result = ptr::null_mut();
+        assert_eq!(
+            bashkit_execute(bash, bytes(b"echo blocked"), &mut result, &mut error),
+            BashkitStatus::Cancelled
+        );
+        assert!(result.is_null());
+        bashkit_error_free(error);
+
+        // clear_cancel restores normal execution without losing shell state.
+        assert_eq!(bashkit_clear_cancel(bash), BashkitStatus::Ok);
+        let mut result = ptr::null_mut();
+        assert_eq!(
+            bashkit_execute(bash, bytes(b"echo resumed"), &mut result, &mut error),
+            BashkitStatus::Ok
+        );
+        assert_eq!(borrowed(bashkit_result_stdout(result)), b"resumed\n");
+        bashkit_result_free(result);
+
+        bashkit_free(bash);
+    }
+}
+
+#[test]
+fn cancel_rejects_null_handle_without_touching_state() {
+    unsafe {
+        assert_eq!(
+            bashkit_cancel(ptr::null_mut()),
+            BashkitStatus::InvalidArgument
+        );
+        assert_eq!(
+            bashkit_clear_cancel(ptr::null_mut()),
+            BashkitStatus::InvalidArgument
+        );
+    }
+}
+
+#[test]
 fn null_destructors_and_accessors_are_safe() {
     unsafe {
         bashkit_free(ptr::null_mut());
@@ -343,5 +438,289 @@ fn null_destructors_and_accessors_are_safe() {
         assert_eq!(bashkit_result_stdout(ptr::null()).len, 0);
         assert_eq!(bashkit_buffer_bytes(ptr::null()).len, 0);
         assert_eq!(bashkit_error_message(ptr::null()).len, 0);
+    }
+}
+
+fn temp_dir(name: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("bashkit-capi-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+#[test]
+fn config_mounts_expose_host_dir_read_only() {
+    unsafe {
+        let host = temp_dir("mount-ro");
+        std::fs::write(host.join("note.txt"), b"host-bytes").unwrap();
+        let config = serde_json::json!({
+            "schema_version": 1,
+            "allowed_mount_paths": [host.to_string_lossy()],
+            "mounts": [{"path": "/data", "root": host.to_string_lossy()}],
+        })
+        .to_string();
+
+        let mut bash = ptr::null_mut();
+        let mut error = ptr::null_mut();
+        assert_eq!(
+            bashkit_create_json(bytes(config.as_bytes()), &mut bash, &mut error),
+            BashkitStatus::Ok
+        );
+
+        let mut result = ptr::null_mut();
+        assert_eq!(
+            bashkit_execute(bash, bytes(b"cat /data/note.txt"), &mut result, &mut error),
+            BashkitStatus::Ok
+        );
+        assert_eq!(borrowed(bashkit_result_stdout(result)), b"host-bytes");
+        bashkit_result_free(result);
+
+        // Read-only mount: writes through the mount never reach the host.
+        let mut result = ptr::null_mut();
+        assert_eq!(
+            bashkit_execute(
+                bash,
+                bytes(b"echo nope > /data/denied.txt"),
+                &mut result,
+                &mut error,
+            ),
+            BashkitStatus::Ok
+        );
+        bashkit_result_free(result);
+        assert!(!host.join("denied.txt").exists());
+
+        bashkit_free(bash);
+        let _ = std::fs::remove_dir_all(&host);
+    }
+}
+
+#[test]
+fn runtime_mount_and_unmount_round_trip() {
+    unsafe {
+        let host = temp_dir("mount-rt");
+        std::fs::write(host.join("f.txt"), b"rt").unwrap();
+        let config = serde_json::json!({
+            "schema_version": 1,
+            "allowed_mount_paths": [host.to_string_lossy()],
+        })
+        .to_string();
+
+        let mut bash = ptr::null_mut();
+        let mut error = ptr::null_mut();
+        assert_eq!(
+            bashkit_create_json(bytes(config.as_bytes()), &mut bash, &mut error),
+            BashkitStatus::Ok
+        );
+
+        let mut result = ptr::null_mut();
+        assert_eq!(
+            bashkit_execute(bash, bytes(b"cat /mnt/f.txt"), &mut result, &mut error),
+            BashkitStatus::Ok
+        );
+        assert_ne!(bashkit_result_exit_code(result), 0);
+        bashkit_result_free(result);
+
+        assert_eq!(
+            bashkit_mount(
+                bash,
+                bytes(b"/mnt"),
+                bytes(host.to_string_lossy().as_bytes()),
+                0,
+                &mut error,
+            ),
+            BashkitStatus::Ok
+        );
+        let mut result = ptr::null_mut();
+        assert_eq!(
+            bashkit_execute(bash, bytes(b"cat /mnt/f.txt"), &mut result, &mut error),
+            BashkitStatus::Ok
+        );
+        assert_eq!(borrowed(bashkit_result_stdout(result)), b"rt");
+        bashkit_result_free(result);
+
+        assert_eq!(
+            bashkit_unmount(bash, bytes(b"/mnt"), &mut error),
+            BashkitStatus::Ok
+        );
+        let mut result = ptr::null_mut();
+        assert_eq!(
+            bashkit_execute(bash, bytes(b"cat /mnt/f.txt"), &mut result, &mut error),
+            BashkitStatus::Ok
+        );
+        assert_ne!(bashkit_result_exit_code(result), 0);
+        bashkit_result_free(result);
+
+        bashkit_free(bash);
+        let _ = std::fs::remove_dir_all(&host);
+    }
+}
+
+#[test]
+fn mounts_require_allowlist_and_containment() {
+    unsafe {
+        // No allowed_mount_paths: config mount is rejected outright.
+        let host = temp_dir("mount-denied");
+        let config = serde_json::json!({
+            "schema_version": 1,
+            "mounts": [{"path": "/data", "root": host.to_string_lossy()}],
+        })
+        .to_string();
+        let mut bash = ptr::null_mut();
+        let mut error = ptr::null_mut();
+        assert_eq!(
+            bashkit_create_json(bytes(config.as_bytes()), &mut bash, &mut error),
+            BashkitStatus::InvalidConfig
+        );
+        assert_eq!(
+            bashkit_error_code(error),
+            BashkitStatus::InvalidConfig as u32
+        );
+        bashkit_error_free(error);
+
+        // Root outside every allowed prefix is rejected at mount time.
+        let allowed = temp_dir("mount-allowed");
+        let outside = temp_dir("mount-outside");
+        let config = serde_json::json!({
+            "schema_version": 1,
+            "allowed_mount_paths": [allowed.to_string_lossy()],
+        })
+        .to_string();
+        let mut bash = ptr::null_mut();
+        let mut error = ptr::null_mut();
+        assert_eq!(
+            bashkit_create_json(bytes(config.as_bytes()), &mut bash, &mut error),
+            BashkitStatus::Ok
+        );
+        assert_ne!(
+            bashkit_mount(
+                bash,
+                bytes(b"/data"),
+                bytes(outside.to_string_lossy().as_bytes()),
+                0,
+                &mut error,
+            ),
+            BashkitStatus::Ok
+        );
+        assert!(!error.is_null());
+        bashkit_error_free(error);
+        bashkit_free(bash);
+        let _ = std::fs::remove_dir_all(&host);
+        let _ = std::fs::remove_dir_all(&allowed);
+        let _ = std::fs::remove_dir_all(&outside);
+    }
+}
+
+// THREAT[TM-FS-013]: a broad allowlist entry (the home directory itself) is
+// not consent to expose a credential directory under it.
+#[test]
+fn config_mounts_refuse_sensitive_paths_under_broad_allowlist() {
+    unsafe {
+        let home = temp_dir("mount-home");
+        let ssh_dir = home.join(".ssh");
+        std::fs::create_dir_all(&ssh_dir).unwrap();
+        std::fs::write(ssh_dir.join("id_rsa"), b"PRIVATE-KEY-BYTES").unwrap();
+
+        let config = serde_json::json!({
+            "schema_version": 1,
+            "allowed_mount_paths": [home.to_string_lossy()],
+            "mounts": [{"path": "/data", "root": ssh_dir.to_string_lossy()}],
+        })
+        .to_string();
+        let mut bash = ptr::null_mut();
+        let mut error = ptr::null_mut();
+        assert_eq!(
+            bashkit_create_json(bytes(config.as_bytes()), &mut bash, &mut error),
+            BashkitStatus::InvalidConfig
+        );
+        assert!(bash.is_null());
+        assert!(
+            error_message(error).contains("sensitive host path"),
+            "error must name the sensitive-path rule"
+        );
+        let _ = std::fs::remove_dir_all(&home);
+    }
+}
+
+#[test]
+fn runtime_mount_refuses_sensitive_paths_under_broad_allowlist() {
+    unsafe {
+        let home = temp_dir("mount-home-rt");
+        let ssh_dir = home.join(".ssh");
+        std::fs::create_dir_all(&ssh_dir).unwrap();
+        std::fs::write(ssh_dir.join("id_rsa"), b"PRIVATE-KEY-BYTES").unwrap();
+
+        let config = serde_json::json!({
+            "schema_version": 1,
+            "allowed_mount_paths": [home.to_string_lossy()],
+        })
+        .to_string();
+        let mut bash = ptr::null_mut();
+        let mut error = ptr::null_mut();
+        assert_eq!(
+            bashkit_create_json(bytes(config.as_bytes()), &mut bash, &mut error),
+            BashkitStatus::Ok
+        );
+
+        assert_ne!(
+            bashkit_mount(
+                bash,
+                bytes(b"/data"),
+                bytes(ssh_dir.to_string_lossy().as_bytes()),
+                0,
+                &mut error,
+            ),
+            BashkitStatus::Ok
+        );
+        assert!(!error.is_null());
+        bashkit_error_free(error);
+
+        // The refused mount left nothing behind: the path stays unresolved.
+        let mut result = ptr::null_mut();
+        assert_eq!(
+            bashkit_execute(bash, bytes(b"cat /data/id_rsa"), &mut result, &mut error),
+            BashkitStatus::Ok
+        );
+        assert_ne!(bashkit_result_exit_code(result), 0);
+        bashkit_result_free(result);
+
+        bashkit_free(bash);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+}
+
+#[test]
+fn sensitive_path_mounts_when_allowlisted_exactly() {
+    unsafe {
+        let home = temp_dir("mount-home-exact");
+        let ssh_dir = home.join(".ssh");
+        std::fs::create_dir_all(&ssh_dir).unwrap();
+        std::fs::write(ssh_dir.join("id_rsa"), b"PRIVATE-KEY-BYTES").unwrap();
+
+        // Naming the sensitive root itself in the allowlist is explicit
+        // consent: the mount is allowed for both config-time and runtime.
+        let config = serde_json::json!({
+            "schema_version": 1,
+            "allowed_mount_paths": [ssh_dir.to_string_lossy()],
+            "mounts": [{"path": "/data", "root": ssh_dir.to_string_lossy()}],
+        })
+        .to_string();
+        let mut bash = ptr::null_mut();
+        let mut error = ptr::null_mut();
+        assert_eq!(
+            bashkit_create_json(bytes(config.as_bytes()), &mut bash, &mut error),
+            BashkitStatus::Ok
+        );
+        let mut result = ptr::null_mut();
+        assert_eq!(
+            bashkit_execute(bash, bytes(b"cat /data/id_rsa"), &mut result, &mut error),
+            BashkitStatus::Ok
+        );
+        assert_eq!(
+            borrowed(bashkit_result_stdout(result)),
+            b"PRIVATE-KEY-BYTES"
+        );
+        bashkit_result_free(result);
+        bashkit_free(bash);
+        let _ = std::fs::remove_dir_all(&home);
     }
 }

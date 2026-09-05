@@ -46,6 +46,24 @@ data uses direct VFS functions rather than base64 configuration. Shell nonzero
 exit codes are successful ABI calls represented in `BashkitResult`; ABI status
 is reserved for boundary and execution failures.
 
+Host-directory mounts are exposed additively (capability marker
+`realfs-mounts`): config schema v1 gains optional `mounts` (`path`, `root`,
+`writable`) and `allowed_mount_paths` keys, and `bashkit_mount` /
+`bashkit_unmount` attach and detach host directories on a live session while
+preserving shell state.
+
+THREAT[TM-FS-013]: the mount allowlist is mandatory — with no
+`allowed_mount_paths` configured, every mount is rejected. Roots are
+canonicalized (defusing `..` and symlinks, case-folded on Windows) before
+the prefix check, and must also clear the shared sensitive-path denylist
+(`bashkit::is_sensitive_mount_path`). A sensitive root (home trees, `/etc`,
+`.ssh`, ...) is only mountable when an allowlist entry names it exactly: a
+broad parent entry, such as the home directory itself, is not consent to
+expose credential stores. This is deliberately stricter than the builder and
+JS binding live-mount precedent, where any covering allowlist entry
+overrides the denylist; the C ABI is the lowest-level, config-driven surface
+and defaults to deny on credential paths.
+
 ## Compatibility
 
 - ABI version is independent of the Bashkit package version.
@@ -57,7 +75,7 @@ is reserved for boundary and execution failures.
 
 ## Deferred surface
 
-Callbacks, custom builtins, streaming, async cancellation, host mounts,
+Callbacks, custom builtins, streaming, async cancellation,
 transport hooks, snapshots, scripted tools, and external filesystem providers
 remain outside v1. They need explicit reentrancy, callback lifetime, and dynamic
 library unload rules before becoming permanent ABI.
@@ -66,8 +84,12 @@ library unload rules before becoming permanent ABI.
 
 Rust contract tests cover success, shell failure, configuration, binary VFS
 content, invalid UTF-8, pre-validation script limits, null outputs, and version
-rejection. The C example runner compiles the public header under C11 with
-warnings denied and executes two programs against the built shared library.
+rejection. Mount tests cover the read-only round trip, live mount/unmount with
+shell state preserved, allowlist containment at config time and runtime, and
+the sensitive-path rule (refused under a broad allowlist entry, allowed when
+the entry names the root exactly). The C example runner compiles the public
+header under C11 with warnings denied and executes two programs against the
+built shared library.
 
 ## See also
 

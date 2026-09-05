@@ -3415,52 +3415,6 @@ impl BashBuilder {
         result
     }
 
-    /// THREAT[TM-FS-013]: Host prefixes refused as `RealFs` mount targets unless
-    /// the embedder explicitly allowlists a narrower path under them. Mounting
-    /// any of these (or a child of them) exposes broad system / kernel /
-    /// secrets surface to sandboxed scripts via a single mount call.
-    #[cfg(feature = "realfs")]
-    const SENSITIVE_MOUNT_PATHS: &[&str] = &[
-        // Kernel and pseudo-filesystems
-        "/proc", "/sys", "/dev", // System configuration / secret stores
-        "/etc", "/boot", // Privileged user directories (whole tree, not just secrets)
-        "/root", // User home roots — refuse the whole tree; embedder must narrow.
-        "/Users", "/home", // Runtime / sockets / pid dirs (host IPC surface)
-        "/run", "/var/run", // macOS canonicalized roots that mirror the above
-        "/private",
-    ];
-
-    /// THREAT[TM-FS-013]: Path components that always indicate a secret-bearing
-    /// directory regardless of where they live (typically inside a user home).
-    /// Any mount whose canonicalized path contains one of these as a component
-    /// is refused unless explicitly allowlisted.
-    #[cfg(feature = "realfs")]
-    const SENSITIVE_PATH_COMPONENTS: &[&str] =
-        &[".ssh", ".aws", ".kube", ".docker", ".gnupg", ".gcloud"];
-
-    /// Returns `true` if `host_path` (already canonicalized) is a sensitive
-    /// mount target — either the host root itself, a path under one of the
-    /// `SENSITIVE_MOUNT_PATHS` prefixes, or a path containing a known secret
-    /// directory component.
-    #[cfg(feature = "realfs")]
-    fn is_sensitive_mount_path(host_path: &Path) -> bool {
-        // THREAT[TM-FS-013]: A canonical host root has no parent. This covers
-        // `/` plus Windows drive, UNC-share, and device-namespace roots.
-        if host_path.parent().is_none() {
-            return true;
-        }
-        if Self::SENSITIVE_MOUNT_PATHS
-            .iter()
-            .any(|s| host_path.starts_with(Path::new(s)))
-        {
-            return true;
-        }
-        host_path.components().any(|c| {
-            let s = c.as_os_str();
-            Self::SENSITIVE_PATH_COMPONENTS.iter().any(|sec| s == *sec)
-        })
-    }
-
     #[cfg(feature = "realfs")]
     #[allow(deprecated)] // BashBuilder::build is intentionally synchronous.
     fn apply_real_mounts(
@@ -3518,7 +3472,7 @@ impl BashBuilder {
             // THREAT[TM-FS-013]: Sensitive paths are refused by default. They
             // can still be mounted by adding an explicit `allowed_mount_paths`
             // entry that covers them.
-            let is_sensitive = Self::is_sensitive_mount_path(&canonical_host);
+            let is_sensitive = is_sensitive_mount_path(&canonical_host);
 
             if let Some(allowlist) = &canonical_allowlist {
                 if !allowlist
@@ -3740,6 +3694,59 @@ impl BashBuilder {
             host_mounts: HostMounts::default(),
         }
     }
+}
+
+/// THREAT[TM-FS-013]: Host prefixes refused as `RealFs` mount targets unless
+/// the embedder explicitly allowlists a narrower path under them. Mounting
+/// any of these (or a child of them) exposes broad system / kernel /
+/// secrets surface to sandboxed scripts via a single mount call.
+#[cfg(feature = "realfs")]
+const SENSITIVE_MOUNT_PATHS: &[&str] = &[
+    // Kernel and pseudo-filesystems
+    "/proc", "/sys", "/dev", // System configuration / secret stores
+    "/etc", "/boot", // Privileged user directories (whole tree, not just secrets)
+    "/root", // User home roots — refuse the whole tree; embedder must narrow.
+    "/Users", "/home", // Runtime / sockets / pid dirs (host IPC surface)
+    "/run", "/var/run", // macOS canonicalized roots that mirror the above
+    "/private",
+];
+
+/// THREAT[TM-FS-013]: Path components that always indicate a secret-bearing
+/// directory regardless of where they live (typically inside a user home).
+/// Any mount whose canonicalized path contains one of these as a component
+/// is refused unless explicitly allowlisted.
+#[cfg(feature = "realfs")]
+const SENSITIVE_PATH_COMPONENTS: &[&str] =
+    &[".ssh", ".aws", ".kube", ".docker", ".gnupg", ".gcloud"];
+
+/// Returns `true` if `host_path` (already canonicalized) is a sensitive
+/// `RealFs` mount target: the host root itself, a path under one of the
+/// privileged prefixes (`/etc`, `/home`, `/Users`, `/proc`, ...), or a path
+/// containing a known secret-directory component (`.ssh`, `.aws`, ...).
+///
+/// Embedders that implement their own mount policy (FFI layers, config-driven
+/// setup) should call this before attaching a host directory so they inherit
+/// the same denylist as `BashBuilder::mount_real_readonly_at`.
+///
+// THREAT[TM-FS-013]: keep the denylist in one place; every mount path —
+// builder, config-time, and runtime — must consult this function.
+#[cfg(feature = "realfs")]
+pub fn is_sensitive_mount_path(host_path: &Path) -> bool {
+    // THREAT[TM-FS-013]: A canonical host root has no parent. This covers
+    // `/` plus Windows drive, UNC-share, and device-namespace roots.
+    if host_path.parent().is_none() {
+        return true;
+    }
+    if SENSITIVE_MOUNT_PATHS
+        .iter()
+        .any(|s| host_path.starts_with(Path::new(s)))
+    {
+        return true;
+    }
+    host_path.components().any(|c| {
+        let s = c.as_os_str();
+        SENSITIVE_PATH_COMPONENTS.iter().any(|sec| s == *sec)
+    })
 }
 
 // =============================================================================
