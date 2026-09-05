@@ -225,11 +225,7 @@ fn make_runtime() -> Result<Runtime, ApiFailure> {
 // as the home directory itself is not consent to expose credential stores.
 fn fold_path(path: &str) -> String {
     let trimmed = path.trim_end_matches(std::path::MAIN_SEPARATOR);
-    let folded = if trimmed.is_empty() {
-        path
-    } else {
-        trimmed
-    };
+    let folded = if trimmed.is_empty() { path } else { trimmed };
     if cfg!(windows) {
         folded.to_ascii_lowercase()
     } else {

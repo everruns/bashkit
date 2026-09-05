@@ -336,11 +336,13 @@ fn cancellation_aborts_running_execution_and_stays_sticky_until_cleared() {
     unsafe {
         let capabilities: serde_json::Value =
             serde_json::from_slice(&borrowed(bashkit_capabilities_json())).unwrap();
-        assert!(capabilities["features"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|feature| feature == "cancellation"));
+        assert!(
+            capabilities["features"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|feature| feature == "cancellation")
+        );
 
         let mut bash = ptr::null_mut();
         let mut error = ptr::null_mut();
@@ -713,7 +715,10 @@ fn sensitive_path_mounts_when_allowlisted_exactly() {
             bashkit_execute(bash, bytes(b"cat /data/id_rsa"), &mut result, &mut error),
             BashkitStatus::Ok
         );
-        assert_eq!(borrowed(bashkit_result_stdout(result)), b"PRIVATE-KEY-BYTES");
+        assert_eq!(
+            borrowed(bashkit_result_stdout(result)),
+            b"PRIVATE-KEY-BYTES"
+        );
         bashkit_result_free(result);
         bashkit_free(bash);
         let _ = std::fs::remove_dir_all(&home);
