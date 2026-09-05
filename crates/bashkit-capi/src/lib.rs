@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use std::ptr;
 use std::slice;
 use std::str;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::runtime::{Builder, Runtime};
@@ -26,7 +27,8 @@ pub const BASHKIT_RESULT_STDOUT_TRUNCATED: u32 = 1 << 0;
 pub const BASHKIT_RESULT_STDERR_TRUNCATED: u32 = 1 << 1;
 
 const MAX_ERROR_BYTES: usize = 1024;
-const CAPABILITIES_JSON: &[u8] = br#"{"abi":1,"features":["git","jq","vfs","realfs-mounts"]}"#;
+const CAPABILITIES_JSON: &[u8] =
+    br#"{"abi":1,"features":["git","jq","vfs","realfs-mounts","cancellation"]}"#;
 const VERSION: &[u8] = env!("CARGO_PKG_VERSION").as_bytes();
 
 #[repr(u32)]
@@ -39,6 +41,7 @@ pub enum BashkitStatus {
     ExecutionError = 4,
     IoError = 5,
     Unsupported = 6,
+    Cancelled = 7,
     InternalError = 255,
 }
 
@@ -76,6 +79,10 @@ struct State {
 
 pub struct Bashkit {
     state: Mutex<State>,
+    // Shared interpreter cancellation flag. Deliberately outside the state
+    // lock: bashkit_execute holds that lock while blocked, and cancellation
+    // must stay reachable — and lock-free — from any thread.
+    cancelled: Arc<AtomicBool>,
 }
 
 pub struct BashkitResult {
@@ -115,6 +122,7 @@ impl ApiFailure {
     fn from_bash(error: BashError) -> Self {
         let status = match error {
             BashError::Io(_) => BashkitStatus::IoError,
+            BashError::Cancelled => BashkitStatus::Cancelled,
             _ => BashkitStatus::ExecutionError,
         };
         Self::new(status, error.to_string())
@@ -481,13 +489,16 @@ pub unsafe extern "C" fn bashkit_create_default(
     unsafe {
         ffi_boundary(out_error, || {
             let out_bash = output_slot(out_bash, "out_bash")?;
+            let engine = Bash::new();
+            let cancelled = engine.cancellation_token();
             let bash = Bashkit {
                 state: Mutex::new(State {
                     runtime: make_runtime()?,
-                    bash: Bash::new(),
+                    bash: engine,
                     max_input_bytes: ExecutionLimits::default().max_input_bytes,
                     allowed_mount_paths: Arc::from(Vec::<String>::new()),
                 }),
+                cancelled,
             };
             *out_bash = Box::into_raw(Box::new(bash));
             Ok(())
@@ -520,14 +531,16 @@ pub unsafe extern "C" fn bashkit_create_json(
                     format!("invalid configuration: {error}"),
                 )
             })?;
-            let (bash, max_input_bytes, allowed_mount_paths) = build_from_config(config)?;
+            let (engine, max_input_bytes, allowed_mount_paths) = build_from_config(config)?;
+            let cancelled = engine.cancellation_token();
             let bash = Bashkit {
                 state: Mutex::new(State {
                     runtime: make_runtime()?,
-                    bash,
+                    bash: engine,
                     max_input_bytes,
                     allowed_mount_paths,
                 }),
+                cancelled,
             };
             *out_bash = Box::into_raw(Box::new(bash));
             Ok(())
@@ -591,6 +604,44 @@ pub unsafe extern "C" fn bashkit_execute(
                 final_env_json: final_env_json(result.final_env)?,
             };
             *out_result = Box::into_raw(Box::new(result));
+            Ok(())
+        })
+    }
+}
+
+/// Requests cancellation of the execution currently running on `bash`.
+/// Requires the `cancellation` capability. Lock-free — never touches the state
+/// mutex — so it is safe to call from any thread while `bashkit_execute` is
+/// blocked on the same handle. Execution aborts at the next command boundary
+/// and `bashkit_execute` reports `BASHKIT_CANCELLED`.
+///
+/// The flag is sticky: reset it with `bashkit_clear_cancel` before the next
+/// execute, or that call aborts immediately.
+///
+/// # Safety
+/// `bash` must be live.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn bashkit_cancel(bash: *mut Bashkit) -> BashkitStatus {
+    unsafe {
+        ffi_boundary(ptr::null_mut(), || {
+            let bash = handle(bash)?;
+            bash.cancelled.store(true, Ordering::SeqCst);
+            Ok(())
+        })
+    }
+}
+
+/// Clears the flag set by `bashkit_cancel`, restoring normal execution.
+/// Lock-free like `bashkit_cancel`.
+///
+/// # Safety
+/// `bash` must be live.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn bashkit_clear_cancel(bash: *mut Bashkit) -> BashkitStatus {
+    unsafe {
+        ffi_boundary(ptr::null_mut(), || {
+            let bash = handle(bash)?;
+            bash.cancelled.store(false, Ordering::SeqCst);
             Ok(())
         })
     }

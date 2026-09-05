@@ -332,6 +332,97 @@ fn configured_deadline_aborts_execution() {
 }
 
 #[test]
+fn cancellation_aborts_running_execution_and_stays_sticky_until_cleared() {
+    unsafe {
+        let capabilities: serde_json::Value =
+            serde_json::from_slice(&borrowed(bashkit_capabilities_json())).unwrap();
+        assert!(capabilities["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|feature| feature == "cancellation"));
+
+        let mut bash = ptr::null_mut();
+        let mut error = ptr::null_mut();
+        assert_eq!(
+            bashkit_create_default(&mut bash, &mut error),
+            BashkitStatus::Ok
+        );
+
+        // Cancel a pending sleep: the request budget polls the token while the
+        // command is in flight, and loop-based scripts would instead race the
+        // profile's command/iteration caps before the flag lands.
+        // Raw pointers are not Send and edition-2021 closures would capture the
+        // inner field of any wrapper anyway, so cross the thread as a usize.
+        let handle = bash as usize;
+
+        let observed = std::sync::Arc::new(std::sync::Mutex::new(None::<BashkitStatus>));
+        let writer = observed.clone();
+        let worker = std::thread::spawn(move || {
+            let bash = handle as *mut Bashkit;
+            unsafe {
+                let mut result = ptr::null_mut();
+                let mut thread_error = ptr::null_mut();
+                let status = bashkit_execute(
+                    bash,
+                    bytes(b"sleep 30000"),
+                    &mut result,
+                    &mut thread_error,
+                );
+                assert!(result.is_null());
+                *writer.lock().unwrap() = Some(status);
+                if !thread_error.is_null() {
+                    bashkit_error_free(thread_error);
+                }
+            }
+        });
+
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert_eq!(bashkit_cancel(bash), BashkitStatus::Ok);
+        worker.join().unwrap();
+        assert_eq!(
+            observed.lock().unwrap().take(),
+            Some(BashkitStatus::Cancelled)
+        );
+
+        // Sticky: the next execute aborts immediately until the flag is cleared.
+        let mut result = ptr::null_mut();
+        assert_eq!(
+            bashkit_execute(bash, bytes(b"echo blocked"), &mut result, &mut error),
+            BashkitStatus::Cancelled
+        );
+        assert!(result.is_null());
+        bashkit_error_free(error);
+
+        // clear_cancel restores normal execution without losing shell state.
+        assert_eq!(bashkit_clear_cancel(bash), BashkitStatus::Ok);
+        let mut result = ptr::null_mut();
+        assert_eq!(
+            bashkit_execute(bash, bytes(b"echo resumed"), &mut result, &mut error),
+            BashkitStatus::Ok
+        );
+        assert_eq!(borrowed(bashkit_result_stdout(result)), b"resumed\n");
+        bashkit_result_free(result);
+
+        bashkit_free(bash);
+    }
+}
+
+#[test]
+fn cancel_rejects_null_handle_without_touching_state() {
+    unsafe {
+        assert_eq!(
+            bashkit_cancel(ptr::null_mut()),
+            BashkitStatus::InvalidArgument
+        );
+        assert_eq!(
+            bashkit_clear_cancel(ptr::null_mut()),
+            BashkitStatus::InvalidArgument
+        );
+    }
+}
+
+#[test]
 fn null_destructors_and_accessors_are_safe() {
     unsafe {
         bashkit_free(ptr::null_mut());

@@ -39,6 +39,7 @@ typedef uint32_t BashkitStatus;
 #define BASHKIT_EXECUTION_ERROR 4u
 #define BASHKIT_IO_ERROR 5u
 #define BASHKIT_UNSUPPORTED 6u
+#define BASHKIT_CANCELLED 7u
 #define BASHKIT_INTERNAL_ERROR 255u
 
 /* Static views returned by these functions remain valid for process lifetime. */
@@ -60,6 +61,13 @@ BASHKIT_API BashkitStatus bashkit_execute(
     BashkitBytes script,
     BashkitResult **out_result,
     BashkitError **out_error);
+
+/* Cancellation requires the `cancellation` capability. Both are lock-free and
+   safe to call from any thread while bashkit_execute is blocked on the same
+   handle; execution aborts at the next command boundary with
+   BASHKIT_CANCELLED. The flag is sticky until bashkit_clear_cancel. */
+BASHKIT_API BashkitStatus bashkit_cancel(Bashkit *bash);
+BASHKIT_API BashkitStatus bashkit_clear_cancel(Bashkit *bash);
 
 /* Result byte views remain valid until bashkit_result_free(result). */
 BASHKIT_API int32_t bashkit_result_exit_code(const BashkitResult *result);
