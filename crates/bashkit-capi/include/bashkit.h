@@ -92,7 +92,9 @@ BASHKIT_API BashkitStatus bashkit_remove(
     BashkitError **out_error);
 
 /* Mounts require the `realfs-mounts` capability; host roots must resolve under
-   an `allowed_mount_paths` prefix from the session config. */
+   an `allowed_mount_paths` prefix from the session config. Sensitive host
+   paths (home trees, `/etc`, `.ssh`, ...) are refused unless the allowlist
+   names the root exactly (TM-FS-013). */
 BASHKIT_API BashkitStatus bashkit_mount(
     Bashkit *bash,
     BashkitBytes vfs_path,

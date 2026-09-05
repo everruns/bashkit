@@ -514,3 +514,115 @@ fn mounts_require_allowlist_and_containment() {
         let _ = std::fs::remove_dir_all(&outside);
     }
 }
+
+// THREAT[TM-FS-013]: a broad allowlist entry (the home directory itself) is
+// not consent to expose a credential directory under it.
+#[test]
+fn config_mounts_refuse_sensitive_paths_under_broad_allowlist() {
+    unsafe {
+        let home = temp_dir("mount-home");
+        let ssh_dir = home.join(".ssh");
+        std::fs::create_dir_all(&ssh_dir).unwrap();
+        std::fs::write(ssh_dir.join("id_rsa"), b"PRIVATE-KEY-BYTES").unwrap();
+
+        let config = serde_json::json!({
+            "schema_version": 1,
+            "allowed_mount_paths": [home.to_string_lossy()],
+            "mounts": [{"path": "/data", "root": ssh_dir.to_string_lossy()}],
+        })
+        .to_string();
+        let mut bash = ptr::null_mut();
+        let mut error = ptr::null_mut();
+        assert_eq!(
+            bashkit_create_json(bytes(config.as_bytes()), &mut bash, &mut error),
+            BashkitStatus::InvalidConfig
+        );
+        assert!(bash.is_null());
+        assert!(
+            error_message(error).contains("sensitive host path"),
+            "error must name the sensitive-path rule"
+        );
+        let _ = std::fs::remove_dir_all(&home);
+    }
+}
+
+#[test]
+fn runtime_mount_refuses_sensitive_paths_under_broad_allowlist() {
+    unsafe {
+        let home = temp_dir("mount-home-rt");
+        let ssh_dir = home.join(".ssh");
+        std::fs::create_dir_all(&ssh_dir).unwrap();
+        std::fs::write(ssh_dir.join("id_rsa"), b"PRIVATE-KEY-BYTES").unwrap();
+
+        let config = serde_json::json!({
+            "schema_version": 1,
+            "allowed_mount_paths": [home.to_string_lossy()],
+        })
+        .to_string();
+        let mut bash = ptr::null_mut();
+        let mut error = ptr::null_mut();
+        assert_eq!(
+            bashkit_create_json(bytes(config.as_bytes()), &mut bash, &mut error),
+            BashkitStatus::Ok
+        );
+
+        assert_ne!(
+            bashkit_mount(
+                bash,
+                bytes(b"/data"),
+                bytes(ssh_dir.to_string_lossy().as_bytes()),
+                0,
+                &mut error,
+            ),
+            BashkitStatus::Ok
+        );
+        assert!(!error.is_null());
+        bashkit_error_free(error);
+
+        // The refused mount left nothing behind: the path stays unresolved.
+        let mut result = ptr::null_mut();
+        assert_eq!(
+            bashkit_execute(bash, bytes(b"cat /data/id_rsa"), &mut result, &mut error),
+            BashkitStatus::Ok
+        );
+        assert_ne!(bashkit_result_exit_code(result), 0);
+        bashkit_result_free(result);
+
+        bashkit_free(bash);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+}
+
+#[test]
+fn sensitive_path_mounts_when_allowlisted_exactly() {
+    unsafe {
+        let home = temp_dir("mount-home-exact");
+        let ssh_dir = home.join(".ssh");
+        std::fs::create_dir_all(&ssh_dir).unwrap();
+        std::fs::write(ssh_dir.join("id_rsa"), b"PRIVATE-KEY-BYTES").unwrap();
+
+        // Naming the sensitive root itself in the allowlist is explicit
+        // consent: the mount is allowed for both config-time and runtime.
+        let config = serde_json::json!({
+            "schema_version": 1,
+            "allowed_mount_paths": [ssh_dir.to_string_lossy()],
+            "mounts": [{"path": "/data", "root": ssh_dir.to_string_lossy()}],
+        })
+        .to_string();
+        let mut bash = ptr::null_mut();
+        let mut error = ptr::null_mut();
+        assert_eq!(
+            bashkit_create_json(bytes(config.as_bytes()), &mut bash, &mut error),
+            BashkitStatus::Ok
+        );
+        let mut result = ptr::null_mut();
+        assert_eq!(
+            bashkit_execute(bash, bytes(b"cat /data/id_rsa"), &mut result, &mut error),
+            BashkitStatus::Ok
+        );
+        assert_eq!(borrowed(bashkit_result_stdout(result)), b"PRIVATE-KEY-BYTES");
+        bashkit_result_free(result);
+        bashkit_free(bash);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+}

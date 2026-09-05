@@ -207,10 +207,14 @@ fn make_runtime() -> Result<Runtime, ApiFailure> {
         })
 }
 
-// THREAT[TM-SBX-XXX]: host-directory mounts pierce the sandbox boundary, so
-// every mount root must resolve under a configured `allowed_mount_paths`
-// prefix. Canonicalization defuses `..` segments and symlinks before the
-// prefix check; comparison is case-folded on Windows filesystems.
+// THREAT[TM-FS-013]: host-directory mounts pierce the sandbox boundary, so
+// every mount root must (a) resolve under a configured `allowed_mount_paths`
+// prefix and (b) clear the shared sensitive-path denylist
+// (`bashkit::is_sensitive_mount_path`). Canonicalization defuses `..` segments
+// and symlinks before the checks; comparison is case-folded on Windows
+// filesystems. A sensitive root (home trees, `/etc`, `.ssh`, ...) additionally
+// requires an allowlist entry that names it exactly: a broad parent entry such
+// as the home directory itself is not consent to expose credential stores.
 fn fold_path(path: &str) -> String {
     let trimmed = path.trim_end_matches(std::path::MAIN_SEPARATOR);
     let folded = if trimmed.is_empty() {
@@ -236,6 +240,8 @@ fn validate_mount_root(root: &str, allowed: &[String]) -> Result<PathBuf, ApiFai
     let canonical = std::fs::canonicalize(&path).unwrap_or(path);
     let candidate = fold_path(&canonical.to_string_lossy());
     let candidate = candidate.as_bytes();
+    let mut covered = false;
+    let mut exact = false;
     for prefix in allowed {
         let prefix_path = PathBuf::from(prefix);
         let prefix_canonical = std::fs::canonicalize(&prefix_path).unwrap_or(prefix_path);
@@ -245,14 +251,25 @@ fn validate_mount_root(root: &str, allowed: &[String]) -> Result<PathBuf, ApiFai
         let under = candidate.len() > prefix.len()
             && candidate.starts_with(prefix)
             && candidate[prefix.len()] == std::path::MAIN_SEPARATOR as u8;
-        if exactly || under {
-            return Ok(canonical);
-        }
+        covered |= exactly || under;
+        exact |= exactly;
     }
-    Err(ApiFailure::new(
-        BashkitStatus::InvalidConfig,
-        format!("mount root {root:?} is not under any allowed_mount_paths prefix"),
-    ))
+    if !covered {
+        return Err(ApiFailure::new(
+            BashkitStatus::InvalidConfig,
+            format!("mount root {root:?} is not under any allowed_mount_paths prefix"),
+        ));
+    }
+    if bashkit::is_sensitive_mount_path(&canonical) && !exact {
+        return Err(ApiFailure::new(
+            BashkitStatus::InvalidConfig,
+            format!(
+                "mount root {root:?} is a sensitive host path; name it exactly in \
+                 allowed_mount_paths to mount it"
+            ),
+        ));
+    }
+    Ok(canonical)
 }
 
 fn apply_config_mounts(
@@ -267,6 +284,8 @@ fn apply_config_mounts(
         } else {
             RealFsMode::ReadOnly
         };
+        #[allow(deprecated)] // The C ABI boundary is synchronous; there is no
+        // async context at this call, mirroring `apply_real_mounts`.
         let fs = RealFs::new(&root, mode).map_err(|error| {
             ApiFailure::new(
                 BashkitStatus::InvalidConfig,
@@ -738,7 +757,9 @@ pub unsafe extern "C" fn bashkit_remove(
 
 /// Mounts a host directory at `vfs_path` for the duration of the session.
 /// Requires the `realfs-mounts` capability and a `host_root` that resolves
-/// under one of the session's `allowed_mount_paths` prefixes.
+/// under one of the session's `allowed_mount_paths` prefixes. Sensitive host
+/// paths (home trees, `/etc`, `.ssh`, ...) are refused unless the allowlist
+/// names the root exactly (TM-FS-013) — the same rule config-time mounts use.
 ///
 /// # Safety
 /// `bash` must be live; path bytes must remain readable for the call.
@@ -765,6 +786,8 @@ pub unsafe extern "C" fn bashkit_mount(
             } else {
                 RealFsMode::ReadOnly
             };
+            #[allow(deprecated)] // The C ABI boundary is synchronous; there
+            // is no async context at this call, mirroring `apply_real_mounts`.
             let fs = RealFs::new(&root, mode).map_err(|error| {
                 ApiFailure::new(
                     BashkitStatus::InvalidArgument,
