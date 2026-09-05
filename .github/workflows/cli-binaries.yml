@@ -1,3 +1,4 @@
+# THREAT[TM-INF-027]: build only the immutable SHA exported by tag validation.
 # Prebuilt CLI binaries — dispatched by release.yml after GitHub Release is created.
 # GITHUB_TOKEN-created releases don't trigger `release: published` (anti-recursion).
 # The Release workflow dispatches this workflow explicitly, same pattern as everruns/everruns.

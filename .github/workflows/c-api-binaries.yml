@@ -1,3 +1,4 @@
+# THREAT[TM-INF-027]: build only the immutable SHA exported by tag validation.
 # Native C ABI archives, dispatched from the verified release workflow.
 # Windows must initialize the Visual Studio environment before using lib.exe/cl.exe.
 # Existing tags may be rebuilt only with the tagged or current main workflow definition.

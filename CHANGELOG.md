@@ -27,7 +27,8 @@
   memory, work, and cancellation limits.
 - Maintenance requests now run analysis, fixes, validation, and shipping through
   green CI and merge, including common misspellings.
-- Add the September Linux VM benchmark baseline.
+- Refresh benchmark baselines; select a supported Bash from `PATH` and record
+  its version instead of silently using macOS's obsolete system shell.
 
 ## [0.17.1] - 2026-08-22
 

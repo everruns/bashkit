@@ -171,6 +171,8 @@ pub struct BenchReport {
     pub warmup: usize,
     pub prewarm_cases: usize,
     pub runners: Vec<String>,
+    #[serde(default)]
+    pub runner_versions: HashMap<String, String>,
     pub results: Vec<BenchResult>,
     pub summary: BenchSummary,
 }
@@ -276,6 +278,7 @@ async fn main() -> Result<()> {
         };
         match result {
             Ok(r) => runners.push(r),
+            Err(e) if *name == "bash" => return Err(e),
             Err(e) => eprintln!("{}: {} not available: {}", "Warning".yellow(), name, e),
         }
     }
@@ -379,7 +382,15 @@ async fn main() -> Result<()> {
     }
 
     // Generate report
-    let report = generate_report(&results, &args, &runner_names, &system_info, prewarm_count);
+    let mut report = generate_report(&results, &args, &runner_names, &system_info, prewarm_count);
+    for runner in &runners {
+        if let Runner::NativeBash(path) = runner {
+            let version = runners::bash_version(path).await?;
+            report
+                .runner_versions
+                .insert("bash".into(), format!("{path} (GNU Bash {version})"));
+        }
+    }
 
     // Print results table
     println!("\n{}", "Results:".bold());
@@ -577,6 +588,7 @@ fn generate_report(
         warmup: args.warmup,
         prewarm_cases: prewarm_count,
         runners: runner_names.iter().map(|s| s.to_string()).collect(),
+        runner_versions: HashMap::new(),
         results: results.to_vec(),
         summary: BenchSummary {
             total_cases: unique_cases.len(),
@@ -602,6 +614,11 @@ fn generate_markdown_report(report: &BenchReport) -> String {
     md.push_str(&format!("- **Iterations**: {}\n", report.iterations));
     md.push_str(&format!("- **Warmup**: {}\n", report.warmup));
     md.push_str(&format!("- **Prewarm cases**: {}\n", report.prewarm_cases));
+    md.push('\n');
+
+    for (runner, version) in &report.runner_versions {
+        md.push_str(&format!("- **{runner} executable**: `{version}`\n"));
+    }
     md.push('\n');
 
     // Summary
@@ -711,7 +728,7 @@ fn generate_markdown_report(report: &BenchReport) -> String {
         "| bashkit-js | persistent child | Node.js + @everruns/bashkit, warm interpreter |\n",
     );
     md.push_str("| bashkit-py | persistent child | Python + bashkit package, warm interpreter |\n");
-    md.push_str("| bash | subprocess | /bin/bash, new process per run |\n");
+    md.push_str("| bash | subprocess | PATH-selected Bash >=4, new process per run |\n");
     md.push_str("| gbash | subprocess | gbash binary (Go), new process per run |\n");
     md.push_str("| gbash-server | persistent child | gbash JSON-RPC server, warm interpreter |\n");
     md.push_str("| just-bash | subprocess | just-bash CLI, new process per run |\n");

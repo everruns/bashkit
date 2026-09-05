@@ -344,6 +344,14 @@ review found an unchecked allocation failure there. A negative fixture proves
 the feature ban rejects that configuration. Existing exemptions and publisher
 trust were not broadened.
 
+Performance baselines are saved in the respective Criterion and comparison
+result directories, and the site timeline is regenerated. The comparison harness
+now selects Bash from `PATH`, requires Bash >=4, and records the executable/version;
+it previously forced macOS Bash 3.2 and produced invalid oracle errors. The GNU
+Bash 5.3.15 run matches all 96 cases with zero errors. Parallel and SQLite
+Criterion runs complete successfully. These local measurements are observational,
+not a controlled before/after dependency performance claim.
+
 The aggregate CI gate must depend on every validation job, including `wasm`,
 `wasm-component`, and `wasm-web`. The maintenance security tests execute its
 condition with each dependency failing, preventing a green gate from hiding
