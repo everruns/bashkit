@@ -220,18 +220,17 @@ jobs:
           DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
 
       # `--only-secrets OPENAI_API_KEY` keeps the runtime env scoped to
-      # just the key these scripts need, instead of injecting every
-      # secret in the Doppler config. DOPPLER_TOKEN stays scoped to this
-      # trusted secret-fetch step, not npm install/build/test/example code.
+      # just the key these scripts need. env -u removes the inherited Doppler
+      # credential before repository code and runtime dependencies execute.
       - name: Run AI examples
         if: steps.doppler.outputs.available == 'true'
         working-directory: examples
         env:
           DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
         run: |
-          doppler run --only-secrets OPENAI_API_KEY -- ${{ matrix.run }} openai_tool.mjs
-          doppler run --only-secrets OPENAI_API_KEY -- ${{ matrix.run }} vercel_ai_tool.mjs
-          doppler run --only-secrets OPENAI_API_KEY -- ${{ matrix.run }} langchain_agent.mjs
+          doppler run --only-secrets OPENAI_API_KEY -- env -u DOPPLER_TOKEN ${{ matrix.run }} openai_tool.mjs
+          doppler run --only-secrets OPENAI_API_KEY -- env -u DOPPLER_TOKEN ${{ matrix.run }} vercel_ai_tool.mjs
+          doppler run --only-secrets OPENAI_API_KEY -- env -u DOPPLER_TOKEN ${{ matrix.run }} langchain_agent.mjs
 
   # Gate job for branch protection
   js-check:

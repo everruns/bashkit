@@ -1,5 +1,10 @@
 # Bashkit Knowledge Update Log
 
+## 2026-09-05
+
+* **Maintenance**: Recorded the dependency audit blocker and Monty compatibility pins in [Maintenance](operations/maintenance.md) and [Dependency Policy](operations/dependencies.md).
+* **Security**: CI example children drop the inherited Doppler service token, the aggregate gate includes WASM jobs, and Anthropic output is capped again after XML escaping. Regression tests cover these boundaries; see [Threat Model](security/threat-model.md).
+
 ## 2026-08-23
 
 * **Security**: TM-DOS-098 tightened. A parked host-call execution stored an unpolled future, so its wall-clock deadline could only fire the next time the host called `next_event()` — a host that took a `HostCallRequest` and never came back retained the whole interpreter. `host_call::spawn_execution` now hands the execution future to a task spawner, so the deadline fires autonomously and the timed-out session is dropped. Dropping the handle aborts the driver, and `into_bash()` no longer recovers a timed-out execution on any target.

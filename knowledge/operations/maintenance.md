@@ -273,6 +273,43 @@ are blocking:
 complete or merged while any of the above checks are red. If the agent cannot
 fix a failure, it must open a GitHub issue and report the pass as blocked.
 
+## September 2026 pass
+
+The 2026-09-05 pass starts at `ab04bca2` with main CI and seven daily nightly/fuzz
+runs green. Dependency refresh remains blocked on supply-chain certifications
+([#2374](https://github.com/everruns/bashkit/issues/2374)); no blanket exemptions
+were added. The Monty migration is tracked in
+[#2373](https://github.com/everruns/bashkit/issues/2373), with compatibility pins
+recorded in [Dependency Policy](dependencies.md). Deep Agents truncation metadata
+and grep glob filtering need a dedicated integration suite
+([#2375](https://github.com/everruns/bashkit/issues/2375)).
+
+DeepSec 2.3.9 analyzed 44 files after 54 matcher hits and reported six findings.
+Four were addressed locally: inherited Doppler credentials in CI/release example
+processes, omitted WASM jobs in the aggregate `Check` gate, and Anthropic escaped
+output expansion. The two Python adapter findings are tracked above. A matcher
+scan is not a complete Rust security audit; DeepSec reported low Rust coverage.
+
+Local verification passed: 5,564 workspace unit/integration tests, 167 rustdoc tests,
+17 failpoint tests, 29 security property tests, 67 repository-script tests,
+571 JS tests using the normal release native build, all-feature clippy/rustdoc,
+site build/generated-page checks, and CLI sort/jq/SQLite
+smoke commands. Strict host Bash parity reported 141 mismatches on macOS,
+including BSD utility differences and `/private/tmp` canonicalization; Linux/GNU
+validation is tracked in [#2376](https://github.com/everruns/bashkit/issues/2376).
+This pass is **blocked**, not release approval. Broader Python framework examples,
+coverage review, unsafe-code audit, coreutils regeneration, and local WASM/fuzz
+builds remain outstanding ([#2377](https://github.com/everruns/bashkit/issues/2377));
+the green baseline CI does not validate this refresh. A debug native JS build
+segfaulted in the security suite after the nested-loop cases, while the normal
+release build passed all 571 tests; investigate the debug stack/runtime behavior
+as part of the remaining validation rather than treating it as a release failure.
+
+The aggregate CI gate must depend on every validation job, including `wasm`,
+`wasm-component`, and `wasm-web`. The maintenance security tests execute its
+condition with each dependency failing, preventing a green gate from hiding
+an omitted platform failure.
+
 ## Deferred Items
 
 When a maintenance pass identifies issues too large to fix inline (e.g.

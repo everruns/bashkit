@@ -456,7 +456,7 @@ jobs:
         continue-on-error: true
         env:
           DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
-        run: doppler run --only-secrets ANTHROPIC_API_KEY -- cargo run --example agent_tool --features http_client
+        run: doppler run --only-secrets ANTHROPIC_API_KEY -- env -u DOPPLER_TOKEN cargo run --example agent_tool --features http_client
 
       # External API dependency — same rationale as the LLM agent example
       # above: an OpenAI outage, quota exhaustion, or billing lapse is not a
@@ -467,8 +467,8 @@ jobs:
         env:
           DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
         run: |
-          cargo build -p bashkit-cli --features realfs --quiet
-          doppler run --only-secrets OPENAI_API_KEY -- bash examples/harness-openai-joke.sh
+          env -u DOPPLER_TOKEN cargo build -p bashkit-cli --features realfs --quiet
+          doppler run --only-secrets OPENAI_API_KEY -- env -u DOPPLER_TOKEN bash examples/harness-openai-joke.sh
 
   fuzz-check:
     name: Fuzz Compile Check
@@ -493,7 +493,7 @@ jobs:
   check:
     name: Check
     if: always()
-    needs: [lint, audit, test, windows-containment, test-windows, examples, fuzz-check]
+    needs: [lint, audit, test, windows-containment, test-windows, examples, fuzz-check, wasm, wasm-component, wasm-web]
     runs-on: ubuntu-latest
     steps:
       - name: Verify all jobs passed
@@ -504,7 +504,10 @@ jobs:
              [[ "${{ needs.windows-containment.result }}" != "success" ]] || \
              [[ "${{ needs.test-windows.result }}" != "success" ]] || \
              [[ "${{ needs.examples.result }}" != "success" ]] || \
-             [[ "${{ needs.fuzz-check.result }}" != "success" ]]; then
+             [[ "${{ needs.fuzz-check.result }}" != "success" ]] || \
+             [[ "${{ needs.wasm.result }}" != "success" ]] || \
+             [[ "${{ needs.wasm-component.result }}" != "success" ]] || \
+             [[ "${{ needs.wasm-web.result }}" != "success" ]]; then
             echo "One or more required jobs failed"
             exit 1
           fi

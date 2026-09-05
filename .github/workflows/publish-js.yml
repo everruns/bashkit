@@ -258,8 +258,8 @@ jobs:
 
       # `--only-secrets OPENAI_API_KEY` keeps the runtime env scoped to
       # just the key these scripts need, instead of injecting every
-      # secret in the Doppler config. DOPPLER_TOKEN stays scoped to this
-      # trusted secret-fetch step, not npm install/build/test/example code.
+      # secret in the Doppler config. env -u also removes DOPPLER_TOKEN
+      # from the child environment before example dependencies execute.
       # Skipped on Windows + Node 24: libuv hits an assertion failure
       # (`!(handle->flags & UV_HANDLE_CLOSING)` in src/win/async.c) during
       # process shutdown of the example scripts on that combination; the
@@ -270,9 +270,9 @@ jobs:
         env:
           DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
         run: |
-          doppler run --only-secrets OPENAI_API_KEY -- node examples/openai_tool.mjs
-          doppler run --only-secrets OPENAI_API_KEY -- node examples/vercel_ai_tool.mjs
-          doppler run --only-secrets OPENAI_API_KEY -- node examples/langchain_agent.mjs
+          doppler run --only-secrets OPENAI_API_KEY -- env -u DOPPLER_TOKEN node examples/openai_tool.mjs
+          doppler run --only-secrets OPENAI_API_KEY -- env -u DOPPLER_TOKEN node examples/vercel_ai_tool.mjs
+          doppler run --only-secrets OPENAI_API_KEY -- env -u DOPPLER_TOKEN node examples/langchain_agent.mjs
 
   # ============================================================================
   # Test bindings on Linux

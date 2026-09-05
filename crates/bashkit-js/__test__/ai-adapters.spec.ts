@@ -350,3 +350,15 @@ test("openai: sanitizeOutput re-caps length after escaping (#1867)", async (t) =
   t.true(result.content.startsWith("<tool_output>"), "outer tags intact");
   t.true(result.content.endsWith("</tool_output>"), "outer tags intact");
 });
+
+test("anthropic: sanitized output is capped without splitting entities", async (t) => {
+  const adapter = anthropicBashTool({ sanitizeOutput: true, maxOutputLength: 21 });
+  const result = await adapter.handler({
+    type: "tool_use", id: "escaped-cap", name: "bash",
+    input: { commands: "printf '%s' '&&&&&&&&&&&&&&&&&&&&&&&&'" },
+  });
+  t.true(result.content.startsWith("<tool_output>\n"));
+  t.true(result.content.endsWith("\n</tool_output>"));
+  const inner = result.content.slice("<tool_output>\n".length, -"\n</tool_output>".length);
+  t.is(inner, "&amp;".repeat(4) + "\n[truncated]");
+});

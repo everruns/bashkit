@@ -57,6 +57,20 @@ lives there, next to the pin, so it cannot drift away from what it explains.
   the browser wasm binary. See
   [Gate rather than reimplement](#gate-rather-than-reimplement).
 
+## Monty compatibility pins
+
+Monty remains on 0.0.19 until its custom resource-tracker integration is migrated
+([tracking issue #2373](https://github.com/everruns/bashkit/issues/2373)). Version
+0.0.22 replaces the tracker trait with a concrete struct; simply removing
+Bashkit's adapter would lose shared work-budget and cancellation checkpoints.
+Keep the Git `jiter` patch until that migration permits the published 0.16 line.
+
+`get-size2` must remain at 0.10.1 in the lockfile. Version 0.10.3 implements
+`GetSize` for `compact_str` 0.10, whereas Monty's `ruff_python_ast` 0.0.3 uses
+0.9.1, causing E0277 when the Python feature builds. After `cargo update`, run
+`cargo update -p get-size2 --precise 0.10.1` alongside the IDNA pin restoration.
+The Python binding's `num-bigint` dependency must still match Monty's 0.4 line.
+
 ## Measure size and audit surface separately
 
 The `idna_adapter` pin removes 21 crates but only **15 KB (0.16%)** from the

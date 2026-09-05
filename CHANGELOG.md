@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Host calls enforce execution deadlines while parked.
+- Runtime mounts use canonical replay keys across binding rebuilds.
+- SQLite budgets account for work within a single engine step.
+- Documentation preserves inline SVG diagrams during Markdown rendering.
+- CI's aggregate check includes WASM validation, and secret-backed examples
+  remove the inherited Doppler credential before executing repository code.
+- Anthropic sanitized tool output is capped after XML escaping, preserving
+  complete entities and matching the OpenAI adapter.
+
+### Changed
+
+- Refresh Rust, JavaScript, site, and example dependencies; update DeepSec to
+  2.3.9. Monty stays on 0.0.19 pending its resource-tracker migration.
+- Add the September Linux VM benchmark baseline.
+
 ## [0.17.1] - 2026-08-22
 
 ### Highlights
