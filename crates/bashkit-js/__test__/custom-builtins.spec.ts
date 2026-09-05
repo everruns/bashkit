@@ -454,3 +454,28 @@ test("ctx.fs respects files mounted at construction", async (t) => {
   t.is(result.exitCode, 0);
   t.is(result.stdout, '{"ok":true}');
 });
+
+for (const keyed of [false, true]) {
+  test(`BashTool snapshot constructor registers supplied callbacks (keyed=${keyed})`, async (t) => {
+    const key = Buffer.alloc(32, 7);
+    const source = new BashTool();
+    await source.execute("echo restored > /tmp/state.txt");
+    const snapshot = keyed
+      ? source.snapshotKeyed(key)
+      : source.snapshot({ hmacKey: key });
+    const options = {
+      customBuiltins: {
+        greet: async (ctx: BuiltinContext) => `hello ${ctx.argv[0]}\n`,
+      },
+    };
+    const restored = keyed
+      ? BashTool.fromSnapshotKeyed(snapshot, key, options)
+      : BashTool.fromSnapshot(snapshot, options, { hmacKey: key });
+    t.is(
+      (await restored.execute("greet Alice; cat /tmp/state.txt")).stdout,
+      "hello Alice\nrestored\n",
+    );
+    restored.reset();
+    t.is((await restored.execute("greet Bob")).stdout, "hello Bob\n");
+  });
+}

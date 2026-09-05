@@ -562,9 +562,21 @@ tool = create_bash_tool()
 
 ### Deep Agents
 
+Requires Python 3.11+ and `pip install 'bashkit[deepagents]'`.
+
 ```python
-from bashkit.deepagents import BashkitBackend, BashkitMiddleware
+from bashkit.deepagents import BashkitBackend
+
+backend = BashkitBackend(timeout_seconds=30)
+backend.write("/tmp/example.py", "print(42)")
+assert backend.read("/tmp/example.py").file_data["content"] == "print(42)"
+assert backend.grep("print", "/tmp", glob="*.py").matches[0]["line"] == 1
+middleware = backend.create_middleware()  # Shares the same virtual filesystem
 ```
+
+Uses the structured Deep Agents 0.7.13+ backend protocol. Shell execution reports
+native output truncation; file operations preserve exact VFS contents. Configure
+execution timeouts on the backend constructor.
 
 ## API Reference
 

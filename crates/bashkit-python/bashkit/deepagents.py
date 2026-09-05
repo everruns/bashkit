@@ -4,7 +4,7 @@ Deep Agents integration for Bashkit.
 Provides middleware and backend for Deep Agents using Bashkit's VFS:
 
 - ``BashkitMiddleware``: Adds ``bash`` tool via ``AgentMiddleware.tools``
-- ``BashkitBackend``: ``SandboxBackendProtocol`` for execute/read_file/write_file/etc.
+- ``BashkitBackend``: ``SandboxBackendProtocol`` for execute/read/write/ls/glob/grep.
 
 Standalone middleware (creates its own VFS)::
 
@@ -28,52 +28,39 @@ The backend exposes file operations on the same VFS used by bash::
 
 from __future__ import annotations
 
-import secrets
-import shlex
+import posixpath
 import uuid
-from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from bashkit import BashTool as NativeBashTool
 
-if TYPE_CHECKING:
-    pass
-
 # Check for deepagents availability
 try:
     from deepagents.backends.protocol import (
+        DeleteResult,
         EditResult,
         ExecuteResponse,
         FileDownloadResponse,
         FileInfo,
         FileUploadResponse,
+        GlobResult,
         GrepMatch,
+        GrepResult,
+        LsResult,
+        ReadResult,
         SandboxBackendProtocol,
         WriteResult,
     )
+    from deepagents.backends.utils import compile_grep_include_glob
     from langchain.agents.middleware.types import AgentMiddleware
     from langchain_core.tools import tool as langchain_tool
 
     DEEPAGENTS_AVAILABLE = True
 except ImportError:
     DEEPAGENTS_AVAILABLE = False
-    SandboxBackendProtocol = object
-    AgentMiddleware = object
-
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _build_write_cmd(file_path: str, content: str) -> str:
-    """Build a heredoc command with a randomized delimiter to prevent injection.
-
-    A fixed delimiter like BASHKIT_EOF can be terminated early by content
-    containing that literal string on its own line. Using a random suffix
-    makes it infeasible for content to match the delimiter.
-    """
-    delimiter = f"BASHKIT_EOF_{secrets.token_hex(8)}"
-    return f"cat > {shlex.quote(file_path)} << '{delimiter}'\n{content}\n{delimiter}"
+    if not TYPE_CHECKING:
+        SandboxBackendProtocol = object
+        AgentMiddleware = object
 
 
 def _make_bash_tool(bash_instance: NativeBashTool, max_output_length: int = 100_000):
@@ -170,7 +157,7 @@ if DEEPAGENTS_AVAILABLE:
     class BashkitBackend(SandboxBackendProtocol):
         """Backend implementing SandboxBackendProtocol with Bashkit VFS.
 
-        Provides execute, read_file, write_file, edit_file, ls, glob, grep
+        Provides execute, read, write, edit, delete, ls, glob, grep
         all operating on the same virtual filesystem.
 
         Example:
@@ -212,162 +199,166 @@ if DEEPAGENTS_AVAILABLE:
             """
             return BashkitMiddleware(bash_tool=self._bash)
 
-        # === Shell Execution ===
+        # File helpers use the live VFS directly: shell output caps and delimiter
+        # parsing must never silently corrupt file contents or discovered paths.
+        # Async protocol defaults dispatch these sync methods off the event loop.
 
-        def execute(self, command: str) -> ExecuteResponse:
+        # Deep Agents explicitly detects backends without per-call timeout support.
+        # Keep the keyword absent so the framework uses our constructor timeout.
+        def execute(self, command: str) -> ExecuteResponse:  # type: ignore[override]
             result = self._bash.execute_sync(command)
             output = result.stdout + (result.stderr or "")
             if result.error and result.error not in output:
                 output += f"\nError: {result.error}"
-            return ExecuteResponse(output=output, exit_code=result.exit_code, truncated=False)
+            return ExecuteResponse(
+                output=output,
+                exit_code=result.exit_code,
+                truncated=result.stdout_truncated or result.stderr_truncated,
+            )
 
-        async def aexecute(self, command: str) -> ExecuteResponse:
-            return self.execute(command)
+        def _path(self, path: str) -> str:
+            return posixpath.normpath(posixpath.join(self._bash.shell_state().cwd, path))
 
-        # === File Operations ===
-
-        def read(self, file_path: str, offset: int = 0, limit: int = 2000) -> str:
-            result = self._bash.execute_sync(f"cat {shlex.quote(file_path)}")
-            if result.exit_code != 0:
-                return f"Error: {result.stderr or 'File not found'}"
-            lines = result.stdout.splitlines()
+        def read(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
+            if limit <= 0:
+                return ReadResult(file_data={"content": "", "encoding": "utf-8"}, no_lines_requested=True)
+            try:
+                lines = self._bash.read_file(self._path(file_path)).splitlines()
+            except (RuntimeError, ValueError) as exc:
+                return ReadResult(error=str(exc))
+            offset = max(0, offset)
             selected = lines[offset : offset + limit]
-            return "\n".join(f"{i:6d}\t{line}" for i, line in enumerate(selected, start=offset + 1))
-
-        async def aread(self, file_path: str, offset: int = 0, limit: int = 2000) -> str:
-            return self.read(file_path, offset, limit)
+            start_line = end_line = total_lines = next_offset = None
+            if selected:
+                end = offset + len(selected)
+                start_line, end_line, total_lines = offset + 1, end, len(lines)
+                if end < len(lines):
+                    next_offset = end
+            return ReadResult(
+                file_data={"content": "\n".join(selected), "encoding": "utf-8"},
+                start_line=start_line,
+                end_line=end_line,
+                total_lines=total_lines,
+                next_offset=next_offset,
+            )
 
         def write(self, file_path: str, content: str) -> WriteResult:
-            cmd = _build_write_cmd(file_path, content)
-            result = self._bash.execute_sync(cmd)
-            return WriteResult(error=result.stderr if result.exit_code != 0 else None, path=file_path)
-
-        async def awrite(self, file_path: str, content: str) -> WriteResult:
-            return self.write(file_path, content)
+            path = self._path(file_path)
+            try:
+                if self._bash.exists(path):
+                    return WriteResult(error=f"File already exists: {path}")
+                self._bash.mkdir(posixpath.dirname(path), recursive=True)
+                self._bash.write_file(path, content)
+            except (RuntimeError, ValueError) as exc:
+                return WriteResult(error=str(exc))
+            return WriteResult(path=path)
 
         def edit(self, file_path: str, old_string: str, new_string: str, replace_all: bool = False) -> EditResult:
-            result = self._bash.execute_sync(f"cat {shlex.quote(file_path)}")
-            if result.exit_code != 0:
-                return EditResult(error=f"File not found: {file_path}")
-            content = result.stdout
-            count = content.count(old_string)
-            if count == 0:
-                return EditResult(error="old_string not found")
-            if count > 1 and not replace_all:
-                return EditResult(error=f"Found {count} times. Use replace_all=True")
-            if replace_all:
-                new_content = content.replace(old_string, new_string)
-            else:
-                new_content = content.replace(old_string, new_string, 1)
-            wr = self.write(file_path, new_content)
-            return EditResult(error=wr.error, path=file_path)
+            path = self._path(file_path)
+            try:
+                content = self._bash.read_file(path)
+                count = content.count(old_string)
+                if count == 0:
+                    return EditResult(error="old_string not found")
+                if count > 1 and not replace_all:
+                    return EditResult(error=f"Found {count} times. Use replace_all=True")
+                self._bash.write_file(path, content.replace(old_string, new_string, -1 if replace_all else 1))
+            except (RuntimeError, ValueError) as exc:
+                return EditResult(error=str(exc))
+            return EditResult(path=path, occurrences=count if replace_all else 1)
 
-        async def aedit(
-            self, file_path: str, old_string: str, new_string: str, replace_all: bool = False
-        ) -> EditResult:
-            return self.edit(file_path, old_string, new_string, replace_all)
+        def delete(self, file_path: str) -> DeleteResult:
+            path = self._path(file_path)
+            try:
+                if self._bash.stat(path)["file_type"] == "directory":
+                    return DeleteResult(error="Cannot delete a directory")
+                self._bash.remove(path)
+            except (RuntimeError, ValueError) as exc:
+                return DeleteResult(error=str(exc))
+            return DeleteResult(path=path)
 
-        # === File Discovery ===
-
-        def ls_info(self, path: str) -> list[FileInfo]:
-            result = self._bash.execute_sync(f"ls -la {shlex.quote(path)}")
-            if result.exit_code != 0:
-                return []
-            files = []
-            for line in result.stdout.splitlines():
-                parts = line.split()
-                if len(parts) < 9 or parts[0].startswith("total"):
-                    continue
-                name = " ".join(parts[8:])
-                if name in (".", ".."):
-                    continue
-                files.append(
+        def ls(self, path: str) -> LsResult:
+            path = self._path(path)
+            try:
+                entries = [
                     FileInfo(
-                        path=f"{path.rstrip('/')}/{name}",
-                        name=name,
-                        is_dir=parts[0].startswith("d"),
-                        size=int(parts[4]) if parts[4].isdigit() else 0,
-                        created_at=_now_iso(),
-                        modified_at=_now_iso(),
+                        path=posixpath.join(path, entry["name"]),
+                        is_dir=entry["metadata"]["file_type"] == "directory",
+                        size=entry["metadata"]["size"],
                     )
-                )
-            return files
+                    for entry in self._bash.read_dir(path)
+                ]
+            except (RuntimeError, ValueError) as exc:
+                return LsResult(error=str(exc))
+            return LsResult(entries=sorted(entries, key=lambda entry: entry["path"]))
 
-        async def als_info(self, path: str) -> list[FileInfo]:
-            return self.ls_info(path)
+        def _files(self, root: str):
+            pending = [root]
+            while pending:
+                path = pending.pop()
+                metadata = self._bash.stat(path)
+                if metadata["file_type"] == "directory":
+                    # Do not traverse symlink directories: cycles must not create
+                    # an unbounded host-side walk outside shell execution limits.
+                    entries = self._bash.read_dir(path)
+                    pending.extend(
+                        posixpath.join(path, entry["name"])
+                        for entry in reversed(sorted(entries, key=lambda entry: entry["name"]))
+                        if entry["metadata"]["file_type"] in ("file", "directory")
+                    )
+                elif metadata["file_type"] == "file":
+                    yield FileInfo(path=path, is_dir=False, size=metadata["size"])
 
-        def glob_info(self, pattern: str, path: str = "/") -> list[FileInfo]:
-            name_pattern = pattern.replace("**/", "").replace("**", "*") if "**" in pattern else pattern
-            result = self._bash.execute_sync(f"find {shlex.quote(path)} -name {shlex.quote(name_pattern)} -type f")
-            if result.exit_code != 0:
-                return []
-            return [
-                FileInfo(
-                    path=p.strip(),
-                    name=p.strip().split("/")[-1],
-                    is_dir=False,
-                    size=0,
-                    created_at=_now_iso(),
-                    modified_at=_now_iso(),
-                )
-                for p in result.stdout.splitlines()
-                if p.strip()
-            ]
+        def glob(self, pattern: str, path: str | None = None) -> GlobResult:
+            root = self._path(path or ".")
+            try:
+                matches = compile_grep_include_glob(pattern)
+                files = [info for info in self._files(root) if matches(posixpath.relpath(info["path"], root))]
+            except (RuntimeError, ValueError) as exc:
+                return GlobResult(error=str(exc))
+            return GlobResult(matches=files)
 
-        async def aglob_info(self, pattern: str, path: str = "/") -> list[FileInfo]:
-            return self.glob_info(pattern, path)
-
-        def grep_raw(self, pattern: str, path: str | None = None, glob: str | None = None) -> list[GrepMatch] | str:
-            quoted_pattern = shlex.quote(pattern)
-            search_path = shlex.quote(path) if path else "/home"
-            cmd = f"grep -rn {quoted_pattern} {search_path}"
-            result = self._bash.execute_sync(cmd)
-            matches = []
-            for line in result.stdout.splitlines():
-                if ":" not in line:
-                    continue
-                parts = line.split(":", 2)
-                if len(parts) >= 3:
-                    try:
-                        matches.append(GrepMatch(path=parts[0], line_number=int(parts[1]), content=parts[2]))
-                    except ValueError:
+        def grep(
+            self, pattern: str, path: str | None = None, glob: str | None = None, *, max_count: int | None = None
+        ) -> GrepResult:
+            root = self._path(path or ".")
+            matches: list[GrepMatch] = []
+            try:
+                include = compile_grep_include_glob(glob) if glob is not None else lambda _: True
+                for info in self._files(root):
+                    relative = posixpath.relpath(info["path"], root)
+                    if not include(posixpath.basename(root) if relative == "." else relative):
                         continue
-            return matches
-
-        async def agrep_raw(
-            self, pattern: str, path: str | None = None, glob: str | None = None
-        ) -> list[GrepMatch] | str:
-            return self.grep_raw(pattern, path, glob)
-
-        # === File Transfer ===
+                    for number, line in enumerate(self._bash.read_file(info["path"]).splitlines(), 1):
+                        if pattern in line:
+                            if max_count is not None and len(matches) >= max(0, max_count):
+                                return GrepResult(matches=matches, truncated=True)
+                            matches.append(GrepMatch(path=info["path"], line=number, text=line))
+            except (RuntimeError, ValueError) as exc:
+                return GrepResult(error=str(exc), matches=matches or None, truncated=bool(matches))
+            return GrepResult(matches=matches)
 
         def download_files(self, paths: list[str]) -> list[FileDownloadResponse]:
             responses = []
-            for p in paths:
-                result = self._bash.execute_sync(f"cat {shlex.quote(p)}")
-                if result.exit_code == 0:
-                    responses.append(FileDownloadResponse(path=p, content=result.stdout.encode(), error=None))
-                else:
-                    responses.append(
-                        FileDownloadResponse(path=p, content=None, error=result.stderr or "File not found")
-                    )
+            for path in paths:
+                try:
+                    content = self._bash.fs().read_file(self._path(path))
+                    responses.append(FileDownloadResponse(path=path, content=content))
+                except (RuntimeError, ValueError) as exc:
+                    responses.append(FileDownloadResponse(path=path, error=str(exc)))
             return responses
-
-        async def adownload_files(self, paths: list[str]) -> list[FileDownloadResponse]:
-            return self.download_files(paths)
 
         def upload_files(self, files: list[tuple[str, bytes]]) -> list[FileUploadResponse]:
             responses = []
-            for p, content in files:
+            for path, content in files:
                 try:
-                    wr = self.write(p, content.decode("utf-8"))
-                    responses.append(FileUploadResponse(path=p, error=None if wr.success else wr.error))
-                except UnicodeDecodeError:
-                    responses.append(FileUploadResponse(path=p, error="Binary files not supported"))
+                    absolute = self._path(path)
+                    self._bash.mkdir(posixpath.dirname(absolute), recursive=True)
+                    self._bash.fs().write_file(absolute, content)
+                    responses.append(FileUploadResponse(path=path))
+                except (RuntimeError, ValueError) as exc:
+                    responses.append(FileUploadResponse(path=path, error=str(exc)))
             return responses
-
-        async def aupload_files(self, files: list[tuple[str, bytes]]) -> list[FileUploadResponse]:
-            return self.upload_files(files)
 
         # === Utility ===
 

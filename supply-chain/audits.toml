@@ -1,10 +1,64 @@
 
 # cargo-vet audits file
 
+[[audits.aes]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.9.2 -> 0.9.3"
+notes = "Reviewed SIMD dispatch, loads/stores, fixed key sizes and partial-load zero padding. Typed batch bounds and divisibility assertions preserve memory limits. VAES dispatch assumes Rust target-feature contract vaes implies aes and avx2; inconsistent hostile CPUID outside review. No new ambient capability."
+
+[[audits.aes-gcm]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.11.0 -> 0.11.1"
+notes = "Reviewed tag comparison replacement with ctutils CtEq: comparison before decrypt and truncated tag lengths preserved. Zeroize propagates to AES/GHASH and marker requires AES ZeroizeOnDrop. No new unsafe or ambient access."
+
+[[audits.antithesis_sdk]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.2.9 -> 0.3.0"
+notes = "Reviewed assertion messages remaining compile-time strings; RwLock read guard drops before map insertion. Diagnostic output appends instead of truncating existing host-configured path. No new destinations or dynamic-loader changes."
+
+[[audits.argon2]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.6.0-rc.8 -> 0.6.0"
+notes = "Reviewed runtime delta: equivalent map of u32 to little-endian bytes, semicolon, documentation/lints and must_use attributes. Memory unsafe code unchanged. Blake2 dependency promoted stable; nondefault output verification test added. No new ambient capability."
+
+[[audits.aws-lc-rs]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "1.18.0 -> 1.18.1"
+notes = "Reviewed AEAD FFI pointer/capacity derived from same AsMut slice with checked Extend growth; constructors validate exact IV contexts. Shared secrets use Zeroizing Vec on failures; RSA digest validation centralized; HKDF salt algorithm consistent; legacy SHA1 explicit opt-in only. Standard FFI preconditions preserved; no new ambient access."
+
 [[audits.aws-lc-sys]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 version = "0.39.1"
+
+[[audits.aws-lc-sys]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.44.0 -> 0.45.0"
+notes = "Reviewed C/FFI and generated symbol-prefix delta. EVP buffers final padded block; GCM checks IV length before subtraction; ML-DSA exact signature/extmu sizes, ML-KEM constant-time validation and parameter bounds retained. Keccak contexts bounded and cleansed; Brainpool immutable once groups. Builder flags preserve jitterentropy O0; fixed CPU discovery and existing compiler toolchain only. Source safety review, not cryptographic proof."
+
+[[audits.blake2]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.11.0-rc.6 -> 0.11.0"
+notes = "Reviewed removal of broken nightly SIMD: lane math remains wrapping add/xor/rotate/reorder. New byte view borrows repr(C) four same-type u32/u64 fields, fully initialized without padding; output copies equal-size halves and zeroization retained. No new ambient access."
+
+[[audits.branches]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.4.5 -> 0.4.6"
+notes = "Reviewed compiler gates for s390x and PowerPC prefetch. Assembly issues cache hints without dereference or stores, with matching architecture register constraints. No new ambient access."
+
+[[audits.cc]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "1.4.3 -> 1.4.5"
+notes = "Reviewed Build env propagation to compiler and archiver probes without shell interpretation; environment enters compiler cache key. Missing OUT_DIR uses existing random create_new temporary file, Unix0600 and owned-path cleanup. OnceLock initialized check remains before unsafe borrow."
 
 [[audits.clap]]
 who = "Mykhailo Chalyi <mykhailo.chalyi-contractor@procore.com>"
@@ -18,6 +72,24 @@ criteria = "safe-to-deploy"
 delta = "4.6.0 -> 4.6.1"
 notes = "Reviewed delta: derive macro emits compile-time env! guards for Cargo metadata and otherwise metadata/dependency updates; crate forbids unsafe code and adds no new runtime capabilities."
 
+[[audits.combine]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "4.6.7 -> 4.6.8"
+notes = "Reviewed BytesMut spare capacity sliced to at most 8KiB and zeroed before Read receives byte slice; write pointer length equals checked slice length. Other changes lifetimes/macros/derivations; no new ambient access."
+
+[[audits.cpufeatures]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.3.0 -> 0.3.1"
+notes = "Reviewed complete source delta: AVX detection now requires YMM OS/XCR0 state instead of XMM, correctly preventing dispatch before OS support. Miri uses compile-time feature configuration, and the AtomicU8 sentinel remains the same value. No new unsafe operation or ambient capability."
+
+[[audits.crc32fast]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "1.5.0 -> 1.5.1"
+notes = "Reviewed SIMD load guards and initialized tail buffers; CPU dispatch checks required features and AArch64 slices remain bounded. Wide CRC casts have documented indeterminate upper lanes but pinned Rust1.95 stdarch zeroes these lanes; re-review this assumption on toolchain change. No new ambient runtime access."
+
 [[audits.ctor]]
 who = "Mykhailo Chalyi <mykhailo.chalyi-contractor@procore.com>"
 criteria = "safe-to-deploy"
@@ -29,6 +101,12 @@ who = "Mykhailo Chalyi <mykhailo.chalyi-contractor@procore.com>"
 criteria = "safe-to-deploy"
 delta = "0.0.7 -> 0.0.13"
 notes = "Reviewed delta: crate metadata only; generated code behavior is unchanged."
+
+[[audits.der]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.8.1 -> 0.8.2"
+notes = "Reviewed safe borrowing traits; nested reader restores state then rejects unconsumed input and marks failure. No unsafe or new I/O."
 
 [[audits.dtor]]
 who = "Mykhailo Chalyi <mykhailo.chalyi-contractor@procore.com>"
@@ -42,6 +120,12 @@ criteria = "safe-to-deploy"
 delta = "0.0.6 -> 0.0.13"
 notes = "Reviewed delta: crate metadata only; generated code behavior is unchanged."
 
+[[audits.either]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "1.17.0 -> 1.18.0"
+notes = "Reviewed new Extend and FromIterator partitioning using safe iterators into caller collections. No unsafe or ambient capability changes."
+
 [[audits.fancy-regex]]
 who = "Mykhailo Chalyi <mykhailo.chalyi-contractor@procore.com>"
 criteria = "safe-to-deploy"
@@ -52,6 +136,12 @@ notes = "Reviewed delta: adds Oniguruma-compatible syntax, absent repeater, CRLF
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 version = "2.4.0"
+
+[[audits.find-msvc-tools]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.1.11 -> 0.1.12"
+notes = "Reviewed existing Visual Studio discovery predicate rewrites with filter/and_then/then. Installation paths and architecture existence checks unchanged. No new process invocation or unsafe."
 
 [[audits.get-size-derive2]]
 who = "Mykhailo Chalyi <mykhailo.chalyi-contractor@procore.com>"
@@ -71,21 +161,119 @@ criteria = "safe-to-deploy"
 version = "0.3.0"
 notes = "Reviewed complete crate: thin wasm-bindgen wrappers around host setTimeout/setInterval with RAII cancellation, plus futures channels. No Rust unsafe code, filesystem/network/process access, or attacker-controlled ambient capabilities; unchecked_ref casts wasm-bindgen Closure handles to the JavaScript Function type they represent."
 
+[[audits.hermit-abi]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.5.2 -> 0.5.3"
+notes = "Reviewed new unsafe extern sys_fsync declaration accepting explicit descriptor. Other changes docs/metadata; no automatic invocation or unchecked safe pointer wrapper."
+
 [[audits.hybrid-array]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 version = "0.4.9"
+
+[[audits.hyper]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "1.11.0 -> 1.11.1"
+notes = "Reviewed multiple Connection close header handling, tokenized TE trailers, HTTP1 flush before yield, HTTP2 minimal capacity reservation after body chunk. Header terminator fast path matches parser acceptance; borrow changes preserve pointer/length invariants. No new destination."
+
+[[audits.icu_collator]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "2.3.0 -> 2.3.1"
+notes = "Reviewed lookahead reset when restarting combining-character collection, preserving iterator state. No new unsafe or ambient capabilities."
+
+[[audits.icu_locale]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "2.3.0 -> 2.3.1"
+notes = "Reviewed complete package delta: metadata/dependency versions only; locale source unchanged."
+
+[[audits.icu_provider]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "2.3.0 -> 2.3.1"
+notes = "Reviewed trie cursor formatting early exit after failed prefix match. Safe formatting and optional lookup retained; no unsafe or ambient changes."
+
+[[audits.indexmap]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "2.14.0 -> 2.14.2"
+notes = "Reviewed disjoint mutable references: all indices bounds-checked and duplicates excluded before references formed. Lifetimes preserved, centralized assertions, exact-key Eq and safe constructor insertions. No ambient changes."
 
 [[audits.iri-string]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 version = "0.7.12"
 
+[[audits.is-macro]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.3.7 -> 0.3.8"
+notes = "Reviewed enum expect helpers optionally omitting Debug values in release panics. Matching and extraction unchanged, no unsafe or ambient access."
+
+[[audits.jaq-core]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "3.1.0 -> 3.1.1"
+notes = "Reviewed complete package delta: dependency feature metadata only; interpreter source unchanged."
+
+[[audits.jaq-json]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "2.0.2 -> 2.0.3"
+notes = "Reviewed complete package delta: dependency feature metadata only; JSON source unchanged."
+
+[[audits.jaq-std]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "3.0.2 -> 3.0.3"
+notes = "Reviewed no_std float rounding with bounded IEEE754 bit operations; std keeps native floor/round/ceil. Corrected import feature gates; no unsafe or ambient changes."
+
+[[audits.jiter]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+version = "0.13.0"
+importable = false
+notes = "Local feature-scoped full source review: default/num-bigint only, with python forbidden by deny.toml (verified all-features graph and negative feature fixture). AArch64 loads require checked 16-byte slices, unchecked next-byte access remains inside the identified non-digit lane, and vector casts preserve initialized sizes. ASCII flags are cleared by non-ASCII bytes/Unicode escapes before unchecked UTF8; partial UTF8 uses validated prefix boundaries. Numeric loops progress and cap big integers at 4300 characters; value parsing limits nesting. No runtime filesystem/network/process access in reviewed features. EXCLUDED: optional Python FFI dereferences PyUnicode_New without checking allocation failure; this audit does not certify that feature. Re-audit before enabling it."
+
 [[audits.jiter]]
 who = "Mykhailo Chalyi <mykhailo.chalyi-contractor@procore.com>"
 criteria = "safe-to-deploy"
 delta = "0.13.0 -> 0.15.0"
 notes = "Reviewed delta: number parsing API refactor, NumberFloat export, Rust 2024 explicit unsafe blocks, and string-cache allocation moved off stack; no new filesystem/process/network capabilities, existing SIMD/PyString unsafe paths remain bounded by parser checks and ASCII preconditions."
+
+[[audits.jiter]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.15.0 -> 0.15.0@git:6d57715e01ec78859c62fc5447073c0b5902de39"
+importable = false
+notes = "Reviewed complete crates.io 0.15.0 to exact pinned Git revision delta with cargo vet: only packaged README is removed. Rust source, manifests and build behavior unchanged. Policy explicitly requires published-base plus exact Git-delta audits."
+
+[[audits.js-sys]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.3.104 -> 0.3.105"
+notes = "Reviewed JSPI task states preventing reentrant polling, Rc raw-waker balanced clone/wake/drop ownership and queued callbacks consuming owned reference. Future pinned and RefCell-protected; atomics excludes JSPI. Experimental JSPI requires matching generated glue and supported wasm32 runtime. No automatic new host destinations."
+
+[[audits.keccak]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.2.1 -> 0.2.2"
+notes = "Reviewed precomputation of equivalent truncated round constants, last-round selection with const bound, and fixed loops replacing unroll macros. No new unsafe or ambient capability."
+
+[[audits.log]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.4.33 -> 0.4.34"
+notes = "Reviewed boxed logger moving std to alloc, retains pointer-atomic gate and same one-time installation. No new unsafe or I/O paths."
+
+[[audits.mio]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "1.2.2 -> 1.2.3"
+notes = "Reviewed shared registration state, Unix listener readiness rearming and BSD selector wakeups. kevent points to live event or null with zero output count; WASI fcntl uses owned socket. No new destinations or unchecked lengths."
 
 [[audits.napi]]
 who = "Mykhailo Chalyi <mykhailo.chalyi-contractor@procore.com>"
@@ -105,11 +293,47 @@ criteria = "safe-to-deploy"
 delta = "5.0.2 -> 5.0.3"
 notes = "Reviewed delta: register_class call now forwards async iterator metadata; no new filesystem/process/network capabilities and generated N-API unsafe shape remains through existing napi abstractions."
 
+[[audits.num-bigint]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.4.8 -> 0.5.1"
+notes = "Reviewed unchanged arithmetic; rand .9/.10 adapters handle empty ranges fallibly. Byte fill length fits initialized digit allocation; zero-bit case avoids final-byte indexing and high-bit mask/endian conversion retained. No new ambient access."
+
+[[audits.ordermap]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "1.2.0 -> 1.2.2"
+notes = "Reviewed const empty construction and safe insertion macros, indexing delegated to checked IndexMap. Other changes tests/diagnostics; no unsafe or ambient access."
+
+[[audits.owo-colors]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "4.3.0 -> 4.4.0"
+notes = "Reviewed removal of compiler-probing build script, stabilized const mutable references with same bounded style bit positions. No new unsafe or I/O."
+
+[[audits.pageant]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.2.2 -> 0.2.3"
+notes = "Reviewed shared-memory reads rejecting checked_add overflow and reads past mapping before copy_nonoverlapping. Errors propagate for length and payload; mapping ownership and agent destination unchanged."
+
+[[audits.portable-atomic-util]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.2.7 -> 0.2.8"
+notes = "Reviewed Arc map uniqueness and equal size/alignment checks. Old T moves local and allocation becomes MaybeUninit U guard before closure, preserving allocation cleanup and preventing double-drop on panic. No ambient capability changes."
+
 [[audits.rand]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 delta = "0.8.5 -> 0.8.6"
 notes = "Reviewed delta: backports RUSTSEC-2026-0097 fix by removing rand logging callbacks, panics on reseed failure instead of logging, removes experimental SIMD support, and keeps public RNG behavior otherwise compatible; no new ambient capabilities."
+
+[[audits.rand]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.8.7 -> 0.8.8"
+notes = "Reviewed complete delta: uses core primitive integer MAX paths to avoid removed associated module constants. RNG algorithms, sampling bounds and entropy sources unchanged."
 
 [[audits.rand]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
@@ -134,17 +358,47 @@ criteria = "safe-to-deploy"
 delta = "0.62.5 -> 0.62.6"
 notes = "Reviewed delta: routes channel-open replies through a dedicated priority queue drained ahead of the bounded receivers, so a confirmation can no longer be silently dropped by a full queue or be overtaken by data for a channel that is not registered yet; enforces the server-side max_auth_attempts cap with a DISCONNECT while keeping publickey probes uncounted; and tolerates exactly one trailing comma in name-lists for OpenSSH interop, still rejecting a bare comma and a doubled separator. No new unsafe code (unchanged single occurrence), no new dependencies, and no ambient capability changes; each behaviour change lands with test coverage."
 
+[[audits.russh]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.63.1 -> 0.63.2"
+notes = "Reviewed credentials redaction/zeroization; negotiated RSA certificate hashes; rekey staging and peer non-transport flood rejection/bounds. Compression drains progress with existing maximum packet limit; PTY lengths count actual entries. No new unsafe or ambient destinations."
+
 [[audits.rustls-webpki]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 delta = "0.103.12 -> 0.103.13"
 notes = "Reviewed delta: fixes BIT STRING/CRL parsing edge cases and preserves fail-closed URI constraint handling; no new unsafe code or ambient capability changes."
 
+[[audits.rustls-webpki]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.103.14 -> 0.103.15"
+notes = "Reviewed complete runtime delta: FIPS status reports underlying AWS-LC signature implementation status. Certificate parsing, verification algorithms and input bounds unchanged."
+
+[[audits.smallvec]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "1.15.2 -> 1.16.0"
+notes = "Reviewed source formatting/import grouping and debugger visualizer removal. Storage ownership, bounds, raw pointer operations and panic guards unchanged; no new unsafe or ambient access."
+
+[[audits.syn]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "3.0.4 -> 3.0.5"
+notes = "Reviewed parser diagnostic span adjustments; token consumption and syntax tree construction remain safe and bounded. No unsafe or ambient access."
+
 [[audits.thin-vec]]
 who = "Mykhailo Chalyi <mykhailo.chalyi-contractor@procore.com>"
 criteria = "safe-to-deploy"
 delta = "0.2.16 -> 0.2.18"
 notes = "Reviewed delta: no_std feature compatibility fixes and std-to-core path changes in gecko-ffi code; no new allocation semantics, unsafe behavior, or ambient capabilities."
+
+[[audits.tinyvec]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "1.12.0 -> 1.13.2"
+notes = "Reviewed formatting buffer changes: checked remaining-capacity copy and length update, safe array constructor. Initialized element and capacity bounds retained; no new ambient access."
 
 [[audits.tokio]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
@@ -156,6 +410,102 @@ who = "Mykhailo Chalyi <mykhailo.chalyi-contractor@procore.com>"
 criteria = "safe-to-deploy"
 delta = "1.52.0 -> 1.52.1"
 notes = "Reviewed delta: reverts blocking-pool sharded queue to mutex/condvar VecDeque to fix spawn_blocking hang, adjusts fastrand cfg, and adds no new unsafe blocks or ambient capabilities."
+
+[[audits.tokio-rustls]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.26.4 -> 0.26.5"
+notes = "Reviewed bounded loop reading multiple immediately available TLS records, preserving buffer limits and wake/pending behavior. No new unsafe or network destination."
+
+[[audits.turso_core]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.8.0-pre.7 -> 0.8.0-pre.8"
+notes = "Reviewed production delta: unchecked UTF8 requires all-ASCII aggregate; unique uninitialized Arc chunk assembly checks every index and complete size before assume_init. IO children link before submission, builder token prevents premature callbacks, SeqCst completion fires once with owned buffers. Transaction retry/abandonment retains write ownership and releases writer leases. Attached database sync is explicit; FTS storage remains in memory with descriptor bounds. No new host filesystem, network or process access. Source safety review, not formal transactional proof."
+
+[[audits.turso_ext]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.8.0-pre.7 -> 0.8.0-pre.8"
+notes = "Reviewed complete package diff: version and turso_macros dependency version only. Extension source unchanged; no new runtime or ambient capability."
+
+[[audits.turso_macros]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.8.0-pre.7 -> 0.8.0-pre.8"
+notes = "Reviewed complete package diff: only Cargo package version changes; macro source is byte-identical. No runtime, unsafe, host access, or build-script changes."
+
+[[audits.turso_parser]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.8.0-pre.7 -> 0.8.0-pre.8"
+notes = "Reviewed named-token lexer: bounded get/peek accesses, progress on every branch, parenthesized suffix rejects missing delimiters and whitespace. New pragma/diagnostics use safe Rust; other parser changes are tests. No new unsafe or host capability."
+
+[[audits.twox-hash]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "2.1.3 -> 2.1.4"
+notes = "Reviewed complete delta: formatting and private internal visibility changes, hash arithmetic and buffer reads unchanged. No new unsafe or host capability."
+
+[[audits.uuid]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "1.24.1 -> 1.26.0"
+notes = "Reviewed serde adapter using existing UUID visitor and timestamp precision clamp to 12 bits. Existing random/clock source paths unchanged; no new unsafe or ambient access."
+
+[[audits.wasm-bindgen]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.2.127 -> 0.2.128"
+notes = "Reviewed generic descriptor/ABI marker using live argument tuples and WasmRet with matching generated glue. String-like marker sealed to supported types; externref failure uses try_borrow. JSPI rejection state is single-threaded, requires matching schema glue. No new automatic host access."
+
+[[audits.wasm-bindgen-futures]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.4.77 -> 0.4.78"
+notes = "Reviewed complete delta: reexports JSPI helpers from reviewed js-sys; existing scheduler source unchanged."
+
+[[audits.wasm-bindgen-macro]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.2.127 -> 0.2.128"
+notes = "Reviewed complete delta: recognizes retried derive attribute; implementation remains in reviewed macro-support. No new host access."
+
+[[audits.wasm-bindgen-macro-support]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.2.127 -> 0.2.128"
+notes = "Reviewed generic imports rejecting mutable/nested refs and return refs, preserving IntoWasmAbi/WasmDescribe and lifetime bounds. Marker points to live tuple, return ABI matches descriptor and noinline transformation boundary. Suspending results convert externref after resume; invalid attribute combinations rejected. Symbol hashes/cfg propagation prevent collisions. Requires matching runtime/glue schema; experimental JSPI supported wasm32 only."
+
+[[audits.wasm-bindgen-shared]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.2.127 -> 0.2.128"
+notes = "Reviewed schema/hash update covering both fixed source schema files, matching JSPI/generic descriptors and crate-qualified symbols. Build reads fixed source and Cargo package metadata, no new dynamic destination."
+
+[[audits.web-sys]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.3.104 -> 0.3.105"
+notes = "Reviewed generated shared input slices for read/copy browser APIs, typed feature-gated OffscreenCanvas WebGL catch overloads, and deprecation metadata. No automatic browser API invocation."
+
+[[audits.wnaf]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.14.0 -> 0.14.1"
+notes = "Reviewed replacement of unconditional representation reversal by PrimeFieldExt to_le_repr with correct bounds. No unsafe or algorithm-loop changes, no new ambient access."
+
+[[audits.zerovec]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.11.7 -> 0.11.8"
+notes = "Reviewed array validation rejecting zero-sized elements and invalid byte lengths before interpretation. Existing aligned/unaligned representation invariants retained; no ambient capability changes."
+
+[[audits.zerovec-derive]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.11.4 -> 0.11.6"
+notes = "Reviewed generated validator passing each element chunk instead of whole bytes; raw slice pointer construction avoids temporary out-of-bounds reference. Validation length constraints precede interpretation; no new host access."
 
 [[trusted.serde_spanned]]
 criteria = "safe-to-deploy"

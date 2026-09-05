@@ -374,7 +374,7 @@ def test_bash_files_dict_callable_large_return_is_limited_and_retryable():
 
 def test_bash_mounts_readonly_by_default(tmp_path):
     (tmp_path / "data.txt").write_text("original\n")
-    bash = Bash(mounts=[{"host_path": str(tmp_path), "vfs_path": "/data"}])
+    bash = Bash(mounts=[{"host_path": str(tmp_path), "vfs_path": "/data"}], allowed_mount_paths=[str(tmp_path)])
     # Can read
     assert bash.execute_sync("cat /data/data.txt").stdout == "original\n"
     # Write goes to in-memory overlay, host file unchanged
@@ -383,7 +383,10 @@ def test_bash_mounts_readonly_by_default(tmp_path):
 
 
 def test_bash_mounts_writable(tmp_path):
-    bash = Bash(mounts=[{"host_path": str(tmp_path), "vfs_path": "/workspace", "writable": True}])
+    bash = Bash(
+        mounts=[{"host_path": str(tmp_path), "vfs_path": "/workspace", "writable": True}],
+        allowed_mount_paths=[str(tmp_path)],
+    )
     result = bash.execute_sync("echo 'hello host' > /workspace/hello.txt")
     assert result.exit_code == 0
     assert (tmp_path / "hello.txt").read_text().strip() == "hello host"
@@ -724,7 +727,10 @@ def test_bashtool_files_dict_callables_are_lazy_and_cached():
 
 
 def test_bashtool_realfs_and_fs_handle(tmp_path):
-    tool = BashTool(mounts=[{"host_path": str(tmp_path), "vfs_path": "/workspace", "writable": True}])
+    tool = BashTool(
+        mounts=[{"host_path": str(tmp_path), "vfs_path": "/workspace", "writable": True}],
+        allowed_mount_paths=[str(tmp_path)],
+    )
     tool.execute_sync("echo 'from tool' > /workspace/tool.txt")
     assert (tmp_path / "tool.txt").read_text().strip() == "from tool"
     assert tool.fs().read_file("/workspace/tool.txt") == b"from tool\n"

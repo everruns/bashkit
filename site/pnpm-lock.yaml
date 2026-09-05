@@ -27,8 +27,8 @@ importers:
         specifier: ^3.7.4
         version: 3.7.4
       '@everruns/bashkit-wasm':
-        specifier: 0.16.0
-        version: 0.16.0
+        specifier: 0.17.1
+        version: 0.17.1
       astro:
         specifier: ^7.3.1
         version: 7.3.1(@astrojs/markdown-remark@7.3.0)(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.1)(@types/node@26.4.1)(yaml@2.9.0)
@@ -469,8 +469,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@everruns/bashkit-wasm@0.16.0':
-    resolution: {integrity: sha512-6Lx6tbZwZ9qHUsXDdNdYgXhjQFf8WTnDkJM0wVnIauEQ/u2v4bbl6AVIBZzR+4ndkGlA5njKYP2+j8Esq05OVg==}
+  '@everruns/bashkit-wasm@0.17.1':
+    resolution: {integrity: sha512-wAtZR7OOC/EqVik6WOXOiXfP1Zwm41XjNtCVtKQ33X47PpQCuy/qT4prJNcwnWk5cnNQwnXJyiCfND6mnIO1aA==}
 
   '@img/colour@1.1.0':
     resolution: {integrity: sha512-Td76q7j57o/tLVdgS746cYARfSyxk8iEfRxewL9h4OMzYhbW4TAcppl0mT4eyqXddh6L/jwoM75mo7ixa/pCeQ==}
@@ -2724,7 +2724,7 @@ snapshots:
   '@esbuild/win32-x64@0.28.2':
     optional: true
 
-  '@everruns/bashkit-wasm@0.16.0': {}
+  '@everruns/bashkit-wasm@0.17.1': {}
 
   '@img/colour@1.1.0': {}
 

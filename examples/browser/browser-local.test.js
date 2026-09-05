@@ -21,6 +21,7 @@ class MemoryStorage {
 
 function fakeFs(tree) {
   return {
+    exists(path) { return Object.hasOwn(tree, path); },
     ls(path) {
       const value = tree[path];
       if (!Array.isArray(value)) throw new Error("not a directory");
@@ -158,4 +159,27 @@ test("rejects unsafe persisted paths", () => {
   assert.deepEqual(browserLocal({ storage }).load(), {
     "/home/user/ok.txt": "ok",
   });
+});
+
+for (const unreadable of ["binary", "directory"]) {
+  test(`preserves previous snapshot when ${unreadable} traversal fails`, () => {
+    const storage = new MemoryStorage();
+    const previous = JSON.stringify({ version: 1, files: { "/home/user/old.txt": "keep" } });
+    storage.setItem("bashkit:fs", previous);
+    const fs = fakeFs({
+      "/home/user": ["first.txt", "unreadable"],
+      "/home/user/first.txt": "new partial data",
+      "/home/user/unreadable": unreadable === "binary" ? new Uint8Array([255]) : ["child"],
+    });
+    assert.equal(browserLocal({ storage }).save(fs), false);
+    assert.equal(storage.getItem("bashkit:fs"), previous);
+  });
+}
+
+test("preserves previous snapshot when the existing root cannot be listed", () => {
+  const storage = new MemoryStorage();
+  storage.setItem("bashkit:fs", "previous snapshot");
+  const fs = fakeFs({ "/home/user": new Error("permission denied") });
+  assert.equal(browserLocal({ storage }).save(fs), false);
+  assert.equal(storage.getItem("bashkit:fs"), "previous snapshot");
 });

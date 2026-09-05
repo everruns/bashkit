@@ -360,6 +360,7 @@ dependencies = [
  "flate2",
  "futures-core",
  "futures-util",
+ "get-size2",
  "getrandom 0.4.3",
  "gloo-timers",
  "hmac",

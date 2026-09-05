@@ -382,9 +382,10 @@ Default limits (configurable):
 | Resource | Default | Notes |
 |----------|---------|-------|
 | Commands | 10,000 | Per execution |
-| Loop iterations | 100,000 | Per loop |
+| Loop iterations | 10,000 | Per loop |
+| Total loop iterations | 1,000,000 | Per execution |
 | Function depth | 100 | Recursion limit |
-| Output size | 10MB | Total stdout |
+| Output size | 1MiB each | Separate stdout and stderr caps |
 | Parser timeout | 5s | Prevents infinite parse |
 | Parser operations | 100,000 | Fuel-based limit |
 | Input size | 10MB | Max script size |

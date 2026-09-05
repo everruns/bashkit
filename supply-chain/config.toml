@@ -27,6 +27,10 @@ criteria = "safe-to-deploy"
 audit-as-crates-io = false
 criteria = "safe-to-deploy"
 
+[policy.jiter]
+audit-as-crates-io = true
+notes = "Require published-base AND exact Git-commit delta audits for the pinned third-party patch; https://mozilla.github.io/cargo-vet/first-party-code.html"
+
 [[exemptions.adler2]]
 version = "2.0.1"
 criteria = "safe-to-deploy"

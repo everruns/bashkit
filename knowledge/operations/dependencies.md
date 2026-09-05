@@ -59,17 +59,38 @@ lives there, next to the pin, so it cannot drift away from what it explains.
 
 ## Monty compatibility pins
 
-Monty remains on 0.0.19 until its custom resource-tracker integration is migrated
-([tracking issue #2373](https://github.com/everruns/bashkit/issues/2373)). Version
-0.0.22 replaces the tracker trait with a concrete struct; simply removing
-Bashkit's adapter would lose shared work-budget and cancellation checkpoints.
-Keep the Git `jiter` patch until that migration permits the published 0.16 line.
+Monty and monty-types are explicitly constrained to `=0.0.19`. Published
+0.0.20, 0.0.21, and 0.0.22 all replace the custom tracker trait with a concrete
+tracker and replace per-VM memory accounting with a process-global allocator
+probe. Neither is compatible with Bashkit's embeddable security contract:
+without the global allocator, aggregate heap growth is uncounted; without
+VM checkpoints, synchronous loops cannot consume shared work or observe
+cancellation. Moving charges outside `start`/`resume` does not preserve this
+contract. This is an enforced compatibility constraint, not an unfinished
+maintenance upgrade. See [Python Builtin](../runtimes/python-builtin.md#upgrade-blocker-monty-is-held-at-0019)
+for the source evidence and resource-limit regression tests. Keep the Git
+`jiter` patch while this compatible Monty release requires the 0.15 line.
 
-`get-size2` must remain at 0.10.1 in the lockfile. Version 0.10.3 implements
-`GetSize` for `compact_str` 0.10, whereas Monty's `ruff_python_ast` 0.0.3 uses
-0.9.1, causing E0277 when the Python feature builds. After `cargo update`, run
-`cargo update -p get-size2 --precise 0.10.1` alongside the IDNA pin restoration.
-The Python binding's `num-bigint` dependency must still match Monty's 0.4 line.
+The pinned `jiter` Git package requires a published-base audit plus an exact
+Git-delta audit (`audit-as-crates-io = true`). Its local, non-importable full
+audit covers the selected `default`/`num-bigint` features. `deny.toml` bans
+`jiter/python`: its optional ASCII Python string allocator dereferences
+`PyUnicode_New` without checking allocation failure. This code is absent from
+the workspace's all-features graph; re-audit before allowing it. Verified the
+ban with an isolated manifest selecting the actual pinned Git revision and
+`features = ["python"]`: `cargo deny check bans` passed before the restriction
+and failed with `feature-banned` after it, while the workspace still passed.
+Cargo-deny's [feature restrictions](https://embarkstudios.github.io/cargo-deny/checks/bans/cfg.html#the-features-field-optional)
+enforce this audit boundary in CI.
+
+`get-size2` is constrained to `=0.10.1` as a Python-only direct dependency,
+so downstream resolution is protected even without this workspace's lockfile.
+Both 0.10.2 and 0.10.3 implement `GetSize` for `compact_str` 0.10, whereas
+Monty's `ruff_python_ast` 0.0.3 uses 0.9.1; resolving either produces E0277.
+The extra edge enables no runtime or feature by itself and adds no crate to
+the existing Python graph. Remove it when Monty's AST upgrades its string
+type. The Python binding's `num-bigint` dependency must still match Monty's
+0.4 line.
 
 ## Measure size and audit surface separately
 

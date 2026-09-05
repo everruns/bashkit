@@ -97,6 +97,17 @@ silently failed.
    version. If one fails, open a hotfix PR rather than leaving the release
    half-shipped.
 
+### Release example dependency boundary
+
+The npm release tests install `examples/pnpm-lock.yaml` with
+`pnpm install --frozen-lockfile --ignore-scripts`, then replace only the generated
+`@everruns/bashkit` link with the downloaded release artifact. Both native and
+Docker test jobs use this graph. Fresh `pnpm add` resolution during publication
+would bypass the dependency review and security overrides used by CI, and must
+not be used. Scoped API keys are fetched only after installation; the credential
+fetch process exits before examples execute. See the
+[Threat Model](../security/threat-model.md).
+
 ### CI Automation
 
 - On merge to main, `release.yml` detects the `chore(release): prepare vX.Y.Z` commit, extracts notes from CHANGELOG.md, creates the GitHub Release + tag.
@@ -207,7 +218,15 @@ to the Release, and pushes a Homebrew formula to `everruns/homebrew-tap`
 ### publish.yml
 
 Trigger: Release published. Publishes to crates.io in dependency order, then
-verifies published versions. Secret: `CARGO_REGISTRY_TOKEN`.
+verifies published versions. Each crate first passes `cargo publish --dry-run`
+without registry credentials. The following `cargo publish --no-verify` upload
+receives the step-scoped `CARGO_REGISTRY_TOKEN`, so dependency compilation never
+inherits that credential. The CLI verification runs after the core is published.
+
+CLI and C ABI release validation resolve the fetched tag once, validate the
+manifest at that immutable commit, and pass its SHA to build checkouts. The tag
+remains the release upload destination, never the build source after validation.
+Regression coverage: `scripts/tests/test_release_security.py`.
 
 ### publish-python.yml
 

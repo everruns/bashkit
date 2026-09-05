@@ -12,6 +12,13 @@ tags:
 
 # Snapshot History and Deltas
 
+## Host callbacks on snapshot construction
+
+JS `BashTool.fromSnapshot` and `fromSnapshotKeyed` register the caller's supplied
+`customBuiltins` after the native interpreter restores state. JS functions are
+not serialized: callers reattach them through construction options, and the
+registered callbacks then survive `reset()` like ordinary constructor callbacks.
+
 ## Status
 
 Implemented. `crates/bashkit/src/snapshot/` holds the object graph, container,

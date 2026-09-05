@@ -7,9 +7,10 @@ on:
     branches: [main]
   workflow_call:
 
+# CI executes repository code and has no consumer of checks-write permission.
+# Checkout credentials must not remain available to build scripts or tests.
 permissions:
   contents: read
-  checks: write
 
 env:
   CARGO_TERM_COLOR: always
@@ -22,6 +23,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
@@ -76,6 +79,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
@@ -109,6 +114,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
@@ -138,6 +145,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
@@ -163,6 +172,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
@@ -228,6 +239,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
@@ -240,7 +253,10 @@ jobs:
       # `sqlite3` isn't on PATH).
       - name: Install host sqlite3 for differential tests
         run: |
-          which sqlite3 || sudo apt-get update && sudo apt-get install -y sqlite3
+          if ! command -v sqlite3 >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y sqlite3
+          fi
           sqlite3 --version
 
       # Install the uutils multicall binary for
@@ -302,6 +318,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
@@ -326,6 +344,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
@@ -354,6 +374,8 @@ jobs:
     # workflow_call events where pull_request context is absent.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
@@ -423,8 +445,8 @@ jobs:
         # or moved suite would report green having run nothing. Assert the
         # files exist first.
         run: |
-          ls *.test.js
-          node --test *.test.js
+          ls ./*.test.js
+          node --test ./*.test.js
 
       # Detect whether DOPPLER_TOKEN is configured. Only set on push to
       # main (trusted code); PRs — including same-repo branches — must
@@ -432,49 +454,67 @@ jobs:
       # `env.DOPPLER_AVAILABLE` so this job stays green when unconfigured.
       - name: Detect Doppler availability (trusted runs only)
         if: github.event_name == 'push'
-        env:
-          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
-        run: |
-          if [ -n "$DOPPLER_TOKEN" ]; then
-            echo "DOPPLER_AVAILABLE=true" >> "$GITHUB_ENV"
-          fi
+        run: echo "DOPPLER_AVAILABLE=${{ secrets.DOPPLER_TOKEN != '' }}" >> "$GITHUB_ENV"
 
       - name: Install Doppler CLI
         if: github.event_name == 'push' && env.DOPPLER_AVAILABLE == 'true'
-        env:
-          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
         uses: dopplerhq/cli-action@4819d808ab99e5cde19a0637a16536a4038fad73 # v4
 
-      # External API dependency — don't block CI on Anthropic outages.
-      # ANTHROPIC_API_KEY is sourced from Doppler (single source of truth
-      # for non-GitHub secrets), so this step also requires Doppler to be
-      # available, which already implies a push to main.
-      # `--only-secrets` keeps the principle of least privilege: the
-      # step sees ANTHROPIC_API_KEY only, not every secret in Doppler.
-      - name: Run LLM agent example
-        if: github.event_name == 'push' && env.DOPPLER_AVAILABLE == 'true'
-        continue-on-error: true
-        env:
-          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
-        run: doppler run --only-secrets ANTHROPIC_API_KEY -- env -u DOPPLER_TOKEN cargo run --example agent_tool --features http_client
+      - name: Build LLM examples without credentials
+        run: |
+          cargo build --example agent_tool --features http_client
+          cargo build -p bashkit-cli --features realfs --quiet
 
-      # External API dependency — same rationale as the LLM agent example
-      # above: an OpenAI outage, quota exhaustion, or billing lapse is not a
-      # bashkit regression and must not turn main red.
-      - name: Run harness OpenAI joke example
-        if: github.event_name == 'push' && env.DOPPLER_AVAILABLE == 'true'
+      # Resolve only the required key; this token-bearing process exits before
+      # repository code runs. Mask the output before crossing the step boundary.
+      - name: Fetch Anthropic example key
+        id: anthropic
         continue-on-error: true
+        if: github.event_name == 'push' && env.DOPPLER_AVAILABLE == 'true'
+        shell: bash
         env:
           DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
         run: |
-          env -u DOPPLER_TOKEN cargo build -p bashkit-cli --features realfs --quiet
-          doppler run --only-secrets OPENAI_API_KEY -- env -u DOPPLER_TOKEN bash examples/harness-openai-joke.sh
+          key=$(doppler secrets get ANTHROPIC_API_KEY --plain)
+          printf '::add-mask::%s\n' "$key"
+          printf 'ANTHROPIC_API_KEY=%s\n' "$key" >> "$GITHUB_OUTPUT"
+
+      # External API availability must not block ordinary repository checks.
+      - name: Run LLM agent example
+        if: github.event_name == 'push' && env.DOPPLER_AVAILABLE == 'true' && steps.anthropic.outcome == 'success'
+        continue-on-error: true
+        env:
+          ANTHROPIC_API_KEY: ${{ steps.anthropic.outputs.ANTHROPIC_API_KEY }}
+        run: target/debug/examples/agent_tool
+
+      # Resolve only the required key; this token-bearing process exits before
+      # repository code runs. Mask the output before crossing the step boundary.
+      - name: Fetch OpenAI example key
+        id: openai
+        continue-on-error: true
+        if: github.event_name == 'push' && env.DOPPLER_AVAILABLE == 'true'
+        shell: bash
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+        run: |
+          key=$(doppler secrets get OPENAI_API_KEY --plain)
+          printf '::add-mask::%s\n' "$key"
+          printf 'OPENAI_API_KEY=%s\n' "$key" >> "$GITHUB_OUTPUT"
+
+      - name: Run harness OpenAI joke example
+        if: github.event_name == 'push' && env.DOPPLER_AVAILABLE == 'true' && steps.openai.outcome == 'success'
+        continue-on-error: true
+        env:
+          OPENAI_API_KEY: ${{ steps.openai.outputs.OPENAI_API_KEY }}
+        run: bash examples/harness-openai-joke.sh
 
   fuzz-check:
     name: Fuzz Compile Check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install Rust nightly
         uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # nightly

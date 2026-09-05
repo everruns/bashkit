@@ -9,14 +9,24 @@
 - SQLite budgets account for work within a single engine step.
 - Documentation preserves inline SVG diagrams during Markdown rendering.
 - CI's aggregate check includes WASM validation, and secret-backed examples
-  remove the inherited Doppler credential before executing repository code.
+  fetch scoped API keys in separate steps that end before repository code runs.
+- Browser persistence preserves the previous save when directory traversal fails.
+- BashTool snapshot constructors retain supplied JavaScript custom builtins.
+- Release binary builds use the exact validated commit; Cargo verification runs
+  without registry credentials, and JS release examples use reviewed lockfiles.
+- CI drops unused write permissions and installs SQLite only when missing.
+- Deep Agents supports the current structured backend protocol, exact VFS file
+  transfers, grep glob filters, and execution truncation metadata.
 - Anthropic sanitized tool output is capped after XML escaping, preserving
   complete entities and matching the OpenAI adapter.
 
 ### Changed
 
 - Refresh Rust, JavaScript, site, and example dependencies; update DeepSec to
-  2.3.9. Monty stays on 0.0.19 pending its resource-tracker migration.
+  2.3.9. Pin Monty to 0.0.19 and get-size2 to 0.10.1 to preserve per-VM
+  memory, work, and cancellation limits.
+- Maintenance requests now run analysis, fixes, validation, and shipping through
+  green CI and merge, including common misspellings.
 - Add the September Linux VM benchmark baseline.
 
 ## [0.17.1] - 2026-08-22

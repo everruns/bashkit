@@ -123,8 +123,8 @@ these files with it.
   - Run `cd .deepsec && pnpm update deepsec@latest`
   - Run `pnpm deepsec scan --project-id bashkit`
   - Run `pnpm deepsec process --project-id bashkit --agent codex`
-  - Review `pnpm deepsec report --project-id bashkit` and create GitHub issues
-    for any deferred findings
+  - Review `pnpm deepsec report --project-id bashkit`, fix findings, and verify
+    regressions before shipping; use the external-blocker policy below only when needed
 - Security tests exist for every MITIGATED threat
 - Failpoint tests pass
 - Unsafe usage reviewed (`cargo geiger`)
@@ -278,47 +278,71 @@ See [Coreutils Argument Port](../runtimes/coreutils-args-port.md).
 #### Escalation Policy
 
 Failures persisting **>2 consecutive days** on any workflow (CI, nightly, fuzz)
-are blocking:
-1. Open GitHub issue with label `ci:nightly`
-2. Link failing run(s)
-3. Assign to most recent contributor in failing area
-4. If upstream dep change: pin to known-good rev, open follow-up issue
+are blocking. Inspect failing runs, fix the root cause, and verify recovery in
+this pass. Preserve evidence in the PR. If upstream breaks a required contract,
+validate and document a known-good pin. Only a genuine external blocker or an
+explicitly requested scope split warrants a follow-up issue; include the failing
+runs and concrete reason work cannot proceed.
 
-**This section is a hard gate.** The maintenance pass MUST NOT be marked
-complete or merged while any of the above checks are red. If the agent cannot
-fix a failure, it must open a GitHub issue and report the pass as blocked.
+**This section is a hard gate.** Never mark maintenance complete or merge while
+required checks are red. Resolve ordinary failures rather than deferring them.
 
 ## September 2026 pass
 
 The 2026-09-05 pass starts at `ab04bca2` with main CI and seven daily nightly/fuzz
-runs green. Dependency refresh remains blocked on supply-chain certifications
-([#2374](https://github.com/everruns/bashkit/issues/2374)); no blanket exemptions
-were added. The Monty migration is tracked in
-[#2373](https://github.com/everruns/bashkit/issues/2373), with compatibility pins
-recorded in [Dependency Policy](dependencies.md). Deep Agents truncation metadata
-and grep glob filtering need a dedicated integration suite
-([#2375](https://github.com/everruns/bashkit/issues/2375)).
+runs green. It refreshes Rust/npm dependencies and updates DeepSec to 2.3.9.
+Monty 0.0.19 and get-size2 0.10.1 are exact compatibility constraints, not an
+unimplemented upgrade: newer Monty releases remove the required per-VM tracker,
+and newer get-size2 releases conflict with the pinned Ruff AST. Isolated
+compatibility builds and 284 Python-feature tests verify the safe versions;
+see [Dependency Policy](dependencies.md) and [Python Builtin](../runtimes/python-builtin.md).
 
-DeepSec 2.3.9 analyzed 44 files after 54 matcher hits and reported six findings.
-Four were addressed locally: inherited Doppler credentials in CI/release example
-processes, omitted WASM jobs in the aggregate `Check` gate, and Anthropic escaped
-output expansion. The two Python adapter findings are tracked above. A matcher
-scan is not a complete Rust security audit; DeepSec reported low Rust coverage.
+DeepSec analyzed 44 files after 54 matcher hits and reported six findings.
+Fixes cover CI credentials, the aggregate WASM gate, Anthropic escaped-output
+expansion, and Deep Agents truncation metadata/grep glob filters. Credential-fetch
+steps now exit before repository execution; only scoped API keys cross the step
+boundary. Tests execute the actual workflow scripts and check process environments.
+Deep Agents now implements the current structured protocol through native VFS
+operations, with a real `create_deep_agent` integration using a deterministic model.
+A matcher scan is not a complete Rust security audit; DeepSec reported low Rust coverage.
 
-Local verification passed: 5,564 workspace unit/integration tests, 167 rustdoc tests,
-17 failpoint tests, 29 security property tests, 67 repository-script tests,
-571 JS tests using the normal release native build, all-feature clippy/rustdoc,
-site build/generated-page checks, and CLI sort/jq/SQLite
-smoke commands. Strict host Bash parity reported 141 mismatches on macOS,
-including BSD utility differences and `/private/tmp` canonicalization; Linux/GNU
-validation is tracked in [#2376](https://github.com/everruns/bashkit/issues/2376).
-This pass is **blocked**, not release approval. Broader Python framework examples,
-coverage review, unsafe-code audit, coreutils regeneration, and local WASM/fuzz
-builds remain outstanding ([#2377](https://github.com/everruns/bashkit/issues/2377));
-the green baseline CI does not validate this refresh. A debug native JS build
-segfaulted in the security suite after the nested-loop cases, while the normal
-release build passed all 571 tests; investigate the debug stack/runtime behavior
-as part of the remaining validation rather than treating it as a release failure.
+Local verification includes 5,564 workspace unit/integration tests, 167 rustdoc
+tests, 17 failpoint tests, 29 security property tests, 75 repository-script tests,
+831 Python tests (four Linux-only skips on macOS), 573 JS tests, and 63 browser
+WASM tests. The JS/Python native security suites use release builds, matching
+published artifacts and CI; debug native stack-stress builds are not interchangeable
+with that validation profile. Strict Linux/GNU Bash parity passes all 1,859 cases.
+The macOS strict comparison exposes BSD utility/path differences and is not the
+GNU compatibility baseline.
+
+All-feature clippy/rustdoc, site build and generated-page checks, locked fuzz
+compilation/advisory checks, and standalone-workspace dependency/advisory checks
+pass. Coreutils regeneration produces no drift. CLI sort/jq/SQLite smoke tests
+pass, as do embedded Python/TypeScript external callbacks. The published 0.17.1
+browser example executes `jq` and the bundled child-shell script successfully.
+
+Unsafe-code review covers the changed dependency deltas and existing native
+FFI/callback ownership boundaries; this pass adds no Rust unsafe code. Geiger
+reports 449 packages but cannot parse two upstream files (signal-hook-registry
+and an aws-lc benchmark helper), and generated includes require source review.
+Its successful exit is not proof of complete unsafe coverage.
+
+The earlier August DeepSec tracking findings are also reproduced and fixed:
+browser persistence retains the previous complete snapshot after traversal errors;
+BashTool snapshot constructors register supplied custom builtins; SQLite setup
+installs only when absent; binary release jobs validate and build one immutable
+commit; Cargo publication verifies without registry credentials; CI grants no
+write permission or persisted checkout credential; release examples install the
+reviewed lockfile rather than resolving fresh dependencies. Regression tests cover
+failed/successful browser saves, keyed/unkeyed callbacks, SQLite present/missing
+branches, moved release tags, compiler environments, and release package links.
+
+Supply-chain validation passes with 57 individually reviewed dependency deltas
+and a non-importable jiter Rust-only baseline audit. The patched Git revision is
+explicitly audited, and `deny.toml` bans jiter's unused Python FFI feature after
+review found an unchecked allocation failure there. A negative fixture proves
+the feature ban rejects that configuration. Existing exemptions and publisher
+trust were not broadened.
 
 The aggregate CI gate must depend on every validation job, including `wasm`,
 `wasm-component`, and `wasm-web`. The maintenance security tests execute its

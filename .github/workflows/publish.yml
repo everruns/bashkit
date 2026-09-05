@@ -1,3 +1,4 @@
+# Verify packages without registry credentials; upload skips compilation.
 name: Publish
 
 on:
@@ -58,8 +59,11 @@ jobs:
           fi
           echo "Version verified: $TAG_VERSION"
 
+      - name: Verify bashkit package without credentials
+        run: cargo publish --dry-run -p bashkit
+
       - name: Publish bashkit to crates.io
-        run: cargo publish -p bashkit
+        run: cargo publish --no-verify -p bashkit
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
@@ -80,8 +84,11 @@ jobs:
       - name: Wait for crates.io index update
         run: sleep 30
 
+      - name: Verify bashkit-cli package without credentials
+        run: cargo publish --dry-run -p bashkit-cli
+
       - name: Publish bashkit-cli to crates.io
-        run: cargo publish -p bashkit-cli
+        run: cargo publish --no-verify -p bashkit-cli
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 

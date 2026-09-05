@@ -1,6 +1,8 @@
 ---
 name: maintain
 description: Analyze, fix, validate, and ship Bashkit maintenance through green CI and merge. Trigger on run maintenance, maintain, maintainace, or maintaiance; use analysis-only mode only when explicitly requested.
+metadata:
+  internal: true
 ---
 
 # Bashkit maintenance

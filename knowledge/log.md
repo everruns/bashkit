@@ -2,8 +2,11 @@
 
 ## 2026-09-05
 
-* **Maintenance**: Recorded the dependency audit blocker and Monty compatibility pins in [Maintenance](operations/maintenance.md) and [Dependency Policy](operations/dependencies.md).
-* **Security**: CI example children drop the inherited Doppler service token, the aggregate gate includes WASM jobs, and Anthropic output is capped again after XML escaping. Regression tests cover these boundaries; see [Threat Model](security/threat-model.md).
+* **Adapters**: Deep Agents implements the current structured protocol through native VFS operations; JS snapshot constructors retain supplied callbacks and browser persistence rejects partial traversals. See [Python Package](runtimes/python-package.md), [Snapshot History](foundations/snapshot-history.md), and [Browser Package](runtimes/browser-package.md).
+* **Supply chain**: Reviewed dependency deltas without new exemptions; the pinned jiter Git revision now has an explicit audit and its unused Python FFI is banned. Release jobs build immutable validated commits and verify Cargo packages without credentials; see [Dependency Policy](operations/dependencies.md) and [Release Process](operations/release-process.md).
+
+* **Maintenance**: Defined analyze/fix/ship as the default invocation and verified Monty compatibility pins in [Maintenance](operations/maintenance.md) and [Dependency Policy](operations/dependencies.md).
+* **Security**: CI credential-fetch steps exit before examples run with only scoped API keys, the aggregate gate includes WASM jobs, and Anthropic output is capped again after XML escaping. Regression tests cover these boundaries; see [Threat Model](security/threat-model.md).
 
 ## 2026-08-23
 

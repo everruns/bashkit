@@ -1047,21 +1047,6 @@ class TestDeepagentsEditSecurity:
             if "% (" in stripped and "path" in stripped:
                 pytest.fail(f"L{i}: Potential %-format injection: {stripped}")
 
-    def test_write_cmd_preserves_content_integrity(self):
-        """_build_write_cmd must not corrupt special characters in content."""
-        import importlib
-
-        mod = importlib.import_module("bashkit.deepagents")
-        build = mod._build_write_cmd
-
-        # Content with every dangerous character
-        content = "line1\n$HOME\n`whoami`\n$(id)\n'single'\n\"double\"\n\\backslash"
-        cmd = build("/tmp/test.txt", content)
-        # The heredoc uses single-quoted delimiter, so content is literal
-        assert "<<" in cmd
-        # Delimiter is single-quoted (no expansion)
-        assert "'" in cmd.split("<<")[1].split("\n")[0]
-
 
 # ===========================================================================
 # 15. BLACK-BOX: ExecResult data integrity

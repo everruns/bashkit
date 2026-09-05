@@ -12,8 +12,8 @@ importers:
   .:
     dependencies:
       '@everruns/bashkit-wasm':
-        specifier: 0.16.0
-        version: 0.16.0
+        specifier: 0.17.1
+        version: 0.17.1
     devDependencies:
       vite:
         specifier: 8.2.2
@@ -21,8 +21,8 @@ importers:
 
 packages:
 
-  '@everruns/bashkit-wasm@0.16.0':
-    resolution: {integrity: sha512-6Lx6tbZwZ9qHUsXDdNdYgXhjQFf8WTnDkJM0wVnIauEQ/u2v4bbl6AVIBZzR+4ndkGlA5njKYP2+j8Esq05OVg==}
+  '@everruns/bashkit-wasm@0.17.1':
+    resolution: {integrity: sha512-wAtZR7OOC/EqVik6WOXOiXfP1Zwm41XjNtCVtKQ33X47PpQCuy/qT4prJNcwnWk5cnNQwnXJyiCfND6mnIO1aA==}
 
   '@oxc-project/types@0.146.0':
     resolution: {integrity: sha512-XC0QsnnhVe7sLIWmYmdPw7x5P0h4W8vUU3Nv1ySgWXtvCz8NizoAEpGXA0sOYoJQV2Rl13LgURAHQ5cI5ILCSA==}
@@ -292,7 +292,7 @@ packages:
 
 snapshots:
 
-  '@everruns/bashkit-wasm@0.16.0': {}
+  '@everruns/bashkit-wasm@0.17.1': {}
 
   '@oxc-project/types@0.146.0': {}
 

@@ -86,9 +86,10 @@ release / 35 debug) against stack overflow from deeply nested expressions.
 `monty` and `monty-types` are pinned to 0.0.19 and ignored in
 `.github/dependabot.yml`. This is a security hold, not API-churn convenience.
 
-Monty 0.0.21 changed how `max_memory` is enforced:
+Published Monty 0.0.20, 0.0.21, and 0.0.22 all change how `max_memory` is
+enforced (verified against each release's `monty-types/src/resource.rs`):
 
-| | 0.0.19 | 0.0.21 |
+| | 0.0.19 | 0.0.20–0.0.22 |
 |---|---|---|
 | Enforcement | `LimitedTracker::on_grow` accounts VM heap growth in-process | `probe_memory()` reads the `LIVE_MEMORY` / `BASELINE_MEMORY` statics |
 | Who populates it | the tracker itself | only `monty-alloc`, installed as the **process-wide global allocator** |
@@ -117,17 +118,18 @@ standing guard for this, they need no new test to be added:
 The duration, recursion, and print-collect-cap limits are unaffected and still
 pass, which localises the regression to allocator-backed memory.
 
-Two further changes land in the same bump and must be handled when the hold is
-lifted; neither is a blocker on its own:
+There is a second security blocker: `ResourceTracker` becomes a concrete
+struct in all three releases, removing Bashkit's VM checkpoint hooks.
+`BudgetTracker` checks request cancellation/deadlines during execution and
+charges shared work on VM/allocation checkpoints. Charging only around a
+synchronous `start`/`resume` call cannot interrupt or meter an uninterrupted
+Python loop, so it is not a safe replacement. The per-entry admission
+reservation enforcing TM-DOS-096 remains necessary but is not a substitute.
+An upgrade requires both per-VM memory enforcement without owning the host's
+global allocator and equivalent in-VM budget/cancellation checkpoints.
 
-- `ResourceTracker` became a concrete struct (upstream pydantic/monty#613), so
-  the host can no longer wrap VM checkpoints. `BudgetTracker`'s bridge into the
-  shared `ExecutionBudget` has to move outside the VM, charging work around
-  each synchronous `start`/`resume` section instead of inside it. The
-  per-entry admission reservation that enforces TM-DOS-096 is independent of
-  the tracker and survives either way.
-- `ResourceLimits::new()` is replaced by `Default`, and its builders take plain
-  values rather than `Option`s.
+The API-only changes (`ResourceLimits::new()` becomes `Default`, builders
+take plain values instead of `Option`s) are not security blockers.
 
 Lifting the hold also **removes** a `[patch.crates-io]` git pin: the patch in
 the root `Cargo.toml` exists only because `monty 0.0.19` requires

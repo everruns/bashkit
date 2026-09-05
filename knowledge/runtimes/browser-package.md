@@ -204,7 +204,10 @@ published, builds `pkg/`, runs the smoke test, and `npm publish`es
 `@everruns/bashkit-wasm` with provenance (`NPM_TOKEN`, `id-token: write`), same
 pattern as `publish-js.yml`. Browser example smoke testing writes a file under
 `/home/user`, reloads the page, and verifies `browserLocal` restores it from
-`localStorage`.
+`localStorage`. The text-only example adapter commits only a complete traversal;
+unreadable files, non-UTF-8 bytes, or directory errors return `false` and leave
+the previous snapshot intact. A root confirmed absent through `exists()` saves
+an empty snapshot, so deleting the root still clears persisted files.
 
 ## Limitations (see [Known Limitations](../operations/limitations.md))
 
