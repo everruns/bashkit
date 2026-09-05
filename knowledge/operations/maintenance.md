@@ -307,13 +307,17 @@ operations, with a real `create_deep_agent` integration using a deterministic mo
 A matcher scan is not a complete Rust security audit; DeepSec reported low Rust coverage.
 
 Local verification includes 5,564 workspace unit/integration tests, 167 rustdoc
-tests, 17 failpoint tests, 29 security property tests, 75 repository-script tests,
+tests, 17 failpoint tests, 29 security property tests, 77 repository-script tests,
 831 Python tests (four Linux-only skips on macOS), 573 JS tests, and 63 browser
 WASM tests. The JS/Python native security suites use release builds, matching
 published artifacts and CI; debug native stack-stress builds are not interchangeable
 with that validation profile. Strict Linux/GNU Bash parity passes all 1,859 cases.
 The macOS strict comparison exposes BSD utility/path differences and is not the
 GNU compatibility baseline.
+
+The WASM bindgen installer derives its exact schema version from Cargo.lock,
+replaces stale cached CLIs, and verifies the executable on PATH in CI and
+publication. Regression tests cover cache mismatch and ambiguous lock versions.
 
 All-feature clippy/rustdoc, site build and generated-page checks, locked fuzz
 compilation/advisory checks, and standalone-workspace dependency/advisory checks
