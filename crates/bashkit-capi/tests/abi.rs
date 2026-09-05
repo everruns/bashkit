@@ -349,9 +349,11 @@ fn cancellation_aborts_running_execution_and_stays_sticky_until_cleared() {
             BashkitStatus::Ok
         );
 
-        // Cancel a pending sleep: the request budget polls the token while the
-        // command is in flight, and loop-based scripts would instead race the
-        // profile's command/iteration caps before the flag lands.
+        // Cancellation lands at command boundaries, so the script must reach
+        // one quickly without tripping the profile's command/iteration caps:
+        // a loop of 1-second sleeps gives a boundary every second while
+        // burning almost no budget. (A pending single sleep is NOT
+        // interruptible; only the profile deadline ends it.)
         // Raw pointers are not Send and edition-2021 closures would capture the
         // inner field of any wrapper anyway, so cross the thread as a usize.
         let handle = bash as usize;
@@ -365,7 +367,7 @@ fn cancellation_aborts_running_execution_and_stays_sticky_until_cleared() {
                 let mut thread_error = ptr::null_mut();
                 let status = bashkit_execute(
                     bash,
-                    bytes(b"sleep 30000"),
+                    bytes(b"while true; do sleep 1; done"),
                     &mut result,
                     &mut thread_error,
                 );
