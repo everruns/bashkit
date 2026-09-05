@@ -364,20 +364,20 @@ fn cancellation_aborts_running_execution_and_stays_sticky_until_cleared() {
         let writer = observed.clone();
         let worker = std::thread::spawn(move || {
             let bash = handle as *mut Bashkit;
-            unsafe {
-                let mut result = ptr::null_mut();
-                let mut thread_error = ptr::null_mut();
-                let status = bashkit_execute(
-                    bash,
-                    bytes(b"while true; do sleep 1; done"),
-                    &mut result,
-                    &mut thread_error,
-                );
-                assert!(result.is_null());
-                *writer.lock().unwrap() = Some(status);
-                if !thread_error.is_null() {
-                    bashkit_error_free(thread_error);
-                }
+            // No inner `unsafe` block: the closure literal is lexically nested
+            // under the test's `unsafe` block, which covers the body.
+            let mut result = ptr::null_mut();
+            let mut thread_error = ptr::null_mut();
+            let status = bashkit_execute(
+                bash,
+                bytes(b"while true; do sleep 1; done"),
+                &mut result,
+                &mut thread_error,
+            );
+            assert!(result.is_null());
+            *writer.lock().unwrap() = Some(status);
+            if !thread_error.is_null() {
+                bashkit_error_free(thread_error);
             }
         });
 
