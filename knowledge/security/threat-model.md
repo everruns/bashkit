@@ -1574,8 +1574,7 @@ the two lists in sync so a local `cargo deny check advisories` matches CI.
 | Advisory | Crate | Why suppressed | Remove when |
 |----------|-------|----------------|-------------|
 | RUSTSEC-2023-0071 | `rsa` | Marvin timing sidechannel (TM-CRY-002). No patched version exists; reachable only via the opt-in `ssh` feature | `rsa` ships a constant-time release |
-| RUSTSEC-2023-0089 | `atomic-polyfill` | Unmaintained, no known vulnerability; transitive via `monty` → `postcard` → `heapless` | Upstream drops the dependency |
-| RUSTSEC-2026-0173 | `proc-macro-error2` | Unmaintained build-time proc-macro, bench harness only (not shipped library code); transitive via `tabled` | `tabled` releases a version without it |
+| RUSTSEC-2023-0089 | `atomic-polyfill` | Unmaintained, no known vulnerability; transitive via `monty` → `postcard` → `heapless` (pinned at 0.7, which still requires it) | Upstream drops the dependency |
 
 A suppression that stops matching is not evidence that it can be dropped.
 `cargo deny check advisories` currently warns `advisory-not-detected` for
@@ -1585,6 +1584,13 @@ The advisory still carries `patched = []`, so the exposure is unchanged and
 matching resumes as soon as `rsa` ships a stable release. Before removing any
 entry above, check the advisory's own `patched` list rather than the scanner's
 silence.
+
+Retired: RUSTSEC-2026-0173 (`proc-macro-error2`, unmaintained). Its recorded
+removal condition — "`tabled` releases a version without it" — was met by
+`tabled` 0.22 / `tabled_derive` 0.12, which drops the dependency. The bench
+harness was moved to 0.22 and the crate is gone from `Cargo.lock`, so the
+suppression was deleted rather than left to rot. This is the shape a removal
+should take: the dependency is actually gone, not merely unmatched.
 
 ### Fuzzing Targets
 

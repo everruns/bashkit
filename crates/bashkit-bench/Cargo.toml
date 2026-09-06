@@ -25,4 +25,4 @@ tempfile.workspace = true
 
 # Terminal output
 colored = "3"
-tabled = "0.21"
+tabled = "0.22"
