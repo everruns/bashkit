@@ -59,6 +59,27 @@ updates:
       # rationale comment above [patch.crates-io] in the root Cargo.toml.
       - dependency-name: "idna_adapter"
 
+      # get-size2 is not a dependency bashkit uses — no bashkit source
+      # references it. It is declared under the `python` feature purely to
+      # hold the *whole graph* at 0.10.1, which is the last version that
+      # implements `GetSize` for compact_str 0.9. monty 0.0.19's
+      # ruff_python_ast derives `get_size2::GetSize` on nodes holding a
+      # `CompactString` from compact_str 0.9, so any get-size2 >= 0.10.2
+      # (which moved those impls to compact_str 0.10) leaves the derive with
+      # no impl:
+      #
+      #   error[E0277]: the trait bound `CompactString: GetSize` is not
+      #   satisfied --> ruff_python_ast-0.0.3/src/nodes.rs:411:41
+      #   note: there are multiple different versions of crate `compact_str`
+      #
+      # Bumping bashkit's declared version does not just fail to help, it
+      # removes the constraint that keeps ruff's copy pinned, letting it
+      # float to 0.10.3 and break (#2381, all 22 build jobs red). Ignore
+      # outright rather than by update-type: the breaking move was a patch
+      # release. Drop this once monty's ruff moves to compact_str 0.10; the
+      # pin comment sits next to the dep in crates/bashkit/Cargo.toml.
+      - dependency-name: "get-size2"
+
   # Fuzz targets are a separate cargo workspace with their own lockfile, so the
   # "/" entry above never touches them. Without this the fuzz lockfile silently
   # rots between releases (it drifted onto an unsound `anyhow` and two yanked
