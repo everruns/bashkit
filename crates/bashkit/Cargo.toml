@@ -129,7 +129,7 @@ monty = { version = "=0.0.19", optional = true }
 monty-types = { version = "=0.0.19", optional = true }
 # Monty's ruff AST uses compact_str 0.9; get-size2 >=0.10.2 only implements
 # GetSize for compact_str 0.10. Enforce downstream too, not only in Cargo.lock.
-get-size2 = { version = "=0.10.1", optional = true }
+get-size2 = { version = "=0.11.0", optional = true }
 
 # Embedded TypeScript interpreter (optional)
 zapcode-core = { version = "1.5.1", optional = true }

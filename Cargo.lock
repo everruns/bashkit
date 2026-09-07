@@ -360,7 +360,7 @@ dependencies = [
  "flate2",
  "futures-core",
  "futures-util",
- "get-size2",
+ "get-size2 0.11.0",
  "getrandom 0.4.3",
  "gloo-timers",
  "hmac",
@@ -936,6 +936,19 @@ dependencies = [
  "rustversion",
  "ryu",
  "static_assertions",
+]
+
+[[package]]
+name = "compact_str"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "79fcda08c33bb58b97008b2cdada6622500e949e060f5913361763121abd2416"
+dependencies = [
+ "castaway",
+ "cfg-if",
+ "itoa",
+ "static_assertions",
+ "zmij",
 ]
 
 [[package]]
@@ -1749,17 +1762,23 @@ dependencies = [
 
 [[package]]
 name = "get-size2"
-version = "0.10.1"
+version = "0.10.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "823645bc6404ae2915707777061a47d3a031a9ee0bff51b34ec973df3d8d2990"
+checksum = "b411f34418305908ab15a82ff78958c2a9aee9a272b2a2e663836b20a4e4b9d3"
 dependencies = [
- "compact_str",
+ "compact_str 0.10.0",
  "get-size-derive2",
  "hashbrown 0.17.1",
  "ordermap",
  "smallvec",
  "thin-vec",
 ]
+
+[[package]]
+name = "get-size2"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d4d338de392104417fe6fdbe588c52383b9236956d8afe5654f0077176edc632"
 
 [[package]]
 name = "getopts"
@@ -3293,7 +3312,7 @@ version = "0.117.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6eb1bd62de89fb0c646bfb053b72370750fab43a84ebe09ad97cfa020712314"
 dependencies = [
- "compact_str",
+ "compact_str 0.9.1",
  "oxc-miette",
  "oxc_allocator",
  "oxc_ast_macros",
@@ -3307,7 +3326,7 @@ version = "0.117.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2e65cbfb06ecbae07e0da931815b6b03ade886d016302c400bda7dc0a2f600d3"
 dependencies = [
- "compact_str",
+ "compact_str 0.9.1",
  "hashbrown 0.16.1",
  "oxc_allocator",
  "oxc_estree",
@@ -4263,8 +4282,8 @@ dependencies = [
  "aho-corasick",
  "arrayvec",
  "bitflags 2.13.1",
- "compact_str",
- "get-size2",
+ "compact_str 0.9.1",
+ "get-size2 0.10.3",
  "is-macro",
  "memchr",
  "ruff_python_trivia",
@@ -4283,8 +4302,8 @@ checksum = "4e3b8436fb010636ea79ce545acc3e391296ef4e804f7cef336dd5f9c8a4aa3a"
 dependencies = [
  "bitflags 2.13.1",
  "bstr",
- "compact_str",
- "get-size2",
+ "compact_str 0.9.1",
+ "get-size2 0.10.3",
  "memchr",
  "ruff_python_ast",
  "ruff_python_trivia",
@@ -4335,7 +4354,7 @@ version = "0.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c91652ad39be604bc4d5299a5d19feccdd89e255609d89a031e7bb8e0d0aef9f"
 dependencies = [
- "get-size2",
+ "get-size2 0.10.3",
 ]
 
 [[package]]
