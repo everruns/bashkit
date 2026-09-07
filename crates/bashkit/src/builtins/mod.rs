@@ -1443,6 +1443,65 @@ mod tests {
         );
     }
 
+    /// TM-INF-024, module-mode half.
+    ///
+    /// `no_clap_env_in_generated_parsers` covers the args-mode hole
+    /// (clap reading defaults from the host process). Vendored uucore
+    /// *module* bodies have the same hole one level down: they can call
+    /// `std::env::var*` directly. Such a body has no `ctx`, so it cannot
+    /// consult bashkit's virtual env — the call would read the host
+    /// process environment and let an embedder's environment change what
+    /// a sandboxed script does. Upstream added exactly this in
+    /// `format/argument.rs` (a `POSIXLY_CORRECT` probe gating a printf
+    /// warning); `bashkit-coreutils-port` now folds allow-listed reads to
+    /// "unset" and aborts on the rest.
+    ///
+    /// This scan is recursive (unlike the args-mode one, which only reads
+    /// the top level) because vendored modules land in subdirectories.
+    #[test]
+    fn no_host_env_reads_in_generated_code() {
+        let pat = regex::Regex::new(r"env\s*::\s*(var|vars|args)(_os)?\s*\(").unwrap();
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/builtins/generated");
+        let mut violations = Vec::new();
+
+        fn walk(dir: &std::path::Path, out: &mut Vec<String>, pat: &regex::Regex) {
+            for entry in std::fs::read_dir(dir).expect("read generated dir") {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    walk(&path, out, pat);
+                    continue;
+                }
+                if path.extension().and_then(|s| s.to_str()) != Some("rs") {
+                    continue;
+                }
+                let src = std::fs::read_to_string(&path).expect("read generated file");
+                for (i, line) in src.lines().enumerate() {
+                    // Doc comments describe the rule; only real calls count.
+                    if line.trim_start().starts_with("//") {
+                        continue;
+                    }
+                    if pat.is_match(line) {
+                        let rel = path
+                            .strip_prefix(std::path::Path::new(env!("CARGO_MANIFEST_DIR")))
+                            .unwrap_or(&path);
+                        out.push(format!("{}:{}: {}", rel.display(), i + 1, line.trim_end()));
+                    }
+                }
+            }
+        }
+        walk(&root, &mut violations, &pat);
+
+        assert!(
+            violations.is_empty(),
+            "Host-process environment read found in generated code. A vendored \
+             body has no `ctx`, so this reads the *host* environment and breaks \
+             bashkit's sandbox boundary (TM-INF-024). Re-run the port — it folds \
+             names listed in `vendored.toml`'s `host_env` to \"unset\" and \
+             rejects the rest.\n\nViolations:\n{}",
+            violations.join("\n")
+        );
+    }
+
     /// Every `<util>_args.rs` MUST expose a `<UTIL>_ENV_DEFAULTS` static.
     /// The codegen always emits one (possibly empty) so the bashkit-side
     /// surface is uniform — every clap-based builtin can wire through

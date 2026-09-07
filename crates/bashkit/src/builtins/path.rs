@@ -287,6 +287,16 @@ impl Builtin for Readlink {
                 ) {
                     return Ok(ExecResult::ok(rendered));
                 }
+                // uutils marked the FILES operand `required(true)`, so clap
+                // now rejects a bare `readlink` with its own generic message.
+                // GNU prints "readlink: missing operand" and exits 1; keep
+                // that parity rather than inheriting the upstream divergence.
+                if kind == clap::error::ErrorKind::MissingRequiredArgument {
+                    return Ok(ExecResult::err(
+                        "readlink: missing operand\n".to_string(),
+                        1,
+                    ));
+                }
                 return Ok(ExecResult::err(rendered, 2));
             }
         };

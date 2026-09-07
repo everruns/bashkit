@@ -37,6 +37,10 @@
 //! prefix = "uucore::translate"
 //! action = "fluent"                 # resolve translate!() at port time
 //! ftl_sources = ["src/uucore/locales/en-US.ftl"]
+//!
+//! # Host env reads the module is allowed to contain. Each listed name
+//! # folds to "unset" at port time; unlisted reads abort the port.
+//! host_env = ["POSIXLY_CORRECT"]
 //! ```
 //!
 //! Action support, current implementation:
@@ -78,6 +82,17 @@ pub struct Module {
     pub out: String,
     #[serde(default)]
     pub substitutions: Vec<Substitution>,
+    /// Host-process environment variables this module is allowed to
+    /// read, each folded to "unset" at port time (TM-INF-024).
+    ///
+    /// A vendored uucore library has no `ctx`, so it cannot consult
+    /// bashkit's virtual env; leaving a `std::env::var*` call in the
+    /// body would let the *host* process environment steer sandboxed
+    /// script behaviour. Listing a name here is an explicit decision
+    /// that "unset" is the correct sandbox answer for it. Any env read
+    /// not listed aborts the port instead of being vendored silently.
+    #[serde(default)]
+    pub host_env: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]

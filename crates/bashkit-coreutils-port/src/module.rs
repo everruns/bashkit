@@ -160,7 +160,16 @@ fn port_file(
     // no longer needs its `use`, which apply_substitutions then drops.
     let folded = fluent.fold_file(&mut parsed, rel_path)?;
 
-    let body_text = if needs_rewrite(module) || stripped_test_items || stripped_doc_attrs || folded
+    // TM-INF-024: neutralise host-process env reads before emission. A
+    // vendored library has no `ctx`, so an `std::env::var*` call left in
+    // the body would let the host environment steer sandboxed scripts.
+    let env_folded = fold_host_env(&mut parsed, module, rel_path)?;
+
+    let body_text = if needs_rewrite(module)
+        || stripped_test_items
+        || stripped_doc_attrs
+        || folded
+        || env_folded
     {
         apply_substitutions(&mut parsed, module, fluent)?;
         prettyplease::unparse(&parsed)
@@ -176,6 +185,179 @@ fn port_file(
     }
     std::fs::write(out, body).with_context(|| format!("write {}", out.display()))?;
     Ok(())
+}
+
+/// Host-process env reads that must never survive into vendored code.
+///
+/// `vars`/`args` enumerate rather than look up a single name, so they
+/// have no allow-list form: they always abort the port.
+const ENV_READ_FNS: &[&str] = &["var", "var_os", "vars", "vars_os", "args", "args_os"];
+
+/// TM-INF-024, module-mode half.
+///
+/// Args mode strips `Arg::env(...)` because clap would otherwise read
+/// clap defaults from the host process. Module mode has the same hole
+/// one level down: a vendored uucore body can call `std::env::var*`
+/// directly. It has no `ctx`, so it cannot consult bashkit's virtual
+/// env, and leaving the call in would let the *host* environment steer
+/// sandboxed script behaviour (upstream added exactly this — a
+/// `POSIXLY_CORRECT` probe in `format/argument.rs`).
+///
+/// Each name listed in the module's `host_env` folds to "unset", the
+/// answer a sandbox with no host environment should give. Anything not
+/// listed aborts the port, so a future upstream env read surfaces as a
+/// loud drift failure instead of a silent boundary regression.
+fn fold_host_env(file: &mut syn::File, module: &Module, rel_path: &str) -> Result<bool> {
+    let mut folder = HostEnvFolder {
+        allowed: &module.host_env,
+        folded: false,
+        errors: Vec::new(),
+    };
+    folder.visit_file_mut(file);
+    if !folder.errors.is_empty() {
+        bail!(
+            "{}: host-process environment read in vendored module '{}'.\n\
+             A vendored uucore body has no `ctx`, so it cannot consult bashkit's \
+             virtual env — leaving the read in would let the host environment \
+             steer sandboxed scripts (TM-INF-024).\n\
+             Fold it to \"unset\" by adding the name to `host_env` in \
+             `vendored.toml`, or stop vendoring the module.\n\n{}",
+            rel_path,
+            module.name,
+            folder.errors.join("\n")
+        );
+    }
+    Ok(folder.folded)
+}
+
+struct HostEnvFolder<'a> {
+    allowed: &'a [String],
+    folded: bool,
+    errors: Vec<String>,
+}
+
+/// Returns the env-read function name for `std::env::<fn>` style paths.
+///
+/// Matches on the `env::<fn>` tail so both `std::env::var_os(..)` and
+/// the `use std::env;` + `env::var_os(..)` spelling are caught.
+fn env_read_fn(path: &syn::Path) -> Option<String> {
+    let mut segs = path.segments.iter().rev();
+    let last = segs.next()?.ident.to_string();
+    if !ENV_READ_FNS.contains(&last.as_str()) {
+        return None;
+    }
+    (segs.next()?.ident == "env").then_some(last)
+}
+
+impl VisitMut for HostEnvFolder<'_> {
+    fn visit_expr_mut(&mut self, expr: &mut Expr) {
+        visit_mut::visit_expr_mut(self, expr);
+
+        let Expr::Call(call) = &*expr else { return };
+        let Expr::Path(func) = &*call.func else {
+            return;
+        };
+        let Some(read_fn) = env_read_fn(&func.path) else {
+            return;
+        };
+
+        // `vars`/`args` enumerate the whole environment; there is no
+        // single name to allow-list, so they are always a policy error.
+        let key = match call.args.first() {
+            Some(Expr::Lit(syn::ExprLit {
+                lit: syn::Lit::Str(s),
+                ..
+            })) => Some(s.value()),
+            _ => None,
+        };
+
+        match key {
+            Some(k) if self.allowed.contains(&k) => {
+                *expr = match read_fn.as_str() {
+                    "var_os" => parse_quote!(::std::option::Option::<::std::ffi::OsString>::None),
+                    "var" => {
+                        parse_quote!(::core::result::Result::Err(
+                            ::std::env::VarError::NotPresent
+                        ))
+                    }
+                    other => {
+                        self.errors.push(format!(
+                            "  `env::{other}(\"{k}\")` cannot be folded — only \
+                             `var` and `var_os` have an \"unset\" form"
+                        ));
+                        return;
+                    }
+                };
+                self.folded = true;
+            }
+            Some(k) => self
+                .errors
+                .push(format!("  `env::{read_fn}(\"{k}\")` — not in `host_env`")),
+            // `vars`/`args` enumerate the whole environment rather than
+            // looking one name up, so there is nothing to allow-list.
+            None if matches!(read_fn.as_str(), "vars" | "vars_os" | "args" | "args_os") => {
+                self.errors.push(format!(
+                    "  `env::{read_fn}()` — enumerates the host environment, \
+                     no single name to allow-list"
+                ))
+            }
+            None => self.errors.push(format!(
+                "  `env::{read_fn}(...)` — non-literal key, cannot be allow-listed"
+            )),
+        }
+    }
+
+    fn visit_item_use_mut(&mut self, item: &mut ItemUse) {
+        // `use std::env::var_os;` would let a later bare `var_os(..)`
+        // call slip past the qualified-path match above.
+        let mut path = Vec::new();
+        collect_use_leaf_names(&item.tree, &mut path, &mut self.errors);
+    }
+}
+
+/// Flags `use std::env::<read fn>` imports, which unqualify an env read.
+fn collect_use_leaf_names(tree: &UseTree, path: &mut Vec<String>, errors: &mut Vec<String>) {
+    match tree {
+        UseTree::Path(p) => {
+            path.push(p.ident.to_string());
+            collect_use_leaf_names(&p.tree, path, errors);
+            path.pop();
+        }
+        UseTree::Group(g) => {
+            for t in &g.items {
+                collect_use_leaf_names(t, path, errors);
+            }
+        }
+        UseTree::Name(n) => {
+            let name = n.ident.to_string();
+            if path.last().map(String::as_str) == Some("env")
+                && ENV_READ_FNS.contains(&name.as_str())
+            {
+                errors.push(format!(
+                    "  `use {}::{name};` — import it qualified (`env::{name}`) \
+                     so the port can fold it",
+                    path.join("::")
+                ));
+            }
+        }
+        UseTree::Rename(r) => {
+            let name = r.ident.to_string();
+            if path.last().map(String::as_str) == Some("env")
+                && ENV_READ_FNS.contains(&name.as_str())
+            {
+                errors.push(format!(
+                    "  `use {}::{name} as {};` — renamed env read cannot be folded",
+                    path.join("::"),
+                    r.rename
+                ));
+            }
+        }
+        UseTree::Glob(_) => {
+            if path.last().map(String::as_str) == Some("env") {
+                errors.push(format!("  `use {}::*;` — glob over `env`", path.join("::")));
+            }
+        }
+    }
 }
 
 fn needs_rewrite(module: &Module) -> bool {
@@ -1052,6 +1234,99 @@ out = "demo.rs"
         assert!(body.contains("uutils/coreutils@abc123"));
         assert!(body.contains("use std::collections::HashMap;"));
         assert!(body.contains("pub fn x() {}"));
+    }
+
+    /// TM-INF-024: an env read the manifest has not opted into must
+    /// abort the port, not get vendored into the sandbox.
+    #[test]
+    fn unlisted_host_env_read_hard_errors() {
+        let (_tmp, uutils, manifest, out) = fixture(
+            r#"
+[[modules]]
+name = "demo"
+source = "lib/demo.rs"
+out = "demo.rs"
+"#,
+            &[(
+                "lib/demo.rs",
+                "pub fn x() -> bool { std::env::var_os(\"POSIXLY_CORRECT\").is_none() }\n",
+            )],
+        );
+        let err = run(&uutils, "demo", "x", &manifest, &out).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("host-process environment read"), "got: {msg}");
+        assert!(msg.contains("POSIXLY_CORRECT"), "got: {msg}");
+    }
+
+    /// An allow-listed name folds to "unset" — the answer a sandbox with
+    /// no host environment should give — and the read is gone.
+    #[test]
+    fn listed_host_env_read_folds_to_unset() {
+        let (_tmp, uutils, manifest, out) = fixture(
+            r#"
+[[modules]]
+name = "demo"
+source = "lib/demo.rs"
+out = "demo.rs"
+host_env = ["POSIXLY_CORRECT"]
+"#,
+            &[(
+                "lib/demo.rs",
+                "pub fn x() -> bool { std::env::var_os(\"POSIXLY_CORRECT\").is_none() }\n",
+            )],
+        );
+        let written = run(&uutils, "demo", "x", &manifest, &out).unwrap();
+        let body = fs::read_to_string(&written[0]).unwrap();
+        assert!(!body.contains("env::var_os"), "read survived: {body}");
+        assert!(
+            body.contains("Option::<::std::ffi::OsString>::None"),
+            "{body}"
+        );
+    }
+
+    /// `env::vars()` enumerates rather than looking up one name, so it
+    /// has no "unset" form and is rejected even when listed.
+    #[test]
+    fn env_enumeration_is_always_rejected() {
+        let (_tmp, uutils, manifest, out) = fixture(
+            r#"
+[[modules]]
+name = "demo"
+source = "lib/demo.rs"
+out = "demo.rs"
+host_env = ["POSIXLY_CORRECT"]
+"#,
+            &[("lib/demo.rs", "pub fn x() { let _ = std::env::vars(); }\n")],
+        );
+        let err = run(&uutils, "demo", "x", &manifest, &out).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("enumerates the host environment"),
+            "got: {err:#}"
+        );
+    }
+
+    /// Importing the read unqualified would dodge the call-site match,
+    /// so the import itself is rejected.
+    #[test]
+    fn unqualified_env_import_hard_errors() {
+        let (_tmp, uutils, manifest, out) = fixture(
+            r#"
+[[modules]]
+name = "demo"
+source = "lib/demo.rs"
+out = "demo.rs"
+host_env = ["POSIXLY_CORRECT"]
+"#,
+            &[(
+                "lib/demo.rs",
+                "use std::env::var_os;\npub fn x() -> bool { var_os(\"POSIXLY_CORRECT\").is_none() }\n",
+            )],
+        );
+        let err = run(&uutils, "demo", "x", &manifest, &out).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("import it qualified"),
+            "got: {err:#}"
+        );
     }
 
     #[test]

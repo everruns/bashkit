@@ -28,6 +28,17 @@ name = "format"
 source = "src/uucore/src/lib/features/format"
 out = "format"
 
+# TM-INF-024. uucore suppresses printf's "character(s) following
+# character constant have been ignored" warning when POSIXLY_CORRECT is
+# set in the *host* process env. A vendored library has no `ctx`, so it
+# cannot read bashkit's virtual env, and honouring the host variable
+# would let the embedder's environment change what a sandboxed script
+# prints. Folded to "unset" at port time: bashkit always warns, which
+# is GNU's own default behaviour and what this module did before
+# upstream added the probe. Any env read not listed here aborts the
+# port rather than being vendored silently.
+host_env = ["POSIXLY_CORRECT"]
+
 # Self-references inside uucore::format now point at the vendored
 # generated module path.
 [[modules.substitutions]]

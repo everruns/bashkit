@@ -59,8 +59,9 @@ impl Builtin for Truncate {
         let no_create = matches.get_flag("no-create");
 
         let target_spec: Option<TargetSize> =
-            if let Some(rfile) = matches.get_one::<String>("reference") {
-                let path = resolve_path(ctx.cwd, rfile);
+            if let Some(rfile) = matches.get_one::<OsString>("reference") {
+                let rfile = rfile.to_string_lossy();
+                let path = resolve_path(ctx.cwd, &rfile);
                 let meta = match ctx.fs.stat(&path).await {
                     Ok(m) => m,
                     Err(e) => {

@@ -280,11 +280,44 @@ Top-level upstream `#[cfg(test)]` items and rustdoc attributes are stripped:
 bashkit tests/docs cover the integrated behavior; upstream tests assume the
 original uucore topology.
 
+### Host env reads in vendored bodies (TM-INF-024, module half)
+
+Args mode strips `Arg::env(...)` so clap cannot resolve defaults from the
+host process. Module mode has the same hole one level down: a vendored
+uucore *body* can call `std::env::var*` directly. Such a body is a plain
+library with no `ctx`, so it cannot consult bashkit's virtual env — the
+call would read the **host** process environment, letting an embedder's
+environment change what a sandboxed script does.
+
+`fold_host_env` (in `module.rs`) runs on every ported file, after Fluent
+folding and before emission:
+
+- A name listed in the module's `host_env` manifest key folds to "unset"
+  (`var_os(...)` → `Option::<OsString>::None`, `var(...)` →
+  `Err(VarError::NotPresent)`) — the answer a sandbox with no host
+  environment should give.
+- Anything else aborts the port: an unlisted name, a non-literal key,
+  the enumerating `env::vars()`/`env::args()` forms (no single name to
+  allow-list), and `use std::env::var_os;`-style imports that would
+  unqualify the call past the AST match.
+
+So an upstream env read surfaces as a loud drift failure, never a silent
+boundary regression. This is not hypothetical: uutils added a
+`POSIXLY_CORRECT` probe to `format/argument.rs` (gating printf's
+"character(s) following character constant have been ignored" warning),
+which is why `format` carries `host_env = ["POSIXLY_CORRECT"]`. Folding
+it to unset means bashkit always warns — GNU's default, and what the
+module did before the probe landed.
+
+Static backstop: `builtins::tests::no_host_env_reads_in_generated_code`
+scans `generated/**` recursively (the args-mode guard only reads the top
+level, so it cannot see vendored subdirectories).
+
 ### Vendored Modules
 
 | Module | uutils source | Output | Substitution decisions |
 |---|---|---|---|
-| `format` | `src/uucore/src/lib/features/format` | `crates/bashkit/src/builtins/generated/format/` plus `extendedbigdecimal.rs` and `num_parser.rs` siblings | `crate::format` self-refs rewrite to `crate::builtins::generated::format`; `extendedbigdecimal` and `parser::num_parser` are inlined; `NonUtf8OsStrError`, `os_str_as_bytes`, `UError`, `set_exit_code`, `strip_errno`, `quoting_style`, `show_error`, and `show_warning` rewrite to bashkit-local `format_support` shims; `translate` / `translate_text` resolve at port time from `src/uucore/locales/{,errors/}en-US.ftl`. |
+| `format` | `src/uucore/src/lib/features/format` | `crates/bashkit/src/builtins/generated/format/` plus `extendedbigdecimal.rs` and `num_parser.rs` siblings | `crate::format` self-refs rewrite to `crate::builtins::generated::format`; `extendedbigdecimal` and `parser::num_parser` are inlined; `NonUtf8OsStrError`, `os_str_as_bytes`, `UError`, `set_exit_code`, `strip_errno`, `quoting_style`, `show_error`, and `show_warning` rewrite to bashkit-local `format_support` shims; `translate` / `translate_text` resolve at port time from `src/uucore/locales/{,errors/}en-US.ftl`; `host_env = ["POSIXLY_CORRECT"]` folds upstream's host-env probe to unset. |
 
 ### Output banner
 
