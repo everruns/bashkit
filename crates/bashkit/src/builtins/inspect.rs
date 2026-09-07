@@ -278,6 +278,13 @@ impl Builtin for Stat {
                 ) {
                     return Ok(ExecResult::ok(rendered));
                 }
+                // uutils marked the FILES operand `required(true)`, so clap
+                // now rejects a bare `stat` with its own generic message.
+                // GNU prints "stat: missing operand" and exits 1; keep that
+                // parity rather than inheriting the upstream divergence.
+                if kind == clap::error::ErrorKind::MissingRequiredArgument {
+                    return Ok(ExecResult::err("stat: missing operand\n".to_string(), 1));
+                }
                 return Ok(ExecResult::err(rendered, 2));
             }
         };
