@@ -748,10 +748,31 @@ impl FsBackend for RealFs {
     async fn set_modified_time(&self, path: &Path, time: SystemTime) -> Result<()> {
         self.check_writable()?;
         let real = self.resolve(path).await?;
-        let file = tokio::fs::File::open(&real).await?.into_std().await;
-        tokio::task::spawn_blocking(move || file.set_modified(time))
-            .await
-            .map_err(|error| IoError::other(format!("mtime worker failed: {error}")))??;
+        // Windows `SetFileTime` requires `FILE_WRITE_ATTRIBUTES` on the handle,
+        // so a read-only open fails with `ERROR_ACCESS_DENIED` (os error 5).
+        // Unix `futimens` ignores the fd open mode. Open inside the blocking
+        // worker with the minimal access each platform needs.
+        tokio::task::spawn_blocking(move || {
+            #[cfg(windows)]
+            {
+                use std::os::windows::fs::OpenOptionsExt;
+                const FILE_WRITE_ATTRIBUTES: u32 = 0x100;
+                let file = std::fs::OpenOptions::new()
+                    .read(true)
+                    .access_mode(FILE_WRITE_ATTRIBUTES)
+                    .open(&real)?;
+                file.set_modified(time)?;
+                Ok::<_, std::io::Error>(())
+            }
+            #[cfg(not(windows))]
+            {
+                let file = std::fs::File::open(&real)?;
+                file.set_modified(time)?;
+                Ok::<_, std::io::Error>(())
+            }
+        })
+        .await
+        .map_err(|error| IoError::other(format!("mtime worker failed: {error}")))??;
         Ok(())
     }
 

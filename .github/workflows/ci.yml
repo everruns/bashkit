@@ -334,6 +334,9 @@ jobs:
       - name: Test RealFS and overlay containment
         run: cargo test -p bashkit --test realfs_tests --features realfs windows_containment
 
+      - name: Test touch mtime on Windows (issue #2388)
+        run: cargo test -p bashkit --test realfs_tests --features realfs realfs_touch
+
   # The adoption shape this covers — bashkit as an agent's shell, with commands
   # bridged to host processes — exists to work on Windows without a real bash.
   # Kept separate from `windows-containment`: that job pins path-containment
