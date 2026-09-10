@@ -1104,3 +1104,38 @@ async fn runtime_mount_readwrite() {
     let content = std::fs::read_to_string(dir.path().join("runtime.txt")).unwrap();
     assert_eq!(content, "runtime write\n");
 }
+
+/// Issue #2388: built-in `touch` failed on Windows with
+/// `io error: Access denied (os error 5)`.
+/// Root cause: `RealFs::set_modified_time` opened the file read-only;
+/// Windows `SetFileTime` requires `FILE_WRITE_ATTRIBUTES` on the handle.
+/// Unix `futimens` ignores the fd open mode, so this passes before/after
+/// on Linux/macOS and only fails on Windows before the fix.
+#[tokio::test]
+async fn realfs_touch_sets_mtime_issue_2388() {
+    use bashkit::{Bash, PosixFs, RealFs, RealFsMode};
+    use std::sync::Arc;
+    use std::time::{Duration, SystemTime};
+
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("touched.txt"), b"data").unwrap();
+
+    let backend = RealFs::open(dir.path(), RealFsMode::ReadWrite)
+        .await
+        .unwrap();
+    let fs: Arc<dyn bashkit::FileSystem> = Arc::new(PosixFs::new(backend));
+    let mut bash = Bash::new();
+    bash.mount("/workspace", fs).unwrap();
+
+    let out = bash.exec("touch /workspace/touched.txt").await.unwrap();
+    assert_eq!(out.exit_code, 0, "touch failed: {}", out.stderr);
+
+    let mtime = std::fs::metadata(dir.path().join("touched.txt"))
+        .unwrap()
+        .modified()
+        .unwrap();
+    assert!(
+        SystemTime::now().duration_since(mtime).unwrap() < Duration::from_secs(120),
+        "mtime was not updated by touch"
+    );
+}
