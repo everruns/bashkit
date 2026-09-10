@@ -409,6 +409,35 @@ async fn test_awk_field_assignment() {
     assert_eq!(result.stdout, "one new three\n");
 }
 
+// GH-2389: number lexer must not swallow a following +/- operator.
+#[tokio::test]
+async fn test_awk_unspaced_plus_minus_after_number() {
+    for (program, expected) in [
+        ("BEGIN{print 1+2}", "3\n"),
+        ("BEGIN{print 1+ 2}", "3\n"),
+        ("BEGIN{print 3-1}", "2\n"),
+        ("BEGIN{print 1e5+2}", "100002\n"),
+        // Exponents with explicit signs still lex as one token.
+        ("BEGIN{print 1e+5}", "100000\n"),
+        ("BEGIN{print 1.5e-3}", "0.0015\n"),
+        ("{print $1+$2}", "3\n"),
+    ] {
+        let input = if program.contains("$1") {
+            Some("1 2")
+        } else {
+            None
+        };
+        let result = run_awk(&[program], input).await.unwrap();
+        assert_eq!(result.stdout, expected, "program: {program}");
+    }
+    // Negative: a lone '.' is still not a number.
+    let err = run_awk(&["BEGIN{print .}"], None).await.unwrap_err();
+    assert!(
+        err.to_string().contains("invalid number"),
+        "unexpected: {err}"
+    );
+}
+
 #[tokio::test]
 async fn test_awk_csv_to_json_pattern() {
     // This is the pattern LLMs use for CSV→JSON conversion

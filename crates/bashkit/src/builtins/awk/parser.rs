@@ -1536,12 +1536,33 @@ impl<'a> AwkParser<'a> {
 
     fn parse_number(&mut self) -> Result<AwkExpr> {
         let start = self.pos;
-        while self.pos < self.input.len() {
-            let c = self.current_char().unwrap();
-            if c.is_ascii_digit() || c == '.' || c == 'e' || c == 'E' || c == '-' || c == '+' {
+        // Integer part.
+        while self.pos < self.input.len() && self.current_char().unwrap().is_ascii_digit() {
+            self.pos += 1;
+        }
+        // Fractional part: digits with an optional '.' (leading ".5" and
+        // trailing "1." both valid; lone '.' rejected below by f64 parse).
+        if self.pos < self.input.len() && self.current_char().unwrap() == '.' {
+            self.pos += 1;
+            while self.pos < self.input.len() && self.current_char().unwrap().is_ascii_digit() {
                 self.pos += 1;
-            } else {
-                break;
+            }
+        }
+        // Exponent: e/E followed by optional sign and at least one digit.
+        // Only consumed when the full exponent is present, so a binary
+        // +/- after the number stays a separate operator (GH-2389).
+        if self.pos < self.input.len() && matches!(self.current_char().unwrap(), 'e' | 'E') {
+            let mut end = self.pos + 1;
+            if end < self.input.len()
+                && (self.input.as_bytes()[end] == b'+' || self.input.as_bytes()[end] == b'-')
+            {
+                end += 1;
+            }
+            if end < self.input.len() && self.input.as_bytes()[end].is_ascii_digit() {
+                while end < self.input.len() && self.input.as_bytes()[end].is_ascii_digit() {
+                    end += 1;
+                }
+                self.pos = end;
             }
         }
 
