@@ -198,3 +198,83 @@ test("Bash: a mount+env+builtin bundle survives reset intact", async (t) => {
   t.is(result.exitCode, 0);
   t.is(result.stdout, "# my-skill\n# my-skill\n");
 });
+
+// ----------------------------------------------------------------------------
+// read-only FileSystem mounts (issue #2387)
+// ----------------------------------------------------------------------------
+
+test("Bash: read-only FileSystem mount serves reads but blocks writes", (t) => {
+  const data = new FileSystem();
+  data.writeFile("/report.txt", "revenue 40,200,000\n");
+
+  const bash = new Bash();
+  bash.mount("/corpus", data, true);
+  t.is(
+    bash.executeSync("cat /corpus/report.txt").stdout,
+    "revenue 40,200,000\n",
+  );
+
+  const overwrite = bash.executeSync(
+    "echo 'revenue 999' > /corpus/report.txt; echo rc=$?",
+  );
+  t.true(overwrite.stdout.includes("rc=1"));
+  t.is(
+    bash.executeSync("cat /corpus/report.txt").stdout,
+    "revenue 40,200,000\n",
+  );
+});
+
+test("Bash: read-only mount blocks mkdir/chmod and keeps /tmp writable", (t) => {
+  const data = new FileSystem();
+  data.writeFile("/report.txt", "revenue 40,200,000\n");
+
+  const bash = new Bash();
+  bash.mount("/corpus", data, true);
+  t.not(bash.executeSync("mkdir /corpus/newdir").exitCode, 0);
+  t.not(bash.executeSync("chmod 600 /corpus/report.txt").exitCode, 0);
+
+  const tmp = bash.executeSync("echo work > /tmp/work.txt && cat /tmp/work.txt");
+  t.is(tmp.exitCode, 0);
+  t.true(tmp.stdout.includes("work"));
+});
+
+test("Bash: read-only mount survives reset, default mount stays writable", (t) => {
+  const data = new FileSystem();
+  data.writeFile("/report.txt", "revenue 40,200,000\n");
+
+  const bash = new Bash();
+  bash.mount("/corpus", data, true);
+  bash.reset();
+  t.is(
+    bash.executeSync("cat /corpus/report.txt").stdout,
+    "revenue 40,200,000\n",
+  );
+  t.true(
+    bash.executeSync("echo x > /corpus/report.txt; echo rc=$?").stdout.includes("rc=1"),
+  );
+
+  const writable = new Bash();
+  const data2 = new FileSystem();
+  data2.writeFile("/report.txt", "revenue 40,200,000\n");
+  writable.mount("/corpus", data2);
+  t.is(
+    writable.executeSync("echo 'revenue 999' > /corpus/report.txt && cat /corpus/report.txt").exitCode,
+    0,
+  );
+});
+
+test("BashTool: read-only FileSystem mount blocks writes and survives reset", (t) => {
+  const data = new FileSystem();
+  data.writeFile("/report.txt", "revenue 40,200,000\n");
+
+  const tool = new BashTool();
+  tool.mount("/corpus", data, true);
+  t.is(
+    tool.executeSync("cat /corpus/report.txt").stdout,
+    "revenue 40,200,000\n",
+  );
+  tool.reset();
+  t.true(
+    tool.executeSync("echo x > /corpus/report.txt; echo rc=$?").stdout.includes("rc=1"),
+  );
+});
