@@ -596,6 +596,25 @@ Use this when a native addon can't load (browsers, edge); for a native
 Node.js / Bun / Deno addon use `@everruns/bashkit` above. See
 [crates/bashkit-wasm](crates/bashkit-wasm/README.md) for details.
 
+### Java (community)
+
+[bashkit4j](https://github.com/tersePrompts/bashkit4j) — Java 17+ binding over
+the `libbashkit` C ABI via JNA (no JNI code of its own, no Docker daemon, no
+host bash binary). It bundles the native libraries for Windows / Linux / macOS
+(x86-64 + ARM64) inside the jar and covers sandboxed execution, in-memory VFS,
+opt-in host-directory mounts, resource limits, wall-clock timeout, and
+cancellation. Published on Maven Central as
+`io.github.terseprompts:bashkit4j`
+([javadoc](https://javadoc.io/doc/io.github.terseprompts/bashkit4j)).
+Independent community project, unaffiliated with Everruns.
+
+### Elixir (community)
+
+[ex_bashkit](https://github.com/jtippett/ex_bashkit) — Elixir NIF binding with
+precompiled binaries for macOS / Linux (x86-64 + ARM64). It offers stateless
+execution plus persistent sessions backed by the in-memory VFS. Published on
+Hex as `ex_bashkit`. Independent community project, unaffiliated with Everruns.
+
 ## Security
 
 Bashkit is built for running untrusted scripts from AI agents and users. Security is a core design goal, not an afterthought.
