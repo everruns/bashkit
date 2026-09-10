@@ -21,7 +21,7 @@ use bashkit::{
     Bash as RustBash, BashTool as RustBashTool, Builtin, BuiltinContext, BuiltinRegistry,
     Credential, ExecResult as RustExecResult, ExecutionLimits, ExtFunctionResult,
     FileSystem as BashFileSystem, FileType, InMemoryFs, Metadata, MontyObject, NetworkAllowlist,
-    OutputCallback, PosixFs, PythonExternalFnHandler, RealFs, RealFsMode,
+    OutputCallback, PosixFs, PythonExternalFnHandler, ReadOnlyFs, RealFs, RealFsMode,
     ScriptedTool as RustScriptedTool, SnapshotOptions as RustSnapshotOptions, Tool, ToolArgs,
     ToolDef, ToolRequest, async_trait,
 };
@@ -2441,9 +2441,28 @@ impl Bash {
     }
 
     /// Mount a filesystem handle without rebuilding the interpreter.
+    ///
+    /// With `read_only=true` the filesystem is wrapped in `ReadOnlyFs`: reads
+    /// keep working while mutations (and `chmod`) fail at the host layer, so
+    /// sandboxed code cannot rewrite the mounted tree. This is host-enforced
+    /// protection — POSIX mode bits remain metadata-only and are not enforced.
+    /// The recorded handle is the wrapped one, so `reset()` replays the
+    /// protection. The default (`read_only=false`/`None`) mounts writable.
     #[napi]
-    pub fn mount_file_system(&self, vfs_path: String, fs: Unknown<'_>) -> napi::Result<()> {
+    pub fn mount_file_system(
+        &self,
+        vfs_path: String,
+        fs: Unknown<'_>,
+        read_only: Option<bool>,
+    ) -> napi::Result<()> {
         let mounted_fs = import_external_file_system(fs)?;
+        // Host-enforced read-only projection; the recorded handle is the
+        // wrapped one, so `reset()` replays the protection.
+        let mounted_fs: Arc<dyn BashFileSystem> = if read_only.unwrap_or(false) {
+            Arc::new(ReadOnlyFs::new(mounted_fs))
+        } else {
+            mounted_fs
+        };
         block_on_with(&self.state, |s| async move {
             let bash = s.inner.lock().await;
             bash.mount(Path::new(&vfs_path), Arc::clone(&mounted_fs))
@@ -3120,9 +3139,28 @@ impl BashTool {
     }
 
     /// Mount a filesystem handle without rebuilding the interpreter.
+    ///
+    /// With `read_only=true` the filesystem is wrapped in `ReadOnlyFs`: reads
+    /// keep working while mutations (and `chmod`) fail at the host layer, so
+    /// sandboxed code cannot rewrite the mounted tree. This is host-enforced
+    /// protection — POSIX mode bits remain metadata-only and are not enforced.
+    /// The recorded handle is the wrapped one, so `reset()` replays the
+    /// protection. The default (`read_only=false`/`None`) mounts writable.
     #[napi]
-    pub fn mount_file_system(&self, vfs_path: String, fs: Unknown<'_>) -> napi::Result<()> {
+    pub fn mount_file_system(
+        &self,
+        vfs_path: String,
+        fs: Unknown<'_>,
+        read_only: Option<bool>,
+    ) -> napi::Result<()> {
         let mounted_fs = import_external_file_system(fs)?;
+        // Host-enforced read-only projection; the recorded handle is the
+        // wrapped one, so `reset()` replays the protection.
+        let mounted_fs: Arc<dyn BashFileSystem> = if read_only.unwrap_or(false) {
+            Arc::new(ReadOnlyFs::new(mounted_fs))
+        } else {
+            mounted_fs
+        };
         block_on_with(&self.state, |s| async move {
             let bash = s.inner.lock().await;
             bash.mount(Path::new(&vfs_path), Arc::clone(&mounted_fs))

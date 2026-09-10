@@ -89,6 +89,11 @@ Do you need a custom filesystem?
   with `PermissionDenied`
 - Useful for inspection-only tool sessions where even in-memory writes to
   `/tmp`, redirections, `cp`, `mv`, `mkdir`, `rm`, and `chmod` must fail
+- Python `Bash.mount()` / `BashTool.mount()` and Node `mount()` accept a
+  per-mount `read_only` / `readOnly` flag (default writable) that wraps the
+  mounted tree in `ReadOnlyFs`; the recorded handle is the wrapped one so
+  `reset()` replays the protection. Host-enforced: POSIX mode bits remain
+  metadata-only and are not enforced — `chmod 444` alone does not stop a write.
 
 #### RealFs (Optional, `realfs` feature)
 - Direct access to a host directory as an `FsBackend`

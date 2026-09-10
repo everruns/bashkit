@@ -68,6 +68,26 @@ bash.mount("/mnt/data", fs)?;
 
 **Errors:** Returns `Err` if `vfs_path` is not absolute (after normalization).
 
+### Read-only mounts (Python and Node bindings)
+
+The Python and Node bindings expose a per-mount `read_only` / `readOnly`
+flag on `mount()` (both `Bash` and the agent tool surface). A read-only
+mount wraps the mounted filesystem in [`ReadOnlyFs`]: reads keep working
+while mutations — shell redirections, `cp`, `mv`, `mkdir`, `rm` — and
+`chmod` fail at the host layer, so sandboxed code cannot rewrite a mounted
+corpus. `/tmp` and the rest of the VFS stay writable. The recorded handle
+is the wrapped one, so `reset()` replays the protection.
+
+```python
+corpus = FileSystem()
+corpus.write_file("/report.txt", b"revenue 40,200,000\n")
+bash.mount("/corpus", corpus, read_only=True)
+```
+
+This is host-enforced protection: POSIX mode bits remain metadata-only and
+are *not* enforced — `chmod 444` alone does not stop a write. Use the
+`read_only` flag for projections nothing inside the sandbox may rewrite.
+
 ### `Bash::unmount(vfs_path)`
 
 Removes the mount at `vfs_path`. Paths that previously resolved to the mounted
