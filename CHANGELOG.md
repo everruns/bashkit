@@ -4,14 +4,20 @@
 
 ### Highlights
 
-- **Read-only filesystem mounts for host bindings.** Hosts can share directories with
-  sandboxed scripts without granting write access, tightening the default posture for
-  filesystem-backed tools.
-- **Host-directory mounts over the C ABI.** Native hosts can expose host directories
-  through the versioned C interface, bringing C embeddings to parity with other
-  bindings.
-- **Targeted correctness fixes** across `awk`, the Windows filesystem backend, `sqlite`
-  progress accounting, and the `uutils` coreutils sync.
+- **Faster ported coreutils builtins.** Ported coreutils builtins reuse pre-built clap
+  `Command` definitions instead of rebuilding them per invocation
+  ([#2347](https://github.com/everruns/bashkit/pull/2347)).
+- **Security hardening.** The Rust update takes `russh` 0.63.1 security fixes
+  ([#2365](https://github.com/everruns/bashkit/pull/2365)), `sqlite` budgets account
+  for work performed inside a single engine step (TM-SQL-014)
+  ([#2369](https://github.com/everruns/bashkit/pull/2369)), the host-environment hole
+  in builtins is closed
+  ([#2385](https://github.com/everruns/bashkit/pull/2385)), and `tabled` 0.22 retires
+  RUSTSEC-2026-0173
+  ([#2379](https://github.com/everruns/bashkit/pull/2379)).
+- **C ABI improvements.** The C ABI exposes host-directory mounts, bringing native
+  embeddings to parity with other host bindings
+  ([#2371](https://github.com/everruns/bashkit/pull/2371)).
 
 ### Added
 
