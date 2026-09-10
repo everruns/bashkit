@@ -493,15 +493,22 @@ b'hello\n'
 ### `mount`
 
 ```python
-Bash.mount(vfs_path: str, fs: FileSystem) -> None
+Bash.mount(vfs_path: str, fs: FileSystem, read_only: bool = ...) -> None
 ```
 
 Mount an external filesystem at the given VFS path.
+
+With ``read_only=True`` the filesystem is wrapped in ``ReadOnlyFs``:
+reads keep working while mutations (and ``chmod``) fail at the host
+layer. This is host-enforced protection — POSIX mode bits remain
+metadata-only and are not enforced. Recorded, so ``reset()`` replays
+the protection. The default (``read_only=False``) mounts writable.
 
 **Parameters:**
 
 - **`vfs_path`** — Mount point inside the VFS.
 - **`fs`** — FileSystem instance to mount.
+- **`read_only`** — Mount read-only via ``ReadOnlyFs``.
 
 Example:
 
@@ -1073,10 +1080,16 @@ b'data\n'
 ### `mount`
 
 ```python
-BashTool.mount(vfs_path: str, fs: FileSystem) -> None
+BashTool.mount(vfs_path: str, fs: FileSystem, read_only: bool = ...) -> None
 ```
 
 Mount an external filesystem at the given VFS path.
+
+With ``read_only=True`` the filesystem is wrapped in ``ReadOnlyFs``:
+reads keep working while mutations (and ``chmod``) fail at the host
+layer. This is host-enforced protection — POSIX mode bits remain
+metadata-only and are not enforced. Recorded, so ``reset()`` replays
+the protection. The default (``read_only=False``) mounts writable.
 
 Example:
 
