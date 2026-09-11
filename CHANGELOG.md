@@ -1,13 +1,52 @@
 # Changelog
 
-## [Unreleased]
+## [0.18.0] - 2026-09-10
+
+### Highlights
+
+- **Faster ported coreutils builtins.** Ported coreutils builtins reuse pre-built clap
+  `Command` definitions instead of rebuilding them per invocation
+  ([#2347](https://github.com/everruns/bashkit/pull/2347)).
+- **Security hardening.** The Rust update takes `russh` 0.63.1 security fixes
+  ([#2365](https://github.com/everruns/bashkit/pull/2365)), `sqlite` budgets account
+  for work performed inside a single engine step (TM-SQL-014)
+  ([#2369](https://github.com/everruns/bashkit/pull/2369)), the host-environment hole
+  in builtins is closed
+  ([#2385](https://github.com/everruns/bashkit/pull/2385)), and `tabled` 0.22 retires
+  RUSTSEC-2026-0173
+  ([#2379](https://github.com/everruns/bashkit/pull/2379)).
+- **C ABI improvements.** The C ABI exposes host-directory mounts, bringing native
+  embeddings to parity with other host bindings
+  ([#2371](https://github.com/everruns/bashkit/pull/2371)).
+
+### Added
+
+- Bindings now support read-only filesystem mounts, so hosts can share directories with
+  sandboxed scripts without granting write access
+  ([#2393](https://github.com/everruns/bashkit/pull/2393))
+- The C ABI exposes host-directory mounts, bringing native embeddings to parity with
+  other host bindings
+  ([#2371](https://github.com/everruns/bashkit/pull/2371))
 
 ### Fixed
 
-- Host calls enforce execution deadlines while parked.
-- Runtime mounts use canonical replay keys across binding rebuilds.
-- SQLite budgets account for work within a single engine step.
-- Documentation preserves inline SVG diagrams during Markdown rendering.
+- Host calls enforce execution deadlines while parked
+  ([#2349](https://github.com/everruns/bashkit/pull/2349)).
+- Runtime mounts use canonical replay keys across binding rebuilds
+  ([#2366](https://github.com/everruns/bashkit/pull/2366)).
+- SQLite budgets account for work within a single engine step
+  ([#2369](https://github.com/everruns/bashkit/pull/2369)).
+- Rust dependency update takes `russh` 0.63.1 security fixes
+  ([#2365](https://github.com/everruns/bashkit/pull/2365)).
+- Documentation preserves inline SVG diagrams during Markdown rendering
+  ([#2368](https://github.com/everruns/bashkit/pull/2368)).
+- The `awk` number lexer no longer swallows a following `+`/`-` operator
+  ([#2392](https://github.com/everruns/bashkit/pull/2392)).
+- `RealFs` sets mtime with `FILE_WRITE_ATTRIBUTES` on Windows so read-only files keep
+  updatable timestamps
+  ([#2391](https://github.com/everruns/bashkit/pull/2391)).
+- Synced `uutils` coreutils drift and closed the host-environment hole in builtins
+  ([#2385](https://github.com/everruns/bashkit/pull/2385)).
 - CI's aggregate check includes WASM validation, and secret-backed examples
   fetch scoped API keys in separate steps that end before repository code runs.
 - Browser persistence preserves the previous save when directory traversal fails.
@@ -29,6 +68,44 @@
   green CI and merge, including common misspellings.
 - Refresh benchmark baselines; select a supported Bash from `PATH` and record
   its version instead of silently using macOS's obsolete system shell.
+- README lists Java and Elixir community bindings
+  ([#2390](https://github.com/everruns/bashkit/pull/2390)).
+
+### What's Changed
+
+* fix(host-call): enforce the execution deadline while parked by @chaliy in #2349
+* chore(ci): bump taiki-e/install-action from 2.86.3 to 2.86.5 in the github-actions group by @app/dependabot in #2354
+* chore(deps): bump @langchain/core from 1.2.8 to 1.2.9 in /crates/bashkit-js in the js-npm group by @app/dependabot in #2350
+* chore(deps): bump the site-npm group in /site with 3 updates by @app/dependabot in #2352
+* chore(deps): bump the examples-npm group across 2 directories with 6 updates by @app/dependabot in #2353
+* chore(deps): bump wasmtime from 47.0.4 to 48.0.0 in /examples/hyperlight/host in the example-cargo group across 1 directory by @app/dependabot in #2355
+* chore(deps): bump turso_core from 0.8.0-pre.4 to 0.8.0-pre.7 by @chaliy in #2356
+* chore(deps): move chacha20 off yanked 0.10.1 by @chaliy in #2357
+* chore(security): record why the rsa advisory suppression stops matching by @app/claude in #2358
+* chore(deps): bump the js-npm group in /crates/bashkit-js with 2 updates by @app/dependabot in #2359
+* chore(deps): bump the site-npm group in /site with 3 updates by @app/dependabot in #2361
+* chore(deps): bump the examples-npm group across 1 directory with 4 updates by @app/dependabot in #2362
+* chore(ci): bump taiki-e/install-action from 2.86.5 to 2.87.0 in the github-actions group by @app/dependabot in #2363
+* chore(deps): bump the example-cargo group across 2 directories with 3 updates by @app/dependabot in #2364
+* fix(deps): bump rust-dependencies group, taking russh 0.63.1 security fixes by @chaliy in #2365
+* fix(bindings): canonicalize runtime mount replay keys by @chaliy in #2366
+* fix(sqlite): count work performed inside a single engine step (TM-SQL-014) by @chaliy in #2369
+* fix(docs): render inline SVG diagrams correctly by @chaliy in #2368
+* chore(bench): add vm-linux-x86_64 benchmark run 2026-09-02 by @chaliy in #2370
+* feat(capi): expose host-directory mounts over the C ABI by @tersePrompts in #2371
+* chore(maintenance): refresh dependencies and resolve security findings by @chaliy in #2378
+* chore(deps): upgrade tabled to 0.22 and retire RUSTSEC-2026-0173 by @chaliy in #2379
+* chore(ci): bump the github-actions group with 2 updates by @app/dependabot in #2383
+* chore(deps): bump the example-cargo group across 1 directory with 3 updates by @app/dependabot in #2384
+* chore(deps): bump the examples-npm group across 1 directory with 3 updates by @app/dependabot in #2382
+* fix(builtins): sync uutils coreutils drift and close host-env hole by @chaliy in #2385
+* chore(deps): stop dependabot reopening the unbuildable get-size2 bump by @chaliy in #2386
+* docs(readme): add Java and Elixir community bindings by @chaliy in #2390
+* fix(fs): set RealFs mtime with FILE_WRITE_ATTRIBUTES on Windows by @chaliy in #2391
+* fix(awk): stop number lexer swallowing following +/- operators by @chaliy in #2392
+* feat(bindings): add read-only filesystem mounts by @chaliy in #2393
+
+**Full Changelog**: https://github.com/everruns/bashkit/compare/v0.17.1...v0.18.0
 
 ## [0.17.1] - 2026-08-22
 
