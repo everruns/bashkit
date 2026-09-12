@@ -173,9 +173,9 @@ v0.4.0 → v0.4.1 for a worked example).
 Use the latest entries in `CHANGELOG.md` as the template. Rules:
 
 - `## [X.Y.Z] - YYYY-MM-DD` header.
-- `### Highlights`, 2-5 most impactful, user-facing bullets.
+- `### Highlights`, 2-5 most impactful, user-facing bullets, each with its PR link. Validate with `just check-changelog`.
 - `### Breaking Changes` for MINOR/MAJOR with bold summary + before/after migration guide.
-- `### What's Changed` (not separate Added/Changed/Fixed), PRs in descending PR-number order, format `* type(scope): description ([#N](URL)) by @author`.
+- `### What's Changed` (not separate Added/Changed/Fixed), PRs in merge order (as GitHub generates them; scaffold with `python3 scripts/check_changelog.py --scaffold <prev-tag>`), format `* type(scope): description ([#N](URL)) by @author`.
 - End with `**Full Changelog**: URL`.
 
 ## Package Names and Registries
