@@ -4,9 +4,6 @@
 
 ### Highlights
 
-- **Faster ported coreutils builtins.** Ported coreutils builtins reuse pre-built clap
-  `Command` definitions instead of rebuilding them per invocation
-  ([#2347](https://github.com/everruns/bashkit/pull/2347)).
 - **Security hardening.** The Rust update takes `russh` 0.63.1 security fixes
   ([#2365](https://github.com/everruns/bashkit/pull/2365)), `sqlite` budgets account
   for work performed inside a single engine step (TM-SQL-014)
@@ -18,58 +15,6 @@
 - **C ABI improvements.** The C ABI exposes host-directory mounts, bringing native
   embeddings to parity with other host bindings
   ([#2371](https://github.com/everruns/bashkit/pull/2371)).
-
-### Added
-
-- Bindings now support read-only filesystem mounts, so hosts can share directories with
-  sandboxed scripts without granting write access
-  ([#2393](https://github.com/everruns/bashkit/pull/2393))
-- The C ABI exposes host-directory mounts, bringing native embeddings to parity with
-  other host bindings
-  ([#2371](https://github.com/everruns/bashkit/pull/2371))
-
-### Fixed
-
-- Host calls enforce execution deadlines while parked
-  ([#2349](https://github.com/everruns/bashkit/pull/2349)).
-- Runtime mounts use canonical replay keys across binding rebuilds
-  ([#2366](https://github.com/everruns/bashkit/pull/2366)).
-- SQLite budgets account for work within a single engine step
-  ([#2369](https://github.com/everruns/bashkit/pull/2369)).
-- Rust dependency update takes `russh` 0.63.1 security fixes
-  ([#2365](https://github.com/everruns/bashkit/pull/2365)).
-- Documentation preserves inline SVG diagrams during Markdown rendering
-  ([#2368](https://github.com/everruns/bashkit/pull/2368)).
-- The `awk` number lexer no longer swallows a following `+`/`-` operator
-  ([#2392](https://github.com/everruns/bashkit/pull/2392)).
-- `RealFs` sets mtime with `FILE_WRITE_ATTRIBUTES` on Windows so read-only files keep
-  updatable timestamps
-  ([#2391](https://github.com/everruns/bashkit/pull/2391)).
-- Synced `uutils` coreutils drift and closed the host-environment hole in builtins
-  ([#2385](https://github.com/everruns/bashkit/pull/2385)).
-- CI's aggregate check includes WASM validation, and secret-backed examples
-  fetch scoped API keys in separate steps that end before repository code runs.
-- Browser persistence preserves the previous save when directory traversal fails.
-- BashTool snapshot constructors retain supplied JavaScript custom builtins.
-- Release binary builds use the exact validated commit; Cargo verification runs
-  without registry credentials, and JS release examples use reviewed lockfiles.
-- CI drops unused write permissions and installs SQLite only when missing.
-- Deep Agents supports the current structured backend protocol, exact VFS file
-  transfers, grep glob filters, and execution truncation metadata.
-- Anthropic sanitized tool output is capped after XML escaping, preserving
-  complete entities and matching the OpenAI adapter.
-
-### Changed
-
-- Refresh Rust, JavaScript, site, and example dependencies; update DeepSec to
-  2.3.9. Pin Monty to 0.0.19 and get-size2 to 0.10.1 to preserve per-VM
-  memory, work, and cancellation limits.
-- Maintenance requests now run analysis, fixes, validation, and shipping through
-  green CI and merge, including common misspellings.
-- Refresh benchmark baselines; select a supported Bash from `PATH` and record
-  its version instead of silently using macOS's obsolete system shell.
-- README lists Java and Elixir community bindings
-  ([#2390](https://github.com/everruns/bashkit/pull/2390)).
 
 ### What's Changed
 

@@ -48,6 +48,11 @@ check:
     just check-okf
     just check-doc-links
     just check-workflow-parity
+    just check-changelog
+
+# Validate the CHANGELOG release-section convention (Highlights + What's Changed).
+check-changelog:
+    python3 scripts/check_changelog.py
 
 # Validate the canonical public-surface capability matrix and generated inventory.
 check-capability-parity:
