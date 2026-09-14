@@ -1512,13 +1512,19 @@ This section documents the security tools used to detect and prevent vulnerabili
 
 | Tool | Purpose | CI Integration | Frequency |
 |------|---------|----------------|-----------|
-| **cargo-audit** | CVE scanning for dependencies | ✅ Required | Every PR |
+| **cargo-audit** | CVE scanning for dependencies | ✅ Required | Every PR + nightly |
 | **cargo-deny** | License + advisory checks | ✅ Required | Every PR |
 | **cargo-clippy** | Lint with security-focused warnings | ✅ Required | Every PR |
 | **cargo-geiger** | Count unsafe code blocks | ✅ Informational | Every PR |
 
-**cargo-audit** scans `Cargo.lock` against the RustSec Advisory Database; **cargo-geiger**
-(`--all-features`) tracks unsafe code usage to keep it minimal and audited.
+**cargo-audit** scans every `Cargo.lock` in the tree against the RustSec Advisory
+Database; **cargo-geiger** (`--all-features`) tracks unsafe code usage to keep it
+minimal and audited.
+
+The advisory scan runs on a schedule as well as on push, because an advisory is
+published against code that has not changed: a push-only scan leaves `main`
+unaudited for as long as nobody pushes. `scripts/audit-lockfiles.sh` is the one
+implementation, called by the CI `audit` job and the nightly `advisories` job.
 
 The repository holds **five** cargo lockfiles: the workspace root plus
 `crates/bashkit/fuzz`, `examples/hyperlight`, `examples/hyperlight/host`, and
@@ -1567,9 +1573,13 @@ parser and interpreter; **Miri** (`cargo +nightly miri test --lib`) detects UB i
 
 Every advisory suppression must be listed here with a rationale and a condition
 for removal, a bare `--ignore` flag or `deny.toml` entry with no recorded
-reasoning is not acceptable. `cargo audit` suppressions live in the CI workflow
-(`.github/workflows/ci.yml`) and `cargo deny` suppressions in `deny.toml`; keep
-the two lists in sync so a local `cargo deny check advisories` matches CI.
+reasoning is not acceptable. `cargo audit` suppressions live in
+`scripts/audit-lockfiles.sh` (`IGNORED_ADVISORIES`) and `cargo deny`
+suppressions in `deny.toml`; keep the two lists in sync so a local `cargo deny
+check advisories` matches CI. The `cargo audit` list may be the smaller of the
+two — it carries only advisories that fail that scan — but never suppresses
+something `cargo deny` still enforces, which `scripts/tests/test_audit_lockfiles.py`
+checks.
 
 | Advisory | Crate | Why suppressed | Remove when |
 |----------|-------|----------------|-------------|

@@ -40,6 +40,33 @@ jobs:
         env:
           MIRIFLAGS: -Zmiri-disable-isolation
 
+  # CI audits lockfiles on push and PR only, so main goes unscanned for as long
+  # as nobody pushes — and an advisory is published against code that has not
+  # changed. This job re-runs the same scan daily against a fresh copy of the
+  # RustSec database, so a new advisory surfaces within a day rather than
+  # waiting for the next commit.
+  advisories:
+    name: Advisory Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+
+      # Prebuilt binary rather than a source build: cargo-audit's own
+      # dependencies resolve unlocked, and an MSRV bump in one of them past our
+      # pinned toolchain broke this step once already in CI.
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8 # v2
+        with:
+          tool: cargo-audit
+
+      - name: Security audit (cargo-audit)
+        run: ./scripts/audit-lockfiles.sh
+
   security-analysis:
     name: Security Analysis
     runs-on: ubuntu-latest
