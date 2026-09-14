@@ -60,7 +60,7 @@ jobs:
       # dependencies resolve unlocked, and an MSRV bump in one of them past our
       # pinned toolchain broke this step once already in CI.
       - name: Install cargo-audit
-        uses: taiki-e/install-action@5bf6ce016fd2e72eefc647cbca1e4213f65955b8 # v2
+        uses: taiki-e/install-action@9534c84618278caac52cb373bb164ed464dbd8af # v2
         with:
           tool: cargo-audit
 
