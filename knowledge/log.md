@@ -1,5 +1,10 @@
 # Bashkit Knowledge Update Log
 
+## 2026-09-14
+
+* **Security**: The advisory scan was push-triggered only, so `main` went unaudited for as long as nobody pushed — and advisories are published against code that has not changed. A critical advisory landing during a quiet stretch would have waited for the next commit to surface. `cargo audit` now also runs nightly, alongside Miri, geiger, and ASan. Recorded in the [Threat Model](security/threat-model.md).
+* **Contract**: Lockfile discovery and the `cargo audit` suppression list live in `scripts/audit-lockfiles.sh`, not inline in a workflow. The list was inline in `ci.yml`, where a second caller would have meant a second copy free to drift from `deny.toml`. `scripts/tests/test_audit_lockfiles.py` holds the invariants: discovery covers every lockfile (skipping `target/` and `node_modules/`), a scan that audits nothing fails rather than passes, one failing lockfile does not stop the others, both workflows call the shared script, and the `cargo audit` suppressions stay a subset of `deny.toml`'s.
+
 ## 2026-09-05
 
 * **Adapters**: Deep Agents implements the current structured protocol through native VFS operations; JS snapshot constructors retain supplied callbacks and browser persistence rejects partial traversals. See [Python Package](runtimes/python-package.md), [Snapshot History](foundations/snapshot-history.md), and [Browser Package](runtimes/browser-package.md).
