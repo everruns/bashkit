@@ -911,7 +911,7 @@ version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "faf9468729b8cbcea668e36183cb69d317348c2e08e994829fb56ebfdfbaac34"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -1475,7 +1475,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4468,7 +4468,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4526,7 +4526,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5256,7 +5256,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5585,9 +5585,9 @@ checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
 name = "turso_core"
-version = "0.8.0-pre.8"
+version = "0.8.0-pre.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8aa9df0e2dd9894ddc61cf6c35e0726f4fc26dd08c584afebd319c1969aaf504"
+checksum = "6bf193fe886c15bb3466800b159e80e558b06e44fab96d796c2584334d80f679"
 dependencies = [
  "aegis",
  "aes 0.8.4",
@@ -5657,9 +5657,9 @@ dependencies = [
 
 [[package]]
 name = "turso_ext"
-version = "0.8.0-pre.8"
+version = "0.8.0-pre.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a27e351e5f30b21d186a62895761a59a944e209111ea7ba84bf8c611068d87fc"
+checksum = "f01dfa5cc29747c04cae1f76257d1252b5631b4160dd905481abd0aef70dd42f"
 dependencies = [
  "chrono",
  "getrandom 0.4.3",
@@ -5668,9 +5668,9 @@ dependencies = [
 
 [[package]]
 name = "turso_macros"
-version = "0.8.0-pre.8"
+version = "0.8.0-pre.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f5c30032b9cd45798d5ed012a3728d9cf4e39a8dbb7d820d82908facb4b665dc"
+checksum = "a7d4b454ff6b89682e5e539ab554c1ead3037e898add8a7a339cce5219019f59"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5679,9 +5679,9 @@ dependencies = [
 
 [[package]]
 name = "turso_parser"
-version = "0.8.0-pre.8"
+version = "0.8.0-pre.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6823c91624d12ae67d6c6dfc819406a279265ca8879307f92c12d7de77bc6846"
+checksum = "fd21798abc4af80114f4da13e5684e2a0c1a50feec3c55e115886701d4e9d3d1"
 dependencies = [
  "bitflags 2.13.1",
  "memchr",
@@ -6067,7 +6067,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
