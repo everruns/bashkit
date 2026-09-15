@@ -885,10 +885,6 @@ criteria = "safe-to-deploy"
 version = "1.48.0"
 criteria = "safe-to-run"
 
-[[exemptions.internal-russh-num-bigint]]
-version = "0.5.0"
-criteria = "safe-to-deploy"
-
 [[exemptions.interpolator]]
 version = "0.5.0"
 criteria = "safe-to-deploy"
@@ -2057,19 +2053,19 @@ version = "0.2.5"
 criteria = "safe-to-deploy"
 
 [[exemptions.turso_core]]
-version = "0.8.0-pre.7"
+version = "0.8.0-pre.11"
 criteria = "safe-to-deploy"
 
 [[exemptions.turso_ext]]
-version = "0.8.0-pre.7"
+version = "0.8.0-pre.11"
 criteria = "safe-to-deploy"
 
 [[exemptions.turso_macros]]
-version = "0.8.0-pre.7"
+version = "0.8.0-pre.11"
 criteria = "safe-to-deploy"
 
 [[exemptions.turso_parser]]
-version = "0.8.0-pre.7"
+version = "0.8.0-pre.11"
 criteria = "safe-to-deploy"
 
 [[exemptions.twox-hash]]
