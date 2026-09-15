@@ -947,8 +947,10 @@ mod tests {
             });
 
             assert_eq!(status, BashkitStatus::InternalError);
-            assert!(!error.is_null());
-            assert_eq!((*error).message, b"internal error");
+            assert_eq!(
+                error.as_ref().expect("ffi_boundary must set error").message,
+                b"internal error"
+            );
             bashkit_error_free(error);
         }
     }
