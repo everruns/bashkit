@@ -190,6 +190,21 @@ updates:
     ignore:
       - dependency-name: "@everruns/*"
 
+  # Python example (uv.lock). Without an entry here nothing kept
+  # examples/docs-grep-agent/uv.lock fresh, and the transitive httpx2 pin
+  # rotted at 2.10.0 until three advisories (#125-127) fired at once.
+  # Ecosystem is "uv" (not "pip"): that is what updates uv.lock files.
+  - package-ecosystem: "uv"
+    directory: "/examples/docs-grep-agent"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      docs-grep-agent-uv:
+        patterns:
+          - "*"
+
   # GitHub Actions
   - package-ecosystem: "github-actions"
     directory: "/"
