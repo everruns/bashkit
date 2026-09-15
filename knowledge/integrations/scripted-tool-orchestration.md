@@ -148,7 +148,7 @@ Enables framework patterns like LangGraph's `get_stream_writer()` and FastAPI re
 
 Implementation and per-syntax precedence: `parse_flags` in `crates/bashkit/src/tool_def.rs`. Rules:
 
-- `--key value` and `--key=value` parse into a JSON object. Type coercion follows `input_schema` property types (`integer`, `number`, `boolean`, `string`, `array`, `object`); bare `--flag` is `true` when schema says boolean. Unknown flags (not in schema) stay strings.
+- `--key value` and `--key=value` parse into a JSON object. Type coercion follows `input_schema` property types (`integer`, `number`, `boolean`, `string`, `array`, `object`); bare `--flag` is `true` when schema says boolean. Unknown flags (not in schema) stay strings, **unless** the schema sets `"additionalProperties": false`, in which case an unknown flag is an error naming the flags the schema does define. That is the same rule `ToolRegistry` applies to structured calls, so one schema describes one command on both surfaces. Decision: an open schema stays permissive because a `ToolDef` without `additionalProperties` is not asserting a closed argument set; a closed one means a typo (`--limti 10`) is a mistake, not an extra string property to pass through and silently drop.
 - Bounded before callback execution: parsed flag value bytes capped at 64 KiB per command invocation; array-typed flags capped at 4096 items after JSON parsing, comma splitting, and repeated-invocation appends. Oversized input fails before allocating the full `ToolArgs.params`.
 - Aggregate types resolve through `$ref`, `oneOf`/`anyOf`/`allOf` branches, nullable shorthand (`type: ["array","null"]`), and implicit signals (`items` ⇒ array, `properties` ⇒ object). When the resolved type is aggregate and the raw value starts `[` or `{`, it parses as JSON; on parse failure the original string is preserved so downstream serde validation produces the real error.
 - Schema-driven shorthand for aggregate flags:
@@ -160,6 +160,12 @@ Implementation and per-syntax precedence: `parse_flags` in `crates/bashkit/src/t
 ### ScriptedToolBuilder
 
 Two arguments per tool: definition + callback. `.tool_fn()` sync, `.async_tool_fn()` async; plus `.locale()`, `.short_description()`, `.env()`, `.limits()`, `.compact_prompt()`. Full example: `crates/bashkit/examples/scripted_tool.rs`.
+
+`.builtin(name, Box<dyn Builtin>)` registers a raw-argv builtin alongside the `ToolDef` tools, mirroring `BashBuilder::builtin` and `BashToolBuilder::builtin`. Stored as `Arc<dyn Builtin>` so one instance is reused by the fresh shell each `execute()` builds.
+
+Why it exists: `parse_flags` is schema-driven and only understands `--key value`. Commands that need positionals, short flags, `--`, or parse-time required-argument checking cannot be expressed as a `ToolDef`, and before this the only workaround was to rebuild the shell on `Bash::builder()` downstream, which is not possible because `BashBuilder::logic_only` is `pub(crate)`. Registering the builtin gives it `ctx.args` unparsed, so it can use [`ClapBuiltin`](../foundations/builtins.md) — the house parser for `Bash` builtins — inside a `ScriptedTool`. Example: `crates/bashkit/examples/scripted_tool_clap_builtin.rs`.
+
+Security posture is unchanged. The builtin runs in the same logic-only shell and gets the same rejecting filesystem, so it cannot reach a real file; the logic-only decision stays enforced by the profile, not by the builtin allowlist. Registration order is custom builtins first, `ToolDefExtension` second: `BashBuilder` keys custom builtins by name and later registrations win, so a custom builtin can never shadow a registered tool command, `help`, or `discover`. A custom builtin is otherwise ordinary trusted host code — whatever it reaches, the script reaches.
 
 ### ToolBuiltinAdapter (internal)
 
