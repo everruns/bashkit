@@ -139,6 +139,7 @@ pub use crate::tool_def::{
     AsyncToolCallback, AsyncToolExec, SyncToolExec, ToolArgs, ToolCallback, ToolDef, ToolImpl,
 };
 
+use crate::builtins::Builtin;
 use crate::{ExecutionLimits, ExecutionProfile, Tool, ToolService};
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
@@ -240,6 +241,9 @@ pub struct ScriptedToolBuilder {
     locale: String,
     short_desc: Option<String>,
     tools: Vec<RegisteredTool>,
+    /// Raw-argv builtins registered alongside the `ToolDef` tools. `Arc` so one
+    /// instance is reused across the fresh shell each `execute()` builds.
+    builtins: Vec<(String, Arc<dyn Builtin>)>,
     limits: Option<ExecutionLimits>,
     profile: Option<ExecutionProfile>,
     env_vars: Vec<(String, String)>,
@@ -256,6 +260,7 @@ impl ScriptedToolBuilder {
             locale: "en-US".to_string(),
             short_desc: None,
             tools: Vec::new(),
+            builtins: Vec::new(),
             limits: None,
             profile: None,
             env_vars: Vec::new(),
@@ -282,6 +287,46 @@ impl ScriptedToolBuilder {
     /// name, schema, and sync/async exec.
     pub fn tool(mut self, tool: ToolImpl) -> Self {
         self.tools.push(RegisteredTool::from_tool_impl(tool));
+        self
+    }
+
+    /// Register a raw-argv builtin alongside the `ToolDef` tools.
+    ///
+    /// `ToolDef` commands are parsed by the schema-driven flag parser, which
+    /// only understands `--key value` and `--key=value`. A command that needs
+    /// positionals, short flags, `--`, or parse-time checking of required
+    /// arguments gets none of that. Registering it here hands the builtin the
+    /// raw `ctx.args` instead, so it can parse them however it likes —
+    /// including with [`ClapBuiltin`](crate::ClapBuiltin), the house parser for
+    /// `Bash` builtins.
+    ///
+    /// The builtin runs in the same logic-only shell as the `ToolDef` commands
+    /// and gets the same disabled filesystem, so registering one does not widen
+    /// the scripted catalog's filesystem posture. It is ordinary trusted host
+    /// code otherwise: whatever the builtin itself reaches, the script reaches.
+    ///
+    /// Custom builtins are registered *before* the `ToolDef` commands, so a
+    /// name collision resolves in favour of the registered tool: a custom
+    /// builtin can never shadow a tool command, `help`, or `discover`.
+    ///
+    /// ```rust
+    /// # use async_trait::async_trait;
+    /// # use bashkit::{Builtin, BuiltinContext, ExecResult, ScriptedTool};
+    /// struct Ping;
+    ///
+    /// #[async_trait]
+    /// impl Builtin for Ping {
+    ///     async fn execute(&self, ctx: BuiltinContext<'_>) -> bashkit::Result<ExecResult> {
+    ///         Ok(ExecResult::ok(format!("pong {}\n", ctx.args.join(" "))))
+    ///     }
+    /// }
+    ///
+    /// let tool = ScriptedTool::builder("api")
+    ///     .builtin("ping", Box::new(Ping))
+    ///     .build();
+    /// ```
+    pub fn builtin(mut self, name: impl Into<String>, builtin: Box<dyn Builtin>) -> Self {
+        self.builtins.push((name.into(), Arc::from(builtin)));
         self
     }
 
@@ -409,6 +454,7 @@ impl ScriptedToolBuilder {
                 tool_names
             ),
             tools: self.tools.clone(),
+            builtins: self.builtins.clone(),
             limits: self.limits.clone(),
             profile: self.profile.clone(),
             env_vars: self.env_vars.clone(),
@@ -480,6 +526,7 @@ pub struct ScriptedTool {
     pub(crate) short_desc: String,
     pub(crate) description: String,
     pub(crate) tools: Vec<RegisteredTool>,
+    pub(crate) builtins: Vec<(String, Arc<dyn Builtin>)>,
     pub(crate) limits: Option<ExecutionLimits>,
     pub(crate) profile: Option<ExecutionProfile>,
     pub(crate) env_vars: Vec<(String, String)>,
