@@ -102,6 +102,34 @@ This is a deliberate, narrower sandbox than [`BashTool`](llm-tools.md).
 Reach for [`BashTool`](llm-tools.md) instead when a virtual filesystem is part of
 the task.
 
+## Arguments a `ToolDef` cannot express
+
+Tool commands are parsed from their JSON Schema, which covers `--key value` and
+`--key=value` and nothing else. No positionals, no short flags, no `--`, and a
+missing required field surfaces as a deserialization error after dispatch rather
+than as usage. When a command needs a real CLI shape, register it as a builtin
+instead and parse the raw argv yourself:
+
+```rust
+let tool = ScriptedTool::builder("control_plane")
+    .builtin("get_agent", Box::new(GetAgent))   // clap owns this one
+    .tool_fn(list_agents_def, list_agents)      // schema owns this one
+    .build();
+```
+
+`GetAgent` can implement [`ClapBuiltin`](https://docs.rs/bashkit/latest/bashkit/trait.ClapBuiltin.html),
+so `get_agent a-42 -f json` works, and `get_agent` alone fails at parse time with
+a real usage message. The builtin runs in the same logic-only shell and gets the
+same disabled filesystem, so this does not widen what a script can touch. Tool
+commands win on a name collision, so a builtin cannot shadow one, nor `help` or
+`discover`. Full example:
+[`scripted_tool_clap_builtin.rs`](https://github.com/everruns/bashkit/blob/main/crates/bashkit/examples/scripted_tool_clap_builtin.rs).
+
+For schema-parsed commands, adding `"additionalProperties": false` turns an
+unrecognised flag into an error listing the valid ones, instead of silently
+keeping it as an unused string property, so `list_agents --limti 10` fails
+loudly rather than quietly ignoring the limit.
+
 ## Runtime discovery
 
 The LLM doesn't need every schema in its context up front. Two built-in commands
