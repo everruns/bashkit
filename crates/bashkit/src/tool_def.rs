@@ -352,7 +352,10 @@ impl Builtin for ToolImpl {
 
 /// Parse `--key value` and `--key=value` flags into a JSON object.
 /// Types are coerced according to the schema's property definitions.
-/// Unknown flags (not in schema) are kept as strings.
+/// Unknown flags (not in schema) are kept as strings, unless the schema sets
+/// `"additionalProperties": false`, in which case an unknown flag is an error.
+/// That is the same rule `ToolRegistry` already applies to structured calls, so
+/// one schema describes one command across the shell and registry surfaces.
 /// Bare `--flag` without a value is treated as `true` if the schema says boolean,
 /// otherwise as `true` when the next arg also starts with `--` or is absent.
 ///
@@ -361,6 +364,24 @@ impl Builtin for ToolImpl {
 /// after `--flag` is collected into one object; repeated invocations of an
 /// array-of-object flag append one object per group. Arrays of scalars
 /// accept comma-split values (`--tags a,b,c`) and repeated invocations.
+/// Error for a flag the schema does not name, listing what it does name.
+fn unknown_flag_error(
+    key: &str,
+    properties: &serde_json::Map<String, serde_json::Value>,
+) -> String {
+    if properties.is_empty() {
+        return format!("unknown flag: --{key} (this command takes no flags)");
+    }
+    let mut known: Vec<&str> = properties.keys().map(String::as_str).collect();
+    known.sort_unstable();
+    let known = known
+        .iter()
+        .map(|name| format!("--{name}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("unknown flag: --{key} (expected one of: {known})")
+}
+
 pub(crate) fn parse_flags(
     raw_args: &[String],
     schema: &serde_json::Value,
@@ -379,6 +400,12 @@ fn parse_flags_with_budget(
         .and_then(|p| p.as_object())
         .cloned()
         .unwrap_or_default();
+    // A schema that closes itself with `additionalProperties: false` means a
+    // flag it does not name is a mistake, not an extra string property. Without
+    // this a typo (`--limti 10`) parses, dispatches, and is silently dropped —
+    // indistinguishable from omitting the flag.
+    let reject_unknown =
+        schema.get("additionalProperties") == Some(&serde_json::Value::Bool(false));
 
     let mut result = serde_json::Map::new();
     let mut i = 0;
@@ -392,6 +419,9 @@ fn parse_flags_with_budget(
 
         // --key=value
         if let Some((key, raw_value)) = flag.split_once('=') {
+            if reject_unknown && !properties.contains_key(key) {
+                return Err(unknown_flag_error(key, &properties));
+            }
             budget.add_bytes(raw_value.len(), key)?;
             let value = coerce_value(raw_value, properties.get(key), schema);
             result.insert(key.to_string(), value);
@@ -400,6 +430,9 @@ fn parse_flags_with_budget(
         }
 
         let key = flag.to_string();
+        if reject_unknown && !properties.contains_key(&key) {
+            return Err(unknown_flag_error(&key, &properties));
+        }
         let prop_schema = properties.get(&key).cloned();
         let effective = prop_schema
             .as_ref()
@@ -883,6 +916,72 @@ pub(crate) fn usage_from_schema(schema: &serde_json::Value) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_unknown_flag_kept_as_string_by_default() {
+        // Open schema (no `additionalProperties: false`): unchanged behaviour.
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": { "limit": {"type": "integer"} }
+        });
+        let args = vec!["--limti".to_string(), "10".to_string()];
+        let result = parse_flags(&args, &schema).unwrap();
+        assert_eq!(result["limti"], "10");
+    }
+
+    #[test]
+    fn test_closed_schema_rejects_unknown_flag() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": { "limit": {"type": "integer"}, "offset": {"type": "integer"} },
+            "additionalProperties": false
+        });
+        let args = vec!["--limti".to_string(), "10".to_string()];
+        let err = parse_flags(&args, &schema).unwrap_err();
+        assert!(err.contains("unknown flag: --limti"), "got: {err}");
+        assert!(err.contains("--limit"), "lists known flags: {err}");
+        assert!(err.contains("--offset"), "lists known flags: {err}");
+    }
+
+    #[test]
+    fn test_closed_schema_rejects_unknown_equals_flag() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": { "limit": {"type": "integer"} },
+            "additionalProperties": false
+        });
+        let args = vec!["--limti=10".to_string()];
+        let err = parse_flags(&args, &schema).unwrap_err();
+        assert!(err.contains("unknown flag: --limti"), "got: {err}");
+    }
+
+    #[test]
+    fn test_closed_schema_accepts_known_flags() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": { "limit": {"type": "integer"}, "name": {"type": "string"} },
+            "additionalProperties": false
+        });
+        let args = vec![
+            "--limit".to_string(),
+            "10".to_string(),
+            "--name=alice".to_string(),
+        ];
+        let result = parse_flags(&args, &schema).unwrap();
+        assert_eq!(result["limit"], 10);
+        assert_eq!(result["name"], "alice");
+    }
+
+    #[test]
+    fn test_closed_schema_without_properties_takes_no_flags() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "additionalProperties": false
+        });
+        let args = vec!["--anything".to_string(), "x".to_string()];
+        let err = parse_flags(&args, &schema).unwrap_err();
+        assert!(err.contains("takes no flags"), "got: {err}");
+    }
 
     #[test]
     fn test_parse_flags_basic() {

@@ -55,6 +55,17 @@ successful stdout results, and maps clap parse failures to stderr with clap's
 exit code. Parse diagnostics are capped to 1 KB to preserve TM-INF-022 stderr
 constraints.
 
+Clap output is kept free of ANSI escapes, and **not** by relying on the
+workspace's `default-features = false` clap pin. Cargo unifies features across a
+build, so a consumer that links clap with default features turns the `color`
+feature on for bashkit's clap too; `Command::color` does not exist as a method
+without that feature, so calling `.color(ColorChoice::Never)` would break the
+colourless build instead of fixing the coloured one. Two layers cover it:
+clap's `Display for StyledStr` runs `anstream::adapter::strip_str` whenever
+`color` is on, and `clap_error_to_exec_result` strips escapes again on our side
+so the guarantee does not rest on clap's internals. Builtin output is usually an
+LLM tool result, never a terminal.
+
 ### Extension Trait
 
 Extensions bundle a related set of builtins so embedders can add one capability
