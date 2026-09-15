@@ -33,6 +33,13 @@ impl ScriptedTool {
         for (key, value) in &self.env_vars {
             builder = builder.env(key, value);
         }
+        // Custom builtins go in before the ToolDef extension: `BashBuilder` keys
+        // custom builtins by name and later registrations win, so installing the
+        // extension last means a custom builtin can never shadow a registered
+        // tool command, `help`, or `discover`.
+        for (name, builtin) in &self.builtins {
+            builder = builder.builtin(name.clone(), Box::new(Arc::clone(builtin)));
+        }
         builder = builder.extension(
             ToolDefExtension::from_registered_tools(self.tools.clone())
                 .sanitize_errors(self.sanitize_errors)
@@ -843,5 +850,153 @@ mod tests {
         assert_ne!(resp.exit_code, 0);
         // With sanitization disabled, full error should appear
         assert!(resp.stderr.contains("postgres://"));
+    }
+}
+
+#[cfg(test)]
+mod custom_builtin_tests {
+    use crate::builtins::{Builtin, Context};
+    use crate::{ExecResult, ScriptedTool, Tool, ToolArgs, ToolDef};
+    use async_trait::async_trait;
+
+    /// Echoes raw argv so tests can assert the builtin saw it unparsed.
+    struct RawArgv;
+
+    #[async_trait]
+    impl Builtin for RawArgv {
+        async fn execute(&self, ctx: Context<'_>) -> crate::Result<ExecResult> {
+            Ok(ExecResult::ok(format!("argv:[{}]\n", ctx.args.join("|"))))
+        }
+    }
+
+    /// Would read a file if the logic-only filesystem allowed it.
+    struct ReadsFile;
+
+    #[async_trait]
+    impl Builtin for ReadsFile {
+        async fn execute(&self, ctx: Context<'_>) -> crate::Result<ExecResult> {
+            match ctx.fs.read_file(std::path::Path::new("/etc/passwd")).await {
+                Ok(_) => Ok(ExecResult::ok("read ok\n")),
+                Err(e) => Ok(ExecResult::err(format!("denied: {e}\n"), 1)),
+            }
+        }
+    }
+
+    async fn run(tool: &ScriptedTool, script: &str) -> (String, String, i64) {
+        let output = tool
+            .execution(serde_json::json!({ "commands": script }))
+            .expect("execution")
+            .execute()
+            .await
+            .expect("execute");
+        (
+            output.result["stdout"].as_str().unwrap_or_default().into(),
+            output.result["stderr"].as_str().unwrap_or_default().into(),
+            output.result["exit_code"].as_i64().unwrap_or_default(),
+        )
+    }
+
+    fn tool_with_raw_argv() -> ScriptedTool {
+        ScriptedTool::builder("api")
+            .builtin("raw", Box::new(RawArgv))
+            .tool_fn(
+                ToolDef::new("greet", "Greet").with_schema(serde_json::json!({
+                    "type": "object",
+                    "properties": { "name": {"type": "string"} }
+                })),
+                |args: &ToolArgs| Ok(format!("hi {}\n", args.param_str("name").unwrap_or("?"))),
+            )
+            .build()
+    }
+
+    #[tokio::test]
+    async fn custom_builtin_receives_raw_argv() {
+        let tool = tool_with_raw_argv();
+        // Positionals and short flags: shapes `parse_flags` rejects outright.
+        let (stdout, _, code) = run(&tool, "raw pos1 -s --long=v --").await;
+        assert_eq!(code, 0);
+        assert_eq!(stdout, "argv:[pos1|-s|--long=v|--]\n");
+    }
+
+    #[tokio::test]
+    async fn custom_builtin_coexists_with_tool_commands() {
+        let tool = tool_with_raw_argv();
+        let (stdout, _, code) = run(&tool, "raw a; greet --name bob").await;
+        assert_eq!(code, 0);
+        assert_eq!(stdout, "argv:[a]\nhi bob\n");
+    }
+
+    #[tokio::test]
+    async fn custom_builtin_reused_across_executions() {
+        let tool = tool_with_raw_argv();
+        for _ in 0..3 {
+            let (stdout, _, code) = run(&tool, "raw x").await;
+            assert_eq!(code, 0);
+            assert_eq!(stdout, "argv:[x]\n");
+        }
+    }
+
+    #[tokio::test]
+    async fn custom_builtin_cannot_shadow_a_tool_command() {
+        // `greet` is registered both ways; the ToolDef command must win.
+        let tool = ScriptedTool::builder("api")
+            .builtin("greet", Box::new(RawArgv))
+            .tool_fn(
+                ToolDef::new("greet", "Greet").with_schema(serde_json::json!({
+                    "type": "object",
+                    "properties": { "name": {"type": "string"} }
+                })),
+                |args: &ToolArgs| Ok(format!("hi {}\n", args.param_str("name").unwrap_or("?"))),
+            )
+            .build();
+        let (stdout, _, _) = run(&tool, "greet --name bob").await;
+        assert_eq!(stdout, "hi bob\n");
+    }
+
+    #[tokio::test]
+    async fn custom_builtin_cannot_shadow_help_or_discover() {
+        let tool = ScriptedTool::builder("api")
+            .builtin("help", Box::new(RawArgv))
+            .builtin("discover", Box::new(RawArgv))
+            .tool_fn(
+                ToolDef::new("greet", "Greet").with_schema(serde_json::json!({})),
+                |_: &ToolArgs| Ok("hi\n".to_string()),
+            )
+            .build();
+        let (stdout, _, _) = run(&tool, "help --list").await;
+        assert!(!stdout.starts_with("argv:"), "help was shadowed: {stdout}");
+        assert!(stdout.contains("greet"), "got: {stdout}");
+    }
+
+    #[tokio::test]
+    async fn custom_builtin_still_has_no_filesystem() {
+        // Registering a builtin must not widen the logic-only posture.
+        let tool = ScriptedTool::builder("api")
+            .builtin("readfile", Box::new(ReadsFile))
+            .build();
+        let (stdout, _, code) = run(&tool, "readfile").await;
+        assert_ne!(code, 0, "filesystem must stay disabled, got: {stdout}");
+    }
+
+    #[tokio::test]
+    async fn closed_schema_rejects_typo_through_the_shell() {
+        let tool = ScriptedTool::builder("api")
+            .tool_fn(
+                ToolDef::new("list", "List").with_schema(serde_json::json!({
+                    "type": "object",
+                    "properties": { "limit": {"type": "integer"} },
+                    "additionalProperties": false
+                })),
+                |args: &ToolArgs| Ok(format!("limit={}\n", args.param_i64("limit").unwrap_or(0))),
+            )
+            .build();
+
+        let (_, stderr, code) = run(&tool, "list --limti 5").await;
+        assert_ne!(code, 0);
+        assert!(stderr.contains("unknown flag: --limti"), "got: {stderr}");
+
+        let (stdout, _, code) = run(&tool, "list --limit 5").await;
+        assert_eq!(code, 0);
+        assert_eq!(stdout, "limit=5\n");
     }
 }

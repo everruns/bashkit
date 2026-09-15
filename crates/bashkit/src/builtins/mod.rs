@@ -1116,9 +1116,18 @@ where
     T: ClapBuiltin,
 {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        // No `.color(ColorChoice::Never)` here: the workspace builds clap with
-        // `default-features = false`, so the `color` feature is absent and clap
-        // is unconditionally colourless. See the clap pin in the root Cargo.toml.
+        // No `.color(ColorChoice::Never)` here, and it is not because the
+        // workspace pins clap with `default-features = false`. Feature
+        // unification is not ours to decide: a consumer that links clap with
+        // default features turns `color` on for bashkit's clap too, and
+        // `Command::color` does not even exist as a method without that
+        // feature, so calling it would make the colourless build stop
+        // compiling. Two things keep the output clean instead. clap renders
+        // errors and help through `Display for StyledStr`, which strips ANSI
+        // with `anstream::adapter::strip_str` whenever `color` is on, and
+        // `clap_error_to_exec_result` strips again on our side so the
+        // guarantee does not rest on clap's internals. Builtin output is
+        // usually an LLM tool result, never a terminal.
         let mut command = <T::Args as CommandFactory>::command();
         let command_name = command.get_name().to_string();
         let argv = std::iter::once(command_name).chain(ctx.args.iter().cloned());
@@ -1146,8 +1155,76 @@ where
     }
 }
 
+/// Drop ANSI escape sequences from rendered clap text.
+///
+/// THREAT[TM-INF-022]-adjacent: builtin output is usually an LLM tool result,
+/// so escape sequences are noise a model has to parse around. clap already
+/// strips styling in its `Display` impl when the `color` feature is enabled,
+/// but whether that feature is enabled at all depends on how the *consumer*
+/// unifies clap's features, so do not depend on it.
+///
+/// Recognises the ECMA-48 forms clap styling can produce: CSI
+/// (`ESC [` … final `0x40..=0x7E`), OSC (`ESC ]` … `BEL` or `ESC \`), and
+/// two- or three-byte escapes (`ESC` … intermediates `0x20..=0x2F` … final).
+/// A dangling trailing `ESC` is dropped rather than emitted.
+fn strip_ansi(text: &str) -> String {
+    if !text.contains('\u{1b}') {
+        return text.to_string();
+    }
+
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch != '\u{1b}' {
+            out.push(ch);
+            continue;
+        }
+        match chars.next() {
+            // CSI: parameters/intermediates then a final byte.
+            Some('[') => {
+                for next in chars.by_ref() {
+                    if ('\u{40}'..='\u{7e}').contains(&next) {
+                        break;
+                    }
+                }
+            }
+            // OSC: terminated by BEL or ST (ESC \).
+            Some(']') => {
+                while let Some(next) = chars.next() {
+                    if next == '\u{7}' {
+                        break;
+                    }
+                    if next == '\u{1b}' {
+                        if chars.peek() == Some(&'\\') {
+                            chars.next();
+                        }
+                        break;
+                    }
+                }
+            }
+            // Intermediate byte: consume the rest of the intermediates and the
+            // final byte, e.g. `ESC ( B` (charset designation).
+            Some(byte) if ('\u{20}'..='\u{2f}').contains(&byte) => {
+                while let Some(next) = chars.peek() {
+                    if ('\u{20}'..='\u{2f}').contains(next) {
+                        chars.next();
+                    } else {
+                        break;
+                    }
+                }
+                chars.next();
+            }
+            // Any other two-byte escape; already consumed its selector.
+            Some(_) => {}
+            // Dangling ESC at end of input.
+            None => {}
+        }
+    }
+    out
+}
+
 fn clap_error_to_exec_result(error: clap::Error) -> ExecResult {
-    let text = error.to_string();
+    let text = strip_ansi(&error.to_string());
     if matches!(
         error.kind(),
         clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion
@@ -1699,5 +1776,79 @@ mod tests {
                     .await;
             super::debug_leak_check::assert_no_leak(&r, &format!("{tool}_bogus_flag"), &[]);
         }
+    }
+}
+
+#[cfg(test)]
+mod clap_output_tests {
+    use super::{ClapBuiltin, strip_ansi};
+
+    #[test]
+    fn strip_ansi_passes_plain_text_through() {
+        assert_eq!(strip_ansi("error: no such flag\n"), "error: no such flag\n");
+        assert_eq!(strip_ansi(""), "");
+    }
+
+    #[test]
+    fn strip_ansi_removes_sgr_sequences() {
+        // What clap's styling emits: bold/red around the "error:" label.
+        let styled = "\u{1b}[1m\u{1b}[31merror:\u{1b}[0m bad flag\n";
+        assert_eq!(strip_ansi(styled), "error: bad flag\n");
+    }
+
+    #[test]
+    fn strip_ansi_removes_multi_param_csi_and_keeps_text() {
+        let styled = "\u{1b}[38;5;9mred\u{1b}[0m and \u{1b}[1;4mbold\u{1b}[0m";
+        assert_eq!(strip_ansi(styled), "red and bold");
+    }
+
+    #[test]
+    fn strip_ansi_drops_non_csi_and_dangling_escapes() {
+        // Two-byte escape (ESC + selector) and a trailing lone ESC.
+        assert_eq!(strip_ansi("a\u{1b}(Bb"), "ab");
+        assert_eq!(strip_ansi("tail\u{1b}"), "tail");
+    }
+
+    #[test]
+    fn clap_builtin_output_carries_no_escapes() {
+        use crate::clap::Parser;
+        use crate::{Bash, BashkitContext};
+        use async_trait::async_trait;
+
+        #[derive(Parser)]
+        #[command(name = "demo", about = "Demo")]
+        struct Args {
+            #[arg(long)]
+            name: String,
+        }
+
+        struct Demo;
+
+        #[async_trait]
+        impl ClapBuiltin for Demo {
+            type Args = Args;
+            async fn execute_clap(
+                &self,
+                args: Self::Args,
+                ctx: &mut BashkitContext<'_>,
+            ) -> crate::Result<()> {
+                ctx.write_stdout(format!("{}\n", args.name));
+                Ok(())
+            }
+        }
+
+        tokio_test::block_on(async {
+            let mut bash = Bash::builder().builtin("demo", Box::new(Demo)).build();
+
+            // Parse error, missing required arg, and help all render through
+            // clap and must reach the caller without escape sequences.
+            for script in ["demo --bogus", "demo", "demo --help"] {
+                let result = bash.exec(script).await.expect("exec");
+                assert!(
+                    !result.stdout.contains('\u{1b}') && !result.stderr.contains('\u{1b}'),
+                    "escape sequence in output of `{script}`"
+                );
+            }
+        });
     }
 }
