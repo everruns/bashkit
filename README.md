@@ -615,6 +615,10 @@ precompiled binaries for macOS / Linux (x86-64 + ARM64). It offers stateless
 execution plus persistent sessions backed by the in-memory VFS. Published on
 Hex as `ex_bashkit`. Independent community project, unaffiliated with Everruns.
 
+### .NET (community)
+
+[computerwelt](https://github.com/theolivenbaum/computerwelt) — Community .NET binding for Bashkit. Independent community project, unaffiliated with Everruns.
+
 ## Security
 
 Bashkit is built for running untrusted scripts from AI agents and users. Security is a core design goal, not an afterthought.
