@@ -237,10 +237,16 @@ Create a directory. If recursive is true, creates parents as needed.
 ### `mount`
 
 ```typescript
-bash.mount(vfsPath: string, fs: FileSystem): void
+bash.mount(vfsPath: string, fs: FileSystem, readOnly?: boolean): void
 ```
 
 Mount either a host directory or a FileSystem into the VFS.
+
+With `readOnly=true` a FileSystem is wrapped in `ReadOnlyFs`: reads keep
+working while mutations (and `chmod`) fail at the host layer, so
+sandboxed code cannot rewrite the mounted tree. This is host-enforced
+protection — POSIX mode bits remain metadata-only and are not enforced.
+Recorded, so `reset()` replays the protection. Default mounts writable.
 
 ### `readDir`
 
@@ -665,10 +671,16 @@ Create a directory. If recursive is true, creates parents as needed.
 ### `mount`
 
 ```typescript
-bashTool.mount(vfsPath: string, fs: FileSystem): void
+bashTool.mount(vfsPath: string, fs: FileSystem, readOnly?: boolean): void
 ```
 
 Mount either a host directory or a FileSystem into the VFS.
+
+With `readOnly=true` a FileSystem is wrapped in `ReadOnlyFs`: reads keep
+working while mutations (and `chmod`) fail at the host layer, so
+sandboxed code cannot rewrite the mounted tree. This is host-enforced
+protection — POSIX mode bits remain metadata-only and are not enforced.
+Recorded, so `reset()` replays the protection. Default mounts writable.
 
 ### `outputSchema`
 
