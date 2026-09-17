@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.18.1] - 2026-09-17
+
+### Highlights
+
+- **ScriptedTool builtins can now use clap.** `ScriptedToolBuilder::builtin(...)` registers a raw-argv builtin alongside `ToolDef` tools, so commands needing positionals, short flags, `--`, or parse-time required-argument checking work inside a `ScriptedTool` ([#2408](https://github.com/everruns/bashkit/pull/2408)).
+- **Closed schemas reject unknown flags.** With `"additionalProperties": false`, an unrecognised flag is now an error naming the valid flags instead of a silently-dropped property, and clap output is stripped of ANSI codes ([#2408](https://github.com/everruns/bashkit/pull/2408)).
+
+### What's Changed
+
+* chore(deps): bump actions/download-artifact from 6 to 7 in [#2414](https://github.com/everruns/bashkit/pull/2414)
+* chore(deps): bump actions/upload-artifact from 5 to 6 in [#2413](https://github.com/everruns/bashkit/pull/2413)
+* chore(deps): bump pypa/gh-action-pypi-publish from 1.12.1 to 1.13.0 in [#2412](https://github.com/everruns/bashkit/pull/2412)
+* chore(deps): bump actions/checkout from 5 to 6 in [#2411](https://github.com/everruns/bashkit/pull/2411)
+* chore(deps): bump actions/setup-node from 5 to 6 in [#2410](https://github.com/everruns/bashkit/pull/2410)
+* chore(deps): bump actions/setup-python from 5 to 6 in [#2409](https://github.com/everruns/bashkit/pull/2409)
+* feat(scripted_tool): let ScriptedTool builtins use clap in [#2408](https://github.com/everruns/bashkit/pull/2408)
+* chore(deps): bump github/codeql-action from 3 to 4 in [#2406](https://github.com/everruns/bashkit/pull/2406)
+* chore(deps): bump pypa/cibuildwheel from 3.1 to 3.2 in [#2405](https://github.com/everruns/bashkit/pull/2405)
+* chore(deps): bump actions/cache from 4 to 5 in [#2404](https://github.com/everruns/bashkit/pull/2404)
+* chore(deps): bump ast-grep from 0.40.1 to 0.41.0 in [#2403](https://github.com/everruns/bashkit/pull/2403)
+* chore(deps): bump the npm_and_yarn group with 2 updates in [#2402](https://github.com/everruns/bashkit/pull/2402)
+* chore(deps): bump actions/stale from 9 to 10 in [#2401](https://github.com/everruns/bashkit/pull/2401)
+* fix(docs-grep-agent): reject zero-context matches with a helpful error in [#2400](https://github.com/everruns/bashkit/pull/2400)
+* fix(capi): make trybuild a dev-dependency with idiomatic assertions in [#2399](https://github.com/everruns/bashkit/pull/2399)
+* chore(deps): bump astral-sh/setup-uv from 6 to 7 in [#2398](https://github.com/everruns/bashkit/pull/2398)
+* chore(deps): bump crate-ci/typos from 1.35 to 1.36 in [#2397](https://github.com/everruns/bashkit/pull/2397)
+* docs(eval): record variadic builtins limitation L30 in [#2395](https://github.com/everruns/bashkit/pull/2395)
+
+**Full Changelog**: https://github.com/everruns/bashkit/compare/v0.18.0...v0.18.1
+
 ## [0.18.0] - 2026-09-10
 
 ### Highlights
