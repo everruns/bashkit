@@ -500,19 +500,49 @@ mod tests {
     use super::{run_subprocess, subprocess_program};
     use std::path::PathBuf;
 
+    /// Write an executable stub shell at `path`.
+    #[cfg(unix)]
+    fn write_stub_shell(path: &std::path::Path, body: &str) {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::write(path, body).unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    /// `which_bash`, retried past a transient ETXTBSY.
+    ///
+    /// These tests write a stub shell and immediately execute it. Sibling tests
+    /// in this binary spawn processes concurrently, and a child forked while the
+    /// stub's write descriptor is still open holds that descriptor until it
+    /// execs — so the exec of the stub can fail with ETXTBSY ("Text file busy").
+    /// That surfaces as the wrong error and fails the assertions below on
+    /// roughly 5% of runs. The race is an artifact of writing the binary under
+    /// test; retry past it rather than assert on whichever error won.
+    #[cfg(unix)]
+    async fn which_bash_past_etxtbsy(search_path: &std::ffi::OsStr) -> anyhow::Result<String> {
+        for _ in 0..100 {
+            let result = which_bash(search_path).await;
+            match &result {
+                // `{:#}` walks the cause chain; the errno lives in the source,
+                // not in the context message `to_string()` renders.
+                Err(error) if format!("{error:#}").contains("Text file busy") => {
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+                _ => return result,
+            }
+        }
+        panic!("stub shell still ETXTBSY after 100 attempts");
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn bash_selection_uses_path_before_system_shell() {
         let directory = tempfile::tempdir().unwrap();
         let shell = directory.path().join("bash");
-        std::fs::write(&shell, "#!/bin/sh\nprintf '5.3.0\\n'\n").unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&shell, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
+        write_stub_shell(&shell, "#!/bin/sh\nprintf '5.3.0\\n'\n");
         assert_eq!(
-            which_bash(directory.path().as_os_str()).await.unwrap(),
+            which_bash_past_etxtbsy(directory.path().as_os_str())
+                .await
+                .unwrap(),
             shell.to_str().unwrap()
         );
     }
@@ -524,13 +554,10 @@ mod tests {
         let error = which_bash(directory.path().as_os_str()).await.unwrap_err();
         assert!(error.to_string().contains("bash not found on PATH"));
         let shell = directory.path().join("bash");
-        std::fs::write(&shell, "#!/bin/sh\nprintf '3.2.57'\n").unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&shell, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
-        let error = which_bash(directory.path().as_os_str()).await.unwrap_err();
+        write_stub_shell(&shell, "#!/bin/sh\nprintf '3.2.57'\n");
+        let error = which_bash_past_etxtbsy(directory.path().as_os_str())
+            .await
+            .unwrap_err();
         assert!(error.to_string().contains("requires Bash >=4"));
         assert!(error.to_string().contains("3.2.57"));
     }
