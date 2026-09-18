@@ -617,7 +617,7 @@ Hex as `ex_bashkit`. Independent community project, unaffiliated with Everruns.
 
 ### .NET (community)
 
-[computerwelt](https://github.com/theolivenbaum/computerwelt) — Community .NET binding for Bashkit. Independent community project, unaffiliated with Everruns.
+[computerwelt](https://github.com/curiosity-ai/computerwelt) — Community .NET binding for Bashkit. Independent community project, unaffiliated with Everruns.
 
 ## Security
 
