@@ -69,8 +69,13 @@ class MaintenanceSecurityTests(unittest.TestCase):
 import json, os, pathlib, sys
 name = pathlib.Path(sys.argv[0]).name
 broad = 'DOPPLER_TOKEN' in os.environ
+# Match the injected token's value, not the bare variable name. bash may
+# exec-replace itself for a step's final command, which reparents this stub
+# onto the test runner; a real DOPPLER_TOKEN in the runner's own environment
+# (the documented cloud agent env pre-configures one) then reads as a leak
+# that never happened.
 parent_env = pathlib.Path('/proc') / str(os.getppid()) / 'environ'
-parent_broad = b'DOPPLER_TOKEN=' in parent_env.read_bytes() if parent_env.exists() else False
+parent_broad = b'DOPPLER_TOKEN=synthetic-broad-token' in parent_env.read_bytes() if parent_env.exists() else False
 with open(os.environ['CALL_LOG'], 'a') as log:
     log.write(json.dumps({'name': name, 'args': sys.argv[1:], 'broad': broad,
         'parent_broad': parent_broad, 'pid': os.getpid()}) + '\n')
