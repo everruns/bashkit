@@ -274,7 +274,7 @@ See [Coreutils Argument Port](../runtimes/coreutils-args-port.md).
 - Nightly and fuzz workflows green for past week
 - Fuzz targets compile
 - Git-sourced dependencies still resolve
-- No orphaned CI quarantines - `grep -rn continue-on-error .github/workflows/`; each hit must cite its tracking issue (bun-canary quarantine: #2417, revert when the canary `bun-linux-x64.zip` asset is back)
+- No orphaned CI quarantines - `grep -rn continue-on-error .github/workflows/`; each hit must cite its tracking issue, and the issue must still be open
 
 #### Workflow Credential Audit
 

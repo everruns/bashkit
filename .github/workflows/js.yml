@@ -73,11 +73,6 @@ jobs:
   build-and-test:
     name: ${{ matrix.runtime }} ${{ matrix.version }}
     runs-on: ubuntu-latest
-    # TODO(#2417): quarantine - upstream oven-sh/bun canary stopped publishing
-    # the glibc linux builds (bun-linux-x64.zip 404s), so setup-bun cannot
-    # install. Scoped to bun canary only; revert when the asset is back.
-    continue-on-error: ${{ matrix.runtime == 'bun' && matrix.version == 'canary' }}
-
     strategy:
       fail-fast: false
       matrix:
