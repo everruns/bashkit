@@ -276,6 +276,34 @@ See [Coreutils Argument Port](../runtimes/coreutils-args-port.md).
 - Git-sourced dependencies still resolve
 - No orphaned CI quarantines - `grep -rn continue-on-error .github/workflows/`; each hit must cite its tracking issue (bun-canary quarantine: #2417, revert when the canary `bun-linux-x64.zip` asset is back)
 
+#### Workflow Credential Audit
+
+Run-level green is not the same as a safe workflow definition. Audit
+`.github/workflows/` itself each pass; the enforced invariants live in
+`scripts/tests/test_ci_supply_chain.py` and `scripts/tests/test_maintenance_security.py`
+(TM-INF-026, TM-INF-027, TM-INF-034), so a new workflow that violates one fails
+`just test` rather than silently shipping.
+
+- **Checkout credentials**: every `actions/checkout` sets
+  `persist-credentials: false` unless the job authenticates a `git`/`gh` call.
+  Without it the job's `GITHUB_TOKEN` sits in `.git/config` where any
+  `build.rs`, npm lifecycle script, or test in the same job can read it. No job
+  in a `pull_request`-triggered workflow may keep it.
+- **Default permissions**: every workflow declares a top-level `permissions`
+  block; write scopes are opt-in per job, never inherited.
+- **Secret transport**: a secret fetched at runtime is invisible to GitHub's log
+  masker until `::add-mask::` announces it. Fetch, mask, then pass it on through
+  `$GITHUB_OUTPUT` and step `env`. Never `$GITHUB_ENV` - that republishes the
+  value in the environment block of every later step. Only a
+  `secrets.X != ''` presence boolean may reach `$GITHUB_ENV`.
+- **Credential lifetime**: the step holding a broad token (`DOPPLER_TOKEN`)
+  fetches one key and exits before any repository code runs. No `cargo`, `node`,
+  `bun`, `docker`, or `examples/` invocation shares a step with it.
+- **Triggers**: no `pull_request_target`, `workflow_run`, or `issue_comment`
+  trigger; these run with a writable token in an attacker-influenced context.
+- **Untrusted interpolation**: no `${{ github.event.* }}` or `${{ github.head_ref }}`
+  expanded directly into a `run:` block. Pass it through `env:` instead.
+
 #### Escalation Policy
 
 Failures persisting **>2 consecutive days** on any workflow (CI, nightly, fuzz)

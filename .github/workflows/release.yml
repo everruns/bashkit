@@ -6,6 +6,12 @@ on:
       - main
   workflow_dispatch:
 
+# Least privilege by default: the single `release` job below opts into the
+# write scopes it needs. Any job added later starts read-only instead of
+# inheriting the repository default.
+permissions:
+  contents: read
+
 jobs:
   release:
     name: Create Release
@@ -16,6 +22,9 @@ jobs:
     # Only run if manually triggered OR commit message starts with "chore(release): prepare v"
     if: "${{ github.event_name == 'workflow_dispatch' || startsWith(github.event.head_commit.message, 'chore(release): prepare v') }}"
     steps:
+      # Checkout credentials are deliberately persisted here: `git push origin
+      # "$TAG"` below authenticates through them. This job runs only from
+      # protected `main` and executes no pull-request-authored code.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
