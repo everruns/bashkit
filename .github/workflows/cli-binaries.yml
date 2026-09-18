@@ -229,9 +229,11 @@ jobs:
           # fine-grained PAT scoped to `everruns/homebrew-tap` only
           # (Contents: read+write, Metadata: read), so a leak cannot
           # touch the main bashkit repo.
+          # Register the mask before the value can reach any log line: an
+          # `set -x` or error trace between fetch and mask would print it.
           GH_PAT=$(doppler secrets get HOMEBREW_TAP_GITHUB_TOKEN --plain)
-          export GH_PAT
           echo "::add-mask::$GH_PAT"
+          export GH_PAT
 
           # Use askpass to avoid embedding token in clone/push URLs or logs
           ASKPASS_SCRIPT=$(mktemp)

@@ -24,6 +24,17 @@ upstream version cannot preserve a required security contract, establish the
 incompatibility, retain the newest safe version with a tested/documented pin,
 and complete the rest of the pass; do not replace security checks with weaker ones.
 
+Audit CI, not just its results. A green run says nothing about what the workflow
+definition hands to the code it executes, so each pass reviews `.github/workflows/`
+against the Workflow Credential Audit in `knowledge/operations/maintenance.md`:
+checkout credentials persisted only where a `git`/`gh` call authenticates with them
+and never in a pull-request-triggered job, a top-level `permissions` block on every
+workflow, runtime-fetched secrets masked before they travel and never routed through
+`$GITHUB_ENV`, broad tokens confined to steps that run no repository code, no
+`pull_request_target`/`workflow_run`/`issue_comment` triggers, and no untrusted
+`${{ github.event.* }}` interpolation inside a `run:` block. Treat a finding here
+as a fix in this pass; `scripts/tests/test_ci_supply_chain.py` holds the regressions.
+
 Do not create deferral issues instead of completing maintenance unless the user
 explicitly requests a deferred scope or a genuine external blocker requires it.
 Only stop for an actual missing permission, unavailable dependency/service, or
