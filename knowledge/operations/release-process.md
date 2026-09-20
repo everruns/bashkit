@@ -168,6 +168,17 @@ If a workflow fails: `gh run view <run-id> --log-failed`, identify root
 cause, re-run (transient) or open a hotfix PR (code/packaging bug, see
 v0.4.0 → v0.4.1 for a worked example).
 
+A red publish workflow does not by itself mean the package is missing. Check
+the registry before treating it as a failed publish: the npm jobs publish and
+then poll for the new version, and the poll can outlive its own success.
+registry.npmjs.org serves packuments with `cache-control: public,
+max-age=300`, so a CDN edge can answer with the pre-publish document for up to
+five minutes, and npm's publish output says so ("may take a few minutes to
+become available"). v0.18.1 published to npm at 00:45:29 and the 120s
+verification poll failed at 00:47:32; the `latest` tag moved at 00:48:10. The
+poll window now clears the 300s cache (`ATTEMPTS`/`SLEEP_SECONDS` in
+`publish-js.yml`, guarded by `scripts/tests/test_release_workflow.py`).
+
 ## Changelog Format
 
 Use the latest entries in `CHANGELOG.md` as the template. Rules:

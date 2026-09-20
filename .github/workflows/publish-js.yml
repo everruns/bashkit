@@ -555,8 +555,14 @@ jobs:
         run: |
           PKG_VERSION=$(node -p "require('./package.json').version")
           TAG="${{ steps.dist-tag.outputs.tag }}"
-          ATTEMPTS=24
-          SLEEP_SECONDS=5
+          # npm answers "may take a few minutes to become available" on
+          # publish, and registry.npmjs.org serves packuments with
+          # `cache-control: public, max-age=300`, so a CDN edge can hand back
+          # the pre-publish document for five minutes. v0.18.1 published fine
+          # and still failed here: the old 24x5s=120s poll gave up 38s before
+          # the registry moved the tag. Outlast the 300s cache window.
+          ATTEMPTS=60
+          SLEEP_SECONDS=10
 
           for attempt in $(seq 1 "$ATTEMPTS"); do
             ACTUAL=$(npm view @everruns/bashkit "dist-tags.$TAG" 2>/dev/null || echo "not found")

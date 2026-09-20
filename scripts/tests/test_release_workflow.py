@@ -13,6 +13,11 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 # release workflow. See the script's header for why apt is not used.
 INSTALLER = "scripts/install-binaryen.sh"
 
+# registry.npmjs.org serves packuments with `cache-control: public,
+# max-age=300`, so a CDN edge can answer with the pre-publish document for
+# five minutes. Any post-publish verification has to outlast that.
+NPM_PACKUMENT_MAX_AGE_SECONDS = 300
+
 
 class ReleaseWorkflowTests(unittest.TestCase):
     def test_release_dispatches_every_publish_workflow(self) -> None:
@@ -74,6 +79,56 @@ class ReleaseWorkflowTests(unittest.TestCase):
             with self.subTest(step=step.splitlines()[0]):
                 if "ava" in step or "pnpm test" in step:
                     self.assertIn("matrix.node != '20'", step)
+
+    def test_npm_publish_verification_outlasts_the_registry_cache(self) -> None:
+        """v0.18.1 published to npm and the release still went red.
+
+        `npm publish` succeeded at 00:45:29 (run 35291306179 logs
+        `+ @everruns/bashkit@0.18.1` and a signed provenance statement), but
+        the verification poll read `0.18.0` on all 24 attempts and failed at
+        00:47:32. npm moved the `latest` tag at 00:48:10 -- 38 seconds after
+        the poll gave up, and 161 seconds after the publish returned.
+
+        The poll is not measuring the publish, it is racing a cache: npm's own
+        publish output says the package "may take a few minutes to become
+        available", and registry.npmjs.org serves packuments with
+        `cache-control: public, max-age=300`, so a CDN edge can keep answering
+        with the pre-publish document for five minutes. A window shorter than
+        that reports a false failure on a release that actually shipped, which
+        is worse than no check: it leaves a red release nobody can act on.
+
+        (Retrying harder inside a short window does not help, and no npm flag
+        avoids this -- `npm view` already forces a staleness check, it sets
+        `preferOnline: true` itself. Only the window length fixes it.)
+        """
+        publish = (ROOT / ".github/workflows/publish-js.yml").read_text()
+        step = re.search(
+            r"^      - name: Verify npm publish\n(?:(?:        .*)?\n)*",
+            publish,
+            re.MULTILINE,
+        )
+        self.assertIsNotNone(step, "publish-js.yml lost its npm verification step")
+        step = step.group(0)
+
+        attempts = re.search(r"^\s*ATTEMPTS=(\d+)$", step, re.MULTILINE)
+        sleep_seconds = re.search(r"^\s*SLEEP_SECONDS=(\d+)$", step, re.MULTILINE)
+        self.assertIsNotNone(attempts, "verification lost its attempt count")
+        self.assertIsNotNone(sleep_seconds, "verification lost its sleep interval")
+
+        window = int(attempts.group(1)) * int(sleep_seconds.group(1))
+        self.assertGreaterEqual(
+            window,
+            2 * NPM_PACKUMENT_MAX_AGE_SECONDS,
+            f"npm publish verification polls for {window}s; the registry "
+            f"caches packuments for {NPM_PACKUMENT_MAX_AGE_SECONDS}s, so the "
+            f"window must clear that with margin or releases go red on a "
+            f"publish that succeeded",
+        )
+
+        # The check still has to be a real one: poll the registry, and fail
+        # the job if the version never lands.
+        self.assertIn("npm view @everruns/bashkit", step)
+        self.assertIn("exit 1", step)
 
     def test_cli_publish_proxy_uses_the_published_core(self) -> None:
         justfile = (ROOT / "justfile").read_text()
