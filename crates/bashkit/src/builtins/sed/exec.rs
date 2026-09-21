@@ -457,6 +457,7 @@ impl<'a> Machine<'a> {
                     let text = format!("{name}\n");
                     self.out.raw(&text);
                 }
+                // Handled above, before the address gate; listed for exhaustiveness.
                 Kind::Block(_) | Kind::BlockEnd | Kind::Label(_) | Kind::Nop => {}
             }
 
@@ -687,6 +688,9 @@ impl<'a> Machine<'a> {
     fn start_matches(&mut self, start: &StartAddr) -> bool {
         match start {
             StartAddr::Line(n) => self.line_no == *n,
+            // `0` is only legal as the start of `0,/re/`, which
+            // `address_matches` handles before reaching here; the parser
+            // rejects a bare `0` address.
             StartAddr::Zero => false,
             StartAddr::Last => self.is_last_line(),
             StartAddr::Step(first, step) => {

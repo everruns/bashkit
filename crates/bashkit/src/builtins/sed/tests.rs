@@ -659,6 +659,52 @@ async fn short_options_cluster_and_take_arguments() {
     assert_eq!(out(&["-n", "--expression", "p"], "x\n").await, "x\n");
 }
 
+/// Every long option and every accepted-but-inert short option, so none of
+/// them can rot into "silently ignored" without a test noticing.
+#[tokio::test]
+async fn every_long_option_is_exercised() {
+    assert_eq!(out(&["--silent", "-e", "p"], "x\n").await, "x\n");
+    assert_eq!(out(&["--quiet", "-e", "p"], "x\n").await, "x\n");
+    assert_eq!(out(&["--regexp-extended", "s/a+/X/"], "aa\n").await, "X\n");
+    assert_eq!(out(&["--expression=s/x/y/"], "x\n").await, "y\n");
+    assert_eq!(
+        out(&["--line-length=5", "-n", "l"], "abcdefgh\n").await,
+        "abcd\\\nefgh$\n"
+    );
+    // -u / --unbuffered and --follow-symlinks are accepted and inert.
+    assert_eq!(out(&["-u", "s/a/b/"], "a\n").await, "b\n");
+    assert_eq!(out(&["--unbuffered", "s/a/b/"], "a\n").await, "b\n");
+    assert_eq!(out(&["--follow-symlinks", "s/a/b/"], "a\n").await, "b\n");
+    assert_eq!(out(&["--posix", "s/a/b/"], "a\n").await, "b\n");
+    assert_eq!(out(&["--debug", "s/a/b/"], "a\n").await, "b\n");
+    assert_eq!(out(&["--sandbox", "s/a/b/"], "a\n").await, "b\n");
+    // --null-data has two spellings.
+    assert_eq!(out(&["--null-data", "s/a/X/g"], "a\0a\0").await, "X\0X\0");
+    assert_eq!(
+        out(&["--zero-terminated", "s/a/X/g"], "a\0a\0").await,
+        "X\0X\0"
+    );
+}
+
+#[tokio::test]
+async fn long_option_separate_and_file() {
+    let fs = Arc::new(InMemoryFs::new());
+    fs.write_file(std::path::Path::new("/f1"), b"a\nb\n")
+        .await
+        .unwrap();
+    fs.write_file(std::path::Path::new("/f2"), b"c\n")
+        .await
+        .unwrap();
+    let sep = run_with(fs.clone(), &["--separate", "-n", "$p", "/f1", "/f2"], None).await;
+    assert_eq!(sep.stdout, "b\nc\n");
+
+    fs.write_file(std::path::Path::new("/sc.sed"), b"s/a/X/\n")
+        .await
+        .unwrap();
+    let from_file = run_with(fs, &["--file=/sc.sed"], Some("a\n")).await;
+    assert_eq!(from_file.stdout, "X\n");
+}
+
 #[tokio::test]
 async fn an_empty_script_is_a_passthrough() {
     let result = run_sed(&[""], Some("a\n")).await;
