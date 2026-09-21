@@ -23,15 +23,15 @@
     "@astrojs/markdown-remark": "^7.3.1",
     "@astrojs/sitemap": "^3.7.4",
     "@everruns/bashkit-wasm": "0.17.1",
-    "astro": "^7.3.2",
+    "astro": "^7.3.3",
     "rehype-autolink-headings": "^7.1.0",
     "rehype-slug": "^6.0.0"
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.10",
-    "@types/node": "^26.5.1",
+    "@types/node": "^26.6.1",
     "typescript": "^7.0.2",
-    "wrangler": "^4.131.1"
+    "wrangler": "^4.134.0"
   },
   "pnpm": {
     "overrides": {
