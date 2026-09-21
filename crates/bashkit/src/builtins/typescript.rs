@@ -999,7 +999,7 @@ fn extract_path(args: &[Value], cwd: &Path) -> Option<PathBuf> {
             if p.is_absolute() {
                 Some(p.to_owned())
             } else {
-                Some(vfs_join(&cwd, p))
+                Some(vfs_join(cwd, p))
             }
         }
         _ => None,
