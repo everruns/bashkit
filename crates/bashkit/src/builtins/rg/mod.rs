@@ -3587,7 +3587,10 @@ async fn resolve_rg_symlink_target(
     let resolved = if target.is_absolute() {
         crate::fs::normalize_path(&target)
     } else {
-        crate::fs::normalize_path(&link_path.parent().unwrap_or(Path::new("/")).join(target))
+        crate::fs::normalize_path(&vfs_join(
+            link_path.parent().unwrap_or(Path::new("/")),
+            target,
+        ))
     };
     // rg may emulate ripgrep's -L behavior only inside the requested VFS search root;
     // rejecting escapes preserves TM-ESC-002's inert-symlink sandbox boundary.

@@ -196,14 +196,30 @@ the read-error path in `tail`/`rev`/`tac`/`shuf`/`sort`/`uniq`/`wc` did the same
 children were keyed `\`-style and every normalized lookup afterwards missed
 them.
 
-Decision: VFS paths are built with `crate::fs::vfs_join`, never `Path::join`.
+The same host/VFS mismatch has a second shape: `Path::is_absolute()` is false
+on Windows for a VFS-absolute path like `/etc/passwd`, because there is no
+drive prefix. Two security guards tested it — the RealFs absolute-symlink-target
+guard and the tar extraction traversal guard — so neither fired on Windows.
+Containment held in both cases via their later checks (canonicalize-and-contain
+for RealFs, `starts_with(extract_base)` for tar), so this was latent fragility
+rather than an escape, but the guards now test `has_root()`, which is true for a
+`/`-rooted path on every host.
+
+Decision: VFS paths are built with `crate::fs::vfs_join`, never `Path::join`
+(or `PathBuf::push`), and a guard that asks "is this path absolute?" about a VFS
+path asks `has_root()`, never `is_absolute()`.
 It joins with `/` on every host, keeps `Path::join` semantics (an absolute
 child replaces the base) and leaves `.`/`..` for the backends to normalize.
 It is re-exported as `bashkit::vfs_join`, since custom `FileSystem`
 implementations have the same obligation. Two guards keep it that way:
-- `builtins::tests::no_host_separator_joins_on_vfs_paths` — static
-  scan of `crates/bashkit/src/` for the `cwd.join(` and `.join(&entry.name)`
+- `builtins::tests::no_host_separator_joins_on_vfs_paths` — static scan of
+  every workspace crate's `src/` for the `cwd.join(` and `.join(&entry.name)`
   shapes, with a `// host-join-ok: <reason>` escape hatch.
+- `windows_containment_host_path_hazards_are_still_real` — a Windows-only test
+  pinning the platform behavior these rules exist for (`Path::join` inserting
+  `\`, `is_absolute()` being false for `/etc/passwd`, `\` and `/` comparing
+  equal). If std or the platform ever changed, it says so before the rules
+  start looking arbitrary.
 - `windows_containment_*` unit tests next to `vfs_join`, `grep`, `du`, `wc` and
   `InMemoryFs::rename`, which the Windows CI job runs (`cargo test -p bashkit
   --lib --features realfs windows_containment`).

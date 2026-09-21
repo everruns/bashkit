@@ -1486,7 +1486,11 @@ mod tests {
         // `Path::join` shapes seen on VFS paths: a cwd-relative operand and a
         // directory entry appended during a recursive walk.
         let shapes = ["cwd.join(", ".join(&entry.name)", ".join(&e.name)"];
-        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        // Every crate in the workspace, not just this one: the sibling crates
+        // (CLI, bindings, bench) build VFS paths too.
+        let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("crates/ dir");
         let mut violations = Vec::new();
 
         fn walk(
@@ -1538,7 +1542,12 @@ mod tests {
             }
         }
 
-        walk(&manifest.join("src"), manifest, &shapes, &mut violations);
+        for crate_dir in std::fs::read_dir(workspace).expect("read crates dir") {
+            let src = crate_dir.expect("crate entry").path().join("src");
+            if src.is_dir() {
+                walk(&src, workspace, &shapes, &mut violations);
+            }
+        }
 
         assert!(
             violations.is_empty(),

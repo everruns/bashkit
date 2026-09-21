@@ -662,7 +662,12 @@ fn validate_tar_for_extraction(
 
         if !to_stdout {
             let entry = Path::new(name.as_ref());
-            if entry.is_absolute()
+            // `has_root()` rather than `is_absolute()`: a `/etc/passwd` entry
+            // carries no drive prefix, so on Windows `is_absolute()` is false
+            // and this arm never fired (issue #2425's class). The
+            // `starts_with(extract_base)` arm below still blocked the write.
+            if entry.has_root()
+                || entry.is_absolute()
                 || entry
                     .components()
                     .any(|component| matches!(component, std::path::Component::ParentDir))

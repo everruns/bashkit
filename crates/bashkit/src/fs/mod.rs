@@ -578,6 +578,32 @@ pub fn normalize_path(path: &Path) -> PathBuf {
 mod windows_containment_tests {
     use super::*;
 
+    /// Pins the host behavior the VFS rules exist for, so the reasoning behind
+    /// [`vfs_join`] and the `has_root()` guards is checked on Windows rather
+    /// than asserted in a comment. If std ever changed these, this test says so
+    /// before the rules start looking arbitrary.
+    #[test]
+    fn windows_containment_host_path_hazards_are_still_real() {
+        // Why `vfs_join` exists: `Path::join` inserts the host separator.
+        assert_eq!(
+            Path::new("/d/proj").join("src").to_string_lossy(),
+            r"/d/proj\src"
+        );
+        assert_eq!(
+            vfs_join(Path::new("/d/proj"), "src").to_string_lossy(),
+            "/d/proj/src"
+        );
+
+        // Why absolute-target guards test `has_root()`: a VFS-absolute path
+        // carries no drive prefix, so `is_absolute()` is false here.
+        assert!(!Path::new("/etc/passwd").is_absolute());
+        assert!(Path::new("/etc/passwd").has_root());
+
+        // Why a mixed-separator path still resolves: both are separators here,
+        // which is what keeps the leak cosmetic rather than functional.
+        assert_eq!(Path::new(r"/d/proj\src"), Path::new("/d/proj/src"));
+    }
+
     #[test]
     fn windows_containment_normalizes_host_path_syntax_into_vfs_root() {
         assert_eq!(

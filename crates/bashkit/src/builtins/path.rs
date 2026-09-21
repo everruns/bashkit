@@ -484,7 +484,7 @@ async fn follow_readlink_symlinks(
 
                 for remaining in components.iter().skip(idx + 1) {
                     if let Component::Normal(part) = remaining {
-                        next.push(part);
+                        next = vfs_join(&next, part);
                     }
                 }
 
