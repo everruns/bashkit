@@ -53,6 +53,9 @@ cargo test --features failpoints security_ -- --test-threads=1
 | `yq::temp_allocate` | `exhausted` | Source preservation when no sibling temporary can be allocated |
 | `yq::temp_chmod` | `error` | Temporary cleanup and source preservation on mode-copy failure |
 | `yq::temp_rename` | `error` | Temporary cleanup and source preservation before atomic replacement |
+| `sed::temp_allocate` | `exhausted` | `sed -i` source preservation when no sibling temporary can be allocated |
+| `sed::temp_chmod` | `error` | `sed -i` temporary cleanup and source preservation on mode-copy failure |
+| `sed::temp_rename` | `error` | `sed -i` temporary cleanup and source preservation before atomic replacement |
 
 The existing `fs::write_file` actions cover yq temporary-write failures,
 including the partial-write class. `security_yq_inplace_*` asserts original

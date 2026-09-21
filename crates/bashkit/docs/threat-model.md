@@ -883,7 +883,7 @@ builtin silently fails.
 | Threat | Attack Example | Mitigation | Status |
 |--------|---------------|------------|--------|
 | Awk byte-boundary panic (TM-UNI-001) | Multi-byte chars in awk input | `catch_unwind` catches panic | PARTIAL |
-| Sed byte-boundary panic (TM-UNI-002) | Box-drawing chars in sed pattern | `catch_unwind` catches panic | PARTIAL |
+| Sed byte-boundary panic (TM-UNI-002) | Multi-byte `s` delimiter, e.g. `sed 's≠a≠X≠'` | Char-based script parser; no byte slicing of script text | FIXED |
 | Expr substr panic (TM-UNI-015) | `expr substr "café" 4 1` | `catch_unwind` catches panic | PARTIAL |
 | Printf precision panic (TM-UNI-016) | `printf "%.1s" "é"` | `catch_unwind` catches panic | PARTIAL |
 | Cut/tr byte-level parsing (TM-UNI-017) | `tr 'é' 'e'`, multi-byte in char set | `catch_unwind` catches; silent data loss | PARTIAL |

@@ -4,15 +4,13 @@
 //! evaluated by the existing jq/jaq builtin, so Bashkit has one query language,
 //! one evaluator, and one set of work/output/deadline mitigations.
 
-use std::path::Path;
-
 use async_trait::async_trait;
 use serde::Deserialize;
 
 use super::{Builtin, Context, Jq, read_text_file, resolve_path};
 use crate::StreamData;
+use crate::builtins::atomic_write::{AtomicFailpoints, atomic_replace};
 use crate::error::Result;
-use crate::fs::vfs_join;
 use crate::interpreter::ExecResult;
 use crate::limits::ExecutionLimits;
 
@@ -203,7 +201,19 @@ impl Builtin for Yq {
         }
 
         if let Some(path) = inplace_path {
-            if let Err(message) = atomic_replace(fs.as_ref(), &path, rendered.as_bytes()).await {
+            if let Err(message) = atomic_replace(
+                fs.as_ref(),
+                &path,
+                rendered.as_bytes(),
+                "yq",
+                AtomicFailpoints {
+                    allocate: "yq::temp_allocate",
+                    chmod: "yq::temp_chmod",
+                    rename: "yq::temp_rename",
+                },
+            )
+            .await
+            {
                 return Ok(ExecResult::err(format!("yq: {message}\n"), 1));
             }
             return Ok(ExecResult::ok(String::new()));
@@ -659,73 +669,6 @@ fn render_results(values: &[serde_json::Value], args: &Args) -> DataResult<Strin
         }
     }
     Ok(output)
-}
-
-// THREAT[TM-FS-016]: write a sibling temporary file and rename only after
-// successful evaluation and serialization; failures leave the source intact.
-async fn atomic_replace(
-    fs: &dyn crate::fs::FileSystem,
-    target: &Path,
-    content: &[u8],
-) -> std::result::Result<(), String> {
-    let parent = target.parent().unwrap_or_else(|| Path::new("/"));
-    #[cfg(feature = "failpoints")]
-    if injected_failure("yq::temp_allocate", "exhausted") {
-        return Err("cannot allocate temporary file".to_string());
-    }
-    let mut temp = None;
-    for _ in 0..16 {
-        let mut suffix = [0u8; 8];
-        getrandom::fill(&mut suffix)
-            .map_err(|_| "cannot generate temporary filename".to_string())?;
-        let suffix = suffix
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>();
-        let candidate = vfs_join(parent, format!(".bashkit-yq-{suffix}.tmp"));
-        if !fs
-            .exists(&candidate)
-            .await
-            .map_err(|error| error.to_string())?
-        {
-            temp = Some(candidate);
-            break;
-        }
-    }
-    let temp = temp.ok_or_else(|| "cannot allocate temporary file".to_string())?;
-    if let Err(error) = fs.write_file(&temp, content).await {
-        let _ = fs.remove(&temp, false).await;
-        return Err(format!("cannot write temporary file: {error}"));
-    }
-    #[cfg(feature = "failpoints")]
-    if injected_failure("yq::temp_chmod", "error") {
-        let _ = fs.remove(&temp, false).await;
-        return Err("cannot preserve file mode: injected failure".to_string());
-    }
-    if let Ok(metadata) = fs.stat(target).await
-        && let Err(error) = fs.chmod(&temp, metadata.mode).await
-    {
-        let _ = fs.remove(&temp, false).await;
-        return Err(format!("cannot preserve file mode: {error}"));
-    }
-    #[cfg(feature = "failpoints")]
-    if injected_failure("yq::temp_rename", "error") {
-        let _ = fs.remove(&temp, false).await;
-        return Err(format!(
-            "cannot replace '{}': injected failure",
-            target.display()
-        ));
-    }
-    if let Err(error) = fs.rename(&temp, target).await {
-        let _ = fs.remove(&temp, false).await;
-        return Err(format!("cannot replace '{}': {error}", target.display()));
-    }
-    Ok(())
-}
-
-#[cfg(feature = "failpoints")]
-fn injected_failure(name: &str, expected: &str) -> bool {
-    fail::eval(name, |action| action.as_deref() == Some(expected)).unwrap_or(false)
 }
 
 fn relabel_jq_error(mut result: ExecResult) -> ExecResult {

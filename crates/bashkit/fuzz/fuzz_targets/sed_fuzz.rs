@@ -90,6 +90,22 @@ fuzz_target!(|data: &[u8]| {
                 expr.replace('\'', "'\\''"),
             );
             bashkit::testing::fuzz_exec(&mut bash, &script3, "sed_fuzz", &[]).await;
+
+            // Test 4: seeds that historically panicked or diverged (issue #2427):
+            // multi-byte `s` delimiters (TM-UNI-002), truncated scripts, and
+            // option clustering.
+            for seed in [
+                "s≠a≠X≠",
+                "s😀a😀X😀g",
+                "y≠a≠b≠",
+                "s/a",
+                "s/[//",
+                ":a;ba",
+                "b missing",
+            ] {
+                let script = format!("echo 'a' | sed '{seed}'");
+                bashkit::testing::fuzz_exec(&mut bash, &script, "sed_fuzz_seed", &[]).await;
+            }
         });
     }
 });
