@@ -66,11 +66,29 @@ criteria = "safe-to-deploy"
 delta = "4.6.0 -> 4.6.1"
 notes = "Reviewed delta: version/dependency metadata plus generated env! guard for derive defaults; clap remains unsafe-forbidden and no new ambient capabilities."
 
+[[audits.clap]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "4.6.6 -> 4.6.7"
+notes = "Reviewed derive Command-to-Self renames, defer builder plumbing, and docs; CLI parsing stays bounded with no new unsafe, fs, net, or ambient access."
+
+[[audits.clap_builder]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "4.6.6 -> 4.6.7"
+notes = "Reviewed defer builder support (Arg::defer, Command::defer) plus docs; argument parsing remains in-memory with no new unsafe, IO, or ambient access."
+
 [[audits.clap_derive]]
 who = "Mykhailo Chalyi <mykhailo.chalyi-contractor@procore.com>"
 criteria = "safe-to-deploy"
 delta = "4.6.0 -> 4.6.1"
 notes = "Reviewed delta: derive macro emits compile-time env! guards for Cargo metadata and otherwise metadata/dependency updates; crate forbids unsafe code and adds no new runtime capabilities."
+
+[[audits.clap_derive]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "4.6.4 -> 4.6.7"
+notes = "Reviewed defer attribute codegen (Defer magic attr, bool-lit helper, initial/final method ordering); proc-macro output only, no new unsafe or ambient access."
 
 [[audits.combine]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
@@ -281,17 +299,47 @@ criteria = "safe-to-deploy"
 delta = "3.8.4 -> 3.8.5"
 notes = "Reviewed delta: iterator prototype setup moves to class registration, threadsafe callback error handling preserves causes and avoids shutdown panics, and new unsafe N-API calls operate on env/value handles obtained from Node without new ambient capabilities."
 
+[[audits.napi]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "3.12.4 -> 3.12.7"
+notes = "Reviewed wasm-gated teardown handshake (async-work pending/cancel registry, settlement drain barrier, env null-guard on teardown, threadsafe fatal status); no new fs/net, only existing NAPI unsafe calls."
+
+[[audits.napi-build]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "2.4.2 -> 2.4.4"
+notes = "Reviewed wasi link args for async-work teardown handshake and android format nit; build script only emits link args, no new fs/net access."
+
 [[audits.napi-derive]]
 who = "Mykhailo Chalyi <mykhailo.chalyi-contractor@procore.com>"
 criteria = "safe-to-deploy"
 delta = "3.5.3 -> 3.5.4"
 notes = "Reviewed delta: dependency metadata updates for ctor/napi backend only; proc-macro source unchanged."
 
+[[audits.napi-derive]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "3.6.5 -> 3.6.8"
+notes = "Reviewed parser lint fix removing unused ident binding; proc-macro codegen unchanged, no runtime or ambient access."
+
 [[audits.napi-derive-backend]]
 who = "Mykhailo Chalyi <mykhailo.chalyi-contractor@procore.com>"
 criteria = "safe-to-deploy"
 delta = "5.0.2 -> 5.0.3"
 notes = "Reviewed delta: register_class call now forwards async iterator metadata; no new filesystem/process/network capabilities and generated N-API unsafe shape remains through existing napi abstractions."
+
+[[audits.napi-derive-backend]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "6.1.3 -> 6.1.4"
+notes = "Reviewed redundant-borrow removals and too_many_arguments allow; generated bindings unchanged in behavior, no new unsafe or ambient access."
+
+[[audits.napi-sys]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "3.3.1 -> 3.3.2"
+notes = "Reviewed single const addition napi_cannot_run_js=23 matching Node API; FFI declarations only, no code or ambient access."
 
 [[audits.num-bigint]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
@@ -387,6 +435,12 @@ who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 delta = "3.0.4 -> 3.0.5"
 notes = "Reviewed parser diagnostic span adjustments; token consumption and syntax tree construction remain safe and bounded. No unsafe or ambient access."
+
+[[audits.syn]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "3.0.5 -> 3.0.6"
+notes = "Reviewed lifetime-group parse guard in expr.rs (Lifetime+End lookahead) plus version bump; token consumption stays bounded. No new unsafe, deps, build scripts, or ambient access."
 
 [[audits.thin-vec]]
 who = "Mykhailo Chalyi <mykhailo.chalyi-contractor@procore.com>"
