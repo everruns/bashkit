@@ -18,6 +18,7 @@ use crate::fs::{FileSystem, normalize_path};
 use crate::limits::ExecutionLimits;
 // On wasm32 there is no OS thread to bridge the sync AWK evaluator to the async
 // VFS, so redirected reads/writes drive the VFS future inline with now_or_never.
+use crate::fs::vfs_join;
 #[cfg(target_family = "wasm")]
 use futures_util::FutureExt;
 
@@ -234,7 +235,7 @@ impl AwkInterpreter {
         let resolved = if path_str.starts_with('/') {
             PathBuf::from(path_str)
         } else {
-            self.cwd.join(path_str)
+            vfs_join(&self.cwd, path_str)
         };
         normalize_path(&resolved).to_string_lossy().to_string()
     }
@@ -1200,7 +1201,7 @@ impl AwkInterpreter {
         let resolved = if path.starts_with('/') {
             PathBuf::from(path)
         } else {
-            self.cwd.join(path)
+            vfs_join(&self.cwd, path)
         };
         let key = resolved.to_string_lossy().into_owned();
         // Bound the number of distinct redirect targets (DoS guard, parity with

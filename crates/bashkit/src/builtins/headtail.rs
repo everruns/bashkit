@@ -4,6 +4,7 @@ use async_trait::async_trait;
 
 use super::{Builtin, Context, read_text_file};
 use crate::error::Result;
+use crate::fs::vfs_join;
 use crate::interpreter::ExecResult;
 
 /// Default number of lines to output
@@ -61,7 +62,7 @@ impl Builtin for Head {
                 let path = if file.starts_with('/') {
                     std::path::PathBuf::from(file)
                 } else {
-                    ctx.cwd.join(file)
+                    vfs_join(ctx.cwd, file)
                 };
 
                 match ctx.fs.read_file(&path).await {
@@ -141,7 +142,7 @@ impl Builtin for Tail {
                 let path = if file.starts_with('/') {
                     std::path::PathBuf::from(file)
                 } else {
-                    ctx.cwd.join(file)
+                    vfs_join(ctx.cwd, file)
                 };
 
                 let text = match read_text_file(&*ctx.fs, &path, "tail").await {

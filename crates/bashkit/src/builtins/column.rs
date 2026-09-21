@@ -4,6 +4,7 @@ use async_trait::async_trait;
 
 use super::{Builtin, BuiltinHelper, Context, read_text_file};
 use crate::error::Result;
+use crate::fs::vfs_join;
 use crate::interpreter::ExecResult;
 
 /// The column builtin - format input into columns.
@@ -182,7 +183,7 @@ impl Builtin for Column {
                     let path = if file.starts_with('/') {
                         std::path::PathBuf::from(file)
                     } else {
-                        ctx.cwd.join(file)
+                        vfs_join(ctx.cwd, file)
                     };
 
                     let text = match read_text_file(&*ctx.fs, &path, "column").await {

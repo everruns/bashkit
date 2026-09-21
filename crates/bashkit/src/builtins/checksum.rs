@@ -7,6 +7,7 @@ use sha2::{Digest, Sha256};
 
 use super::{Builtin, Context};
 use crate::error::Result;
+use crate::fs::vfs_join;
 use crate::interpreter::ExecResult;
 
 /// md5sum builtin - compute MD5 message digest
@@ -100,7 +101,7 @@ async fn checksum_execute<D: Digest>(ctx: &Context<'_>, cmd: &str) -> Result<Exe
             let path = if file.starts_with('/') {
                 std::path::PathBuf::from(file)
             } else {
-                ctx.cwd.join(file)
+                vfs_join(ctx.cwd, file)
             };
 
             match ctx.fs.read_file(&path).await {

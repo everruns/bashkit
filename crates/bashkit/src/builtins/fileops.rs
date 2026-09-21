@@ -13,6 +13,7 @@ use std::path::Path;
 use super::limits::MKTEMP_MAX_ATTEMPTS;
 use super::{Builtin, Context, resolve_path};
 use crate::error::Result;
+use crate::fs::vfs_join;
 use crate::interpreter::ExecResult;
 
 /// The mkdir builtin - create directories.
@@ -320,7 +321,7 @@ impl Builtin for Cp {
                     .file_name()
                     .map(|s| s.to_string_lossy().to_string())
                     .unwrap_or_else(|| source.to_string());
-                dest_path.join(&filename)
+                vfs_join(&dest_path, &filename)
             } else {
                 dest_path.clone()
             };
@@ -428,7 +429,7 @@ impl Builtin for Mv {
                     .file_name()
                     .map(|s| s.to_string_lossy().to_string())
                     .unwrap_or_else(|| source.to_string());
-                dest_path.join(&filename)
+                vfs_join(&dest_path, &filename)
             } else {
                 dest_path.clone()
             };

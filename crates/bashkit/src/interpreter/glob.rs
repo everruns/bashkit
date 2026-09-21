@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use crate::error::Result;
 
 use super::Interpreter;
+use crate::fs::vfs_join;
 
 /// Expand a POSIX character class name into a list of characters.
 pub(super) fn expand_posix_class(name: &str, out: &mut Vec<char>) {
@@ -858,7 +859,7 @@ impl Interpreter {
                     matched.sort();
                     for name in matched {
                         let output = Self::glob_join_output(out, &name, is_absolute);
-                        next.push((dir.join(&name), output));
+                        next.push((vfs_join(dir, &name), output));
                     }
                 }
             } else {
@@ -866,7 +867,7 @@ impl Interpreter {
                 // that must not reach the filesystem or the expanded word.
                 let literal = Self::glob_path_unescape(component);
                 for (dir, out) in &candidates {
-                    let path = crate::fs::normalize_path(&dir.join(&literal));
+                    let path = crate::fs::normalize_path(&vfs_join(dir, &literal));
                     // Intermediate literals are validated implicitly by the next
                     // `read_dir`; only the final component needs an existence check.
                     if is_last && !self.fs.exists(&path).await.unwrap_or(false) {
@@ -941,7 +942,7 @@ impl Interpreter {
                             continue;
                         }
                         if !entry.metadata.file_type.is_dir() {
-                            matches.push(dir.join(&entry.name).to_string_lossy().to_string());
+                            matches.push(vfs_join(dir, &entry.name).to_string_lossy().to_string());
                         }
                     }
                 }
@@ -955,7 +956,7 @@ impl Interpreter {
                             continue;
                         }
                         if self.glob_match_impl(&entry.name, pat, nocase, 0) {
-                            matches.push(dir.join(&entry.name).to_string_lossy().to_string());
+                            matches.push(vfs_join(dir, &entry.name).to_string_lossy().to_string());
                         }
                     }
                 }
@@ -985,7 +986,7 @@ impl Interpreter {
                         if entry.name.starts_with('.') && !dotglob {
                             continue;
                         }
-                        let subdir = dir.join(&entry.name);
+                        let subdir = vfs_join(dir, &entry.name);
                         result.push(subdir.clone());
                         self.collect_dirs_recursive(&subdir, result, max_depth - 1, dotglob)
                             .await;

@@ -18,6 +18,7 @@ use crate::error::{Error, Result};
 use crate::fs::FileSystem;
 
 use super::config::GitConfig;
+use crate::fs::vfs_join;
 
 /// Git client for virtual operations.
 ///
@@ -92,7 +93,7 @@ impl GitClient {
     /// The path must be within the virtual filesystem. Path traversal
     /// attacks are blocked by the VFS layer.
     pub async fn init(&self, fs: &Arc<dyn FileSystem>, repo_path: &Path) -> Result<String> {
-        let git_dir = repo_path.join(".git");
+        let git_dir = vfs_join(repo_path, ".git");
 
         // Check if already initialized
         if fs.exists(&git_dir).await? {
@@ -104,13 +105,13 @@ impl GitClient {
 
         // Create .git directory structure
         fs.mkdir(&git_dir, true).await?;
-        fs.mkdir(&git_dir.join("objects"), true).await?;
-        fs.mkdir(&git_dir.join("refs"), true).await?;
-        fs.mkdir(&git_dir.join("refs/heads"), true).await?;
-        fs.mkdir(&git_dir.join("refs/tags"), true).await?;
+        fs.mkdir(&vfs_join(&git_dir, "objects"), true).await?;
+        fs.mkdir(&vfs_join(&git_dir, "refs"), true).await?;
+        fs.mkdir(&vfs_join(&git_dir, "refs/heads"), true).await?;
+        fs.mkdir(&vfs_join(&git_dir, "refs/tags"), true).await?;
 
         // Create HEAD pointing to master
-        fs.write_file(&git_dir.join("HEAD"), b"ref: refs/heads/master\n")
+        fs.write_file(&vfs_join(&git_dir, "HEAD"), b"ref: refs/heads/master\n")
             .await?;
 
         // Create config with author info
@@ -124,11 +125,11 @@ impl GitClient {
              \temail = {}\n",
             self.config.author_name, self.config.author_email
         );
-        fs.write_file(&git_dir.join("config"), config_content.as_bytes())
+        fs.write_file(&vfs_join(&git_dir, "config"), config_content.as_bytes())
             .await?;
 
         // Create empty index
-        fs.write_file(&git_dir.join("index"), b"").await?;
+        fs.write_file(&vfs_join(&git_dir, "index"), b"").await?;
 
         Ok(format!(
             "Initialized empty Git repository in {}/.git/\n",
@@ -148,7 +149,7 @@ impl GitClient {
         repo_path: &Path,
         key: &str,
     ) -> Result<Option<String>> {
-        let config_path = repo_path.join(".git/config");
+        let config_path = vfs_join(repo_path, ".git/config");
 
         if !fs.exists(&config_path).await? {
             return Err(Error::Internal(format!(
@@ -202,7 +203,7 @@ impl GitClient {
         key: &str,
         value: &str,
     ) -> Result<()> {
-        let config_path = repo_path.join(".git/config");
+        let config_path = vfs_join(repo_path, ".git/config");
 
         if !fs.exists(&config_path).await? {
             return Err(Error::Internal(format!(
@@ -286,8 +287,8 @@ impl GitClient {
         repo_path: &Path,
         paths: &[&str],
     ) -> Result<()> {
-        let git_dir = repo_path.join(".git");
-        let index_path = git_dir.join("index");
+        let git_dir = vfs_join(repo_path, ".git");
+        let index_path = vfs_join(&git_dir, "index");
 
         if !fs.exists(&git_dir).await? {
             return Err(Error::Internal(format!(
@@ -313,7 +314,7 @@ impl GitClient {
             let path = if Path::new(path_str).is_absolute() {
                 PathBuf::from(path_str)
             } else {
-                repo_path.join(path_str)
+                vfs_join(repo_path, path_str)
             };
 
             // Handle "." to add all files
@@ -362,7 +363,7 @@ impl GitClient {
                 continue;
             }
 
-            let path = dir.join(name);
+            let path = vfs_join(dir, name);
             let rel_path = path
                 .strip_prefix(repo_path)
                 .unwrap_or(&path)
@@ -390,9 +391,9 @@ impl GitClient {
         repo_path: &Path,
         message: &str,
     ) -> Result<String> {
-        let git_dir = repo_path.join(".git");
-        let index_path = git_dir.join("index");
-        let commits_path = git_dir.join("commits");
+        let git_dir = vfs_join(repo_path, ".git");
+        let index_path = vfs_join(&git_dir, "index");
+        let commits_path = vfs_join(&git_dir, "commits");
 
         if !fs.exists(&git_dir).await? {
             return Err(Error::Internal(format!(
@@ -447,7 +448,7 @@ impl GitClient {
         fs.write_file(&commits_path, commits.as_bytes()).await?;
 
         // Track committed files by adding staged files to the tracked set
-        let tracked_path = git_dir.join("tracked");
+        let tracked_path = vfs_join(&git_dir, "tracked");
         let mut tracked: HashSet<String> = HashSet::new();
         if fs.exists(&tracked_path).await? {
             let content = fs.read_file(&tracked_path).await?;
@@ -475,7 +476,7 @@ impl GitClient {
         fs.write_file(&index_path, b"").await?;
 
         // Update HEAD
-        let head_ref_path = git_dir.join("refs/heads/master");
+        let head_ref_path = vfs_join(&git_dir, "refs/heads/master");
         fs.write_file(&head_ref_path, hash.as_bytes()).await?;
 
         Ok(format!(
@@ -487,8 +488,8 @@ impl GitClient {
 
     /// Get repository status.
     pub async fn status(&self, fs: &Arc<dyn FileSystem>, repo_path: &Path) -> Result<GitStatus> {
-        let git_dir = repo_path.join(".git");
-        let index_path = git_dir.join("index");
+        let git_dir = vfs_join(repo_path, ".git");
+        let index_path = vfs_join(&git_dir, "index");
 
         if !fs.exists(&git_dir).await? {
             return Err(Error::Internal(format!(
@@ -503,7 +504,7 @@ impl GitClient {
         };
 
         // Read HEAD to get branch
-        let head_path = git_dir.join("HEAD");
+        let head_path = vfs_join(&git_dir, "HEAD");
         if fs.exists(&head_path).await? {
             let content = fs.read_file(&head_path).await?;
             let content = String::from_utf8_lossy(&content);
@@ -526,7 +527,7 @@ impl GitClient {
         }
 
         // Load tracked (committed) files
-        let tracked_path = git_dir.join("tracked");
+        let tracked_path = vfs_join(&git_dir, "tracked");
         let mut tracked_files: HashSet<String> = HashSet::new();
         if fs.exists(&tracked_path).await? {
             let content = fs.read_file(&tracked_path).await?;
@@ -573,7 +574,7 @@ impl GitClient {
                 continue;
             }
 
-            let path = dir.join(name);
+            let path = vfs_join(dir, name);
             let rel_path = path
                 .strip_prefix(repo_path)
                 .unwrap_or(&path)
@@ -598,8 +599,8 @@ impl GitClient {
         repo_path: &Path,
         limit: Option<usize>,
     ) -> Result<Vec<GitLogEntry>> {
-        let git_dir = repo_path.join(".git");
-        let commits_path = git_dir.join("commits");
+        let git_dir = vfs_join(repo_path, ".git");
+        let commits_path = vfs_join(&git_dir, "commits");
 
         if !fs.exists(&git_dir).await? {
             return Err(Error::Internal(format!(
@@ -732,7 +733,7 @@ impl GitClient {
         name: &str,
         url: &str,
     ) -> Result<()> {
-        let git_dir = repo_path.join(".git");
+        let git_dir = vfs_join(repo_path, ".git");
 
         if !fs.exists(&git_dir).await? {
             return Err(Error::Internal(format!(
@@ -745,7 +746,7 @@ impl GitClient {
         self.config.is_url_allowed(url).map_err(Error::Internal)?;
 
         // Store remote in .git/remotes file
-        let remotes_path = git_dir.join("remotes");
+        let remotes_path = vfs_join(&git_dir, "remotes");
         let mut remotes = String::new();
         if fs.exists(&remotes_path).await? {
             let content = fs.read_file(&remotes_path).await?;
@@ -778,8 +779,8 @@ impl GitClient {
         repo_path: &Path,
         name: &str,
     ) -> Result<()> {
-        let git_dir = repo_path.join(".git");
-        let remotes_path = git_dir.join("remotes");
+        let git_dir = vfs_join(repo_path, ".git");
+        let remotes_path = vfs_join(&git_dir, "remotes");
 
         if !fs.exists(&git_dir).await? {
             return Err(Error::Internal(format!(
@@ -822,8 +823,8 @@ impl GitClient {
         fs: &Arc<dyn FileSystem>,
         repo_path: &Path,
     ) -> Result<Vec<Remote>> {
-        let git_dir = repo_path.join(".git");
-        let remotes_path = git_dir.join("remotes");
+        let git_dir = vfs_join(repo_path, ".git");
+        let remotes_path = vfs_join(&git_dir, "remotes");
 
         if !fs.exists(&git_dir).await? {
             return Err(Error::Internal(format!(
@@ -979,8 +980,8 @@ impl GitClient {
         fs: &Arc<dyn FileSystem>,
         repo_path: &Path,
     ) -> Result<Vec<Branch>> {
-        let git_dir = repo_path.join(".git");
-        let refs_heads = git_dir.join("refs/heads");
+        let git_dir = vfs_join(repo_path, ".git");
+        let refs_heads = vfs_join(&git_dir, "refs/heads");
 
         if !fs.exists(&git_dir).await? {
             return Err(Error::Internal(format!(
@@ -1027,8 +1028,8 @@ impl GitClient {
         fs: &Arc<dyn FileSystem>,
         repo_path: &Path,
     ) -> Result<String> {
-        let git_dir = repo_path.join(".git");
-        let head_path = git_dir.join("HEAD");
+        let git_dir = vfs_join(repo_path, ".git");
+        let head_path = vfs_join(&git_dir, "HEAD");
 
         if fs.exists(&head_path).await? {
             let content = fs.read_file(&head_path).await?;
@@ -1098,7 +1099,9 @@ impl GitClient {
 
         for component in path.components() {
             match component {
-                Component::Normal(part) => clean.push(part),
+                // `PathBuf::push` would insert the host separator here, so the
+                // cleaned pathspec would not be a VFS path on Windows (#2425).
+                Component::Normal(part) => clean = vfs_join(&clean, part),
                 Component::CurDir => {}
                 Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
                     return Err(Error::Internal(format!(
@@ -1134,9 +1137,9 @@ impl GitClient {
         name: &str,
     ) -> Result<()> {
         Self::validate_ref_name(name)?;
-        let git_dir = repo_path.join(".git");
-        let refs_heads = git_dir.join("refs/heads");
-        let branch_path = refs_heads.join(name);
+        let git_dir = vfs_join(repo_path, ".git");
+        let refs_heads = vfs_join(&git_dir, "refs/heads");
+        let branch_path = vfs_join(&refs_heads, name);
 
         if !fs.exists(&git_dir).await? {
             return Err(Error::Internal(format!(
@@ -1153,7 +1156,7 @@ impl GitClient {
         }
 
         // Get current HEAD commit
-        let head_ref = refs_heads.join(self.get_current_branch(fs, repo_path).await?);
+        let head_ref = vfs_join(&refs_heads, self.get_current_branch(fs, repo_path).await?);
         let commit_hash = if fs.exists(&head_ref).await? {
             let content = fs.read_file(&head_ref).await?;
             String::from_utf8_lossy(&content).trim().to_string()
@@ -1181,8 +1184,8 @@ impl GitClient {
         name: &str,
     ) -> Result<()> {
         Self::validate_ref_name(name)?;
-        let git_dir = repo_path.join(".git");
-        let branch_path = git_dir.join("refs/heads").join(name);
+        let git_dir = vfs_join(repo_path, ".git");
+        let branch_path = vfs_join(&git_dir, "refs/heads").join(name);
 
         if !fs.exists(&git_dir).await? {
             return Err(Error::Internal(format!(
@@ -1220,9 +1223,9 @@ impl GitClient {
         target: &str,
     ) -> Result<String> {
         Self::validate_ref_name(target)?;
-        let git_dir = repo_path.join(".git");
-        let head_path = git_dir.join("HEAD");
-        let branch_path = git_dir.join("refs/heads").join(target);
+        let git_dir = vfs_join(repo_path, ".git");
+        let head_path = vfs_join(&git_dir, "HEAD");
+        let branch_path = vfs_join(&git_dir, "refs/heads").join(target);
 
         if !fs.exists(&git_dir).await? {
             return Err(Error::Internal(format!(
@@ -1264,7 +1267,7 @@ impl GitClient {
         _from: Option<&str>,
         _to: Option<&str>,
     ) -> Result<String> {
-        let git_dir = repo_path.join(".git");
+        let git_dir = vfs_join(repo_path, ".git");
 
         if !fs.exists(&git_dir).await? {
             return Err(Error::Internal(format!(
@@ -1286,7 +1289,7 @@ impl GitClient {
         mode: &str,
         target: Option<&str>,
     ) -> Result<String> {
-        let git_dir = repo_path.join(".git");
+        let git_dir = vfs_join(repo_path, ".git");
 
         if !fs.exists(&git_dir).await? {
             return Err(Error::Internal(format!(
@@ -1300,7 +1303,7 @@ impl GitClient {
         match mode {
             "--soft" | "--mixed" | "--hard" => {
                 // Clear staged files (index)
-                let index_path = git_dir.join("index");
+                let index_path = vfs_join(&git_dir, "index");
                 fs.write_file(&index_path, b"").await?;
 
                 Ok(match mode {
@@ -1344,7 +1347,7 @@ impl GitClient {
         repo_path: &Path,
         target: Option<&str>,
     ) -> Result<String> {
-        let git_dir = repo_path.join(".git");
+        let git_dir = vfs_join(repo_path, ".git");
         if !fs.exists(&git_dir).await? {
             return Err(Error::Internal(format!(
                 "fatal: not a git repository: {}",
@@ -1364,7 +1367,7 @@ impl GitClient {
                 )));
             }
             let safe_path = Self::validate_repo_pathspec(path)?;
-            let file_path = repo_path.join(&safe_path);
+            let file_path = vfs_join(repo_path, &safe_path);
             if fs.exists(&file_path).await? {
                 let content = fs.read_file(&file_path).await?;
                 // Sanitize file content from VFS (TM-GIT-015)
@@ -1404,7 +1407,7 @@ impl GitClient {
         fs: &Arc<dyn FileSystem>,
         repo_path: &Path,
     ) -> Result<Vec<String>> {
-        let git_dir = repo_path.join(".git");
+        let git_dir = vfs_join(repo_path, ".git");
         if !fs.exists(&git_dir).await? {
             return Err(Error::Internal(format!(
                 "fatal: not a git repository: {}",
@@ -1412,7 +1415,7 @@ impl GitClient {
             )));
         }
 
-        let tracked_path = git_dir.join("tracked");
+        let tracked_path = vfs_join(&git_dir, "tracked");
         let mut files = Vec::new();
         if fs.exists(&tracked_path).await? {
             let content = fs.read_file(&tracked_path).await?;
@@ -1425,7 +1428,7 @@ impl GitClient {
         }
 
         // Also include staged but not yet committed files
-        let index_path = git_dir.join("index");
+        let index_path = vfs_join(&git_dir, "index");
         if fs.exists(&index_path).await? {
             let content = fs.read_file(&index_path).await?;
             let content = String::from_utf8_lossy(&content);
@@ -1450,7 +1453,7 @@ impl GitClient {
         repo_path: &Path,
         args: &[&str],
     ) -> Result<String> {
-        let git_dir = repo_path.join(".git");
+        let git_dir = vfs_join(repo_path, ".git");
         if !fs.exists(&git_dir).await? {
             return Err(Error::Internal(
                 "fatal: not a git repository (or any parent up to mount point /)\n\
@@ -1476,7 +1479,7 @@ impl GitClient {
                 "--abbrev-ref" => {
                     i += 1;
                     if i < args.len() && args[i] == "HEAD" {
-                        let head_content = fs.read_file(&git_dir.join("HEAD")).await?;
+                        let head_content = fs.read_file(&vfs_join(&git_dir, "HEAD")).await?;
                         let head = String::from_utf8_lossy(&head_content);
                         if let Some(branch) = head.trim().strip_prefix("ref: refs/heads/") {
                             // Sanitize branch name from HEAD ref (TM-GIT-015)
@@ -1491,11 +1494,11 @@ impl GitClient {
                 }
                 "HEAD" => {
                     // Resolve HEAD to commit hash
-                    let head_content = fs.read_file(&git_dir.join("HEAD")).await?;
+                    let head_content = fs.read_file(&vfs_join(&git_dir, "HEAD")).await?;
                     let head = String::from_utf8_lossy(&head_content);
                     if let Some(branch) = head.trim().strip_prefix("ref: refs/heads/") {
                         Self::validate_ref_name(branch)?;
-                        let ref_path = git_dir.join("refs/heads").join(branch);
+                        let ref_path = vfs_join(&git_dir, "refs/heads").join(branch);
                         if fs.exists(&ref_path).await? {
                             let hash = fs.read_file(&ref_path).await?;
                             // Sanitize hash read from ref file (TM-GIT-015)
@@ -1520,7 +1523,7 @@ impl GitClient {
                             arg
                         ))
                     })?;
-                    let ref_path = git_dir.join("refs/heads").join(arg);
+                    let ref_path = vfs_join(&git_dir, "refs/heads").join(arg);
                     if fs.exists(&ref_path).await? {
                         let hash = fs.read_file(&ref_path).await?;
                         // Sanitize hash read from ref file (TM-GIT-015)
@@ -1552,7 +1555,7 @@ impl GitClient {
         paths: &[&str],
         staged: bool,
     ) -> Result<String> {
-        let git_dir = repo_path.join(".git");
+        let git_dir = vfs_join(repo_path, ".git");
         if !fs.exists(&git_dir).await? {
             return Err(Error::Internal(format!(
                 "fatal: not a git repository: {}",
@@ -1562,7 +1565,7 @@ impl GitClient {
 
         if staged {
             // Unstage files (remove from index)
-            let index_path = git_dir.join("index");
+            let index_path = vfs_join(&git_dir, "index");
             if fs.exists(&index_path).await? {
                 let content = fs.read_file(&index_path).await?;
                 let content = String::from_utf8_lossy(&content);
@@ -1580,7 +1583,7 @@ impl GitClient {
         // Restore working tree files from tracked versions
         // Since we don't store per-commit snapshots, this is a no-op message
         for path in paths {
-            let file_path = repo_path.join(path);
+            let file_path = vfs_join(repo_path, path);
             if !fs.exists(&file_path).await? {
                 return Err(Error::Internal(format!(
                     "error: pathspec '{}' did not match any file(s) known to git",
@@ -1603,7 +1606,7 @@ impl GitClient {
         ref1: &str,
         ref2: &str,
     ) -> Result<String> {
-        let git_dir = repo_path.join(".git");
+        let git_dir = vfs_join(repo_path, ".git");
         if !fs.exists(&git_dir).await? {
             return Err(Error::Internal(format!(
                 "fatal: not a git repository: {}",
@@ -1647,7 +1650,7 @@ impl GitClient {
         pattern: &str,
         paths: &[&str],
     ) -> Result<String> {
-        let git_dir = repo_path.join(".git");
+        let git_dir = vfs_join(repo_path, ".git");
         if !fs.exists(&git_dir).await? {
             return Err(Error::Internal(format!(
                 "fatal: not a git repository: {}",
@@ -1685,7 +1688,7 @@ impl GitClient {
 
         let mut output = String::new();
         for file in &files {
-            let file_path = repo_path.join(file);
+            let file_path = vfs_join(repo_path, file);
             if !fs.exists(&file_path).await? {
                 continue;
             }
@@ -1715,11 +1718,11 @@ impl GitClient {
         refspec: &str,
     ) -> Result<String> {
         if refspec == "HEAD" {
-            let head_content = fs.read_file(&git_dir.join("HEAD")).await?;
+            let head_content = fs.read_file(&vfs_join(git_dir, "HEAD")).await?;
             let head = String::from_utf8_lossy(&head_content);
             if let Some(branch) = head.trim().strip_prefix("ref: refs/heads/") {
                 Self::validate_ref_name(branch)?;
-                let ref_path = git_dir.join("refs/heads").join(branch);
+                let ref_path = vfs_join(git_dir, "refs/heads").join(branch);
                 if fs.exists(&ref_path).await? {
                     let hash = fs.read_file(&ref_path).await?;
                     return Ok(String::from_utf8_lossy(&hash).trim().to_string());
@@ -1730,7 +1733,7 @@ impl GitClient {
 
         // Try as branch name. Invalid ref names cannot be resolved via the VFS.
         if Self::validate_ref_name(refspec).is_ok() {
-            let ref_path = git_dir.join("refs/heads").join(refspec);
+            let ref_path = vfs_join(git_dir, "refs/heads").join(refspec);
             if fs.exists(&ref_path).await? {
                 let hash = fs.read_file(&ref_path).await?;
                 return Ok(String::from_utf8_lossy(&hash).trim().to_string());

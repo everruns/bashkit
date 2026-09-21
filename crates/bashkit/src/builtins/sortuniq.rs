@@ -4,6 +4,7 @@ use async_trait::async_trait;
 
 use super::{Builtin, Context, read_text_file};
 use crate::error::Result;
+use crate::fs::vfs_join;
 use crate::interpreter::ExecResult;
 
 /// The sort builtin - sort lines of text.
@@ -409,7 +410,7 @@ impl Builtin for Sort {
                 let path = if file.starts_with('/') {
                     std::path::PathBuf::from(file)
                 } else {
-                    ctx.cwd.join(file)
+                    vfs_join(ctx.cwd, file)
                 };
 
                 let text = match read_text_file(&*ctx.fs, &path, "sort").await {
@@ -431,7 +432,7 @@ impl Builtin for Sort {
                 let path = if file.starts_with('/') {
                     std::path::PathBuf::from(file)
                 } else {
-                    ctx.cwd.join(file)
+                    vfs_join(ctx.cwd, file)
                 };
                 let text = match read_text_file(&*ctx.fs, &path, "sort").await {
                     Ok(t) => t,
@@ -607,7 +608,7 @@ impl Builtin for Sort {
             let path = if outfile.starts_with('/') {
                 std::path::PathBuf::from(outfile)
             } else {
-                ctx.cwd.join(outfile)
+                vfs_join(ctx.cwd, outfile)
             };
             if let Err(e) = ctx.fs.write_file(&path, output.as_bytes()).await {
                 return Ok(ExecResult::err(format!("sort: {}: {}\n", outfile, e), 1));
@@ -704,7 +705,7 @@ impl Builtin for Uniq {
             let path = if file.starts_with('/') {
                 std::path::PathBuf::from(file)
             } else {
-                ctx.cwd.join(file)
+                vfs_join(ctx.cwd, file)
             };
 
             match read_text_file(&*ctx.fs, &path, "uniq").await {

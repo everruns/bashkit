@@ -31,7 +31,7 @@ impl Builtin for Cd {
                 .map(PathBuf::from)
                 .unwrap_or_else(|| ctx.cwd.clone())
         } else {
-            ctx.cwd.join(target)
+            vfs_join(ctx.cwd, target)
         };
 
         // Normalize the path
@@ -73,3 +73,4 @@ impl Builtin for Pwd {
 }
 
 use crate::fs::normalize_path;
+use crate::fs::vfs_join;

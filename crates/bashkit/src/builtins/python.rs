@@ -37,6 +37,7 @@ use std::time::Duration;
 
 use super::{Builtin, Context, ExecutionDeadline, RuntimeLimits, resolve_path};
 use crate::error::Result;
+use crate::fs::vfs_join;
 use crate::fs::{FileSystem, FileType};
 use crate::interpreter::ExecResult;
 
@@ -978,7 +979,7 @@ async fn handle_os_call(
                 let items: Vec<MontyObject> = entries
                     .into_iter()
                     .map(|e| {
-                        let child = path.join(&e.name);
+                        let child = vfs_join(&path, &e.name);
                         MontyObject::Path(child.to_string_lossy().to_string())
                     })
                     .collect();
@@ -1089,7 +1090,7 @@ fn resolve_python_path(path_str: &str, cwd: &Path) -> PathBuf {
     if p.is_absolute() {
         p.to_owned()
     } else {
-        cwd.join(p)
+        vfs_join(cwd, p)
     }
 }
 

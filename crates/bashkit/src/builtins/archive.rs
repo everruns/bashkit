@@ -31,6 +31,7 @@ use std::path::{Path, PathBuf};
 use super::limits::ARCHIVE_MAX_DECOMPRESSION_RATIO as MAX_DECOMPRESSION_RATIO;
 use super::{Builtin, Context, resolve_path};
 use crate::error::Result;
+use crate::fs::vfs_join;
 use crate::interpreter::ExecResult;
 use crate::limits::{BudgetedBytes, BudgetedString, BudgetedVec, LimitExceeded};
 
@@ -586,7 +587,7 @@ fn add_directory_to_tar<'a>(
         // Add directory contents
         let entries = ctx.fs.read_dir(path).await?;
         for entry in entries {
-            let child_path = path.join(&entry.name);
+            let child_path = vfs_join(path, &entry.name);
             let child_name = format!("{}/{}", name, entry.name);
 
             if entry.metadata.file_type.is_dir() {

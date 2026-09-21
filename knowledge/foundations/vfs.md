@@ -176,6 +176,42 @@ All `FileSystem` implementations MUST enforce:
 5. Cross-backend rename restores the destination on failure, or is rejected
    before mutation when that rollback contract cannot be supported
 
+### Path Separators Are Always `/`
+
+The VFS is Unix-style on every host: `normalize_path` rebuilds paths from their
+components with `/`, and every backend runs it on entry. Host path syntax
+(drive-relative, drive-absolute, UNC, device) is discarded there
+(THREAT[TM-ESC-033]).
+
+`std::path::PathBuf::join`/`push` break that rule on Windows: they append
+`MAIN_SEPARATOR` (`\`) whenever the buffer does not already end in a separator,
+so `/d/proj` + `src` becomes `/d/proj\src`. The result still *resolves* (the
+backends normalize `\` away), but builtins print these paths verbatim, so
+`grep -r` and `du` emitted mixed separators such as `/d/proj\src\main.rs`, and
+the read-error path in `tail`/`rev`/`tac`/`shuf`/`sort`/`uniq`/`wc` did the same
+(issue #2425).
+
+`InMemoryFs::rename` was worse than cosmetic: its directory fan-out wrote
+`to.join(suffix)` straight into the entry map, so on Windows the renamed
+children were keyed `\`-style and every normalized lookup afterwards missed
+them.
+
+Decision: VFS paths are built with `crate::fs::vfs_join`, never `Path::join`.
+It joins with `/` on every host, keeps `Path::join` semantics (an absolute
+child replaces the base) and leaves `.`/`..` for the backends to normalize.
+It is re-exported as `bashkit::vfs_join`, since custom `FileSystem`
+implementations have the same obligation. Two guards keep it that way:
+- `builtins::tests::no_host_separator_joins_on_vfs_paths` — static
+  scan of `crates/bashkit/src/` for the `cwd.join(` and `.join(&entry.name)`
+  shapes, with a `// host-join-ok: <reason>` escape hatch.
+- `windows_containment_*` unit tests next to `vfs_join`, `grep`, `du`, `wc` and
+  `InMemoryFs::rename`, which the Windows CI job runs (`cargo test -p bashkit
+  --lib --features realfs windows_containment`).
+
+Host paths are the exception and keep using `Path::join`: `RealFs` joining
+under its host root, and `HostMounts` mapping a VFS path back to a host path.
+There the host separator is the correct one.
+
 ### Security Conformance Certification
 
 `tests/support/filesystem_security_conformance.rs` is the shared, private

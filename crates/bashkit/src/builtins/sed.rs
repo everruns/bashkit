@@ -26,6 +26,7 @@ use super::search_common::{REGEX_DFA_SIZE_LIMIT, REGEX_SIZE_LIMIT, build_regex, 
 use super::limits::SED_MAX_GROUP_NESTING_DEPTH as MAX_GROUP_NESTING_DEPTH;
 use super::{Builtin, Context, read_text_file};
 use crate::error::{Error, Result};
+use crate::fs::vfs_join;
 use crate::interpreter::ExecResult;
 
 /// Regex wrapper that falls back to fancy-regex for patterns with backreferences.
@@ -961,7 +962,7 @@ impl Builtin for Sed {
                 let path = if file.starts_with('/') {
                     std::path::PathBuf::from(file)
                 } else {
-                    ctx.cwd.join(file)
+                    vfs_join(ctx.cwd, file)
                 };
 
                 let text = match read_text_file(&*ctx.fs, &path, "sed").await {
@@ -1132,7 +1133,7 @@ impl Builtin for Sed {
             let path = if filename.starts_with('/') {
                 std::path::PathBuf::from(&filename)
             } else {
-                ctx.cwd.join(&filename)
+                vfs_join(ctx.cwd, &filename)
             };
 
             if let Err(e) = ctx.fs.write_file(&path, content.as_bytes()).await {
