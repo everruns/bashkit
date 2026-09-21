@@ -52,7 +52,7 @@ impl Sink {
 impl Sink {
     /// Write one line, adding a terminator only when the source had one.
     fn line(&mut self, text: &str, had_newline: bool) {
-        self.pending();
+        self.flush_pending();
         self.buf.push_str(text);
         if had_newline {
             self.buf.push(self.sep);
@@ -63,11 +63,12 @@ impl Sink {
 
     /// Write text that already carries its own terminator.
     fn raw(&mut self, text: &str) {
-        self.pending();
+        self.flush_pending();
         self.buf.push_str(text);
     }
 
-    fn pending(&mut self) {
+    /// Emit a newline that was withheld because the source line had none.
+    fn flush_pending(&mut self) {
         if self.missing_newline {
             self.buf.push(self.sep);
             self.missing_newline = false;
@@ -80,6 +81,11 @@ struct RangeState {
     active: bool,
     /// Resolved last line of the range for numeric / `+N` / `~N` ends.
     end_line: Option<usize>,
+    /// A line-number range start fires at most once. It opens on the first
+    /// line at or past it — `n`, `N` and `b` can carry the stream past the
+    /// line before the range is ever evaluated — and must not re-open
+    /// afterwards, when `line_no >= start` is still trivially true.
+    start_spent: bool,
 }
 
 enum Append {
@@ -111,11 +117,20 @@ pub(super) struct Machine<'a> {
 
     range: Vec<RangeState>,
     hold: String,
+    /// GNU tracks "was this line terminated" on the hold space too, and `g`,
+    /// `G` and `x` carry it onto the pattern space. The hold space starts out
+    /// terminated, which is why `printf 'ab' | sed G` emits a trailing newline
+    /// even though the input had none.
+    hold_had_newline: bool,
     appends: Vec<Append>,
     read_cursor: HashMap<String, usize>,
     last_regex: Option<std::sync::Arc<SedRegex>>,
     pub(super) exit_code: Option<i32>,
     warned: bool,
+    /// `q` terminates the line it printed even when the input line had no
+    /// terminator, unlike falling off the end of input. `Q`, which prints
+    /// nothing, does not.
+    flush_newline_on_quit: bool,
 
     // Per-segment state.
     lines: &'a [InputLine],
@@ -148,11 +163,13 @@ impl<'a> Machine<'a> {
             write_files: HashMap::new(),
             range: Vec::new(),
             hold: String::new(),
+            hold_had_newline: true,
             appends: Vec::new(),
             read_cursor: HashMap::new(),
             last_regex: None,
             exit_code: None,
             warned: false,
+            flush_newline_on_quit: false,
             lines: &[],
             cursor: 0,
             line_no: 0,
@@ -176,6 +193,11 @@ impl<'a> Machine<'a> {
         self.out = Sink::with_sep(self.sep);
 
         let mut restart = false;
+        // THREAT[TM-DOS]: `D` restarts the script without reading input, so a
+        // script like `G;D` never terminates and grows the pattern space
+        // without bound. The per-cycle step budget cannot see across restarts,
+        // so they get their own budget, reset whenever a line is read.
+        let mut restarts = 0usize;
         loop {
             if self.exit_code.is_some() {
                 break;
@@ -183,8 +205,17 @@ impl<'a> Machine<'a> {
             // `D` restarts the script on what is left of the pattern space
             // without reading input, and GNU only clears the `t` flag when a
             // line is actually read, so the reset lives in `read_next`.
-            if !restart && !self.read_next() {
-                break;
+            if restart {
+                restarts += 1;
+                if restarts > SED_MAX_CYCLE_STEPS {
+                    self.warn_loop_limit();
+                    break;
+                }
+            } else {
+                if !self.read_next() {
+                    break;
+                }
+                restarts = 0;
             }
             restart = false;
 
@@ -203,6 +234,10 @@ impl<'a> Machine<'a> {
                     restart = true;
                 }
             }
+
+            if self.flush_newline_on_quit {
+                self.out.flush_pending();
+            }
         }
 
         std::mem::replace(&mut self.out, Sink::with_sep(self.sep)).buf
@@ -216,14 +251,7 @@ impl<'a> Machine<'a> {
         while pc < cmds.len() {
             steps += 1;
             if steps > SED_MAX_CYCLE_STEPS {
-                if !self.warned {
-                    self.warned = true;
-                    self.stderr.push_str(&format!(
-                        "sed: warning: branch/label loop limit ({SED_MAX_CYCLE_STEPS}) reached \
-                         on line {}; output may be truncated\n",
-                        self.line_no
-                    ));
-                }
+                self.warn_loop_limit();
                 break;
             }
 
@@ -349,6 +377,7 @@ impl<'a> Machine<'a> {
                 }
                 Kind::Quit(code) => {
                     self.exit_code = Some(*code);
+                    self.flush_newline_on_quit = true;
                     return Cycle::Auto;
                 }
                 Kind::QuitSilent(code) => {
@@ -369,17 +398,28 @@ impl<'a> Machine<'a> {
                     }
                     return Cycle::Silent;
                 }
-                Kind::HoldCopy => self.hold.clone_from(&self.ps),
+                Kind::HoldCopy => {
+                    self.hold.clone_from(&self.ps);
+                    self.hold_had_newline = self.ps_had_newline;
+                }
                 Kind::HoldAppend => {
                     self.hold.push('\n');
                     self.hold.push_str(&self.ps);
+                    self.hold_had_newline = self.ps_had_newline;
                 }
-                Kind::GetCopy => self.ps.clone_from(&self.hold),
+                Kind::GetCopy => {
+                    self.ps.clone_from(&self.hold);
+                    self.ps_had_newline = self.hold_had_newline;
+                }
                 Kind::GetAppend => {
                     self.ps.push('\n');
                     self.ps.push_str(&self.hold);
+                    self.ps_had_newline = self.hold_had_newline;
                 }
-                Kind::Exchange => std::mem::swap(&mut self.ps, &mut self.hold),
+                Kind::Exchange => {
+                    std::mem::swap(&mut self.ps, &mut self.hold);
+                    std::mem::swap(&mut self.ps_had_newline, &mut self.hold_had_newline);
+                }
                 Kind::LineNumber => {
                     let text = format!("{}\n", self.line_no);
                     self.out.raw(&text);
@@ -424,6 +464,18 @@ impl<'a> Machine<'a> {
         }
 
         Cycle::Auto
+    }
+
+    fn warn_loop_limit(&mut self) {
+        if self.warned {
+            return;
+        }
+        self.warned = true;
+        self.stderr.push_str(&format!(
+            "sed: warning: branch/label loop limit ({SED_MAX_CYCLE_STEPS}) reached on line {}; \
+             output may be truncated\n",
+            self.line_no
+        ));
     }
 
     fn read_next(&mut self) -> bool {
@@ -544,30 +596,51 @@ impl<'a> Machine<'a> {
 
         let state = self.range[pc].clone();
         if state.active {
-            let closed = match end {
-                EndAddr::Line(n) => self.line_no >= *n,
-                EndAddr::Last => self.is_last_line(),
-                EndAddr::Plus(_) | EndAddr::Multiple(_) => {
-                    state.end_line.is_some_and(|e| self.line_no >= e)
-                }
+            // A numeric end both closes the range and *excludes* the line once
+            // the stream is past it: `n`/`N`/`b` can carry the stream beyond
+            // the end line without the range ever being evaluated there.
+            let (closed, selected) = match end {
+                EndAddr::Line(n) => (self.line_no >= *n, self.line_no <= *n),
+                EndAddr::Plus(_) | EndAddr::Multiple(_) => match state.end_line {
+                    Some(e) => (self.line_no >= e, self.line_no <= e),
+                    None => (false, true),
+                },
+                EndAddr::Last => (self.is_last_line(), true),
                 EndAddr::Regex(re) => {
                     let re = self.resolve(re);
-                    re.is_some_and(|re| re.is_match(&self.ps))
+                    (re.is_some_and(|re| re.is_match(&self.ps)), true)
                 }
             };
-            let closed = closed || self.is_last_line();
             if closed {
-                self.range[pc] = RangeState::default();
+                // A relative end (`+N`, `~N`) is recomputed every time the
+                // range opens, so skipping past it (via `n`, `N`, `D` or a
+                // branch) re-arms the start address; an absolute `,N` end is
+                // spent for good once the stream is past it.
+                let relative = matches!(end, EndAddr::Plus(_) | EndAddr::Multiple(_));
+                self.range[pc] = RangeState {
+                    start_spent: state.start_spent && (selected || !relative),
+                    ..RangeState::default()
+                };
             }
-            return (true, closed);
+            if selected || !matches!(end, EndAddr::Plus(_) | EndAddr::Multiple(_)) {
+                return (selected, selected && closed);
+            }
+            // Fall through and retest the start address on this line.
         }
 
+        let state = self.range[pc].clone();
+        let one_shot = matches!(addr.start, StartAddr::Line(_) | StartAddr::Zero);
         let starts = match &addr.start {
-            StartAddr::Zero => self.line_no == 1,
+            // A numeric start opens on the first line at or past it, once.
+            StartAddr::Line(n) => !state.start_spent && self.line_no >= *n,
+            StartAddr::Zero => !state.start_spent,
             other => self.start_matches(other),
         };
         if !starts {
             return (false, false);
+        }
+        if one_shot {
+            self.range[pc].start_spent = true;
         }
 
         let end_line = match end {
@@ -590,6 +663,9 @@ impl<'a> Machine<'a> {
         if matches!(end, EndAddr::Last) && self.is_last_line() {
             return (true, true);
         }
+        // Running off the end of input does NOT close a range: GNU only fires
+        // `c` when the end address actually matched, so `sed '1,5c\Z'` over two
+        // lines prints nothing.
         // `0,/re/` is the one form whose end regex is tested on the start line.
         if let EndAddr::Regex(re) = end
             && matches!(addr.start, StartAddr::Zero)
@@ -599,13 +675,11 @@ impl<'a> Machine<'a> {
                 return (true, true);
             }
         }
-        if self.is_last_line() {
-            return (true, true);
-        }
 
         self.range[pc] = RangeState {
             active: true,
             end_line,
+            start_spent: one_shot,
         };
         (true, false)
     }

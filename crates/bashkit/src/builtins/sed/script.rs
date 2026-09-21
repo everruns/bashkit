@@ -283,6 +283,12 @@ impl Parser {
             }
 
             let kind = self.command(cmd_char, addr.is_some())?;
+            // `q` and `Q` stop the stream, so a range makes no sense for them.
+            if matches!(kind, Kind::Quit(_) | Kind::QuitSilent(_))
+                && addr.as_ref().is_some_and(|a| a.end.is_some())
+            {
+                return self.err("command only uses one address");
+            }
             match &kind {
                 Kind::ReadFile(f) | Kind::ReadLine(f) => read_files.push(f.clone()),
                 _ => {}
@@ -737,9 +743,22 @@ impl Parser {
         }
 
         let re = self.compile(&pattern, case_insensitive, multi_line)?;
+        let parts = parse_replacement(&replacement);
+        // GNU rejects `s/a/\1/` at compile time rather than substituting an
+        // empty string, so a typo in a back-reference fails loudly.
+        if let Some(re) = &re {
+            let groups = re.group_count();
+            for part in &parts {
+                if let RepPart::Group(n) = part
+                    && *n > groups
+                {
+                    return self.err(format!("invalid reference \\{n} on `s' command's RHS"));
+                }
+            }
+        }
         Ok(Kind::Substitute(Box::new(Subst {
             re,
-            parts: parse_replacement(&replacement),
+            parts,
             occurrence: occurrence.unwrap_or(1),
             global,
             print,

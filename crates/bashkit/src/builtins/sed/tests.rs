@@ -272,6 +272,55 @@ async fn a_closed_range_stays_closed() {
     );
 }
 
+/// A relative end (`+N`, `~N`) is recomputed on each activation, so a stream
+/// carried past it by `n`/`N`/`D`/`b` re-arms the start; an absolute `,N` end
+/// is spent for good. Both shapes are GNU behaviour.
+#[tokio::test]
+async fn ranges_that_the_stream_skipped_past() {
+    // `1~2N` advances the line counter mid-cycle, so `2,+1` is evaluated at
+    // lines 2 and 4 and opens both times.
+    assert_eq!(
+        out(&["-n", "1~2N;2,+1a\\APP"], "a\nb\nc\nd\ne\n").await,
+        "APP\nAPP\n"
+    );
+    // An absolute end does not re-arm: `1,2` is spent once line 3 is reached.
+    assert_eq!(
+        out(&["-s", "1,2n;1,/b/s/^/>/"], "a\nb\nc\n").await,
+        "a\n>b\n>c\n"
+    );
+    // A range is only re-tested from its start once the end has been passed.
+    assert_eq!(out(&["-n", "1b;1,/zz/p"], "a\nb\nc\n").await, "b\nc\n");
+    assert_eq!(out(&["-n", "1b;1,2p"], "a\nb\nc\n").await, "b\n");
+    assert_eq!(out(&["-n", "1,2b;1,3p"], "a\nb\nc\n").await, "c\n");
+    assert_eq!(
+        out(&["2,~3b;2,~3p"], "a\nb\nc\nd\ne\n").await,
+        "a\nb\nc\nd\nd\ne\ne\n"
+    );
+}
+
+#[tokio::test]
+async fn hold_space_carries_its_own_newline_flag() {
+    // The hold space starts out terminated, so `G` re-terminates a final line
+    // that arrived without a newline.
+    assert_eq!(out(&["G"], "ab").await, "ab\n\n");
+    assert_eq!(out(&["x"], "a\nb\n").await, "\na\n");
+    assert_eq!(
+        out(&["-n", "1!G;h;$p"], "a\nb\nc\nd\n").await,
+        "d\nc\nb\na\n"
+    );
+}
+
+#[tokio::test]
+async fn quit_terminates_the_line_it_printed() {
+    // Falling off the end of input keeps a missing newline missing, but `q`
+    // flushes it; `Q`, which prints nothing, does not.
+    assert_eq!(out(&["q"], "ab").await, "ab\n");
+    assert_eq!(out(&["-n", "p;q"], "ab").await, "ab\n");
+    assert_eq!(out(&["-n", "p"], "ab").await, "ab");
+    assert_eq!(out(&["Q"], "ab").await, "");
+    assert_eq!(out(&["2q"], "a\nb").await, "a\nb\n");
+}
+
 #[tokio::test]
 async fn relative_and_multiple_end_addresses() {
     let input = (1..=12).map(|n| format!("{n}\n")).collect::<String>();
@@ -288,6 +337,64 @@ async fn change_on_a_range_emits_its_text_once() {
     // A range that never matches emits nothing.
     assert_eq!(out(&["/zz/,/b/c\\Z"], "a\nb\nc\n").await, "a\nb\nc\n");
     assert_eq!(out(&["2c\\Z"], "a\nb\nc\n").await, "a\nZ\nc\n");
+    // `c` ignores -n.
+    assert_eq!(out(&["-n", "1,2c\\Z"], "a\nb\nc\n").await, "Z\n");
+    // Running off the end of input does not close a range, so no text fires.
+    assert_eq!(out(&["1,5c\\Z"], "a\nb\n").await, "");
+    assert_eq!(out(&["2,5c\\Z"], "a\nb\nc\n").await, "a\n");
+    assert_eq!(out(&["/a/,/zz/c\\Z"], "a\nb\nc\n").await, "");
+    // Inside a block the `c` carries no address of its own, so it fires per line.
+    assert_eq!(out(&["1,2{c\\Z\n}"], "a\nb\nc\n").await, "Z\nZ\nc\n");
+}
+
+#[tokio::test]
+async fn quit_rejects_a_second_address() {
+    for script in ["1,2q", "2,+1q", "1,2Q", "/a/,/b/q"] {
+        let result = run_sed(&[script], Some("a\nb\n")).await;
+        assert_eq!(result.exit_code, 1, "{script}");
+        assert!(
+            result.stderr.contains("command only uses one address"),
+            "{script}: {}",
+            result.stderr
+        );
+    }
+    // Commands that GNU does allow two addresses on still work.
+    assert_eq!(out(&["-n", "1,2="], "a\nb\nc\n").await, "1\n2\n");
+    assert_eq!(out(&["1,2a\\X"], "a\nb\n").await, "a\nX\nb\nX\n");
+}
+
+#[tokio::test]
+async fn back_references_beyond_the_group_count_are_rejected() {
+    for script in [r"s/a/\1/", r"s/\(a\)/\2/", r"s/a/[\9]/"] {
+        let result = run_sed(&[script], Some("a\n")).await;
+        assert_eq!(result.exit_code, 1, "{script}");
+        assert!(
+            result.stderr.contains("invalid reference"),
+            "{script}: {}",
+            result.stderr
+        );
+    }
+    // In ERE mode `\(` is a literal paren, so there is no group 1 to reference.
+    let ere = run_sed(&["-E", r"s/\(a\)b/[\1]/"], Some("a\n")).await;
+    assert_eq!(ere.exit_code, 1);
+    assert!(ere.stderr.contains("invalid reference"), "{}", ere.stderr);
+    // A real group is fine.
+    assert_eq!(out(&["s/\\(a\\)/[\\1]/"], "ab\n").await, "[a]b\n");
+}
+
+/// THREAT[TM-DOS]: `D` reruns the script without reading input, so `G;D` never
+/// terminates and grows the pattern space without bound. GNU hangs here; the
+/// sandbox must not.
+#[tokio::test]
+async fn a_non_progressing_delete_restart_loop_terminates() {
+    let result = run_sed(&["G;D"], Some("a\nb\n")).await;
+    assert_eq!(result.exit_code, 0);
+    assert!(result.stderr.contains("loop limit"), "{}", result.stderr);
+    // A `D` loop that does make progress still terminates on its own.
+    let progressing = run_sed(&["-s", "1,2!h;2,+1G;2,$D"], Some("abc\nABC\n")).await;
+    assert_eq!(progressing.exit_code, 0);
+    assert_eq!(progressing.stdout, "abc\n\n\n");
+    assert!(progressing.stderr.is_empty(), "{}", progressing.stderr);
 }
 
 // === finding D: operands are one stream =================================

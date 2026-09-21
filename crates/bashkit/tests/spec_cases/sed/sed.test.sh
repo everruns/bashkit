@@ -900,3 +900,30 @@ printf 'x\n' | sed --quiet -e p
 y
 x
 ### end
+
+### sed_change_range_needs_a_real_end
+# A range that runs off the end of input never "ends", so c emits nothing
+printf 'a\nb\n' | sed '1,5c\Z'
+printf 'a\nb\nc\n' | sed '2,5c\Z'
+printf 'a\nb\nc\n' | sed '/a/,/zz/c\Z'
+### expect
+a
+### end
+
+### sed_quit_takes_one_address
+# q and Q stop the stream, so a range is a compile error
+printf 'a\nb\n' | sed '1,2q' 2>&1
+echo "rc=$?"
+### expect
+sed: -e expression #1, char 4: command only uses one address
+rc=1
+### end
+
+### sed_invalid_backreference_is_rejected
+# GNU rejects \1 with no group instead of substituting an empty string
+printf 'a\n' | sed 's/a/\1/' 2>&1
+echo "rc=$?"
+### expect
+sed: -e expression #1, char 7: invalid reference \1 on `s' command's RHS
+rc=1
+### end

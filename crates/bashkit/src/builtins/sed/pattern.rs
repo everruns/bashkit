@@ -322,6 +322,14 @@ impl SedRegex {
             .map_err(|e| e.to_string())
     }
 
+    /// Number of capture groups, excluding the whole match.
+    pub(super) fn group_count(&self) -> usize {
+        match self {
+            SedRegex::Standard(re) => re.captures_len().saturating_sub(1),
+            SedRegex::Fancy(re) => re.captures_len().saturating_sub(1),
+        }
+    }
+
     pub(super) fn is_match(&self, text: &str) -> bool {
         match self {
             SedRegex::Standard(re) => re.is_match(text),
