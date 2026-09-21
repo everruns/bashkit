@@ -72,7 +72,7 @@ for sandbox security reasons. See the compliance spec for details.
 | `times` | - | POSIX display process times |
 | `grep` | `-i`, `-v`, `-c`, `-n`, `-E`, `-q` | Pattern matching |
 | `rg` | `-i/-S/-s`, `-n/-N`, `--column`, `-b/--byte-offset`, `--vimgrep`, basic `--json`, `--stats`, `--null`, `-c`, `--count-matches`, `--include-zero`, `-l`, `--files-with-matches`, `--files-without-match`, `--files`, `-F`, `-w`, `-x`, `-a/--text`, `--binary`, `-m`, `-M/--max-columns`, `--max-columns-preview`, `--max-depth`, `-A`, `-B`, `-C`, separator flags, `--heading/--no-heading`, `--sort/--sortr`, `--path-separator`, `-g/--glob`, `--ignore-file`, `.ignore`/`.gitignore`, `--no-ignore*`, `--require-git/--no-require-git`, `-u/--unrestricted`, `--messages/--no-messages`, `-t/--type`, `-T/--type-not`, `--type-add`, `--type-clear`, `--type-list`, `--hidden/--no-hidden`, `-o`, `-q`, `-e`, `-f`, `-E/--encoding` (`auto`, `none`, UTF-8, UTF-16LE/BE), `-r`, `--passthru`, `--trim`, `-H/-I`, `--no-config`, `--line-buffered`, `--block-buffered`, `--mmap/--no-mmap`, `-P/--pcre2`, `--no-pcre2`, `--engine`, `--auto-hybrid-regex`, `--no-auto-hybrid-regex`, `--help`, `--version` | Recursive ripgrep-style search |
-| `sed` | `s///[g]`, `d`, `p`, `q`, `a`, `i`, `c`, `h/H/g/G/x`, `-E`, `-n`, `!` | Stream editing |
+| `sed` | `s///[gpiImMN w]`, `y`, `d`, `D`, `p`, `P`, `n`, `N`, `q[N]`, `Q[N]`, `=`, `l[N]`, `z`, `F`, `a`, `i`, `c`, `r`, `R`, `w`, `W`, `h/H/g/G/x`, `b`/`t`/`T`/`:label`, `{}`, `#`/`#n`; addresses `N`, `$`, `/re/[IM]`, `\cREc`, `first~step`, `a,b`, `a,+N`, `a,~N`, `0,/re/`, `!`; options `-n -e -f -i[SUF] -E/-r -s -z -l N -u --` and long forms | Stream editing; one stream across operands unless `-s`/`-i` |
 | `awk` | `'{print}'`, `-F`, `-v`, loops, arrays, increment, ternary | Text processing |
 | `jq` | `.field`, `.[n]`, pipes, file args, `-r`, `-c`, `-n`, `-s`, `-S`, `-e`, `-j`, `--tab`, `--arg`, `--argjson`, `-V`, combined flags | JSON processing |
 | `sleep` | `N`, `N.N` | Pause execution (max 60s) |
@@ -502,6 +502,11 @@ Identified from eval analysis, all items now implemented:
 - [x] `sed` `0~2` step addressing, even/odd line processing
 - [x] `sed` `Q` quiet quit command
 - [x] `sed` `0,/pattern/` first match addressing
+- [x] `sed` GNU rewrite, issue #2427: literal `$` in the replacement, BRE/ERE
+  translation shared by `s///` and address regexes, stateful range addresses,
+  single-stream multi-file input, preserved missing final newline, `s///Ng`,
+  the `y = l n N P D T z F r R w W` commands, `#` comments and `#n`, atomic
+  mode-preserving `-i`, and full getopt-style option parsing
 - [x] AWK `$0` modification with field re-splitting
 
 ### Not Planned

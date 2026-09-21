@@ -425,10 +425,23 @@ async fn run_category_tests(
 #[tokio::test]
 #[ignore = "strict host-bash parity gate; run explicitly in CI or via just check-bash-compat"]
 async fn bash_comparison_tests() {
-    let dir = spec_cases_dir().join("bash");
+    compare_against_real_bash("bash").await;
+}
+
+/// The sed spec suite is a differential suite: every expectation was taken from
+/// GNU sed, so it must keep matching the host tool (issue #2427). Divergences we
+/// keep on purpose carry `### bash_diff:` and are excluded, like the bash gate.
+#[tokio::test]
+#[ignore = "strict host-sed parity gate; run explicitly in CI or via just check-bash-compat"]
+async fn sed_comparison_tests() {
+    compare_against_real_bash("sed").await;
+}
+
+async fn compare_against_real_bash(category: &str) {
+    let dir = spec_cases_dir().join(category);
     let all_tests = load_spec_tests(&dir);
 
-    println!("\n=== Bash Comparison Tests ===");
+    println!("\n=== {} Comparison Tests ===", category.to_uppercase());
     println!("Comparing Bashkit output against real bash\n");
 
     let mut total = 0;

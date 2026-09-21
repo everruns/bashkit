@@ -1236,7 +1236,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | ~~TM-PY-027~~ | ~~py_to_json unbounded recursion~~ | ~~Stack overflow~~ | `MAX_NESTING_DEPTH = 64` in `json_to_py_inner` / `py_to_json_inner` / MontyObject converters (**FIXED**) |
 | ~~TM-DOS-040~~ | ~~Integer truncation on 32-bit~~ | ~~Size check bypass~~ | `usize::try_from(...).unwrap_or(usize::MAX)` (**FIXED**) |
 | TM-UNI-001 | Awk parser byte-boundary panic on Unicode | Silent builtin failure on valid input | Fix awk parser to use char-boundary-safe indexing |
-| TM-UNI-002 | Sed parser byte-boundary issues | Silent builtin failure on valid input | Audit and fix sed byte-indexing |
+| ~~TM-UNI-002~~ | ~~Sed parser byte-boundary issues~~ | ~~Silent builtin failure on valid input~~ | ~~Audit and fix sed byte-indexing~~ The sed script parser is char-based end to end (`builtins/sed/script.rs`), so a multi-byte `s`/`y`/address delimiter is parsed rather than sliced at a byte offset. `fuzz_exec` now also rejects stderr reporting a *caught* panic (`internal error:`, `builtin failed unexpectedly`), which previously let these pass; seeds live in `sed_fuzz_scaffold_tests` and the `sed_fuzz` target (**FIXED**, issue #2427) |
 | ~~TM-UNI-003~~ | ~~Zero-width chars in filenames~~ | ~~Invisible/confusable filenames~~ | ~~Extend `find_unsafe_path_char()`~~ (**FIXED**) |
 | ~~TM-UNI-011~~ | ~~Tag characters in filenames~~ | ~~Invisible content in filenames~~ | ~~Extend `find_unsafe_path_char()`~~ (**FIXED**) |
 | TM-UNI-015 | Expr `substr` byte-boundary panic | Silent failure on multi-byte substr | Fix to use char-boundary-safe indexing (issue #434) |

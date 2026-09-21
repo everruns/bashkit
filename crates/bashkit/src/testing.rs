@@ -34,6 +34,12 @@ pub const UNIVERSAL_BANNED: &[&str] = &[
     "Some([",
     "Span {",
     "Range {",
+    // -- Caught panics (TM-INT-001, TM-UNI-002) --
+    // The interpreter catches builtin panics so the host stays up, but a
+    // panic reachable from untrusted script text is still a bug; without
+    // these the fuzz targets pass on every caught panic. Issue #2427.
+    "internal error:",
+    "builtin failed unexpectedly",
     // -- Host paths (TM-INF-016) --
     // Rust compiler internals leaked via panic backtraces.
     "/rustc/",

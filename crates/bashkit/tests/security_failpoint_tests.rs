@@ -304,6 +304,87 @@ async fn security_yq_inplace_stage_failures_are_atomic() {
     }
 }
 
+/// THREAT[TM-FS-016]: `sed -i` shares yq's atomic-replace helper, so every
+/// injectable stage must keep the original bytes and clean up the temporary.
+#[tokio::test]
+#[serial]
+async fn security_sed_inplace_stage_failures_are_atomic() {
+    for (failpoint, action) in [
+        ("sed::temp_allocate", "return(exhausted)"),
+        ("sed::temp_chmod", "return(error)"),
+        ("sed::temp_rename", "return(error)"),
+    ] {
+        let fs = Arc::new(InMemoryFs::new());
+        fs.write_file(Path::new("/tmp/data.txt"), b"name: original\n")
+            .await
+            .unwrap();
+        let mut bash = Bash::builder().fs(fs.clone()).build();
+
+        fail::cfg(failpoint, action).unwrap();
+        let result = bash
+            .exec("sed -i 's/original/changed/' /tmp/data.txt")
+            .await
+            .unwrap();
+        fail::cfg(failpoint, "off").unwrap();
+
+        assert_ne!(result.exit_code, 0, "{failpoint}");
+        assert_eq!(
+            fs.read_file(Path::new("/tmp/data.txt")).await.unwrap(),
+            b"name: original\n",
+            "{failpoint}"
+        );
+        assert!(
+            fs.read_dir(Path::new("/tmp"))
+                .await
+                .unwrap()
+                .iter()
+                .all(|entry| !entry.name.starts_with(".bashkit-sed-")),
+            "temporary leaked after {failpoint}"
+        );
+    }
+}
+
+/// THREAT[TM-FS-016]: backend write failures cannot damage the file `sed -i`
+/// is editing or leave a sed temporary behind.
+#[tokio::test]
+#[serial]
+async fn security_sed_inplace_write_failures_are_atomic() {
+    for action in [
+        "io_error",
+        "disk_full",
+        "permission_denied",
+        "partial_write",
+    ] {
+        let fs = Arc::new(InMemoryFs::new());
+        fs.write_file(Path::new("/tmp/data.txt"), b"original\n")
+            .await
+            .unwrap();
+        let mut bash = Bash::builder().fs(fs.clone()).build();
+
+        fail::cfg("fs::write_file", &format!("return({action})")).unwrap();
+        let result = bash
+            .exec("sed -i 's/original/changed/' /tmp/data.txt")
+            .await
+            .unwrap();
+        fail::cfg("fs::write_file", "off").unwrap();
+
+        assert_ne!(result.exit_code, 0, "{action}");
+        assert_eq!(
+            fs.read_file(Path::new("/tmp/data.txt")).await.unwrap(),
+            b"original\n",
+            "{action}"
+        );
+        assert!(
+            fs.read_dir(Path::new("/tmp"))
+                .await
+                .unwrap()
+                .iter()
+                .all(|entry| !entry.name.starts_with(".bashkit-sed-")),
+            "temporary leaked after {action}"
+        );
+    }
+}
+
 /// THREAT[TM-FS-016]: backend write failures, including partial-write
 /// simulation, cannot damage the source or leave a yq temporary behind.
 #[tokio::test]

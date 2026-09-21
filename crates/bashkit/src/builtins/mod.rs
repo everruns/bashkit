@@ -26,6 +26,7 @@ mod alias;
 mod archive;
 pub(crate) mod arg_parser;
 mod assert;
+mod atomic_write;
 mod awk;
 mod base64;
 mod bc;

@@ -74,6 +74,10 @@ pub(crate) const RETRY_MAX_ATTEMPTS: u32 = 10_000;
 /// sed: max group-nesting depth in `s` replacements.
 pub(crate) const SED_MAX_GROUP_NESTING_DEPTH: usize = 128;
 
+/// sed: max instructions executed for one input line, bounding `b`/`t` loops.
+/// THREAT[TM-DOS]: sed scripts are untrusted text and `:a;ba` never terminates.
+pub(crate) const SED_MAX_CYCLE_STEPS: usize = 1_000;
+
 /// sleep: max sleep duration.
 pub(crate) const SLEEP_MAX_SECONDS: f64 = 60.0;
 

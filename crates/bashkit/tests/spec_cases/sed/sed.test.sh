@@ -587,3 +587,343 @@ echo "abc" | sed 's/b/\\/'
 ### expect
 a\c
 ### end
+
+### sed_replacement_dollar_is_literal
+# Issue #2427 A: `$` in the RHS is text, not a capture reference
+printf 'ab\n' | sed 's/a/$x/'
+printf 'ab\n' | sed 's/\(a\)/[$1]/'
+printf 'ab\n' | sed 's/a/$$/'
+### expect
+$xb
+[$1]b
+$$b
+### end
+
+### sed_replacement_backslash_drops
+# Issue #2427 A: GNU drops the backslash before an ordinary character
+printf 'ab\n' | sed 's/a/\$/'
+printf 'ab\n' | sed 's/a/\q/'
+### expect
+$b
+qb
+### end
+
+### sed_replacement_case_conversion
+# GNU \U \L \u \l \E in the replacement
+printf 'abc\n' | sed 's/a\(b\)c/\U\1x\E-\1/'
+printf 'abc\n' | sed 's/.*/\u&/'
+printf 'ABC\n' | sed 's/.*/\L&/'
+### expect
+BX-b
+Abc
+abc
+### end
+
+### sed_bre_literals
+# Issue #2427 B: + ? | are ordinary characters in BRE
+printf 'a+b\n' | sed 's/a+b/X/'
+printf 'a?b\n' | sed 's/a?b/X/'
+printf 'a|b\n' | sed 's/a|b/X/'
+printf 'aaa\n' | sed 's/*a/X/'
+### expect
+X
+X
+X
+aaa
+### end
+
+### sed_bre_anchors_are_positional
+# Issue #2427 B: ^ and $ only anchor at the edges of a BRE
+printf 'a^b\n' | sed -n '/a^b/p'
+printf 'a$b\n' | sed -n '/a$b/p'
+### expect
+a^b
+a$b
+### end
+
+### sed_address_regex_uses_bre
+# Issue #2427 B: address regexes take the same BRE path as s///
+printf 'aaa\n' | sed -n '/a\+/p'
+printf 'a+b\n' | sed -n '/a+b/p'
+### expect
+aaa
+a+b
+### end
+
+### sed_bracket_expression_holds_delimiter
+# Inside [...] the s/// delimiter is an ordinary character
+printf 'a/b\n' | sed 's/[/]/X/'
+printf 'a]b\n' | sed 's/[]]/X/'
+### expect
+aXb
+aXb
+### end
+
+### sed_regex_to_line_range
+# Issue #2427 C: /re/,N must keep the regex
+printf 'a\nb\nc\nd\n' | sed '/b/,3d'
+### expect
+a
+d
+### end
+
+### sed_closed_range_stays_closed
+# Issue #2427 C: N,/re/ closes once and does not re-open
+printf 'a\nb\nc\n' | sed -n '1,/b/p'
+### expect
+a
+b
+### end
+
+### sed_zero_range_tests_first_line
+# 0,/re/ is the form whose end regex is tested on line 1
+printf 'b\nb\nc\n' | sed -n '0,/b/p'
+### expect
+b
+### end
+
+### sed_relative_end_addresses
+# addr,+N and addr,~N
+printf '1\n2\n3\n4\n5\n6\n7\n8\n9\n' | sed -n '3,+2p'
+printf '1\n2\n3\n4\n5\n6\n7\n8\n9\n' | sed -n '2,~4p'
+### expect
+3
+4
+5
+2
+3
+4
+### end
+
+### sed_change_on_range_prints_once
+# Issue #2427 C: c on a range emits its text once
+printf 'a\nb\nc\n' | sed '1,2c\Z'
+### expect
+Z
+c
+### end
+
+### sed_multiple_files_are_one_stream
+# Issue #2427 D: line numbers, $ and q span all operands
+printf 'a\nb\nc\n' > /tmp/sed_f1.txt
+printf 'd\ne\n' > /tmp/sed_f2.txt
+sed -n '$p' /tmp/sed_f1.txt /tmp/sed_f2.txt
+sed '2q' /tmp/sed_f1.txt /tmp/sed_f2.txt
+sed -n '$=' /tmp/sed_f1.txt /tmp/sed_f2.txt
+### expect
+e
+a
+b
+5
+### end
+
+### sed_separate_restores_per_file_streams
+# -s puts each operand back in its own stream
+printf 'a\nb\nc\n' > /tmp/sed_s1.txt
+printf 'd\ne\n' > /tmp/sed_s2.txt
+sed -s -n '$p' /tmp/sed_s1.txt /tmp/sed_s2.txt
+### expect
+c
+e
+### end
+
+### sed_missing_final_newline_is_preserved
+# Issue #2427 E: sed must not invent a trailing newline
+printf 'a' | sed 's/a/b/' > /tmp/sed_nl.txt
+wc -c < /tmp/sed_nl.txt
+printf 'abc' > /tmp/sed_inplace.txt
+sed -i 's/b/X/' /tmp/sed_inplace.txt
+wc -c < /tmp/sed_inplace.txt
+cat /tmp/sed_inplace.txt
+echo
+### expect
+1
+3
+aXc
+### end
+
+### sed_in_place_preserves_mode
+# Issue #2427 E: -i keeps the original file mode
+printf 'x\n' > /tmp/sed_mode.txt
+chmod 600 /tmp/sed_mode.txt
+sed -i 's/x/y/' /tmp/sed_mode.txt
+stat -c %a /tmp/sed_mode.txt
+cat /tmp/sed_mode.txt
+### expect
+600
+y
+### end
+
+### sed_in_place_backup_suffix
+# -i.bak keeps the original alongside the edit
+printf 'a\nb\n' > /tmp/sed_bak.txt
+sed -i.bak 's/a/A/' /tmp/sed_bak.txt
+cat /tmp/sed_bak.txt
+cat /tmp/sed_bak.txt.bak
+### expect
+A
+b
+a
+b
+### end
+
+### sed_occurrence_with_global
+# Issue #2427 F: s///Ng replaces the Nth match and everything after it
+printf 'heLLo\n' | sed 's/L/x/2g'
+printf 'aaa\n' | sed 's/a/X/3g'
+printf 'aaaa\n' | sed 's/a/X/3'
+### expect
+heLxo
+aaX
+aaXa
+### end
+
+### sed_line_number_command
+# Issue #2427 G: `=`
+printf 'a\nb\n' | sed -n '$='
+### expect
+2
+### end
+
+### sed_next_commands
+# Issue #2427 G: n and N
+printf 'a\nb\nc\n' | sed 'N;s/\n/ /'
+printf 'a\nb\nc\n' | sed -n '/a/{n;p}'
+### expect
+a b
+c
+b
+### end
+
+### sed_transliterate
+# Issue #2427 G: y
+printf 'abc\n' | sed 'y/abc/xyz/'
+### expect
+xyz
+### end
+
+### sed_comments_and_hash_n
+# Issue #2427 G: # comments, and #n as the first line implying -n
+printf 'a\nb\n' | sed '# just a comment'
+printf 'a\n' | sed '#n
+p'
+### expect
+a
+b
+a
+### end
+
+### sed_list_command
+# Issue #2427 G: l renders the pattern space unambiguously
+printf 'a\tb\\c\n' | sed -n 'l'
+### expect
+a\tb\\c$
+### end
+
+### sed_branch_if_no_substitution
+# Issue #2427 G: T
+printf 'abc\n' | sed 's/a/X/;T end;s/b/Y/;:end'
+printf 'abc\n' | sed 'T end;s/a/X/;:end'
+### expect
+XYc
+abc
+### end
+
+### sed_read_and_write_files
+# Issue #2427 G: r, R and w against the VFS
+printf 'R1\nR2\n' > /tmp/sed_r.txt
+printf 'a\nb\n' | sed '1r /tmp/sed_r.txt'
+printf 'a\nb\n' | sed 'R /tmp/sed_r.txt'
+printf 'a\nb\n' | sed -n '1w /tmp/sed_w.txt'
+cat /tmp/sed_w.txt
+### expect
+a
+R1
+R2
+b
+a
+R1
+b
+R2
+a
+### end
+
+### sed_quit_exit_status
+# q and Q carry an exit status
+printf 'a\nb\n' | sed '1q5'
+echo "rc=$?"
+printf 'a\nb\n' | sed '1Q3'
+echo "rc=$?"
+### expect
+a
+rc=5
+rc=3
+### end
+
+### sed_multibyte_delimiter_does_not_crash
+# Issue #2427 H (TM-UNI-002): a multi-byte s delimiter is parsed, not sliced
+### bash_diff: L-SED-001 - GNU rejects a multi-byte delimiter; Bashkit accepts it
+printf 'a\n' | sed 's≠a≠X≠'
+### expect
+X
+### end
+
+### sed_clustered_short_options
+# Issue #2427 I: -ne must behave like -n -e
+printf 'a\n' | sed -ne p
+### expect
+a
+### end
+
+### sed_empty_script_is_passthrough
+# Issue #2427 I: an empty script copies input through
+printf 'a\n' | sed ''
+echo "rc=$?"
+### expect
+a
+rc=0
+### end
+
+### sed_script_file
+# Issue #2427 I: -f reads the script from a file
+printf 's/a/X/\ns/X/Y/\n' > /tmp/sed_script.sed
+printf 'a\n' | sed -f /tmp/sed_script.sed
+### expect
+Y
+### end
+
+### sed_long_options
+# Issue #2427 I: long spellings
+printf 'x\n' | sed --expression='s/x/y/'
+printf 'x\n' | sed --quiet -e p
+### expect
+y
+x
+### end
+
+### sed_change_range_needs_a_real_end
+# A range that runs off the end of input never "ends", so c emits nothing
+printf 'a\nb\n' | sed '1,5c\Z'
+printf 'a\nb\nc\n' | sed '2,5c\Z'
+printf 'a\nb\nc\n' | sed '/a/,/zz/c\Z'
+### expect
+a
+### end
+
+### sed_quit_takes_one_address
+# q and Q stop the stream, so a range is a compile error
+printf 'a\nb\n' | sed '1,2q' 2>&1
+echo "rc=$?"
+### expect
+sed: -e expression #1, char 4: command only uses one address
+rc=1
+### end
+
+### sed_invalid_backreference_is_rejected
+# GNU rejects \1 with no group instead of substituting an empty string
+printf 'a\n' | sed 's/a/\1/' 2>&1
+echo "rc=$?"
+### expect
+sed: -e expression #1, char 7: invalid reference \1 on `s' command's RHS
+rc=1
+### end
