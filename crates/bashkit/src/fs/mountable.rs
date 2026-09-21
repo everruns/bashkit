@@ -16,6 +16,7 @@ use std::sync::{Arc, RwLock};
 
 use super::limits::{FsLimits, FsUsage};
 use super::traits::{DirEntry, FileSystem, FileSystemExt, FileType, Metadata};
+use super::vfs_join;
 use crate::error::Result;
 use std::io::ErrorKind;
 
@@ -452,7 +453,7 @@ impl MountableFs {
                 let resolved = if relative.as_os_str().is_empty() {
                     PathBuf::from("/")
                 } else {
-                    PathBuf::from("/").join(relative)
+                    vfs_join(Path::new("/"), relative)
                 };
 
                 (Arc::clone(fs), resolved)

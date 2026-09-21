@@ -26,6 +26,7 @@ use zapcode_core::{ResourceLimits, RunResult, Value, VmState, ZapcodeRun};
 use super::{Builtin, Context, ExecutionDeadline, Extension, RuntimeLimits, resolve_path};
 use crate::error::Result;
 use crate::fs::FileSystem;
+use crate::fs::vfs_join;
 use crate::interpreter::ExecResult;
 
 /// TypeScript's default call-stack-depth cap. The other shared VM limits
@@ -998,7 +999,7 @@ fn extract_path(args: &[Value], cwd: &Path) -> Option<PathBuf> {
             if p.is_absolute() {
                 Some(p.to_owned())
             } else {
-                Some(cwd.join(p))
+                Some(vfs_join(cwd, p))
             }
         }
         _ => None,

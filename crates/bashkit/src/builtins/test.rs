@@ -9,6 +9,7 @@ use async_trait::async_trait;
 use super::{Builtin, Context};
 use crate::error::Result;
 use crate::fs::FileSystem;
+use crate::fs::vfs_join;
 use crate::interpreter::ExecResult;
 
 /// The test builtin command.
@@ -71,7 +72,7 @@ fn resolve_file_path(cwd: &Path, arg: &str) -> PathBuf {
     if p.is_absolute() {
         p.to_path_buf()
     } else {
-        cwd.join(p)
+        vfs_join(cwd, p)
     }
 }
 

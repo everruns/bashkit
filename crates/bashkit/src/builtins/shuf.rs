@@ -18,6 +18,7 @@ use std::path::Path;
 
 use super::{Builtin, Context, read_text_file};
 use crate::error::Result;
+use crate::fs::vfs_join;
 use crate::interpreter::ExecResult;
 use crate::limits::ExecutionLimits;
 
@@ -93,7 +94,7 @@ impl Builtin for Shuf {
                     let path = if Path::new(file).is_absolute() {
                         file.clone()
                     } else {
-                        ctx.cwd.join(file).to_string_lossy().into_owned()
+                        vfs_join(ctx.cwd, file).to_string_lossy().into_owned()
                     };
                     match read_text_file(&*ctx.fs, Path::new(&path), "shuf").await {
                         Ok(t) => t,
@@ -121,7 +122,7 @@ impl Builtin for Shuf {
             let resolved = if path.is_absolute() {
                 path.clone()
             } else {
-                ctx.cwd.join(&path)
+                vfs_join(ctx.cwd, &path)
             };
             if let Err(e) = ctx.fs.write_file(&resolved, out.as_bytes()).await {
                 return Ok(ExecResult::err(

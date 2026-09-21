@@ -6,6 +6,7 @@ use std::path::Path;
 
 use super::{Builtin, Context};
 use crate::error::Result;
+use crate::fs::vfs_join;
 use crate::interpreter::ExecResult;
 
 /// The basename builtin - strip directory and suffix from filenames.
@@ -478,12 +479,12 @@ async fn follow_readlink_symlinks(
                 let mut next = if target.is_absolute() {
                     target
                 } else {
-                    link_parent.join(target)
+                    vfs_join(link_parent, target)
                 };
 
                 for remaining in components.iter().skip(idx + 1) {
                     if let Component::Normal(part) = remaining {
-                        next.push(part);
+                        next = vfs_join(&next, part);
                     }
                 }
 

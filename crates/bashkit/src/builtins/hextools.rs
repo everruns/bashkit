@@ -5,6 +5,7 @@ use async_trait::async_trait;
 
 use super::{Builtin, Context};
 use crate::error::Result;
+use crate::fs::vfs_join;
 use crate::interpreter::ExecResult;
 
 /// The od builtin - dump files in octal and other formats.
@@ -651,7 +652,7 @@ async fn collect_input(
                 let path = if file.starts_with('/') {
                     std::path::PathBuf::from(file)
                 } else {
-                    cwd.join(file)
+                    vfs_join(cwd, file)
                 };
 
                 let content = fs

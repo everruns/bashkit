@@ -12,13 +12,14 @@ use std::path::PathBuf;
 use super::limits::DIRSTACK_MAX_SIZE as MAX_DIRSTACK_SIZE;
 use super::{Builtin, Context};
 use crate::error::Result;
+use crate::fs::vfs_join;
 use crate::interpreter::ExecResult;
 
 fn normalize_path(base: &std::path::Path, target: &str) -> PathBuf {
     let path = if target.starts_with('/') {
         PathBuf::from(target)
     } else {
-        base.join(target)
+        vfs_join(base, target)
     };
     super::resolve_path(&PathBuf::from("/"), &path.to_string_lossy())
 }

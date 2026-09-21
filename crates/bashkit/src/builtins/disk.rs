@@ -5,6 +5,7 @@ use std::path::Path;
 
 use super::{Builtin, Context};
 use crate::error::Result;
+use crate::fs::vfs_join;
 use crate::interpreter::ExecResult;
 
 /// The du builtin - estimate file space usage.
@@ -69,7 +70,7 @@ impl Builtin for Du {
             } else if path_str == "." {
                 ctx.cwd.clone()
             } else {
-                ctx.cwd.join(path_str)
+                vfs_join(ctx.cwd, path_str)
             };
 
             match calculate_size(&ctx, &path, summary_only, human_readable).await {
@@ -129,7 +130,7 @@ fn calculate_size_recursive<'a>(
             ctx.consume_budget_work(u64::try_from(entries.len()).unwrap_or(u64::MAX))?;
 
             for entry in entries {
-                let child_path = path.join(&entry.name);
+                let child_path = vfs_join(path, &entry.name);
                 total += calculate_size_recursive(
                     ctx,
                     &child_path,
@@ -293,6 +294,35 @@ mod tests {
     }
 
     // ==================== du tests ====================
+
+    // Issue #2425: `du` prints the paths it builds, so every separator in
+    // them must be `/` even when the host separator is `\`.
+    #[tokio::test]
+    async fn windows_containment_du_prints_slash_separated_paths() {
+        let (fs, mut cwd, mut variables) = create_test_ctx().await;
+        let env = HashMap::new();
+
+        fs.mkdir(&cwd.join("proj/src"), true).await.unwrap();
+        fs.write_file(&cwd.join("proj/src/main.rs"), b"fn main() {}")
+            .await
+            .unwrap();
+
+        let args = vec!["proj".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+
+        let result = Du.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert!(
+            result.stdout.contains("/home/user/proj/src/main.rs"),
+            "recursive descent path is not slash-separated:\n{}",
+            result.stdout
+        );
+        assert!(
+            !result.stdout.contains('\\'),
+            "output leaked a host separator:\n{}",
+            result.stdout
+        );
+    }
 
     #[tokio::test]
     async fn test_du_file() {

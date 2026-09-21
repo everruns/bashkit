@@ -641,7 +641,13 @@ impl FsBackend for RealFs {
         // Absolute targets always escape the mount root on disk
         // THREAT[TM-ESC-033]: `C:target` is drive-relative, not absolute, but
         // still carries host namespace semantics and cannot be a VFS target.
-        if target.is_absolute()
+        // `has_root()` rather than `is_absolute()`: a VFS-absolute target like
+        // `/etc/passwd` has no drive prefix, so on Windows `is_absolute()` is
+        // false and this guard never fired there (issue #2425's class). The
+        // canonicalize-and-contain check below still blocked it, but only as a
+        // backstop — reject it here, where the error names the real reason.
+        if target.has_root()
+            || target.is_absolute()
             || target
                 .components()
                 .any(|component| matches!(component, std::path::Component::Prefix(_)))

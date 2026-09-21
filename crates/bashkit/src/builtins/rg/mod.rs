@@ -28,6 +28,7 @@ use std::sync::OnceLock;
 use super::search_common::build_regex_opts;
 use super::{Builtin, Context, read_text_file, resolve_path};
 use crate::error::{Error, Result};
+use crate::fs::vfs_join;
 use crate::interpreter::ExecResult;
 use crate::limits::ExecutionLimits;
 
@@ -3193,7 +3194,8 @@ async fn load_rg_global_ignore_files(
 
     let mut configured_paths = Vec::new();
     if let Some(home) = non_empty_env_path(env, "HOME") {
-        configured_paths.extend(git_config_excludes_files(fs, &home.join(".gitconfig")).await?);
+        configured_paths
+            .extend(git_config_excludes_files(fs, &vfs_join(&home, ".gitconfig")).await?);
     }
 
     if configured_paths.is_empty() {
@@ -3236,8 +3238,10 @@ fn default_git_global_ignore_path(
     env: &std::collections::HashMap<String, String>,
 ) -> Option<PathBuf> {
     non_empty_env_path(env, "XDG_CONFIG_HOME")
-        .map(|path| path.join("git/ignore"))
-        .or_else(|| non_empty_env_path(env, "HOME").map(|path| path.join(".config/git/ignore")))
+        .map(|path| vfs_join(&path, "git/ignore"))
+        .or_else(|| {
+            non_empty_env_path(env, "HOME").map(|path| vfs_join(&path, ".config/git/ignore"))
+        })
 }
 
 async fn git_config_excludes_files(
@@ -3287,7 +3291,7 @@ fn expand_git_config_path(value: &str, home: &Path) -> PathBuf {
         return home.to_path_buf();
     }
     if let Some(rest) = value.strip_prefix("~/") {
-        return home.join(rest);
+        return vfs_join(home, rest);
     }
     PathBuf::from(value)
 }
@@ -3329,7 +3333,7 @@ async fn load_local_ignore_rules(
         if !opts.no_ignore_exclude {
             load_optional_ignore_file_with_rule_base(
                 fs,
-                &dir.join(".git/info/exclude"),
+                &vfs_join(dir, ".git/info/exclude"),
                 dir,
                 opts.ignore_file_case_insensitive,
                 inherited_rule_count,
@@ -3339,7 +3343,7 @@ async fn load_local_ignore_rules(
         }
         load_optional_ignore_file_with_rule_base(
             fs,
-            &dir.join(".gitignore"),
+            &vfs_join(dir, ".gitignore"),
             dir,
             opts.ignore_file_case_insensitive,
             inherited_rule_count,
@@ -3350,7 +3354,7 @@ async fn load_local_ignore_rules(
     if !opts.no_ignore_dot {
         load_optional_ignore_file_with_rule_base(
             fs,
-            &dir.join(".ignore"),
+            &vfs_join(dir, ".ignore"),
             dir,
             opts.ignore_file_case_insensitive,
             inherited_rule_count,
@@ -3359,7 +3363,7 @@ async fn load_local_ignore_rules(
         .await?;
         load_optional_ignore_file_with_rule_base(
             fs,
-            &dir.join(".rgignore"),
+            &vfs_join(dir, ".rgignore"),
             dir,
             opts.ignore_file_case_insensitive,
             inherited_rule_count,
@@ -3491,7 +3495,7 @@ async fn has_git_dir_in_ancestors(fs: &dyn crate::fs::FileSystem, dir: &Path, ro
     for ancestor in dir.ancestors() {
         if ancestor.starts_with(root)
             && fs
-                .stat(&ancestor.join(".git"))
+                .stat(&vfs_join(ancestor, ".git"))
                 .await
                 .is_ok_and(|meta| meta.file_type.is_dir())
         {
@@ -3583,7 +3587,10 @@ async fn resolve_rg_symlink_target(
     let resolved = if target.is_absolute() {
         crate::fs::normalize_path(&target)
     } else {
-        crate::fs::normalize_path(&link_path.parent().unwrap_or(Path::new("/")).join(target))
+        crate::fs::normalize_path(&vfs_join(
+            link_path.parent().unwrap_or(Path::new("/")),
+            target,
+        ))
     };
     // rg may emulate ripgrep's -L behavior only inside the requested VFS search root;
     // rejecting escapes preserves TM-ESC-002's inert-symlink sandbox boundary.
@@ -3650,8 +3657,8 @@ async fn collect_rg_files_recursive(
         };
         if let Ok(entries) = fs.read_dir(&item.actual).await {
             for entry in entries {
-                let path = item.logical.join(&entry.name);
-                let actual_path = item.actual.join(&entry.name);
+                let path = vfs_join(&item.logical, &entry.name);
+                let actual_path = vfs_join(&item.actual, &entry.name);
                 let hidden_entry = !opts.hidden && is_hidden_name(&entry.name);
                 let entry_depth = item.depth + 1;
                 let (entry_actual_path, entry_metadata) =
@@ -3889,7 +3896,7 @@ async fn try_indexed_search(
                 let root = if p.starts_with('/') {
                     PathBuf::from(p)
                 } else {
-                    cwd.join(p)
+                    vfs_join(cwd, p)
                 };
                 (root, Some(p.clone()))
             })
@@ -3934,7 +3941,7 @@ async fn try_indexed_search(
             let candidate = if m.path.is_absolute() {
                 crate::fs::normalize_path(&m.path)
             } else {
-                crate::fs::normalize_path(&root.join(&m.path))
+                crate::fs::normalize_path(&vfs_join(&root, &m.path))
             };
             let explicit_file_match = explicit_file_root && candidate == root;
 

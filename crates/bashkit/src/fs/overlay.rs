@@ -41,6 +41,7 @@ use std::sync::{Arc, RwLock};
 use super::limits::{FsLimits, FsUsage};
 use super::memory::InMemoryFs;
 use super::traits::{DirEntry, FileSystem, FileSystemExt, FileType, Metadata};
+use super::vfs_join;
 use crate::error::Result;
 
 /// Copy-on-write overlay filesystem.
@@ -332,7 +333,7 @@ impl OverlayFs {
     async fn hide_lower_children_recursive(&self, dir: &Path) {
         if let Ok(entries) = self.lower.read_dir(dir).await {
             for entry in entries {
-                let child = dir.join(&entry.name);
+                let child = vfs_join(dir, &entry.name);
                 if self.is_whiteout(&child) {
                     continue;
                 }
@@ -734,7 +735,7 @@ impl FileSystem for OverlayFs {
         if is_dir_lower && let Ok(lower_entries) = self.lower.read_dir(&path).await {
             for entry in lower_entries {
                 // Skip whited out entries
-                let entry_path = path.join(&entry.name);
+                let entry_path = vfs_join(&path, &entry.name);
                 if !self.is_whiteout(&entry_path) {
                     entries.insert(entry.name.clone(), entry);
                 }
@@ -827,7 +828,10 @@ impl FileSystem for OverlayFs {
                     FileType::Directory => {
                         captured.push(CapturedEntry::Directory(relative.clone(), metadata.mode));
                         for entry in self.read_dir(&path).await? {
-                            pending.push((path.join(&entry.name), relative.join(&entry.name)));
+                            pending.push((
+                                vfs_join(&path, &entry.name),
+                                vfs_join(&relative, &entry.name),
+                            ));
                         }
                     }
                     FileType::File => captured.push(CapturedEntry::File(
@@ -867,22 +871,22 @@ impl FileSystem for OverlayFs {
                 for entry in captured {
                     match entry {
                         CapturedEntry::Directory(path, mode) => {
-                            let path = to.join(path);
+                            let path = vfs_join(&to, path);
                             self.mkdir(&path, true).await?;
                             self.chmod(&path, mode).await?;
                         }
                         CapturedEntry::File(path, content, mode) => {
-                            let path = to.join(path);
+                            let path = vfs_join(&to, path);
                             self.write_file(&path, &content).await?;
                             self.chmod(&path, mode).await?;
                         }
                         CapturedEntry::Symlink(path, target, mode) => {
-                            let path = to.join(path);
+                            let path = vfs_join(&to, path);
                             self.symlink(&target, &path).await?;
                             self.chmod(&path, mode).await?;
                         }
                         CapturedEntry::Fifo(path, content, mode) => {
-                            let path = to.join(path);
+                            let path = vfs_join(&to, path);
                             self.mkfifo(&path, mode).await?;
                             self.append_file(&path, &content).await?;
                         }

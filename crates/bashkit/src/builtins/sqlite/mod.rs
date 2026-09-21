@@ -48,6 +48,7 @@ use crate::fs::FileSystem;
 use crate::interpreter::ExecResult;
 
 use super::{Builtin, Context, check_help_version, resolve_path};
+use crate::fs::vfs_join;
 use dot_commands::{DotError, DotOutcome};
 use engine::{QueryLimits, SqliteEngine};
 use formatter::{OutputMode, OutputOpts, render};
@@ -839,7 +840,11 @@ async fn run_statements(
                     Ok(DotOutcome::Configured) => {}
                     Ok(DotOutcome::Quit) => return Ok(()),
                     Ok(DotOutcome::Read(p)) => {
-                        let abs = if p.is_absolute() { p } else { cwd.join(&p) };
+                        let abs = if p.is_absolute() {
+                            p
+                        } else {
+                            vfs_join(cwd, &p)
+                        };
                         let bytes = fs
                             .read_file(&abs)
                             .await

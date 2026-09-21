@@ -10,6 +10,7 @@ use std::io::{Error as IoError, ErrorKind};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
+use super::vfs_join;
 use super::{
     DirEntry, FileSystem, FileSystemExt, FileType, FsLimits, FsUsage, Metadata, ReadOnlyFs,
     normalize_path,
@@ -227,7 +228,7 @@ impl NamespaceFs {
                 let source_path = if relative.as_os_str().is_empty() {
                     mount.source_root.clone()
                 } else {
-                    mount.source_root.join(relative)
+                    vfs_join(&mount.source_root, relative)
                 };
                 ResolvedPath {
                     index,
@@ -288,9 +289,9 @@ impl NamespaceFs {
                 continue;
             };
             children.insert(if path == Path::new("/") {
-                PathBuf::from("/").join(name)
+                vfs_join(Path::new("/"), name)
             } else {
-                path.join(name)
+                vfs_join(path, name)
             });
         }
         children.into_iter().collect()

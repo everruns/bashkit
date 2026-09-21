@@ -13,6 +13,7 @@ use crate::builtins::generated::ls_args::LS_ENV_DEFAULTS;
 use crate::builtins::{Builtin, Context, resolve_path};
 use crate::error::Result;
 use crate::fs::FileType;
+use crate::fs::vfs_join;
 use crate::interpreter::ExecResult;
 
 /// Argument IDs from the generated `ls_command()` that bashkit currently
@@ -301,7 +302,7 @@ async fn list_directory(
             output.push_str(&line);
             if opts.recursive && entry.metadata.file_type.is_dir() {
                 subdirs.push((
-                    path.join(&entry.name),
+                    vfs_join(path, &entry.name),
                     format!("{}/{}", display_path, entry.name),
                 ));
             }
@@ -317,7 +318,7 @@ async fn list_directory(
             names.push(name);
             if opts.recursive && entry.metadata.file_type.is_dir() {
                 subdirs.push((
-                    path.join(&entry.name),
+                    vfs_join(path, &entry.name),
                     format!("{}/{}", display_path, entry.name),
                 ));
             }

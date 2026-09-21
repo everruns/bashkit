@@ -98,6 +98,32 @@ mod windows_containment {
         );
     }
 
+    /// Issue #2425's class: a VFS-absolute target has no drive prefix, so
+    /// `is_absolute()` is false on Windows and the guard that rejects absolute
+    /// symlink targets did not fire. Containment held via the
+    /// canonicalize-and-contain backstop; the guard now rejects it directly.
+    #[tokio::test]
+    async fn windows_containment_realfs_rejects_vfs_absolute_symlink_target() {
+        let root = tempfile::tempdir().unwrap();
+        let fs = RealFs::open(root.path(), RealFsMode::ReadWrite)
+            .await
+            .unwrap();
+
+        let error = fs
+            .symlink(
+                Path::new("/Windows/System32/drivers/etc/hosts"),
+                Path::new("/link"),
+            )
+            .await
+            .expect_err("VFS-absolute symlink target must be rejected");
+        assert!(
+            error
+                .to_string()
+                .contains("absolute or drive-relative target"),
+            "expected the absolute-target guard to fire, got: {error}"
+        );
+    }
+
     #[tokio::test]
     async fn windows_containment_realfs_rejects_drive_relative_symlink_target() {
         let root = tempfile::tempdir().unwrap();

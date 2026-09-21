@@ -12,6 +12,7 @@ use serde::Deserialize;
 use super::{Builtin, Context, Jq, read_text_file, resolve_path};
 use crate::StreamData;
 use crate::error::Result;
+use crate::fs::vfs_join;
 use crate::interpreter::ExecResult;
 use crate::limits::ExecutionLimits;
 
@@ -681,7 +682,7 @@ async fn atomic_replace(
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect::<String>();
-        let candidate = parent.join(format!(".bashkit-yq-{suffix}.tmp"));
+        let candidate = vfs_join(parent, format!(".bashkit-yq-{suffix}.tmp"));
         if !fs
             .exists(&candidate)
             .await

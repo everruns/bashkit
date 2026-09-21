@@ -507,6 +507,38 @@ impl FileSystem for DisabledFs {
     }
 }
 
+/// Join `child` onto the VFS path `base`, always using `/` as the separator.
+///
+/// `PathBuf::join`/`push` insert the *host* separator (`\` on Windows) whenever
+/// the buffer does not already end in one, so `/d/proj` + `src` becomes
+/// `/d/proj\src` there. The VFS is Unix-style on every host (see
+/// [`normalize_path`]), and builtins print these paths verbatim, so a host
+/// separator leaks into command output and error messages (issue #2425).
+/// Every VFS path built from a cwd, an operand, or a directory entry goes
+/// through this helper instead of `Path::join`; host paths (`RealFs` under its
+/// root, host mount mapping) keep using `Path::join`, where the host separator
+/// is the correct one.
+///
+/// Semantics match `Path::join` for VFS paths: an absolute `child` replaces
+/// `base`, and no `.`/`..` resolution happens here (backends normalize on
+/// entry). It differs only for an empty `child`, where the result is `base`
+/// without a trailing separator.
+pub fn vfs_join(base: &Path, child: impl AsRef<Path>) -> PathBuf {
+    let child = child.as_ref();
+    // Non-UTF-8 pieces cannot be reassembled as a string; they never occur in
+    // the VFS (paths come from shell words and `DirEntry::name`, both `String`),
+    // so fall back rather than mangle them through a lossy conversion.
+    let (Some(base), Some(child)) = (base.to_str(), child.to_str()) else {
+        return base.join(child);
+    };
+    match (base, child) {
+        ("", _) => PathBuf::from(child),
+        (_, "") => PathBuf::from(base),
+        (_, _) if child.starts_with('/') => PathBuf::from(child),
+        _ => PathBuf::from(format!("{}/{}", base.trim_end_matches('/'), child)),
+    }
+}
+
 /// Normalize a virtual filesystem path by resolving `.` and `..` components.
 ///
 /// Returns a canonical absolute path. If the result would be empty (e.g., from
@@ -545,6 +577,32 @@ pub fn normalize_path(path: &Path) -> PathBuf {
 #[cfg(all(test, windows))]
 mod windows_containment_tests {
     use super::*;
+
+    /// Pins the host behavior the VFS rules exist for, so the reasoning behind
+    /// [`vfs_join`] and the `has_root()` guards is checked on Windows rather
+    /// than asserted in a comment. If std ever changed these, this test says so
+    /// before the rules start looking arbitrary.
+    #[test]
+    fn windows_containment_host_path_hazards_are_still_real() {
+        // Why `vfs_join` exists: `Path::join` inserts the host separator.
+        assert_eq!(
+            Path::new("/d/proj").join("src").to_string_lossy(),
+            r"/d/proj\src"
+        );
+        assert_eq!(
+            vfs_join(Path::new("/d/proj"), "src").to_string_lossy(),
+            "/d/proj/src"
+        );
+
+        // Why absolute-target guards test `has_root()`: a VFS-absolute path
+        // carries no drive prefix, so `is_absolute()` is false here.
+        assert!(!Path::new("/etc/passwd").is_absolute());
+        assert!(Path::new("/etc/passwd").has_root());
+
+        // Why a mixed-separator path still resolves: both are separators here,
+        // which is what keeps the leak cosmetic rather than functional.
+        assert_eq!(Path::new(r"/d/proj\src"), Path::new("/d/proj/src"));
+    }
 
     #[test]
     fn windows_containment_normalizes_host_path_syntax_into_vfs_root() {
@@ -652,4 +710,64 @@ pub async fn verify_filesystem_requirements(fs: &dyn FileSystem) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod vfs_join_tests {
+    use super::*;
+
+    /// The separator is `/` on every host, so these assertions are the same
+    /// ones the Windows CI job checks — there `Path::join` would produce
+    /// `/d/proj\src`.
+    #[test]
+    fn windows_containment_vfs_join_always_uses_forward_slashes() {
+        let base = Path::new("/d/proj");
+        let src = vfs_join(base, "src");
+        assert_eq!(src.to_string_lossy(), "/d/proj/src");
+        // Nested joins are where `PathBuf::push` accumulates host separators.
+        let file = vfs_join(&src, "main.rs");
+        assert_eq!(file.to_string_lossy(), "/d/proj/src/main.rs");
+        assert!(!file.to_string_lossy().contains('\\'));
+    }
+
+    #[test]
+    fn windows_containment_vfs_join_matches_path_join_semantics() {
+        // Absolute child replaces the base, like `Path::join`.
+        assert_eq!(
+            vfs_join(Path::new("/d/proj"), "/etc/hosts").to_string_lossy(),
+            "/etc/hosts"
+        );
+        // A trailing separator on the base is not doubled.
+        assert_eq!(
+            vfs_join(Path::new("/d/proj/"), "src").to_string_lossy(),
+            "/d/proj/src"
+        );
+        // Root is still a single separator.
+        assert_eq!(vfs_join(Path::new("/"), "etc").to_string_lossy(), "/etc");
+        // Multi-segment children keep their own separators.
+        assert_eq!(
+            vfs_join(Path::new("/d/proj"), "src/main.rs").to_string_lossy(),
+            "/d/proj/src/main.rs"
+        );
+        // `.`/`..` are left for the backends to normalize.
+        assert_eq!(
+            vfs_join(Path::new("/d/proj"), "../other").to_string_lossy(),
+            "/d/proj/../other"
+        );
+        // Empty pieces: relative bases and empty children stay usable.
+        assert_eq!(vfs_join(Path::new(""), "src").to_string_lossy(), "src");
+        assert_eq!(
+            vfs_join(Path::new("/d/proj"), "").to_string_lossy(),
+            "/d/proj"
+        );
+    }
+
+    #[test]
+    fn windows_containment_vfs_join_result_normalizes_like_a_backend() {
+        // What the backends do to the joined path must not change.
+        assert_eq!(
+            normalize_path(&vfs_join(Path::new("/d/proj"), "../other/./x")),
+            Path::new("/d/other/x")
+        );
+    }
 }

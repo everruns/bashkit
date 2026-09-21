@@ -4,6 +4,7 @@ use async_trait::async_trait;
 
 use super::{Builtin, Context};
 use crate::error::Result;
+use crate::fs::vfs_join;
 use crate::interpreter::ExecResult;
 
 /// The strings builtin - find printable strings in files.
@@ -184,7 +185,7 @@ impl Builtin for Strings {
                     let path = if file.starts_with('/') {
                         std::path::PathBuf::from(file)
                     } else {
-                        ctx.cwd.join(file)
+                        vfs_join(ctx.cwd, file)
                     };
 
                     match ctx.fs.read_file(&path).await {

@@ -3681,7 +3681,7 @@ impl Interpreter {
                         let joined = if path.is_absolute() {
                             path.to_path_buf()
                         } else {
-                            self.cwd.join(path)
+                            crate::fs::vfs_join(&self.cwd, path)
                         };
                         crate::fs::normalize_path(&joined)
                     };
@@ -4258,7 +4258,7 @@ impl Interpreter {
 
         let parent = path.parent().unwrap_or_else(|| Path::new("/"));
         let id = TIME_REPORT_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let temp = parent.join(format!(".bashkit-time-{id}.tmp"));
+        let temp = crate::fs::vfs_join(parent, format!(".bashkit-time-{id}.tmp"));
         if let Err(error) = self.fs.write_file(&temp, report).await {
             let _ = self.fs.remove(&temp, false).await;
             return Err(error);
@@ -8743,7 +8743,7 @@ impl Interpreter {
         let joined = if p.is_absolute() {
             p.to_path_buf()
         } else {
-            self.cwd.join(p)
+            crate::fs::vfs_join(&self.cwd, p)
         };
         crate::fs::normalize_path(&joined)
     }

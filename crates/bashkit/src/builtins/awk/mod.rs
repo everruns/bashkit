@@ -451,6 +451,7 @@ fn normalize_awk_newlines(input: &str) -> String {
 
 mod interpreter;
 mod parser;
+use crate::fs::vfs_join;
 use interpreter::{AwkFlow, AwkInterpreter};
 use parser::AwkParser;
 
@@ -535,7 +536,7 @@ impl Builtin for Awk {
                     let path = if ctx.args[i].starts_with('/') {
                         std::path::PathBuf::from(&ctx.args[i])
                     } else {
-                        ctx.cwd.join(&ctx.args[i])
+                        vfs_join(ctx.cwd, &ctx.args[i])
                     };
                     program_str = match read_text_file(&*ctx.fs, &path, "awk").await {
                         Ok(t) => t,
@@ -615,7 +616,7 @@ impl Builtin for Awk {
                 let path = if file.starts_with('/') {
                     std::path::PathBuf::from(file)
                 } else {
-                    ctx.cwd.join(file)
+                    vfs_join(ctx.cwd, file)
                 };
 
                 let text = match read_text_file(&*ctx.fs, &path, "awk").await {

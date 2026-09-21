@@ -23,6 +23,7 @@ use std::path::{Component, Path, PathBuf};
 
 use super::{Builtin, Context, resolve_path};
 use crate::error::Result;
+use crate::fs::vfs_join;
 use crate::interpreter::ExecResult;
 use crate::limits::BudgetedBytes;
 
@@ -266,7 +267,7 @@ async fn collect_files_recursive(
     while let Some((current, current_prefix)) = dirs.pop() {
         if let Ok(entries) = fs.read_dir(&current).await {
             for entry in entries {
-                let path = current.join(&entry.name);
+                let path = vfs_join(&current, &entry.name);
                 let entry_prefix = if current_prefix.is_empty() {
                     entry.name.clone()
                 } else {
@@ -454,7 +455,7 @@ impl Builtin for Unzip {
                     ));
                 }
             };
-            let target = extract_base.join(entry_path);
+            let target = vfs_join(&extract_base, entry_path);
 
             // Check if file exists and overwrite not set
             if !opts.overwrite

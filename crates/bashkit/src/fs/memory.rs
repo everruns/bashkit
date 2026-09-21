@@ -50,6 +50,7 @@ use super::limits::{FsLimits, FsUsage};
 use super::traits::{DirEntry, FileSystem, FileSystemExt, FileType, Metadata};
 use crate::error::Result;
 
+use super::vfs_join;
 #[cfg(feature = "failpoints")]
 use fail::fail_point;
 
@@ -1680,7 +1681,7 @@ impl FileSystem for InMemoryFs {
                 .filter(|(path, _)| path.starts_with(&from))
                 .map(|(path, entry)| {
                     let suffix = path.strip_prefix(&from).expect("prefix checked");
-                    (to.join(suffix), path.clone(), entry.clone())
+                    (vfs_join(&to, suffix), path.clone(), entry.clone())
                 })
                 .collect::<Vec<_>>();
             for (_, old_path, _) in &moved {
@@ -1907,6 +1908,32 @@ impl FileSystemExt for InMemoryFs {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Issue #2425: the rename fan-out writes the new entry-map keys itself, so
+    // a host separator there would leave the renamed children unreachable
+    // through the normalized paths every lookup uses.
+    #[tokio::test]
+    async fn windows_containment_rename_dir_keeps_children_reachable() {
+        let fs = InMemoryFs::new();
+        fs.mkdir(Path::new("/src/nested"), true).await.unwrap();
+        fs.write_file(Path::new("/src/nested/main.rs"), b"fn main() {}")
+            .await
+            .unwrap();
+
+        fs.rename(Path::new("/src"), Path::new("/dst"))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            fs.read_file(Path::new("/dst/nested/main.rs"))
+                .await
+                .unwrap(),
+            b"fn main() {}"
+        );
+        let entries = fs.read_dir(Path::new("/dst/nested")).await.unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "main.rs");
+    }
 
     #[tokio::test]
     async fn test_write_and_read_file() {

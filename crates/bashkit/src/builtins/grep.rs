@@ -43,6 +43,7 @@ use super::search_common::{
 };
 use super::{Builtin, Context};
 use crate::error::{Error, Result};
+use crate::fs::vfs_join;
 use crate::interpreter::ExecResult;
 
 /// grep command - pattern matching
@@ -560,7 +561,7 @@ impl Builtin for Grep {
             let path = if pattern_file.starts_with('/') {
                 std::path::PathBuf::from(pattern_file)
             } else {
-                ctx.cwd.join(pattern_file)
+                vfs_join(ctx.cwd, pattern_file)
             };
             match ctx.fs.read_file(&path).await {
                 Ok(content) => {
@@ -627,7 +628,7 @@ impl Builtin for Grep {
                     let path = if file.starts_with('/') {
                         std::path::PathBuf::from(file)
                     } else {
-                        ctx.cwd.join(file)
+                        vfs_join(ctx.cwd, file)
                     };
                     dirs_to_process.push(path);
                 }
@@ -635,7 +636,7 @@ impl Builtin for Grep {
                 while let Some(path) = dirs_to_process.pop() {
                     if let Ok(entries) = ctx.fs.read_dir(&path).await {
                         for entry in entries {
-                            let entry_path = path.join(&entry.name);
+                            let entry_path = vfs_join(&path, &entry.name);
                             if entry.metadata.file_type.is_dir() {
                                 // Skip dirs matching --exclude-dir patterns
                                 if opts
@@ -673,7 +674,7 @@ impl Builtin for Grep {
                 let path = if file.starts_with('/') {
                     std::path::PathBuf::from(file)
                 } else {
-                    ctx.cwd.join(file)
+                    vfs_join(ctx.cwd, file)
                 };
 
                 match ctx.fs.read_file(&path).await {
@@ -1003,7 +1004,7 @@ async fn try_indexed_search(
         let root = crate::fs::normalize_path(&if file.starts_with('/') {
             std::path::PathBuf::from(file)
         } else {
-            cwd.join(file)
+            vfs_join(cwd, file)
         });
         let provider = sc.search_provider(&root)?;
         let caps = provider.capabilities();
@@ -1054,7 +1055,7 @@ async fn try_indexed_search(
             let candidate = if m.path.is_absolute() {
                 crate::fs::normalize_path(&m.path)
             } else {
-                crate::fs::normalize_path(&root.join(&m.path))
+                crate::fs::normalize_path(&vfs_join(&root, &m.path))
             };
 
             if !candidate.starts_with(&root) || !seen_paths.insert(candidate.clone()) {
@@ -1456,6 +1457,55 @@ mod tests {
         assert_eq!(result.exit_code, 0);
         assert!(result.stdout.contains("/dir/a.txt:hello"));
         assert!(!result.stdout.contains("b.log"));
+    }
+
+    // Issue #2425: `grep -r` prints the paths it walks, so a relative operand
+    // resolved against the cwd and every directory entry below it must stay
+    // `/`-separated even where the host separator is `\`.
+    #[tokio::test]
+    async fn windows_containment_grep_recursive_prints_slash_separated_paths() {
+        let grep = Grep;
+        let fs = Arc::new(InMemoryFs::new());
+        fs.mkdir(&PathBuf::from("/d/proj/src"), true).await.unwrap();
+        fs.write_file(&PathBuf::from("/d/proj/src/main.rs"), b"fn main() {}\n")
+            .await
+            .unwrap();
+
+        let mut vars = HashMap::new();
+        let mut cwd = PathBuf::from("/d/proj");
+        let args: Vec<String> = ["-r", "main", "src"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+
+        let ctx = Context {
+            args: &args,
+            env: &HashMap::new(),
+            variables: &mut vars,
+            cwd: &mut cwd,
+            fs,
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
+            shell: None,
+        };
+
+        let result = grep.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert!(
+            result.stdout.starts_with("/d/proj/src/main.rs:"),
+            "match path is not slash-separated:\n{}",
+            result.stdout
+        );
+        assert!(
+            !result.stdout.contains('\\'),
+            "output leaked a host separator:\n{}",
+            result.stdout
+        );
     }
 
     #[tokio::test]

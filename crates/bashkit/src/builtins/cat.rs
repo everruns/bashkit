@@ -12,6 +12,7 @@ use std::path::Path;
 
 use super::{Builtin, Context};
 use crate::error::Result;
+use crate::fs::vfs_join;
 use crate::interpreter::ExecResult;
 
 pub struct Cat;
@@ -72,7 +73,7 @@ impl Builtin for Cat {
                 let path = if Path::new(file).is_absolute() {
                     file.clone()
                 } else {
-                    ctx.cwd.join(file).to_string_lossy().into_owned()
+                    vfs_join(ctx.cwd, file).to_string_lossy().into_owned()
                 };
                 match ctx.fs.read_file(Path::new(&path)).await {
                     Ok(bytes) => raw.extend_from_slice(&bytes),

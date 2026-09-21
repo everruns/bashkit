@@ -4,6 +4,7 @@ use async_trait::async_trait;
 
 use super::{Builtin, Context, read_text_file};
 use crate::error::Result;
+use crate::fs::vfs_join;
 use crate::interpreter::ExecResult;
 
 /// The diff builtin - compare files line by line.
@@ -348,7 +349,7 @@ impl Builtin for Diff {
             let path = if files[0].starts_with('/') {
                 std::path::PathBuf::from(&files[0])
             } else {
-                ctx.cwd.join(&files[0])
+                vfs_join(ctx.cwd, &files[0])
             };
             match read_text_file(&*ctx.fs, &path, "diff").await {
                 Ok(text) => text.lines().map(|l| l.to_string()).collect(),
@@ -365,7 +366,7 @@ impl Builtin for Diff {
             let path = if files[1].starts_with('/') {
                 std::path::PathBuf::from(&files[1])
             } else {
-                ctx.cwd.join(&files[1])
+                vfs_join(ctx.cwd, &files[1])
             };
             match read_text_file(&*ctx.fs, &path, "diff").await {
                 Ok(text) => text.lines().map(|l| l.to_string()).collect(),

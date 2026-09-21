@@ -4,6 +4,7 @@ use async_trait::async_trait;
 
 use super::{Builtin, Context, read_stream_file};
 use crate::error::Result;
+use crate::fs::vfs_join;
 use crate::interpreter::ExecResult;
 
 /// The wc builtin - print newline, word, and byte counts.
@@ -143,7 +144,7 @@ impl Builtin for Wc {
                 let path = if file.starts_with('/') {
                     std::path::PathBuf::from(file)
                 } else {
-                    ctx.cwd.join(file)
+                    vfs_join(ctx.cwd, file)
                 };
 
                 match read_stream_file(&*ctx.fs, &path, "wc").await {
@@ -293,6 +294,41 @@ mod tests {
         };
 
         Wc.execute(ctx).await.unwrap()
+    }
+
+    // Issue #2425: a failed read reports the resolved VFS path, which must be
+    // `/`-separated even where the host separator is `\`.
+    #[tokio::test]
+    async fn windows_containment_wc_error_path_is_slash_separated() {
+        let fs = Arc::new(InMemoryFs::new());
+        let mut variables = HashMap::new();
+        let env = HashMap::new();
+        let mut cwd = PathBuf::from("/d/proj");
+
+        let args = vec!["src/missing.rs".to_string()];
+        let ctx = Context {
+            args: &args,
+            env: &env,
+            variables: &mut variables,
+            cwd: &mut cwd,
+            fs,
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
+            shell: None,
+        };
+
+        let result = Wc.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 1);
+        assert!(
+            result.stderr.starts_with("wc: /d/proj/src/missing.rs:"),
+            "error path is not slash-separated:\n{}",
+            result.stderr
+        );
     }
 
     #[tokio::test]

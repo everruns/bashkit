@@ -601,7 +601,7 @@ pub fn resolve_path(cwd: &Path, path_str: &str) -> PathBuf {
     let joined = if path.is_absolute() {
         path.to_path_buf()
     } else {
-        cwd.join(path)
+        vfs_join(cwd, path)
     };
     // Normalize the path to handle . and .. components
     normalize_path(&joined)
@@ -609,6 +609,7 @@ pub fn resolve_path(cwd: &Path, path_str: &str) -> PathBuf {
 
 // Re-export shared normalize_path for use by builtins
 use crate::fs::normalize_path;
+use crate::fs::vfs_join;
 
 /// Execution context for builtin commands.
 ///
@@ -1465,6 +1466,95 @@ mod tests {
              Use Display ({{}}) or a domain-specific formatter. Add \
              `// debug-ok: <reason>` to the line for legitimate test \
              asserts.\n\nViolations:\n{}",
+            violations.join("\n")
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Issue #2425: VFS paths are Unix-style on every host, but
+    // `PathBuf::join`/`push` insert the *host* separator, so on Windows a
+    // joined path prints as `/d/proj\src\main.rs`.
+    //
+    // Static guard — the shapes that build a VFS path from a cwd or from a
+    // directory entry must go through `crate::fs::vfs_join`. The dynamic
+    // counterpart is the `windows_containment_*` tests next to `vfs_join` and
+    // the affected builtins, which the Windows CI job runs.
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn no_host_separator_joins_on_vfs_paths() {
+        // `Path::join` shapes seen on VFS paths: a cwd-relative operand and a
+        // directory entry appended during a recursive walk.
+        let shapes = ["cwd.join(", ".join(&entry.name)", ".join(&e.name)"];
+        // Every crate in the workspace, not just this one: the sibling crates
+        // (CLI, bindings, bench) build VFS paths too.
+        let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("crates/ dir");
+        let mut violations = Vec::new();
+
+        fn walk(
+            dir: &std::path::Path,
+            root: &std::path::Path,
+            shapes: &[&str],
+            violations: &mut Vec<String>,
+        ) {
+            for entry in std::fs::read_dir(dir).expect("read source dir") {
+                let entry = entry.unwrap();
+                let path = entry.path();
+                if path.is_dir() {
+                    walk(&path, root, shapes, violations);
+                    continue;
+                }
+                if path.extension().is_none_or(|e| e != "rs") {
+                    continue;
+                }
+                // Whole test files build VFS paths for fixtures, never for
+                // output (inline test modules are skipped below).
+                if path.file_name().is_some_and(|n| n == "tests.rs") {
+                    continue;
+                }
+                let src = std::fs::read_to_string(&path).expect("read source");
+                // Skip inline `#[cfg(test)] mod ... { ... }` blocks for the
+                // same reason. A `#[cfg(test)] mod tests;` declaration is not a
+                // block, and the file it names is skipped by name above.
+                let mut in_test_mod = false;
+                let mut prev_attr = false;
+                for (i, line) in src.lines().enumerate() {
+                    if in_test_mod {
+                        in_test_mod = line != "}";
+                        continue;
+                    }
+                    if prev_attr && line.starts_with("mod ") && line.ends_with('{') {
+                        in_test_mod = true;
+                        prev_attr = false;
+                        continue;
+                    }
+                    prev_attr = line == "#[cfg(test)]";
+                    if line.contains("// host-join-ok:") {
+                        continue;
+                    }
+                    if shapes.iter().any(|shape| line.contains(shape)) {
+                        let rel = path.strip_prefix(root).unwrap_or(&path);
+                        violations.push(format!("{}:{}: {}", rel.display(), i + 1, line.trim()));
+                    }
+                }
+            }
+        }
+
+        for crate_dir in std::fs::read_dir(workspace).expect("read crates dir") {
+            let src = crate_dir.expect("crate entry").path().join("src");
+            if src.is_dir() {
+                walk(&src, workspace, &shapes, &mut violations);
+            }
+        }
+
+        assert!(
+            violations.is_empty(),
+            "`Path::join` used to build a VFS path. On Windows it inserts the \
+             host separator, so the path prints as `/d/proj\\src\\main.rs` \
+             (issue #2425). Use `crate::fs::vfs_join` instead, or add \
+             `// host-join-ok: <reason>` for a genuine host path.\n\nViolations:\n{}",
             violations.join("\n")
         );
     }

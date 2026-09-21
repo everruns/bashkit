@@ -5,6 +5,7 @@ use std::path::Path;
 
 use super::{Builtin, Context, resolve_path};
 use crate::error::Result;
+use crate::fs::vfs_join;
 use crate::interpreter::ExecResult;
 use crate::limits::ExecutionLimits;
 
@@ -279,7 +280,7 @@ async fn build_tree(
             } else {
                 format!("{}\u{2502}   ", prefix)
             };
-            let child_path = dir.join(&entry.name);
+            let child_path = vfs_join(dir, &entry.name);
             Box::pin(build_tree(
                 ctx,
                 &child_path,

@@ -11,6 +11,7 @@ use std::path::Path;
 
 use super::{Builtin, Context, read_text_file};
 use crate::error::Result;
+use crate::fs::vfs_join;
 use crate::interpreter::ExecResult;
 
 /// Read input from files or stdin, returning the raw text. Used by `rev`.
@@ -40,7 +41,7 @@ async fn read_input(ctx: &Context<'_>) -> std::result::Result<String, ExecResult
                 let path = if Path::new(file).is_absolute() {
                     file.to_string()
                 } else {
-                    ctx.cwd.join(file).to_string_lossy().to_string()
+                    vfs_join(ctx.cwd, file).to_string_lossy().to_string()
                 };
                 let text = read_text_file(&*ctx.fs, Path::new(&path), "rev").await?;
                 raw.push_str(&text);
@@ -128,7 +129,7 @@ async fn read_tac_files(
             let path = if Path::new(file).is_absolute() {
                 file.clone()
             } else {
-                ctx.cwd.join(file).to_string_lossy().into_owned()
+                vfs_join(ctx.cwd, file).to_string_lossy().into_owned()
             };
             let text = read_text_file(&*ctx.fs, Path::new(&path), "tac").await?;
             raw.push_str(&text);

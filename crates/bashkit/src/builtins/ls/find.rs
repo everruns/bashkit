@@ -9,6 +9,7 @@ use super::glob_match;
 use crate::builtins::limits::FIND_MAX_OUTPUT_BYTES;
 use crate::builtins::{Builtin, Context, ExecutionPlan, SubCommand, resolve_path};
 use crate::error::Result;
+use crate::fs::vfs_join;
 use crate::interpreter::{ControlFlow, ExecResult};
 
 /// Options for find command
@@ -534,7 +535,7 @@ fn find_recursive<'a>(
             sorted_entries.sort_by(|a, b| a.name.cmp(&b.name));
 
             for entry in sorted_entries {
-                let child_path = path.join(&entry.name);
+                let child_path = vfs_join(path, &entry.name);
                 let child_display = if display_path == "." {
                     format!("./{}", entry.name)
                 } else {

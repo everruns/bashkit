@@ -4,6 +4,7 @@ use async_trait::async_trait;
 
 use super::{Builtin, Context, MAX_FORMAT_WIDTH, read_text_file};
 use crate::error::Result;
+use crate::fs::vfs_join;
 use crate::interpreter::ExecResult;
 
 /// The nl builtin - number lines of files.
@@ -189,7 +190,7 @@ impl Builtin for Nl {
                     let path = if file.starts_with('/') {
                         std::path::PathBuf::from(file)
                     } else {
-                        ctx.cwd.join(file)
+                        vfs_join(ctx.cwd, file)
                     };
 
                     let text = match read_text_file(&*ctx.fs, &path, "nl").await {
