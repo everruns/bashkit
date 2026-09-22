@@ -52,6 +52,9 @@ silently failed.
    `bashkit`, `crates/bashkit-js/package.json`,
    `crates/bashkit-wasm/package.json`, and `Cargo.lock`
    (`cargo update -p bashkit -p bashkit-cli ...`).
+   - Bump the `bashkit = { version = "X.Y.Z", ... }` snippets in docs
+     (`README.md`, `docs/`, `crates/bashkit/docs/`, `crates/bashkit/src/lib.rs`);
+     `python3 scripts/check_doc_links.py` (CI Lint) lists every stale pin.
    - Refresh the self-hosted API references: `just apidocs` and commit any
      changes. The `apidocs-drift` workflow only checks TypeScript weekly (its
      regen needs a Rust build), so a release is the reliable point to catch TS
