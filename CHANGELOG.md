@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.18.2] - 2026-09-22
+
+### Highlights
+
+- **`sed` is GNU-aligned.** The stream editor was rewritten after a differential audit against GNU sed 4.9 found 46 mismatches. It adds the missing commands (`y = l n N P D T z F r R w W`), GNU range-address semantics, `\U \L \u \l \E` case conversion, a real getopt (`-s`, `-z`, `-f`, `-l`, attached `-i.bak`), and it preserves a missing final newline. `-i` now writes atomically ([#2436](https://github.com/everruns/bashkit/pull/2436)).
+- **Windows path fix.** VFS paths use forward slashes on every host ([#2435](https://github.com/everruns/bashkit/pull/2435)).
+- **Release pipeline hardening.** npm publish verification now outlasts the registry cache ([#2426](https://github.com/everruns/bashkit/pull/2426)), and untrusted workflow code no longer receives the checkout token ([#2420](https://github.com/everruns/bashkit/pull/2420)).
+
+### What's Changed
+
+* fix(sed): GNU-align the stream editor and add the missing commands in [#2436](https://github.com/everruns/bashkit/pull/2436)
+* chore(deps): bump the rust-dependencies group with 5 updates in [#2431](https://github.com/everruns/bashkit/pull/2431)
+* chore(deps): bump the site-npm group in /site with 3 updates in [#2428](https://github.com/everruns/bashkit/pull/2428)
+* chore(deps): bump langchain from 1.4.0 to 1.4.1 in /examples/docs-grep-agent in the docs-grep-agent-uv group in [#2430](https://github.com/everruns/bashkit/pull/2430)
+* chore(deps): bump the examples-npm group across 1 directory with 4 updates in [#2432](https://github.com/everruns/bashkit/pull/2432)
+* chore(deps): bump the js-npm group in /crates/bashkit-js with 5 updates in [#2429](https://github.com/everruns/bashkit/pull/2429)
+* chore(deps): bump clap from 4.6.6 to 4.6.7 in /examples/hyperlight in the example-cargo group across 1 directory in [#2434](https://github.com/everruns/bashkit/pull/2434)
+* chore(ci): bump the github-actions group with 2 updates in [#2433](https://github.com/everruns/bashkit/pull/2433)
+* fix(fs): build VFS paths with forward slashes on every host in [#2435](https://github.com/everruns/bashkit/pull/2435)
+* fix(ci): let npm publish verification outlast the registry cache in [#2426](https://github.com/everruns/bashkit/pull/2426)
+* docs(readme): point computerwelt link to curiosity-ai org in [#2424](https://github.com/everruns/bashkit/pull/2424)
+* test(bench): retry the stub-shell exec past ETXTBSY in [#2423](https://github.com/everruns/bashkit/pull/2423)
+* test(ci): scope the broad-token probe to the injected token in [#2422](https://github.com/everruns/bashkit/pull/2422)
+* fix(ci): un-quarantine the bun canary job in [#2421](https://github.com/everruns/bashkit/pull/2421)
+* fix(ci): stop handing the checkout token to untrusted workflow code in [#2420](https://github.com/everruns/bashkit/pull/2420)
+
+**Full Changelog**: https://github.com/everruns/bashkit/compare/v0.18.1...v0.18.2
+
 ## [0.18.1] - 2026-09-17
 
 ### Highlights

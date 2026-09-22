@@ -322,7 +322,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! bashkit = { version = "0.18.1", features = ["git"] }
+//! bashkit = { version = "0.18.2", features = ["git"] }
 //! ```
 //!
 //! ```rust,ignore
@@ -353,7 +353,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! bashkit = { version = "0.18.1", features = ["python"] }
+//! bashkit = { version = "0.18.2", features = ["python"] }
 //! ```
 //!
 //! ```rust,ignore
