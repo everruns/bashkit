@@ -83,6 +83,7 @@ mod paste;
 mod patch;
 mod path;
 mod pipeline;
+mod posix_regex;
 mod printf;
 mod read;
 mod retry;

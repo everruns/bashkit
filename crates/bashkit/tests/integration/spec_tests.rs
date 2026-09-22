@@ -437,6 +437,15 @@ async fn sed_comparison_tests() {
     compare_against_real_bash("sed").await;
 }
 
+/// Same gate for grep: its POSIX BRE/ERE expectations were taken from GNU grep
+/// and share a translator with sed, so a change to one must not silently move
+/// the other (issue #2437).
+#[tokio::test]
+#[ignore = "strict host-grep parity gate; run explicitly in CI or via just check-bash-compat"]
+async fn grep_comparison_tests() {
+    compare_against_real_bash("grep").await;
+}
+
 async fn compare_against_real_bash(category: &str) {
     let dir = spec_cases_dir().join(category);
     let all_tests = load_spec_tests(&dir);

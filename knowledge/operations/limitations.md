@@ -122,6 +122,7 @@ pass in CI); only divergences and boundaries are recorded here.
 | ID | Tool | Limitation | Evidence |
 |----|------|------------|----------|
 | L-AWK-001 | awk | Some complex regex patterns unsupported (engine shared with sed/grep, size-limited) | stance |
+| L-GREP-002 | grep | An invalid quantifier is degraded, not rejected: a brace opening no interval (`a{b`, `{}`, `\{`) is an ordinary character, and a quantifier with nothing to repeat at the start of a branch is dropped with `grep: warning: X at start of expression`. This matches GNU grep and deliberately differs from `sed`, which rejects the same expressions — one shared translator, two policies (`posix_regex::Syntax::lenient`) | `lenient_degrades_what_strict_leaves_to_the_engine`, `grep_ere_lenient_braces` |
 | L-JQ-001 | jq | Alternative `//`: jaq errors on `.foo` applied to null instead of returning null (upstream jaq divergence) | 1 skipped spec test |
 | L-JQ-002 | jq | Regex natives compile the pattern per filter invocation; mapping `test`/`match`/`split` over many inputs can repeat compilation because jaq's native callback has no per-run cache state | `regex_compat.rs::re_native` |
 | L-YQ-001 | yq | Expressions are Bashkit jq expressions; mikefarah/yq-only node, comment, style, anchor, tag, filename, and eval-all operators are not implemented | stance |

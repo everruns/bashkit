@@ -105,6 +105,7 @@ world
 
 ### grep_files_with_matches
 # List matching files (shows (stdin) for stdin input)
+### bash_diff: pre-existing: -l/-L label stdin `(stdin)`, GNU uses `(standard input)`
 printf 'foo\nbar\n' | grep -l foo
 ### expect
 (stdin)
@@ -202,6 +203,7 @@ echo $?
 
 ### grep_null_data
 # Null-terminated mode with -z
+### bash_diff: pre-existing: -z reads NUL-separated input but still writes `\n`, GNU writes `\0`
 printf 'foo\0bar\0' | grep -z foo
 ### expect
 foo
@@ -336,6 +338,7 @@ foo
 
 ### grep_color
 # Color flag accepted (no-op, outputs plain text)
+### bash_diff: L-GREP-001: --color is an accepted no-op, GNU emits ANSI escapes
 printf 'foo\n' | grep --color=always foo
 ### expect
 foo
@@ -350,6 +353,7 @@ foo123
 
 ### grep_binary_detect
 # Binary file detection: content with null bytes triggers binary message
+### bash_diff: pre-existing: the binary notice goes to stdout, GNU writes `grep: NAME: binary file matches` to stderr and leaves stdout empty
 printf 'foo\0bar\n' | grep foo
 ### expect
 Binary file (standard input) matches
@@ -357,6 +361,7 @@ Binary file (standard input) matches
 
 ### grep_binary_with_a_flag
 # -a flag treats binary as text, outputs match normally
+### bash_diff: L-STREAM-001: -a cannot carry NUL through the text domain, so GNU's `foo\0bar` arrives as `foobar`
 printf 'foo\0bar\n' | grep -a foo
 ### expect
 foobar
@@ -417,6 +422,7 @@ printf '' | grep foo
 
 ### grep_binary_files_text
 # Treat binary as text with -a (filters null bytes)
+### bash_diff: L-STREAM-001: -a cannot carry NUL through the text domain, so GNU's `foo\0bar` arrives as `foobar`
 printf 'foo\0bar\n' | grep -a foo
 ### expect
 foobar
@@ -581,6 +587,7 @@ printf 'foo\n' > /tmp/grep_l_a.txt && printf 'bar\n' > /tmp/grep_l_b.txt && grep
 
 ### grep_files_without_match_no_output
 # -L does not print files that match
+### bash_diff: pre-existing: -L exits 1 when nothing is listed, GNU uses the ordinary match status (0 when some file matched)
 printf 'foo\n' > /tmp/grep_l2_a.txt && grep -L foo /tmp/grep_l2_a.txt
 ### exit_code: 1
 ### expect
@@ -595,6 +602,7 @@ mkdir -p /tmp/grepexd/src /tmp/grepexd/vendor && printf 'match\n' > /tmp/grepexd
 
 ### grep_suppress_errors
 # -s suppresses error messages for nonexistent files
+### bash_diff: pre-existing: a file-read error exits 1 and prints to stdout, GNU exits 2 and prints to stderr
 grep -s foo /tmp/nonexistent_grep_file_xyz
 echo $?
 ### expect
@@ -613,4 +621,100 @@ printf 'foo\n' > /tmp/grep_z_a.txt && grep -lZ foo /tmp/grep_z_a.txt | tr '\0' '
 printf 'bar\n' > /tmp/grep_zl_a.txt && grep -LZ foo /tmp/grep_zl_a.txt | tr '\0' '\n'
 ### expect
 /tmp/grep_zl_a.txt
+### end
+
+### grep_bre_literals
+# Issue #2437: + ? | are ordinary characters in BRE (grep's default mode)
+printf 'a+b\n' | grep 'a+b'
+printf 'a?b\n' | grep 'a?b'
+printf 'a|b\n' | grep 'a|b'
+printf '+\n' | grep '+'
+### expect
+a+b
+a?b
+a|b
++
+### end
+
+### grep_bre_literals_do_not_overmatch
+# The same operators must not match as quantifiers
+printf 'ab\n' | grep 'a+b'
+echo "rc=$?"
+printf 'ab\n' | grep 'a?b'
+echo "rc=$?"
+### expect
+rc=1
+rc=1
+### end
+
+### grep_bre_backslash_operators
+# \+ \? \| are the operators in BRE
+printf 'aaa\n' | grep 'a\+'
+printf 'ab\n' | grep 'a\?b'
+printf 'cd\n' | grep 'ab\|cd'
+### expect
+aaa
+ab
+cd
+### end
+
+### grep_bre_anchors_are_positional
+# ^ and $ only anchor at the ends of a BRE
+printf 'a^b\n' | grep 'a^b'
+printf 'a$b\n' | grep 'a$b'
+### expect
+a^b
+a$b
+### end
+
+### grep_bre_leading_star_is_literal
+# A leading * is an ordinary character, and stays one after ^
+printf '*a\n' | grep '^*a'
+printf 'aaa\n' | grep '^*a'
+echo "rc=$?"
+### expect
+*a
+rc=1
+### end
+
+### grep_bre_intervals
+# \{n\} \{n,\} \{n,m\} are intervals; a lone \{ is a literal brace
+printf 'aab\n' | grep 'a\{2\}b'
+printf 'aaab\n' | grep 'a\{2,3\}b'
+printf 'a{b\n' | grep '\{'
+### expect
+aab
+aaab
+a{b
+### end
+
+### grep_ere_lenient_braces
+# GNU grep reads a brace that opens no interval as an ordinary character
+printf 'a{b\n' | grep -E 'a{b'
+printf '{}\n' | grep -E '{}'
+printf 'aab\n' | grep -E 'a{2}b'
+### expect
+a{b
+{}
+aab
+### end
+
+### grep_ere_leading_quantifier_is_dropped
+# A quantifier with nothing to repeat is dropped (GNU also warns on stderr)
+printf 'aaa\n' | grep -E '*a' 2>/dev/null
+printf '+\n' | grep -E '+' 2>/dev/null
+### expect
+aaa
++
+### end
+
+### grep_bracket_expression_posix
+# Inside [...] a backslash is an ordinary character in POSIX
+printf 'a\\b\n' | grep '[\]'
+printf 'a]b\n' | grep '[]]'
+printf 'abc\n' | grep '[[:alpha:]]\+'
+### expect
+a\b
+a]b
+abc
 ### end

@@ -240,13 +240,15 @@ async fn bracket_expressions_keep_posix_semantics() {
 
 #[test]
 fn translate_is_positional() {
-    assert_eq!(pattern::translate("a+b", false), "a\\+b");
-    assert_eq!(pattern::translate("a\\+b", false), "a+b");
-    assert_eq!(pattern::translate("^a$", false), "^a$");
-    assert_eq!(pattern::translate("a^b$c", false), "a\\^b\\$c");
-    assert_eq!(pattern::translate("*a", false), "\\*a");
-    assert_eq!(pattern::translate("a*", false), "a*");
-    assert_eq!(pattern::translate("a+b", true), "a+b");
+    use crate::builtins::posix_regex::{Syntax, translate};
+    let bre = |p: &str| translate(p, Syntax::new(false, false)).regex;
+    assert_eq!(bre("a+b"), "a\\+b");
+    assert_eq!(bre("a\\+b"), "a+b");
+    assert_eq!(bre("^a$"), "^a$");
+    assert_eq!(bre("a^b$c"), "a\\^b\\$c");
+    assert_eq!(bre("*a"), "\\*a");
+    assert_eq!(bre("a*"), "a*");
+    assert_eq!(translate("a+b", Syntax::new(true, false)).regex, "a+b");
 }
 
 // === finding C: range addresses =========================================

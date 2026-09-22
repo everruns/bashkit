@@ -38,6 +38,7 @@
 
 use async_trait::async_trait;
 
+use super::posix_regex;
 use super::search_common::{
     Matcher, build_fancy_matcher, build_regex_opts, parse_numeric_flag_arg,
 };
@@ -345,38 +346,38 @@ impl GrepOptions {
         self.perl_regex = matches!(pt, PatternType::Perl);
     }
 
-    fn build_matcher(&self) -> Result<Matcher> {
+    fn build_matcher(&self) -> Result<(Matcher, Vec<String>)> {
+        let mut warnings: Vec<String> = Vec::new();
         // Build patterns for each -e pattern
-        let escaped_patterns: Vec<String> = self
-            .patterns
-            .iter()
-            .map(|p| {
-                // Empty pattern matches everything (like .*)
-                if p.is_empty() {
-                    return ".*".to_string();
-                }
-                let pat = if self.fixed_strings {
-                    regex::escape(p)
-                } else if self.perl_regex {
-                    // PCRE mode (-P): pass through to fancy-regex unchanged so
-                    // lookaround / backreferences are preserved.
-                    p.clone()
-                } else if !self.extended_regex {
-                    // BRE mode: convert to ERE for the regex crate
-                    // In BRE: ( ) are literal, \( \) are groups
-                    // In ERE/regex crate: ( ) are groups, \( \) are literal
-                    bre_to_ere(p)
-                } else {
-                    p.clone()
-                };
-                // Wrap with word boundaries if -w flag is set
-                if self.word_regex {
-                    format!(r"\b{}\b", pat)
-                } else {
-                    pat
-                }
-            })
-            .collect();
+        let mut escaped_patterns: Vec<String> = Vec::with_capacity(self.patterns.len());
+        for p in &self.patterns {
+            // Empty pattern matches everything (like .*)
+            if p.is_empty() {
+                escaped_patterns.push(".*".to_string());
+                continue;
+            }
+            let pat = if self.fixed_strings {
+                regex::escape(p)
+            } else if self.perl_regex {
+                // PCRE mode (-P): pass through to fancy-regex unchanged so
+                // lookaround / backreferences are preserved.
+                p.clone()
+            } else {
+                // BRE (the default) and ERE both go through the shared POSIX
+                // translator. grep is the lenient caller: an invalid quantifier
+                // degrades to a literal rather than failing the whole run.
+                let translated =
+                    posix_regex::translate(p, posix_regex::Syntax::new(self.extended_regex, true));
+                warnings.extend(translated.warnings);
+                translated.regex
+            };
+            // Wrap with word boundaries if -w flag is set
+            escaped_patterns.push(if self.word_regex {
+                format!(r"\b{}\b", pat)
+            } else {
+                pat
+            });
+        }
 
         // Combine multiple patterns with alternation
         let combined = if escaped_patterns.len() == 1 {
@@ -401,13 +402,33 @@ impl GrepOptions {
         // over `-P`, matching GNU grep.
         if self.perl_regex && !self.fixed_strings {
             build_fancy_matcher(&final_pattern, self.ignore_case)
-                .map_err(|e| Error::Execution(format!("grep: invalid pattern: {}", e)))
+                .map(|m| (m, warnings))
+                .map_err(|e| invalid_pattern(&e))
         } else {
             build_regex_opts(&final_pattern, self.ignore_case)
-                .map(Matcher::Standard)
-                .map_err(|e| Error::Execution(format!("grep: invalid pattern: {}", e)))
+                .map(|re| (Matcher::Standard(re), warnings))
+                .map_err(|e| invalid_pattern(&e))
         }
     }
+}
+
+/// GNU grep rejects a malformed pattern with a one-line diagnostic and exit
+/// status 2. Keeping this out of `Error::Execution` matters: an interpreter
+/// error is rendered by the CLI with a Rust backtrace carrying `/rustc/` and
+/// `/.cargo/registry/` paths (TM-INF-016/TM-INF-022), which a bad `grep '+'`
+/// must never produce. The engine diagnostic is flattened to one line and
+/// capped.
+fn invalid_pattern(error: &impl std::fmt::Display) -> Error {
+    let detail = error
+        .to_string()
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.chars().all(|c| c == '^'))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut message = format!("grep: invalid pattern: {detail}");
+    message.truncate(512);
+    Error::Execution(message)
 }
 
 /// Resolve the value of a value-taking long option: prefer the inline
@@ -504,43 +525,6 @@ fn process_content(content: Vec<u8>, binary_as_text: bool) -> String {
     }
 }
 
-/// Convert a BRE (Basic Regular Expression) pattern to ERE for the regex crate.
-/// In BRE: ( ) { } are literal; \( \) \{ \} \+ \? \| are metacharacters.
-/// In ERE/regex crate: ( ) { } + ? | are metacharacters.
-fn bre_to_ere(pattern: &str) -> String {
-    let mut result = String::with_capacity(pattern.len());
-    let chars: Vec<char> = pattern.chars().collect();
-    let mut i = 0;
-
-    while i < chars.len() {
-        if chars[i] == '\\' && i + 1 < chars.len() {
-            match chars[i + 1] {
-                // BRE escaped metacharacters → ERE unescaped
-                '(' | ')' | '{' | '}' | '+' | '?' | '|' => {
-                    result.push(chars[i + 1]);
-                    i += 2;
-                }
-                // Other escapes pass through
-                _ => {
-                    result.push('\\');
-                    result.push(chars[i + 1]);
-                    i += 2;
-                }
-            }
-        } else if chars[i] == '(' || chars[i] == ')' || chars[i] == '{' || chars[i] == '}' {
-            // BRE literal chars → escape them for ERE
-            result.push('\\');
-            result.push(chars[i]);
-            i += 1;
-        } else {
-            result.push(chars[i]);
-            i += 1;
-        }
-    }
-
-    result
-}
-
 #[async_trait]
 impl Builtin for Grep {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
@@ -583,7 +567,7 @@ impl Builtin for Grep {
             return Err(Error::Execution("grep: missing pattern".to_string()));
         }
 
-        let matcher = opts.build_matcher()?;
+        let (matcher, pattern_warnings) = opts.build_matcher()?;
 
         let mut output = String::new();
         let mut any_match = false;
@@ -969,10 +953,23 @@ impl Builtin for Grep {
 
         // In quiet mode, return empty output
         if opts.quiet {
-            return Ok(ExecResult::with_code(String::new(), exit_code));
+            output.clear();
         }
 
-        Ok(ExecResult::with_code(output, exit_code))
+        // GNU grep warns about a dropped leading quantifier but still runs.
+        let stderr = pattern_warnings
+            .iter()
+            .map(|w| format!("grep: warning: {w}\n"))
+            .collect::<String>();
+        if stderr.is_empty() {
+            return Ok(ExecResult::with_code(output, exit_code));
+        }
+        Ok(ExecResult {
+            stdout: output.into(),
+            stderr: stderr.into(),
+            exit_code,
+            ..Default::default()
+        })
     }
 }
 
@@ -1019,11 +1016,11 @@ async fn try_indexed_search(
                 return None;
             }
 
-            let pattern = if opts.extended_regex {
-                opts.patterns[0].clone()
-            } else {
-                bre_to_ere(&opts.patterns[0])
-            };
+            let pattern = posix_regex::translate(
+                &opts.patterns[0],
+                posix_regex::Syntax::new(opts.extended_regex, true),
+            )
+            .regex;
             let pattern = if opts.word_regex {
                 format!(r"\b{}\b", pattern)
             } else {

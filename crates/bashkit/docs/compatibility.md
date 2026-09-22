@@ -502,6 +502,11 @@ Identified from eval analysis, all items now implemented:
 - [x] `sed` `0~2` step addressing, even/odd line processing
 - [x] `sed` `Q` quiet quit command
 - [x] `sed` `0,/pattern/` first match addressing
+- [x] `grep` POSIX BRE/ERE, issue #2437: one shared translator with `sed`
+  (`builtins/posix_regex.rs`) instead of a private copy that handled only
+  `( ) { }`, so BRE literals `+ ? | ^ $` and a leading `*` match the way GNU
+  grep matches them, intervals and bracket expressions follow POSIX, and an
+  invalid quantifier is degraded (GNU grep) rather than raising an error
 - [x] `sed` GNU rewrite, issue #2427: literal `$` in the replacement, BRE/ERE
   translation shared by `s///` and address regexes, stateful range addresses,
   single-stream multi-file input, preserved missing final newline, `s///Ng`,
