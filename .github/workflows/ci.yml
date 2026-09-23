@@ -263,8 +263,17 @@ jobs:
       - name: Run tests
         run: cargo test --workspace --lib --bins --tests --features http_client,ssh,sqlite
 
-      - name: Run strict bash parity tests
-        run: cargo test -p bashkit --test integration --features http_client,ssh -- spec_tests::bash_comparison_tests --ignored
+      # All three differential gates (bash, sed, grep), not just bash: each is
+      # the only thing checking that its spec expectations still describe the
+      # real tool. `spec_tests::` + `--ignored` selects exactly the gates —
+      # they are the only ignored tests in the module — and is what
+      # `scripts/update-spec-expected.sh` runs locally.
+      # Block scalar, not a plain one: `spec_tests::` followed by a space is a
+      # mapping indicator to the YAML parser and silently takes the whole
+      # workflow file out of service.
+      - name: Run strict host-tool parity gates (bash, sed, grep)
+        run: |
+          cargo test -p bashkit --test integration --features http_client,ssh -- spec_tests:: --ignored
 
       - name: Run competitor regression corpus
         run: cargo test -p bashkit --test integration --features http_client,jq -- competitor_regression_tests
