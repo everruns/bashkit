@@ -52,6 +52,21 @@ Handles bash's context-sensitivity:
 - Brace expansion: `{a,b,c}` and `{1..5}` vs brace groups `{ cmd; }`
 - Tilde expansion: `~` at start of word expands to `$HOME`
 
+**Metacharacters vs reserved words.** Only space, tab, newline, `|`, `&`, `;`,
+`(`, `)`, `<` and `>` delimit a word. `{` and `}` do not: they are reserved
+words, recognized as such only when they stand alone. So `echo a}b` prints
+`a}b`, and `}b` is a command named `}b`. The lexer decides this with
+`is_brace_group_start` on the opening side and `right_brace_stands_alone` on
+the closing side; both word readers (`read_word`, `read_word_starting_with`)
+keep a `}` that has no opener inside the word. `for`/`select` `in` lists apply
+the same distinction to `do`/`done`/`in` — see `for_in_reserved_word_tests`.
+
+Treating `}` as a metacharacter is not just a cosmetic difference: it splits
+`v=a}b`, `for i in a}b`, and `case x}` at a point where the grammar expects a
+terminator, so they fail to parse rather than printing the wrong thing.
+Regressions: `close_brace_word_tests` and the lexer unit tests, all pinned
+against GNU bash 5.2.
+
 ### Arithmetic Expressions
 
 `$((expr))` supports: `+`, `-`, `*`, `/`, `%`, comparisons, logical `&&`/`||`
