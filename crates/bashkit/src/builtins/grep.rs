@@ -586,6 +586,14 @@ impl Builtin for Grep {
         let matcher = opts.build_matcher()?;
 
         let mut output = String::new();
+        // Diagnostics are a separate stream: a `grep: FILE: ...` line written
+        // into `output` lands in the data a pipeline consumes, so
+        // `grep foo *.log | wc -l` counts it as a match.
+        let mut errors = String::new();
+        // GNU grep exits 2 when any operand could not be read, whether or not
+        // another operand matched, and `-s` silences the message but not the
+        // status.
+        let mut read_failed = false;
         let mut any_match = false;
         let mut exit_code = 1; // 1 = no match
         let mut total_matches = 0usize;
@@ -683,9 +691,11 @@ impl Builtin for Grep {
                         inputs.push((file.clone(), text));
                     }
                     Err(e) => {
-                        // Report error but continue with other files
-                        if !opts.quiet && !opts.suppress_errors {
-                            output.push_str(&format!("grep: {}: {}\n", file, e));
+                        // Report the error but continue with the other files.
+                        read_failed = true;
+                        if !opts.suppress_errors {
+                            let reason = crate::error::io_error_reason(&e);
+                            errors.push_str(&format!("grep: {file}: {reason}\n"));
                         }
                     }
                 }
@@ -699,7 +709,10 @@ impl Builtin for Grep {
         } else if opts.show_filename || opts.recursive {
             true
         } else {
-            inputs.len() > 1
+            // Operands requested, not operands successfully read: GNU grep
+            // prints `ok.txt:hello` for `grep hello ok.txt /nope`, because two
+            // files were named even though only one could be opened.
+            opts.files.len().max(inputs.len()) > 1
         };
         let has_context = opts.before_context > 0 || opts.after_context > 0;
 
@@ -966,13 +979,30 @@ impl Builtin for Grep {
         if any_match {
             exit_code = 0;
         }
+        // An unreadable operand outranks "no match", but not a match found
+        // under `-q`: GNU `grep -q hello ok.txt /nope` exits 0, because it
+        // stops at the first match without reaching the bad operand.
+        // `-q` stops at the first match, so GNU grep never reaches a later
+        // unreadable operand: no message and status 0. Bashkit reads every
+        // operand up front, so emulate the short-circuit by dropping both.
+        if opts.quiet && any_match {
+            errors.clear();
+        } else if read_failed {
+            exit_code = 2;
+        }
 
         // In quiet mode, return empty output
         if opts.quiet {
-            return Ok(ExecResult::with_code(String::new(), exit_code));
+            return Ok(ExecResult {
+                stderr: errors.into(),
+                ..ExecResult::with_code(String::new(), exit_code)
+            });
         }
 
-        Ok(ExecResult::with_code(output, exit_code))
+        Ok(ExecResult {
+            stderr: errors.into(),
+            ..ExecResult::with_code(output, exit_code)
+        })
     }
 }
 
@@ -2152,9 +2182,10 @@ mod tests {
         };
 
         let result = grep.execute(ctx).await.unwrap();
-        assert_eq!(result.exit_code, 1);
-        // -s suppresses error messages
+        // GNU grep: -s silences the message but not the status.
+        assert_eq!(result.exit_code, 2);
         assert_eq!(result.stdout, "");
+        assert_eq!(result.stderr, "");
     }
 
     #[tokio::test]
@@ -2186,9 +2217,14 @@ mod tests {
         };
 
         let result = grep.execute(ctx).await.unwrap();
-        assert_eq!(result.exit_code, 1);
-        // Without -s, error message is shown
-        assert!(result.stdout.contains("grep: /nonexistent:"));
+        // GNU grep: the diagnostic goes to stderr, never into the data
+        // stream, and an unreadable operand is status 2, not "no match".
+        assert_eq!(result.exit_code, 2);
+        assert_eq!(result.stdout, "");
+        assert_eq!(
+            result.stderr,
+            "grep: /nonexistent: No such file or directory\n"
+        );
     }
 
     #[tokio::test]
@@ -2220,8 +2256,10 @@ mod tests {
         };
 
         let result = grep.execute(ctx).await.unwrap();
-        assert_eq!(result.exit_code, 1);
+        // --no-messages is the long form of -s: same status 2.
+        assert_eq!(result.exit_code, 2);
         assert_eq!(result.stdout, "");
+        assert_eq!(result.stderr, "");
     }
 
     // -Z (--null) tests

@@ -594,11 +594,12 @@ mkdir -p /tmp/grepexd/src /tmp/grepexd/vendor && printf 'match\n' > /tmp/grepexd
 ### end
 
 ### grep_suppress_errors
-# -s suppresses error messages for nonexistent files
+# -s suppresses the error message but not the status: GNU grep exits 2
+# whenever an operand could not be read, matched or not.
 grep -s foo /tmp/nonexistent_grep_file_xyz
 echo $?
 ### expect
-1
+2
 ### end
 
 ### grep_null_filename_l

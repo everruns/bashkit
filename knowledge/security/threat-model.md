@@ -470,7 +470,15 @@ Most file-reading builtins go through `builtins::read_text_file` /
 `read_stream_file`, so a single leaking formatter there reached ~25 tools at
 once (`wc`, `sort`, `cut`, `nl`, `awk`, `paste`, `uniq`, `rev`, `tac`,
 `column`, `jq`, `diff`, …); `cat`, `head`, `tail` and `strings` read the VFS
-directly and leaked it separately. Coverage: `builtin_fs_error_tests`.
+directly and leaked it separately, as did `rg`, `sed` and `json`. The sweep
+is complete: `builtin_fs_error_tests` walks all thirty file-reading builtins
+and fails on any banned shape in either stream.
+
+A diagnostic also has to reach the right stream. `grep` accumulated its
+`grep: FILE: ...` line into the stdout buffer, so `grep foo *.log | wc -l`
+counted it as a match — a wrong-stream bug is a data-corruption bug, not a
+cosmetic one. Status matters too: GNU `grep`, `sed` and `rg` report an
+unreadable operand as exit 2, which outranks both "matched" and "no match".
 
 A related shape: a user-reachable failure classified as `Error::Internal`
 aborts the whole script *and* prints `internal error:`. Nightly `glob_fuzz`
