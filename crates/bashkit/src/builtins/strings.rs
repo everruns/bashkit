@@ -193,7 +193,8 @@ impl Builtin for Strings {
                             output.push_str(&extract_strings(&content, &opts));
                         }
                         Err(e) => {
-                            return Ok(ExecResult::err(format!("strings: {}: {}\n", file, e), 1));
+                            let reason = crate::error::io_error_reason(&e);
+                            return Ok(ExecResult::err(format!("strings: {file}: {reason}\n"), 1));
                         }
                     }
                 }

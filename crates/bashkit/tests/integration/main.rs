@@ -26,6 +26,7 @@ pub mod base64_binary_tests;
 pub mod bash_source_tests;
 pub mod blackbox_security_tests;
 pub mod builtin_error_security_tests;
+pub mod builtin_fs_error_tests;
 pub mod builtin_registry_tests;
 pub mod byte_range_panic_tests;
 pub mod byte_stream_tests;

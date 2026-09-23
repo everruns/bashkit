@@ -77,7 +77,10 @@ impl Builtin for Cat {
                 };
                 match ctx.fs.read_file(Path::new(&path)).await {
                     Ok(bytes) => raw.extend_from_slice(&bytes),
-                    Err(e) => return Ok(ExecResult::err(format!("cat: {file}: {e}\n"), 1)),
+                    Err(e) => {
+                        let reason = crate::error::io_error_reason(&e);
+                        return Ok(ExecResult::err(format!("cat: {file}: {reason}\n"), 1));
+                    }
                 }
             }
         }
