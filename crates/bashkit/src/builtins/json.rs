@@ -126,7 +126,10 @@ async fn read_json_input(
         match ctx.fs.read_file(&path).await {
             Ok(bytes) => String::from_utf8(bytes)
                 .map_err(|e| ExecResult::err(format!("json: invalid UTF-8 in {file}: {e}\n"), 1)),
-            Err(e) => Err(ExecResult::err(format!("json: {file}: {e}\n"), 1)),
+            Err(e) => {
+                let reason = crate::error::io_error_reason(&e);
+                Err(ExecResult::err(format!("json: {file}: {reason}\n"), 1))
+            }
         }
     } else if let Some(stdin) = ctx.stdin {
         Ok(stdin.to_string())

@@ -370,7 +370,11 @@ impl Builtin for Sed {
                     },
                     // GNU exits 2 when an input file cannot be read.
                     Err(e) => {
-                        return Ok(ExecResult::err(format!("sed: can't read {name}: {e}\n"), 2));
+                        let reason = crate::error::io_error_reason(&e);
+                        return Ok(ExecResult::err(
+                            format!("sed: can't read {name}: {reason}\n"),
+                            2,
+                        ));
                     }
                 }
             };

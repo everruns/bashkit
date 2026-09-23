@@ -2988,10 +2988,10 @@ async fn read_rg_text_file(
     display_path: &str,
     opts: &RgOptions,
 ) -> std::result::Result<String, ExecResult> {
-    let content = fs
-        .read_file(path)
-        .await
-        .map_err(|e| ExecResult::err(format!("rg: {display_path}: {e}\n"), 1))?;
+    let content = fs.read_file(path).await.map_err(|e| {
+        let reason = crate::error::io_error_reason(&e);
+        ExecResult::err(format!("rg: {display_path}: {reason}\n"), 1)
+    })?;
 
     opts.validate_preprocessor_for(path, cwd)
         .map_err(|e| ExecResult::err(format!("rg: {display_path}: {e}\n"), 1))?;
