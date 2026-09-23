@@ -437,6 +437,21 @@ async fn sed_comparison_tests() {
     compare_against_real_bash("sed").await;
 }
 
+/// The grep spec suite is a differential suite against GNU grep, for the same
+/// reason sed is against GNU sed: every expectation is a claim about the real
+/// tool, and nothing else checks it.
+///
+/// It was added after the gate caught seven expectations that had captured
+/// Bashkit's own bugs rather than grep's behaviour — the `(stdin)` label, `-z`
+/// output terminators, `-a` deleting NUL bytes, the binary-match diagnostic
+/// on stdout, and `-L`'s exit status. Divergences kept on purpose carry
+/// `### bash_diff:` and are excluded, like the bash gate.
+#[tokio::test]
+#[ignore = "strict host-grep parity gate; run explicitly in CI or via just check-bash-compat"]
+async fn grep_comparison_tests() {
+    compare_against_real_bash("grep").await;
+}
+
 async fn compare_against_real_bash(category: &str) {
     let dir = spec_cases_dir().join(category);
     let all_tests = load_spec_tests(&dir);

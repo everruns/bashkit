@@ -200,11 +200,29 @@ change must update the executable surface test and manifest in the same change.
 
 ## Comparison Testing
 
-The `bash_comparison_tests` test is ignored by default for local `cargo test`
-runs because it compares against the host shell environment. CI runs it
-explicitly as a strict parity gate. Tests marked with `### bash_diff` are
-excluded from comparison. Tests marked with `### skip` are excluded from both
-spec tests and comparison.
+Three gates compare a spec category against the real host tool:
+`bash_comparison_tests`, `sed_comparison_tests` and `grep_comparison_tests`.
+All are `#[ignore]`d for local `cargo test` runs because they need the host
+tool; CI runs them together with `spec_tests:: --ignored`, which selects
+exactly the gates because they are the only ignored tests in the module.
+`scripts/update-spec-expected.sh` (`just check-bash-compat`) runs the same
+set. Tests marked `### bash_diff` are excluded from comparison; `### skip`
+excludes from both spec tests and comparison.
+
+**A spec category without a gate is unverified, not verified.** Its
+expectations are only a record of what Bashkit printed when they were written.
+Pointing the gate at `grep` for the first time turned up seven expectations
+that had captured Bashkit's own bugs — the `(stdin)` label, `-z` output
+terminators, `-a` deleting NUL bytes, the binary-match diagnostic on stdout,
+`-L`'s inverted exit status, and `-s` reporting exit 1 where GNU grep exits 2.
+Wiring only `bash_comparison_tests` into CI had the same effect on `sed`: the
+gate added with the GNU-sed work existed but never ran there.
+
+Categories still without a gate: `awk`, `jq`, `yq`, `python`, `typescript`.
+`awk` is not a straightforward candidate — the usual host `awk` is mawk, while
+Bashkit targets gawk, so a gate would need `### bash_diff` on every gawk
+extension (`**`, `gensub`, 3-argument `match`, `\u` escapes) and on `for (k in
+arr)`, whose iteration order awk leaves unspecified.
 
 ### yq compatibility and fuzzing
 

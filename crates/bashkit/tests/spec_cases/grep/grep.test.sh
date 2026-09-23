@@ -104,10 +104,11 @@ world
 ### end
 
 ### grep_files_with_matches
-# List matching files (shows (stdin) for stdin input)
+# List matching files. GNU grep names stdin "(standard input)" under -l too,
+# not "(stdin)".
 printf 'foo\nbar\n' | grep -l foo
 ### expect
-(stdin)
+(standard input)
 ### end
 
 ### grep_quiet
@@ -201,10 +202,13 @@ echo $?
 ### end
 
 ### grep_null_data
-# Null-terminated mode with -z
-printf 'foo\0bar\0' | grep -z foo
+# -z is null-terminated *records*, on output as well as input: GNU grep emits
+# `foo\0`, not `foo\n`. Rendered through tr so the NUL is visible here.
+# The trailing `echo` supplies the newline the spec format needs; grep -z
+# itself terminates the record with the NUL, not a newline.
+printf 'foo\0bar\0' | grep -z foo | tr '\0' '@'; echo
 ### expect
-foo
+foo@
 ### end
 
 ### grep_only_matching_multiple
@@ -335,6 +339,8 @@ foo
 ### end
 
 ### grep_color
+### bash_diff: --color=always is accepted but not implemented; GNU grep wraps
+### bash_diff: the match in SGR escapes. Tracked as a limitation, not a bug.
 # Color flag accepted (no-op, outputs plain text)
 printf 'foo\n' | grep --color=always foo
 ### expect
@@ -349,17 +355,20 @@ foo123
 ### end
 
 ### grep_binary_detect
-# Binary file detection: content with null bytes triggers binary message
-printf 'foo\0bar\n' | grep foo
+# Binary file detection. The message is a diagnostic, so GNU grep >= 3.5
+# writes `grep: FILE: binary file matches` to stderr and leaves stdout empty;
+# merged here so the spec asserts the text as well as the stream.
+printf 'foo\0bar\n' | grep foo 2>&1
 ### expect
-Binary file (standard input) matches
+grep: (standard input): binary file matches
 ### end
 
 ### grep_binary_with_a_flag
-# -a flag treats binary as text, outputs match normally
-printf 'foo\0bar\n' | grep -a foo
+# -a treats binary as text; it does not delete the NUL bytes. GNU grep passes
+# the line through byte for byte. Rendered through tr so the NUL is visible.
+printf 'foo\0bar\n' | grep -a foo | tr '\0' '@'
 ### expect
-foobar
+foo@bar
 ### end
 
 ### grep_include_pattern
@@ -416,10 +425,11 @@ printf '' | grep foo
 ### end
 
 ### grep_binary_files_text
-# Treat binary as text with -a (filters null bytes)
-printf 'foo\0bar\n' | grep -a foo
+# Same as grep_binary_with_a_flag from the --binary-files=text angle: the NUL
+# survives.
+printf 'foo\0bar\n' | grep -a foo | tr '\0' '@'
 ### expect
-foobar
+foo@bar
 ### end
 
 ### grep_count_multiple_matches
@@ -580,9 +590,11 @@ printf 'foo\n' > /tmp/grep_l_a.txt && printf 'bar\n' > /tmp/grep_l_b.txt && grep
 ### end
 
 ### grep_files_without_match_no_output
-# -L does not print files that match
+# -L does not print files that match. The status still reports whether a
+# *match* was found, so a matching file means exit 0 even though -L prints
+# nothing; a non-matching file prints the name and exits 1.
 printf 'foo\n' > /tmp/grep_l2_a.txt && grep -L foo /tmp/grep_l2_a.txt
-### exit_code: 1
+### exit_code: 0
 ### expect
 ### end
 

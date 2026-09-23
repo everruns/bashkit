@@ -495,13 +495,12 @@ fn path_has_excluded_dir(
     })
 }
 
-fn process_content(content: Vec<u8>, binary_as_text: bool) -> String {
-    if binary_as_text {
-        let filtered: Vec<u8> = content.into_iter().filter(|&b| b != 0).collect();
-        String::from_utf8_lossy(&filtered).into_owned()
-    } else {
-        String::from_utf8_lossy(&content).into_owned()
-    }
+/// `-a` means "treat this binary file as text", not "delete its NUL bytes":
+/// GNU grep passes the matching line through byte for byte, so
+/// `printf 'foo\0bar\n' | grep -a foo` prints `foo\0bar`. Stripping the NUL
+/// silently altered the data a caller got back.
+fn process_content(content: Vec<u8>, _binary_as_text: bool) -> String {
+    String::from_utf8_lossy(&content).into_owned()
 }
 
 /// Convert a BRE (Basic Regular Expression) pattern to ERE for the regex crate.
@@ -599,21 +598,18 @@ impl Builtin for Grep {
         let mut total_matches = 0usize;
 
         // Determine input sources
-        // Use "(standard input)" for -H flag, "(stdin)" for -l flag
-        let stdin_name = if opts.show_filename {
-            "(standard input)"
-        } else if opts.files_with_matches || opts.files_without_matches {
-            "(stdin)"
-        } else {
-            ""
-        };
+        // GNU grep names stdin "(standard input)" everywhere it names it at
+        // all — under -H, -l and -L alike.
+        let stdin_name =
+            if opts.show_filename || opts.files_with_matches || opts.files_without_matches {
+                "(standard input)"
+            } else {
+                ""
+            };
         let inputs: Vec<(String, String)> = if opts.files.is_empty() {
             // Read from stdin
-            let mut stdin_content = ctx.stdin.map(ToString::to_string).unwrap_or_default();
-            if opts.binary_as_text {
-                // Filter null bytes for -a flag
-                stdin_content = stdin_content.replace('\0', "");
-            }
+            // No NUL filtering here either — see `process_content`.
+            let stdin_content = ctx.stdin.map(ToString::to_string).unwrap_or_default();
             vec![(stdin_name.to_string(), stdin_content)]
         } else if opts.recursive {
             // Try indexed search via SearchCapable if available. Skip it for -P:
@@ -773,9 +769,7 @@ impl Builtin for Grep {
                     // matcher as soon as grep's early-exit conditions are met.
                     matcher.for_each_range(line, |_| {
                         file_matched = true;
-                        if !opts.files_without_matches {
-                            any_match = true;
-                        }
+                        any_match = true;
                         match_count += 1;
                         total_matches += 1;
 
@@ -807,9 +801,7 @@ impl Builtin for Grep {
 
                     if should_match {
                         file_matched = true;
-                        if !opts.files_without_matches {
-                            any_match = true;
-                        }
+                        any_match = true;
                         match_count += 1;
                         total_matches += 1;
                         match_lines.push(line_num);
@@ -850,21 +842,29 @@ impl Builtin for Grep {
                 } else {
                     filename.as_str()
                 };
-                output.push_str(&format!("Binary file {} matches\n", display_name));
+                // A diagnostic, not data: GNU grep >= 3.5 writes
+                // `grep: FILE: binary file matches` to stderr, so a pipeline
+                // reading grep's output never sees it.
+                errors.push_str(&format!("grep: {display_name}: binary file matches\n"));
                 continue 'file_loop;
             }
             // Filename terminator: \0 for -Z, \n otherwise
             let fname_term = if opts.null_filename { '\0' } else { '\n' };
+            // Output record terminator: -z means NUL-terminated *records*,
+            // on the way out as well as on the way in.
+            let line_term = if opts.null_terminated { '\0' } else { '\n' };
             // Filename separator in line output: \0 for -Z, : otherwise
             let fname_sep = if opts.null_filename { '\0' } else { ':' };
             if opts.files_with_matches && file_matched {
                 output.push_str(filename);
                 output.push(fname_term);
             } else if opts.files_without_matches && !file_matched {
+                // The filename is printed, but the status still reports
+                // whether a *match* was found: GNU `grep -L foo matching.txt`
+                // prints nothing and exits 0, and `grep -L foo other.txt`
+                // prints the name and exits 1.
                 output.push_str(filename);
                 output.push(fname_term);
-                // -L means at least one file printed => success
-                any_match = true;
             } else if opts.files_without_matches {
                 // -L mode but file matched: skip output for this file
             } else if opts.count_only {
@@ -896,7 +896,7 @@ impl Builtin for Grep {
                                 output.push_str(&format!("{}:", line_num + 1));
                             }
                             output.push_str(&line[start..end]);
-                            output.push('\n');
+                            output.push(line_term);
                             o_matches += 1;
                             true
                         });
@@ -949,7 +949,7 @@ impl Builtin for Grep {
                             output.push_str(&format!("{}{}", line_idx + 1, separator));
                         }
                         output.push_str(lines[line_idx]);
-                        output.push('\n');
+                        output.push(line_term);
                     }
                 } else {
                     // Normal mode: output matching lines
@@ -970,7 +970,7 @@ impl Builtin for Grep {
                             output.push_str(&format!("{}:", line_idx + 1));
                         }
                         output.push_str(lines[line_idx]);
-                        output.push('\n');
+                        output.push(line_term);
                     }
                 }
             }
@@ -1413,7 +1413,7 @@ mod tests {
     async fn test_grep_files_with_matches_stdin() {
         let result = run_grep(&["-l", "foo"], Some("foo\nbar")).await.unwrap();
         assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout, "(stdin)\n");
+        assert_eq!(result.stdout, "(standard input)\n");
     }
 
     #[test]
@@ -2003,14 +2003,16 @@ mod tests {
     #[tokio::test]
     async fn test_grep_files_without_match_stdin() {
         let result = run_grep(&["-L", "xyz"], Some("foo\nbar")).await.unwrap();
-        assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout, "(stdin)\n");
+        // GNU: the name is printed, but no match was found, so the status is 1.
+        assert_eq!(result.exit_code, 1);
+        assert_eq!(result.stdout, "(standard input)\n");
     }
 
     #[tokio::test]
     async fn test_grep_files_without_match_stdin_has_match() {
         let result = run_grep(&["-L", "foo"], Some("foo\nbar")).await.unwrap();
-        assert_eq!(result.exit_code, 1);
+        // GNU: -L prints nothing here, but a match *was* found, so status 0.
+        assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, "");
     }
 
@@ -2019,8 +2021,8 @@ mod tests {
         let result = run_grep(&["--files-without-match", "xyz"], Some("foo\nbar"))
             .await
             .unwrap();
-        assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout, "(stdin)\n");
+        assert_eq!(result.exit_code, 1);
+        assert_eq!(result.stdout, "(standard input)\n");
     }
 
     #[tokio::test]
@@ -2268,14 +2270,14 @@ mod tests {
     async fn test_grep_null_filename_with_l() {
         let result = run_grep(&["-lZ", "foo"], Some("foo\nbar")).await.unwrap();
         assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout, "(stdin)\0");
+        assert_eq!(result.stdout, "(standard input)\0");
     }
 
     #[tokio::test]
     async fn test_grep_null_filename_with_big_l() {
         let result = run_grep(&["-LZ", "xyz"], Some("foo\nbar")).await.unwrap();
-        assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout, "(stdin)\0");
+        assert_eq!(result.exit_code, 1);
+        assert_eq!(result.stdout, "(standard input)\0");
     }
 
     #[tokio::test]
@@ -2325,7 +2327,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout, "(stdin)\0");
+        assert_eq!(result.stdout, "(standard input)\0");
     }
 
     // TM-INF-022: malformed-regex stderr must not leak `regex` crate Debug.
