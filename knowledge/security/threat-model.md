@@ -457,6 +457,21 @@ then generalized via the static + dynamic + fuzz guards in the table. New builti
 library errors must use Display (`{}`) or a domain formatter, reference shape:
 `format_compile_errors` in `builtins/jq/errors.rs`.
 
+Display of a **Bashkit** error is not a safe formatter either: `Error`'s own
+variants stringify as Rust enum shapes (`io error: `, `internal error: `) that
+no shell prints, and `internal error:` is in `UNIVERSAL_BANNED`. Builtins
+reporting a filesystem failure must render the reason with
+`crate::error::io_error_reason`, which maps the `io::ErrorKind` to the
+`strerror` text real tools print (`No such file or directory`) while keeping a
+custom `FileSystem` backend's own richer wording (`filesystem is read-only`)
+verbatim. Redirection diagnostics share the same helper.
+
+A related shape: a user-reachable failure classified as `Error::Internal`
+aborts the whole script *and* prints `internal error:`. Nightly `glob_fuzz`
+run 228 caught `od`/`xxd`/`hexdump` doing this for a missing operand, where
+real `od` exits 1 and lets the script continue. An unreadable operand is
+ordinary command failure, so it belongs in `ExecResult`, not in `Error`.
+
 The fuzz layer also catches three sister threats with the same
 machinery (`bashkit::testing::assert_fuzz_invariants`):
 - **TM-INF-013 regression**: `fuzz_init()` seeds the host OS env with

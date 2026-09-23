@@ -256,7 +256,10 @@ impl Builtin for Od {
             Err(e) => return Ok(ExecResult::err(format!("{}\n", e), 1)),
         };
 
-        let data = collect_input(ctx.stdin, &files, ctx.cwd, &ctx.fs).await?;
+        let data = match collect_input("od", ctx.stdin, &files, ctx.cwd, &ctx.fs).await {
+            Ok(data) => data,
+            Err(failure) => return Ok(failure),
+        };
         let output = od_dump(&data, &opts);
 
         Ok(ExecResult::ok(output))
@@ -463,7 +466,10 @@ impl Builtin for Xxd {
             Err(e) => return Ok(ExecResult::err(format!("{}\n", e), 1)),
         };
 
-        let data = collect_input(ctx.stdin, &files, ctx.cwd, &ctx.fs).await?;
+        let data = match collect_input("xxd", ctx.stdin, &files, ctx.cwd, &ctx.fs).await {
+            Ok(data) => data,
+            Err(failure) => return Ok(failure),
+        };
 
         if opts.reverse {
             let bytes = xxd_reverse(&data, opts.plain);
@@ -621,7 +627,10 @@ impl Builtin for Hexdump {
             Err(e) => return Ok(ExecResult::err(format!("{}\n", e), 1)),
         };
 
-        let data = collect_input(ctx.stdin, &files, ctx.cwd, &ctx.fs).await?;
+        let data = match collect_input("hexdump", ctx.stdin, &files, ctx.cwd, &ctx.fs).await {
+            Ok(data) => data,
+            Err(failure) => return Ok(failure),
+        };
         let output = hexdump_dump(&data, &opts);
 
         Ok(ExecResult::ok(output))
@@ -630,12 +639,23 @@ impl Builtin for Hexdump {
 
 // --- Shared helpers ---
 
+/// Read the operand files for `od` / `xxd` / `hexdump`.
+///
+/// An unreadable operand is an ordinary command failure, not an interpreter
+/// error: real `od` prints `od: FILE: No such file or directory`, exits 1 and
+/// lets the rest of the script run. Wrapping the VFS error in
+/// `Error::Internal` instead aborted the whole script with
+/// `internal error: FILE: io error: file not found` — two Rust enum shapes on
+/// a path any typo reaches, which is the TM-INF-022 leak nightly `glob_fuzz`
+/// run 228 caught. Hence `Err(ExecResult)`: the failure is the command's own
+/// output, so the caller returns it as `Ok`.
 async fn collect_input(
+    name: &str,
     stdin: Option<&crate::StreamData>,
     files: &[String],
     cwd: &std::path::Path,
     fs: &std::sync::Arc<dyn crate::fs::FileSystem>,
-) -> Result<Vec<u8>> {
+) -> std::result::Result<Vec<u8>, ExecResult> {
     let mut data = Vec::new();
 
     if files.is_empty() {
@@ -655,10 +675,12 @@ async fn collect_input(
                     vfs_join(cwd, file)
                 };
 
-                let content = fs
-                    .read_file(&path)
-                    .await
-                    .map_err(|e| crate::error::Error::Internal(format!("{}: {}", file, e)))?;
+                let content = fs.read_file(&path).await.map_err(|e| {
+                    ExecResult::err(
+                        format!("{name}: {file}: {}\n", crate::error::io_error_reason(&e)),
+                        1,
+                    )
+                })?;
                 data.extend_from_slice(&content);
             }
         }
@@ -1019,5 +1041,17 @@ mod tests {
         let result = run_hexdump(&["-C"], Some("AB")).await;
         assert_eq!(result.exit_code, 0);
         assert!(result.stdout.contains("00000002")); // final offset
+    }
+
+    /// TM-INF-022: a missing operand must not put a Rust enum shape on
+    /// stderr. Guards the whole `UNIVERSAL_BANNED` list, not just the two
+    /// shapes `Error::Internal(Error::Io)` used to produce, so a future
+    /// rewording cannot reintroduce a different leak.
+    #[tokio::test]
+    async fn no_leak_missing_operand() {
+        let result = run_od_with_fs(&["/nope"], &[]).await;
+        crate::testing::assert_no_leak(&result, "od", &[]);
+        assert_eq!(result.stderr, "od: /nope: No such file or directory\n");
+        assert_eq!(result.exit_code, 1);
     }
 }

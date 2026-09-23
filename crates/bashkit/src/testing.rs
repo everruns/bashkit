@@ -213,7 +213,7 @@ const SHELL_ERROR_SUFFIXES: &[&str] = &[
     ": Permission denied",
     ": cannot execute: required file not found",
     ": cannot execute binary file",
-    // Remaining errno templates that `redirect_error_reason` can emit
+    // Remaining errno templates that `io_error_reason` can emit
     // for `bash: <redirect target>: <strerror>`.
     ": Not a directory",
     ": File exists",
