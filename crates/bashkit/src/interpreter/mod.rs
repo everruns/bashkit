@@ -6082,7 +6082,7 @@ impl Interpreter {
                             return Ok(ExecResult::err(
                                 format!(
                                     "bash: {target_path}: {}\n",
-                                    redirection::redirect_error_reason(&e)
+                                    crate::error::io_error_reason(&e)
                                 ),
                                 1,
                             ));

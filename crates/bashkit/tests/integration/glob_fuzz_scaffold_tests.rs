@@ -151,3 +151,52 @@ async fn nul_byte_in_word_is_dropped() {
     let without_nul = bash.exec("ls /tmp/ < /nope").await.unwrap();
     assert_eq!(with_nul.stderr.to_string(), without_nul.stderr.to_string());
 }
+
+/// Regression: fuzz run 228 (`crash-9be3ed84f275159780cc08d447fbc341c3e88ea7`,
+/// bytes `[10, 111, 100, 125, 46, 7]` = `\nod}.\x07`).
+///
+/// `ls /tmp/` + newline + `od}.\x07` runs `od` with the operand `}`, which the
+/// VFS has no file for. `od` reported that as `Error::Internal`, so the whole
+/// script aborted with `internal error: }: io error: file not found` — two
+/// Rust enum shapes on a path any script can reach with a typo.
+#[tokio::test]
+async fn glob_fuzz_crash_missing_od_operand() {
+    let input = "\nod}.\u{7}";
+    let scripts = [
+        format!("ls /tmp/{}", input),
+        format!(
+            "case \"test.txt\" in {}) echo match;; *) echo no;; esac",
+            input
+        ),
+        format!("if [[ \"hello.world\" == {} ]]; then echo y; fi", input),
+    ];
+    let mut bash = fuzz_bash();
+    for script in &scripts {
+        fuzz_exec(&mut bash, script, "glob_fuzz_crash_missing_od_operand", &[]).await;
+    }
+}
+
+/// A missing operand is an ordinary command failure for the hex dumpers, the
+/// way it is for real `od`: `od: FILE: No such file or directory`, exit 1,
+/// and the rest of the script still runs. Before the fix each of these
+/// aborted the script with an `Error::Internal` carrying `io error:`.
+#[tokio::test]
+async fn hex_dumpers_report_missing_operand_like_real_od() {
+    for name in ["od", "xxd", "hexdump"] {
+        let mut bash = fuzz_bash();
+        let result = bash
+            .exec(&format!("{name} /nope; echo after=$?"))
+            .await
+            .unwrap_or_else(|e| panic!("{name} aborted the script: {e}"));
+        assert_eq!(
+            result.stderr.to_string(),
+            format!("{name}: /nope: No such file or directory\n"),
+            "{name} stderr"
+        );
+        assert_eq!(
+            result.stdout.to_string(),
+            "after=1\n",
+            "{name} kept running"
+        );
+    }
+}

@@ -152,6 +152,48 @@ impl Error {
     }
 }
 
+/// VFS messages that only restate their `io::ErrorKind`.
+///
+/// These carry nothing the errno does not, so diagnostics swap them for the
+/// `strerror` text real tools print. Every other message —
+/// `filesystem is read-only`, a custom [`crate::FileSystem`] backend's own
+/// wording — tells the caller *why* in a way the bare errno cannot, and is
+/// kept verbatim.
+const ERRNO_RESTATING_MESSAGES: &[&str] = &["file not found", "parent directory not found"];
+
+/// Render a filesystem error the way a real shell tool renders it.
+///
+/// Never format a [`Error`] with `Display` into a diagnostic a script can
+/// see: `io error: ` and `internal error: ` are Rust enum shapes no shell
+/// ever prints, and the fuzz/proptest leak detector in [`crate::testing`]
+/// bans them (TM-INF-022). `od /nope` must report
+/// `od: /nope: No such file or directory`, not
+/// `od: /nope: io error: file not found`.
+pub(crate) fn io_error_reason(e: &Error) -> String {
+    let io = match e {
+        Error::Io(io) => io,
+        other => return other.to_string(),
+    };
+    let message = io.to_string();
+    // Errors straight from the OS stringify as `<strerror> (os error N)`;
+    // real tools print only the strerror half.
+    let restates_errno =
+        io.raw_os_error().is_some() || ERRNO_RESTATING_MESSAGES.contains(&message.as_str());
+    if !restates_errno {
+        return message;
+    }
+    match io.kind() {
+        std::io::ErrorKind::NotFound => "No such file or directory",
+        std::io::ErrorKind::PermissionDenied => "Permission denied",
+        std::io::ErrorKind::IsADirectory => "Is a directory",
+        std::io::ErrorKind::NotADirectory => "Not a directory",
+        std::io::ErrorKind::AlreadyExists => "File exists",
+        std::io::ErrorKind::Unsupported => "Operation not supported",
+        _ => return message,
+    }
+    .to_string()
+}
+
 /// THREAT[TM-INF-016]: Sanitize error messages to prevent information leakage.
 /// Strips:
 /// - Host filesystem paths (anything starting with /)
@@ -198,6 +240,46 @@ fn sanitize_error_message(msg: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// A VFS message that only restates its errno is swapped for the
+    /// `strerror` text real tools print — `od`, `cat` and redirection all
+    /// depend on this to avoid printing the `io error: ` enum shape.
+    #[test]
+    fn io_error_reason_maps_errno_restating_messages() {
+        let err = Error::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "file not found",
+        ));
+        assert_eq!(io_error_reason(&err), "No such file or directory");
+    }
+
+    /// A backend reason richer than its errno survives: `read-only` is the
+    /// only actionable detail and collapsing it to `Permission denied`
+    /// would drop it.
+    #[test]
+    fn io_error_reason_keeps_specific_backend_reason() {
+        let err = Error::Io(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "filesystem is read-only",
+        ));
+        assert_eq!(io_error_reason(&err), "filesystem is read-only");
+    }
+
+    /// An OS error stringifies as `<strerror> (os error N)`; only the
+    /// strerror half is shell-shaped.
+    #[test]
+    fn io_error_reason_drops_the_os_error_number() {
+        let err = Error::Io(std::io::Error::from_raw_os_error(2));
+        assert_eq!(io_error_reason(&err), "No such file or directory");
+    }
+
+    /// Non-I/O variants are passed through: they have no errno to map, and
+    /// their own `Display` is what callers already report.
+    #[test]
+    fn io_error_reason_passes_through_non_io_variants() {
+        let err = Error::Execution("boom".into());
+        assert_eq!(io_error_reason(&err), "execution error: boom");
+    }
+
     use super::*;
 
     #[test]
