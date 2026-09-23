@@ -466,6 +466,12 @@ reporting a filesystem failure must render the reason with
 custom `FileSystem` backend's own richer wording (`filesystem is read-only`)
 verbatim. Redirection diagnostics share the same helper.
 
+Most file-reading builtins go through `builtins::read_text_file` /
+`read_stream_file`, so a single leaking formatter there reached ~25 tools at
+once (`wc`, `sort`, `cut`, `nl`, `awk`, `paste`, `uniq`, `rev`, `tac`,
+`column`, `jq`, `diff`, …); `cat`, `head`, `tail` and `strings` read the VFS
+directly and leaked it separately. Coverage: `builtin_fs_error_tests`.
+
 A related shape: a user-reachable failure classified as `Error::Internal`
 aborts the whole script *and* prints `internal error:`. Nightly `glob_fuzz`
 run 228 caught `od`/`xxd`/`hexdump` doing this for a missing operand, where

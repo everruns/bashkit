@@ -280,7 +280,18 @@ pub(crate) async fn read_stream_file(
     fs.read_file(path)
         .await
         .map(crate::StreamData::from)
-        .map_err(|e| ExecResult::err(format!("{cmd_name}: {}: {e}\n", path.display()), 1))
+        .map_err(|e| {
+            // Never the `Display` of a `crate::Error`: `io error: ` is a Rust
+            // enum shape no tool prints. See `error::io_error_reason`.
+            ExecResult::err(
+                format!(
+                    "{cmd_name}: {}: {}\n",
+                    path.display(),
+                    crate::error::io_error_reason(&e)
+                ),
+                1,
+            )
+        })
 }
 
 /// Check args for `--help` and optionally `--version`.

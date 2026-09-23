@@ -81,7 +81,8 @@ impl Builtin for Head {
                         }
                     }
                     Err(e) => {
-                        return Ok(ExecResult::err(format!("head: {}: {}\n", file, e), 1));
+                        let reason = crate::error::io_error_reason(&e);
+                        return Ok(ExecResult::err(format!("head: {file}: {reason}\n"), 1));
                     }
                 }
             }
