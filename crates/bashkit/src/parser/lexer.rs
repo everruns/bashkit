@@ -228,8 +228,19 @@ impl<'a> Lexer<'a> {
                 }
             }
             '}' => {
+                // `}` closes a brace group only as a standalone word, the way
+                // `{ cmd; }` writes it. Anything glued to it is an ordinary
+                // word: bash runs `}b` as a command named `}b`, and echoes
+                // `}b` as an argument.
+                let stands_alone = self.right_brace_stands_alone();
                 self.advance();
-                Some(Token::RightBrace)
+                if stands_alone {
+                    Some(Token::RightBrace)
+                } else {
+                    // `read_word_starting_with` seeds the word with the prefix
+                    // and reads from the cursor, so `}` must already be consumed.
+                    self.read_word_starting_with("}")
+                }
             }
             '[' => {
                 self.advance();
@@ -542,7 +553,10 @@ impl<'a> Lexer<'a> {
                     }
                 }
                 continue;
-            } else if self.is_word_char(ch) || ch == ']' {
+            } else if self.is_word_char(ch) || ch == ']' || ch == '}' {
+                // `}` included for the same reason as in `read_word`: it is a
+                // reserved word, not a metacharacter, so it stays inside the
+                // word unless it stands alone (`echo }}` prints `}}`).
                 word.push(ch);
                 self.advance();
             } else {
@@ -1035,6 +1049,14 @@ impl<'a> Lexer<'a> {
                         _ => {}
                     }
                 }
+            } else if ch == '}' {
+                // An unmatched `}` inside a word is a literal. `}` is a
+                // reserved word, not a metacharacter, so it only terminates a
+                // word when it stands alone — bash prints `a}b`, not `a } b`.
+                // A balanced `{...}` never reaches here: the `'{'` arm above
+                // consumes it, so any `}` at this point has no opener.
+                word.push(ch);
+                self.advance();
             } else if self.is_word_char(ch) {
                 // Track glob metacharacters in unquoted portions
                 if matches!(ch, '*' | '?' | '[') {
@@ -1876,6 +1898,27 @@ impl<'a> Lexer<'a> {
         matches!(chars.next(), Some(' ') | Some('\t') | Some('\n') | None)
     }
 
+    /// Whether the `}` at the cursor is a word of its own, and so the
+    /// reserved word that closes a brace group.
+    ///
+    /// Mirrors [`Self::is_brace_group_start`] for the opening side. bash's
+    /// metacharacters are space, tab, newline, `|`, `&`, `;`, `(`, `)`, `<`
+    /// and `>`; `}` is not among them, so it delimits a word only when a
+    /// metacharacter or EOF already follows it.
+    fn right_brace_stands_alone(&self) -> bool {
+        let mut chars = self.chars.clone();
+        if chars.next() != Some('}') {
+            return false;
+        }
+        match chars.next() {
+            None => true,
+            Some(c) => matches!(
+                c,
+                ' ' | '\t' | '\n' | ';' | '|' | '&' | '(' | ')' | '<' | '>'
+            ),
+        }
+    }
+
     /// Read a {literal} pattern without comma/dot-dot as a word
     fn read_brace_literal_word(&mut self) -> Option<Token> {
         let mut word = String::new();
@@ -2434,6 +2477,47 @@ mod tests {
     fn test_simple_brace_expansion_unchanged() {
         let mut lexer = Lexer::new("${foo}");
         assert_eq!(lexer.next_token(), Some(Token::Word("${foo}".to_string())));
+        assert_eq!(lexer.next_token(), None);
+    }
+
+    /// `}` is a reserved word, not a metacharacter: it stays inside the word
+    /// unless a metacharacter or EOF follows it.
+    #[test]
+    fn close_brace_does_not_split_a_word() {
+        for src in ["a}b", "a}", "}b", "}}", "a}b}c", "a}{b"] {
+            let mut lexer = Lexer::new(src);
+            assert_eq!(
+                lexer.next_token(),
+                Some(Token::Word(src.to_string())),
+                "{src:?} should lex as one word"
+            );
+            assert_eq!(lexer.next_token(), None, "{src:?} left trailing tokens");
+        }
+    }
+
+    /// Standing alone, it is still the reserved word that closes a group.
+    #[test]
+    fn lone_close_brace_is_the_reserved_word() {
+        for src in ["}", "} ", "};", "}\n", "})", "}|", "}&", "}<", "}>"] {
+            let mut lexer = Lexer::new(src);
+            assert_eq!(
+                lexer.next_token(),
+                Some(Token::RightBrace),
+                "{src:?} should open with RightBrace"
+            );
+        }
+    }
+
+    /// The closing token of a brace group survives, whether or not a space
+    /// precedes it.
+    #[test]
+    fn brace_group_still_lexes_as_a_group() {
+        let mut lexer = Lexer::new("{ echo hi; }");
+        assert_eq!(lexer.next_token(), Some(Token::LeftBrace));
+        assert_eq!(lexer.next_token(), Some(Token::Word("echo".to_string())));
+        assert_eq!(lexer.next_token(), Some(Token::Word("hi".to_string())));
+        assert_eq!(lexer.next_token(), Some(Token::Semicolon));
+        assert_eq!(lexer.next_token(), Some(Token::RightBrace));
         assert_eq!(lexer.next_token(), None);
     }
 }
