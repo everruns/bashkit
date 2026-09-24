@@ -200,3 +200,107 @@ async fn hex_dumpers_report_missing_operand_like_real_od() {
         );
     }
 }
+
+/// Regression: fuzz run 229 (`crash-bd17afb20a1f27f7c30dc099a77b76e7b26f13bb`,
+/// bytes `[10, 36, 114, 10, 126, 10, 45, 84, 111, 107, 58, 10, 126, 58]`
+/// = `\n$r\n~\n-Tok:\n~:`).
+///
+/// Three command-resolution diagnostics in a row. None of them terminated its
+/// line, so all three arrived as a single run-on line
+/// `bash: /home/sandbox: Is a directorybash: -Tok:: command not found...`.
+/// The echo filter matches a diagnostic per line, and that line opened with a
+/// recognized template but ended with a suggestion suffix, so nothing was
+/// stripped and the `-Tok:` echo (rendered `-Tok::` by the `: ` separator)
+/// tripped the banned parser-token shape `Tok::`.
+#[tokio::test]
+async fn glob_fuzz_crash_unterminated_command_diagnostics() {
+    let input = "\n$r\n~\n-Tok:\n~:";
+    // The pre-filter cannot catch this one: the input holds `-Tok:` with a
+    // single colon, and the second colon comes from the template's own
+    // `: ` separator. The echo filter is the defense that has to hold.
+    assert!(!bashkit::testing::input_echo_would_trip(input));
+
+    let mut bash = fuzz_bash();
+    for script in [
+        format!("ls /tmp/{}", input),
+        format!(
+            "case \"test.txt\" in {}) echo match;; *) echo no;; esac",
+            input
+        ),
+        format!("if [[ \"hello.world\" == {} ]]; then echo y; fi", input),
+    ] {
+        fuzz_exec(
+            &mut bash,
+            &script,
+            "glob_fuzz_crash_unterminated_command_diagnostics",
+            &[],
+        )
+        .await;
+    }
+}
+
+/// Each command-resolution diagnostic terminates its own line, the way real
+/// bash writes them. Verified against GNU bash 5.2.21:
+///
+///     $ bash -c $'~\n-Tok:\nnotacmd' 2>&1 | cat -A
+///     bash: line 1: /root: Is a directory$
+///     bash: line 2: -Tok:: command not found$
+///     bash: line 3: notacmd: command not found$
+#[tokio::test]
+async fn consecutive_command_failures_are_separate_lines() {
+    let mut bash = fuzz_bash();
+    let result = bash.exec("nosuchcmd\nalsomissing").await.unwrap();
+    assert_eq!(
+        result.stderr.to_string(),
+        "bash: nosuchcmd: command not found\nbash: alsomissing: command not found\n"
+    );
+}
+
+/// Every `bash:` diagnostic the command resolver emits ends in a newline.
+/// A run-on stderr is not just cosmetic: a host that splits stderr into
+/// lines sees two failures as one, and the fuzz harness's echo filter — which
+/// matches one real-shell template per line — stops recognizing them.
+#[tokio::test]
+async fn command_resolution_diagnostics_end_with_newline() {
+    let cases: &[(&str, &str)] = &[
+        ("nosuchcmd", "bash: nosuchcmd: command not found\n"),
+        ("/tmp", "bash: /tmp: Is a directory\n"),
+        (
+            "/nope/missing",
+            "bash: /nope/missing: No such file or directory\n",
+        ),
+    ];
+    for (script, expected) in cases {
+        let mut bash = fuzz_bash();
+        let result = bash.exec(script).await.unwrap();
+        assert_eq!(result.stderr.to_string(), *expected, "script: {script}");
+    }
+}
+
+/// The suggestion variant (`. Did you mean: …`) is still one terminated line.
+#[tokio::test]
+async fn command_not_found_suggestion_ends_with_newline() {
+    let mut bash = fuzz_bash();
+    let result = bash.exec("grpe").await.unwrap();
+    let stderr = result.stderr.to_string();
+    assert!(
+        stderr.starts_with("bash: grpe: command not found. Did you mean: "),
+        "unexpected wording: {stderr:?}"
+    );
+    assert!(stderr.ends_with("\n"), "not terminated: {stderr:?}");
+    assert_eq!(stderr.lines().count(), 1, "not one line: {stderr:?}");
+}
+
+/// A non-executable file reports `Permission denied` on its own line.
+#[tokio::test]
+async fn non_executable_script_denied_ends_with_newline() {
+    let mut bash = Bash::builder()
+        .mount_text("/tmp/noexec.sh", "echo hi")
+        .build();
+    let result = bash.exec("/tmp/noexec.sh").await.unwrap();
+    assert_eq!(
+        result.stderr.to_string(),
+        "bash: /tmp/noexec.sh: Permission denied\n"
+    );
+    assert_eq!(result.exit_code, 126);
+}
