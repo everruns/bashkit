@@ -552,10 +552,35 @@ second, independent gap:
   cannot be swallowed *inside* a span because each shell diagnostic is formatted
   and written as one string with nothing interleaved.
 
-Regression coverage: `tests/integration/glob_fuzz_scaffold_tests.rs` replays both
-crash inputs through all three scripts the target builds, and the
-`strip_*`/`input_echo_would_trip` unit tests in `src/testing.rs` pin both the
-strip and keep directions.
+Run 229 (`\n$r\n~\n-Tok:\n~:`) showed the assumption underneath the span rule was
+only half true. The filter matches one diagnostic per line, which requires each
+diagnostic to *end* its line — but the command-resolution diagnostics were built
+with `format!("bash: {}: command not found", name)` and friends and never
+terminated, so three consecutive failures arrived as one run-on line:
+
+    bash: /home/sandbox: Is a directorybash: -Tok:: command not foundbash: ~:: command not found. Did you mean: :?
+
+That line opened with a recognized template but ended with a suggestion suffix, so
+nothing was stripped and the echoed `-Tok:` — rendered `-Tok::` by the template's
+own `: ` separator — tripped the parser-token shape `Tok::`. The pre-filter could
+not have caught it either: the input holds a single colon, and the second one comes
+from the template.
+
+Fixed at the source rather than in the filter. **Every `bash:` diagnostic written to
+stderr terminates its own line**, which is what real bash does (`bash -c $'~\n-Tok:'`
+prints two `$`-terminated lines under `cat -A`). The run-on was a user-visible defect
+in its own right: a host that splits stderr into lines saw two failures as one. The
+newline is added at the emit sites in `interpreter/mod.rs` (`command_not_found_message`
+and the `try_execute_script_by_path` stat/dir/permission diagnostics) and at the
+process-substitution refusal in `interpreter/redirection.rs`, whose sibling return in
+the same function already terminated. `Error::Execution` payloads are deliberately
+left unterminated: they surface through a `Display` impl, not through stderr.
+
+Regression coverage: `tests/integration/glob_fuzz_scaffold_tests.rs` replays all three
+crash inputs through all three scripts the target builds, pins the terminator on each
+command-resolution diagnostic, and asserts two consecutive failures land on separate
+lines; the `strip_*`/`input_echo_would_trip` unit tests in `src/testing.rs` pin both
+the strip and keep directions.
 
 **TM-INF-013**: The jq builtin previously called `std::env::set_var()` to expose
 shell variables to jaq's `env` function. This also made host process env vars (API keys, tokens)

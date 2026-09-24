@@ -592,12 +592,17 @@ fn unavailable_command_hint(name: &str) -> Option<&'static str> {
 }
 
 /// Build a "command not found" error with optional suggestions.
+///
+/// The message is newline-terminated: it goes straight into stderr, and real
+/// bash ends every diagnostic with a newline. Without it consecutive failures
+/// run together on one line (`...command not foundbash: next: ...`).
 fn command_not_found_message(name: &str, known_commands: &[&str]) -> String {
     let mut msg = format!("bash: {}: command not found", name);
 
     // Check for unavailable command hints first
     if let Some(hint) = unavailable_command_hint(name) {
         msg.push_str(&format!(". {}", hint));
+        msg.push('\n');
         return msg;
     }
 
@@ -626,6 +631,7 @@ fn command_not_found_message(name: &str, known_commands: &[&str]) -> String {
         msg.push_str(&format!(". Did you mean: {}?", names.join(", ")));
     }
 
+    msg.push('\n');
     msg
 }
 
@@ -6531,7 +6537,7 @@ impl Interpreter {
             && matches!(name, "exec" | "bash" | "sh" | "source" | ".")
         {
             return Some(Ok(ExecResult::err(
-                format!("bash: {}: command not found", name),
+                format!("bash: {}: command not found\n", name),
                 127,
             )));
         }
@@ -6616,7 +6622,7 @@ impl Interpreter {
             if name.contains('/') {
                 if self.shell_profile.is_logic_only() {
                     return Ok(ExecResult::err(
-                        format!("bash: {}: command not found", name),
+                        format!("bash: {}: command not found\n", name),
                         127,
                     ));
                 }
@@ -6716,7 +6722,7 @@ impl Interpreter {
             Ok(m) => m,
             Err(_) => {
                 return Ok(ExecResult::err(
-                    format!("bash: {}: No such file or directory", name),
+                    format!("bash: {}: No such file or directory\n", name),
                     127,
                 ));
             }
@@ -6725,7 +6731,7 @@ impl Interpreter {
         // Directory check
         if meta.file_type.is_dir() {
             return Ok(ExecResult::err(
-                format!("bash: {}: Is a directory", name),
+                format!("bash: {}: Is a directory\n", name),
                 126,
             ));
         }
@@ -6733,7 +6739,7 @@ impl Interpreter {
         // Execute permission check
         if meta.mode & 0o111 == 0 {
             return Ok(ExecResult::err(
-                format!("bash: {}: Permission denied", name),
+                format!("bash: {}: Permission denied\n", name),
                 126,
             ));
         }
@@ -6743,7 +6749,7 @@ impl Interpreter {
             Ok(c) => decode_file_bytes_for_path(&path, &c),
             Err(_) => {
                 return Ok(ExecResult::err(
-                    format!("bash: {}: No such file or directory", name),
+                    format!("bash: {}: No such file or directory\n", name),
                     127,
                 ));
             }
@@ -12176,7 +12182,7 @@ echo "count=$COUNT"
         let msg = command_not_found_message("grpe", &["type", "true", "tree", "grep"]);
         assert_eq!(
             msg,
-            "bash: grpe: command not found. Did you mean: grep, tree, true?"
+            "bash: grpe: command not found. Did you mean: grep, tree, true?\n"
         );
     }
 

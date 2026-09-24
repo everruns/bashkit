@@ -302,7 +302,9 @@ impl Interpreter {
 
         for redirect in redirects {
             if word_has_process_substitution(&redirect.target) {
-                return Some("bash: process substitution disabled in logic-only shell".to_string());
+                return Some(
+                    "bash: process substitution disabled in logic-only shell\n".to_string(),
+                );
             }
 
             if matches!(
