@@ -125,3 +125,42 @@ echo done
 ### expect
 done
 ### end
+
+### head_n_negative
+# head -n -N prints all but the last N lines (issue #2447)
+printf '1\n2\n3\n' | head -n -1
+### expect
+1
+2
+### end
+
+### head_n_negative_exceeds
+# head -n -N with N >= line count prints nothing
+printf '1\n2\n3\n' | head -n -5
+echo done
+### expect
+done
+### end
+
+### head_n_negative_no_trailing_newline
+# head -n -1 on input without trailing newline
+printf '1\n2\n3' | head -n -1
+### expect
+1
+2
+### end
+
+### head_c_negative
+# head -c -N prints all but the last N bytes
+printf 'abcdef' | head -c -2; echo
+### expect
+abcd
+### end
+
+### head_n_invalid
+# head -n with non-numeric count is an error
+printf 'a\n' | head -n abc
+echo "rc=$?"
+### expect
+rc=1
+### end

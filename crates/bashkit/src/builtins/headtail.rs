@@ -30,7 +30,7 @@ impl Builtin for Head {
         ) {
             return Ok(r);
         }
-        let (count, byte_mode, files) = match parse_head_args(ctx.args, DEFAULT_LINES) {
+        let (count, byte_mode, files) = match parse_head_args(ctx.args) {
             Ok(v) => v,
             Err(e) => return Ok(e),
         };
@@ -42,10 +42,10 @@ impl Builtin for Head {
             if let Some(stdin) = ctx.stdin {
                 if byte_mode {
                     return Ok(ExecResult::ok_bytes(
-                        stdin.as_bytes()[..stdin.len().min(count)].to_vec(),
+                        head_bytes(stdin.as_bytes(), count).to_vec(),
                     ));
                 } else {
-                    output = take_first_lines(&stdin.text_lossy(), count);
+                    output = head_lines(&stdin.text_lossy(), count);
                 }
             }
         } else {
@@ -68,16 +68,13 @@ impl Builtin for Head {
                 match ctx.fs.read_file(&path).await {
                     Ok(content) => {
                         if byte_mode {
-                            let bytes = &content[..content.len().min(count)];
+                            let bytes = head_bytes(&content, count);
                             if files.len() == 1 {
                                 return Ok(ExecResult::ok_bytes(bytes.to_vec()));
                             }
                             output.push_str(&String::from_utf8_lossy(bytes));
                         } else {
-                            output.push_str(&take_first_lines(
-                                &String::from_utf8_lossy(&content),
-                                count,
-                            ));
+                            output.push_str(&head_lines(&String::from_utf8_lossy(&content), count));
                         }
                     }
                     Err(e) => {
@@ -163,31 +160,59 @@ impl Builtin for Tail {
     }
 }
 
+/// Count selected by `head -n`/`-c`.
+///
+/// Decision: a leading `-` on the value (`-n -N`, `-c -N`) selects GNU's
+/// "all but the last N" mode instead of being rejected or ignored (#2447).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HeadCount {
+    /// Output the first N units.
+    First(usize),
+    /// Output everything except the last N units.
+    AllBut(usize),
+}
+
+/// Parse a `-n`/`-c` value; `None` means it is not a valid count.
+fn parse_head_count(val: &str) -> Option<HeadCount> {
+    match val.strip_prefix('-') {
+        Some(rest) => rest.parse().ok().map(HeadCount::AllBut),
+        None => val
+            .strip_prefix('+')
+            .unwrap_or(val)
+            .parse()
+            .ok()
+            .map(HeadCount::First),
+    }
+}
+
 /// Parse arguments for head command, including -c (byte count) mode.
 /// Returns (count, byte_mode, file_list)
 #[allow(clippy::result_large_err)]
 fn parse_head_args(
     args: &[String],
-    default: usize,
-) -> std::result::Result<(usize, bool, Vec<String>), ExecResult> {
-    let mut count = default;
+) -> std::result::Result<(HeadCount, bool, Vec<String>), ExecResult> {
+    let mut count = HeadCount::First(DEFAULT_LINES);
     let mut byte_mode = false;
     let mut files = Vec::new();
     let mut p = super::arg_parser::ArgParser::new(args);
 
     while !p.is_done() {
         if let Some(val) = p.flag_value_opt("-n") {
-            count = val.parse().unwrap_or(default);
+            count = parse_head_count(val).ok_or_else(|| {
+                ExecResult::err(format!("head: invalid number of lines: '{val}'\n"), 1)
+            })?;
             byte_mode = false;
         } else if let Some(val) = p.flag_value_opt("-c") {
-            count = val.parse().unwrap_or(default);
+            count = parse_head_count(val).ok_or_else(|| {
+                ExecResult::err(format!("head: invalid number of bytes: '{val}'\n"), 1)
+            })?;
             byte_mode = true;
         } else if let Some(arg) = p.current().filter(|a| a.starts_with('-')) {
             if let Some(num_str) = arg.strip_prefix('-')
                 && let Ok(n) = num_str.parse::<usize>()
             {
                 // Obsolete `-NUM` line-count form.
-                count = n;
+                count = HeadCount::First(n);
                 p.advance();
             } else if arg == "-" || arg == "--" {
                 // "-" is the stdin operand; "--" ends options.
@@ -202,6 +227,26 @@ fn parse_head_args(
     }
 
     Ok((count, byte_mode, files))
+}
+
+/// Select the bytes `head -c` would print.
+fn head_bytes(bytes: &[u8], count: HeadCount) -> &[u8] {
+    let end = match count {
+        HeadCount::First(n) => bytes.len().min(n),
+        HeadCount::AllBut(n) => bytes.len().saturating_sub(n),
+    };
+    &bytes[..end]
+}
+
+/// Select the lines `head -n` would print.
+fn head_lines(text: &str, count: HeadCount) -> String {
+    match count {
+        HeadCount::First(n) => take_first_lines(text, n),
+        HeadCount::AllBut(n) => {
+            let total = text.lines().count();
+            take_first_lines(text, total.saturating_sub(n))
+        }
+    }
 }
 
 /// Parse arguments for tail command, including +N "from start" syntax.
@@ -402,6 +447,42 @@ mod tests {
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, "é");
         assert_eq!(result.stdout.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_head_n_negative_all_but_last() {
+        let result = run_head(&["-n", "-1"], Some("1\n2\n3\n")).await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "1\n2\n");
+
+        let result = run_head(&["-n-2"], Some("1\n2\n3\n")).await;
+        assert_eq!(result.stdout, "1\n");
+
+        let result = run_head(&["-n", "-9"], Some("1\n2\n3\n")).await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "");
+    }
+
+    #[tokio::test]
+    async fn test_head_c_negative_all_but_last() {
+        let result = run_head(&["-c", "-2"], Some("abcdef")).await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "abcd");
+
+        let result = run_head(&["-c", "-10"], Some("abc")).await;
+        assert_eq!(result.stdout, "");
+    }
+
+    #[tokio::test]
+    async fn test_head_invalid_count() {
+        let result = run_head(&["-n", "abc"], Some("a\n")).await;
+        assert_eq!(result.exit_code, 1);
+        assert_eq!(result.stdout, "");
+        assert!(result.stderr.contains("invalid number of lines: 'abc'"));
+
+        let result = run_head(&["-c", "-x"], Some("a\n")).await;
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("invalid number of bytes: '-x'"));
     }
 
     #[tokio::test]
