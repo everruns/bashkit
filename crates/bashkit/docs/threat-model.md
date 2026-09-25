@@ -46,6 +46,7 @@ through configurable limits.
 | Recursive copy (TM-DOS-009) | `cp -r /tmp /tmp/copy` | FS limits | MITIGATED |
 | Append flood (TM-DOS-010) | `while true; do echo x >> f; done` | FS + loop limits | MITIGATED |
 | RealFs append memory exhaustion (TM-DOS-105) | Tiny append to a large writable host file | Stream existing bytes into atomic sibling staging with bounded memory | MITIGATED |
+| Deep Agents VFS search amplification (TM-DOS-113) | Dense matching files or a broad recursive `grep`/`glob` bypass shell execution limits and amplify into host objects | Grep caps results at 1,000 matches and 100 KB of matched text; line scans stream; every direct walk carries a per-operation deadline, 10,000-file and 10 MB traversal budget, and a cancellation flag the async workers set | **MITIGATED** |
 | Symlink loops (TM-DOS-011) | `ln -s /a /b; ln -s /b /a` | No symlink following | MITIGATED |
 | Deep dirs (TM-DOS-012) | `mkdir -p a/b/c/.../z` (1000 levels) | `max_path_depth` (100) | MITIGATED |
 | Long filenames (TM-DOS-013) | 10KB filename | `max_filename_length` (255) + `max_path_length` (4096) | MITIGATED |
