@@ -90,3 +90,27 @@ pub(crate) const TIMEOUT_MAX_SECONDS: u64 = 300;
 /// yes: max lines and total output bytes per invocation.
 pub(crate) const YES_MAX_LINES: usize = 10_000;
 pub(crate) const YES_MAX_OUTPUT_BYTES: usize = 1_048_576;
+
+/// seq: max lines per invocation.
+pub(crate) const SEQ_MAX_LINES: usize = 100_000;
+/// seq: max output bytes per invocation.
+pub(crate) const SEQ_MAX_OUTPUT_BYTES: usize = 1_048_576;
+
+/// Result for a builtin that stopped early at one of the caps above.
+///
+/// Decision (#2446): reaching a cap is never silent. The output produced so
+/// far is kept, stderr names the command and the cap, and the exit status is
+/// 1, so scripts and agents cannot mistake a cut result for a complete one.
+pub(crate) fn cap_exceeded(
+    cmd: &str,
+    stdout: impl Into<crate::StreamData>,
+    what: &str,
+    limit: impl std::fmt::Display,
+) -> crate::interpreter::ExecResult {
+    let mut result = crate::interpreter::ExecResult::err(
+        format!("{cmd}: {what} limit ({limit}) exceeded; output truncated\n"),
+        1,
+    );
+    result.stdout = stdout.into();
+    result
+}

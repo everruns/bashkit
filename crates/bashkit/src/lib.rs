@@ -5032,7 +5032,9 @@ fn
             .exec("awk 'BEGIN { i=0; while(1) { i++; if(i>999) break } print i }'")
             .await
             .unwrap();
-        assert_eq!(result.stdout.trim(), "5");
+        assert_eq!(result.exit_code, 2);
+        assert_eq!(result.stdout, "");
+        assert!(result.stderr.contains("loop iteration limit (5) exceeded"));
     }
 
     #[tokio::test]
@@ -5040,10 +5042,12 @@ fn
         let limits = ExecutionLimits::new().max_loop_iterations(3);
         let mut bash = Bash::builder().limits(limits).build();
         let result = bash
-            .exec("awk 'BEGIN { for(i=1;i<=10;i++) a[i]=i; c=0; for(k in a) c++; print c }'")
+            .exec("awk 'BEGIN { a[1]=1; a[2]=2; a[3]=3; a[4]=4; c=0; for(k in a) c++; print c }'")
             .await
             .unwrap();
-        assert_eq!(result.stdout.trim(), "3");
+        assert_eq!(result.exit_code, 2);
+        assert_eq!(result.stdout, "");
+        assert!(result.stderr.contains("loop iteration limit (3) exceeded"));
     }
 
     #[tokio::test]

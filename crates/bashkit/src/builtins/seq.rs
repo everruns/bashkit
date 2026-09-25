@@ -2,6 +2,7 @@
 
 use async_trait::async_trait;
 
+use super::limits::{SEQ_MAX_LINES, SEQ_MAX_OUTPUT_BYTES, cap_exceeded};
 use super::{Builtin, Context};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
@@ -142,10 +143,10 @@ impl Builtin for Seq {
         let mut current = first;
         let mut first_item = true;
 
-        // THREAT[TM-DOS-058]: Limit iterations and output size to prevent memory exhaustion
-        let max_iterations = 100_000;
-        let max_output_bytes = 1_048_576; // 1MB
+        // THREAT[TM-DOS-058]: Limit iterations and output size to prevent memory
+        // exhaustion; THREAT[TM-DOS-109]: hitting either cap is reported.
         let mut count = 0;
+        let mut capped = None;
 
         loop {
             if increment > 0.0 && current > last + f64::EPSILON {
@@ -155,7 +156,12 @@ impl Builtin for Seq {
                 break;
             }
             count += 1;
-            if count > max_iterations || output.len() > max_output_bytes {
+            if count > SEQ_MAX_LINES {
+                capped = Some(("line", SEQ_MAX_LINES));
+                break;
+            }
+            if output.len() > SEQ_MAX_OUTPUT_BYTES {
+                capped = Some(("output byte", SEQ_MAX_OUTPUT_BYTES));
                 break;
             }
 
@@ -185,6 +191,9 @@ impl Builtin for Seq {
             output.push('\n');
         }
 
+        if let Some((what, limit)) = capped {
+            return Ok(cap_exceeded("seq", output, what, limit));
+        }
         Ok(ExecResult::ok(output))
     }
 }

@@ -5,7 +5,7 @@
 
 use async_trait::async_trait;
 
-use super::limits::NUMFMT_MAX_OUTPUT_BYTES as MAX_OUTPUT_BYTES;
+use super::limits::{NUMFMT_MAX_OUTPUT_BYTES as MAX_OUTPUT_BYTES, cap_exceeded};
 use super::{Builtin, Context};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
@@ -505,7 +505,12 @@ impl Builtin for Numfmt {
             if let Some(stdin) = ctx.stdin {
                 for line in stdin.lines() {
                     if output.len() > MAX_OUTPUT_BYTES {
-                        break;
+                        return Ok(cap_exceeded(
+                            "numfmt",
+                            output,
+                            "output byte",
+                            MAX_OUTPUT_BYTES,
+                        ));
                     }
                     match convert_line(line, &opts) {
                         Ok(converted) => {
@@ -520,7 +525,12 @@ impl Builtin for Numfmt {
             // Process each operand
             for operand in &operands {
                 if output.len() > MAX_OUTPUT_BYTES {
-                    break;
+                    return Ok(cap_exceeded(
+                        "numfmt",
+                        output,
+                        "output byte",
+                        MAX_OUTPUT_BYTES,
+                    ));
                 }
                 match convert_line(operand, &opts) {
                     Ok(converted) => {

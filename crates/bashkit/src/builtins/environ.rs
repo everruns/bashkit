@@ -305,7 +305,10 @@ impl Builtin for History {
             entries.reverse();
             for (idx, entry) in entries {
                 if !append_history_line(&mut output, limits.max_history_output_bytes, idx, entry) {
-                    break;
+                    return Ok(history_output_capped(
+                        output,
+                        limits.max_history_output_bytes,
+                    ));
                 }
             }
         } else {
@@ -315,13 +318,21 @@ impl Builtin for History {
                 .filter(|(_, entry)| matches_entry(entry))
             {
                 if !append_history_line(&mut output, limits.max_history_output_bytes, idx, entry) {
-                    break;
+                    return Ok(history_output_capped(
+                        output,
+                        limits.max_history_output_bytes,
+                    ));
                 }
             }
         }
 
         Ok(ExecResult::ok(output))
     }
+}
+
+/// THREAT[TM-DOS-109]: a listing cut at `max_history_output_bytes` is reported.
+fn history_output_capped(output: String, max_bytes: usize) -> ExecResult {
+    super::limits::cap_exceeded("history", output, "output", format!("{max_bytes} bytes"))
 }
 
 /// Append one formatted history line. Returns `false` when the line does not
