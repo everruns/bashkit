@@ -1119,6 +1119,18 @@ async fn env_does_not_pollute_process_env() {
 // =========================================================================
 
 #[tokio::test]
+async fn finite_user_recursion_stays_available() {
+    let result = run_jq_result(
+        "def f($n): if $n == 0 then 42 else f($n - 1) end; f(32)",
+        "null",
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.exit_code, 0, "stderr: {}", result.stderr);
+    assert_eq!(result.stdout.trim(), "42");
+}
+
+#[tokio::test]
 async fn deep_array_input_rejected() {
     let depth = 150;
     let input = format!("{}1{}", "[".repeat(depth), "]".repeat(depth));

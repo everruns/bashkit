@@ -627,6 +627,70 @@ fn timeout_bounds_an_idle_open_stdin_pipe() {
     );
 }
 
+#[test]
+fn jq_recursive_filters_stop_without_host_abort_or_hang() {
+    for filter in ["def f: f; f", "def f: (def g: f; g); f", "def f: 1 + f; f"] {
+        let mut child = cli()
+            .args([
+                "--no-stdin",
+                "--timeout",
+                "1",
+                "-c",
+                &format!("jq -n '{filter}'"),
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn bashkit");
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while child.try_wait().expect("poll bashkit").is_none() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(20));
+        }
+        if child.try_wait().expect("final poll bashkit").is_none() {
+            child.kill().expect("kill hung bashkit");
+            let _ = child.wait();
+            panic!("jq filter hung: {filter}");
+        }
+        let out = child.wait_with_output().expect("collect bashkit output");
+        assert_ne!(code(&out), 0, "filter: {filter}");
+        assert!(
+            stderr(&out).contains("jq: "),
+            "filter: {filter}; stderr: {}",
+            stderr(&out)
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn jq_non_tail_recursion_is_bounded_on_a_two_mib_stack() {
+    let mut child = Command::new("sh")
+        .args([
+            "-c",
+            "ulimit -s 2048; exec \"$1\" --no-stdin --timeout 1 -c \"$2\"",
+            "sh",
+            BIN,
+            "jq -n 'def f: 1 + f; f'",
+        ])
+        .env_remove("RUST_BACKTRACE")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn bashkit with small stack");
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while child.try_wait().expect("poll bashkit").is_none() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(20));
+    }
+    if child.try_wait().expect("final poll bashkit").is_none() {
+        child.kill().expect("kill hung bashkit");
+        let _ = child.wait();
+        panic!("non-tail jq recursion hung on a 2 MiB stack");
+    }
+    let out = child.wait_with_output().expect("collect bashkit output");
+    assert_eq!(out.status.code(), Some(5), "{}", stderr(&out));
+    assert!(stderr(&out).contains("recursion limit (64) exceeded"));
+}
+
 // ---------------------------------------------------------------------------
 // Streaming
 // ---------------------------------------------------------------------------

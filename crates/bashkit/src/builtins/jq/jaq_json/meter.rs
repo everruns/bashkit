@@ -20,6 +20,8 @@
 //! builtin catches it. Value operations also `tick`, and every
 //! [`TICKS_PER_POLL`] ticks the installed stop check (the execution
 //! deadline) is polled, so a non-emitting loop cannot outlive the timeout.
+//! The jq context wrapper also ticks this meter on every clone and aborts at
+//! 64 simultaneous contexts, covering recursion with no value operations.
 //! Builds with `panic = "abort"` cannot unwind: there the meter only trips
 //! and values are cut short, and a non-emitting loop is not interrupted.
 
@@ -53,6 +55,8 @@ pub enum Abort {
     Memory,
     /// The stop check fired (execution deadline).
     Interrupted,
+    /// The evaluator retained too many live contexts (recursive filters).
+    Recursion,
 }
 
 struct Poll {
@@ -104,6 +108,11 @@ fn abort(kind: Abort) {
     std::panic::resume_unwind(Box::new(kind));
     #[cfg(not(panic = "unwind"))]
     let _ = kind;
+}
+
+/// Stop evaluation when the host-side context budget is exhausted.
+pub fn abort_recursion() {
+    abort(Abort::Recursion);
 }
 
 /// Count one value operation; poll the stop check now and then.
