@@ -253,3 +253,39 @@ echo "$x"
 ### expect
 ok
 ### end
+
+### subst_file_read_shorthand
+# $(<file) reads the file like $(cat file) (issue #2448)
+echo hi > /tmp/cs_read
+x=$(</tmp/cs_read)
+echo "[$x]"
+### expect
+[hi]
+### end
+
+### subst_file_read_shorthand_space
+# $(< file) with a space and multi-line content; trailing newlines trimmed
+printf 'a\nb\n\n' > /tmp/cs_read2
+x=$(< /tmp/cs_read2)
+echo "[$x]"
+### expect
+[a
+b]
+### end
+
+### subst_file_read_shorthand_var_target
+# $(<"$f") expands the target word
+f=/tmp/cs_read3
+echo value > "$f"
+echo "[$(<"$f")]"
+### expect
+[value]
+### end
+
+### subst_file_read_shorthand_missing
+# $(<missing) is empty and sets $? to 1
+{ x=$(</tmp/cs_no_such_file); } 2>/dev/null
+echo "rc=$? [$x]"
+### expect
+rc=1 []
+### end

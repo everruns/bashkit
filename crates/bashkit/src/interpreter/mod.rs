@@ -5804,11 +5804,21 @@ impl Interpreter {
                     && self.subst_generation == pre_assign_subst_gen
                 {
                     0
+                } else if command.assignments.is_empty() && !command.redirects.is_empty() {
+                    // Redirect-only null command (`> file`, `< file`).
+                    0
                 } else {
                     self.last_exit_code
                 };
-                self.last_exit_code = exit_code;
                 self.discard_deferred_proc_subs_from(deferred_proc_sub_start);
+                if !command.redirects.is_empty() {
+                    // Null commands still perform their redirections: `> f`
+                    // truncates, `< missing` fails with status 1.
+                    return self
+                        .execute_null_command_redirects(exit_code, &command.redirects)
+                        .await;
+                }
+                self.last_exit_code = exit_code;
                 return Ok(ExecResult {
                     stdout: crate::StreamData::new(),
                     stderr: crate::StreamData::new(),
@@ -8827,6 +8837,55 @@ impl Interpreter {
         self.last_bg_pid = snap.last_bg_pid;
     }
 
+    /// Perform the redirections of a null command (no command word) and
+    /// return its result. Input redirects are opened and discarded.
+    async fn execute_null_command_redirects(
+        &mut self,
+        exit_code: i32,
+        redirects: &[Redirect],
+    ) -> Result<ExecResult> {
+        if let Some(stderr) = self.logic_only_redirect_error(redirects) {
+            self.last_exit_code = 1;
+            return Ok(ExecResult::err(stderr, 1));
+        }
+        match self.process_input_redirections(None, redirects).await {
+            Ok(_) => {}
+            Err(crate::error::Error::CommandFailure(msg)) => {
+                self.last_exit_code = 1;
+                return Ok(ExecResult::err(msg, 1));
+            }
+            Err(e) => return Err(e),
+        }
+        let result = ExecResult {
+            exit_code,
+            ..Default::default()
+        };
+        let result = self.apply_redirections(result, redirects).await?;
+        self.last_exit_code = result.exit_code;
+        Ok(result)
+    }
+
+    /// Match `$(<file)`: a lone simple command with no name, arguments or
+    /// assignments and a single stdin (`<`) redirect. Returns its redirects.
+    fn cmd_subst_file_read(commands: &[Command]) -> Option<&[Redirect]> {
+        let [Command::Simple(cmd)] = commands else {
+            return None;
+        };
+        let bare_name = cmd.name.parts.is_empty()
+            || matches!(cmd.name.parts.as_slice(), [WordPart::Literal(s)] if s.is_empty());
+        let [redirect] = cmd.redirects.as_slice() else {
+            return None;
+        };
+        (bare_name
+            && !cmd.name.quoted
+            && cmd.args.is_empty()
+            && cmd.assignments.is_empty()
+            && redirect.kind == RedirectKind::Input
+            && redirect.fd_var.is_none()
+            && matches!(redirect.fd, None | Some(0)))
+        .then_some(cmd.redirects.as_slice())
+    }
+
     fn execute_cmd_subst<'a>(
         &'a mut self,
         commands: &'a [Command],
@@ -8836,6 +8895,30 @@ impl Interpreter {
             // mutable state so mutations don't leak to the parent.
             let snapshot = self.snapshot_subshell_state();
             let mut stdout = String::new();
+            let file_read = Self::cmd_subst_file_read(commands);
+            if let Some(redirects) = file_read {
+                // `$(<file)` / `$(< file)`: bash's shorthand for `$(cat file)`
+                // (#2448). A bare input redirect would otherwise run an empty
+                // command and produce nothing.
+                let read = if self.logic_only_redirect_error(redirects).is_some() {
+                    Err(crate::error::Error::CommandFailure(String::new()))
+                } else {
+                    self.process_input_redirections(None, redirects).await
+                };
+                match read {
+                    Ok(content) => {
+                        if let Some(content) = content {
+                            stdout.push_str(&content.command_substitution_text());
+                        }
+                        self.last_exit_code = 0;
+                    }
+                    Err(crate::error::Error::CommandFailure(_)) => {
+                        self.last_exit_code = 1;
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+            let commands: &[Command] = if file_read.is_some() { &[] } else { commands };
             for cmd in commands {
                 let cmd_result = self.execute_command(cmd).await?;
                 stdout.push_str(&cmd_result.stdout.command_substitution_text());
