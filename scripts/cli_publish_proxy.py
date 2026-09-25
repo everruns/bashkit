@@ -23,6 +23,9 @@ API = "https://crates.io/api/v1/crates/bashkit/{version}"
 UA = "bashkit-release-check (https://github.com/everruns/bashkit)"
 DEPENDENCY = re.compile(r"^bashkit = \{[^}\n]*\}$", re.MULTILINE)
 FEATURES = re.compile(r"features = \[([^\]]*)\]")
+FORWARDED_FEATURE = re.compile(
+    r'^([A-Za-z0-9_-]+) = \["bashkit/([A-Za-z0-9_-]+)"\]$', re.MULTILINE
+)
 
 
 class ManifestError(Exception):
@@ -49,6 +52,16 @@ def rewrite(manifest: str, available: set[str]) -> tuple[str, list[str], list[st
     names = [name.strip().strip('"') for name in requested.group(1).split(",") if name.strip()]
     kept = [name for name in names if name in available]
     dropped = [name for name in names if name not in available]
+
+    # CLI features need not also appear on the dependency's feature list.
+    # Filter direct forwarding aliases independently so defaults cannot retain
+    # a reference to a feature absent from the published core.
+    forwarded_dropped = [
+        cli_name
+        for cli_name, core_name in FORWARDED_FEATURE.findall(manifest)
+        if core_name not in available
+    ]
+    dropped.extend(name for name in forwarded_dropped if name not in dropped)
 
     line = (
         line[: requested.start()]
