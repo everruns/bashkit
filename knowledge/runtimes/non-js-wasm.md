@@ -130,6 +130,15 @@ Three tiers, only the first two are automatable without special hardware:
 3. **Micro-VM boot** — needs `/dev/kvm` (Linux) or WHP (Windows). Not run in
    this repo's CI yet.
 
+The sleep/timeout deadline clamp is the one behavior whose code path only
+compiles for this target, so tier 1 cannot reach it: the clamp arithmetic is
+covered by the native unit test `non_js_wasm_sleep_is_capped_by_execution_budget`
+and the wiring is compile-checked by the component build. An end-to-end
+"`sleep` longer than the timeout returns at the deadline" case would need
+`examples/hyperlight/host` to accept a configurable timeout — worth adding when
+that host grows a limits argument, since the default 30 s deadline makes the
+observable case too slow for CI today.
+
 ## See also
 
 - [Browser Package](browser-package.md) — the JS-host wasm package, same
