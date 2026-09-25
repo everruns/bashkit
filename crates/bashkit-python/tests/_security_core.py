@@ -277,8 +277,9 @@ def test_tm_dos_059_default_memory_limit_prevents_oom_without_max_memory():
     """TM-DOS-059: Bash() must enforce the default memory cap even without max_memory."""
     bash = Bash(max_loop_iterations=10000, max_commands=10000)
     r = bash.execute_sync('x=AAAAAAAAAA; i=0; while [ $i -lt 30 ]; do x="$x$x"; i=$((i+1)); done; echo ${#x}')
-    assert r.exit_code == 0
-    assert int(r.stdout.strip()) <= 10_000_000
+    assert r.exit_code != 0
+    assert "variable byte limit (10000000) exceeded" in r.stderr
+    assert r.stdout == ""
 
 
 def test_tm_inf_002_env_builtins_do_not_leak_host_env():

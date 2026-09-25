@@ -7515,13 +7515,12 @@ echo missing fi"#,
                     .max_loop_iterations(10_000),
             )
             .build();
-        let result = bash
+        let error = bash
             .exec(r#"x=AAAAAAAAAA; i=0; while [ $i -lt 25 ]; do x="$x$x"; i=$((i+1)); done; echo ${#x}"#)
             .await
-            .unwrap();
-        let len: usize = result.stdout.trim().parse().unwrap();
-        // 25 doublings of 10 bytes = 335 544 320 without limits; must be capped ≤ 1024
-        assert!(len <= 1024, "string length {len} must be ≤ 1024");
+            .unwrap_err();
+        // 25 doublings of 10 bytes = 335 544 320 without limits.
+        assert!(error.to_string().contains("variable byte limit (1024)"));
     }
 
     /// Issue #1116: 2>/dev/null must suppress stderr in streaming mode

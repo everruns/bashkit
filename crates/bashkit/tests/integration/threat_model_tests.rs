@@ -3684,16 +3684,15 @@ mod memory_limits {
             .session_limits(SessionLimits::unlimited())
             .build();
 
-        // Try to create 100 variables — should stop at 50
+        // Try to create 100 variables — the rejected write must fail visibly.
         let script = r#"
 for i in $(seq 1 100); do
     eval "var_$i=hello"
 done
 echo "done"
 "#;
-        let result = bash.exec(script).await.unwrap();
-        // The script should complete but some variables won't be created
-        assert_eq!(result.exit_code, 0);
+        let error = bash.exec(script).await.unwrap_err();
+        assert!(error.to_string().contains("variable count limit (50)"));
     }
 
     /// TM-DOS-060: Variable byte bomb — large variable values.
@@ -3734,13 +3733,8 @@ echo ${#big2}
 local a=1 b=2 c=3
 printf "%s\n" "${a:-unset}" "${b:-unset}" "${c:-unset}"
 "#;
-        let result = bash.exec(script).await.unwrap();
-
-        assert_eq!(result.exit_code, 0);
-        let lines: Vec<&str> = result.stdout.lines().collect();
-        assert_eq!(lines.len(), 3);
-        assert_eq!(lines[0], "1");
-        assert_eq!(lines[2], "unset");
+        let error = bash.exec(script).await.unwrap_err();
+        assert!(error.to_string().contains("variable count limit (2)"));
     }
 
     /// TM-DOS-060: local builtin assignments in functions must honor variable count budget.
@@ -3759,11 +3753,8 @@ f() {
 }
 f
 "#;
-        let result = bash.exec(script).await.unwrap();
-
-        assert_eq!(result.exit_code, 0);
-        let lines: Vec<&str> = result.stdout.lines().collect();
-        assert_eq!(lines, vec!["1", "unset"]);
+        let error = bash.exec(script).await.unwrap_err();
+        assert!(error.to_string().contains("variable count limit (2)"));
     }
 
     /// TM-DOS-060: local compound array assignments must honor array entry budget.
