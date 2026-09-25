@@ -34,6 +34,7 @@ use super::{Builtin, Context};
 use crate::error::Result;
 use crate::fs::vfs_join;
 use crate::interpreter::ExecResult;
+use crate::limits::ExecutionBudget;
 
 const HELP: &str = "Usage: sed [OPTION]... {script} [FILE]...\n\
 Stream editor for filtering and transforming text.\n\n  \
@@ -402,6 +403,15 @@ impl Builtin for Sed {
             vec![lines]
         };
 
+        // THREAT[TM-DOS-112]: sed's sinks grow inside the builtin, so they are
+        // charged to the shared live-intermediate budget before allocating. The
+        // stdout *capture* cap is deliberately not used here: sed's output may
+        // be piped to another command or redirected to a file, neither of which
+        // is captured stdout, so bounding it by that cap would truncate
+        // ordinary transformations (see #2455).
+        let execution_budget = ctx
+            .execution_budget()
+            .and_then(|budget| budget.try_with(ExecutionBudget::clone).ok());
         let mut machine = Machine::new(
             &program,
             &names,
@@ -409,6 +419,7 @@ impl Builtin for Sed {
             opts.quiet,
             opts.line_length,
             sep,
+            execution_budget,
         );
 
         let mut stdout = String::new();
@@ -418,9 +429,13 @@ impl Builtin for Sed {
             if machine.finished() {
                 break;
             }
-            let produced = machine.run_segment(segment);
             let name = names.get(index).map(String::as_str).unwrap_or("-");
-            if opts.separate && opts.in_place.is_some() && name != "-" {
+            let in_place = opts.separate && opts.in_place.is_some() && name != "-";
+            let produced = match machine.run_segment(segment) {
+                Ok(produced) => produced,
+                Err(error) => return Ok(ExecResult::err(format!("sed: {error}\n"), 1)),
+            };
+            if in_place {
                 edits.push((index, name.to_string(), produced));
             } else {
                 stdout.push_str(&produced);
@@ -434,6 +449,9 @@ impl Builtin for Sed {
 
         // Files named by `w`/`W`/`s///w`.
         for (name, sink) in write_files {
+            if let Some(error) = sink.error {
+                return Ok(ExecResult::err(format!("sed: {error}\n"), 1));
+            }
             let path = resolve(ctx.cwd, &name);
             if let Err(e) = ctx.fs.write_file(&path, sink.buf.as_bytes()).await {
                 return Ok(ExecResult::err(
