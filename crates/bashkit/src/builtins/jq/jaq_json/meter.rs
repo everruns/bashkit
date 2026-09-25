@@ -28,6 +28,8 @@ use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
+use bytes::Bytes;
+
 use super::Error;
 
 /// Live bytes held by one jq run, with its limit.
@@ -180,45 +182,102 @@ pub fn trip() {
     }
 }
 
-/// A string buffer owner that charges its length while alive.
-struct MeteredBuf<B> {
-    data: B,
-    charged: usize,
-    meter: Option<Arc<Meter>>,
+/// The charge for one string buffer, released when the last value sharing
+/// it drops.
+struct Charge {
+    meter: Arc<Meter>,
+    bytes: usize,
 }
 
-impl<B: AsRef<[u8]>> AsRef<[u8]> for MeteredBuf<B> {
-    fn as_ref(&self) -> &[u8] {
-        self.data.as_ref()
-    }
-}
-
-impl<B> Drop for MeteredBuf<B> {
+impl Drop for Charge {
     fn drop(&mut self) {
-        if let Some(m) = &self.meter {
-            m.release(self.charged);
-        }
+        self.meter.release(self.bytes);
     }
 }
 
-/// Wrap a freshly allocated buffer so its bytes count until dropped. A
-/// buffer that does not fit trips the meter and is freed, leaving an empty
-/// string; the run reports the trip.
-pub fn bytes<B: AsRef<[u8]> + Send + 'static>(data: B) -> bytes::Bytes {
-    let Some(meter) = current() else {
-        return bytes::Bytes::from_owner(data);
-    };
-    let charged = data.as_ref().len();
-    if !meter.fits(charged) {
-        abort(Abort::Memory);
-        return bytes::Bytes::new();
+/// A string body whose length is charged while alive.
+///
+/// Decision: the charge sits beside a plain `Bytes` (not inside it as the
+/// buffer owner), so a uniquely held string can be taken out with
+/// [`Str::into_bytes`] and appended to in place. `join` and other `. + $x`
+/// reductions stay linear instead of copying the whole string per step.
+/// Clones share the charge; a slice is a new string and is charged again.
+#[derive(Clone, Default)]
+pub struct Str {
+    data: Bytes,
+    charge: Option<Arc<Charge>>,
+}
+
+impl Str {
+    /// Charge a new string. Over the limit it trips the meter and aborts.
+    pub fn new(data: Bytes) -> Self {
+        tick();
+        let charge = current().map(|meter| {
+            let bytes = data.len();
+            if !meter.fits(bytes) {
+                abort(Abort::Memory);
+            }
+            meter.charge(bytes);
+            Arc::new(Charge { meter, bytes })
+        });
+        Self { data, charge }
     }
-    meter.charge(charged);
-    bytes::Bytes::from_owner(MeteredBuf {
-        data,
-        charged,
-        meter: Some(meter),
-    })
+
+    /// Take the bytes out; the charge is released unless a clone holds it.
+    pub fn into_bytes(self) -> Bytes {
+        self.data
+    }
+}
+
+impl Deref for Str {
+    type Target = Bytes;
+    fn deref(&self) -> &Bytes {
+        &self.data
+    }
+}
+
+impl AsRef<[u8]> for Str {
+    fn as_ref(&self) -> &[u8] {
+        &self.data
+    }
+}
+
+impl PartialEq for Str {
+    fn eq(&self, other: &Self) -> bool {
+        self.data == other.data
+    }
+}
+
+impl Eq for Str {}
+
+impl PartialEq<Str> for &[u8] {
+    fn eq(&self, other: &Str) -> bool {
+        *self == &other.data[..]
+    }
+}
+
+impl PartialOrd for Str {
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Str {
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        self.data.cmp(&other.data)
+    }
+}
+
+impl core::hash::Hash for Str {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        self.data.hash(state)
+    }
+}
+
+impl core::fmt::Debug for Str {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        self.data.fmt(f)
+    }
 }
 
 /// Size of a container, charged while it is alive.

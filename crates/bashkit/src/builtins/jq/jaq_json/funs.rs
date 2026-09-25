@@ -77,7 +77,7 @@ impl Val {
                 .and_then(|i| u8::try_from(i).ok())
                 .map(|u| Bytes::from(Vec::from([u])))
                 .ok_or_else(|| self.clone()),
-            Val::BStr(b) | Val::TStr(b) => Ok(*b.clone()),
+            Val::BStr(b) | Val::TStr(b) => Ok(Bytes::clone(b)), // BASHKIT PATCH
             Val::Arr(a) => {
                 let mut buf = BytesMut::new();
                 for x in a.iter() {
@@ -89,7 +89,7 @@ impl Val {
                     }
                     buf.put(b);
                 }
-                Ok(super::meter::bytes(buf.freeze()))
+                Ok(buf.into())
             }
             _ => Err(self.clone()),
         }
@@ -97,7 +97,7 @@ impl Val {
 
     fn as_bytes_owned(&self) -> Option<Bytes> {
         match self {
-            Self::BStr(b) | Self::TStr(b) => Some(*b.clone()),
+            Self::BStr(b) | Self::TStr(b) => Some(Bytes::clone(b)), // BASHKIT PATCH
             _ => None,
         }
     }
@@ -167,7 +167,7 @@ fn base<D: for<'a> DataT<V<'a> = Val>>() -> Box<[Filter<RunPtr<D>>]> {
         // BASHKIT PATCH: meter the rendering and fail when it hit the limit.
         ("tojson", v(0), |cv| {
             let json = cv.1.to_json();
-            bome(super::meter::check(0).map(|()| Val::utf8_str(super::meter::bytes(json))))
+            bome(super::meter::check(0).map(|()| Val::utf8_str(json)))
         }),
         ("tobytes", v(0), |cv| {
             let fail = |v| Error::str(format_args!("cannot convert {v} to bytes"));

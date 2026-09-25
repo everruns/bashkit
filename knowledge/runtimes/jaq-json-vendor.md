@@ -65,9 +65,12 @@ same rewrite applies to every release:
 
 `meter.rs` holds the bytes live values own right now, per jq run:
 
-- Every freshly allocated string (`From<String>`, concatenation, repetition,
-  `tojson`, parsed strings, natives via `from_utf8_bytes`) is wrapped in a
-  `Bytes` owner that charges its length and releases it on drop.
+- String bodies are `meter::Str`: `Val::utf8_str`/`byte_str` charge the
+  length, clones share the charge, and the last one dropped releases it. The
+  charge sits beside a plain `Bytes`, not inside it as the buffer owner, so a
+  uniquely held string is appended to in place (`. + $x`, `join`). An owner
+  wrapper made every append copy, and `join` over 300k strings went from
+  0.5 s to over 30 s.
 - Array and object bodies are `Metered<Vec<Val>>` / `Metered<Map>`: charged
   on creation and clone, re-charged by `resync()` after every in-place
   mutation, released on drop.

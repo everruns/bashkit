@@ -118,12 +118,11 @@ fn parse<L: LexAlloc>(next: u8, lexer: &mut L) -> Result<Val, hifijson::Error> {
         b'n' if lexer.strip_prefix(b"null") => Val::Null,
         b't' if lexer.strip_prefix(b"true") => Val::Bool(true),
         b'f' if lexer.strip_prefix(b"false") => Val::Bool(false),
-        // BASHKIT PATCH: meter parsed strings (TM-DOS-110).
-        b'b' if lexer.strip_prefix(b"b\"") => Val::byte_str(super::meter::bytes(parse_string(lexer, true)?)),
+        b'b' if lexer.strip_prefix(b"b\"") => Val::byte_str(parse_string(lexer, true)?),
         b'N' if lexer.strip_prefix(b"NaN") => Val::Num(Num::Float(f64::NAN)),
         b'I' if lexer.strip_prefix(b"Infinity") => Val::Num(Num::Float(f64::INFINITY)),
         b'0'..=b'9' | b'+' | b'-' => Val::Num(parse_num(lexer)?),
-        b'"' => Val::utf8_str(super::meter::bytes(parse_string(lexer.discarded(), false)?)),
+        b'"' => Val::utf8_str(parse_string(lexer.discarded(), false)?),
         b'[' => Val::Arr({
             let mut arr = Vec::new();
             lexer.discarded().seq(b']', ws_tk, |next, lexer| {

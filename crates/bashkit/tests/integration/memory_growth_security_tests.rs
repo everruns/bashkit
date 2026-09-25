@@ -253,14 +253,16 @@ mod jq {
         assert_eq!(r.stdout, "300000000\n");
     }
 
+    /// `join` appends in place; metering must not turn it quadratic (300k
+    /// joins took over 30 s when every append copied the string).
     #[tokio::test]
     async fn ordinary_workloads_still_fit() {
         let r = run(
-            "jq -n '[range(100000)] | map(tostring) | join(\",\") | length'; \
+            "jq -n '[range(300000)] | map(tostring) | join(\",\") | length'; \
              jq -n 'reduce range(50000) as $i ({}; .[$i|tostring] = $i) | length'",
         )
         .await;
         assert_eq!(r.stderr, "");
-        assert_eq!(r.stdout, "588889\n50000\n");
+        assert_eq!(r.stdout, "1988889\n50000\n");
     }
 }

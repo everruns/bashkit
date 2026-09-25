@@ -32,7 +32,7 @@ use num_traits::{cast::ToPrimitive, Signed};
 
 pub use funs::{bytes_valrs, funs};
 pub use num::Num;
-use meter::Metered;
+use meter::{Metered, Str};
 
 /// BASHKIT PATCH: wrap a new array/object body so it is metered.
 pub(crate) fn metered<T: meter::Footprint>(t: T) -> Rc<Metered<T>> {
@@ -59,14 +59,15 @@ pub enum Val {
     /// Number
     Num(Num),
     /// Byte string
-    BStr(Box<Bytes>),
+    // BASHKIT PATCH: string bodies are metered `Str` (TM-DOS-110).
+    BStr(Box<Str>),
     /// Text string (interpreted as UTF-8)
     ///
     /// Note that this does not require the actual bytes to be all valid UTF-8;
     /// this just means that the bytes are interpreted as UTF-8.
     /// An effort is made to preserve invalid UTF-8 as is, else
     /// replace invalid UTF-8 by the Unicode replacement character.
-    TStr(Box<Bytes>),
+    TStr(Box<Str>),
     /// Array
     // BASHKIT PATCH: bodies are `Metered` (TM-DOS-110).
     Arr(Rc<Metered<Vec<Val>>>),
@@ -179,8 +180,8 @@ impl jaq_core::ValT for Val {
                 .map(|(skip, take)| b.slice(skip..skip + take))
         };
         match self {
-            Val::BStr(b) => fs(*b, range, skip_take_bytes).map(Val::byte_str),
-            Val::TStr(b) => fs(*b, range, skip_take_chars).map(Val::utf8_str),
+            Val::BStr(b) => fs(b.into_bytes(), range, skip_take_bytes).map(Val::byte_str),
+            Val::TStr(b) => fs(b.into_bytes(), range, skip_take_chars).map(Val::utf8_str),
             Val::Arr(a) => Self::range_int(range)
                 .map(|range| skip_take(range, a.len()))
                 .map(|(skip, take)| a.iter().skip(skip).take(take).cloned().collect()),
@@ -283,7 +284,7 @@ impl jaq_core::ValT for Val {
             // BASHKIT PATCH: size-check and meter the result (TM-DOS-110).
             meter::check(b.len() - take + y.len())?;
             bytes_splice(&mut b, skip, take, &y);
-            Ok(into(meter::bytes(b.freeze())))
+            Ok(into(b.freeze()))
         };
         let stb = skip_take_bytes;
         let stc = skip_take_chars;
@@ -302,8 +303,8 @@ impl jaq_core::ValT for Val {
                 a.resync(); // BASHKIT PATCH (TM-DOS-110)
                 Ok(self)
             }
-            Val::BStr(b) => fs(*b, range, stb, Val::into_byte_str, Val::byte_str),
-            Val::TStr(b) => fs(*b, range, stc, Val::into_utf8_str, Val::utf8_str),
+            Val::BStr(b) => fs(b.into_bytes(), range, stb, Val::into_byte_str, Val::byte_str),
+            Val::TStr(b) => fs(b.into_bytes(), range, stc, Val::into_utf8_str, Val::utf8_str),
             _ => opt.fail(self, |v| Exn::from(Error::typ(v, Type::Arr.as_str()))),
         }
     }
@@ -317,7 +318,7 @@ impl jaq_core::ValT for Val {
     fn into_string(self) -> Self {
         match self {
             Self::BStr(b) | Self::TStr(b) => Self::TStr(b),
-            _ => Self::utf8_str(meter::bytes(self.to_json())), // BASHKIT PATCH
+            _ => Self::utf8_str(self.to_json()),
         }
     }
 }
@@ -365,7 +366,7 @@ impl jaq_std::ValT for Val {
     }
 
     fn from_utf8_bytes(b: impl AsRef<[u8]> + Send + 'static) -> Self {
-        Self::utf8_str(meter::bytes(b)) // BASHKIT PATCH (TM-DOS-110)
+        Self::utf8_str(Bytes::from_owner(b))
     }
 }
 
@@ -437,12 +438,12 @@ impl Val {
 
     /// Construct a string that is interpreted as UTF-8.
     pub fn utf8_str(s: impl Into<Bytes>) -> Self {
-        Self::TStr(s.into().into())
+        Self::TStr(Str::new(s.into()).into()) // BASHKIT PATCH (TM-DOS-110)
     }
 
     /// Construct a string that is interpreted as bytes.
     pub fn byte_str(s: impl Into<Bytes>) -> Self {
-        Self::BStr(s.into().into())
+        Self::BStr(Str::new(s.into()).into()) // BASHKIT PATCH (TM-DOS-110)
     }
 
     fn as_num(&self) -> Option<&Num> {
@@ -460,14 +461,14 @@ impl Val {
 
     fn into_byte_str(self) -> Result<Bytes, Error> {
         match self {
-            Self::BStr(b) => Ok(*b),
+            Self::BStr(b) => Ok(b.into_bytes()),
             _ => Err(Error::typ(self, Type::Str.as_str())),
         }
     }
 
     fn into_utf8_str(self) -> Result<Bytes, Error> {
         match self {
-            Self::TStr(b) => Ok(*b),
+            Self::TStr(b) => Ok(b.into_bytes()),
             _ => Err(Error::typ(self, Type::Str.as_str())),
         }
     }
@@ -563,7 +564,7 @@ impl From<f64> for Val {
 
 impl From<String> for Val {
     fn from(s: String) -> Self {
-        Self::utf8_str(meter::bytes(s)) // BASHKIT PATCH (TM-DOS-110)
+        Self::utf8_str(Bytes::from_owner(s))
     }
 }
 
@@ -594,11 +595,14 @@ impl core::ops::Add for Val {
         meter::tick(); // BASHKIT PATCH (TM-DOS-110)
         // BASHKIT PATCH: size-check before allocating and meter the result
         // (TM-DOS-110, #2444).
-        let concat_bytes = |l: Bytes, r: Box<Bytes>| {
+        // Taking `l` out first releases its charge when it is not shared, so
+        // the check counts it once and `BytesMut::from` reuses its buffer.
+        let concat_bytes = |l: Box<Str>, r: Box<Str>| {
+            let l = l.into_bytes();
             meter::check(l.len() + r.len())?;
             let mut buf = BytesMut::from(l);
-            buf.put(*r);
-            Ok::<_, Error>(meter::bytes(buf.freeze()))
+            buf.put_slice(&r);
+            Ok::<_, Error>(buf.freeze())
         };
         let val_size = core::mem::size_of::<Val>();
         use Val::*;
@@ -606,8 +610,8 @@ impl core::ops::Add for Val {
             // `null` is a neutral element for addition
             (Null, x) | (x, Null) => Ok(x),
             (Num(x), Num(y)) => Ok(Num(x + y)),
-            (BStr(l), BStr(r)) => Ok(Val::byte_str(concat_bytes(*l, r)?)),
-            (TStr(l), TStr(r)) => Ok(Val::utf8_str(concat_bytes(*l, r)?)),
+            (BStr(l), BStr(r)) => Ok(Val::byte_str(concat_bytes(l, r)?)),
+            (TStr(l), TStr(r)) => Ok(Val::utf8_str(concat_bytes(l, r)?)),
             (Arr(mut l), Arr(r)) => {
                 //std::dbg!(Rc::strong_count(&l));
                 meter::check((l.len() + r.len()) * val_size)?;
@@ -674,11 +678,11 @@ impl core::ops::Mul for Val {
             // BASHKIT PATCH: size-check before allocating (TM-DOS-110, #2444).
             (BStr(s), Num(Int(i))) | (Num(Int(i)), BStr(s)) if i > 0 => {
                 meter::check(s.len().saturating_mul(i as usize))?;
-                Ok(Self::byte_str(meter::bytes(s.repeat(i as usize))))
+                Ok(Self::byte_str(s.repeat(i as usize)))
             }
             (TStr(s), Num(Int(i))) | (Num(Int(i)), TStr(s)) if i > 0 => {
                 meter::check(s.len().saturating_mul(i as usize))?;
-                Ok(Self::utf8_str(meter::bytes(s.repeat(i as usize))))
+                Ok(Self::utf8_str(s.repeat(i as usize)))
             }
             // string multiplication with negatives or 0 results in null
             // <https://jqlang.github.io/jq/manual/#Builtinoperatorsandfunctions>
@@ -715,8 +719,8 @@ impl core::ops::Div for Val {
         };
         match (self, rhs) {
             (Self::Num(x), Self::Num(y)) => Ok(Self::Num(x / y)),
-            (Self::TStr(x), Self::TStr(y)) => Ok(fs(*x, *y, Val::utf8_str)),
-            (Self::BStr(x), Self::BStr(y)) => Ok(fs(*x, *y, Val::byte_str)),
+            (Self::TStr(x), Self::TStr(y)) => Ok(fs(x.into_bytes(), y.into_bytes(), Val::utf8_str)),
+            (Self::BStr(x), Self::BStr(y)) => Ok(fs(x.into_bytes(), y.into_bytes(), Val::byte_str)),
             (l, r) => Err(Error::math(l, ops::Math::Div, r)),
         }
     }
