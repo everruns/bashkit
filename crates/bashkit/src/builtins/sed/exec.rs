@@ -21,6 +21,7 @@ use std::collections::HashMap;
 use super::pattern::SedRegex;
 use super::script::{Addr, CaseOp, EndAddr, Kind, Program, RepPart, StartAddr, Subst};
 use crate::builtins::limits::SED_MAX_CYCLE_STEPS;
+use crate::limits::{BudgetedString, ExecutionBudget, LimitExceeded};
 
 /// One input line plus the two facts the engine needs about it.
 pub(super) struct InputLine {
@@ -33,16 +34,27 @@ pub(super) struct InputLine {
 
 /// Output buffer that reproduces GNU sed's missing-newline handling.
 pub(super) struct Sink {
-    pub(super) buf: String,
+    pub(super) buf: BudgetedString,
+    max_bytes: Option<usize>,
+    pub(super) error: Option<LimitExceeded>,
     missing_newline: bool,
     /// Line terminator: `\n`, or NUL under `-z`.
     sep: char,
 }
 
 impl Sink {
-    fn with_sep(sep: char) -> Self {
+    fn with_sep(sep: char, max_bytes: Option<usize>, budget: Option<&ExecutionBudget>) -> Self {
+        let (buf, error) = match BudgetedString::new(budget) {
+            Ok(buf) => (buf, None),
+            Err(error) => (
+                BudgetedString::new(None).expect("an unbudgeted empty string is infallible"),
+                Some(error),
+            ),
+        };
         Sink {
-            buf: String::new(),
+            buf,
+            max_bytes,
+            error,
             missing_newline: false,
             sep,
         }
@@ -53,9 +65,9 @@ impl Sink {
     /// Write one line, adding a terminator only when the source had one.
     fn line(&mut self, text: &str, had_newline: bool) {
         self.flush_pending();
-        self.buf.push_str(text);
+        self.push_str(text);
         if had_newline {
-            self.buf.push(self.sep);
+            self.push(self.sep);
         } else {
             self.missing_newline = true;
         }
@@ -64,15 +76,40 @@ impl Sink {
     /// Write text that already carries its own terminator.
     fn raw(&mut self, text: &str) {
         self.flush_pending();
-        self.buf.push_str(text);
+        self.push_str(text);
     }
 
     /// Emit a newline that was withheld because the source line had none.
     fn flush_pending(&mut self) {
         if self.missing_newline {
-            self.buf.push(self.sep);
+            self.push(self.sep);
             self.missing_newline = false;
         }
+    }
+
+    fn push_str(&mut self, text: &str) {
+        if self.error.is_some() {
+            return;
+        }
+        let exceeds_destination = self
+            .buf
+            .len()
+            .checked_add(text.len())
+            .is_none_or(|len| self.max_bytes.is_some_and(|max| len > max));
+        if exceeds_destination {
+            self.error = Some(LimitExceeded::Memory(
+                "sed output exceeds configured stdout limit".into(),
+            ));
+            return;
+        }
+        if let Err(error) = self.buf.try_push_str(text) {
+            self.error = Some(error);
+        }
+    }
+
+    fn push(&mut self, ch: char) {
+        let mut encoded = [0; 4];
+        self.push_str(ch.encode_utf8(&mut encoded));
     }
 }
 
@@ -110,6 +147,7 @@ pub(super) struct Machine<'a> {
     quiet: bool,
     default_line_len: usize,
     sep: char,
+    execution_budget: Option<ExecutionBudget>,
 
     out: Sink,
     pub(super) stderr: String,
@@ -150,7 +188,9 @@ impl<'a> Machine<'a> {
         quiet: bool,
         line_len: usize,
         sep: char,
+        execution_budget: Option<ExecutionBudget>,
     ) -> Self {
+        let out = Sink::with_sep(sep, None, execution_budget.as_ref());
         Machine {
             prog,
             names,
@@ -158,7 +198,8 @@ impl<'a> Machine<'a> {
             quiet: quiet || prog.quiet,
             default_line_len: line_len,
             sep,
-            out: Sink::with_sep(sep),
+            execution_budget,
+            out,
             stderr: String::new(),
             write_files: HashMap::new(),
             range: Vec::new(),
@@ -185,12 +226,16 @@ impl<'a> Machine<'a> {
     }
 
     /// Run one input stream and return everything it wrote to stdout.
-    pub(super) fn run_segment(&mut self, lines: &'a [InputLine]) -> String {
+    pub(super) fn run_segment(
+        &mut self,
+        lines: &'a [InputLine],
+        max_bytes: Option<usize>,
+    ) -> Result<String, LimitExceeded> {
         self.lines = lines;
         self.cursor = 0;
         self.line_no = 0;
         self.range = vec![RangeState::default(); self.prog.cmds.len()];
-        self.out = Sink::with_sep(self.sep);
+        self.out = Sink::with_sep(self.sep, max_bytes, self.execution_budget.as_ref());
 
         let mut restart = false;
         // THREAT[TM-DOS]: `D` restarts the script without reading input, so a
@@ -240,7 +285,12 @@ impl<'a> Machine<'a> {
             }
         }
 
-        std::mem::replace(&mut self.out, Sink::with_sep(self.sep)).buf
+        let replacement = Sink::with_sep(self.sep, max_bytes, self.execution_budget.as_ref());
+        let out = std::mem::replace(&mut self.out, replacement);
+        match out.error {
+            Some(error) => Err(error),
+            None => Ok(out.buf.into_inner()),
+        }
     }
 
     fn cycle(&mut self) -> Cycle {
@@ -516,7 +566,7 @@ impl<'a> Machine<'a> {
                 let sep = self.sep;
                 self.write_files
                     .entry(name.to_string())
-                    .or_insert_with(|| Sink::with_sep(sep))
+                    .or_insert_with(|| Sink::with_sep(sep, None, self.execution_budget.as_ref()))
                     .line(text, had_newline)
             }
         }
