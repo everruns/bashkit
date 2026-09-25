@@ -49,7 +49,7 @@ use bashkit::{Bash, ExecutionLimits};
 let limits = ExecutionLimits::new()
     .max_commands(1000)
     .max_loop_iterations(10000)
-    .max_function_depth(100);
+    .max_function_depth(16);
 
 let mut bash = Bash::builder().limits(limits).build();
 ```

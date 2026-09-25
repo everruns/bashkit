@@ -141,7 +141,7 @@ impl ExecutionProfile {
             max_commands: 2_500,
             max_loop_iterations: 2_500,
             max_total_loop_iterations: 100_000,
-            max_function_depth: 64,
+            max_function_depth: 16,
             timeout: Duration::from_secs(10),
             parser_timeout: Duration::from_secs(2),
             max_input_bytes: 1_000_000,

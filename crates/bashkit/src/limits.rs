@@ -31,6 +31,11 @@ use std::time::Duration;
 
 use crate::time_compat::Instant;
 
+// THREAT[TM-DOS-020]: 100 nested interpreter frames overflow a 2 MiB host
+// stack before the configurable counter fires. Keep a hard ceiling even when
+// embedders request a higher logical recursion limit.
+const HARD_MAX_FUNCTION_DEPTH: usize = 16;
+
 #[cfg(feature = "failpoints")]
 use fail::fail_point;
 
@@ -67,7 +72,7 @@ pub struct ExecutionLimits {
     pub max_total_loop_iterations: usize,
 
     /// Maximum function call depth (recursion limit)
-    /// Default: 100
+    /// Default: 16; values above 16 are capped for host stack safety.
     pub max_function_depth: usize,
 
     /// Execution timeout
@@ -160,7 +165,7 @@ impl Default for ExecutionLimits {
             max_commands: 10_000,
             max_loop_iterations: 10_000,
             max_total_loop_iterations: 1_000_000,
-            max_function_depth: 100,
+            max_function_depth: HARD_MAX_FUNCTION_DEPTH,
             timeout: Duration::from_secs(30),
             parser_timeout: Duration::from_secs(5),
             max_input_bytes: 10_000_000, // 10MB
@@ -619,8 +624,9 @@ impl ExecutionCounters {
         });
 
         // Check before incrementing so we don't leave invalid state on failure
-        if self.function_depth >= limits.max_function_depth {
-            return Err(LimitExceeded::MaxFunctionDepth(limits.max_function_depth));
+        let max_depth = limits.max_function_depth.min(HARD_MAX_FUNCTION_DEPTH);
+        if self.function_depth >= max_depth {
+            return Err(LimitExceeded::MaxFunctionDepth(max_depth));
         }
         self.function_depth += 1;
         Ok(())
@@ -1560,7 +1566,7 @@ mod tests {
         assert_eq!(limits.max_commands, 10_000);
         assert_eq!(limits.max_loop_iterations, 10_000);
         assert_eq!(limits.max_total_loop_iterations, 1_000_000);
-        assert_eq!(limits.max_function_depth, 100);
+        assert_eq!(limits.max_function_depth, HARD_MAX_FUNCTION_DEPTH);
         assert_eq!(limits.timeout, Duration::from_secs(30));
         assert_eq!(limits.parser_timeout, Duration::from_secs(5));
         assert_eq!(limits.max_input_bytes, 10_000_000);
@@ -1704,6 +1710,19 @@ mod tests {
             counters.tick_loop(&limits),
             Err(LimitExceeded::MaxLoopIterations(2))
         )); // outer=3 -> fail
+    }
+
+    #[test]
+    fn function_depth_has_a_hard_stack_safety_ceiling() {
+        let limits = ExecutionLimits::new().max_function_depth(1_000);
+        let mut counters = ExecutionCounters::new();
+        for _ in 0..HARD_MAX_FUNCTION_DEPTH {
+            assert!(counters.push_function(&limits).is_ok());
+        }
+        assert!(matches!(
+            counters.push_function(&limits),
+            Err(LimitExceeded::MaxFunctionDepth(HARD_MAX_FUNCTION_DEPTH))
+        ));
     }
 
     #[test]

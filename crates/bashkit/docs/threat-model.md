@@ -79,7 +79,7 @@ through configurable limits.
 
 | Threat | Attack Example | Mitigation | Status |
 |--------|---------------|------------|--------|
-| Function recursion (TM-DOS-020) | `f() { f; }; f` | Depth limit (100) | MITIGATED |
+| Function recursion (TM-DOS-020) | `f() { f; }; f` | Depth limit of 16, including a hard ceiling when callers request more, protects 2 MiB host stacks | MITIGATED |
 | Command sub depth (TM-DOS-021) | `$($($($())))` nesting | Inherited depth/fuel from parent | MITIGATED |
 | Parser depth (TM-DOS-022) | `(((((...))))))` nesting | `max_ast_depth` + hard cap (100) | MITIGATED |
 | Arithmetic depth (TM-DOS-026) | `$(((((...))))))` | `MAX_ARITHMETIC_DEPTH` (50) | MITIGATED |
@@ -126,7 +126,7 @@ use std::time::Duration;
 let limits = ExecutionLimits::new()
     .max_commands(10_000)
     .max_loop_iterations(10_000)
-    .max_function_depth(100)
+    .max_function_depth(16)
     .timeout(Duration::from_secs(30))
     .max_input_bytes(10_000_000);  // 10MB
 
