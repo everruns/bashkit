@@ -72,9 +72,12 @@ silently failed.
      `scripts/cli_publish_proxy.py` reads that crate's feature set from
      crates.io and drops the ones added in the current cycle (plus `python`,
      which predates Monty's crates.io publication) from the disposable copy
-     only. A failure there is real packaging drift, not a missing feature. Normal workspace checks
-     still compile the CLI against the new local core, and `publish.yml` waits
-     for the core registry version before publishing the CLI. Packaging caught
+     only. Direct CLI-to-core feature aliases are checked independently of the
+     features requested on the core dependency, because default CLI features
+     need not appear in that dependency list. A failure there is real packaging
+     drift, not a missing feature. Normal workspace checks still compile the CLI
+     against the new local core, and `publish.yml` waits for the core registry
+     version before publishing the CLI. Packaging caught
      the v0.4.0 → v0.4.1 incident: the rustdoc guide lived outside the crate
      dir, so `cargo publish` couldn't find it; local `cargo build` did not catch
      it.

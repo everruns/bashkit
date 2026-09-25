@@ -3,6 +3,12 @@
 use async_trait::async_trait;
 use std::time::Duration;
 
+#[cfg(all(
+    target_arch = "wasm32",
+    target_os = "unknown",
+    not(feature = "wasm_js")
+))]
+use super::ExecutionDeadline;
 use super::limits::SLEEP_MAX_SECONDS as MAX_SLEEP_SECONDS;
 use super::{Builtin, BuiltinHelper, Context};
 use crate::error::Result;
@@ -51,11 +57,40 @@ impl Builtin for Sleep {
         };
 
         if seconds > 0.0 {
-            crate::time_compat::sleep(Duration::from_secs_f64(seconds)).await;
+            let duration = Duration::from_secs_f64(seconds);
+            #[cfg(all(
+                target_arch = "wasm32",
+                target_os = "unknown",
+                not(feature = "wasm_js")
+            ))]
+            let duration = if let Some(deadline) = ctx.execution_extension::<ExecutionDeadline>() {
+                // THREAT[TM-DOS-057]: the non-JS timer spins synchronously, so
+                // cap it before polling can block the outer timeout future.
+                if let Ok(remaining) = deadline.try_with(ExecutionDeadline::remaining) {
+                    effective_sleep_duration(duration, remaining)
+                } else {
+                    duration
+                }
+            } else {
+                duration
+            };
+            crate::time_compat::sleep(duration).await;
         }
 
         Ok(ExecResult::ok(String::new()))
     }
+}
+
+#[cfg(any(
+    test,
+    all(
+        target_arch = "wasm32",
+        target_os = "unknown",
+        not(feature = "wasm_js")
+    )
+))]
+fn effective_sleep_duration(requested: Duration, remaining: Duration) -> Duration {
+    requested.min(remaining)
 }
 
 #[cfg(test)]
@@ -112,6 +147,18 @@ mod tests {
         assert_eq!(result.exit_code, 0);
         assert!(elapsed.as_millis() >= 90); // Allow some margin
         assert!(elapsed.as_millis() < 200);
+    }
+
+    #[test]
+    fn non_js_wasm_sleep_is_capped_by_execution_budget() {
+        assert_eq!(
+            effective_sleep_duration(Duration::from_secs(60), Duration::from_millis(10)),
+            Duration::from_millis(10)
+        );
+        assert_eq!(
+            effective_sleep_duration(Duration::from_millis(10), Duration::from_secs(60)),
+            Duration::from_millis(10)
+        );
     }
 
     #[tokio::test]

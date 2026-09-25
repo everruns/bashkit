@@ -39,7 +39,7 @@ path. It is enabled by the JS packages (`bashkit-wasm`) and by the
 | Concern | With `wasm_js` | Without |
 |---|---|---|
 | Clock | `web-time` (`Performance.now`, `Date.now`) | `time_compat::host_clock`, embedder symbol |
-| Timers (`sleep`, `timeout`) | `gloo-timers` (`setTimeout`) | spin on the host clock |
+| Timers (`sleep`, `timeout`) | `gloo-timers` (`setTimeout`) | budget-bounded spin on the host clock |
 | Entropy | `getrandom/wasm_js` (`crypto.getRandomValues`) | `getrandom` custom backend, embedder's |
 | `chrono::Utc::now` | `chrono/wasmbind` (JS `Date`) | `time_compat::now_utc` |
 | Host-call driver | `wasm-bindgen-futures::spawn_local` | none, `next_event` polls inline |
@@ -80,7 +80,7 @@ $ wasm-tools print bashkit_hyperlight_guest.wasm | grep '(import'
   (import "bashkit:sandbox/host" "random-bytes" ...)
 ```
 
-## Decision: timers spin
+## Decision: timers spin within the execution budget
 
 Without JS there is no `setTimeout`, and in a micro-VM there is no other thread
 to make progress. `sleep` therefore blocks, spinning on the host clock, and
@@ -88,7 +88,10 @@ to make progress. `sleep` therefore blocks, spinning on the host clock, and
 correct choice here, not a compromise: these embedders drive execution with a
 single poll (`now_or_never`), so a pending timer future could never be woken.
 A guest that burns VM cycles during `sleep 1` is the price of having no timer
-hardware.
+hardware. The sleep builtin clamps that spin to the active execution deadline;
+the timeout wrapper checks the deadline after every interpreter poll, including
+a ready result. A script therefore cannot extend a shorter execution timeout by
+requesting a longer sleep, despite the single blocking poll.
 
 The same "no other thread" fact decides who drives a parked host-call
 execution. `host_call::spawn_execution` hands the execution future to a task
@@ -126,6 +129,15 @@ Three tiers, only the first two are automatable without special hardware:
    is consumable by the micro-VM guest.
 3. **Micro-VM boot** — needs `/dev/kvm` (Linux) or WHP (Windows). Not run in
    this repo's CI yet.
+
+The sleep/timeout deadline clamp is the one behavior whose code path only
+compiles for this target, so tier 1 cannot reach it: the clamp arithmetic is
+covered by the native unit test `non_js_wasm_sleep_is_capped_by_execution_budget`
+and the wiring is compile-checked by the component build. An end-to-end
+"`sleep` longer than the timeout returns at the deadline" case would need
+`examples/hyperlight/host` to accept a configurable timeout — worth adding when
+that host grows a limits argument, since the default 30 s deadline makes the
+observable case too slow for CI today.
 
 ## See also
 

@@ -46,6 +46,7 @@ through configurable limits.
 | Recursive copy (TM-DOS-009) | `cp -r /tmp /tmp/copy` | FS limits | MITIGATED |
 | Append flood (TM-DOS-010) | `while true; do echo x >> f; done` | FS + loop limits | MITIGATED |
 | RealFs append memory exhaustion (TM-DOS-105) | Tiny append to a large writable host file | Stream existing bytes into atomic sibling staging with bounded memory | MITIGATED |
+| Deep Agents VFS search amplification (TM-DOS-113) | Dense matching files or a broad recursive `grep`/`glob` bypass shell execution limits and amplify into host objects | Grep caps results at 1,000 matches and 100 KB of matched text; line scans stream; every direct walk carries a per-operation deadline, 10,000-file and 10 MB traversal budget, and a cancellation flag the async workers set | **MITIGATED** |
 | Symlink loops (TM-DOS-011) | `ln -s /a /b; ln -s /b /a` | No symlink following | MITIGATED |
 | Deep dirs (TM-DOS-012) | `mkdir -p a/b/c/.../z` (1000 levels) | `max_path_depth` (100) | MITIGATED |
 | Long filenames (TM-DOS-013) | 10KB filename | `max_filename_length` (255) + `max_path_length` (4096) | MITIGATED |
@@ -107,10 +108,12 @@ through configurable limits.
 | glob ExtGlob blowup (TM-DOS-054) | `glob --files "+(a\|aa)"` | Same as TM-DOS-031 | **MITIGATED** |
 | split file count (TM-DOS-055) | `split -l 1 bigfile` | FS `max_file_count` limit | MITIGATED |
 | source self-recursion (TM-DOS-056) | Script that sources itself | Track source depth | **MITIGATED** |
-| sleep bypasses timeout (TM-DOS-057) | `sleep N` ignores `ExecutionLimits::timeout` | Implement tokio timeout wrapper | **PARTIAL** |
+| sleep bypasses timeout (TM-DOS-057) | `sleep N` ignores `ExecutionLimits::timeout` | Host-backed timeout; non-JS wasm blocking sleep is clamped to the execution deadline | **MITIGATED** |
 | Unbounded builtin output (TM-DOS-058) | `seq 1 1000000` produces 1M lines | Add `max_stdout_bytes` limit | **MITIGATED** |
 | Silent truncation at builtin caps (TM-DOS-109) | `seq 200000`, an awk loop past its cap, or an oversized `sprintf` expression returns incomplete output with exit 0 | Caps report `<cmd>: <what> limit (<N>) exceeded` on stderr and exit non-zero; awk caps and formatting errors are fatal | **MITIGATED** |
 | In-builtin memory growth (TM-DOS-110) | `awk 'BEGIN { s = "x"; while (1) s = s s }'` or `jq -n '"x" \| until(false; . + .)'` allocates until the host aborts | awk checks each string against a 16 MiB cap before allocating it, caps `$N` field indexes, and caps total variable memory at `max_live_intermediate_bytes` (fatal, exit 2). jq meters every live string, array and object against the same limit and fails before growing (exit 5); non-emitting jq loops and pure recursion stop at the timeout; non-tail recursion hits a live-context ceiling (64) before host stack exhaustion | **MITIGATED** |
+| Silent scalar assignment rejection (TM-DOS-111) | A variable write over the byte or count limit is dropped while the script exits 0 | The first rejected write fails execution with a memory-limit error; a later exec can reuse the session | **MITIGATED** |
+| `sed r` output amplification (TM-DOS-112) | `sed 'r FILE' FILE` re-emits the whole file after every input line, growing output quadratically inside the engine | Every sed sink leases from `max_live_intermediate_bytes` before growing; a refused lease is `sed: <error>` with exit 1. The stdout *capture* cap is deliberately not a sink limit, since sed output is often piped onward or redirected to a file | **MITIGATED** |
 | Param expansion bomb (TM-DOS-059) | `${x//a/bigstring}` multiplicative amplification | `max_total_variable_bytes` + `max_stdout_bytes` | MITIGATED |
 | Sparse array huge-index (TM-DOS-060) | `arr[999999999]=x` | HashMap storage; `max_array_entries` | MITIGATED |
 | Snapshot restore bypasses function/parser limits (TM-DOS-061) | Crafted snapshot with oversized/deep function bodies | Re-parse restored function source under current limits; re-check function memory budget | MITIGATED |

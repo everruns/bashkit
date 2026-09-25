@@ -117,7 +117,7 @@ test("WB: fork bomb pattern blocked (TM-DOS-021)", (t) => {
 // ============================================================================
 
 test("WB: maxMemory caps exponential string doubling (TM-DOS-059)", (t) => {
-  // 1 KB limit — string doubling silently stops when budget is exceeded
+  // 1 KB limit — an over-budget assignment must fail visibly.
   const bash = new Bash({
     maxMemory: 1024,
     maxLoopIterations: 10000,
@@ -126,9 +126,9 @@ test("WB: maxMemory caps exponential string doubling (TM-DOS-059)", (t) => {
   const r = bash.executeSync(
     'x=AAAAAAAAAA; i=0; while [ $i -lt 25 ]; do x="$x$x"; i=$((i+1)); done; echo ${#x}',
   );
-  // String must be capped well below what 25 doublings would produce (335 544 320)
-  const len = parseInt(r.stdout.trim(), 10);
-  t.true(len <= 1024, `string length ${len} must be ≤ 1024`);
+  t.not(r.exitCode, 0);
+  t.regex(r.stderr, /variable byte limit \(1024\) exceeded/);
+  t.is(r.stdout, "");
 });
 
 test("WB: maxMemory — small scripts still work within budget", (t) => {
@@ -144,10 +144,11 @@ test("WB: maxMemory — recovery after exceeding limit", (t) => {
     maxLoopIterations: 10000,
     maxCommands: 10000,
   });
-  // Exceed limit (variable silently stops growing)
-  bash.executeSync(
+  const failed = bash.executeSync(
     'x=AAAAAAAAAA; i=0; while [ $i -lt 25 ]; do x="$x$x"; i=$((i+1)); done',
   );
+  t.not(failed.exitCode, 0);
+  t.regex(failed.stderr, /variable byte limit \(1024\) exceeded/);
   // Next exec should still work
   const r = bash.executeSync("echo recovered");
   t.is(r.exitCode, 0);
@@ -163,8 +164,9 @@ test("WB: maxMemory via BashTool (TM-DOS-059)", (t) => {
   const r = tool.executeSync(
     'x=AAAAAAAAAA; i=0; while [ $i -lt 25 ]; do x="$x$x"; i=$((i+1)); done; echo ${#x}',
   );
-  const len = parseInt(r.stdout.trim(), 10);
-  t.true(len <= 1024, `BashTool: string length ${len} must be ≤ 1024`);
+  t.not(r.exitCode, 0);
+  t.regex(r.stderr, /variable byte limit \(1024\) exceeded/);
+  t.is(r.stdout, "");
 });
 
 test("WB: default memory limit prevents OOM without maxMemory", (t) => {
@@ -173,12 +175,10 @@ test("WB: default memory limit prevents OOM without maxMemory", (t) => {
   const r = bash.executeSync(
     'x=AAAAAAAAAA; i=0; while [ $i -lt 30 ]; do x="$x$x"; i=$((i+1)); done; echo ${#x}',
   );
-  // 30 doublings of 10 bytes = 10 GB without limits; default 10 MB cap stops it
-  const len = parseInt(r.stdout.trim(), 10);
-  t.true(
-    len <= 10_000_000,
-    `default limit: string length ${len} must be ≤ 10MB`,
-  );
+  // 30 doublings of 10 bytes = 10 GB without limits.
+  t.not(r.exitCode, 0);
+  t.regex(r.stderr, /variable byte limit \(10000000\) exceeded/);
+  t.is(r.stdout, "");
 });
 
 // ============================================================================

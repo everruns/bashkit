@@ -28,11 +28,60 @@ The backend exposes file operations on the same VFS used by bash::
 
 from __future__ import annotations
 
+import asyncio
 import posixpath
+import threading
+import time
 import uuid
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from bashkit import BashTool as NativeBashTool
+
+# THREAT[TM-DOS-113]: Agent-facing VFS helpers bypass shell execution limits.
+# Keep every direct walk and retained grep result independently bounded.
+#
+# These are deliberately *per-operation* budgets. A session-lifetime byte
+# counter was tried and removed: nothing is retained once an operation returns
+# (results carry their own caps), so a cumulative counter measures work already
+# released and can only ever drain. It turned a long-lived agent session into a
+# permanent failure once enough legitimate reads had happened, with no way back
+# except `reset()`, while adding nothing over the per-operation bounds that
+# actually cap amplification.
+_DEFAULT_OPERATION_TIMEOUT_SECONDS = 30.0
+_MAX_OPERATION_FILES = 10_000
+_MAX_OPERATION_BYTES = 10_000_000
+_DEFAULT_GREP_MATCHES = 1_000
+_MAX_GREP_RESULT_BYTES = 100_000
+
+
+class _BudgetExceeded(Exception):
+    """Internal signal that a direct VFS operation must return partial data."""
+
+
+@dataclass
+class _OperationBudget:
+    deadline: float
+    cancelled: threading.Event
+    files_remaining: int = _MAX_OPERATION_FILES
+    bytes_remaining: int = _MAX_OPERATION_BYTES
+
+    def checkpoint(self) -> None:
+        if self.cancelled.is_set() or time.monotonic() >= self.deadline:
+            raise _BudgetExceeded
+
+
+def _lines(content: str):
+    """Yield newline-delimited text without allocating a list of every line."""
+    start = 0
+    while start < len(content):
+        end = content.find("\n", start)
+        if end == -1:
+            yield content[start:].removesuffix("\r")
+            return
+        yield content[start:end].removesuffix("\r")
+        start = end + 1
+
 
 # Check for deepagents availability
 try:
@@ -186,6 +235,9 @@ if DEEPAGENTS_AVAILABLE:
                 timeout_seconds=timeout_seconds,
             )
             self._id = f"bashkit-{uuid.uuid4().hex[:8]}"
+            self._operation_timeout = (
+                _DEFAULT_OPERATION_TIMEOUT_SECONDS if timeout_seconds is None else max(0.0, timeout_seconds)
+            )
 
         @property
         def id(self) -> str:
@@ -219,20 +271,57 @@ if DEEPAGENTS_AVAILABLE:
         def _path(self, path: str) -> str:
             return posixpath.normpath(posixpath.join(self._bash.shell_state().cwd, path))
 
-        def read(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
+        def _budget(self, cancelled: threading.Event | None = None) -> _OperationBudget:
+            return _OperationBudget(
+                deadline=time.monotonic() + self._operation_timeout,
+                cancelled=cancelled or threading.Event(),
+            )
+
+        def _charge(self, budget: _OperationBudget, *, files: int = 0, size: int = 0) -> None:
+            budget.checkpoint()
+            if files > budget.files_remaining or size > budget.bytes_remaining:
+                raise _BudgetExceeded
+            budget.files_remaining -= files
+            budget.bytes_remaining -= size
+
+        async def _run_cancellable(self, callback, *args):
+            cancelled = threading.Event()
+            try:
+                return await asyncio.to_thread(callback, *args, cancelled)
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+
+        def read(
+            self,
+            file_path: str,
+            offset: int = 0,
+            limit: int = 2000,
+            _cancelled: threading.Event | None = None,
+        ) -> ReadResult:
             if limit <= 0:
                 return ReadResult(file_data={"content": "", "encoding": "utf-8"}, no_lines_requested=True)
             try:
-                lines = self._bash.read_file(self._path(file_path)).splitlines()
+                path = self._path(file_path)
+                metadata = self._bash.stat(path)
+                budget = self._budget(_cancelled)
+                self._charge(budget, files=1, size=metadata["size"])
+                selected = []
+                scanned_lines = 0
+                offset = max(0, offset)
+                for scanned_lines, line in enumerate(_lines(self._bash.read_file(path)), 1):
+                    budget.checkpoint()
+                    if offset < scanned_lines <= offset + limit:
+                        selected.append(line)
+            except _BudgetExceeded:
+                return ReadResult(error="read resource budget exceeded")
             except (RuntimeError, ValueError) as exc:
                 return ReadResult(error=str(exc))
-            offset = max(0, offset)
-            selected = lines[offset : offset + limit]
             start_line = end_line = total_lines = next_offset = None
             if selected:
                 end = offset + len(selected)
-                start_line, end_line, total_lines = offset + 1, end, len(lines)
-                if end < len(lines):
+                start_line, end_line, total_lines = offset + 1, end, scanned_lines
+                if end < scanned_lines:
                     next_offset = end
             return ReadResult(
                 file_data={"content": "\n".join(selected), "encoding": "utf-8"},
@@ -241,6 +330,9 @@ if DEEPAGENTS_AVAILABLE:
                 total_lines=total_lines,
                 next_offset=next_offset,
             )
+
+        async def aread(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
+            return await self._run_cancellable(self.read, file_path, offset, limit)
 
         def write(self, file_path: str, content: str) -> WriteResult:
             path = self._path(file_path)
@@ -292,11 +384,13 @@ if DEEPAGENTS_AVAILABLE:
                 return LsResult(error=str(exc))
             return LsResult(entries=sorted(entries, key=lambda entry: entry["path"]))
 
-        def _files(self, root: str):
+        def _files(self, root: str, budget: _OperationBudget):
             pending = [root]
             while pending:
+                budget.checkpoint()
                 path = pending.pop()
                 metadata = self._bash.stat(path)
+                self._charge(budget, files=1)
                 if metadata["file_type"] == "directory":
                     # Do not traverse symlink directories: cycles must not create
                     # an unbounded host-side walk outside shell execution limits.
@@ -307,36 +401,72 @@ if DEEPAGENTS_AVAILABLE:
                         if entry["metadata"]["file_type"] in ("file", "directory")
                     )
                 elif metadata["file_type"] == "file":
+                    self._charge(budget, size=metadata["size"])
                     yield FileInfo(path=path, is_dir=False, size=metadata["size"])
 
-        def glob(self, pattern: str, path: str | None = None) -> GlobResult:
+        def glob(self, pattern: str, path: str | None = None, _cancelled: threading.Event | None = None) -> GlobResult:
             root = self._path(path or ".")
+            files = []
             try:
                 matches = compile_grep_include_glob(pattern)
-                files = [info for info in self._files(root) if matches(posixpath.relpath(info["path"], root))]
+                for info in self._files(root, self._budget(_cancelled)):
+                    if matches(posixpath.relpath(info["path"], root)):
+                        files.append(info)
+            except _BudgetExceeded:
+                return GlobResult(matches=files, truncated=True, truncation_reason="budget")
             except (RuntimeError, ValueError) as exc:
                 return GlobResult(error=str(exc))
             return GlobResult(matches=files)
 
+        async def aglob(self, pattern: str, path: str | None = None) -> GlobResult:
+            return await self._run_cancellable(self.glob, pattern, path)
+
         def grep(
-            self, pattern: str, path: str | None = None, glob: str | None = None, *, max_count: int | None = None
+            self,
+            pattern: str,
+            path: str | None = None,
+            glob: str | None = None,
+            *,
+            max_count: int | None = None,
+            _cancelled: threading.Event | None = None,
         ) -> GrepResult:
             root = self._path(path or ".")
             matches: list[GrepMatch] = []
+            result_bytes = 0
+            match_limit = _DEFAULT_GREP_MATCHES if max_count is None else max(0, max_count)
             try:
                 include = compile_grep_include_glob(glob) if glob is not None else lambda _: True
-                for info in self._files(root):
+                budget = self._budget(_cancelled)
+                for info in self._files(root, budget):
                     relative = posixpath.relpath(info["path"], root)
                     if not include(posixpath.basename(root) if relative == "." else relative):
                         continue
-                    for number, line in enumerate(self._bash.read_file(info["path"]).splitlines(), 1):
+                    content = self._bash.read_file(info["path"])
+                    for number, line in enumerate(_lines(content), 1):
+                        budget.checkpoint()
                         if pattern in line:
-                            if max_count is not None and len(matches) >= max(0, max_count):
+                            match_bytes = len(info["path"].encode("utf-8")) + len(line.encode("utf-8"))
+                            if len(matches) >= match_limit or result_bytes + match_bytes > _MAX_GREP_RESULT_BYTES:
                                 return GrepResult(matches=matches, truncated=True)
                             matches.append(GrepMatch(path=info["path"], line=number, text=line))
+                            result_bytes += match_bytes
+            except _BudgetExceeded:
+                return GrepResult(matches=matches, truncated=True)
             except (RuntimeError, ValueError) as exc:
                 return GrepResult(error=str(exc), matches=matches or None, truncated=bool(matches))
             return GrepResult(matches=matches)
+
+        async def agrep(
+            self, pattern: str, path: str | None = None, glob: str | None = None, *, max_count: int | None = None
+        ) -> GrepResult:
+            cancelled = threading.Event()
+            try:
+                return await asyncio.to_thread(
+                    self.grep, pattern, path, glob, max_count=max_count, _cancelled=cancelled
+                )
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
 
         def download_files(self, paths: list[str]) -> list[FileDownloadResponse]:
             responses = []
