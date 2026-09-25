@@ -98,10 +98,16 @@ pub(crate) async fn timeout<F: Future>(
 
         let deadline = Instant::now() + duration;
         let mut future = pin!(future);
-        return std::future::poll_fn(move |cx| match future.as_mut().poll(cx) {
-            Poll::Ready(output) => Poll::Ready(Ok(output)),
-            Poll::Pending if Instant::now() >= deadline => Poll::Ready(Err(TimeoutElapsed)),
-            Poll::Pending => Poll::Pending,
+        return std::future::poll_fn(move |cx| {
+            let result = future.as_mut().poll(cx);
+            // A non-yielding operation may have consumed the remaining budget
+            // before returning Ready, so deadline precedence must be checked
+            // after every poll, not only after Pending.
+            if Instant::now() >= deadline {
+                Poll::Ready(Err(TimeoutElapsed))
+            } else {
+                result.map(Ok)
+            }
         })
         .await;
     }

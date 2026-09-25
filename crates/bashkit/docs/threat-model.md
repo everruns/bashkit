@@ -107,7 +107,7 @@ through configurable limits.
 | glob ExtGlob blowup (TM-DOS-054) | `glob --files "+(a\|aa)"` | Same as TM-DOS-031 | **MITIGATED** |
 | split file count (TM-DOS-055) | `split -l 1 bigfile` | FS `max_file_count` limit | MITIGATED |
 | source self-recursion (TM-DOS-056) | Script that sources itself | Track source depth | **MITIGATED** |
-| sleep bypasses timeout (TM-DOS-057) | `sleep N` ignores `ExecutionLimits::timeout` | Implement tokio timeout wrapper | **PARTIAL** |
+| sleep bypasses timeout (TM-DOS-057) | `sleep N` ignores `ExecutionLimits::timeout` | Host-backed timeout; non-JS wasm blocking sleep is clamped to the execution deadline | **MITIGATED** |
 | Unbounded builtin output (TM-DOS-058) | `seq 1 1000000` produces 1M lines | Add `max_stdout_bytes` limit | **MITIGATED** |
 | Silent truncation at builtin caps (TM-DOS-109) | `seq 200000`, an awk loop past its cap, or an oversized `sprintf` expression returns incomplete output with exit 0 | Caps report `<cmd>: <what> limit (<N>) exceeded` on stderr and exit non-zero; awk caps and formatting errors are fatal | **MITIGATED** |
 | Silent scalar assignment rejection (TM-DOS-111) | A variable write over the byte or count limit is dropped while the script exits 0 | The first rejected write fails execution with a memory-limit error; a later exec can reuse the session | **MITIGATED** |
