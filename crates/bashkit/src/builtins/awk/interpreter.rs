@@ -9,11 +9,12 @@ use super::{
 };
 use crate::builtins::MAX_FORMAT_WIDTH;
 use crate::builtins::limits::{
-    AWK_MAX_CALL_DEPTH as MAX_AWK_CALL_DEPTH,
+    AWK_MAX_CALL_DEPTH as MAX_AWK_CALL_DEPTH, AWK_MAX_FIELD_INDEX,
     AWK_MAX_GETLINE_CACHE_BYTES as MAX_GETLINE_CACHE_BYTES,
     AWK_MAX_GETLINE_CACHED_FILES as MAX_GETLINE_CACHED_FILES,
     AWK_MAX_GETLINE_FILE_BYTES as MAX_GETLINE_FILE_BYTES,
     AWK_MAX_OUTPUT_BYTES as MAX_AWK_OUTPUT_BYTES, AWK_MAX_OUTPUT_TARGETS as MAX_AWK_OUTPUT_TARGETS,
+    AWK_MAX_STRING_BYTES,
 };
 use crate::builtins::search_common::RuntimeRegexCache;
 use crate::fs::{FileSystem, normalize_path};
@@ -209,6 +210,24 @@ pub(super) struct AwkInterpreter {
     pub(super) execution_budget: Option<crate::limits::ExecutionBudget>,
     /// Set once a resource limit aborted the program (see `fatal`).
     fatal: bool,
+    /// Cap on accounted variable bytes; the host's
+    /// `max_live_intermediate_bytes`. THREAT[TM-DOS-110].
+    pub(super) max_state_bytes: usize,
+    /// Accounted bytes of values parked in user-function call frames.
+    pinned_bytes: usize,
+}
+
+/// Which matches `replace_checked` substitutes.
+#[derive(Clone, Copy)]
+enum Replace {
+    All,
+    Nth(usize),
+}
+
+/// `format_string` failure: a user-facing diagnostic, or the string cap.
+enum FormatError {
+    Message(String),
+    TooLarge,
 }
 
 impl AwkInterpreter {
@@ -235,7 +254,90 @@ impl AwkInterpreter {
             regex_cache: RuntimeRegexCache::default(),
             execution_budget: None,
             fatal: false,
+            max_state_bytes: ExecutionLimits::default().max_live_intermediate_bytes as usize,
+            pinned_bytes: 0,
         }
+    }
+
+    pub(super) fn is_fatal(&self) -> bool {
+        self.fatal
+    }
+
+    /// THREAT[TM-DOS-110]: a single string may not exceed
+    /// `AWK_MAX_STRING_BYTES`. Callers check a size before allocating it.
+    fn string_fits(&mut self, len: usize) -> bool {
+        if len > AWK_MAX_STRING_BYTES {
+            self.fatal(&format!(
+                "string size limit ({AWK_MAX_STRING_BYTES} bytes) exceeded"
+            ));
+            return false;
+        }
+        true
+    }
+
+    /// THREAT[TM-DOS-110]: variables, array elements and parked call-frame
+    /// values together stay within the host's live-bytes limit. Checked at
+    /// every expression, so growth overshoots by at most one assignment.
+    ///
+    /// Decision: a local cap, not an `ExecutionBudgetLease`. A lease that
+    /// runs out poisons the whole request, while this fails only the awk
+    /// command (fatal, exit 2) and the script carries on, like every other
+    /// awk cap (TM-DOS-109).
+    fn memory_fits(&mut self) -> bool {
+        if self.fatal {
+            return false;
+        }
+        if self.state.mem_bytes + self.pinned_bytes > self.max_state_bytes {
+            let msg = format!("memory limit ({} bytes) exceeded", self.max_state_bytes);
+            self.fatal(&msg);
+            return false;
+        }
+        true
+    }
+
+    /// `sub`/`gsub`/`gensub` core: substitute matches of `re` in `target`,
+    /// checking the result against the string cap as it grows (a 10 KB
+    /// target and replacement would otherwise build 100 MB first).
+    /// `expand` interprets `$N` group references in `rep`.
+    fn replace_checked(
+        &mut self,
+        re: &regex::Regex,
+        target: &str,
+        rep: &str,
+        which: Replace,
+        expand: bool,
+    ) -> Option<(String, usize)> {
+        let mut out = String::new();
+        let mut last = 0;
+        let mut count = 0;
+        for caps in re.captures_iter(target) {
+            let Some(m) = caps.get(0) else { continue };
+            count += 1;
+            out.push_str(&target[last..m.start()]);
+            let hit = match which {
+                Replace::All => true,
+                Replace::Nth(n) => count == n,
+            };
+            if !hit {
+                out.push_str(m.as_str());
+            } else if expand {
+                caps.expand(rep, &mut out);
+            } else {
+                out.push_str(rep);
+            }
+            last = m.end();
+            if !self.string_fits(out.len()) {
+                return None;
+            }
+            if matches!(which, Replace::Nth(n) if count >= n) {
+                break;
+            }
+        }
+        if !self.string_fits(out.len() + target.len() - last) {
+            return None;
+        }
+        out.push_str(&target[last..]);
+        Some((out, count))
     }
 
     /// Abort the program because a resource limit was reached.
@@ -384,6 +486,9 @@ impl AwkInterpreter {
     }
 
     fn eval_expr(&mut self, expr: &AwkExpr) -> AwkValue {
+        if !self.memory_fits() {
+            return AwkValue::Uninitialized;
+        }
         match expr {
             AwkExpr::Number(n) => AwkValue::Number(*n),
             AwkExpr::String(s) => AwkValue::String(s.clone()),
@@ -479,7 +584,11 @@ impl AwkInterpreter {
                     }
                     "SUBSEP_CONCAT" => {
                         let subsep = self.state.get_variable("SUBSEP").as_string();
-                        AwkValue::String(format!("{}{}{}", l.as_string(), subsep, r.as_string()))
+                        let (l, r) = (l.as_string(), r.as_string());
+                        if !self.string_fits(l.len() + subsep.len() + r.len()) {
+                            return AwkValue::Uninitialized;
+                        }
+                        AwkValue::String(format!("{l}{subsep}{r}"))
                     }
                     _ => AwkValue::Uninitialized,
                 }
@@ -496,11 +605,14 @@ impl AwkInterpreter {
                 _ => self.eval_expr(expr),
             },
             AwkExpr::Concat(parts) => {
-                let s: String = parts
+                let parts: Vec<String> = parts
                     .iter()
                     .map(|p| self.eval_expr(p).as_string())
                     .collect();
-                AwkValue::String(s)
+                if !self.string_fits(parts.iter().map(String::len).sum()) {
+                    return AwkValue::Uninitialized;
+                }
+                AwkValue::String(parts.concat())
             }
             AwkExpr::ArrayAssign(name, key, val) => {
                 let k = self.eval_expr(key).as_string();
@@ -532,6 +644,27 @@ impl AwkInterpreter {
                 if n == 0 {
                     self.state.set_variable("$0", v.clone());
                 } else {
+                    if n > AWK_MAX_FIELD_INDEX {
+                        self.fatal(&format!(
+                            "field index limit ({AWK_MAX_FIELD_INDEX}) exceeded"
+                        ));
+                        return AwkValue::Uninitialized;
+                    }
+                    // The rebuilt $0 must fit before any field is created.
+                    let value_len = v.as_string().len();
+                    let nf = n.max(self.state.fields.len());
+                    let kept: usize = self
+                        .state
+                        .fields
+                        .iter()
+                        .enumerate()
+                        .filter(|(i, _)| *i != n - 1)
+                        .map(|(_, f)| f.len())
+                        .sum();
+                    let seps = (nf - 1).saturating_mul(self.state.ofs.len());
+                    if !self.string_fits(kept + value_len + seps) {
+                        return AwkValue::Uninitialized;
+                    }
                     // Extend fields if needed
                     while self.state.fields.len() < n {
                         self.state.fields.push(String::new());
@@ -689,6 +822,10 @@ impl AwkInterpreter {
                 if let AwkExpr::Variable(arr_name) = &args[1] {
                     self.state.clear_array(arr_name);
                     for (i, part) in parts.iter().enumerate() {
+                        // One call can create millions of elements.
+                        if !self.memory_fits() {
+                            return AwkValue::Uninitialized;
+                        }
                         let key = format!("{}[{}]", arr_name, i + 1);
                         self.state
                             .set_variable(&key, AwkValue::String(part.to_string()));
@@ -705,10 +842,14 @@ impl AwkInterpreter {
                 let values: Vec<AwkValue> = args[1..].iter().map(|a| self.eval_expr(a)).collect();
                 match self.format_string(&format, &values) {
                     Ok(s) => AwkValue::String(s),
-                    Err(e) => {
+                    Err(FormatError::Message(e)) => {
                         self.stderr_output.push_str(&e);
                         self.stderr_output.push('\n');
                         AwkValue::String(String::new())
+                    }
+                    Err(FormatError::TooLarge) => {
+                        self.string_fits(usize::MAX);
+                        AwkValue::Uninitialized
                     }
                 }
             }
@@ -741,15 +882,15 @@ impl AwkInterpreter {
                 let target = self.eval_expr(&target_expr).as_string();
 
                 if let Some(re) = self.runtime_regex(&pattern) {
-                    let (result, count) = if name == "gsub" {
-                        let count = re.find_iter(&target).count();
-                        (
-                            re.replace_all(&target, replacement.as_str()).to_string(),
-                            count,
-                        )
+                    let which = if name == "gsub" {
+                        Replace::All
                     } else {
-                        let count = if re.is_match(&target) { 1 } else { 0 };
-                        (re.replace(&target, replacement.as_str()).to_string(), count)
+                        Replace::Nth(1)
+                    };
+                    let Some((result, count)) =
+                        self.replace_checked(&re, &target, &replacement, which, true)
+                    else {
+                        return AwkValue::Number(0.0);
                     };
 
                     // Update the target variable or field
@@ -875,21 +1016,15 @@ impl AwkInterpreter {
                     self.state.get_field(0).as_string()
                 };
                 if let Some(re) = self.runtime_regex(&pattern) {
-                    if how == "g" || how == "G" {
-                        AwkValue::String(re.replace_all(&target, replacement.as_str()).to_string())
+                    let (which, expand) = if how == "g" || how == "G" {
+                        (Replace::All, true)
                     } else {
                         // Replace nth occurrence (default 1st)
-                        let n = how.parse::<usize>().unwrap_or(1);
-                        let mut count = 0;
-                        let result = re.replace_all(&target, |caps: &regex::Captures| -> String {
-                            count += 1;
-                            if count == n {
-                                replacement.clone()
-                            } else {
-                                caps[0].to_string()
-                            }
-                        });
-                        AwkValue::String(result.to_string())
+                        (Replace::Nth(how.parse::<usize>().unwrap_or(1)), false)
+                    };
+                    match self.replace_checked(&re, &target, &replacement, which, expand) {
+                        Some((result, _)) => AwkValue::String(result),
+                        None => AwkValue::Uninitialized,
                     }
                 } else {
                     AwkValue::String(target)
@@ -977,10 +1112,18 @@ impl AwkInterpreter {
         }
         self.call_depth += 1;
 
-        // Save current local variables that will be shadowed
-        let mut saved: Vec<(String, AwkValue)> = Vec::new();
+        // Save current local variables that will be shadowed. Stored values
+        // move out of the map and stay accounted as pinned bytes, so deep
+        // recursion cannot duplicate memory past the cap (TM-DOS-110).
+        let mut saved: Vec<(String, AwkValue, bool)> = Vec::new();
         for param in &func.params {
-            saved.push((param.clone(), self.state.get_variable(param)));
+            match self.state.remove_var(param) {
+                Some(val) => {
+                    self.pinned_bytes += super::var_cost(param, &val);
+                    saved.push((param.clone(), val, true));
+                }
+                None => saved.push((param.clone(), self.state.get_variable(param), false)),
+            }
         }
 
         // Bind arguments to parameters
@@ -1007,7 +1150,10 @@ impl AwkInterpreter {
         }
 
         // Restore saved variables
-        for (name, val) in saved {
+        for (name, val, pinned) in saved {
+            if pinned {
+                self.pinned_bytes -= super::var_cost(&name, &val);
+            }
             self.state.set_variable(&name, val);
         }
 
@@ -1022,7 +1168,7 @@ impl AwkInterpreter {
         &self,
         format: &str,
         values: &[AwkValue],
-    ) -> std::result::Result<String, String> {
+    ) -> std::result::Result<String, FormatError> {
         let mut result = String::new();
         let mut chars = format.chars().peekable();
         let mut value_idx = 0;
@@ -1097,11 +1243,11 @@ impl AwkInterpreter {
                     && let Ok(w_val) = w.parse::<usize>()
                 {
                     if w_val > Self::MAX_FORMAT_WIDTH {
-                        return Err(format!(
+                        return Err(FormatError::Message(format!(
                             "awk: format width {} exceeds maximum ({})",
                             w_val,
                             Self::MAX_FORMAT_WIDTH
-                        ));
+                        )));
                     }
                     width = Some(w_val);
                 }
@@ -1122,11 +1268,11 @@ impl AwkInterpreter {
                         Some(0)
                     } else if let Ok(p_val) = p.parse::<usize>() {
                         if p_val > Self::MAX_FORMAT_WIDTH {
-                            return Err(format!(
+                            return Err(FormatError::Message(format!(
                                 "awk: format precision {} exceeds maximum ({})",
                                 p_val,
                                 Self::MAX_FORMAT_WIDTH
-                            ));
+                            )));
                         }
                         Some(p_val)
                     } else {
@@ -1236,6 +1382,11 @@ impl AwkInterpreter {
                 }
             } else {
                 result.push(c);
+            }
+            // THREAT[TM-DOS-110]: each conversion adds at most
+            // MAX_FORMAT_WIDTH (or one value); stop before the next one.
+            if result.len() > AWK_MAX_STRING_BYTES {
+                return Err(FormatError::TooLarge);
             }
         }
 
@@ -1349,7 +1500,7 @@ impl AwkInterpreter {
             // The builtin dispatcher reports the poisoned budget.
             self.fatal = true;
         }
-        if self.fatal {
+        if self.fatal || !self.memory_fits() {
             return AwkFlow::Exit(Some(2));
         }
         match action {
@@ -1358,6 +1509,15 @@ impl AwkInterpreter {
                     .iter()
                     .map(|e| self.eval_expr(e).as_string())
                     .collect();
+                if self.fatal {
+                    // A limit fired while evaluating the arguments.
+                    return AwkFlow::Exit(Some(2));
+                }
+                let len = parts.iter().map(String::len).sum::<usize>()
+                    + parts.len().saturating_sub(1) * self.state.ofs.len();
+                if !self.string_fits(len) {
+                    return AwkFlow::Exit(Some(2));
+                }
                 let mut text = parts.join(&self.state.ofs);
                 text.push_str(&self.state.ors);
                 if !self.write_output(&text, target) {
@@ -1370,6 +1530,9 @@ impl AwkInterpreter {
             AwkAction::Printf(format_expr, args, target) => {
                 let format_str = self.eval_expr(format_expr).as_string();
                 let values: Vec<AwkValue> = args.iter().map(|a| self.eval_expr(a)).collect();
+                if self.fatal {
+                    return AwkFlow::Exit(Some(2));
+                }
                 match self.format_string(&format_str, &values) {
                     Ok(text) => {
                         if !self.write_output(&text, target) {
@@ -1379,9 +1542,13 @@ impl AwkInterpreter {
                         }
                         AwkFlow::Continue
                     }
-                    Err(e) => {
+                    Err(FormatError::Message(e)) => {
                         self.stderr_output.push_str(&e);
                         self.stderr_output.push('\n');
+                        AwkFlow::Exit(Some(2))
+                    }
+                    Err(FormatError::TooLarge) => {
+                        self.string_fits(usize::MAX);
                         AwkFlow::Exit(Some(2))
                     }
                 }
@@ -1536,7 +1703,7 @@ impl AwkInterpreter {
                     self.state.clear_array(arr_name);
                 } else {
                     let full_key = format!("{}[{}]", arr_name, k);
-                    self.state.variables.remove(&full_key);
+                    self.state.remove_var(&full_key);
                 }
                 AwkFlow::Continue
             }

@@ -557,8 +557,13 @@ async fn test_awk_recursive_function_depth_limit() {
     )
     .await
     .unwrap();
-    // Should complete without crashing (returns Uninitialized -> empty string)
-    assert_eq!(result.exit_code, 0);
+    // Stops at the depth cap without crashing: a fatal error, exit 2.
+    assert_eq!(result.exit_code, 2);
+    assert_eq!(
+        result.stderr,
+        "awk: fatal: function call depth limit (64) exceeded\n"
+    );
+    assert_eq!(result.stdout, "");
 }
 
 #[tokio::test]
