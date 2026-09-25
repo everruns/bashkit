@@ -87,6 +87,52 @@ def test_grep_handles_paths_patterns_and_limits(backend, tmp_path):
     ]
 
 
+def test_grep_default_bounds_dense_maximum_file(backend):
+    """TM-DOS-106: omitted max_count cannot amplify one VFS file into millions of objects."""
+    import tracemalloc
+
+    content = "x\n" * 5_000_000
+    assert backend.write("/tmp/dense.txt", content).error is None
+
+    tracemalloc.start()
+    result = backend.grep("x", "/tmp")
+    _, peak_bytes = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+
+    assert result.error is None
+    assert result.truncated is True
+    assert len(result.matches) == 1000
+    assert sum(len(match["path"].encode()) + len(match["text"].encode()) for match in result.matches) <= 100_000
+    assert peak_bytes < 20_000_000
+
+
+async def test_cancelled_grep_stops_worker(backend):
+    """TM-DOS-106: cancelling the protocol call cooperatively stops its worker."""
+    import asyncio
+    import time
+
+    visited = 0
+    original_checkpoint = backend._charge
+
+    def slow_charge(budget, *, files=0, size=0):
+        nonlocal visited
+        visited += 1
+        time.sleep(0.002)
+        return original_checkpoint(budget, files=files, size=size)
+
+    for number in range(200):
+        assert backend.write(f"/tmp/cancel/{number}.txt", "absent").error is None
+    backend._charge = slow_charge
+    task = asyncio.create_task(backend.agrep("needle", "/tmp/cancel"))
+    await asyncio.sleep(0.02)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    count_at_cancel = visited
+    await asyncio.sleep(0.05)
+    assert visited <= count_at_cancel + 2
+
+
 async def test_async_protocol_shares_middleware_vfs(backend):
     tool = backend.create_middleware().tools[0]
     assert "done" in tool.invoke({"command": "echo shared > /tmp/shared.txt; echo done"})
