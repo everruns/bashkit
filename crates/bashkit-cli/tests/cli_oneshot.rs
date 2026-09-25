@@ -117,6 +117,47 @@ fn script_mode_propagates_exit_code() {
     assert_eq!(stdout(&out), "scripted\n");
 }
 
+// THREAT[TM-DOS-020]: run in a child so a stack-overflow regression fails
+// this test instead of aborting the entire Rust test process.
+#[cfg(unix)]
+fn run_with_two_mib_stack(script: &str) -> Output {
+    Command::new("sh")
+        .args([
+            "-c",
+            "set -e; ulimit -s 2048; exec \"$1\" --profile standard --no-stdin -c \"$2\"",
+            "sh",
+            BIN,
+            script,
+        ])
+        .env_remove("RUST_BACKTRACE")
+        .output()
+        .expect("spawn bashkit with small stack")
+}
+
+#[cfg(unix)]
+#[test]
+fn function_recursion_is_bounded_on_a_two_mib_stack() {
+    for script in ["f() { f; }; f", "f() { g; }; g() { f; }; f"] {
+        let out = run_with_two_mib_stack(script);
+        assert_eq!(out.status.code(), Some(1), "{script}: {}", stderr(&out));
+        assert!(
+            stderr(&out).contains("maximum function depth exceeded"),
+            "{script}: {}",
+            stderr(&out)
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn function_nesting_below_limit_works_on_a_two_mib_stack() {
+    let out = run_with_two_mib_stack(
+        "f() { if [ \"$1\" -eq 0 ]; then echo ok; else f \"$(( $1 - 1 ))\"; fi; }; f 8",
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "ok\n");
+}
+
 // ---------------------------------------------------------------------------
 // Stream routing
 // ---------------------------------------------------------------------------
