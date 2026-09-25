@@ -4,7 +4,9 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use super::{AwkAction, AwkExpr, AwkFunctionDef, AwkOutputTarget, AwkPattern, AwkState, AwkValue};
+use super::{
+    AwkAction, AwkExpr, AwkFunctionDef, AwkOutputTarget, AwkPattern, AwkState, AwkValue, FieldSep,
+};
 use crate::builtins::MAX_FORMAT_WIDTH;
 use crate::builtins::limits::{
     AWK_MAX_CALL_DEPTH as MAX_AWK_CALL_DEPTH,
@@ -612,20 +614,23 @@ impl AwkInterpreter {
                     return AwkValue::Number(0.0);
                 }
                 let s = self.eval_expr(&args[0]).as_string();
-                let sep = if args.len() > 2 {
-                    self.eval_expr(&args[2]).as_string()
-                } else {
-                    self.state.fs.clone()
+                // A regex constant (`/re/`) is always an ERE; a string follows
+                // the same rules as FS (see `FieldSep`).
+                let (sep, force_regex) = match args.get(2) {
+                    Some(AwkExpr::Regex(pattern)) => (pattern.clone(), true),
+                    Some(expr) => (self.eval_expr(expr).as_string(), false),
+                    None => (self.state.fs.clone(), false),
                 };
-
-                let parts: Vec<&str> = if sep == " " {
-                    s.split_whitespace().collect()
+                let regex = if (force_regex && !sep.is_empty()) || FieldSep::is_regex(&sep) {
+                    self.runtime_regex(&sep)
                 } else {
-                    s.split(&sep).collect()
+                    None
                 };
+                let parts = FieldSep::classify(&sep, regex.as_ref()).split(&s);
 
-                // Store in array variable
+                // Store in array variable, replacing any previous contents.
                 if let AwkExpr::Variable(arr_name) = &args[1] {
+                    self.state.clear_array(arr_name);
                     for (i, part) in parts.iter().enumerate() {
                         let key = format!("{}[{}]", arr_name, i + 1);
                         self.state
@@ -1436,18 +1441,7 @@ impl AwkInterpreter {
             AwkAction::Delete(arr_name, key) => {
                 let k = self.eval_expr(key).as_string();
                 if k == "*" {
-                    // Delete all entries in the array
-                    let prefix = format!("{}[", arr_name);
-                    let keys: Vec<String> = self
-                        .state
-                        .variables
-                        .keys()
-                        .filter(|k| k.starts_with(&prefix))
-                        .cloned()
-                        .collect();
-                    for key in keys {
-                        self.state.variables.remove(&key);
-                    }
+                    self.state.clear_array(arr_name);
                 } else {
                     let full_key = format!("{}[{}]", arr_name, k);
                     self.state.variables.remove(&full_key);

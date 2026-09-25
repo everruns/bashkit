@@ -508,6 +508,7 @@ Identified from eval analysis, all items now implemented:
   the `y = l n N P D T z F r R w W` commands, `#` comments and `#n`, atomic
   mode-preserving `-i`, and full getopt-style option parsing
 - [x] AWK `$0` modification with field re-splitting
+- [x] AWK regex field separators (`-F' +'`, `FS = "[,;]"`) and regex `split()` separators
 
 ### Not Planned
 - Interactive features (history, job control UI)
