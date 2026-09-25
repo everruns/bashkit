@@ -77,10 +77,47 @@ impl<V: jaq_core::ValT + 'static> data::DataT for InputData<V> {
     type Data<'a> = InputDataRef<'a, V>;
 }
 
-#[derive(Clone)]
+// THREAT[TM-DOS-110]: jaq-core creates/clones this context while evaluating
+// user defs, including recursion that never emits or operates on a value.
+// Count live contexts to stop stack growth; tick the deadline on every clone
+// so tail recursion cannot bypass the wall-clock limit.
+const MAX_JQ_LIVE_CONTEXTS: usize = 64;
+
 struct InputDataRef<'a, V: jaq_core::ValT + 'static> {
     lut: &'a jaq_core::Lut<InputData<V>>,
     inputs: &'a RcIter<dyn Iterator<Item = std::result::Result<V, String>> + 'a>,
+    live_contexts: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl<V: jaq_core::ValT + 'static> Clone for InputDataRef<'_, V> {
+    fn clone(&self) -> Self {
+        jaq_json::meter::tick();
+        let prior = self
+            .live_contexts
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if prior >= MAX_JQ_LIVE_CONTEXTS {
+            #[cfg(panic = "unwind")]
+            {
+                self.live_contexts
+                    .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+                jaq_json::meter::abort_recursion();
+            }
+            #[cfg(not(panic = "unwind"))]
+            jaq_json::meter::trip();
+        }
+        Self {
+            lut: self.lut,
+            inputs: self.inputs,
+            live_contexts: self.live_contexts.clone(),
+        }
+    }
+}
+
+impl<V: jaq_core::ValT + 'static> Drop for InputDataRef<'_, V> {
+    fn drop(&mut self) {
+        self.live_contexts
+            .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 impl<'a, V: jaq_core::ValT + 'static> data::HasLut<'a, InputData<V>> for InputDataRef<'a, V> {
@@ -368,9 +405,9 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
     // bytes against the caller's stdout limit and check the wall-clock deadline
     // periodically so a runaway filter aborts instead of wedging the host.
     //
-    // TODO: a filter that loops without emitting (`until(false; .)`) never
-    // reaches the deadline check below; jaq-core has no step hook to
-    // interrupt it. Tracked separately from TM-DOS-110 (memory).
+    // THREAT[TM-DOS-110]: Non-emitting filters also poll through value
+    // operations, and recursive defs poll through InputDataRef::clone. This
+    // closes the gap where neither output nor values change (#2465).
     let max_output_bytes = ctx
         .execution_extension::<ExecutionLimits>()
         .and_then(|limits| limits.try_with(|limits| limits.max_stdout_bytes).ok())
@@ -447,6 +484,7 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
             let data = InputDataRef {
                 lut: &filter.lut,
                 inputs: &shared_inputs,
+                live_contexts: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(1)),
             };
             let cv_ctx = Ctx::<InputData<Val>>::new(data, Vars::new(var_vals));
 
@@ -526,6 +564,12 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
             Some(jaq_json::meter::Abort::Memory) => return size_error(&meter),
             Some(jaq_json::meter::Abort::Interrupted) => {
                 return Ok(ExecResult::err("jq: execution timed out\n".to_string(), 5));
+            }
+            Some(jaq_json::meter::Abort::Recursion) => {
+                return Ok(ExecResult::err(
+                    format!("jq: error: recursion limit ({MAX_JQ_LIVE_CONTEXTS}) exceeded\n"),
+                    5,
+                ));
             }
             None => std::panic::resume_unwind(payload),
         },
