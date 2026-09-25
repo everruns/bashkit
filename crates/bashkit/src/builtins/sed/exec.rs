@@ -35,7 +35,6 @@ pub(super) struct InputLine {
 /// Output buffer that reproduces GNU sed's missing-newline handling.
 pub(super) struct Sink {
     pub(super) buf: BudgetedString,
-    max_bytes: Option<usize>,
     pub(super) error: Option<LimitExceeded>,
     missing_newline: bool,
     /// Line terminator: `\n`, or NUL under `-z`.
@@ -43,7 +42,7 @@ pub(super) struct Sink {
 }
 
 impl Sink {
-    fn with_sep(sep: char, max_bytes: Option<usize>, budget: Option<&ExecutionBudget>) -> Self {
+    fn with_sep(sep: char, budget: Option<&ExecutionBudget>) -> Self {
         let (buf, error) = match BudgetedString::new(budget) {
             Ok(buf) => (buf, None),
             Err(error) => (
@@ -53,7 +52,6 @@ impl Sink {
         };
         Sink {
             buf,
-            max_bytes,
             error,
             missing_newline: false,
             sep,
@@ -89,17 +87,6 @@ impl Sink {
 
     fn push_str(&mut self, text: &str) {
         if self.error.is_some() {
-            return;
-        }
-        let exceeds_destination = self
-            .buf
-            .len()
-            .checked_add(text.len())
-            .is_none_or(|len| self.max_bytes.is_some_and(|max| len > max));
-        if exceeds_destination {
-            self.error = Some(LimitExceeded::Memory(
-                "sed output exceeds configured stdout limit".into(),
-            ));
             return;
         }
         if let Err(error) = self.buf.try_push_str(text) {
@@ -190,7 +177,7 @@ impl<'a> Machine<'a> {
         sep: char,
         execution_budget: Option<ExecutionBudget>,
     ) -> Self {
-        let out = Sink::with_sep(sep, None, execution_budget.as_ref());
+        let out = Sink::with_sep(sep, execution_budget.as_ref());
         Machine {
             prog,
             names,
@@ -226,16 +213,12 @@ impl<'a> Machine<'a> {
     }
 
     /// Run one input stream and return everything it wrote to stdout.
-    pub(super) fn run_segment(
-        &mut self,
-        lines: &'a [InputLine],
-        max_bytes: Option<usize>,
-    ) -> Result<String, LimitExceeded> {
+    pub(super) fn run_segment(&mut self, lines: &'a [InputLine]) -> Result<String, LimitExceeded> {
         self.lines = lines;
         self.cursor = 0;
         self.line_no = 0;
         self.range = vec![RangeState::default(); self.prog.cmds.len()];
-        self.out = Sink::with_sep(self.sep, max_bytes, self.execution_budget.as_ref());
+        self.out = Sink::with_sep(self.sep, self.execution_budget.as_ref());
 
         let mut restart = false;
         // THREAT[TM-DOS]: `D` restarts the script without reading input, so a
@@ -285,7 +268,7 @@ impl<'a> Machine<'a> {
             }
         }
 
-        let replacement = Sink::with_sep(self.sep, max_bytes, self.execution_budget.as_ref());
+        let replacement = Sink::with_sep(self.sep, self.execution_budget.as_ref());
         let out = std::mem::replace(&mut self.out, replacement);
         match out.error {
             Some(error) => Err(error),
@@ -566,7 +549,7 @@ impl<'a> Machine<'a> {
                 let sep = self.sep;
                 self.write_files
                     .entry(name.to_string())
-                    .or_insert_with(|| Sink::with_sep(sep, None, self.execution_budget.as_ref()))
+                    .or_insert_with(|| Sink::with_sep(sep, self.execution_budget.as_ref()))
                     .line(text, had_newline)
             }
         }

@@ -34,7 +34,7 @@ use super::{Builtin, Context};
 use crate::error::Result;
 use crate::fs::vfs_join;
 use crate::interpreter::ExecResult;
-use crate::limits::{ExecutionBudget, ExecutionLimits};
+use crate::limits::ExecutionBudget;
 
 const HELP: &str = "Usage: sed [OPTION]... {script} [FILE]...\n\
 Stream editor for filtering and transforming text.\n\n  \
@@ -403,10 +403,12 @@ impl Builtin for Sed {
             vec![lines]
         };
 
-        let max_stdout_bytes = ctx
-            .execution_extension::<ExecutionLimits>()
-            .and_then(|limits| limits.try_with(|limits| limits.max_stdout_bytes).ok())
-            .unwrap_or_else(|| ExecutionLimits::default().max_stdout_bytes);
+        // THREAT[TM-DOS-112]: sed's sinks grow inside the builtin, so they are
+        // charged to the shared live-intermediate budget before allocating. The
+        // stdout *capture* cap is deliberately not used here: sed's output may
+        // be piped to another command or redirected to a file, neither of which
+        // is captured stdout, so bounding it by that cap would truncate
+        // ordinary transformations (see #2455).
         let execution_budget = ctx
             .execution_budget()
             .and_then(|budget| budget.try_with(ExecutionBudget::clone).ok());
@@ -429,9 +431,7 @@ impl Builtin for Sed {
             }
             let name = names.get(index).map(String::as_str).unwrap_or("-");
             let in_place = opts.separate && opts.in_place.is_some() && name != "-";
-            let destination_limit =
-                (!in_place).then(|| max_stdout_bytes.saturating_sub(stdout.len()));
-            let produced = match machine.run_segment(segment, destination_limit) {
+            let produced = match machine.run_segment(segment) {
                 Ok(produced) => produced,
                 Err(error) => return Ok(ExecResult::err(format!("sed: {error}\n"), 1)),
             };
