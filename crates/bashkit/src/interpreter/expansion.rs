@@ -119,18 +119,41 @@ impl Interpreter {
     /// Quote expansion output that came from a quoted segment of a mixed word.
     /// THREAT[TM-INF-022]: Quoted user-controlled values must stay literal; only
     /// unquoted suffix/prefix glob syntax in the source word may drive expansion.
+    /// The one definition of which characters the quoting above escapes.
+    ///
+    /// THREAT[TM-DOS-115]: `expansion_appended_len` charges the execution budget
+    /// for what `append_expansion_for_word` is about to append, so both must
+    /// agree on this set. Keeping it in one place stops the byte charge from
+    /// silently under-counting when a metacharacter is added.
+    fn needs_glob_escape(ch: char) -> bool {
+        matches!(
+            ch,
+            '\\' | '*' | '?' | '[' | ']' | '{' | '}' | '@' | '!' | '+' | '(' | ')' | '|'
+        )
+    }
+
     pub(super) fn quote_expansion_for_quoted_glob(value: &str) -> String {
         let mut quoted = String::with_capacity(value.len());
         for ch in value.chars() {
-            if matches!(
-                ch,
-                '\\' | '*' | '?' | '[' | ']' | '{' | '}' | '@' | '!' | '+' | '(' | ')' | '|'
-            ) {
+            if Self::needs_glob_escape(ch) {
                 quoted.push('\\');
             }
             quoted.push(ch);
         }
         quoted
+    }
+
+    /// How many bytes `append_expansion_for_word` will append for `value`,
+    /// counted before anything is allocated so the budget is charged first.
+    fn expansion_appended_len(word: &Word, value: &str) -> usize {
+        if word.quoted && word.has_unquoted_glob {
+            value
+                .chars()
+                .map(|ch| ch.len_utf8() + usize::from(Self::needs_glob_escape(ch)))
+                .sum()
+        } else {
+            value.len()
+        }
     }
 
     pub(super) fn append_expansion_for_word(result: &mut String, word: &Word, value: &str) {
@@ -143,6 +166,9 @@ impl Interpreter {
 
     pub(super) async fn expand_word_inner(&mut self, word: &Word) -> Result<String> {
         let mut result = String::new();
+        // Keep command-substitution bytes charged until the complete word has
+        // been consumed; sibling substitutions otherwise evade live-byte caps.
+        let mut substitution_leases = Vec::new();
         let mut is_first_part = true;
 
         for part in &word.parts {
@@ -206,6 +232,8 @@ impl Interpreter {
                     // THREAT[TM-DOS-089]: Delegate to Box::pin-ed helper to
                     // prevent stack growth proportional to nesting depth.
                     let trimmed = self.execute_cmd_subst(commands).await?;
+                    let appended_bytes = Self::expansion_appended_len(word, &trimmed);
+                    substitution_leases.push(self.execution_budget.lease_bytes(appended_bytes)?);
                     Self::append_expansion_for_word(&mut result, word, &trimmed);
                 }
                 WordPart::ArithmeticExpansion(expr) => {
@@ -1734,5 +1762,50 @@ impl Interpreter {
             }
         }
         value.to_string()
+    }
+}
+
+#[cfg(test)]
+mod expansion_charge_tests {
+    use super::*;
+
+    fn word(quoted: bool, has_unquoted_glob: bool) -> Word {
+        Word {
+            parts: Vec::new(),
+            quoted,
+            has_unquoted_glob,
+            part_quoted: Vec::new(),
+        }
+    }
+
+    /// THREAT[TM-DOS-115]: the budget charge must equal what actually gets
+    /// appended. If these drift, a substitution is under-charged and the
+    /// live-byte cap stops bounding it.
+    #[test]
+    fn appended_len_matches_what_append_writes() {
+        let values = [
+            "",
+            "plain text",
+            "*?[]{}@!+()|\\",
+            "mixed *glob* and text",
+            "unicode: héllo → 世界 *",
+            "\\\\already\\\\escaped",
+            "trailing backslash \\",
+        ];
+        for quoted in [false, true] {
+            for has_unquoted_glob in [false, true] {
+                let w = word(quoted, has_unquoted_glob);
+                for value in values {
+                    let mut appended = String::new();
+                    Interpreter::append_expansion_for_word(&mut appended, &w, value);
+                    assert_eq!(
+                        Interpreter::expansion_appended_len(&w, value),
+                        appended.len(),
+                        "charge != appended for {value:?} \
+                         (quoted={quoted}, has_unquoted_glob={has_unquoted_glob})"
+                    );
+                }
+            }
+        }
     }
 }

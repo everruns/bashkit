@@ -2,6 +2,7 @@
 
 ## 2026-09-25
 
+* **Security**: TM-DOS-115 added. The optimized `$(<file)` path now charges command, session-command, work, and live-intermediate budgets; accumulated sibling substitutions remain leased through word expansion. See [Threat Model](security/threat-model.md).
 * **Security**: TM-DOS-110 added. A value growing inside awk or jq (`s = s s`, `until(false; . + .)`) allocated until the host process aborted (#2444). awk checks strings against a 16 MiB cap before allocating and caps variable memory at `max_live_intermediate_bytes`; jq meters every live value against the same limit and polls the deadline from value operations, so non-emitting loops stop too. See [Threat Model](security/threat-model.md).
 * **Decision**: jaq-json is vendored, because a `[patch.crates-io]` override does not reach crates.io users and its value operations had no size hook. Mechanical adaptation and upstream sync are scripted, and syncing is a maintenance step. See [Vendored jaq-json](runtimes/jaq-json-vendor.md), [Dependency Policy](operations/dependencies.md) and [Maintenance](operations/maintenance.md).
 

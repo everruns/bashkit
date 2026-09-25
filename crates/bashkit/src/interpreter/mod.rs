@@ -64,7 +64,7 @@ use crate::builtins::{self, Builtin};
 use crate::error::Error;
 use crate::error::Result;
 use crate::fs::FileSystem;
-use crate::limits::{ExecutionCounters, ExecutionLimits, SessionLimits};
+use crate::limits::{BudgetedString, ExecutionCounters, ExecutionLimits, SessionLimits};
 
 /// A single command history entry.
 #[derive(Debug, Clone)]
@@ -2894,13 +2894,7 @@ impl Interpreter {
                 Ok(ExecResult::ok(String::new()))
             });
 
-            // Check command count limit (per-exec)
-            self.execution_budget.consume_work(1)?;
-            self.counters.tick_command(&self.limits)?;
-            // THREAT[TM-DOS-059]: Check session-level command limit
-            self.counters
-                .check_session_limits(&self.session_limits)
-                .map_err(|e| crate::error::Error::Execution(e.to_string()))?;
+            self.charge_command_execution()?;
 
             match command {
                 Command::Simple(simple) => self.execute_simple_command(simple, None).await,
@@ -3019,6 +3013,16 @@ impl Interpreter {
                 }
             }
         })
+    }
+
+    /// Charge every executable AST command, including optimized command forms.
+    fn charge_command_execution(&mut self) -> Result<()> {
+        self.execution_budget.consume_work(1)?;
+        self.counters.tick_command(&self.limits)?;
+        // THREAT[TM-DOS-059]: Check session-level command limit.
+        self.counters
+            .check_session_limits(&self.session_limits)
+            .map_err(|e| crate::error::Error::Execution(e.to_string()))
     }
 
     /// Execute a compound command (if, for, while, etc.)
@@ -8945,12 +8949,16 @@ impl Interpreter {
             // Command substitution runs in a subshell: snapshot all
             // mutable state so mutations don't leak to the parent.
             let snapshot = self.snapshot_subshell_state();
-            let mut stdout = String::new();
+            // THREAT[TM-DOS-111]: Expansion happens before top-level output caps,
+            // so reserve every byte before growing the substitution buffer.
+            let mut stdout = BudgetedString::new(Some(&self.execution_budget))?;
             let file_read = Self::cmd_subst_file_read(commands);
             if let Some(redirects) = file_read {
                 // `$(<file)` / `$(< file)`: bash's shorthand for `$(cat file)`
                 // (#2448). A bare input redirect would otherwise run an empty
                 // command and produce nothing.
+                // The optimized read replaces execution, not its accounting.
+                self.charge_command_execution()?;
                 let read = if self.logic_only_redirect_error(redirects).is_some() {
                     Err(crate::error::Error::CommandFailure(String::new()))
                 } else {
@@ -8959,7 +8967,11 @@ impl Interpreter {
                 match read {
                     Ok(content) => {
                         if let Some(content) = content {
-                            stdout.push_str(&content.command_substitution_text());
+                            // Account for the VFS-owned input while it and the
+                            // decoded substitution text are simultaneously live.
+                            let _content_lease =
+                                self.execution_budget.lease_bytes(content.len())?;
+                            stdout.try_push_str(&content.command_substitution_text())?;
                         }
                         self.last_exit_code = 0;
                     }
@@ -8972,7 +8984,7 @@ impl Interpreter {
             let commands: &[Command] = if file_read.is_some() { &[] } else { commands };
             for cmd in commands {
                 let cmd_result = self.execute_command(cmd).await?;
-                stdout.push_str(&cmd_result.stdout.command_substitution_text());
+                stdout.try_push_str(&cmd_result.stdout.command_substitution_text())?;
                 self.last_exit_code = cmd_result.exit_code;
                 if matches!(cmd_result.control_flow, ControlFlow::Exit(_)) {
                     break;
@@ -8992,13 +9004,15 @@ impl Interpreter {
                     .execute_capture_only_sequence(&trap_script.commands)
                     .await
             {
-                stdout.push_str(&trap_result.stdout.command_substitution_text());
+                stdout.try_push_str(&trap_result.stdout.command_substitution_text())?;
             }
             self.restore_subshell_state(snapshot);
             self.counters.pop_subst();
             self.subst_generation += 1;
-            let trimmed = stdout.trim_end_matches('\n');
-            Ok(trimmed.to_string())
+            let trimmed_len = stdout.trim_end_matches('\n').len();
+            let mut stdout = stdout.into_inner();
+            stdout.truncate(trimmed_len);
+            Ok(stdout)
         })
     }
 
