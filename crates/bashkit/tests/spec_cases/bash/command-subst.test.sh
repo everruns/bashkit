@@ -289,3 +289,31 @@ echo "rc=$? [$x]"
 ### expect
 rc=1 []
 ### end
+
+### subst_file_read_backticks
+# `<file` is the backtick spelling of $(<file)
+echo tick > /tmp/cs_tick
+x=`</tmp/cs_tick`
+echo "[$x]"
+### expect
+[tick]
+### end
+
+### subst_file_read_in_arithmetic
+# $(<file) and $(cat file) inside $(( )) read the file
+echo 5 > /tmp/cs_num
+echo $(( $(</tmp/cs_num) + 1 ))
+echo $(( $(cat /tmp/cs_num) * 2 ))
+### expect
+6
+10
+### end
+
+### subst_file_read_word_split
+# Unquoted $(<file) word-splits like any substitution
+printf 'a b\nc\n' > /tmp/cs_words
+set -- $(</tmp/cs_words)
+echo "$#"
+### expect
+3
+### end

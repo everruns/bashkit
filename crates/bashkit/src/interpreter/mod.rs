@@ -9489,17 +9489,13 @@ impl Interpreter {
                         if self.counters.push_subst(&self.limits).is_err() {
                             result.push('0');
                         } else {
-                            let snapshot = self.snapshot_subshell_state();
-                            let cmd_result =
-                                self.execute_command_sequence(&script.commands).await?;
-                            self.restore_subshell_state(snapshot);
-                            self.counters.pop_subst();
-                            let command_output = cmd_result.stdout.command_substitution_text();
-                            let trimmed = command_output.trim_end_matches('\n');
+                            // Same subshell semantics as `$(...)` in words,
+                            // including the `$(<file)` shorthand.
+                            let trimmed = self.execute_cmd_subst(&script.commands).await?;
                             if trimmed.is_empty() {
                                 result.push('0');
                             } else {
-                                result.push_str(trimmed);
+                                result.push_str(&trimmed);
                             }
                         }
                     }
