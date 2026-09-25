@@ -5409,26 +5409,34 @@ impl Interpreter {
                         let resolved_name = self.resolve_nameref(&assignment.name).to_string();
                         if self.scoped.assoc_arrays.contains_key(&resolved_name) {
                             let key = self.expand_assoc_key(index_str).await?;
-                            let is_new_entry = self
+                            let existing = self
                                 .scoped
                                 .assoc_arrays
                                 .get(&resolved_name)
-                                .is_none_or(|a| !a.contains_key(&key));
-                            if is_new_entry
-                                && self
-                                    .memory_budget
-                                    .check_array_entries(1, &self.memory_limits)
-                                    .is_err()
-                            {
-                                // Budget exceeded — skip
+                                .and_then(|a| a.get(&key))
+                                .cloned();
+                            let is_new_entry = existing.is_none();
+                            let old_len = existing.as_ref().map_or(0, String::len);
+                            let new_len = if assignment.append {
+                                old_len + value.len()
                             } else {
-                                if is_new_entry {
-                                    self.memory_budget.record_array_insert(1);
-                                }
+                                value.len()
+                            };
+                            // A new entry also charges its key; an overwrite only
+                            // charges the value delta.
+                            let added = if is_new_entry {
+                                key.len() + new_len
+                            } else {
+                                new_len
+                            };
+                            if self.admit_array_write(
+                                usize::from(is_new_entry),
+                                added,
+                                if is_new_entry { 0 } else { old_len },
+                            ) {
                                 let arr = self.assoc_arrays_mut().entry(resolved_name).or_default();
                                 if assignment.append {
-                                    let existing = arr.get(&key).cloned().unwrap_or_default();
-                                    arr.insert(key, existing + &value);
+                                    arr.insert(key, existing.unwrap_or_default() + &value);
                                 } else {
                                     arr.insert(key, value);
                                 }
@@ -5436,26 +5444,27 @@ impl Interpreter {
                         } else {
                             let index =
                                 self.resolve_indexed_array_subscript(&resolved_name, index_str);
-                            let is_new_entry = self
+                            let existing = self
                                 .scoped
                                 .arrays
                                 .get(&resolved_name)
-                                .is_none_or(|a| !a.contains_key(&index));
-                            if is_new_entry
-                                && self
-                                    .memory_budget
-                                    .check_array_entries(1, &self.memory_limits)
-                                    .is_err()
-                            {
-                                // Budget exceeded — skip
+                                .and_then(|a| a.get(&index))
+                                .cloned();
+                            let is_new_entry = existing.is_none();
+                            let old_len = existing.as_ref().map_or(0, String::len);
+                            let new_len = if assignment.append {
+                                old_len + value.len()
                             } else {
-                                if is_new_entry {
-                                    self.memory_budget.record_array_insert(1);
-                                }
+                                value.len()
+                            };
+                            if self.admit_array_write(
+                                usize::from(is_new_entry),
+                                new_len,
+                                if is_new_entry { 0 } else { old_len },
+                            ) {
                                 let arr = self.arrays_mut().entry(resolved_name).or_default();
                                 if assignment.append {
-                                    let existing = arr.get(&index).cloned().unwrap_or_default();
-                                    arr.insert(index, existing + &value);
+                                    arr.insert(index, existing.unwrap_or_default() + &value);
                                 } else {
                                     arr.insert(index, value);
                                 }
@@ -7451,18 +7460,23 @@ impl Interpreter {
         let retained_indexed = self.remember_local_array_binding(name);
         let retained_assoc = self.remember_local_assoc_array_binding(name);
         if !keep_indexed {
-            let removed = self.arrays_mut().remove(name).map_or(0, |arr| arr.len());
+            let removed = self
+                .arrays_mut()
+                .remove(name)
+                .map_or((0, 0), |arr| (arr.len(), Self::indexed_array_bytes(&arr)));
             if !retained_indexed {
-                self.memory_budget.record_array_remove(removed);
+                self.memory_budget.record_array_remove(removed.0);
+                self.memory_budget.release_array_bytes(removed.1);
             }
         }
         if !keep_assoc {
             let removed = self
                 .assoc_arrays_mut()
                 .remove(name)
-                .map_or(0, |arr| arr.len());
+                .map_or((0, 0), |arr| (arr.len(), Self::assoc_array_bytes(&arr)));
             if !retained_assoc {
-                self.memory_budget.record_array_remove(removed);
+                self.memory_budget.record_array_remove(removed.0);
+                self.memory_budget.release_array_bytes(removed.1);
             }
         }
     }
@@ -7829,12 +7843,22 @@ impl Interpreter {
                 let key = &arg[bracket + 1..arg.len() - 1];
                 let expanded_key = self.expand_variable_or_literal(key);
                 let resolved_name = self.resolve_nameref(arr_name).to_string();
-                if let Some(arr) = self.assoc_arrays_mut().get_mut(&resolved_name) {
-                    arr.remove(&expanded_key);
+                // THREAT[TM-DOS-114]: releasing one element must give back both
+                // its entry slot and its bytes, or repeated set/unset cycles
+                // drift the budget until a healthy script is refused.
+                let released = if let Some(arr) = self.assoc_arrays_mut().get_mut(&resolved_name) {
+                    arr.remove(&expanded_key)
+                        .map(|value| expanded_key.len() + value.len())
                 } else if let Some(arr) = self.arrays_mut().get_mut(&resolved_name)
                     && let Ok(idx) = key.parse::<usize>()
                 {
-                    arr.remove(&idx);
+                    arr.remove(&idx).map(|value| value.len())
+                } else {
+                    None
+                };
+                if let Some(bytes) = released {
+                    self.memory_budget.record_array_remove(1);
+                    self.memory_budget.release_array_bytes(bytes);
                 }
                 continue;
             }
@@ -7861,8 +7885,21 @@ impl Interpreter {
                 }
                 self.vars_mut().remove(&resolved);
                 self.env.remove(&resolved);
-                self.arrays_mut().remove(&resolved);
-                self.assoc_arrays_mut().remove(&resolved);
+                // THREAT[TM-DOS-114]: `unset arr` must return the array's entry
+                // slots and bytes to the budget. Without this a set/unset cycle
+                // drifts until a healthy script is refused.
+                let released = self
+                    .arrays_mut()
+                    .remove(&resolved)
+                    .map_or((0, 0), |arr| (arr.len(), Self::indexed_array_bytes(&arr)));
+                let released_assoc = self
+                    .assoc_arrays_mut()
+                    .remove(&resolved)
+                    .map_or((0, 0), |arr| (arr.len(), Self::assoc_array_bytes(&arr)));
+                self.memory_budget
+                    .record_array_remove(released.0 + released_assoc.0);
+                self.memory_budget
+                    .release_array_bytes(released.1 + released_assoc.1);
                 self.clear_var_attrs(&resolved);
                 self.remove_nameref(&resolved);
                 for frame in self.call_stack.iter_mut().rev() {
@@ -9150,21 +9187,20 @@ impl Interpreter {
 
             if self.scoped.assoc_arrays.contains_key(&resolved_name) {
                 let expanded_key = self.expand_variable_or_literal(key);
-                let is_new_entry = self
+                let old_len = self
                     .scoped
                     .assoc_arrays
                     .get(&resolved_name)
-                    .is_none_or(|a| !a.contains_key(&expanded_key));
-                if is_new_entry
-                    && self
-                        .memory_budget
-                        .check_array_entries(1, &self.memory_limits)
-                        .is_err()
-                {
+                    .and_then(|a| a.get(&expanded_key))
+                    .map(String::len);
+                let is_new_entry = old_len.is_none();
+                let added = if is_new_entry {
+                    expanded_key.len() + value.len()
+                } else {
+                    value.len()
+                };
+                if !self.admit_array_write(usize::from(is_new_entry), added, old_len.unwrap_or(0)) {
                     return;
-                }
-                if is_new_entry {
-                    self.memory_budget.record_array_insert(1);
                 }
                 self.assoc_arrays_mut()
                     .entry(resolved_name)
@@ -9174,21 +9210,16 @@ impl Interpreter {
             }
 
             let index = self.resolve_indexed_array_subscript(&resolved_name, key);
-            let is_new_entry = self
+            let old_len = self
                 .scoped
                 .arrays
                 .get(&resolved_name)
-                .is_none_or(|a| !a.contains_key(&index));
-            if is_new_entry
-                && self
-                    .memory_budget
-                    .check_array_entries(1, &self.memory_limits)
-                    .is_err()
+                .and_then(|a| a.get(&index))
+                .map(String::len);
+            let is_new_entry = old_len.is_none();
+            if !self.admit_array_write(usize::from(is_new_entry), value.len(), old_len.unwrap_or(0))
             {
                 return;
-            }
-            if is_new_entry {
-                self.memory_budget.record_array_insert(1);
             }
             self.arrays_mut()
                 .entry(resolved_name)
@@ -9370,10 +9401,15 @@ impl Interpreter {
     }
 
     fn restore_array_binding(&mut self, name: &str, previous: Option<HashMap<usize, String>>) {
-        let old_entries = self.scoped.arrays.get(name).map_or(0, |a| a.len());
+        let (old_entries, old_bytes) = self
+            .scoped
+            .arrays
+            .get(name)
+            .map_or((0, 0), |a| (a.len(), Self::indexed_array_bytes(a)));
         // Saved bindings remain budgeted while shadowed; popping only releases
         // entries allocated by the local binding currently active in arrays.
         self.memory_budget.record_array_remove(old_entries);
+        self.memory_budget.release_array_bytes(old_bytes);
         if let Some(arr) = previous {
             self.arrays_mut().insert(name.to_string(), arr);
         } else {
@@ -9386,10 +9422,15 @@ impl Interpreter {
         name: &str,
         previous: Option<HashMap<String, String>>,
     ) {
-        let old_entries = self.scoped.assoc_arrays.get(name).map_or(0, |a| a.len());
+        let (old_entries, old_bytes) = self
+            .scoped
+            .assoc_arrays
+            .get(name)
+            .map_or((0, 0), |a| (a.len(), Self::assoc_array_bytes(a)));
         // Saved bindings remain budgeted while shadowed; popping only releases
         // entries allocated by the local binding currently active in assoc_arrays.
         self.memory_budget.record_array_remove(old_entries);
+        self.memory_budget.release_array_bytes(old_bytes);
         if let Some(arr) = previous {
             self.assoc_arrays_mut().insert(name.to_string(), arr);
         } else {
@@ -9397,12 +9438,63 @@ impl Interpreter {
         }
     }
 
+    /// Bytes charged for an indexed array's contents. Indexed keys are machine
+    /// integers already covered by the entry count, so only values are charged.
+    fn indexed_array_bytes(arr: &HashMap<usize, String>) -> usize {
+        arr.values().map(String::len).sum()
+    }
+
+    /// Bytes charged for an associative array's contents: keys are
+    /// attacker-controlled strings, so they count too.
+    fn assoc_array_bytes(arr: &HashMap<String, String>) -> usize {
+        arr.iter().map(|(k, v)| k.len() + v.len()).sum()
+    }
+
+    /// Charge an array write against the entry count and the shared
+    /// retained-byte budget. Returns `false` when the write must be skipped.
+    ///
+    /// THREAT[TM-DOS-114]: an over-budget *byte* write records the first
+    /// rejection so execution fails visibly rather than dropping the value.
+    /// Hitting `max_array_entries` keeps its established silent-skip behaviour —
+    /// that counter is a separate contract (TM-DOS-060) with its own tests, and
+    /// widening it here would change unrelated semantics.
+    fn admit_array_write(
+        &mut self,
+        new_entries: usize,
+        added_bytes: usize,
+        removed_bytes: usize,
+    ) -> bool {
+        if self
+            .memory_budget
+            .check_array_entries(new_entries, &self.memory_limits)
+            .is_err()
+        {
+            return false;
+        }
+        if let Err(error) =
+            self.memory_budget
+                .check_array_bytes(added_bytes, removed_bytes, &self.memory_limits)
+        {
+            self.memory_limit_error.get_or_insert(error);
+            return false;
+        }
+        self.memory_budget.record_array_insert(new_entries);
+        self.memory_budget
+            .record_array_bytes(added_bytes, removed_bytes);
+        true
+    }
+
     /// Insert an array with memory budget checking.
     /// Returns true if the insert succeeded.
     fn insert_array_checked(&mut self, name: String, arr: HashMap<usize, String>) -> bool {
         let new_entries = arr.len();
-        let old_entries = self.scoped.arrays.get(&name).map_or(0, |a| a.len());
+        let (old_entries, old_bytes) = self
+            .scoped
+            .arrays
+            .get(&name)
+            .map_or((0, 0), |a| (a.len(), Self::indexed_array_bytes(a)));
         let net = new_entries.saturating_sub(old_entries);
+        let new_bytes = Self::indexed_array_bytes(&arr);
         if net > 0
             && self
                 .memory_budget
@@ -9411,8 +9503,16 @@ impl Interpreter {
         {
             return false;
         }
+        if let Err(error) =
+            self.memory_budget
+                .check_array_bytes(new_bytes, old_bytes, &self.memory_limits)
+        {
+            self.memory_limit_error.get_or_insert(error);
+            return false;
+        }
         self.memory_budget.array_entries =
             self.memory_budget.array_entries.saturating_sub(old_entries) + new_entries;
+        self.memory_budget.record_array_bytes(new_bytes, old_bytes);
         self.arrays_mut().insert(name, arr);
         true
     }
@@ -9422,8 +9522,13 @@ impl Interpreter {
     #[allow(dead_code)]
     fn insert_assoc_array_checked(&mut self, name: String, arr: HashMap<String, String>) -> bool {
         let new_entries = arr.len();
-        let old_entries = self.scoped.assoc_arrays.get(&name).map_or(0, |a| a.len());
+        let (old_entries, old_bytes) = self
+            .scoped
+            .assoc_arrays
+            .get(&name)
+            .map_or((0, 0), |a| (a.len(), Self::assoc_array_bytes(a)));
         let net = new_entries.saturating_sub(old_entries);
+        let new_bytes = Self::assoc_array_bytes(&arr);
         if net > 0
             && self
                 .memory_budget
@@ -9432,8 +9537,16 @@ impl Interpreter {
         {
             return false;
         }
+        if let Err(error) =
+            self.memory_budget
+                .check_array_bytes(new_bytes, old_bytes, &self.memory_limits)
+        {
+            self.memory_limit_error.get_or_insert(error);
+            return false;
+        }
         self.memory_budget.array_entries =
             self.memory_budget.array_entries.saturating_sub(old_entries) + new_entries;
+        self.memory_budget.record_array_bytes(new_bytes, old_bytes);
         self.assoc_arrays_mut().insert(name, arr);
         true
     }

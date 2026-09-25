@@ -1389,6 +1389,13 @@ pub struct MemoryBudget {
     pub variable_bytes: usize,
     /// Total entries across all arrays (indexed + associative).
     pub array_entries: usize,
+    /// Total bytes in array keys + values (indexed + associative).
+    ///
+    /// THREAT[TM-DOS-114]: entries alone let a script park a few multi-megabyte
+    /// values in an array and keep the host memory it wanted (#2462). Array
+    /// contents are retained interpreter state exactly like scalars, so they
+    /// share the `max_total_variable_bytes` ceiling with `variable_bytes`.
+    pub array_bytes: usize,
     /// Number of function definitions.
     pub function_count: usize,
     /// Total bytes in function bodies.
@@ -1412,8 +1419,8 @@ impl MemoryBudget {
                 limits.max_variable_count
             )));
         }
-        let new_bytes =
-            (self.variable_bytes + key_len + value_len).saturating_sub(old_key_len + old_value_len);
+        let new_bytes = (self.retained_bytes() + key_len + value_len)
+            .saturating_sub(old_key_len + old_value_len);
         if new_bytes > limits.max_total_variable_bytes {
             return Err(LimitExceeded::Memory(format!(
                 "variable byte limit ({}) exceeded",
@@ -1421,6 +1428,47 @@ impl MemoryBudget {
             )));
         }
         Ok(())
+    }
+
+    /// Retained variable state: scalar keys/values plus array keys/values.
+    /// Both share `max_total_variable_bytes`; see [`MemoryBudget::array_bytes`].
+    fn retained_bytes(&self) -> usize {
+        self.variable_bytes.saturating_add(self.array_bytes)
+    }
+
+    /// Check whether an array write fits the shared retained-byte ceiling.
+    /// `removed_bytes` is what the write replaces, so a same-size overwrite is
+    /// always admitted.
+    pub fn check_array_bytes(
+        &self,
+        added_bytes: usize,
+        removed_bytes: usize,
+        limits: &MemoryLimits,
+    ) -> Result<(), LimitExceeded> {
+        let new_bytes = self
+            .retained_bytes()
+            .saturating_add(added_bytes)
+            .saturating_sub(removed_bytes);
+        if new_bytes > limits.max_total_variable_bytes {
+            return Err(LimitExceeded::Memory(format!(
+                "variable byte limit ({}) exceeded",
+                limits.max_total_variable_bytes
+            )));
+        }
+        Ok(())
+    }
+
+    /// Record an array byte delta (call after a successful write).
+    pub fn record_array_bytes(&mut self, added: usize, removed: usize) {
+        self.array_bytes = self
+            .array_bytes
+            .saturating_add(added)
+            .saturating_sub(removed);
+    }
+
+    /// Release array bytes on unset, replacement, or scope pop.
+    pub fn release_array_bytes(&mut self, removed: usize) {
+        self.array_bytes = self.array_bytes.saturating_sub(removed);
     }
 
     /// Record a variable insert (call after successful insert).
