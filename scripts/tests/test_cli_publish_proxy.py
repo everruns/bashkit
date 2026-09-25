@@ -21,7 +21,7 @@ python = ["bashkit/python"]
 tzdata = ["bashkit/tzdata"]
 
 [dependencies]
-bashkit = { path = "../bashkit", version = "0.17.0", default-features = false, features = ["http_client", "ring", "git", "python", "tzdata"] }
+bashkit = { path = "../bashkit", version = "0.17.0", default-features = false, features = ["http_client", "ring", "git", "tzdata"] }
 """
 
 
@@ -29,7 +29,7 @@ class CliPublishProxyTests(unittest.TestCase):
     def test_drops_features_the_published_core_lacks(self) -> None:
         rewritten, kept, dropped = rewrite(MANIFEST, {"http_client", "git"})
         self.assertEqual(kept, ["http_client", "git"])
-        self.assertEqual(dropped, ["ring", "python", "tzdata"])
+        self.assertEqual(dropped, ["ring", "tzdata", "python"])
         self.assertIn('features = ["http_client", "git"]', rewritten)
         self.assertNotIn('path = "../bashkit"', rewritten)
         self.assertNotIn('python = ["bashkit/python"]', rewritten)
@@ -41,7 +41,7 @@ class CliPublishProxyTests(unittest.TestCase):
         rewritten, kept, dropped = rewrite(MANIFEST, available)
         self.assertEqual(dropped, [])
         self.assertIn(
-            'features = ["http_client", "ring", "git", "python", "tzdata"]', rewritten
+            'features = ["http_client", "ring", "git", "tzdata"]', rewritten
         )
         self.assertIn('python = ["bashkit/python"]', rewritten)
 
