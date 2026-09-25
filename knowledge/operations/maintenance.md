@@ -228,6 +228,20 @@ See [Coreutils Argument Port](../runtimes/coreutils-args-port.md).
 - Bump the pinned uutils revision recorded in the generated file headers
   if it has fallen >3 months behind upstream `main`.
 
+### Vendored jaq-json Drift
+
+See [Vendored jaq-json](../runtimes/jaq-json-vendor.md).
+
+- Run `scripts/sync-jaq-json.sh --check`. If upstream jaq-json has a newer
+  release, sync it with `scripts/sync-jaq-json.sh <version>`, resolve any
+  `.rej` files, and re-check every `BASHKIT PATCH` hunk: new growth paths
+  (natives, container mutations) need a meter check or `resync()`
+  (TM-DOS-110).
+- Keep `jaq-core`/`jaq-std` at the versions the vendored release requires,
+  and match its dependency ranges in `crates/bashkit/Cargo.toml`.
+- Check whether upstream now offers a size hook; if so, drop the vendored
+  copy and go back to the crate.
+
 ### Code Quality
 
 - Formatted (`cargo fmt`)

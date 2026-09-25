@@ -136,6 +136,15 @@ worth keeping so the question does not get re-litigated from scratch.
   of `Quotable`), but they are imported by *generated* coreutils-port files, so
   removal means carrying rewrite rules in the porter. Low return.
 
+## Vendored crates
+
+- **`jaq-json`** is vendored into the jq builtin so its value operations can
+  enforce memory limits (TM-DOS-110); `[patch.crates-io]` would not reach
+  crates.io users. Its own dependencies (`bstr`, `bytes`, `foldhash`,
+  `hifijson`, `indexmap`, `num-bigint`, `ryu`, `self_cell`) became direct
+  optional deps of the `jq` feature, with upstream's version ranges. See
+  [Vendored jaq-json](../runtimes/jaq-json-vendor.md) for the sync procedure.
+
 ## Gate rather than reimplement
 
 Where a dependency is large but its domain is not something to reimplement, the

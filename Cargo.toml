@@ -39,9 +39,8 @@ serde_json = "1"
 serde_yaml_ng = "0.10"
 
 # JSON processing (jq) - verified embeddable
-jaq-core = "3.0"
-jaq-std = "3.0"
-jaq-json = "2.0"
+jaq-core = "3.1.1"
+jaq-std = "3.0.3"
 
 # HTTP client (for curl and API calls)
 # IMPORTANT: rustls-no-provider leaves the backend choice to bashkit, whose

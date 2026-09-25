@@ -1,5 +1,10 @@
 # Bashkit Knowledge Update Log
 
+## 2026-09-25
+
+* **Security**: TM-DOS-110 added. A value growing inside awk or jq (`s = s s`, `until(false; . + .)`) allocated until the host process aborted (#2444). awk checks strings against a 16 MiB cap before allocating and caps variable memory at `max_live_intermediate_bytes`; jq meters every live value against the same limit and polls the deadline from value operations, so non-emitting loops stop too. See [Threat Model](security/threat-model.md).
+* **Decision**: jaq-json is vendored, because a `[patch.crates-io]` override does not reach crates.io users and its value operations had no size hook. Mechanical adaptation and upstream sync are scripted, and syncing is a maintenance step. See [Vendored jaq-json](runtimes/jaq-json-vendor.md), [Dependency Policy](operations/dependencies.md) and [Maintenance](operations/maintenance.md).
+
 ## 2026-09-14
 
 * **Security**: The advisory scan was push-triggered only, so `main` went unaudited for as long as nobody pushed — and advisories are published against code that has not changed. A critical advisory landing during a quiet stretch would have waited for the next commit to surface. `cargo audit` now also runs nightly, alongside Miri, geiger, and ASan. Recorded in the [Threat Model](security/threat-model.md).

@@ -167,3 +167,102 @@ mod awk_state {
         assert_eq!(r.exit_code, 0);
     }
 }
+
+#[cfg(feature = "jq")]
+mod jq {
+    use super::*;
+
+    fn size_error(limit: u64) -> String {
+        format!("jq: error: value size limit ({limit} bytes) exceeded\n")
+    }
+
+    async fn assert_jq_capped(filter: &str) {
+        let script = format!("jq -n '{filter}'; echo rc=$?; echo after");
+        let r = run(&script).await;
+        assert_eq!(r.stderr, size_error(32_000_000), "{filter}: diagnostic");
+        assert_eq!(
+            r.stdout, "rc=5\nafter\n",
+            "{filter}: exit 5, shell continues"
+        );
+    }
+
+    /// The report in #2444, and every other way a value can grow inside one
+    /// evaluation without emitting anything.
+    #[tokio::test]
+    async fn growth_inside_one_evaluation_stops_at_the_limit() {
+        for filter in [
+            r#""x" | until(false; . + .)"#,
+            r#""x" | until(false; "\(.)\(.)")"#,
+            r#""x" * 1000000000000"#,
+            r#"[range(1e12)]"#,
+            r#"[1] | until(false; . + .)"#,
+            r#"{"a": 1} | until(false; . + {(tostring): .})"#,
+            r#"reduce range(40) as $i ("x"; tojson)"#,
+            r#"[range(100000) | "x" * 1000]"#,
+            r#"[range(200) | [range(100000)]]"#,
+        ] {
+            assert_jq_capped(filter).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn limit_follows_host_live_bytes_limit() {
+        let limits = ExecutionLimits::new().max_live_intermediate_bytes(100_000);
+        let r = run_with(limits, "jq -n '\"x\" * 200000 | length'").await;
+        assert_eq!(r.stderr, size_error(100_000));
+        assert_eq!(r.exit_code, 5);
+    }
+
+    #[tokio::test]
+    async fn shared_structure_cannot_expand_on_output() {
+        // 2^40 leaves in memory as 40 shared nodes.
+        let r = run("jq -nc 'reduce range(40) as $i (1; [., .])'").await;
+        assert_eq!(r.stderr, "jq: output limit exceeded (1048576 bytes)\n");
+        assert_eq!(r.exit_code, 5);
+    }
+
+    /// A loop that never emits used to spin (and grow evaluator state)
+    /// until the host died; value operations now poll the deadline.
+    #[tokio::test]
+    async fn non_emitting_loop_stops_at_the_timeout() {
+        let limits = ExecutionLimits::new().timeout(std::time::Duration::from_millis(300));
+        for filter in [
+            "until(false; .)",
+            "0 | until(false; . + 1)",
+            "last(range(1e15))",
+        ] {
+            let script = format!("jq -n '{filter}'; echo rc=$?");
+            let r = run_with(limits.clone(), &script).await;
+            assert_eq!(r.stderr, "jq: execution timed out\n", "{filter}");
+            assert_eq!(r.stdout, "rc=5\n", "{filter}");
+        }
+    }
+
+    #[tokio::test]
+    async fn catching_the_error_does_not_reset_the_limit() {
+        let r = run(r#"jq -n '"x" | until(false; try (. + .) catch "y")'"#).await;
+        assert_eq!(r.stderr, size_error(32_000_000));
+        assert_eq!(r.exit_code, 5);
+    }
+
+    #[tokio::test]
+    async fn released_memory_is_reusable() {
+        // 30 rounds of a 10 MB string: only one is alive at a time.
+        let r = run(r#"jq -n 'reduce range(30) as $i (0; . + ("x" * 10000000 | length))'"#).await;
+        assert_eq!(r.stderr, "");
+        assert_eq!(r.stdout, "300000000\n");
+    }
+
+    /// `join` appends in place; metering must not turn it quadratic (300k
+    /// joins took over 30 s when every append copied the string).
+    #[tokio::test]
+    async fn ordinary_workloads_still_fit() {
+        let r = run(
+            "jq -n '[range(300000)] | map(tostring) | join(\",\") | length'; \
+             jq -n 'reduce range(50000) as $i ({}; .[$i|tostring] = $i) | length'",
+        )
+        .await;
+        assert_eq!(r.stderr, "");
+        assert_eq!(r.stdout, "1988889\n50000\n");
+    }
+}

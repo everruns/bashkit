@@ -10,7 +10,7 @@
 //!  - `MAX_JQ_JSON_DEPTH` (TM-DOS-027) bounds input nesting to prevent
 //!    stack overflow during jaq evaluation on deeply nested JSON.
 
-use jaq_json::Val;
+use super::jaq_json::Val;
 
 /// THREAT[TM-DOS-027]: Maximum nesting depth for JSON input values.
 /// Prevents stack overflow when jaq evaluates deeply nested JSON structures
@@ -107,8 +107,22 @@ pub(super) fn jq_to_val(v: &JqJson) -> Val {
 
 /// Convert jaq Val back to JqJson for output formatting. Captures number
 /// representation via Val's Display (jaq preserves the original token).
-pub(super) fn val_to_jq(v: &Val) -> JqJson {
-    match v {
+/// Convert a result for output. `None` when the value would render to more
+/// than `max_bytes`: a value built from shared parts (`[., .]` repeated) is
+/// small in memory but expands exponentially here (TM-DOS-110).
+pub(super) fn val_to_jq_capped(v: &Val, max_bytes: usize) -> Option<JqJson> {
+    let mut budget = max_bytes;
+    val_to_jq_budget(v, &mut budget)
+}
+
+/// Every node costs at least one output byte, strings their length.
+fn val_to_jq_budget(v: &Val, budget: &mut usize) -> Option<JqJson> {
+    let cost = match v {
+        Val::BStr(b) | Val::TStr(b) => b.len().max(1),
+        _ => 1,
+    };
+    *budget = budget.checked_sub(cost)?;
+    Some(match v {
         Val::Null => JqJson::Null,
         Val::Bool(b) => JqJson::Bool(*b),
         Val::Num(_) => {
@@ -141,7 +155,11 @@ pub(super) fn val_to_jq(v: &Val) -> JqJson {
                 Err(_) => JqJson::String(displayed),
             }
         }
-        Val::Arr(a) => JqJson::Array(a.iter().map(val_to_jq).collect()),
+        Val::Arr(a) => JqJson::Array(
+            a.iter()
+                .map(|x| val_to_jq_budget(x, budget))
+                .collect::<Option<_>>()?,
+        ),
         Val::Obj(o) => {
             let map: Vec<(String, JqJson)> = o
                 .iter()
@@ -153,12 +171,12 @@ pub(super) fn val_to_jq(v: &Val) -> JqJson {
                         }
                         _ => format!("{k}"),
                     };
-                    (key, val_to_jq(v))
+                    Some((key, val_to_jq_budget(v, budget)?))
                 })
-                .collect();
+                .collect::<Option<_>>()?;
             JqJson::Object(map)
         }
-    }
+    })
 }
 
 /// Format an f64 as JSON, ensuring whole numbers keep `.0` so they remain

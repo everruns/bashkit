@@ -4,6 +4,7 @@
 * [ZapCode Runtime](zapcode-runtime.md) - Embedded TypeScript runtime, external functions, VFS bridging, and resource limits.
 * [SQLite Builtin](sqlite-builtin.md) - Embedded SQLite through Turso with memory and virtual filesystem backends.
 * [Coreutils Argument Port](coreutils-args-port.md) - Code generation design for porting uutils clap arguments and uucore modules.
+* [Vendored jaq-json](jaq-json-vendor.md) - Why and how jq's JSON value type is vendored from upstream jaq-json, the memory meter patched into it, and how to sync upstream releases.
 * [Python Package](python-package.md) - Python bindings, PyPI wheels, ABI strategy, and platform build matrix.
 * [Emscripten Wheels](emscripten-wheels.md) - Reduced-feature Pyodide and Emscripten Python wheel design and build constraints.
 * [Browser Package](browser-package.md) - Slim single-threaded WebAssembly package design for browsers and JavaScript runtimes.

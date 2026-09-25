@@ -6,14 +6,18 @@ Bashkit's design or whose test case formats have inspired our testing approach.
 ## Important Notes
 
 1. **Bashkit is an independent implementation.** No source code has been copied
-   from any of these projects. All Rust code in Bashkit is original.
+   from any of these projects, with one exception: the jq value type in
+   `crates/bashkit/src/builtins/jq/jaq_json/` is a modified copy of the
+   jaq-json crate (MIT, Michael Färber, https://github.com/01mf02/jaq), kept
+   under its MIT license (`MIT.txt`).
 
 2. **Test cases are original.** While our testing methodology was inspired by
    projects like Oils, the actual test cases are written specifically for
    Bashkit.
 
-3. **Dependencies are via Cargo.** Rust dependencies (like jaq for jq support)
-   are included via standard Cargo dependency management, not by copying source.
+3. **Dependencies are via Cargo.** Rust dependencies (like jaq-core and
+   jaq-std for jq support) are included via standard Cargo dependency
+   management, not by copying source, except jaq-json as noted above.
 
 ## License Files
 
