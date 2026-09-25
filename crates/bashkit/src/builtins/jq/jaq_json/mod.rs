@@ -1,3 +1,8 @@
+// BASHKIT: vendored jaq-json (MIT, Copyright (c) Michael Färber,
+// https://github.com/01mf02/jaq), release in UPSTREAM_VERSION, license in
+// LICENSE-MIT. Local changes are marked `BASHKIT PATCH`; sync with
+// scripts/sync-jaq-json.sh (knowledge/runtimes/jaq-json-vendor.md).
+
 //! JSON superset with binary data and non-string object keys.
 //!
 //! This crate provides a few macros for formatting / writing;
@@ -7,6 +12,8 @@
 
 
 mod funs;
+// BASHKIT PATCH: live-memory meter (TM-DOS-110).
+pub mod meter;
 mod num;
 #[macro_use]
 pub mod write;
@@ -25,6 +32,12 @@ use num_traits::{cast::ToPrimitive, Signed};
 
 pub use funs::{bytes_valrs, funs};
 pub use num::Num;
+use meter::Metered;
+
+/// BASHKIT PATCH: wrap a new array/object body so it is metered.
+pub(crate) fn metered<T: meter::Footprint>(t: T) -> Rc<Metered<T>> {
+    Rc::new(Metered::new(t))
+}
 
 pub use std::rc::Rc;
 #[cfg(any())]
@@ -55,9 +68,10 @@ pub enum Val {
     /// replace invalid UTF-8 by the Unicode replacement character.
     TStr(Box<Bytes>),
     /// Array
-    Arr(Rc<Vec<Val>>),
+    // BASHKIT PATCH: bodies are `Metered` (TM-DOS-110).
+    Arr(Rc<Metered<Vec<Val>>>),
     /// Object
-    Obj(Rc<Map<Val, Val>>),
+    Obj(Rc<Metered<Map<Val, Val>>>),
 }
 
 #[cfg(any())]
@@ -126,6 +140,7 @@ fn rc_unwrap_or_clone<T: Clone>(a: Rc<T>) -> T {
 
 impl jaq_core::ValT for Val {
     fn from_num(n: &str) -> ValR {
+        meter::tick(); // BASHKIT PATCH (TM-DOS-110)
         Ok(Self::Num(Num::from_str(n)))
     }
 
@@ -134,6 +149,7 @@ impl jaq_core::ValT for Val {
     }
 
     fn key_values(self) -> Box<dyn Iterator<Item = Result<(Val, Val), Error>>> {
+        meter::tick(); // BASHKIT PATCH (TM-DOS-110)
         let arr_idx = |(i, x)| Ok((Self::from(i as isize), x));
         match self {
             Self::Arr(a) => Box::new(rc_unwrap_or_clone(a).into_iter().enumerate().map(arr_idx)),
@@ -143,6 +159,7 @@ impl jaq_core::ValT for Val {
     }
 
     fn values(self) -> Box<dyn Iterator<Item = ValR>> {
+        meter::tick(); // BASHKIT PATCH (TM-DOS-110)
         match self {
             Self::Arr(a) => Box::new(rc_unwrap_or_clone(a).into_iter().map(Ok)),
             Self::Obj(o) => Box::new(rc_unwrap_or_clone(o).into_iter().map(|(_k, v)| Ok(v))),
@@ -151,6 +168,7 @@ impl jaq_core::ValT for Val {
     }
 
     fn index(self, index: &Self) -> ValR {
+        meter::tick(); // BASHKIT PATCH (TM-DOS-110)
         self.index_opt(index).map(|o| o.unwrap_or(Val::Null))
     }
 
@@ -175,6 +193,7 @@ impl jaq_core::ValT for Val {
         opt: path::Opt,
         f: impl Fn(Self) -> I,
     ) -> ValX<'a> {
+        meter::tick(); // BASHKIT PATCH (TM-DOS-110)
         match self {
             Self::Arr(a) => {
                 let iter = rc_unwrap_or_clone(a).into_iter().flat_map(f);
@@ -195,6 +214,7 @@ impl jaq_core::ValT for Val {
         opt: path::Opt,
         f: impl Fn(Self) -> I,
     ) -> ValX<'a> {
+        meter::tick(); // BASHKIT PATCH (TM-DOS-110)
         if let (Val::BStr(_) | Val::TStr(_) | Val::Arr(_), Val::Obj(o)) = (&self, index) {
             let range = o.get(&Val::utf8_str("start"))..o.get(&Val::utf8_str("end"));
             return self.map_range(range, opt, f);
@@ -218,6 +238,9 @@ impl jaq_core::ValT for Val {
                         }
                     }
                 }
+                // BASHKIT PATCH: charge in-place growth (TM-DOS-110).
+                Rc::make_mut(o).resync();
+                meter::check(0)?;
                 Ok(self)
             }
             Val::Arr(ref mut a) => {
@@ -235,6 +258,7 @@ impl jaq_core::ValT for Val {
                 } else {
                     a.remove(i);
                 }
+                a.resync(); // BASHKIT PATCH (TM-DOS-110)
                 Ok(self)
             }
             _ => opt.fail(self, |v| Exn::from(Error::typ(v, Type::Iter.as_str()))),
@@ -256,8 +280,10 @@ impl jaq_core::ValT for Val {
             let y = f(str).map(|y| from(y?).map_err(Exn::from)).next();
             let y = y.transpose()?.unwrap_or_default();
             let mut b = BytesMut::from(b);
+            // BASHKIT PATCH: size-check and meter the result (TM-DOS-110).
+            meter::check(b.len() - take + y.len())?;
             bytes_splice(&mut b, skip, take, &y);
-            Ok(into(b.freeze()))
+            Ok(into(meter::bytes(b.freeze())))
         };
         let stb = skip_take_bytes;
         let stc = skip_take_chars;
@@ -270,7 +296,10 @@ impl jaq_core::ValT for Val {
                 let arr = a.iter().skip(skip).take(take).cloned().collect();
                 let y = f(arr).map(|y| y?.into_arr().map_err(Exn::from)).next();
                 let y = y.transpose()?.unwrap_or_default();
-                Rc::make_mut(a).splice(skip..skip + take, (*y).clone());
+                meter::check((a.len() - take + y.len()) * core::mem::size_of::<Val>())?; // BASHKIT PATCH
+                let a = Rc::make_mut(a);
+                a.splice(skip..skip + take, (**y).clone());
+                a.resync(); // BASHKIT PATCH (TM-DOS-110)
                 Ok(self)
             }
             Val::BStr(b) => fs(*b, range, stb, Val::into_byte_str, Val::byte_str),
@@ -281,13 +310,14 @@ impl jaq_core::ValT for Val {
 
     /// True if the value is neither null nor false.
     fn as_bool(&self) -> bool {
+        meter::tick(); // BASHKIT PATCH (TM-DOS-110)
         !matches!(self, Self::Null | Self::Bool(false))
     }
 
     fn into_string(self) -> Self {
         match self {
             Self::BStr(b) | Self::TStr(b) => Self::TStr(b),
-            _ => Self::utf8_str(self.to_json()),
+            _ => Self::utf8_str(meter::bytes(self.to_json())), // BASHKIT PATCH
         }
     }
 }
@@ -335,7 +365,7 @@ impl jaq_std::ValT for Val {
     }
 
     fn from_utf8_bytes(b: impl AsRef<[u8]> + Send + 'static) -> Self {
-        Self::utf8_str(Bytes::from_owner(b))
+        Self::utf8_str(meter::bytes(b)) // BASHKIT PATCH (TM-DOS-110)
     }
 }
 
@@ -402,7 +432,7 @@ fn abs_index(i: num::PosUsize, len: usize) -> Option<usize> {
 impl Val {
     /// Construct an object value.
     pub fn obj(m: Map) -> Self {
-        Self::Obj(m.into())
+        Self::Obj(metered(m))
     }
 
     /// Construct a string that is interpreted as UTF-8.
@@ -443,14 +473,14 @@ impl Val {
     }
 
     /// If the value is an array, return it, else fail.
-    fn into_arr(self) -> Result<Rc<Vec<Self>>, Error> {
+    fn into_arr(self) -> Result<Rc<Metered<Vec<Self>>>, Error> {
         match self {
             Self::Arr(a) => Ok(a),
             _ => Err(Error::typ(self, Type::Arr.as_str())),
         }
     }
 
-    fn as_arr(&self) -> Result<&Rc<Vec<Self>>, Error> {
+    fn as_arr(&self) -> Result<&Rc<Metered<Vec<Self>>>, Error> {
         match self {
             Self::Arr(a) => Ok(a),
             _ => Err(Error::typ(self.clone(), Type::Arr.as_str())),
@@ -469,7 +499,11 @@ impl Val {
 
     fn to_json(&self) -> Vec<u8> {
         let mut buf = write::Buf(Vec::new());
-        write::write_buf(&mut buf, &write::Pp::default(), 0, self).unwrap();
+        // BASHKIT PATCH: a render stopped by the meter yields an empty
+        // string; the meter is tripped and the run reports it.
+        if write::write_buf(&mut buf, &write::Pp::default(), 0, self).is_err() {
+            return Vec::new();
+        }
         buf.0
     }
 
@@ -488,7 +522,7 @@ impl Val {
             (Val::Arr(x), Val::Arr(y)) => {
                 // adapted from the implementation of the `indices` filter
                 let iw = x.windows(y.len()).enumerate();
-                let indices = iw.filter_map(|(i, w)| (w == **y).then_some(i));
+                let indices = iw.filter_map(|(i, w)| (w == ***y).then_some(i));
                 Some(indices.map(Val::from).collect())
             }
             (Val::Obj(o), i) => o.get(i).cloned(),
@@ -529,7 +563,7 @@ impl From<f64> for Val {
 
 impl From<String> for Val {
     fn from(s: String) -> Self {
-        Self::utf8_str(Bytes::from_owner(s))
+        Self::utf8_str(meter::bytes(s)) // BASHKIT PATCH (TM-DOS-110)
     }
 }
 
@@ -543,7 +577,8 @@ impl From<val::Range<Val>> for Val {
 
 impl FromIterator<Self> for Val {
     fn from_iter<T: IntoIterator<Item = Self>>(iter: T) -> Self {
-        Self::Arr(Rc::new(iter.into_iter().collect()))
+        // BASHKIT PATCH: stop at the meter's limit (TM-DOS-110).
+        Self::Arr(Rc::new(meter::collect_vec(iter)))
     }
 }
 
@@ -556,25 +591,36 @@ fn bigint_to_int_saturated(i: &BigInt) -> isize {
 impl core::ops::Add for Val {
     type Output = ValR;
     fn add(self, rhs: Self) -> Self::Output {
-        let concat_bytes = |l, r| {
+        meter::tick(); // BASHKIT PATCH (TM-DOS-110)
+        // BASHKIT PATCH: size-check before allocating and meter the result
+        // (TM-DOS-110, #2444).
+        let concat_bytes = |l: Bytes, r: Box<Bytes>| {
+            meter::check(l.len() + r.len())?;
             let mut buf = BytesMut::from(l);
-            buf.put(r);
-            buf
+            buf.put(*r);
+            Ok::<_, Error>(meter::bytes(buf.freeze()))
         };
+        let val_size = core::mem::size_of::<Val>();
         use Val::*;
         match (self, rhs) {
             // `null` is a neutral element for addition
             (Null, x) | (x, Null) => Ok(x),
             (Num(x), Num(y)) => Ok(Num(x + y)),
-            (BStr(l), BStr(r)) => Ok(Val::byte_str(concat_bytes(*l, r))),
-            (TStr(l), TStr(r)) => Ok(Val::utf8_str(concat_bytes(*l, r))),
+            (BStr(l), BStr(r)) => Ok(Val::byte_str(concat_bytes(*l, r)?)),
+            (TStr(l), TStr(r)) => Ok(Val::utf8_str(concat_bytes(*l, r)?)),
             (Arr(mut l), Arr(r)) => {
                 //std::dbg!(Rc::strong_count(&l));
-                Rc::make_mut(&mut l).extend(r.iter().cloned());
+                meter::check((l.len() + r.len()) * val_size)?;
+                let a = Rc::make_mut(&mut l);
+                a.extend(r.iter().cloned());
+                a.resync();
                 Ok(Arr(l))
             }
             (Obj(mut l), Obj(r)) => {
-                Rc::make_mut(&mut l).extend(r.iter().map(|(k, v)| (k.clone(), v.clone())));
+                meter::check((l.len() + r.len()) * 3 * val_size)?;
+                let o = Rc::make_mut(&mut l);
+                o.extend(r.iter().map(|(k, v)| (k.clone(), v.clone())));
+                o.resync();
                 Ok(Obj(l))
             }
             (l, r) => Err(Error::math(l, ops::Math::Add, r)),
@@ -585,11 +631,14 @@ impl core::ops::Add for Val {
 impl core::ops::Sub for Val {
     type Output = ValR;
     fn sub(self, rhs: Self) -> Self::Output {
+        meter::tick(); // BASHKIT PATCH (TM-DOS-110)
         match (self, rhs) {
             (Self::Num(x), Self::Num(y)) => Ok(Self::Num(x - y)),
             (Self::Arr(mut l), Self::Arr(r)) => {
                 let r = r.iter().collect::<std::collections::BTreeSet<_>>();
-                Rc::make_mut(&mut l).retain(|x| !r.contains(x));
+                let a = Rc::make_mut(&mut l);
+                a.retain(|x| !r.contains(x));
+                a.resync(); // BASHKIT PATCH (TM-DOS-110)
                 Ok(Self::Arr(l))
             }
             (l, r) => Err(Error::math(l, ops::Math::Sub, r)),
@@ -597,7 +646,7 @@ impl core::ops::Sub for Val {
     }
 }
 
-fn obj_merge(l: &mut Rc<Map>, r: Rc<Map>) {
+fn obj_merge(l: &mut Rc<Metered<Map>>, r: Rc<Metered<Map>>) {
     let l = Rc::make_mut(l);
     let r = rc_unwrap_or_clone(r).into_iter();
     r.for_each(|(k, v)| match (l.get_mut(&k), v) {
@@ -607,11 +656,13 @@ fn obj_merge(l: &mut Rc<Map>, r: Rc<Map>) {
             l.insert(k, r);
         }
     });
+    l.resync(); // BASHKIT PATCH (TM-DOS-110)
 }
 
 impl core::ops::Mul for Val {
     type Output = ValR;
     fn mul(self, rhs: Self) -> Self::Output {
+        meter::tick(); // BASHKIT PATCH (TM-DOS-110)
         use self::Num::{BigInt, Int};
         use Val::*;
         match (self, rhs) {
@@ -620,11 +671,14 @@ impl core::ops::Mul for Val {
             | (Num(BigInt(i)), s @ (BStr(_) | TStr(_))) => {
                 s * Num(Int(bigint_to_int_saturated(&i)))
             }
+            // BASHKIT PATCH: size-check before allocating (TM-DOS-110, #2444).
             (BStr(s), Num(Int(i))) | (Num(Int(i)), BStr(s)) if i > 0 => {
-                Ok(Self::byte_str(s.repeat(i as usize)))
+                meter::check(s.len().saturating_mul(i as usize))?;
+                Ok(Self::byte_str(meter::bytes(s.repeat(i as usize))))
             }
             (TStr(s), Num(Int(i))) | (Num(Int(i)), TStr(s)) if i > 0 => {
-                Ok(Self::utf8_str(s.repeat(i as usize)))
+                meter::check(s.len().saturating_mul(i as usize))?;
+                Ok(Self::utf8_str(meter::bytes(s.repeat(i as usize))))
             }
             // string multiplication with negatives or 0 results in null
             // <https://jqlang.github.io/jq/manual/#Builtinoperatorsandfunctions>
@@ -655,6 +709,7 @@ fn split<'a>(s: &'a [u8], sep: &'a [u8]) -> Box<dyn Iterator<Item = &'a [u8]> + 
 impl core::ops::Div for Val {
     type Output = ValR;
     fn div(self, rhs: Self) -> Self::Output {
+        meter::tick(); // BASHKIT PATCH (TM-DOS-110)
         let fs = |x: Bytes, y: Bytes, into: BytesValFn| {
             split(&x, &y).map(|s| into(x.slice_ref(s))).collect()
         };
@@ -670,6 +725,7 @@ impl core::ops::Div for Val {
 impl core::ops::Rem for Val {
     type Output = ValR;
     fn rem(self, rhs: Self) -> Self::Output {
+        meter::tick(); // BASHKIT PATCH (TM-DOS-110)
         match (self, rhs) {
             (Self::Num(x), Self::Num(y)) if !(x.is_int() && y.is_int() && y == Num::Int(0)) => {
                 Ok(Self::Num(x % y))
@@ -682,6 +738,7 @@ impl core::ops::Rem for Val {
 impl core::ops::Neg for Val {
     type Output = ValR;
     fn neg(self) -> Self::Output {
+        meter::tick(); // BASHKIT PATCH (TM-DOS-110)
         match self {
             Self::Num(n) => Ok(Self::Num(-n)),
             x => Err(Error::typ(x, Type::Num.as_str())),

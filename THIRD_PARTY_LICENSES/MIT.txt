@@ -21,6 +21,7 @@ SOFTWARE.
 --------------------------------------------------------------------------------
 This license applies to:
 - jq (Stephen Dolan)
-- jaq Rust crates (Michael Färber)
+- jaq Rust crates (Michael Färber), including jaq-json vendored in
+  crates/bashkit/src/builtins/jq/jaq_json/
 - Many Rust dependencies (see Cargo.lock for full list)
 --------------------------------------------------------------------------------

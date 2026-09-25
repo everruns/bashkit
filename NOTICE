@@ -65,9 +65,14 @@ RUST DEPENDENCIES
 Bashkit uses the following notable Rust crates. Full dependency information
 is available via `cargo tree` or in the Cargo.lock file.
 
-jaq-core, jaq-std, jaq-json (MIT)
+jaq-core, jaq-std (MIT)
   - JQ expression parsing and evaluation
   - Copyright (c) Michael Färber
+
+jaq-json (MIT), vendored in crates/bashkit/src/builtins/jq/jaq_json/
+  - JSON value type for jq, with bashkit resource-limit patches
+  - Copyright (c) Michael Färber
+  - Repository: https://github.com/01mf02/jaq
 
 grep, grep-regex, grep-searcher (MIT/Apache-2.0)
   - Text search functionality
@@ -100,4 +105,6 @@ It is not affiliated with, endorsed by, or derived from:
 - Any of the projects mentioned above
 
 The shell syntax parser, interpreter, virtual filesystem, and all builtins
-(except where noted) are original implementations written in Rust.
+(except where noted) are original implementations written in Rust. The jq
+value type in crates/bashkit/src/builtins/jq/jaq_json/ is a modified copy of
+jaq-json (MIT, Michael Färber), see RUST DEPENDENCIES above.

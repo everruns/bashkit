@@ -18,10 +18,10 @@
 //!   jq -n --argjson x 5 '$x + 1'
 //!   jq -n --slurpfile data /file.json '$data | length'
 
+use self::jaq_json::Val;
 use async_trait::async_trait;
 use jaq_core::load::{Arena, File, Loader};
 use jaq_core::{Compiler, Ctx, Vars, data};
-use self::jaq_json::Val;
 use jaq_std::input::{HasInputs, Inputs, RcIter};
 
 use super::{Builtin, Context, ExecutionDeadline, read_text_file, resolve_path};
@@ -38,10 +38,15 @@ mod input;
 // Vendored jaq-json (MIT, Michael Färber, https://github.com/01mf02/jaq),
 // see jaq_json/UPSTREAM_VERSION and knowledge/runtimes/jaq-json-vendor.md.
 // Kept byte-close to upstream so `scripts/sync-jaq-json.sh` can merge new
-// releases: not reformatted, not linted.
+// releases: not reformatted, not linted. Its few `unwrap`s rely on
+// upstream invariants (e.g. BigInt -> f64 is total); a panic would still be
+// contained by the builtin dispatcher's catch_unwind.
 #[rustfmt::skip]
 #[allow(
     clippy::all,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
     dead_code,
     unused_imports,
     unused_macros,
@@ -59,7 +64,7 @@ use compat::{
     ARGS_VAR_NAME, ENV_VAR_NAME, FILENAME_VAR_NAME, LINENO_VAR_NAME, PUBLIC_ENV_VAR_NAME,
     build_compat_prefix,
 };
-use convert::{JqJson, MAX_JQ_JSON_DEPTH, jq_to_val, parse_json_stream, val_to_jq};
+use convert::{JqJson, MAX_JQ_JSON_DEPTH, jq_to_val, parse_json_stream, val_to_jq_capped};
 use errors::{format_compile_errors, format_load_errors, format_runtime_error};
 use format::{Indent, render, sort_keys as sort_jq_keys};
 
@@ -363,18 +368,44 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
     // bytes against the caller's stdout limit and check the wall-clock deadline
     // periodically so a runaway filter aborts instead of wedging the host.
     //
-    // TODO(#2444, TM-DOS-110): values that grow *inside* one evaluation
-    // (`until(false; . + .)`, `"x" * 1e18`) never reach this loop: jaq-json's
-    // `Add`/`Mul` have no size hook, so they allocate until the host aborts.
-    // Needs a size-checked value type or an upstream jaq hook. Likewise a
-    // filter that loops without emitting (`until(false; .)`) never sees the
-    // deadline check below.
+    // TODO: a filter that loops without emitting (`until(false; .)`) never
+    // reaches the deadline check below; jaq-core has no step hook to
+    // interrupt it. Tracked separately from TM-DOS-110 (memory).
     let max_output_bytes = ctx
         .execution_extension::<ExecutionLimits>()
         .and_then(|limits| limits.try_with(|limits| limits.max_stdout_bytes).ok())
         .unwrap_or_else(|| ExecutionLimits::default().max_stdout_bytes);
     let deadline = ctx.execution_extension::<ExecutionDeadline>();
     let mut values_emitted: usize = 0;
+
+    // THREAT[TM-DOS-110]: values that grow inside one evaluation
+    // (`until(false; . + .)`, `"x" * 1e18`, `[range(1e12)]`) never reach the
+    // output checks above. The vendored jaq-json charges every string and
+    // array/object body to this meter and fails growth past the host's
+    // live-bytes limit before allocating (#2444).
+    let max_live_bytes = ctx
+        .execution_extension::<ExecutionLimits>()
+        .and_then(|limits| {
+            limits
+                .try_with(|limits| limits.max_live_intermediate_bytes)
+                .ok()
+        })
+        .unwrap_or_else(|| ExecutionLimits::default().max_live_intermediate_bytes);
+    let stop = deadline.clone().map(|deadline| {
+        Box::new(move || {
+            deadline
+                .try_with(ExecutionDeadline::is_expired)
+                .unwrap_or(true)
+        }) as jaq_json::meter::StopCheck
+    });
+    let (_meter_guard, meter) =
+        jaq_json::meter::install(usize::try_from(max_live_bytes).unwrap_or(usize::MAX), stop);
+    let size_error = |meter: &jaq_json::meter::Meter| {
+        Ok(ExecResult::err(
+            format!("jq: error: {}\n", meter.message()),
+            5,
+        ))
+    };
 
     // Drive the outer loop from the shared input iterator so `input`/`inputs`
     // inside the filter consume from the same source (matching real jq:
@@ -391,82 +422,113 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
     );
     let shared_inputs = RcIter::new(value_iter);
 
-    for (outer_idx, jaq_input) in (&shared_inputs).enumerate() {
-        let jaq_input: Val = match jaq_input {
-            Ok(v) => v,
-            Err(e) => {
-                return Ok(ExecResult::err(format!("jq: input error: {e}\n"), 5));
-            }
-        };
-        let (filename_val, lineno_val) = metadata
-            .get(outer_idx)
-            .cloned()
-            .unwrap_or((Val::Null, Val::from(0isize)));
+    // THREAT[TM-DOS-110]: the meter aborts a run by unwinding where jaq
+    // gives it no error channel (see jaq_json::meter::Abort).
+    let run_filter = std::panic::AssertUnwindSafe(|| -> Result<Option<ExecResult>> {
+        for (outer_idx, jaq_input) in (&shared_inputs).enumerate() {
+            let jaq_input: Val = match jaq_input {
+                Ok(v) => v,
+                Err(e) => {
+                    return Ok(Some(ExecResult::err(format!("jq: input error: {e}\n"), 5)));
+                }
+            };
+            let (filename_val, lineno_val) = metadata
+                .get(outer_idx)
+                .cloned()
+                .unwrap_or((Val::Null, Val::from(0isize)));
 
-        let mut var_vals: Vec<Val> = pre_var_vals.clone();
-        var_vals.push(env_val.clone()); // $__bashkit_env__
-        var_vals.push(env_val.clone()); // $ENV
-        var_vals.push(filename_val); // $__bashkit_filename__
-        var_vals.push(lineno_val); // $__bashkit_lineno__
-        var_vals.push(args_val.clone()); // $ARGS
+            let mut var_vals: Vec<Val> = pre_var_vals.clone();
+            var_vals.push(env_val.clone()); // $__bashkit_env__
+            var_vals.push(env_val.clone()); // $ENV
+            var_vals.push(filename_val); // $__bashkit_filename__
+            var_vals.push(lineno_val); // $__bashkit_lineno__
+            var_vals.push(args_val.clone()); // $ARGS
 
-        let data = InputDataRef {
-            lut: &filter.lut,
-            inputs: &shared_inputs,
-        };
-        let cv_ctx = Ctx::<InputData<Val>>::new(data, Vars::new(var_vals));
+            let data = InputDataRef {
+                lut: &filter.lut,
+                inputs: &shared_inputs,
+            };
+            let cv_ctx = Ctx::<InputData<Val>>::new(data, Vars::new(var_vals));
 
-        for result in filter.id.run((cv_ctx, jaq_input)) {
-            ctx.consume_budget_work(1)?;
-            match jaq_core::unwrap_valr(result) {
-                Ok(val) => {
-                    has_output = true;
-                    let mut jq = val_to_jq(&val);
-                    if parsed.sort_keys {
-                        jq = sort_jq_keys(jq);
-                    }
-                    if !(jq.is_null() || jq.is_false()) {
-                        all_null_or_false = false;
-                    }
+            for result in filter.id.run((cv_ctx, jaq_input)) {
+                ctx.consume_budget_work(1)?;
+                if meter.tripped() {
+                    // The value may have been cut short at the limit.
+                    return size_error(&meter).map(Some);
+                }
+                match jaq_core::unwrap_valr(result) {
+                    Ok(val) => {
+                        has_output = true;
+                        let Some(mut jq) = val_to_jq_capped(&val, max_output_bytes) else {
+                            return Ok(Some(ExecResult::err(
+                                format!("jq: output limit exceeded ({max_output_bytes} bytes)\n"),
+                                5,
+                            )));
+                        };
+                        if parsed.sort_keys {
+                            jq = sort_jq_keys(jq);
+                        }
+                        if !(jq.is_null() || jq.is_false()) {
+                            all_null_or_false = false;
+                        }
 
-                    let effective_raw = parsed.raw_output || parsed.join_output;
-                    let formatted = if effective_raw {
-                        if let JqJson::String(s) = &jq {
-                            s.clone()
+                        let effective_raw = parsed.raw_output || parsed.join_output;
+                        let formatted = if effective_raw {
+                            if let JqJson::String(s) = &jq {
+                                s.clone()
+                            } else {
+                                render(&jq, indent)
+                            }
                         } else {
                             render(&jq, indent)
+                        };
+
+                        output.push_str(&formatted);
+                        if !parsed.join_output {
+                            output.push('\n');
                         }
-                    } else {
-                        render(&jq, indent)
-                    };
 
-                    output.push_str(&formatted);
-                    if !parsed.join_output {
-                        output.push('\n');
+                        if output.len() > max_output_bytes {
+                            return Ok(Some(ExecResult::err(
+                                format!("jq: output limit exceeded ({max_output_bytes} bytes)\n"),
+                                5,
+                            )));
+                        }
+                        values_emitted += 1;
+                        if values_emitted.is_multiple_of(4096)
+                            && deadline.as_ref().is_some_and(|deadline| {
+                                deadline
+                                    .try_with(ExecutionDeadline::is_expired)
+                                    .unwrap_or(true)
+                            })
+                        {
+                            return Ok(Some(ExecResult::err(
+                                "jq: execution timed out\n".to_string(),
+                                5,
+                            )));
+                        }
                     }
-
-                    if output.len() > max_output_bytes {
-                        return Ok(ExecResult::err(
-                            format!("jq: output limit exceeded ({max_output_bytes} bytes)\n"),
-                            5,
-                        ));
+                    Err(e) => {
+                        return Ok(Some(ExecResult::err(format_runtime_error(&e), 5)));
                     }
-                    values_emitted += 1;
-                    if values_emitted.is_multiple_of(4096)
-                        && deadline.as_ref().is_some_and(|deadline| {
-                            deadline
-                                .try_with(ExecutionDeadline::is_expired)
-                                .unwrap_or(true)
-                        })
-                    {
-                        return Ok(ExecResult::err("jq: execution timed out\n".to_string(), 5));
-                    }
-                }
-                Err(e) => {
-                    return Ok(ExecResult::err(format_runtime_error(&e), 5));
                 }
             }
         }
+        Ok(None)
+    });
+    match std::panic::catch_unwind(run_filter) {
+        Ok(result) => {
+            if let Some(early) = result? {
+                return Ok(early);
+            }
+        }
+        Err(payload) => match payload.downcast_ref::<jaq_json::meter::Abort>() {
+            Some(jaq_json::meter::Abort::Memory) => return size_error(&meter),
+            Some(jaq_json::meter::Abort::Interrupted) => {
+                return Ok(ExecResult::err("jq: execution timed out\n".to_string(), 5));
+            }
+            None => std::panic::resume_unwind(payload),
+        },
     }
 
     // Real jq exit codes for -e:

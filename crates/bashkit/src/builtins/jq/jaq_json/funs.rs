@@ -43,7 +43,7 @@ impl Val {
             (Val::Arr(_), Val::Arr(y)) if y.is_empty() => Ok(Box::new(core::iter::empty())),
             (Val::Arr(x), Val::Arr(y)) => {
                 let iw = x.windows(y.len()).enumerate();
-                Ok(Box::new(iw.filter_map(|(i, w)| (w == **y).then_some(i))))
+                Ok(Box::new(iw.filter_map(|(i, w)| (w == ***y).then_some(i))))
             }
             (Val::Arr(x), y) => {
                 let ix = x.iter().enumerate();
@@ -81,9 +81,15 @@ impl Val {
             Val::Arr(a) => {
                 let mut buf = BytesMut::new();
                 for x in a.iter() {
-                    buf.put(Val::to_bytes(x)?);
+                    let b = Val::to_bytes(x)?;
+                    // BASHKIT PATCH: nested shared arrays expand; stop at
+                    // the meter's limit (TM-DOS-110).
+                    if super::meter::check(buf.len() + b.len()).is_err() {
+                        return Err(self.clone());
+                    }
+                    buf.put(b);
                 }
-                Ok(buf.into())
+                Ok(super::meter::bytes(buf.freeze()))
             }
             _ => Err(self.clone()),
         }
@@ -158,7 +164,11 @@ fn base<D: for<'a> DataT<V<'a> = Val>>() -> Box<[Filter<RunPtr<D>>]> {
                 bytes_valrs(s, |s| Box::new(read::parse_many(s).map(fail)))
             }))
         }),
-        ("tojson", v(0), |cv| bome(Ok(Val::utf8_str(cv.1.to_json())))),
+        // BASHKIT PATCH: meter the rendering and fail when it hit the limit.
+        ("tojson", v(0), |cv| {
+            let json = cv.1.to_json();
+            bome(super::meter::check(0).map(|()| Val::utf8_str(super::meter::bytes(json))))
+        }),
         ("tobytes", v(0), |cv| {
             let fail = |v| Error::str(format_args!("cannot convert {v} to bytes"));
             bome(cv.1.to_bytes().map(Val::byte_str).map_err(fail))

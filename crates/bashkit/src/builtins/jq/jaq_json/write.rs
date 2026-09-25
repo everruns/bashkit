@@ -298,6 +298,12 @@ pub(crate) struct Buf(pub(crate) std::vec::Vec<u8>);
 
 impl Buf {
     fn write_all(&mut self, bytes: &[u8]) -> fmt::Result {
+        // BASHKIT PATCH: stop rendering at the meter's limit, so `tojson`
+        // of a deeply shared value cannot expand without bound (TM-DOS-110).
+        if self.0.len() + bytes.len() > super::meter::headroom() {
+            super::meter::trip();
+            return Err(fmt::Error);
+        }
         self.0.extend_from_slice(bytes);
         Ok(())
     }

@@ -66,6 +66,16 @@ respectively, matching jq. Long error operands are summarised so failures
 do not blow up an LLM context window, see
 [#1485](https://github.com/everruns/bashkit/issues/1485).
 
+## Resource limits
+
+A filter cannot allocate without bound. Every live string, array and object
+counts against `ExecutionLimits::max_live_intermediate_bytes` (32 MB by
+default); growing past it fails before allocating with
+`jq: error: value size limit (N bytes) exceeded` and exit 5, and `try` cannot
+catch its way around it. Output is capped by `max_stdout_bytes`, and a filter
+that loops without emitting (`until(false; .)`) stops at the execution timeout
+with `jq: execution timed out`.
+
 ## Known gaps
 
 Bashkit's jq is intentionally minimal in places where the host model differs
