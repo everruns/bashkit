@@ -143,6 +143,9 @@ impl Interpreter {
 
     pub(super) async fn expand_word_inner(&mut self, word: &Word) -> Result<String> {
         let mut result = String::new();
+        // Keep command-substitution bytes charged until the complete word has
+        // been consumed; sibling substitutions otherwise evade live-byte caps.
+        let mut substitution_leases = Vec::new();
         let mut is_first_part = true;
 
         for part in &word.parts {
@@ -206,6 +209,35 @@ impl Interpreter {
                     // THREAT[TM-DOS-089]: Delegate to Box::pin-ed helper to
                     // prevent stack growth proportional to nesting depth.
                     let trimmed = self.execute_cmd_subst(commands).await?;
+                    let appended_bytes = if word.quoted && word.has_unquoted_glob {
+                        trimmed
+                            .chars()
+                            .map(|ch| {
+                                if matches!(
+                                    ch,
+                                    '\\' | '*'
+                                        | '?'
+                                        | '['
+                                        | ']'
+                                        | '{'
+                                        | '}'
+                                        | '@'
+                                        | '!'
+                                        | '+'
+                                        | '('
+                                        | ')'
+                                        | '|'
+                                ) {
+                                    ch.len_utf8() + 1
+                                } else {
+                                    ch.len_utf8()
+                                }
+                            })
+                            .sum()
+                    } else {
+                        trimmed.len()
+                    };
+                    substitution_leases.push(self.execution_budget.lease_bytes(appended_bytes)?);
                     Self::append_expansion_for_word(&mut result, word, &trimmed);
                 }
                 WordPart::ArithmeticExpansion(expr) => {

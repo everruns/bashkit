@@ -2,8 +2,9 @@
 use bashkit::ExecOptions;
 use bashkit::{
     Bash, Builtin, BuiltinContext, Error, ExecResult, ExecutionBudget, ExecutionLimits,
-    LimitExceeded, async_trait,
+    LimitExceeded, SessionLimits, async_trait,
 };
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 fn assert_budget_exhausted(result: bashkit::Result<bashkit::ExecResult>) {
@@ -14,6 +15,91 @@ fn assert_budget_exhausted(result: bashkit::Result<bashkit::ExecResult>) {
         ),
         "expected shared execution budget exhaustion, got {result:?}"
     );
+}
+
+#[tokio::test]
+/// TM-DOS-111: the `$(<file)` fast path is still an executed command.
+async fn command_substitution_file_read_respects_command_limit() {
+    let limits = ExecutionLimits::new().max_commands(1);
+    let mut bash = Bash::builder().limits(limits).build();
+    bash.fs()
+        .write_file(Path::new("/f"), b"data")
+        .await
+        .unwrap();
+
+    let result = bash.exec(": \"$(</f)\"").await;
+    assert!(
+        matches!(
+            result,
+            Err(Error::ResourceLimit(LimitExceeded::MaxCommands(1)))
+        ),
+        "expected command limit exhaustion, got {result:?}"
+    );
+}
+
+#[tokio::test]
+/// TM-DOS-111: shortcut commands count toward the cumulative session limit.
+async fn command_substitution_file_read_respects_session_command_limit() {
+    let mut bash = Bash::builder()
+        .limits(ExecutionLimits::new().max_commands(100))
+        .session_limits(
+            SessionLimits::new()
+                .max_total_commands(1)
+                .max_exec_calls(100),
+        )
+        .build();
+    bash.fs()
+        .write_file(Path::new("/f"), b"data")
+        .await
+        .unwrap();
+
+    let error = bash.exec(": \"$(</f)\"").await.unwrap_err().to_string();
+    assert!(error.contains("session command limit"), "{error}");
+}
+
+#[tokio::test]
+/// TM-DOS-111: the shortcut consumes the same shared work unit as a command.
+async fn command_substitution_file_read_respects_work_limit() {
+    let limits = ExecutionLimits::new()
+        .max_commands(100)
+        .max_work_units(1)
+        .max_aggregate_input_bytes(1_000);
+    let mut bash = Bash::builder().limits(limits).build();
+    bash.fs()
+        .write_file(Path::new("/f"), b"data")
+        .await
+        .unwrap();
+
+    assert_budget_exhausted(bash.exec(": \"$(</f)\"").await);
+}
+
+#[tokio::test]
+/// TM-DOS-111: file-backed substitution text is a live intermediate.
+async fn command_substitution_file_read_respects_live_byte_limit() {
+    let limits = ExecutionLimits::new()
+        .max_commands(100)
+        .max_work_units(10_000)
+        .max_live_intermediate_bytes(4);
+    let mut bash = Bash::builder().limits(limits).build();
+    bash.fs()
+        .write_file(Path::new("/f"), b"12345")
+        .await
+        .unwrap();
+
+    assert_budget_exhausted(bash.exec(": \"$(</f)\"").await);
+}
+
+#[tokio::test]
+/// TM-DOS-111: sibling substitutions cannot each reuse the full live budget.
+async fn command_substitution_file_reads_share_live_byte_limit() {
+    let limits = ExecutionLimits::new()
+        .max_commands(100)
+        .max_work_units(10_000)
+        .max_live_intermediate_bytes(10);
+    let mut bash = Bash::builder().limits(limits).build();
+    bash.fs().write_file(Path::new("/f"), b"123").await.unwrap();
+
+    assert_budget_exhausted(bash.exec(": \"$(</f)$(</f)$(</f)\"").await);
 }
 
 #[tokio::test]
