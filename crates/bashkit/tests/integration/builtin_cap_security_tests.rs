@@ -126,6 +126,55 @@ mod awk_loops {
     }
 }
 
+mod awk_format {
+    use super::*;
+
+    #[tokio::test]
+    async fn sprintf_error_in_expression_aborts_the_program() {
+        for body in [
+            "s = sprintf(\"%10001s\", \"x\"); print length(s)",
+            "print length(sprintf(\"%10001s\", \"x\"))",
+            "if (sprintf(\"%10001s\", \"x\")) print \"after\"",
+        ] {
+            let script = format!("awk 'BEGIN {{ {body} }} END {{ print \"end\" }}'");
+            let r = run(&script).await;
+            assert_eq!(r.exit_code, 2, "{body}: exit status");
+            assert_eq!(r.stdout, "", "{body}: no output after error");
+            assert_eq!(
+                r.stderr, "awk: fatal: format width 10001 exceeds maximum (10000)\n",
+                "{body}: diagnostic"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn sprintf_width_at_cap_succeeds() {
+        let r = run("awk 'BEGIN { s = sprintf(\"%10000s\", \"x\"); print length(s) }'").await;
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.stdout, "10000\n");
+        assert_eq!(r.stderr, "");
+    }
+
+    #[tokio::test]
+    async fn precision_and_printf_errors_are_fatal_too() {
+        for (body, diagnostic) in [
+            (
+                "print length(sprintf(\"%.10001s\", \"x\"))",
+                "awk: fatal: format precision 10001 exceeds maximum (10000)\n",
+            ),
+            (
+                "printf \"%10001s\", \"x\"",
+                "awk: fatal: format width 10001 exceeds maximum (10000)\n",
+            ),
+        ] {
+            let r = run(&format!("awk 'BEGIN {{ {body} }} END {{ print \"end\" }}'")).await;
+            assert_eq!(r.exit_code, 2, "{body}: exit status");
+            assert_eq!(r.stdout, "", "{body}: no output after error");
+            assert_eq!(r.stderr, diagnostic, "{body}: diagnostic");
+        }
+    }
+}
+
 mod awk_getline {
     use super::*;
 

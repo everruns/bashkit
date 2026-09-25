@@ -4,7 +4,7 @@
 echo "" | awk '{printf "%999999999d", 1}' 2>&1
 echo "exit: $?"
 ### expect
-awk: format width 999999999 exceeds maximum (10000)
+awk: fatal: format width 999999999 exceeds maximum (10000)
 exit: 2
 ### end
 
@@ -28,6 +28,6 @@ echo "" | awk '{printf "%10000d\n", 1}' | wc -c
 echo "" | awk '{printf "%.999999999f", 1}' 2>&1
 echo "exit: $?"
 ### expect
-awk: format precision 999999999 exceeds maximum (10000)
+awk: fatal: format precision 999999999 exceeds maximum (10000)
 exit: 2
 ### end

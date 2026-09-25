@@ -840,12 +840,13 @@ impl AwkInterpreter {
                 }
                 let format = self.eval_expr(&args[0]).as_string();
                 let values: Vec<AwkValue> = args[1..].iter().map(|a| self.eval_expr(a)).collect();
+                // THREAT[TM-DOS-109]: expression errors must poison the run;
+                // returning an empty string with exit 0 hides a failed cap.
                 match self.format_string(&format, &values) {
                     Ok(s) => AwkValue::String(s),
                     Err(FormatError::Message(e)) => {
-                        self.stderr_output.push_str(&e);
-                        self.stderr_output.push('\n');
-                        AwkValue::String(String::new())
+                        self.fatal(&e);
+                        AwkValue::Uninitialized
                     }
                     Err(FormatError::TooLarge) => {
                         self.string_fits(usize::MAX);
@@ -1244,7 +1245,7 @@ impl AwkInterpreter {
                 {
                     if w_val > Self::MAX_FORMAT_WIDTH {
                         return Err(FormatError::Message(format!(
-                            "awk: format width {} exceeds maximum ({})",
+                            "format width {} exceeds maximum ({})",
                             w_val,
                             Self::MAX_FORMAT_WIDTH
                         )));
@@ -1269,7 +1270,7 @@ impl AwkInterpreter {
                     } else if let Ok(p_val) = p.parse::<usize>() {
                         if p_val > Self::MAX_FORMAT_WIDTH {
                             return Err(FormatError::Message(format!(
-                                "awk: format precision {} exceeds maximum ({})",
+                                "format precision {} exceeds maximum ({})",
                                 p_val,
                                 Self::MAX_FORMAT_WIDTH
                             )));
@@ -1542,11 +1543,7 @@ impl AwkInterpreter {
                         }
                         AwkFlow::Continue
                     }
-                    Err(FormatError::Message(e)) => {
-                        self.stderr_output.push_str(&e);
-                        self.stderr_output.push('\n');
-                        AwkFlow::Exit(Some(2))
-                    }
+                    Err(FormatError::Message(e)) => self.fatal(&e),
                     Err(FormatError::TooLarge) => {
                         self.string_fits(usize::MAX);
                         AwkFlow::Exit(Some(2))
