@@ -4,7 +4,44 @@
 //! host aborted with `memory allocation ... failed`. Every growth path must
 //! stop at a cap first: a fatal awk error (exit 2), and the shell carries on.
 
-use bashkit::{Bash, ExecutionLimits};
+use bashkit::{Bash, ExecutionLimits, MemoryLimits};
+
+/// A rejected scalar assignment must fail the request, never silently keep the
+/// old value and report success to the caller.
+#[tokio::test]
+async fn scalar_assignment_budget_failure_is_reported_and_session_recovers() {
+    let mut bash = Bash::builder()
+        .memory_limits(MemoryLimits::new().max_total_variable_bytes(1024))
+        .build();
+    let error = bash
+        .exec("s=x; for i in {1..11}; do s=\"$s$s\"; done; echo done")
+        .await
+        .expect_err("over-budget scalar assignment must fail execution");
+    assert!(
+        error.to_string().contains("variable byte limit"),
+        "unexpected diagnostic: {error}"
+    );
+    let recovered = bash.exec("echo recovered").await.unwrap();
+    assert_eq!(recovered.exit_code, 0);
+    assert_eq!(recovered.stdout, "recovered\n");
+}
+
+#[tokio::test]
+async fn local_and_exported_scalar_budget_failures_are_reported() {
+    for script in [
+        "f(){ local s=x; for i in {1..11}; do s=\"$s$s\"; done; }; f",
+        "set -a; s=x; for i in {1..11}; do s=\"$s$s\"; done",
+    ] {
+        let mut bash = Bash::builder()
+            .memory_limits(MemoryLimits::new().max_total_variable_bytes(1024))
+            .build();
+        let error = bash.exec(script).await.expect_err(script);
+        assert!(
+            error.to_string().contains("byte limit"),
+            "{script}: {error}"
+        );
+    }
+}
 
 async fn run(script: &str) -> bashkit::ExecResult {
     Bash::new().exec(script).await.unwrap()

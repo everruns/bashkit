@@ -1143,6 +1143,10 @@ pub struct Interpreter {
     memory_limits: crate::limits::MemoryLimits,
     /// Memory budget tracker
     memory_budget: crate::limits::MemoryBudget,
+    // THREAT[TM-DOS-060]: Assignment helpers are called from many infallible
+    // expansion paths. Remember the first rejected write and fail execution at
+    // the next interpreter boundary; never report a dropped assignment as success.
+    memory_limit_error: Option<crate::limits::LimitExceeded>,
     /// Trace event collector
     trace: crate::trace::TraceCollector,
     /// Execution counters for resource tracking
@@ -1621,6 +1625,7 @@ impl Interpreter {
             session_limits: SessionLimits::default(),
             memory_limits: crate::limits::MemoryLimits::default(),
             memory_budget: crate::limits::MemoryBudget::default(),
+            memory_limit_error: None,
             trace: crate::trace::TraceCollector::default(),
             counters: ExecutionCounters::new(),
             execution_budget: crate::limits::ExecutionBudget::new(
@@ -1783,6 +1788,9 @@ impl Interpreter {
 
     /// Check if cancellation has been requested.
     fn check_cancelled(&self) -> Result<()> {
+        if let Some(error) = &self.memory_limit_error {
+            return Err(crate::error::Error::ResourceLimit(error.clone()));
+        }
         if self.cancelled.load(Ordering::Relaxed) {
             Err(crate::error::Error::Cancelled)
         } else {
@@ -1935,6 +1943,7 @@ impl Interpreter {
     /// `shopt` options (expand_aliases, extglob, etc.) are intentionally
     /// preserved — they are persistent session configuration.
     pub fn reset_transient_state(&mut self) {
+        self.memory_limit_error = None;
         self.traps_mut().clear();
         self.last_exit_code = 0;
         // THREAT[TM-DOS-035/057]: A timeout can drop execution while a trap
@@ -2618,7 +2627,11 @@ impl Interpreter {
             // Script boundary cleanup: background jobs are scoped to a single exec()
             // call, so they cannot accumulate across long-lived sessions.
             let _ = self.jobs.lock().await.wait_all_results().await;
-            result
+            if let Some(error) = &self.memory_limit_error {
+                Err(crate::error::Error::ResourceLimit(error.clone()))
+            } else {
+                result
+            }
         };
 
         if result.is_err() {
@@ -2663,6 +2676,7 @@ impl Interpreter {
             self.check_cancelled()?;
             let emit_before = self.output_emit_count;
             let result = self.execute_command(command).await?;
+            self.check_cancelled()?;
             self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
 
             // Accumulate stdout with truncation
@@ -9064,18 +9078,15 @@ impl Interpreter {
                 .get(resolved)
                 .map(String::len)
             {
-                if self
-                    .memory_budget
-                    .check_variable_insert(
-                        resolved.len(),
-                        value.len(),
-                        false,
-                        resolved.len(),
-                        old_val_len,
-                        &self.memory_limits,
-                    )
-                    .is_err()
-                {
+                if let Err(error) = self.memory_budget.check_variable_insert(
+                    resolved.len(),
+                    value.len(),
+                    false,
+                    resolved.len(),
+                    old_val_len,
+                    &self.memory_limits,
+                ) {
+                    self.memory_limit_error.get_or_insert(error);
                     return;
                 }
                 self.memory_budget.record_variable_insert(
@@ -9190,7 +9201,7 @@ impl Interpreter {
     }
 
     /// Insert a variable into the global variables map with memory budget checking.
-    /// Silently drops the insert if the budget would be exceeded.
+    /// Records a fatal execution error if the budget would be exceeded.
     /// Internal marker variables (_READONLY_, _NAMEREF_, etc.) bypass budget checks.
     fn insert_variable_checked(&mut self, key: String, value: String) -> bool {
         let is_internal = Self::is_internal_variable(&key);
@@ -9204,19 +9215,16 @@ impl Interpreter {
                     self.scoped.variables.get(&key).map_or(0, |v| v.len()),
                 )
             };
-            if self
-                .memory_budget
-                .check_variable_insert(
-                    key.len(),
-                    value.len(),
-                    is_new,
-                    old_key_len,
-                    old_value_len,
-                    &self.memory_limits,
-                )
-                .is_err()
-            {
-                return false; // silently reject — budget exceeded
+            if let Err(error) = self.memory_budget.check_variable_insert(
+                key.len(),
+                value.len(),
+                is_new,
+                old_key_len,
+                old_value_len,
+                &self.memory_limits,
+            ) {
+                self.memory_limit_error.get_or_insert(error);
+                return false;
             }
             self.memory_budget.record_variable_insert(
                 key.len(),
@@ -9242,7 +9250,7 @@ impl Interpreter {
     }
 
     /// Insert a variable into the current local frame with memory budget checking.
-    /// Silently drops the insert if the budget would be exceeded.
+    /// Records a fatal execution error if the budget would be exceeded.
     fn insert_local_checked(&mut self, key: String, value: String) {
         let Some(frame) = self.call_stack.last() else {
             return;
@@ -9255,19 +9263,16 @@ impl Interpreter {
             (key.len(), old_value_len)
         };
 
-        if self
-            .memory_budget
-            .check_variable_insert(
-                key.len(),
-                value.len(),
-                is_new,
-                old_key_len,
-                old_value_len,
-                &self.memory_limits,
-            )
-            .is_err()
-        {
-            return; // silently reject — budget exceeded
+        if let Err(error) = self.memory_budget.check_variable_insert(
+            key.len(),
+            value.len(),
+            is_new,
+            old_key_len,
+            old_value_len,
+            &self.memory_limits,
+        ) {
+            self.memory_limit_error.get_or_insert(error);
+            return;
         }
 
         self.memory_budget.record_variable_insert(
@@ -9288,15 +9293,29 @@ impl Interpreter {
     fn insert_env_checked(&mut self, key: String, value: String) {
         let is_new = !self.env.contains_key(&key);
         if is_new && self.env.len() >= self.memory_limits.max_variable_count {
+            self.memory_limit_error.get_or_insert_with(|| {
+                crate::limits::LimitExceeded::Memory(format!(
+                    "environment variable count limit ({}) exceeded",
+                    self.memory_limits.max_variable_count
+                ))
+            });
             return;
         }
 
         let old_value_len = self.env.get(&key).map_or(0, |v| v.len());
         let old_key_len = if is_new { 0 } else { key.len() };
         let current_env_bytes: usize = self.env.iter().map(|(k, v)| k.len() + v.len()).sum();
-        let new_env_bytes = (current_env_bytes + key.len() + value.len())
-            .saturating_sub(old_key_len + old_value_len);
+        let new_env_bytes = (current_env_bytes
+            .saturating_add(key.len())
+            .saturating_add(value.len()))
+        .saturating_sub(old_key_len + old_value_len);
         if new_env_bytes > self.memory_limits.max_total_variable_bytes {
+            self.memory_limit_error.get_or_insert_with(|| {
+                crate::limits::LimitExceeded::Memory(format!(
+                    "environment variable byte limit ({}) exceeded",
+                    self.memory_limits.max_total_variable_bytes
+                ))
+            });
             return;
         }
 
@@ -10039,14 +10058,14 @@ mod tests {
         script: &str,
         limits: ExecutionLimits,
         memory_limits: crate::limits::MemoryLimits,
-    ) -> ExecResult {
+    ) -> Result<ExecResult> {
         let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
         let mut interp = Interpreter::new(Arc::clone(&fs));
         interp.set_limits(limits);
         interp.set_memory_limits(memory_limits);
         let parser = Parser::new(script);
         let ast = parser.parse().unwrap();
-        interp.execute(&ast).await.unwrap()
+        interp.execute(&ast).await
     }
 
     #[tokio::test]
@@ -10120,9 +10139,10 @@ mod tests {
             script.push_str(&format!("V{i}=x\n"));
         }
         script.push_str("export -p | grep -c '^declare -x V' || true\n");
-        let result = run_script_with_limits(&script, limits, memory_limits).await;
-        assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout.trim(), "4");
+        let error = run_script_with_limits(&script, limits, memory_limits)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("variable count limit (5)"));
     }
 
     #[test]
