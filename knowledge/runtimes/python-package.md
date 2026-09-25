@@ -262,8 +262,10 @@ root, recursive `**`, braces, and character classes. Traversal patterns are
 errors. A total `max_count` reports truncation only when a match is omitted.
 When callers omit it, Bashkit enforces a 1,000-match default plus a 100 KB
 matched-text ceiling. Direct reads and recursive discovery share per-operation
-deadline, 10,000-file, and 10 MB traversal budgets plus a 100 MB session work
-budget. Exhausted searches return partial results with `truncated=True`.
+deadline, 10,000-file, and 10 MB traversal budgets. These are per-operation by
+design — nothing is retained once an operation returns, so a session-lifetime
+byte counter would only drain and eventually fail a healthy long-lived session.
+Exhausted searches return partial results with `truncated=True`.
 Line scans stream through file content instead of materializing `splitlines()`.
 Recursive discovery skips symlink entries to avoid cyclic walks. Async read,
 glob, and grep dispatch cooperatively signal cancellation to their worker,

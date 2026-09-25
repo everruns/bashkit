@@ -38,12 +38,19 @@ from typing import TYPE_CHECKING
 
 from bashkit import BashTool as NativeBashTool
 
-# THREAT[TM-DOS-106]: Agent-facing VFS helpers bypass shell execution limits.
+# THREAT[TM-DOS-113]: Agent-facing VFS helpers bypass shell execution limits.
 # Keep every direct walk and retained grep result independently bounded.
+#
+# These are deliberately *per-operation* budgets. A session-lifetime byte
+# counter was tried and removed: nothing is retained once an operation returns
+# (results carry their own caps), so a cumulative counter measures work already
+# released and can only ever drain. It turned a long-lived agent session into a
+# permanent failure once enough legitimate reads had happened, with no way back
+# except `reset()`, while adding nothing over the per-operation bounds that
+# actually cap amplification.
 _DEFAULT_OPERATION_TIMEOUT_SECONDS = 30.0
 _MAX_OPERATION_FILES = 10_000
 _MAX_OPERATION_BYTES = 10_000_000
-_MAX_SESSION_WORK_BYTES = 100_000_000
 _DEFAULT_GREP_MATCHES = 1_000
 _MAX_GREP_RESULT_BYTES = 100_000
 
@@ -231,8 +238,6 @@ if DEEPAGENTS_AVAILABLE:
             self._operation_timeout = (
                 _DEFAULT_OPERATION_TIMEOUT_SECONDS if timeout_seconds is None else max(0.0, timeout_seconds)
             )
-            self._session_work_remaining = _MAX_SESSION_WORK_BYTES
-            self._session_work_lock = threading.Lock()
 
         @property
         def id(self) -> str:
@@ -276,10 +281,6 @@ if DEEPAGENTS_AVAILABLE:
             budget.checkpoint()
             if files > budget.files_remaining or size > budget.bytes_remaining:
                 raise _BudgetExceeded
-            with self._session_work_lock:
-                if size > self._session_work_remaining:
-                    raise _BudgetExceeded
-                self._session_work_remaining -= size
             budget.files_remaining -= files
             budget.bytes_remaining -= size
 
@@ -502,8 +503,6 @@ if DEEPAGENTS_AVAILABLE:
         def reset(self) -> None:
             """Reset VFS."""
             self._bash.reset()
-            with self._session_work_lock:
-                self._session_work_remaining = _MAX_SESSION_WORK_BYTES
 
 
 def create_bash_middleware(**kwargs) -> BashkitMiddleware:
