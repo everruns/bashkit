@@ -21,7 +21,7 @@
 use async_trait::async_trait;
 use jaq_core::load::{Arena, File, Loader};
 use jaq_core::{Compiler, Ctx, Vars, data};
-use jaq_json::Val;
+use self::jaq_json::Val;
 use jaq_std::input::{HasInputs, Inputs, RcIter};
 
 use super::{Builtin, Context, ExecutionDeadline, read_text_file, resolve_path};
@@ -35,6 +35,20 @@ mod convert;
 mod errors;
 mod format;
 mod input;
+// Vendored jaq-json (MIT, Michael Färber, https://github.com/01mf02/jaq),
+// see jaq_json/UPSTREAM_VERSION and knowledge/runtimes/jaq-json-vendor.md.
+// Kept byte-close to upstream so `scripts/sync-jaq-json.sh` can merge new
+// releases: not reformatted, not linted.
+#[rustfmt::skip]
+#[allow(
+    clippy::all,
+    dead_code,
+    unused_imports,
+    unused_macros,
+    unreachable_pub,
+    missing_docs
+)]
+mod jaq_json;
 mod regex_compat;
 
 #[cfg(test)]
@@ -195,7 +209,7 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
     // Set up loader.
     let defs = jaq_core::defs()
         .chain(jaq_std::defs())
-        .chain(jaq_json::defs());
+        .chain(self::jaq_json::defs());
     let loader = Loader::new(defs);
     let arena = Arena::default();
 
@@ -260,7 +274,7 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
         .chain(std::iter::once(safe_halt))
         .chain(input_funs)
         .chain(regex_funs)
-        .chain(jaq_json::funs::<D>());
+        .chain(self::jaq_json::funs::<D>());
 
     let compiler = Compiler::default()
         .with_funs(native_funs)

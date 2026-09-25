@@ -10,7 +10,7 @@
 //!  - `MAX_JQ_JSON_DEPTH` (TM-DOS-027) bounds input nesting to prevent
 //!    stack overflow during jaq evaluation on deeply nested JSON.
 
-use jaq_json::Val;
+use super::jaq_json::Val;
 
 /// THREAT[TM-DOS-027]: Maximum nesting depth for JSON input values.
 /// Prevents stack overflow when jaq evaluates deeply nested JSON structures

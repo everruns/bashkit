@@ -65,7 +65,18 @@ bitflags = "2"
 # JSON processing (jq) - optional, enabled with jq feature
 jaq-core = { workspace = true, optional = true }
 jaq-std = { workspace = true, optional = true }
-jaq-json = { workspace = true, optional = true }
+# jaq-json is vendored into builtins/jq/jaq_json/ (TM-DOS-110, #2444) so its
+# value operations can enforce size limits; these are its dependencies,
+# pinned to the ranges upstream jaq-json declares. See
+# knowledge/runtimes/jaq-json-vendor.md.
+bstr = { version = "1", default-features = false, optional = true }
+bytes = { version = "1", default-features = false, optional = true }
+foldhash = { version = "0.1", default-features = false, optional = true }
+hifijson = { version = "0.5.0", default-features = false, features = ["alloc", "std"], optional = true }
+indexmap = { version = "2.0", default-features = false, optional = true }
+num-bigint = { version = "0.4.6", default-features = false, optional = true }
+ryu = { version = "1.0.20", optional = true }
+self_cell = { version = "1.2.0", optional = true }
 
 # Compression (for gzip/gunzip and bzip2/bunzip2)
 flate2 = { workspace = true }
@@ -182,7 +193,19 @@ wasm_js = [
 ]
 # Enable jq builtin via embedded jaq interpreter
 # Usage: cargo build --features jq
-jq = ["dep:jaq-core", "dep:jaq-std", "dep:jaq-json", "dep:serde_yaml_ng"]
+jq = [
+    "dep:jaq-core",
+    "dep:jaq-std",
+    "dep:bstr",
+    "dep:bytes",
+    "dep:foldhash",
+    "dep:hifijson",
+    "dep:indexmap",
+    "dep:num-bigint",
+    "dep:ryu",
+    "dep:self_cell",
+    "dep:serde_yaml_ng",
+]
 # HTTP client (curl/wget) over rustls. Does NOT imply a crypto backend: pick
 # `ring` (on by default) or `aws-lc-rs`. Enabling neither is a compile error.
 http_client = ["reqwest", "rustls"]

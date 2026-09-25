@@ -7,7 +7,7 @@
 //! into stderr (TM-INF-022).
 
 use jaq_core::compile::Undefined;
-use jaq_json::Val;
+use super::jaq_json::Val;
 
 /// Cap for formatted compile/parse error messages. Bounds stderr so jaq
 /// internals (file structs, AST debug, ~800 chars of prepended stdlib) never

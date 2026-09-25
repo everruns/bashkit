@@ -1,0 +1,44 @@
+use crate::builtins::jq::jaq_json::{Error, Val, ValR};
+use serde_json::{from_value, Value};
+
+fn yields(x: Val, code: &str, ys: impl Iterator<Item = ValR>) {
+    use jaq_core::load::{Arena, File, Loader};
+    eprintln!("{}", code.replace('\n', " "));
+
+    let arena = Arena::default();
+    let defs = jaq_core::defs()
+        .chain(jaq_std::defs())
+        .chain(crate::builtins::jq::jaq_json::defs());
+    let loader = Loader::new(defs);
+    let modules = loader.load(&arena, File { path: (), code }).unwrap();
+    let funs = jaq_core::funs()
+        .chain(jaq_std::funs())
+        .chain(crate::builtins::jq::jaq_json::funs());
+    let filter = jaq_core::Compiler::default()
+        .with_funs(funs)
+        .compile(modules)
+        .unwrap();
+    filter.yields(x, ys)
+}
+
+pub fn fail(x: Value, f: &str, err: Error) {
+    yields(from_value(x).unwrap(), f, core::iter::once(Err(err)))
+}
+
+pub fn give(x: Value, f: &str, y: Value) {
+    gives(x, f, [y])
+}
+
+pub fn gives<const N: usize>(x: Value, f: &str, ys: [Value; N]) {
+    let conv = |v| from_value(v).unwrap();
+    yields(conv(x), f, ys.into_iter().map(|y| Ok(conv(y))))
+}
+
+macro_rules! yields {
+    ($func_name:ident, $filter:expr, $output: expr) => {
+        #[test]
+        fn $func_name() {
+            super::common::give(json!(null), $filter, json!($output))
+        }
+    };
+}

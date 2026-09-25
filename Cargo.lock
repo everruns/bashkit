@@ -349,6 +349,8 @@ dependencies = [
  "base64 0.23.1",
  "bigdecimal",
  "bitflags 2.13.2",
+ "bstr",
+ "bytes",
  "bzip2",
  "chrono",
  "chrono-tz",
@@ -358,19 +360,22 @@ dependencies = [
  "fail",
  "fancy-regex 0.19.2",
  "flate2",
+ "foldhash 0.1.5",
  "futures-core",
  "futures-util",
  "get-size2",
  "getrandom 0.4.3",
  "gloo-timers",
+ "hifijson",
  "hmac",
+ "indexmap",
  "insta",
  "jaq-core",
- "jaq-json",
  "jaq-std",
  "md-5",
  "monty",
  "monty-types",
+ "num-bigint 0.4.8",
  "num-traits",
  "os_display",
  "pretty_assertions",
@@ -380,6 +385,8 @@ dependencies = [
  "reqwest",
  "russh",
  "rustls",
+ "ryu",
+ "self_cell",
  "send_wrapper",
  "serde",
  "serde_json",
@@ -2394,25 +2401,6 @@ dependencies = [
  "dyn-clone",
  "once_cell",
  "typed-arena",
-]
-
-[[package]]
-name = "jaq-json"
-version = "2.0.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4be2f53207ffb1313a2d2ad819cfa8bfaa7936cb85a110eda10fd5da822cec94"
-dependencies = [
- "bstr",
- "bytes",
- "foldhash 0.1.5",
- "hifijson",
- "indexmap",
- "jaq-core",
- "jaq-std",
- "num-bigint 0.4.8",
- "num-traits",
- "ryu",
- "self_cell",
 ]
 
 [[package]]
