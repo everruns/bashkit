@@ -125,6 +125,8 @@ struct AwkState {
     variables: HashMap<String, AwkValue>,
     fields: Vec<String>,
     fs: String,
+    /// Compiled ERE for `fs` when it is used as a regex (see `FieldSep`).
+    fs_regex: Option<Regex>,
     ofs: String,
     ors: String,
     nr: usize,
@@ -230,6 +232,7 @@ impl Default for AwkState {
             variables,
             fields: Vec::new(),
             fs: " ".to_string(),
+            fs_regex: None,
             ofs: " ".to_string(),
             ors: "\n".to_string(),
             nr: 0,
@@ -273,15 +276,92 @@ fn csv_split_fields(line: &str) -> Vec<String> {
     fields
 }
 
+/// How a field separator string splits text (POSIX awk "Regular
+/// Expressions as Field Separators").
+///
+/// Decision (#2445): one classification drives record splitting (`FS`) and
+/// `split()`, so both follow the same rules:
+/// - `" "`: runs of blanks/newlines, leading and trailing ones ignored
+/// - `""`: every character is a field (gawk/mawk extension)
+/// - any other single character: that character, literally
+/// - anything longer: an ERE
+enum FieldSep<'a> {
+    Whitespace,
+    Chars,
+    Literal(&'a str),
+    Regex(&'a Regex),
+}
+
+impl<'a> FieldSep<'a> {
+    /// Returns `true` when `sep` must be matched as an ERE.
+    fn is_regex(sep: &str) -> bool {
+        sep != " " && sep.chars().nth(1).is_some()
+    }
+
+    /// Classify `sep`; `regex` is its compiled ERE when `is_regex(sep)`.
+    /// An ERE that failed to compile falls back to a literal match.
+    fn classify(sep: &'a str, regex: Option<&'a Regex>) -> Self {
+        match sep {
+            " " => Self::Whitespace,
+            "" => Self::Chars,
+            _ => match regex {
+                Some(re) => Self::Regex(re),
+                None => Self::Literal(sep),
+            },
+        }
+    }
+
+    fn split(&self, text: &str) -> Vec<String> {
+        if text.is_empty() {
+            // An empty record/string has no fields in every mode.
+            return Vec::new();
+        }
+        match self {
+            Self::Whitespace => text.split_whitespace().map(String::from).collect(),
+            Self::Chars => text.chars().map(String::from).collect(),
+            Self::Literal(sep) => text.split(sep).map(String::from).collect(),
+            Self::Regex(re) => split_regex_nonempty(re, text),
+        }
+    }
+}
+
+/// Split on non-empty ERE matches. An empty match separates nothing, as in
+/// gawk (`FS = "x*"` does not split between every character).
+fn split_regex_nonempty(re: &Regex, text: &str) -> Vec<String> {
+    let mut fields = Vec::new();
+    let mut last = 0;
+    for m in re.find_iter(text).filter(|m| !m.as_str().is_empty()) {
+        fields.push(text[last..m.start()].to_string());
+        last = m.end();
+    }
+    fields.push(text[last..].to_string());
+    fields
+}
+
 impl AwkState {
+    /// Set `FS`, compiling it once when it is an ERE.
+    fn set_fs(&mut self, fs: String) {
+        // THREAT[TM-DOS-023]: `build_regex` enforces the shared regex size limits.
+        self.fs_regex = if FieldSep::is_regex(&fs) {
+            crate::builtins::search_common::build_regex(&fs).ok()
+        } else {
+            None
+        };
+        self.fs = fs;
+    }
+
+    /// Delete every element of array `name`.
+    fn clear_array(&mut self, name: &str) {
+        let prefix = format!("{name}[");
+        self.variables.retain(|k, _| !k.starts_with(&prefix));
+    }
+
     /// Split a line into fields based on current mode (CSV or FS)
     fn split_fields(&self, line: &str) -> Vec<String> {
         if self.csv_mode {
             csv_split_fields(line)
-        } else if self.fs == " " {
-            line.split_whitespace().map(String::from).collect()
         } else {
-            line.split(&self.fs).map(String::from).collect()
+            FieldSep::classify(&self.fs, self.fs_regex.as_ref()).split(line)
         }
     }
 
@@ -337,7 +417,7 @@ impl AwkState {
 
     fn set_variable(&mut self, name: &str, value: AwkValue) {
         match name {
-            "FS" => self.fs = value.as_string(),
+            "FS" => self.set_fs(value.as_string()),
             "OFS" => self.ofs = value.as_string(),
             "ORS" => self.ors = value.as_string(),
             "$0" => {
@@ -580,7 +660,9 @@ impl Builtin for Awk {
         interp.max_loop_iterations = max_loop;
         interp.max_total_loop_iterations = max_total_loop;
         interp.functions = program.functions.clone();
-        interp.state.fs = Self::process_escape_sequences(&field_sep);
+        interp
+            .state
+            .set_fs(Self::process_escape_sequences(&field_sep));
         interp.fs = Some(ctx.fs.clone());
         interp.cwd = ctx.cwd.clone();
         if csv_mode {

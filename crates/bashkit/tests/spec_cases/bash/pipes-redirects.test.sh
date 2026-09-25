@@ -247,3 +247,41 @@ cat <&3
 ### expect
 start
 ### end
+
+### null_command_output_redirect_truncates
+# A redirect with no command still truncates/creates the file
+echo data > /tmp/nullcmd_out
+> /tmp/nullcmd_out
+wc -c < /tmp/nullcmd_out
+echo "rc=$?"
+### expect
+0
+rc=0
+### end
+
+### null_command_input_redirect_missing
+# A lone input redirect to a missing file fails with status 1
+{ < /tmp/nullcmd_missing; } 2>/dev/null
+echo "rc=$?"
+### expect
+rc=1
+### end
+
+### null_command_redirect_resets_status
+# A successful redirect-only command exits 0
+false
+> /tmp/nullcmd_status
+echo "rc=$?"
+### expect
+rc=0
+### end
+
+### assignment_with_redirect_creates_file
+# x=1 > file assigns and still creates the file
+x=1 > /tmp/nullcmd_assign
+echo "$x"
+test -f /tmp/nullcmd_assign && echo exists
+### expect
+1
+exists
+### end
