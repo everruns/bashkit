@@ -646,10 +646,19 @@ impl Builtin for Awk {
         interp.execution_budget = ctx
             .execution_budget()
             .and_then(|budget| budget.try_with(Clone::clone).ok());
-        interp.max_loop_iterations = ctx
+        let (max_loop, max_total_loop) = ctx
             .execution_extension::<ExecutionLimits>()
-            .and_then(|limits| limits.try_with(|limits| limits.max_loop_iterations).ok())
-            .unwrap_or_else(|| ExecutionLimits::default().max_loop_iterations);
+            .and_then(|limits| {
+                limits
+                    .try_with(|l| (l.max_loop_iterations, l.max_total_loop_iterations))
+                    .ok()
+            })
+            .unwrap_or_else(|| {
+                let d = ExecutionLimits::default();
+                (d.max_loop_iterations, d.max_total_loop_iterations)
+            });
+        interp.max_loop_iterations = max_loop;
+        interp.max_total_loop_iterations = max_total_loop;
         interp.functions = program.functions.clone();
         interp
             .state

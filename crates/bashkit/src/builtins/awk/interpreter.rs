@@ -187,7 +187,8 @@ pub(super) struct AwkInterpreter {
     vfs_writer: Option<VfsWriter>,
     /// Cached file inputs for `getline var < file` redirection.
     /// Maps normalized resolved path -> (lines, current_position).
-    file_inputs: HashMap<String, (Vec<String>, usize)>,
+    /// Maps normalized resolved path -> (lines, current_position, raw_bytes).
+    file_inputs: HashMap<String, (Vec<String>, usize, usize)>,
     /// Approximate raw input bytes retained by `file_inputs`.
     file_input_bytes: usize,
     /// VFS reference for lazy file reads (getline < file).
@@ -200,9 +201,14 @@ pub(super) struct AwkInterpreter {
     range_active: HashMap<usize, bool>,
     /// Max iterations for a single loop, inherited from execution limits.
     pub(super) max_loop_iterations: usize,
+    /// Max iterations across all loops of one awk run (nested loops share it).
+    pub(super) max_total_loop_iterations: usize,
+    total_loop_iterations: usize,
     regex_cache: RuntimeRegexCache,
     /// Shared request budget; poisoning is surfaced by the builtin dispatcher.
     pub(super) execution_budget: Option<crate::limits::ExecutionBudget>,
+    /// Set once a resource limit aborted the program (see `fatal`).
+    fatal: bool,
 }
 
 impl AwkInterpreter {
@@ -224,9 +230,50 @@ impl AwkInterpreter {
             cwd: PathBuf::from("/"),
             range_active: HashMap::new(),
             max_loop_iterations: ExecutionLimits::default().max_loop_iterations,
+            max_total_loop_iterations: ExecutionLimits::default().max_total_loop_iterations,
+            total_loop_iterations: 0,
             regex_cache: RuntimeRegexCache::default(),
             execution_budget: None,
+            fatal: false,
         }
+    }
+
+    /// Abort the program because a resource limit was reached.
+    /// THREAT[TM-DOS-109]: caps are reported, never silent.
+    ///
+    /// Decision (#2446): hitting a cap is never silent. Like a gawk fatal
+    /// error, the message goes to stderr, no further actions (END included)
+    /// run, and awk exits 2. Output produced so far is kept.
+    fn fatal(&mut self, msg: &str) -> AwkFlow {
+        if !self.fatal {
+            self.fatal = true;
+            self.stderr_output.push_str("awk: fatal: ");
+            self.stderr_output.push_str(msg);
+            self.stderr_output.push('\n');
+        }
+        AwkFlow::Exit(Some(2))
+    }
+
+    /// Count one iteration of a loop that has run `iters` times so far.
+    /// THREAT[TM-DOS-033]: per-loop and whole-program caps, so nested loops
+    /// cannot multiply past `max_total_loop_iterations`.
+    fn tick_loop(&mut self, iters: usize) -> Option<AwkFlow> {
+        self.total_loop_iterations += 1;
+        if iters > self.max_loop_iterations {
+            let msg = format!(
+                "loop iteration limit ({}) exceeded",
+                self.max_loop_iterations
+            );
+            return Some(self.fatal(&msg));
+        }
+        if self.total_loop_iterations > self.max_total_loop_iterations {
+            let msg = format!(
+                "total loop iteration limit ({}) exceeded",
+                self.max_total_loop_iterations
+            );
+            return Some(self.fatal(&msg));
+        }
+        None
     }
 
     fn runtime_regex(&mut self, pattern: &str) -> Option<regex::Regex> {
@@ -244,13 +291,17 @@ impl AwkInterpreter {
 
     /// Load a file into the `file_inputs` cache if not already present.
     /// Uses a separate thread + tokio runtime to bridge async VFS → sync context.
-    /// Returns true on success, false on error.
+    /// Returns true on success, false on error. An unreadable file is the
+    /// normal awk `-1` case; exceeding a getline cap is fatal (#2446).
     fn ensure_file_loaded(&mut self, resolved: &str) -> bool {
         if self.file_inputs.contains_key(resolved) {
             return true;
         }
         // Guard: cap cache entries and retained bytes before whole-file reads.
         if self.file_inputs.len() >= MAX_GETLINE_CACHED_FILES {
+            self.fatal(&format!(
+                "getline open file limit ({MAX_GETLINE_CACHED_FILES}) exceeded"
+            ));
             return false;
         }
         let Some(fs) = &self.fs else {
@@ -259,58 +310,64 @@ impl AwkInterpreter {
         let fs = fs.clone();
         let p = PathBuf::from(resolved);
 
+        // `Ok(None)` means the file exceeds MAX_GETLINE_FILE_BYTES.
         // Native: spawn a thread with its own runtime to bridge the sync AWK
         // evaluator to the async VFS without blocking the outer runtime.
         #[cfg(not(target_family = "wasm"))]
-        let result = std::thread::spawn(move || {
+        let result = std::thread::spawn(move || -> crate::error::Result<Option<Vec<u8>>> {
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
                 .unwrap();
             let meta = runtime.block_on(fs.stat(&p))?;
             if meta.size > MAX_GETLINE_FILE_BYTES as u64 {
-                return Err(std::io::Error::other("awk getline input too large").into());
+                return Ok(None);
             }
-            runtime.block_on(fs.read_file(&p))
+            runtime.block_on(fs.read_file(&p)).map(Some)
         })
         .join();
 
         // wasm32: no threads. Drive the in-memory VFS reads inline (they resolve
         // in one poll). The outer Ok mirrors a thread that didn't panic.
         #[cfg(target_family = "wasm")]
-        let result: std::result::Result<crate::error::Result<Vec<u8>>, ()> = Ok((|| {
+        let result: std::result::Result<crate::error::Result<Option<Vec<u8>>>, ()> = Ok((|| {
             let meta = match fs.stat(&p).now_or_never() {
                 Some(m) => m?,
                 None => return Err(std::io::Error::other("awk getline: vfs read suspended").into()),
             };
             if meta.size > MAX_GETLINE_FILE_BYTES as u64 {
-                return Err(std::io::Error::other("awk getline input too large").into());
+                return Ok(None);
             }
             match fs.read_file(&p).now_or_never() {
-                Some(bytes) => bytes,
+                Some(bytes) => bytes.map(Some),
                 None => Err(std::io::Error::other("awk getline: vfs read suspended").into()),
             }
-        })());
+        })(
+        ));
 
-        match result {
-            Ok(Ok(bytes)) => {
-                if bytes.len() > MAX_GETLINE_FILE_BYTES {
-                    return false;
-                }
-                let Some(total) = self.file_input_bytes.checked_add(bytes.len()) else {
-                    return false;
-                };
-                if total > MAX_GETLINE_CACHE_BYTES {
-                    return false;
-                }
-                let text = String::from_utf8_lossy(&bytes).into_owned();
-                let lines: Vec<String> = text.lines().map(|l| l.to_string()).collect();
-                self.file_inputs.insert(resolved.to_string(), (lines, 0));
-                self.file_input_bytes = total;
-                true
+        let bytes = match result {
+            Ok(Ok(Some(bytes))) if bytes.len() <= MAX_GETLINE_FILE_BYTES => bytes,
+            Ok(Ok(_)) => {
+                self.fatal(&format!(
+                    "getline input file size limit ({MAX_GETLINE_FILE_BYTES} bytes) exceeded"
+                ));
+                return false;
             }
-            _ => false,
+            _ => return false,
+        };
+        let total = self.file_input_bytes.saturating_add(bytes.len());
+        if total > MAX_GETLINE_CACHE_BYTES {
+            self.fatal(&format!(
+                "getline total input limit ({MAX_GETLINE_CACHE_BYTES} bytes) exceeded"
+            ));
+            return false;
         }
+        let text = String::from_utf8_lossy(&bytes).into_owned();
+        let lines: Vec<String> = text.lines().map(|l| l.to_string()).collect();
+        self.file_inputs
+            .insert(resolved.to_string(), (lines, 0, bytes.len()));
+        self.file_input_bytes = total;
+        true
     }
 
     /// Evaluate an expression as a boolean, with special handling for regex
@@ -875,6 +932,30 @@ impl AwkInterpreter {
                     self.eval_expr(&args[2])
                 }
             }
+            "close" => {
+                // close(name): release a `getline < file` input (freeing its
+                // share of the getline caps) and make the next `>` write to
+                // the same path truncate again. 0 if something was open.
+                let Some(arg) = args.first() else {
+                    return AwkValue::Number(-1.0);
+                };
+                let name = self.eval_expr(arg).as_string();
+                let resolved = self.resolve_getline_path(&name);
+                let mut closed = false;
+                if let Some((_, _, bytes)) = self.file_inputs.remove(&resolved) {
+                    self.file_input_bytes = self.file_input_bytes.saturating_sub(bytes);
+                    closed = true;
+                }
+                let out_key = if name.starts_with('/') {
+                    PathBuf::from(&name)
+                } else {
+                    vfs_join(&self.cwd, &name)
+                }
+                .to_string_lossy()
+                .into_owned();
+                closed |= self.file_truncates.remove(&out_key);
+                AwkValue::Number(if closed { 0.0 } else { -1.0 })
+            }
             _ => {
                 // Check for user-defined function
                 if let Some(func) = self.functions.get(name).cloned() {
@@ -889,6 +970,9 @@ impl AwkInterpreter {
     fn call_user_function(&mut self, func: &AwkFunctionDef, args: &[AwkExpr]) -> AwkValue {
         // THREAT[TM-DOS-027]: Limit recursion depth to prevent stack overflow
         if self.call_depth >= MAX_AWK_CALL_DEPTH {
+            self.fatal(&format!(
+                "function call depth limit ({MAX_AWK_CALL_DEPTH}) exceeded"
+            ));
             return AwkValue::Uninitialized;
         }
         self.call_depth += 1;
@@ -1262,6 +1346,10 @@ impl AwkInterpreter {
             .as_ref()
             .is_some_and(|budget| budget.consume_work(1).is_err())
         {
+            // The builtin dispatcher reports the poisoned budget.
+            self.fatal = true;
+        }
+        if self.fatal {
             return AwkFlow::Exit(Some(2));
         }
         match action {
@@ -1273,6 +1361,8 @@ impl AwkInterpreter {
                 let mut text = parts.join(&self.state.ofs);
                 text.push_str(&self.state.ors);
                 if !self.write_output(&text, target) {
+                    // write_output already reported why; stop like a fatal error.
+                    self.fatal = true;
                     return AwkFlow::Exit(Some(2));
                 }
                 AwkFlow::Continue
@@ -1283,6 +1373,8 @@ impl AwkInterpreter {
                 match self.format_string(&format_str, &values) {
                     Ok(text) => {
                         if !self.write_output(&text, target) {
+                            // write_output already reported why; stop like a fatal error.
+                            self.fatal = true;
                             return AwkFlow::Exit(Some(2));
                         }
                         AwkFlow::Continue
@@ -1324,8 +1416,8 @@ impl AwkInterpreter {
                 let mut iters = 0;
                 while self.eval_expr(cond).as_bool() {
                     iters += 1;
-                    if iters > self.max_loop_iterations {
-                        break;
+                    if let Some(flow) = self.tick_loop(iters) {
+                        return flow;
                     }
                     let mut do_break = false;
                     for action in actions {
@@ -1349,8 +1441,8 @@ impl AwkInterpreter {
                 let mut iters = 0;
                 loop {
                     iters += 1;
-                    if iters > self.max_loop_iterations {
-                        break;
+                    if let Some(flow) = self.tick_loop(iters) {
+                        return flow;
                     }
                     let mut do_break = false;
                     for action in actions {
@@ -1375,8 +1467,8 @@ impl AwkInterpreter {
                 let mut iters = 0;
                 while self.eval_expr(cond).as_bool() {
                     iters += 1;
-                    if iters > self.max_loop_iterations {
-                        break;
+                    if let Some(flow) = self.tick_loop(iters) {
+                        return flow;
                     }
                     let mut do_break = false;
                     for action in actions {
@@ -1416,8 +1508,8 @@ impl AwkInterpreter {
                 let mut iters = 0;
                 for key in keys {
                     iters += 1;
-                    if iters > self.max_loop_iterations {
-                        break;
+                    if let Some(flow) = self.tick_loop(iters) {
+                        return flow;
                     }
                     self.state.set_variable(var, AwkValue::String(key));
                     let mut do_break = false;

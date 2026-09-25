@@ -563,20 +563,19 @@ async fn test_awk_recursive_function_depth_limit() {
 
 #[tokio::test]
 async fn test_awk_while_loop_limited() {
-    // Infinite while loop should terminate via default max_loop_iterations
+    // An unbounded while loop hits max_loop_iterations and aborts loudly
+    // (#2446): no partial `print i`, stderr names the cap, exit 2.
     let result = run_awk(
         &[r#"BEGIN { i=0; while(1) { i++; if(i>200000) break } print i }"#],
         Some(""),
     )
     .await
     .unwrap();
-    assert_eq!(result.exit_code, 0);
-    let count: usize = result.stdout.trim().parse().unwrap();
-    // Should be capped at default max_loop_iterations (10_000), not 200_000
-    assert!(
-        count <= 10_001,
-        "loop ran {} times, expected <= 10001",
-        count
+    assert_eq!(result.exit_code, 2);
+    assert_eq!(result.stdout, "");
+    assert_eq!(
+        result.stderr,
+        "awk: fatal: loop iteration limit (10000) exceeded\n"
     );
 }
 
@@ -1120,7 +1119,8 @@ async fn test_awk_many_redirected_writes_reuse_single_writer() {
 async fn test_awk_dev_null_redirect_does_not_count_against_output_limit() {
     // /dev/null is discarded before any AWK-side redirect buffering.
     let result = run_awk(
-        &[r#"BEGIN { s = sprintf("%1000s", "x"); for(i=0;i<12000;i++) print s > "/dev/null"; print "done" }"#],
+        // 15 MB through /dev/null, with every loop under the iteration cap.
+        &[r#"BEGIN { s = sprintf("%1000s", "x"); for(j=0;j<3;j++) for(i=0;i<5000;i++) print s > "/dev/null"; print "done" }"#],
         None,
     )
     .await
@@ -1187,10 +1187,24 @@ async fn test_awk_getline_file_cache_limit_exceeded() {
     let prog = format!(
         r#"BEGIN{{ ok=0; for(i=0;i<{count};i++) {{ f="/tmp/f"i".txt"; if((getline x < f)>0) ok++ }} print ok }}"#,
     );
+    let result = run_awk_with_custom_fs(&[&prog], None, fs.clone())
+        .await
+        .unwrap();
+    // Opening one file past the cap is fatal, not a silent -1 (#2446).
+    assert_eq!(result.exit_code, 2);
+    assert_eq!(result.stdout, "");
+    assert_eq!(
+        result.stderr,
+        format!("awk: fatal: getline open file limit ({MAX_GETLINE_CACHED_FILES}) exceeded\n")
+    );
+
+    // close() releases each input, so the same loop stays under the cap.
+    let prog = format!(
+        r#"BEGIN{{ ok=0; for(i=0;i<{count};i++) {{ f="/tmp/f"i".txt"; if((getline x < f)>0) ok++; close(f) }} print ok }}"#,
+    );
     let result = run_awk_with_custom_fs(&[&prog], None, fs).await.unwrap();
-    let ok: usize = result.stdout.trim().parse().unwrap();
-    // Exactly MAX_GETLINE_CACHED_FILES should succeed, rest should fail
-    assert_eq!(ok, MAX_GETLINE_CACHED_FILES);
+    assert_eq!(result.exit_code, 0);
+    assert_eq!(result.stdout, format!("{count}\n"));
 }
 
 #[tokio::test]
@@ -1299,7 +1313,13 @@ async fn test_awk_getline_file_builtin_size_limit() {
     .await
     .unwrap();
 
-    assert_eq!(result.stdout, "-1\n");
+    assert_eq!(result.exit_code, 2);
+    assert_eq!(result.stdout, "");
+    assert!(
+        result
+            .stderr
+            .contains("getline input file size limit (10000000 bytes) exceeded")
+    );
 }
 
 #[tokio::test]
@@ -1316,12 +1336,28 @@ async fn test_awk_getline_file_total_cache_byte_limit() {
     let result = run_awk_with_custom_fs(
         &[r#"BEGIN{r1=(getline a < "/tmp/a.txt"); r2=(getline b < "/tmp/b.txt"); print r1, r2}"#],
         None,
-        fs,
+        fs.clone(),
     )
     .await
     .unwrap();
 
-    assert_eq!(result.stdout, "1 -1\n");
+    assert_eq!(result.exit_code, 2);
+    assert_eq!(result.stdout, "");
+    assert!(
+        result
+            .stderr
+            .contains("getline total input limit (10000000 bytes) exceeded")
+    );
+
+    // Closing the first input frees its bytes for the second.
+    let result = run_awk_with_custom_fs(
+        &[r#"BEGIN{r1=(getline a < "/tmp/a.txt"); close("/tmp/a.txt"); r2=(getline b < "/tmp/b.txt"); print r1, r2}"#],
+        None,
+        fs,
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.stdout, "1 1\n");
 }
 
 // TM-INF-022: malformed-input corpus must not leak Debug shapes.

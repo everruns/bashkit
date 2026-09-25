@@ -73,7 +73,7 @@ through configurable limits.
 | Command flood (TM-DOS-019) | 100K sequential commands | Command limit (10K) | MITIGATED |
 | Long computation (TM-DOS-023) | Complex awk/sed regex, including repeated awk and `[[ =~ ]]` operands | Linear-time engine; bounded runtime regex caches; timeout (30s) | MITIGATED |
 | Regex backtrack (TM-DOS-025) | `grep "a](*b)*c" file` | Regex crate limits | PARTIAL |
-| AWK unbounded loops (TM-DOS-033) | `BEGIN { while(1){} }` | Timeout (30s) backstop | PARTIAL |
+| AWK unbounded loops (TM-DOS-033) | `BEGIN { while(1){} }`, nested loops, deep recursion | Per-loop and whole-program loop caps from `ExecutionLimits`, call-depth cap; all fatal (exit 2) | MITIGATED |
 
 **Stack Overflow / Recursion:**
 
@@ -109,6 +109,7 @@ through configurable limits.
 | source self-recursion (TM-DOS-056) | Script that sources itself | Track source depth | **MITIGATED** |
 | sleep bypasses timeout (TM-DOS-057) | `sleep N` ignores `ExecutionLimits::timeout` | Implement tokio timeout wrapper | **PARTIAL** |
 | Unbounded builtin output (TM-DOS-058) | `seq 1 1000000` produces 1M lines | Add `max_stdout_bytes` limit | **MITIGATED** |
+| Silent truncation at builtin caps (TM-DOS-109) | `seq 200000` or an awk loop past its cap returns cut output with exit 0 | Caps report `<cmd>: <what> limit (<N>) exceeded` on stderr and exit non-zero; awk caps are fatal | **MITIGATED** |
 | Param expansion bomb (TM-DOS-059) | `${x//a/bigstring}` multiplicative amplification | `max_total_variable_bytes` + `max_stdout_bytes` | MITIGATED |
 | Sparse array huge-index (TM-DOS-060) | `arr[999999999]=x` | HashMap storage; `max_array_entries` | MITIGATED |
 | Snapshot restore bypasses function/parser limits (TM-DOS-061) | Crafted snapshot with oversized/deep function bodies | Re-parse restored function source under current limits; re-check function memory budget | MITIGATED |

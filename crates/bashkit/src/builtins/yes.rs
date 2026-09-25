@@ -30,6 +30,8 @@ fn truncate_to_char_boundary(s: &str, max_bytes: usize) -> &str {
     &s[..end]
 }
 
+/// Build the capped output. `yes` never ends on its own, so the result is
+/// always cut at a cap; the caller reports that (#2446).
 fn build_yes_output(text: &str) -> String {
     let max_text_bytes = MAX_OUTPUT_BYTES.saturating_sub(1);
     let line_text = truncate_to_char_boundary(text, max_text_bytes);
@@ -61,7 +63,16 @@ impl Builtin for Yes {
             ctx.args.join(" ")
         };
 
-        Ok(ExecResult::ok(build_yes_output(&text)))
+        // THREAT[TM-DOS-109]: the cap always ends `yes`; say so on stderr so a
+        // consumer wanting more lines than the cap can tell output was cut.
+        let output = build_yes_output(&text);
+        let lines = output.lines().count();
+        Ok(super::limits::cap_exceeded(
+            "yes",
+            output,
+            "output",
+            format!("{lines} lines"),
+        ))
     }
 }
 
