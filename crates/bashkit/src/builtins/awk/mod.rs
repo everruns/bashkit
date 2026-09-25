@@ -19,6 +19,7 @@ use async_trait::async_trait;
 use regex::Regex;
 use std::collections::HashMap;
 
+use super::limits::AWK_VARIABLE_OVERHEAD_BYTES;
 use super::{Builtin, Context, read_text_file};
 use crate::error::{Error, Result};
 use crate::interpreter::ExecResult;
@@ -132,6 +133,15 @@ struct AwkState {
     fnr: usize,
     /// When true, fields are split per RFC 4180 CSV rules (--csv flag)
     csv_mode: bool,
+    /// Accounted bytes held by `variables` (keys, string values, and a fixed
+    /// per-entry overhead). THREAT[TM-DOS-110]: checked by the interpreter
+    /// against the live-bytes limit; mutate `variables` only through
+    /// `insert_var` / `remove_var` so this stays exact.
+    mem_bytes: usize,
+}
+
+fn var_cost(key: &str, value: &AwkValue) -> usize {
+    key.len() + value.heap_bytes() + AWK_VARIABLE_OVERHEAD_BYTES
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -139,6 +149,15 @@ enum AwkValue {
     Number(f64),
     String(String),
     Uninitialized,
+}
+
+impl AwkValue {
+    fn heap_bytes(&self) -> usize {
+        match self {
+            AwkValue::String(s) => s.len(),
+            _ => 0,
+        }
+    }
 }
 
 /// Format number using AWK's OFMT (%.6g): 6 significant digits, trim trailing zeros.
@@ -223,11 +242,8 @@ impl AwkValue {
 
 impl Default for AwkState {
     fn default() -> Self {
-        let mut variables = HashMap::new();
-        // POSIX SUBSEP: subscript separator for multi-dimensional arrays
-        variables.insert("SUBSEP".to_string(), AwkValue::String("\x1c".to_string()));
-        Self {
-            variables,
+        let mut state = Self {
+            variables: HashMap::new(),
             fields: Vec::new(),
             fs: " ".to_string(),
             ofs: " ".to_string(),
@@ -236,7 +252,11 @@ impl Default for AwkState {
             nf: 0,
             fnr: 0,
             csv_mode: false,
-        }
+            mem_bytes: 0,
+        };
+        // POSIX SUBSEP: subscript separator for multi-dimensional arrays
+        state.insert_var("SUBSEP".to_string(), AwkValue::String("\x1c".to_string()));
+        state
     }
 }
 
@@ -295,14 +315,25 @@ impl AwkState {
         self.nf = self.fields.len();
 
         // Set built-in variables
-        self.variables
-            .insert("NR".to_string(), AwkValue::Number(self.nr as f64));
-        self.variables
-            .insert("NF".to_string(), AwkValue::Number(self.nf as f64));
-        self.variables
-            .insert("FNR".to_string(), AwkValue::Number(self.fnr as f64));
-        self.variables
-            .insert("$0".to_string(), AwkValue::String(line.to_string()));
+        self.insert_var("NR".to_string(), AwkValue::Number(self.nr as f64));
+        self.insert_var("NF".to_string(), AwkValue::Number(self.nf as f64));
+        self.insert_var("FNR".to_string(), AwkValue::Number(self.fnr as f64));
+        self.insert_var("$0".to_string(), AwkValue::String(line.to_string()));
+    }
+
+    fn insert_var(&mut self, key: String, value: AwkValue) {
+        let added = var_cost(&key, &value);
+        if let Some(old) = self.variables.get(&key) {
+            self.mem_bytes -= var_cost(&key, old);
+        }
+        self.mem_bytes += added;
+        self.variables.insert(key, value);
+    }
+
+    fn remove_var(&mut self, key: &str) -> Option<AwkValue> {
+        let old = self.variables.remove(key)?;
+        self.mem_bytes -= var_cost(key, &old);
+        Some(old)
     }
 
     fn get_field(&self, n: usize) -> AwkValue {
@@ -345,12 +376,11 @@ impl AwkState {
                 // Re-split fields when $0 is modified
                 self.fields = self.split_fields(&s);
                 self.nf = self.fields.len();
-                self.variables
-                    .insert("NF".to_string(), AwkValue::Number(self.nf as f64));
-                self.variables.insert(name.to_string(), value);
+                self.insert_var("NF".to_string(), AwkValue::Number(self.nf as f64));
+                self.insert_var(name.to_string(), value);
             }
             _ => {
-                self.variables.insert(name.to_string(), value);
+                self.insert_var(name.to_string(), value);
             }
         }
     }
@@ -566,19 +596,30 @@ impl Builtin for Awk {
         interp.execution_budget = ctx
             .execution_budget()
             .and_then(|budget| budget.try_with(Clone::clone).ok());
-        let (max_loop, max_total_loop) = ctx
+        let (max_loop, max_total_loop, max_live) = ctx
             .execution_extension::<ExecutionLimits>()
             .and_then(|limits| {
                 limits
-                    .try_with(|l| (l.max_loop_iterations, l.max_total_loop_iterations))
+                    .try_with(|l| {
+                        (
+                            l.max_loop_iterations,
+                            l.max_total_loop_iterations,
+                            l.max_live_intermediate_bytes,
+                        )
+                    })
                     .ok()
             })
             .unwrap_or_else(|| {
                 let d = ExecutionLimits::default();
-                (d.max_loop_iterations, d.max_total_loop_iterations)
+                (
+                    d.max_loop_iterations,
+                    d.max_total_loop_iterations,
+                    d.max_live_intermediate_bytes,
+                )
             });
         interp.max_loop_iterations = max_loop;
         interp.max_total_loop_iterations = max_total_loop;
+        interp.max_state_bytes = usize::try_from(max_live).unwrap_or(usize::MAX);
         interp.functions = program.functions.clone();
         interp.state.fs = Self::process_escape_sequences(&field_sep);
         interp.fs = Some(ctx.fs.clone());
@@ -610,10 +651,12 @@ impl Builtin for Awk {
                     }
                 }
                 Self::flush_file_outputs(&interp, &ctx).await?;
-                let mut result = ExecResult::with_code(interp.output, exit_code.unwrap_or(0));
-                result.stderr = interp.stderr_output.into();
-                return Ok(result);
+                return Ok(Self::finish(interp, exit_code));
             }
+        }
+        if interp.is_fatal() {
+            // A limit hit mid-action in BEGIN: no input, no END.
+            return Ok(Self::finish(interp, exit_code));
         }
 
         // Process input
@@ -642,15 +685,14 @@ impl Builtin for Awk {
             interp.state.fnr = 0;
             // Set FILENAME to current file path, or empty for stdin
             if !files.is_empty() {
-                interp.state.variables.insert(
+                interp.state.insert_var(
                     "FILENAME".to_string(),
                     AwkValue::String(files[file_idx].clone()),
                 );
             } else {
                 interp
                     .state
-                    .variables
-                    .insert("FILENAME".to_string(), AwkValue::String(String::new()));
+                    .insert_var("FILENAME".to_string(), AwkValue::String(String::new()));
             }
             // Index-based iteration so getline can advance the index
             interp.input_lines = input.lines().map(|l| l.to_string()).collect();
@@ -704,13 +746,24 @@ impl Builtin for Awk {
         }
 
         Self::flush_file_outputs(&interp, &ctx).await?;
-        let mut result = ExecResult::with_code(interp.output, exit_code.unwrap_or(0));
-        result.stderr = interp.stderr_output.into();
-        Ok(result)
+        Ok(Self::finish(interp, exit_code))
     }
 }
 
 impl Awk {
+    /// A fatal limit error exits 2 whatever `exit` code the program chose,
+    /// even when it fired inside an expression and the action ran on.
+    fn finish(interp: AwkInterpreter, exit_code: Option<i32>) -> ExecResult {
+        let code = if interp.is_fatal() {
+            2
+        } else {
+            exit_code.unwrap_or(0)
+        };
+        let mut result = ExecResult::with_code(interp.output, code);
+        result.stderr = interp.stderr_output.into();
+        result
+    }
+
     /// AWK redirection streams through VFS as output is produced.
     async fn flush_file_outputs(_interp: &AwkInterpreter, _ctx: &Context<'_>) -> Result<()> {
         Ok(())

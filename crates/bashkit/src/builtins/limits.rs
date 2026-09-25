@@ -33,6 +33,13 @@ pub(crate) const AWK_MAX_GETLINE_CACHED_FILES: usize = 100;
 pub(crate) const AWK_MAX_GETLINE_FILE_BYTES: usize = 10_000_000;
 /// awk: max total bytes retained by all `getline < file` inputs.
 pub(crate) const AWK_MAX_GETLINE_CACHE_BYTES: usize = 10_000_000;
+/// awk: max bytes in one string value (concat, sub/gsub/gensub, sprintf,
+/// rebuilt `$0`). THREAT[TM-DOS-110].
+pub(crate) const AWK_MAX_STRING_BYTES: usize = 16 * 1024 * 1024;
+/// awk: max field index for `$N = ...`. THREAT[TM-DOS-110].
+pub(crate) const AWK_MAX_FIELD_INDEX: usize = 100_000;
+/// awk: accounted per-entry overhead for a variable or array element.
+pub(crate) const AWK_VARIABLE_OVERHEAD_BYTES: usize = 48;
 /// Max compiled runtime regexes retained by one evaluator.
 pub(crate) const RUNTIME_REGEX_CACHE_ENTRIES: usize = 64;
 

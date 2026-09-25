@@ -348,6 +348,13 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
     // (OOM) or spin forever producing no output (hang). Cap accumulated output
     // bytes against the caller's stdout limit and check the wall-clock deadline
     // periodically so a runaway filter aborts instead of wedging the host.
+    //
+    // TODO(#2444, TM-DOS-110): values that grow *inside* one evaluation
+    // (`until(false; . + .)`, `"x" * 1e18`) never reach this loop: jaq-json's
+    // `Add`/`Mul` have no size hook, so they allocate until the host aborts.
+    // Needs a size-checked value type or an upstream jaq hook. Likewise a
+    // filter that loops without emitting (`until(false; .)`) never sees the
+    // deadline check below.
     let max_output_bytes = ctx
         .execution_extension::<ExecutionLimits>()
         .and_then(|limits| limits.try_with(|limits| limits.max_stdout_bytes).ok())
