@@ -2812,8 +2812,10 @@ impl<'a> Parser<'a> {
             }
         }
 
-        // Handle assignment-only commands (VAR=value with no command)
-        if words.is_empty() && !assignments.is_empty() {
+        // Handle assignment-only and redirect-only commands (`VAR=value`,
+        // `< file`, `> file`): bash runs them as null commands that still
+        // perform their assignments/redirections (#2448: `$(<file)`).
+        if words.is_empty() && (!assignments.is_empty() || !redirects.is_empty()) {
             return Ok(Some(SimpleCommand {
                 name: Word::literal(""),
                 args: Vec::new(),
