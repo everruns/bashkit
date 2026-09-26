@@ -3,6 +3,17 @@
 //! A script that keeps growing a value inside awk used to allocate until the
 //! host aborted with `memory allocation ... failed`. Every growth path must
 //! stop at a cap first: a fatal awk error (exit 2), and the shell carries on.
+//!
+//! DECISION: every assertion here names a *memory* or *output* outcome, so it
+//! must not race the execution deadline. Inheriting the 30 s default made the
+//! expected diagnostic a function of machine speed: under the nightly
+//! AddressSanitizer job (`-Z sanitizer=address`, ~15x slower) the deadline
+//! fired first and `jq` reported `execution timed out` where a size cap was
+//! expected. Cap tests therefore pin [`SLOW_BUILD_TIMEOUT`] instead. It is
+//! generous enough for instrumented builds (ASAN, Miri) and still far below a
+//! genuinely unbounded or quadratic regression, which overruns it by orders of
+//! magnitude. `non_emitting_loop_stops_at_the_timeout` is the one test that
+//! asserts a timeout, and sets its own short deadline.
 
 use bashkit::{Bash, ExecutionLimits, MemoryLimits};
 
@@ -43,8 +54,18 @@ async fn local_and_exported_scalar_budget_failures_are_reported() {
     }
 }
 
+/// Wall-clock budget for tests whose expected outcome is a memory or output
+/// cap. Instrumented builds are slow; the deadline must not preempt the cap.
+const SLOW_BUILD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
+
+/// Default limits with the execution deadline pushed out of the way, so a cap
+/// is the only thing that can stop these scripts.
+fn capped_limits() -> ExecutionLimits {
+    ExecutionLimits::new().timeout(SLOW_BUILD_TIMEOUT)
+}
+
 async fn run(script: &str) -> bashkit::ExecResult {
-    Bash::new().exec(script).await.unwrap()
+    run_with(capped_limits(), script).await
 }
 
 async fn run_with(limits: ExecutionLimits, script: &str) -> bashkit::ExecResult {
@@ -176,7 +197,7 @@ mod awk_state {
 
     #[tokio::test]
     async fn memory_cap_follows_host_live_bytes_limit() {
-        let limits = ExecutionLimits::new().max_live_intermediate_bytes(1_000_000);
+        let limits = capped_limits().max_live_intermediate_bytes(1_000_000);
         let r = run_with(
             limits,
             "awk 'BEGIN { s = sprintf(\"%10000s\", \"\"); for (i = 0; i < 200; i++) a[i] = s }'; echo rc=$?; echo after",
@@ -244,7 +265,7 @@ mod jq {
 
     #[tokio::test]
     async fn limit_follows_host_live_bytes_limit() {
-        let limits = ExecutionLimits::new().max_live_intermediate_bytes(100_000);
+        let limits = capped_limits().max_live_intermediate_bytes(100_000);
         let r = run_with(limits, "jq -n '\"x\" * 200000 | length'").await;
         assert_eq!(r.stderr, size_error(100_000));
         assert_eq!(r.exit_code, 5);
