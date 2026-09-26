@@ -184,6 +184,25 @@ surfaces as a 404 in an already-green job.
    `### bash_diff: reason`
 4. Record the limitation in [Known Limitations](limitations.md) (skip reason = evidence)
 
+## Resource-cap tests must not race the deadline
+
+A test whose expected outcome is a **memory or output cap** must pin its own
+generous execution timeout instead of inheriting the `ExecutionLimits::default()`
+30 s deadline. Otherwise the asserted diagnostic becomes a function of machine
+speed: whichever limit trips first wins, and instrumented builds change the
+answer.
+
+The nightly AddressSanitizer job (`-Z sanitizer=address`, roughly 15x slower)
+caught this on the jq cap tests, which reported `jq: execution timed out` where
+a value-size cap was expected. `memory_growth_security_tests.rs` now routes
+every cap assertion through a 600 s `SLOW_BUILD_TIMEOUT`, which covers ASAN and
+Miri while still failing an unbounded or quadratic regression by orders of
+magnitude.
+
+Only a test that asserts a timeout sets a short deadline, and it sets it
+explicitly. Before adding a cap test, confirm the cap is the sole limit that can
+stop the script.
+
 ## Public capability parity contract
 
 [`contracts/capability-parity.json`](../../contracts/capability-parity.json) is the
