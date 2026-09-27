@@ -52,6 +52,22 @@ silently failed.
    `bashkit`, `crates/bashkit-js/package.json`,
    `crates/bashkit-wasm/package.json`, and `Cargo.lock`
    (`cargo update -p bashkit -p bashkit-cli ...`).
+   - Refresh the **auxiliary lockfiles** too. `crates/bashkit/fuzz`,
+     `examples/hyperlight`, and `examples/hyperlight/host` are separate
+     workspaces whose lockfiles pin `bashkit` through a path dependency, so a
+     workspace version bump leaves each one stale:
+     `for m in crates/bashkit/fuzz examples/hyperlight examples/hyperlight/host;
+     do cargo metadata --manifest-path "$m/Cargo.toml" --format-version 1
+     >/dev/null; done`, then commit the result.
+     Nothing fails when they rot. CI builds them without `--locked`
+     (`cargo +nightly fuzz build`), so a stale lockfile is silently updated in
+     the runner and the job still passes, while `scripts/audit-lockfiles.sh`
+     keeps scanning the stale dependency set — an advisory scan of crates that
+     are no longer what builds. They drifted to 0.18.0 and 0.18.1 against a
+     0.18.2 workspace this way, still resolving a `jaq-json` registry crate
+     that had been vendored into the tree. Verify with
+     `cargo metadata --locked --manifest-path <m>/Cargo.toml`, which fails
+     whenever a lockfile no longer matches its manifests.
    - Bump the `bashkit = { version = "X.Y.Z", ... }` snippets in docs
      (`README.md`, `docs/`, `crates/bashkit/docs/`, `crates/bashkit/src/lib.rs`);
      `python3 scripts/check_doc_links.py` (CI Lint) lists every stale pin.
