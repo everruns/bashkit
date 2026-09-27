@@ -69,28 +69,35 @@ checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
 
 [[package]]
 name = "bashkit"
-version = "0.18.1"
+version = "0.18.2"
 dependencies = [
  "anyhow",
  "async-trait",
  "base64 0.23.1",
  "bigdecimal",
  "bitflags 2.13.2",
+ "bstr",
+ "bytes",
  "bzip2",
  "chrono",
  "clap",
  "fancy-regex",
  "flate2",
+ "foldhash 0.1.5",
  "futures-util",
  "getrandom",
+ "hifijson",
  "hmac",
+ "indexmap",
  "jaq-core",
- "jaq-json",
  "jaq-std",
  "md-5",
+ "num-bigint",
  "num-traits",
  "os_display",
  "regex",
+ "ryu",
+ "self_cell",
  "serde",
  "serde_json",
  "serde_yaml_ng",
@@ -662,25 +669,6 @@ dependencies = [
  "dyn-clone",
  "once_cell",
  "typed-arena",
-]
-
-[[package]]
-name = "jaq-json"
-version = "2.0.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4be2f53207ffb1313a2d2ad819cfa8bfaa7936cb85a110eda10fd5da822cec94"
-dependencies = [
- "bstr",
- "bytes",
- "foldhash 0.1.5",
- "hifijson",
- "indexmap",
- "jaq-core",
- "jaq-std",
- "num-bigint",
- "num-traits",
- "ryu",
- "self_cell",
 ]
 
 [[package]]

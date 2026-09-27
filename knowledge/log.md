@@ -1,6 +1,9 @@
 # Bashkit Knowledge Update Log
 
-## 2026-09-25
+## 2026-09-27
+
+* **Contract**: Discovering every `Cargo.lock` made the advisory scan complete; it did not make it current. `crates/bashkit/fuzz` and `examples/hyperlight` had drifted to `bashkit` 0.18.0 and 0.18.1 against a 0.18.2 workspace, and both still resolved the `jaq-json` registry crate that the 2026-09-25 vendoring removed from the tree — so `scripts/audit-lockfiles.sh` was auditing crates that are no longer what builds, and `jaq-core`/`jaq-std` at versions the workspace had moved off. Nothing failed: the aux workspaces build without `--locked` (`cargo +nightly fuzz build`), so the runner silently refreshed each stale lockfile and the job passed. A stale scan is a quiet scan, not a clean one — the same lesson as 2026-08-22, one step further in.
+* **Process**: An auxiliary lockfile pins `bashkit` through a path dependency, so every workspace version bump staleness-bumps all three. [Release Process](operations/release-process.md) step 3 now refreshes them alongside the root `Cargo.lock`. `cargo metadata --locked --manifest-path <m>/Cargo.toml` is the check: it fails exactly when a lockfile no longer matches its manifests.
 
 * **Security**: TM-DOS-115 added. The optimized `$(<file)` path now charges command, session-command, work, and live-intermediate budgets; accumulated sibling substitutions remain leased through word expansion. See [Threat Model](security/threat-model.md).
 * **Security**: TM-DOS-110 added. A value growing inside awk or jq (`s = s s`, `until(false; . + .)`) allocated until the host process aborted (#2444). awk checks strings against a 16 MiB cap before allocating and caps variable memory at `max_live_intermediate_bytes`; jq meters every live value against the same limit and polls the deadline from value operations, so non-emitting loops stop too. See [Threat Model](security/threat-model.md).
