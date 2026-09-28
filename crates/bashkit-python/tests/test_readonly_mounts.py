@@ -65,6 +65,12 @@ def test_bash_default_mount_stays_writable():
     assert "revenue 999" in r.stdout
 
 
+def test_bash_read_only_self_mount_is_rejected():
+    bash = Bash()
+    with pytest.raises(RuntimeError, match="cannot mount filesystem into itself"):
+        bash.mount("/", bash.fs(), read_only=True)
+
+
 def test_tool_read_only_mount():
     tool = BashTool()
     tool.mount("/corpus", make_corpus(), read_only=True)
@@ -74,3 +80,9 @@ def test_tool_read_only_mount():
     tool.reset()
     r = tool.execute_sync("echo 'revenue 999' > /corpus/report.txt; echo rc=$?")
     assert "rc=1" in r.stdout
+
+
+def test_tool_read_only_self_mount_is_rejected():
+    tool = BashTool()
+    with pytest.raises(RuntimeError, match="cannot mount filesystem into itself"):
+        tool.mount("/", tool.fs(), read_only=True)

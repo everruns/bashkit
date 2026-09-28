@@ -86,6 +86,7 @@ through configurable limits.
 | Arithmetic depth (TM-DOS-026) | `$(((((...))))))` | `MAX_ARITHMETIC_DEPTH` (50) | MITIGATED |
 | Builtin parser depth (TM-DOS-027) | Deeply nested awk/jq | `MAX_AWK_PARSER_DEPTH` (100) + `MAX_JQ_JSON_DEPTH` (100) | MITIGATED |
 | Collect dirs recursion (TM-DOS-049) | Deep VFS tree | Mitigated by `max_path_depth` | MITIGATED |
+| Python read-only self-mount recursion (TM-DOS-118) | `bash.mount("/", bash.fs(), read_only=True)` hides the live filesystem identity behind a wrapper | Python validates the resolved filesystem identity before wrapping it | MITIGATED |
 
 **Parser and Arithmetic:**
 

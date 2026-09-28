@@ -1459,7 +1459,7 @@ impl Bash {
         vfs_path: impl AsRef<std::path::Path>,
         fs: Arc<dyn FileSystem>,
     ) -> Result<()> {
-        // THREAT[TM-DOS-058]: `Bash::fs()` exposes the live outer VFS handle;
+        // THREAT[TM-DOS-118]: `Bash::fs()` exposes the live outer VFS handle;
         // reject mounting that handle back into this Bash before any wrappers
         // can hide pointer identity and recurse through delegated operations.
         if Arc::ptr_eq(&self.fs, &fs) {
