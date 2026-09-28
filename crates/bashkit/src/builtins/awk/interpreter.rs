@@ -42,6 +42,8 @@ pub(super) enum AwkFlow {
 // - AWK_MAX_OUTPUT_TARGETS (distinct redirected output files).
 // - AWK_MAX_GETLINE_CACHED_FILES (distinct files held open by `getline`).
 // - AWK_MAX_GETLINE_FILE_BYTES / AWK_MAX_GETLINE_CACHE_BYTES (retained input bytes).
+// - The request execution budget counts every `getline` load monotonically;
+//   `close()` releases retained memory but cannot recycle read/work quotas.
 // THREAT[TM-DOS-023]: Runtime regex operands share one bounded cache. Invalid
 // patterns are cached too, preventing repeated compilation failures from
 // becoming a CPU sink.
@@ -457,6 +459,17 @@ impl AwkInterpreter {
             }
             _ => return false,
         };
+        // THREAT[TM-DOS-116]: `close()` must not recycle the request-wide
+        // getline budget. Charge both materialized input and byte-proportional
+        // work before allocating the decoded text and its line copies.
+        let loaded = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+        if self.execution_budget.as_ref().is_some_and(|budget| {
+            budget.consume_input(bytes.len()).is_err() || budget.consume_work(loaded).is_err()
+        }) {
+            // The builtin dispatcher reports the poisoned shared budget.
+            self.fatal = true;
+            return false;
+        }
         let total = self.file_input_bytes.saturating_add(bytes.len());
         if total > MAX_GETLINE_CACHE_BYTES {
             self.fatal(&format!(

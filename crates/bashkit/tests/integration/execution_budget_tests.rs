@@ -130,6 +130,33 @@ async fn mixed_pipeline_consumers_share_aggregate_input_budget() {
 }
 
 #[tokio::test]
+/// TM-DOS-116: awk close/reopen cycles must not recycle getline input budget.
+async fn awk_getline_close_cannot_recycle_input_budget() {
+    use bashkit::FileSystem;
+    use bashkit::InMemoryFs;
+    use std::path::Path;
+
+    let fs = Arc::new(InMemoryFs::new());
+    // Exactly the per-file cap: reopening it used to make each 10 MB load
+    // disappear from accounting as soon as close() dropped the cache entry.
+    fs.write_file(Path::new("/tmp/data"), &vec![b'x'; 10_000_000])
+        .await
+        .unwrap();
+    let limits = ExecutionLimits::new()
+        .max_commands(100)
+        .max_work_units(30_000_000)
+        .max_aggregate_input_bytes(15_000_000);
+    let mut bash = Bash::builder().fs(fs).limits(limits).build();
+
+    assert_budget_exhausted(
+        bash.exec(
+            r#"awk 'BEGIN { for (i = 0; i < 2; i++) { getline x < "/tmp/data"; close("/tmp/data") } }'"#,
+        )
+        .await,
+    );
+}
+
+#[tokio::test]
 /// TM-DOS-096: the first exhaustion poisons all later descendants.
 async fn a_poisoned_budget_stops_later_pipeline_stages() {
     let limits = ExecutionLimits::new()
