@@ -938,6 +938,46 @@ pub unsafe extern "C" fn bashkit_error_free(error: *mut BashkitError) {
 mod tests {
     use super::*;
 
+    #[cfg(windows)]
+    #[test]
+    fn tm_fs_013_windows_home_requires_exact_allowlist_entry() {
+        let allowed = vec![r"C:\Users".to_string()];
+
+        let error = validate_mount_root(r"C:\Users\victim", &allowed).unwrap_err();
+
+        assert!(error.message.starts_with("mount root"));
+        assert!(
+            error.message.contains("sensitive host path"),
+            "broad Windows Users allowlist must not authorize a user home"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn tm_fs_013_windows_mixed_case_secret_requires_exact_allowlist_entry() {
+        let allowed = vec![r"C:\Users\victim".to_string()];
+
+        let error = validate_mount_root(r"C:\Users\victim\.SSH", &allowed).unwrap_err();
+
+        assert!(
+            error.message.contains("sensitive host path"),
+            "Windows secret-directory matching must be case-insensitive"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn tm_fs_013_windows_home_accepts_exact_allowlist_entry() {
+        let home = r"C:\Users\victim";
+
+        let result = validate_mount_root(home, &[home.to_string()]);
+        assert!(
+            result.is_ok(),
+            "exact home allowlist entry must be accepted"
+        );
+        assert_eq!(result.ok(), Some(PathBuf::from(home)));
+    }
+
     #[test]
     fn tm_int_008_contains_panics_at_the_foreign_boundary() {
         unsafe {
