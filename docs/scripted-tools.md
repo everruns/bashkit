@@ -153,8 +153,9 @@ before writing a script, ideal alongside other tools or for 50+ tool sets.
 unless configured) and adds a disabled filesystem backend and reduced builtin
 surface. Each `execute()` gets a **fresh** interpreter, so there is no state
 bleed between calls; persistence is your callbacks' concern (capture an `Arc`).
-Callback error strings are sanitised by default so host-side secrets, paths, and
-stack traces never reach script-visible stderr.
+Callback and custom-builtin fatal error strings are sanitised by default so
+host-side secrets, paths, and stack traces never reach script-visible stderr.
+Cancellation and resource-limit errors remain visible so callers can act on them.
 
 ## See also
 

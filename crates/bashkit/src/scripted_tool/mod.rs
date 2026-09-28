@@ -406,10 +406,11 @@ impl ScriptedToolBuilder {
         self
     }
 
-    /// Control whether callback error messages are sanitized before appearing in
-    /// tool output. When `true` (the default), internal error details are replaced
-    /// with a generic "callback failed" message to prevent leaking file paths,
-    /// connection strings, or stack traces to LLM agents.
+    /// Control whether callback and custom-builtin fatal errors are sanitized
+    /// before appearing in tool output. When `true` (the default), internal error
+    /// details are replaced with a generic "callback failed" message to prevent
+    /// leaking file paths, connection strings, or stack traces to LLM agents.
+    /// Cancellation and resource-limit errors retain their actionable category.
     // THREAT[TM-INF-030]: Prevent information disclosure through callback errors.
     pub fn sanitize_errors(mut self, sanitize: bool) -> Self {
         self.sanitize_errors = sanitize;
