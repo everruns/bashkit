@@ -584,6 +584,13 @@ impl Builtin for Grep {
 
         let matcher = opts.build_matcher()?;
 
+        // GNU grep treats `-q -m0` as an immediate no-match result. In
+        // particular, it must not open operands and turn an irrelevant read
+        // failure into status 2 or a diagnostic.
+        if opts.quiet && opts.max_count == Some(0) {
+            return Ok(ExecResult::with_code(String::new(), 1));
+        }
+
         let mut output = String::new();
         // Diagnostics are a separate stream: a `grep: FILE: ...` line written
         // into `output` lands in the data a pipeline consumes, so

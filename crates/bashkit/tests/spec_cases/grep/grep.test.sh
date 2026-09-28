@@ -582,6 +582,32 @@ printf 'foo\nfoo\n' | grep -m 0 foo
 ### expect
 ### end
 
+### grep_quiet_max_count_zero_readable_file
+# -q -m0 exits before inspecting a readable operand.
+printf 'foo\n' > /tmp/grep_qm0_readable.txt
+grep -q -m0 foo /tmp/grep_qm0_readable.txt
+echo $?
+### expect
+1
+### end
+
+### grep_quiet_max_count_zero_missing_file_option_orders
+# Every spelling exits before opening an unreadable operand, without a diagnostic.
+grep -qm0 foo /tmp/nonexistent_grep_qm0 2>&1
+echo $?
+grep -q -m0 foo /tmp/nonexistent_grep_qm0 2>&1
+echo $?
+grep -m0 -q foo /tmp/nonexistent_grep_qm0 2>&1
+echo $?
+grep --quiet --max-count=0 foo /tmp/nonexistent_grep_qm0 2>&1
+echo $?
+### expect
+1
+1
+1
+1
+### end
+
 ### grep_files_without_match
 # -L prints files that have no matches
 printf 'foo\n' > /tmp/grep_l_a.txt && printf 'bar\n' > /tmp/grep_l_b.txt && grep -L foo /tmp/grep_l_a.txt /tmp/grep_l_b.txt
