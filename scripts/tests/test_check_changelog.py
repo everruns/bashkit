@@ -65,6 +65,23 @@ class CheckChangelogTests(unittest.TestCase):
         errs = mod.check_changelog(text)
         self.assertTrue(any("stale PR #100" in e for e in errs), errs)
 
+    def test_stale_pr_link_fails_for_asterisk_bullet(self):
+        """GitHub's generated release notes use `* `, not `- `."""
+        text = CLEAN + "\n## [1.0.0] - 2026-01-01\n\n### What's Changed\n\n" + \
+            "* Old work in [#100](https://github.com/everruns/bashkit/pull/100)\n"
+        errs = mod.check_changelog(text)
+        self.assertTrue(any("stale PR #100" in e for e in errs), errs)
+
+    def test_asterisk_bullet_is_checked_for_duplicates(self):
+        """A `* ` bullet must reach every bullet-level rule, not just PR links."""
+        text = CLEAN.replace(
+            "### What's Changed",
+            "* Cached definitions reuse pre-built command objects\n"
+            "  ([#101](https://github.com/everruns/bashkit/pull/101)).\n\n### What's Changed",
+        )
+        errs = mod.check_changelog(text)
+        self.assertTrue(any("duplicate bullet text" in e for e in errs), errs)
+
     def test_extra_subsection_fails(self):
         text = CLEAN.replace(
             "### What's Changed",

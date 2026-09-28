@@ -53,7 +53,7 @@ def parse_sections(text):
 
 
 def iter_bullets(lines):
-    """Yield (subsection, text) joining wrapped continuation lines."""
+    """Yield Markdown dash/asterisk bullets, joining wrapped lines."""
     sub, cur = "top", None
     for line in lines + [""]:
         m = SUBSECTION_RE.match(line)
@@ -63,7 +63,7 @@ def iter_bullets(lines):
                 cur = None
             sub = m.group(1)
             continue
-        if line.startswith("- "):
+        if line.startswith(("- ", "* ")):
             if cur is not None:
                 yield sub, " ".join(cur)
             cur = [line[2:]]
