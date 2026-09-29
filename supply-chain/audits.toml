@@ -483,17 +483,35 @@ criteria = "safe-to-deploy"
 delta = "0.8.0-pre.7 -> 0.8.0-pre.8"
 notes = "Reviewed complete package diff: version and turso_macros dependency version only. Extension source unchanged; no new runtime or ambient capability."
 
+[[audits.turso_ext]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.8.0-pre.11 -> 0.8.0-pre.14"
+notes = "Reviewed the complete package diff: package versions, the vendored commit id, and one build-script fix replacing a cfg!(target_os = ...) test, which reports the *host* in a build script, with the CARGO_CFG_TARGET_OS env var, which reports the target. Extension source is otherwise unchanged; no new runtime, unsafe, or ambient capability."
+
 [[audits.turso_macros]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 delta = "0.8.0-pre.7 -> 0.8.0-pre.8"
 notes = "Reviewed complete package diff: only Cargo package version changes; macro source is byte-identical. No runtime, unsafe, host access, or build-script changes."
 
+[[audits.turso_macros]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.8.0-pre.11 -> 0.8.0-pre.14"
+notes = "Reviewed the complete package diff: only the package version and the vendored commit id change. Macro source is byte-identical. No runtime, unsafe, host access, or build-script changes."
+
 [[audits.turso_parser]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 delta = "0.8.0-pre.7 -> 0.8.0-pre.8"
 notes = "Reviewed named-token lexer: bounded get/peek accesses, progress on every branch, parenthesized suffix rejects missing delimiters and whitespace. New pragma/diagnostics use safe Rust; other parser changes are tests. No new unsafe or host capability."
+
+[[audits.turso_parser]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.8.0-pre.11 -> 0.8.0-pre.14"
+notes = "Reviewed the complete package diff. Adds GENERATED ALWAYS to the column-constraint AST and its formatter; adds blob_literal_bytes, which decodes already-validated hex with chunks_exact(2) so the pairing is bounded (its expect() calls rest on the parser's prior validation); quotes identifiers that begin with a digit, which previously round-tripped as invalid unquoted SQL; and makes an unrecognised STORED/VIRTUAL token a parse error instead of silently yielding None. All safe Rust, fail-closed, no new unsafe or host capability."
 
 [[audits.twox-hash]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
