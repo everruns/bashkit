@@ -2,6 +2,7 @@
 
 use super::{ScriptedExecutionTrace, ScriptedTool, ToolDefExtension, extension::InvocationLog};
 use crate::Bash;
+use crate::builtins::{Builtin, Context, ExecutionPlan};
 use crate::tool::timeout_response;
 use crate::tool::{
     Tool, ToolError, ToolExecution, ToolOutputChunk, ToolRequest, ToolResponse, ToolStatus,
@@ -9,10 +10,56 @@ use crate::tool::{
     tool_response_schema,
 };
 use crate::tool_def::usage_from_schema;
+use crate::{Error, ExecResult};
 use async_trait::async_trait;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+/// Keeps fatal host diagnostics behind ScriptedTool's callback-error boundary.
+///
+// THREAT[TM-INF-030]: this wrapper must forward *every* `Builtin` method. A
+// method left to its trait default silently replaces the wrapped builtin's
+// own override, so adding one to `Builtin` means adding it here too.
+struct ScriptedBuiltin {
+    inner: Arc<dyn Builtin>,
+    sanitize_errors: bool,
+}
+
+impl ScriptedBuiltin {
+    fn sanitize<T>(&self, result: crate::Result<T>) -> crate::Result<T> {
+        match result {
+            Err(err)
+                if self.sanitize_errors
+                    && !matches!(err, Error::Cancelled | Error::ResourceLimit(_)) =>
+            {
+                Err(Error::Execution("callback failed".into()))
+            }
+            result => result,
+        }
+    }
+}
+
+#[async_trait]
+impl Builtin for ScriptedBuiltin {
+    async fn execute(&self, ctx: Context<'_>) -> crate::Result<ExecResult> {
+        let result = self.inner.execute(ctx).await;
+        self.sanitize(result)
+    }
+
+    async fn execution_plan(&self, ctx: &Context<'_>) -> crate::Result<Option<ExecutionPlan>> {
+        let result = self.inner.execution_plan(ctx).await;
+        self.sanitize(result)
+    }
+
+    fn llm_hint(&self) -> Option<&'static str> {
+        self.inner.llm_hint()
+    }
+
+    fn reset_session_state(&self) {
+        self.inner.reset_session_state();
+    }
+}
 
 // ============================================================================
 // ScriptedTool — internal helpers
@@ -38,7 +85,13 @@ impl ScriptedTool {
         // extension last means a custom builtin can never shadow a registered
         // tool command, `help`, or `discover`.
         for (name, builtin) in &self.builtins {
-            builder = builder.builtin(name.clone(), Box::new(Arc::clone(builtin)));
+            builder = builder.builtin(
+                name.clone(),
+                Box::new(ScriptedBuiltin {
+                    inner: Arc::clone(builtin),
+                    sanitize_errors: self.sanitize_errors,
+                }),
+            );
         }
         builder = builder.extension(
             ToolDefExtension::from_registered_tools(self.tools.clone())
@@ -856,8 +909,11 @@ mod tests {
 #[cfg(test)]
 mod custom_builtin_tests {
     use crate::builtins::{Builtin, Context};
-    use crate::{ExecResult, ScriptedTool, Tool, ToolArgs, ToolDef};
+    use crate::{
+        BashkitContext, ClapBuiltin, Error, ExecResult, ScriptedTool, Tool, ToolArgs, ToolDef,
+    };
     use async_trait::async_trait;
+    use clap::Parser;
 
     /// Echoes raw argv so tests can assert the builtin saw it unparsed.
     struct RawArgv;
@@ -879,6 +935,38 @@ mod custom_builtin_tests {
                 Ok(_) => Ok(ExecResult::ok("read ok\n")),
                 Err(e) => Ok(ExecResult::err(format!("denied: {e}\n"), 1)),
             }
+        }
+    }
+
+    struct LeakyBuiltin;
+
+    #[async_trait]
+    impl Builtin for LeakyBuiltin {
+        async fn execute(&self, _ctx: Context<'_>) -> crate::Result<ExecResult> {
+            Err(Error::Network(
+                "postgres://admin:secret@internal-db/prod".into(),
+            ))
+        }
+    }
+
+    #[derive(Parser)]
+    #[command(name = "leaky_clap")]
+    struct LeakyArgs {}
+
+    struct LeakyClapBuiltin;
+
+    #[async_trait]
+    impl ClapBuiltin for LeakyClapBuiltin {
+        type Args = LeakyArgs;
+
+        async fn execute_clap(
+            &self,
+            _args: Self::Args,
+            _ctx: &mut BashkitContext<'_>,
+        ) -> crate::Result<()> {
+            Err(Error::Execution(
+                "SDK diagnostic: postgres://admin:secret@internal-db/prod".into(),
+            ))
         }
     }
 
@@ -976,6 +1064,38 @@ mod custom_builtin_tests {
             .build();
         let (stdout, _, code) = run(&tool, "readfile").await;
         assert_ne!(code, 0, "filesystem must stay disabled, got: {stdout}");
+    }
+
+    #[tokio::test]
+    async fn custom_builtin_errors_are_sanitized_by_default() {
+        for (name, builtin) in [
+            ("leaky", Box::new(LeakyBuiltin) as Box<dyn Builtin>),
+            ("leaky_clap", Box::new(LeakyClapBuiltin) as Box<dyn Builtin>),
+        ] {
+            let tool = ScriptedTool::builder("api").builtin(name, builtin).build();
+            let (_, stderr, code) = run(&tool, name).await;
+
+            assert_ne!(code, 0);
+            assert!(!stderr.contains("postgres://"), "secret leaked: {stderr}");
+            assert!(stderr.contains("callback failed"), "got: {stderr}");
+        }
+    }
+
+    #[tokio::test]
+    async fn custom_builtin_errors_can_be_unsanitized_explicitly() {
+        for (name, builtin) in [
+            ("leaky", Box::new(LeakyBuiltin) as Box<dyn Builtin>),
+            ("leaky_clap", Box::new(LeakyClapBuiltin) as Box<dyn Builtin>),
+        ] {
+            let tool = ScriptedTool::builder("api")
+                .sanitize_errors(false)
+                .builtin(name, builtin)
+                .build();
+            let (_, stderr, code) = run(&tool, name).await;
+
+            assert_ne!(code, 0);
+            assert!(stderr.contains("postgres://"), "got: {stderr}");
+        }
     }
 
     #[tokio::test]
