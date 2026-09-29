@@ -204,6 +204,57 @@ mod windows_containment {
             );
         }
     }
+
+    /// TM-FS-013: a Windows home tree is drive- or share-qualified, so it can
+    /// never match the Unix-shaped `/Users` prefix. The denylist keys off the
+    /// first normal component instead, and secret directories match
+    /// case-insensitively because the filesystem itself is.
+    #[test]
+    fn windows_containment_home_trees_and_secret_components_are_sensitive() {
+        use bashkit::is_sensitive_mount_path;
+
+        for path in [
+            r"C:\Users",
+            r"C:\Users\victim",
+            r"D:\Users\victim\Documents",
+            r"\\server\share\Users\victim",
+            // Case-insensitive, matching NTFS semantics.
+            r"C:\users\victim",
+            r"C:\USERS\victim",
+        ] {
+            assert!(
+                is_sensitive_mount_path(Path::new(path)),
+                "{path} is a Windows home tree and must be refused"
+            );
+        }
+
+        for path in [
+            r"C:\Users\victim\.ssh",
+            r"C:\projects\app\.SSH",
+            r"C:\projects\app\.Aws",
+            r"C:\projects\app\.KUBE",
+        ] {
+            assert!(
+                is_sensitive_mount_path(Path::new(path)),
+                "{path} holds a secret directory and must be refused"
+            );
+        }
+    }
+
+    /// `Users` is only a home root as the *first* component. A project
+    /// directory that merely contains the word stays mountable, otherwise the
+    /// denylist would swallow ordinary paths.
+    #[test]
+    fn windows_containment_users_is_only_a_home_root_at_the_front() {
+        use bashkit::is_sensitive_mount_path;
+
+        for path in [r"C:\projects\Users", r"D:\work\Users\shared"] {
+            assert!(
+                !is_sensitive_mount_path(Path::new(path)),
+                "{path} is an ordinary directory named Users, not a home root"
+            );
+        }
+    }
 }
 
 #[path = "support/filesystem_security_conformance.rs"]
@@ -1164,4 +1215,83 @@ async fn realfs_touch_sets_mtime_issue_2388() {
         SystemTime::now().duration_since(mtime).unwrap() < Duration::from_secs(120),
         "mtime was not updated by touch"
     );
+}
+
+/// TM-FS-013: the shared mount denylist (`is_sensitive_mount_path`) is the one
+/// place every mount path consults, so its behaviour is pinned here rather than
+/// left to the callers that happen to exercise it.
+///
+/// These run on the Linux realfs job. The Windows-only half of the denylist —
+/// drive/share-qualified `Users` trees and case-insensitive secret components —
+/// lives in `windows_containment` above so the Windows job picks it up by the
+/// same name filter it already uses.
+mod sensitive_mount_paths {
+    use bashkit::is_sensitive_mount_path;
+    use std::path::Path;
+
+    #[test]
+    fn privileged_prefixes_and_secret_components_are_sensitive() {
+        for path in [
+            "/",
+            "/etc",
+            "/etc/ssl",
+            "/root",
+            "/home",
+            "/home/alice",
+            "/Users",
+            "/proc",
+            "/sys",
+            "/dev",
+            "/boot",
+            "/private",
+        ] {
+            assert!(
+                is_sensitive_mount_path(Path::new(path)),
+                "{path} must be refused without an explicit allowlist entry"
+            );
+        }
+
+        // Secret directories are refused wherever they live, not only in a home.
+        for path in [
+            "/srv/deploy/.ssh",
+            "/srv/deploy/.aws/credentials",
+            "/opt/app/.kube",
+            "/opt/app/.docker",
+            "/var/lib/x/.gnupg",
+            "/var/lib/x/.gcloud",
+        ] {
+            assert!(
+                is_sensitive_mount_path(Path::new(path)),
+                "{path} contains a secret component and must be refused"
+            );
+        }
+    }
+
+    #[test]
+    fn ordinary_project_paths_are_not_sensitive() {
+        for path in [
+            "/srv/app",
+            "/var/lib/data",
+            "/opt/workspace/src",
+            // A secret name as a *substring* is not a component match.
+            "/srv/app/.sshconfig",
+            "/srv/app/ssh",
+            "/srv/notdotssh",
+        ] {
+            assert!(
+                !is_sensitive_mount_path(Path::new(path)),
+                "{path} is an ordinary mount target and must stay allowed"
+            );
+        }
+    }
+
+    /// On Unix, `.SSH` is a genuinely different directory from `.ssh`, so the
+    /// denylist stays case-sensitive here. The Windows job asserts the opposite
+    /// for the same input, which is why this is pinned on both sides.
+    #[test]
+    #[cfg(not(windows))]
+    fn secret_components_stay_case_sensitive_on_unix() {
+        assert!(!is_sensitive_mount_path(Path::new("/srv/deploy/.SSH")));
+        assert!(is_sensitive_mount_path(Path::new("/srv/deploy/.ssh")));
+    }
 }
