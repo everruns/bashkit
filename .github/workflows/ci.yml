@@ -323,6 +323,12 @@ jobs:
       - name: Test touch mtime on Windows (issue #2388)
         run: cargo test -p bashkit --test realfs_tests --features realfs realfs_touch
 
+      # The C ABI mount-root guard is Windows-conditional, so the Linux
+      # workspace test run compiles it out. Nothing else runs bashkit-capi's
+      # tests on Windows, which left them never executing anywhere.
+      - name: Test C ABI mount-root validation
+        run: cargo test -p bashkit-capi --lib
+
   # The adoption shape this covers — bashkit as an agent's shell, with commands
   # bridged to host processes — exists to work on Windows without a real bash.
   # Kept separate from `windows-containment`: that job pins path-containment

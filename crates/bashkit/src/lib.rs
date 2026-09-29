@@ -3743,9 +3743,34 @@ pub fn is_sensitive_mount_path(host_path: &Path) -> bool {
     {
         return true;
     }
+
+    // Windows home directories are drive- or share-qualified, so they cannot
+    // match the Unix-shaped `/Users` prefix above. Treat the first normal path
+    // component as the home-root marker instead.
+    #[cfg(windows)]
+    if host_path
+        .components()
+        .find_map(|component| match component {
+            std::path::Component::Normal(name) => Some(name),
+            _ => None,
+        })
+        .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("Users"))
+    {
+        return true;
+    }
+
     host_path.components().any(|c| {
         let s = c.as_os_str();
-        SENSITIVE_PATH_COMPONENTS.iter().any(|sec| s == *sec)
+        SENSITIVE_PATH_COMPONENTS.iter().any(|sec| {
+            #[cfg(windows)]
+            {
+                s.to_string_lossy().eq_ignore_ascii_case(sec)
+            }
+            #[cfg(not(windows))]
+            {
+                s == *sec
+            }
+        })
     })
 }
 

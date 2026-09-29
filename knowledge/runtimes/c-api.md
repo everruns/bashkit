@@ -59,7 +59,9 @@ the prefix check, and must also clear the shared sensitive-path denylist
 (`bashkit::is_sensitive_mount_path`). A sensitive root (home trees, `/etc`,
 `.ssh`, ...) is only mountable when an allowlist entry names it exactly: a
 broad parent entry, such as the home directory itself, is not consent to
-expose credential stores. This is deliberately stricter than the builder and
+expose credential stores. Windows drive- and share-qualified `Users` trees are
+sensitive, and known secret-directory components match case-insensitively on
+Windows. This is deliberately stricter than the builder and
 JS binding live-mount precedent, where any covering allowlist entry
 overrides the denylist; the C ABI is the lowest-level, config-driven surface
 and defaults to deny on credential paths.
