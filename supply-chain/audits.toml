@@ -305,11 +305,23 @@ criteria = "safe-to-deploy"
 delta = "3.12.4 -> 3.12.7"
 notes = "Reviewed wasm-gated teardown handshake (async-work pending/cancel registry, settlement drain barrier, env null-guard on teardown, threadsafe fatal status); no new fs/net, only existing NAPI unsafe calls."
 
+[[audits.napi]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "3.12.7 -> 3.13.0"
+notes = "External<T> now checks a native-payload registry before casting the tagged object, turning a type-confusion cast into an InvalidArg error, and frees obj_ptr/size_hint_ptr when napi_wrap fails. Remaining additions are the wasm-only two-phase env-cleanup exports. New unsafe stays inside the existing NAPI FFI idiom and is now better guarded; the only std::process uses are abort() guards against unwinding across the FFI boundary. No new fs or net access."
+
 [[audits.napi-build]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 delta = "2.4.2 -> 2.4.4"
 notes = "Reviewed wasi link args for async-work teardown handshake and android format nit; build script only emits link args, no new fs/net access."
+
+[[audits.napi-build]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "2.4.4 -> 2.5.0"
+notes = "Adds the napi_wasi_threads cfg via rustc-check-cfg plus an exact-triple rustc-cfg for wasm32-wasip1-threads, and three --export-if-defined link args for the two-phase wasm env-cleanup entry points. Build script only prints cargo directives; no fs or net access."
 
 [[audits.napi-derive]]
 who = "Mykhailo Chalyi <mykhailo.chalyi-contractor@procore.com>"
@@ -322,6 +334,12 @@ who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 delta = "3.6.5 -> 3.6.8"
 notes = "Reviewed parser lint fix removing unused ident binding; proc-macro codegen unchanged, no runtime or ambient access."
+
+[[audits.napi-derive]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "3.6.8 -> 3.6.9"
+notes = "No source changes; the release only bumps the napi/napi-derive-backend dependency versions in Cargo.toml."
 
 [[audits.napi-derive-backend]]
 who = "Mykhailo Chalyi <mykhailo.chalyi-contractor@procore.com>"
@@ -388,6 +406,12 @@ who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 delta = "0.10.0 -> 0.10.1"
 
+[[audits.rand]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.10.2 -> 0.10.3"
+notes = "Correctness fixes in the distribution code: WeightedIndex returns Error::Overflow instead of panicking on an infinite float weight sum, Uniform::new_inclusive no longer reports NonFinite for large finite ranges, a deserialized Uniform<char> can no longer panic when sampled, and WeightedIndex::weights reports exact remaining lengths. No new unsafe, fs, net, or ambient access; entropy sources unchanged."
+
 [[audits.russh]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
@@ -448,6 +472,18 @@ criteria = "safe-to-deploy"
 delta = "0.2.16 -> 0.2.18"
 notes = "Reviewed delta: no_std feature compatibility fixes and std-to-core path changes in gecko-ffi code; no new allocation semantics, unsafe behavior, or ambient capabilities."
 
+[[audits.thiserror]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "2.0.20 -> 2.0.21"
+notes = "Source change is the docs html_root_url bump; the MSRV moves to 1.77. No runtime behaviour, unsafe, or ambient access changes."
+
+[[audits.thiserror-impl]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "2.0.20 -> 2.0.21"
+notes = "Tracks turbofish depth when scanning display attribute tokens so a `>` inside a turbofish is not mistaken for the end of a generic argument list. Proc-macro parsing only, no new unsafe or ambient access."
+
 [[audits.tinyvec]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
@@ -470,6 +506,12 @@ who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 delta = "0.26.4 -> 0.26.5"
 notes = "Reviewed bounded loop reading multiple immediately available TLS records, preserving buffer limits and wake/pending behavior. No new unsafe or network destination."
+
+[[audits.tokio-test]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-run"
+delta = "0.4.5 -> 0.4.6"
+notes = "Fixes a TOCTOU race in Mock::poll_write where a timer expiring between write() and remaining_wait() panicked on an unexpected WouldBlock, adds Spawn::poll_until_idle, and silences a semicolon_in_expressions_from_macros lint. Test-support crate; no new unsafe, fs, net, or ambient access."
 
 [[audits.turso_core]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
