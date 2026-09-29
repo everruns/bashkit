@@ -609,7 +609,6 @@ impl Builtin for Grep {
         let mut read_failed = false;
         let mut any_match = false;
         let mut exit_code = 1; // 1 = no match
-        let mut total_matches = 0usize;
 
         // Determine input sources
         // GNU grep names stdin "(standard input)" everywhere it names it at
@@ -726,20 +725,15 @@ impl Builtin for Grep {
         };
         let has_context = opts.before_context > 0 || opts.after_context > 0;
 
-        let mut max_reached = false;
-
         'file_loop: for (filename, content) in &inputs {
-            // Check if we already reached max count from previous files.
-            // `-L` is exempt: its output is driven by the files that *didn't*
-            // match, so a spent match budget must not stop the enumeration.
-            // GNU `grep -L -m1 foo match.txt other.txt` still lists other.txt.
-            if let Some(max) = opts.max_count
-                && total_matches >= max
-                && !opts.files_without_matches
-            {
-                break 'file_loop;
-            }
-
+            // GNU `-m NUM` stops reading *each file* after NUM matching lines;
+            // the budget is per operand, not shared across them. So
+            // `grep -m1 foo a b` prints one match from a *and* one from b, and
+            // `grep -c -m1 foo a b` reports a count for every operand.
+            // Only the `-o` closure needs this: it cannot break the enclosing
+            // line loop itself, so it signals the budget out. Every other exit
+            // path breaks directly.
+            let mut max_reached = false;
             let mut match_count = 0;
             let mut file_matched = false;
 
@@ -776,9 +770,8 @@ impl Builtin for Grep {
             for (line_num, line) in lines.iter().enumerate() {
                 // Check max count limit before adding more matches
                 if let Some(max) = opts.max_count
-                    && total_matches >= max
+                    && match_count >= max
                 {
-                    max_reached = true;
                     break; // Break inner loop, continue to output phase
                 }
 
@@ -789,14 +782,13 @@ impl Builtin for Grep {
                         file_matched = true;
                         any_match = true;
                         match_count += 1;
-                        total_matches += 1;
 
                         if opts.files_with_matches || opts.files_without_matches || opts.quiet {
                             return false;
                         }
 
                         if let Some(max) = opts.max_count
-                            && total_matches >= max
+                            && match_count >= max
                         {
                             max_reached = true;
                             return false;
@@ -821,7 +813,6 @@ impl Builtin for Grep {
                         file_matched = true;
                         any_match = true;
                         match_count += 1;
-                        total_matches += 1;
                         match_lines.push(line_num);
 
                         if opts.files_with_matches || opts.files_without_matches {
@@ -833,9 +824,8 @@ impl Builtin for Grep {
 
                         // Check max after recording this match
                         if let Some(max) = opts.max_count
-                            && total_matches >= max
+                            && match_count >= max
                         {
-                            max_reached = true;
                             break;
                         }
                     }
