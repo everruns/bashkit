@@ -224,6 +224,23 @@ fn make_runtime() -> Result<Runtime, ApiFailure> {
 // requires an allowlist entry that names it exactly: a broad parent entry such
 // as the home directory itself is not consent to expose credential stores.
 fn fold_path(path: &str) -> String {
+    // Windows `std::fs::canonicalize` returns an extended-length ("verbatim")
+    // path, but a path that does not exist yet keeps whatever the caller wrote.
+    // `validate_mount_root` compares one against the other, so the prefix has to
+    // go before folding: otherwise an allowlist entry that exists on disk never
+    // covers a mount root that does not, and the mount is refused for the wrong
+    // reason — "not under any allowed_mount_paths prefix" instead of the real
+    // verdict.
+    let unverbatim: String;
+    let path = if !cfg!(windows) {
+        path
+    } else if let Some(rest) = path.strip_prefix(r"\\?\UNC\") {
+        // `\\?\UNC\server\share` is the verbatim spelling of `\\server\share`.
+        unverbatim = format!(r"\\{rest}");
+        &unverbatim
+    } else {
+        path.strip_prefix(r"\\?\").unwrap_or(path)
+    };
     let trimmed = path.trim_end_matches(std::path::MAIN_SEPARATOR);
     let folded = if trimmed.is_empty() { path } else { trimmed };
     if cfg!(windows) {
@@ -962,6 +979,28 @@ mod tests {
         assert!(
             error.message.contains("sensitive host path"),
             "Windows secret-directory matching must be case-insensitive"
+        );
+    }
+
+    /// An allowlist entry that exists on disk canonicalizes to a verbatim
+    /// `\\?\` path, while a mount root that does not exist stays as written.
+    /// Comparing the two must still work, or a real deployment refuses
+    /// not-yet-created mount roots with the wrong verdict: "not under any
+    /// allowed_mount_paths prefix" rather than an actual policy decision.
+    #[cfg(windows)]
+    #[test]
+    fn tm_fs_013_windows_existing_prefix_covers_missing_mount_root() {
+        // `C:\Windows` exists on any Windows runner, so it canonicalizes to
+        // `\\?\C:\Windows`; the child does not exist, so it stays as written.
+        // Neither is a sensitive path, so the only question is coverage.
+        let allowed = vec![r"C:\Windows".to_string()];
+
+        let result = validate_mount_root(r"C:\Windows\no_such_dir_bashkit", &allowed);
+
+        assert!(
+            result.is_ok(),
+            "an existing allowlist prefix must cover a missing child, got: {}",
+            result.unwrap_err().message
         );
     }
 
