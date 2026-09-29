@@ -142,7 +142,9 @@ worth keeping so the question does not get re-litigated from scratch.
   enforce memory limits (TM-DOS-110); `[patch.crates-io]` would not reach
   crates.io users. Its own dependencies (`bstr`, `bytes`, `foldhash`,
   `hifijson`, `indexmap`, `num-bigint`, `ryu`, `self_cell`) became direct
-  optional deps of the `jq` feature, with upstream's version ranges. See
+  optional deps of the `jq` feature, with upstream's version ranges — except
+  `foldhash`, held at `0.2` against upstream's `^0.1` so the build links one
+  copy instead of two (`hashbrown` requires 0.2). See
   [Vendored jaq-json](../runtimes/jaq-json-vendor.md) for the sync procedure.
 
 ## Gate rather than reimplement

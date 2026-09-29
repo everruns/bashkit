@@ -110,7 +110,14 @@ Part of the [maintenance](../operations/maintenance.md) pass:
    container mutations) need a meter check or `resync()`.
 4. Match jaq-json's `Cargo.toml` dependency ranges in
    `crates/bashkit/Cargo.toml`, and keep `jaq-core`/`jaq-std` at the versions
-   that release requires.
+   that release requires. One deliberate exception: `foldhash` is declared
+   `0.2` while jaq-json 2.0.3 still asks for `^0.1`. `hashbrown` already pulls
+   `foldhash` 0.2 in, so matching upstream would lock two copies of it into
+   every build. The vendored code only uses `fast::RandomState` and
+   `fast::FixedState`, which are unchanged across the bump, and `hash_nums`
+   asserts hash *relations* rather than fixed values, so it does not care which
+   is linked. Do not "restore" this to `^0.1` during a sync; drop the exception
+   only once upstream itself moves to 0.2.
 5. Run the jq tests (upstream ones included) and `memory_growth_security_tests`.
 
 ## See also
