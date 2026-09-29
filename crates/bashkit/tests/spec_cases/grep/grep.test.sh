@@ -661,6 +661,45 @@ echo $?
 0
 ### end
 
+### grep_max_count_is_per_file_not_cumulative
+# GNU -m NUM stops reading *each file* after NUM matching lines. The budget is
+# per operand, so a file that spends it does not silence the next one.
+printf 'foo1\nfoo2\nfoo3\n' > /tmp/grep_mm_p.txt
+printf 'foo4\nfoo5\n'       > /tmp/grep_mm_q.txt
+grep -m1 foo /tmp/grep_mm_p.txt /tmp/grep_mm_q.txt
+echo "rc=$?"
+grep -m2 foo /tmp/grep_mm_p.txt /tmp/grep_mm_q.txt
+echo "rc=$?"
+### expect
+/tmp/grep_mm_p.txt:foo1
+/tmp/grep_mm_q.txt:foo4
+rc=0
+/tmp/grep_mm_p.txt:foo1
+/tmp/grep_mm_p.txt:foo2
+/tmp/grep_mm_q.txt:foo4
+/tmp/grep_mm_q.txt:foo5
+rc=0
+### end
+
+### grep_max_count_per_file_with_count_and_invert
+# -c reports a count for every operand, not just until a shared budget runs
+# out, and -v applies the same per-file budget to non-matching lines.
+# Each spec block gets a fresh VFS, so this recreates its own inputs.
+printf 'foo1\nfoo2\nfoo3\n' > /tmp/grep_mm_p.txt
+printf 'foo4\nfoo5\n'       > /tmp/grep_mm_q.txt
+printf 'foo\nbar\nbaz\n'   > /tmp/grep_mm_v.txt
+grep -c -m1 foo /tmp/grep_mm_p.txt /tmp/grep_mm_q.txt
+echo "rc=$?"
+grep -v -m1 foo /tmp/grep_mm_v.txt /tmp/grep_mm_q.txt
+echo "rc=$?"
+### expect
+/tmp/grep_mm_p.txt:1
+/tmp/grep_mm_q.txt:1
+rc=0
+/tmp/grep_mm_v.txt:bar
+rc=0
+### end
+
 ### grep_files_without_match
 # -L prints files that have no matches
 printf 'foo\n' > /tmp/grep_l_a.txt && printf 'bar\n' > /tmp/grep_l_b.txt && grep -L foo /tmp/grep_l_a.txt /tmp/grep_l_b.txt
