@@ -8,6 +8,8 @@
 //! - `head -c`/`tail -c` count bytes; `tail -c` supports the same signs.
 //! - Selection works on raw bytes, so a missing final newline and non-UTF-8
 //!   input pass through unchanged.
+//! - Line selection finds only the requested boundary, scanning from the
+//!   nearest end without allocating an offset for every input line.
 //! - A missing file is reported and skipped; the command then exits 1.
 
 use async_trait::async_trait;
@@ -180,25 +182,44 @@ fn parse_args(cmd: &str, args: &[String]) -> std::result::Result<Options, ExecRe
 
 /// Apply `selection` to `data`, counting `unit`s. Bytes pass through as-is.
 fn select(data: &[u8], selection: Selection, unit: Unit) -> &[u8] {
-    // Byte offset where each unit starts, plus the end of the data.
-    let bounds: Vec<usize> = match unit {
-        Unit::Bytes => return select_range(data, data.len(), |i| i, selection),
-        Unit::Lines => std::iter::once(0)
-            .chain(
-                data.iter()
-                    .enumerate()
-                    .filter(|&(i, &b)| b == b'\n' && i + 1 < data.len())
-                    .map(|(i, _)| i + 1),
-            )
-            .collect(),
+    match unit {
+        Unit::Bytes => select_range(data, data.len(), |i| i, selection),
+        Unit::Lines => select_lines(data, selection),
+    }
+}
+
+/// Select lines without building an input-proportional line-offset index.
+// THREAT[TM-DOS-117]: Newline-dense files must not amplify a small head/tail
+// request into one heap allocation per input line.
+fn select_lines(data: &[u8], selection: Selection) -> &[u8] {
+    let from_front = |line: usize| {
+        if line == 0 {
+            return 0;
+        }
+        data.iter()
+            .enumerate()
+            .filter(|&(i, &byte)| byte == b'\n' && i + 1 < data.len())
+            .nth(line - 1)
+            .map_or(data.len(), |(i, _)| i + 1)
     };
-    let units = if data.is_empty() { 0 } else { bounds.len() };
-    select_range(
-        data,
-        units,
-        |i| bounds.get(i).copied().unwrap_or(data.len()),
-        selection,
-    )
+    let from_back = |lines: usize| {
+        if lines == 0 {
+            return data.len();
+        }
+        data.iter()
+            .enumerate()
+            .rev()
+            .filter(|&(i, &byte)| byte == b'\n' && i + 1 < data.len())
+            .nth(lines - 1)
+            .map_or(0, |(i, _)| i + 1)
+    };
+
+    match selection {
+        Selection::First(n) => &data[..from_front(n)],
+        Selection::AllButLast(n) => &data[..from_back(n)],
+        Selection::Last(n) => &data[from_back(n)..],
+        Selection::From(n) => &data[from_front(n.saturating_sub(1))..],
+    }
 }
 
 /// Slice `data` to units `[start, end)` of `total`, mapping unit index to a
@@ -401,6 +422,19 @@ mod tests {
         let result = run_head(&["-n", "3"], Some(input)).await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, "a\nb\nc\n");
+    }
+
+    #[test]
+    fn tm_dos_117_newline_dense_selection_finds_boundaries() {
+        let input = vec![b'\n'; 1_000_000];
+
+        assert_eq!(select_lines(&input, Selection::First(1)), b"\n");
+        assert_eq!(select_lines(&input, Selection::Last(1)), b"\n");
+        assert_eq!(
+            select_lines(&input, Selection::AllButLast(1)).len(),
+            999_999
+        );
+        assert_eq!(select_lines(&input, Selection::From(1)), input);
     }
 
     #[tokio::test]
