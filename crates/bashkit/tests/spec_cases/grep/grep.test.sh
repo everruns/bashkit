@@ -582,6 +582,85 @@ printf 'foo\nfoo\n' | grep -m 0 foo
 ### expect
 ### end
 
+### grep_max_count_zero_readable_file
+# -m0 selects nothing and exits 1, with or without -q.
+printf 'foo\n' > /tmp/grep_qm0_readable.txt
+grep -q -m0 foo /tmp/grep_qm0_readable.txt
+echo $?
+grep -m0 foo /tmp/grep_qm0_readable.txt
+echo $?
+### expect
+1
+1
+### end
+
+### grep_max_count_zero_missing_file_option_orders
+# Every spelling exits before opening an unreadable operand, without a
+# diagnostic. GNU grep 3.11 does not require -q for this.
+grep -qm0 foo /tmp/nonexistent_grep_qm0 2>&1
+echo $?
+grep -q -m0 foo /tmp/nonexistent_grep_qm0 2>&1
+echo $?
+grep -m0 -q foo /tmp/nonexistent_grep_qm0 2>&1
+echo $?
+grep --quiet --max-count=0 foo /tmp/nonexistent_grep_qm0 2>&1
+echo $?
+grep -m0 foo /tmp/nonexistent_grep_qm0 2>&1
+echo $?
+grep --max-count=0 foo /tmp/nonexistent_grep_qm0 2>&1
+echo $?
+### expect
+1
+1
+1
+1
+1
+1
+### end
+
+### grep_max_count_zero_skips_pattern_compilation
+# The short-circuit happens before the pattern is compiled, so an invalid
+# regex is not reported either. Matches GNU grep 3.11.
+grep -m0 '[' /tmp/grep_qm0_readable.txt 2>&1
+echo $?
+grep -q -m0 '[' /tmp/nonexistent_grep_qm0 2>&1
+echo $?
+### expect
+1
+1
+### end
+
+### grep_max_count_zero_suppresses_other_output_modes
+# -c, -l and -v all produce nothing under -m0.
+grep -c -m0 foo /tmp/grep_qm0_readable.txt
+echo $?
+grep -l -m0 foo /tmp/grep_qm0_readable.txt
+echo $?
+grep -v -m0 foo /tmp/grep_qm0_readable.txt
+echo $?
+### expect
+1
+1
+1
+### end
+
+### grep_max_count_does_not_truncate_files_without_match
+# -L is the exception: "no line selected" is what makes every operand
+# qualify, so it still opens each one and lists them all.
+printf 'foo\n' > /tmp/grep_L_m.txt
+printf 'bar\n' > /tmp/grep_L_n.txt
+grep -L -m0 foo /tmp/grep_L_m.txt /tmp/grep_L_n.txt
+echo $?
+grep -L -m1 foo /tmp/grep_L_m.txt /tmp/grep_L_n.txt
+echo $?
+### expect
+/tmp/grep_L_m.txt
+/tmp/grep_L_n.txt
+1
+/tmp/grep_L_n.txt
+0
+### end
+
 ### grep_files_without_match
 # -L prints files that have no matches
 printf 'foo\n' > /tmp/grep_l_a.txt && printf 'bar\n' > /tmp/grep_l_b.txt && grep -L foo /tmp/grep_l_a.txt /tmp/grep_l_b.txt

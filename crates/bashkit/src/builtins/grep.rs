@@ -582,6 +582,20 @@ impl Builtin for Grep {
             return Err(Error::Execution("grep: missing pattern".to_string()));
         }
 
+        // GNU grep treats `-m0` as "stop before selecting anything": it exits 1
+        // with no output, no diagnostic, and without opening any operand or
+        // compiling the pattern. Verified against GNU grep 3.11, where
+        // `grep -m0 '[' missing` exits 1 rather than reporting either the
+        // invalid pattern or the missing file. This must therefore run *before*
+        // `build_matcher()`, or an unparseable pattern would still fail.
+        //
+        // `-L` is the documented exception: "no line was selected" is exactly
+        // what makes every operand qualify, so it still opens each one, reports
+        // read errors with status 2, and lists the files.
+        if opts.max_count == Some(0) && !opts.files_without_matches {
+            return Ok(ExecResult::with_code(String::new(), 1));
+        }
+
         let matcher = opts.build_matcher()?;
 
         let mut output = String::new();
@@ -715,9 +729,13 @@ impl Builtin for Grep {
         let mut max_reached = false;
 
         'file_loop: for (filename, content) in &inputs {
-            // Check if we already reached max count from previous files
+            // Check if we already reached max count from previous files.
+            // `-L` is exempt: its output is driven by the files that *didn't*
+            // match, so a spent match budget must not stop the enumeration.
+            // GNU `grep -L -m1 foo match.txt other.txt` still lists other.txt.
             if let Some(max) = opts.max_count
                 && total_matches >= max
+                && !opts.files_without_matches
             {
                 break 'file_loop;
             }
