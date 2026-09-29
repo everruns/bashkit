@@ -5448,6 +5448,14 @@ impl PyBash {
         py.detach(|| {
             self.rt.block_on(async move {
                 let mounted_fs = source.resolve().await?;
+                let bash = inner.lock().await;
+                // THREAT[TM-DOS-118]: validate the resolved handle before a
+                // read-only wrapper can hide a recursive self-mount.
+                if Arc::ptr_eq(&bash.fs(), &mounted_fs) {
+                    return Err(PyRuntimeError::new_err(
+                        "cannot mount filesystem into itself",
+                    ));
+                }
                 // Host-enforced read-only projection: the recorded handle is the
                 // wrapped one, so `reset()` replays the protection.
                 let mounted_fs: Arc<dyn FileSystem> = if read_only {
@@ -5455,7 +5463,6 @@ impl PyBash {
                 } else {
                     mounted_fs
                 };
-                let bash = inner.lock().await;
                 bash.mount(Path::new(&vfs_path), Arc::clone(&mounted_fs))
                     .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
                 record_runtime_mount(&runtime_mounts, &vfs_path, mounted_fs)?;
@@ -6323,6 +6330,14 @@ impl BashTool {
         py.detach(|| {
             self.rt.block_on(async move {
                 let mounted_fs = source.resolve().await?;
+                let bash = inner.lock().await;
+                // THREAT[TM-DOS-118]: validate the resolved handle before a
+                // read-only wrapper can hide a recursive self-mount.
+                if Arc::ptr_eq(&bash.fs(), &mounted_fs) {
+                    return Err(PyRuntimeError::new_err(
+                        "cannot mount filesystem into itself",
+                    ));
+                }
                 // Host-enforced read-only projection: the recorded handle is the
                 // wrapped one, so `reset()` replays the protection.
                 let mounted_fs: Arc<dyn FileSystem> = if read_only {
@@ -6330,7 +6345,6 @@ impl BashTool {
                 } else {
                     mounted_fs
                 };
-                let bash = inner.lock().await;
                 bash.mount(Path::new(&vfs_path), Arc::clone(&mounted_fs))
                     .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
                 record_runtime_mount(&runtime_mounts, &vfs_path, mounted_fs)?;

@@ -94,6 +94,8 @@ Do you need a custom filesystem?
   mounted tree in `ReadOnlyFs`; the recorded handle is the wrapped one so
   `reset()` replays the protection. Host-enforced: POSIX mode bits remain
   metadata-only and are not enforced — `chmod 444` alone does not stop a write.
+- Python validates the resolved source against the interpreter's live filesystem
+  before applying `ReadOnlyFs`; wrappers must never hide self-mount identity.
 
 #### RealFs (Optional, `realfs` feature)
 - Direct access to a host directory as an `FsBackend`
