@@ -77,6 +77,10 @@ device`). Bashkit consolidates those into one binary:
     sweeps that build bashkit with `--features ssh` only.
   - `logging_security_tests.rs`, mutates `BASHKIT_UNSAFE_LOGGING` in
     the process env; cannot share a binary with other tests.
+  - `headtail_allocation_tests.rs`, installs a counting
+    `#[global_allocator]` to assert a memory bound (TM-DOS-117); the
+    allocator is process-wide, so unrelated tests sharing the binary
+    would land in the measurement.
 
 When adding a new test file, default to placing it under
 `tests/integration/` and adding a `pub mod foo;` line to
