@@ -2053,7 +2053,7 @@ version = "0.2.5"
 criteria = "safe-to-deploy"
 
 [[exemptions.turso_core]]
-version = "0.8.0-pre.11"
+version = "0.8.0-pre.14"
 criteria = "safe-to-deploy"
 
 [[exemptions.turso_ext]]
