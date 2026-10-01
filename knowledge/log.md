@@ -1,5 +1,9 @@
 # Bashkit Knowledge Update Log
 
+## 2026-10-01
+
+* **Security**: The advisory scan stops at the cargo boundary. `scripts/audit-lockfiles.sh` discovers every `Cargo.lock`, but nothing runs `pnpm audit` or a PyPI equivalent, leaving five pnpm lockfiles and one uv lockfile unaudited — and seven advisories (four high) had accumulated in three of them: `brace-expansion` 2.1.4 and `fast-uri` 3.1.7 under `pnpm.overrides` security floors that had drifted below their patched releases, and `urllib3` 2.7.0 under `requests`. All transitive and dev- or example-only, so nothing shipped and nothing failed. Dependabot covers those directories for *bumps*, which is not a scan: an advisory against a pinned transitive dependency surfaces only if some bump happens to move it. `examples/docs-grep-agent` is unreferenced by any workflow, so its lockfile is neither built nor audited. Floors raised and `urllib3` bumped; the scan gap itself remains open. The same lesson as 2026-08-22 and 2026-09-27, one ecosystem out rather than one workspace in — coverage that stops at an ecosystem boundary is quiet, not clean. See [Threat Model](security/threat-model.md).
+
 ## 2026-09-27
 
 * **Contract**: Discovering every `Cargo.lock` made the advisory scan complete; it did not make it current. `crates/bashkit/fuzz` and `examples/hyperlight` had drifted to `bashkit` 0.18.0 and 0.18.1 against a 0.18.2 workspace, and both still resolved the `jaq-json` registry crate that the 2026-09-25 vendoring removed from the tree — so `scripts/audit-lockfiles.sh` was auditing crates that are no longer what builds, and `jaq-core`/`jaq-std` at versions the workspace had moved off. Nothing failed: the aux workspaces build without `--locked` (`cargo +nightly fuzz build`), so the runner silently refreshed each stale lockfile and the job passed. A stale scan is a quiet scan, not a clean one — the same lesson as 2026-08-22, one step further in.
