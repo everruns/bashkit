@@ -1605,6 +1605,37 @@ Discovery removes the step a new workspace can forget.
 Dependabot still needs explicit directories (it cannot glob), so **that** list
 does have to grow with each new workspace. All five are currently covered.
 
+#### Non-cargo lockfiles are not advisory-scanned
+
+The advisory scan is **cargo-only**. `scripts/audit-lockfiles.sh` discovers
+`Cargo.lock` files and runs `cargo audit`; nothing runs `pnpm audit` or a PyPI
+equivalent in CI or nightly. The tree holds six non-cargo lockfiles that no job
+audits:
+
+| Ecosystem | Lockfiles |
+|-----------|-----------|
+| npm (pnpm) | `crates/bashkit-js`, `site`, `examples`, `examples/browser`, `examples/bashkit-pi` |
+| PyPI (uv) | `examples/docs-grep-agent` |
+
+Dependabot covers these directories for version bumps, which is not the same as
+a scan: it opens a PR when a dependency has a newer release, so an advisory
+against a pinned transitive dependency surfaces only if some bump happens to
+move it. Between bumps the ecosystem goes unaudited, and nothing fails.
+
+That is how 2026-10-01 happened: seven advisories (four high) sat in three
+lockfiles — `brace-expansion` 2.1.4 and `fast-uri` 3.1.7 under stale
+`pnpm.overrides` security floors, `urllib3` 2.7.0 under `requests`. All were
+transitive and dev- or example-only, so nothing shipped to a consumer and no
+job was ever going to complain. `examples/docs-grep-agent` is worse off than
+the rest: no workflow references it at all, so its lockfile is neither built
+nor audited.
+
+The same lesson as 2026-08-22 and 2026-09-27, one ecosystem out rather than one
+workspace in: coverage that stops at an ecosystem boundary is quiet, not clean.
+Closing it means scanning npm and PyPI beside cargo, not pinning floors by
+hand — a hand-raised floor is a fix with an expiry date, since it drifts again
+the moment the next advisory lands.
+
 ### Dynamic Analysis Tools
 
 | Tool | Purpose | CI Integration | Frequency |
