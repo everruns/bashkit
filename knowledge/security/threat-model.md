@@ -1595,11 +1595,19 @@ implementation, called by the CI `audit` job and the nightly `advisories` job.
 It audits all three ecosystems on every run and reports each separately, so one
 ecosystem's advisory never masks another's.
 
-The repository holds **five** cargo lockfiles: the workspace root plus
-`crates/bashkit/fuzz`, `examples/hyperlight`, `examples/hyperlight/host`, and
-`crates/bashkit-js/test-fixtures/random-fs`. A root-only scan sees only the
+The repository holds **six** independent cargo workspaces — each carries a
+`[workspace]` table and so resolves its own lockfile: the root plus
+`crates/bashkit/fuzz`, `examples/hyperlight`, `examples/hyperlight/host`,
+`crates/bashkit-js/test-fixtures/random-fs` and
+`crates/bashkit-python/test-fixtures/random-fs`. A root-only scan sees only the
 first, so CI **discovers** every `Cargo.lock` in the tree and audits each one
 rather than keeping a list.
+
+Four of those lockfiles are committed. The two `test-fixtures/random-fs`
+lockfiles are gitignored and generated at test time, so a fresh checkout — which
+is what CI audits — has four, and the fixtures' dependencies (`napi`, `pyo3`)
+are not advisory-scanned there at all. Dependabot is their only coverage, which
+is the reason the entry list below is test-pinned.
 
 That is deliberate. The hand-maintained list failed twice: the fuzz lockfile
 drifted onto an unsound `anyhow` before it was added, and
@@ -1608,7 +1616,13 @@ sandbox-escape issues in `wasmtime` 38.x — because nothing audited it either.
 Discovery removes the step a new workspace can forget.
 
 Dependabot still needs explicit directories (it cannot glob), so **that** list
-does have to grow with each new workspace. All five are currently covered.
+does have to grow with each new workspace — and it had already drifted:
+`crates/bashkit-python/test-fixtures/random-fs` had no entry while its napi
+twin did, leaving its `pyo3` unwatched by the one mechanism that watched it.
+All six are covered now, and `scripts/tests/test_dependabot_coverage.py` fails
+when any cargo, pnpm or uv workspace in the tree has none, because "remember to
+add it" is the step that keeps going wrong. A missing entry is quiet by nature:
+nothing fails, no PR opens, and the dependency just stops being watched.
 
 #### Every ecosystem's lockfiles are advisory-scanned
 
@@ -1694,7 +1708,7 @@ parser and interpreter; **Miri** (`cargo +nightly miri test --lib`) detects UB i
 | **pnpm audit** | Known CVE detection (npm) | ✅ Required |
 | **OSV** | Known CVE detection (PyPI) | ✅ Required |
 | **cargo-deny** | License compliance | ✅ Required |
-| **Dependabot** | Automated dependency updates | GitHub-native (one entry per workspace: `/` and `/crates/bashkit/fuzz`) |
+| **Dependabot** | Automated dependency updates | GitHub-native; every workspace enumerated (6 cargo, 5 npm, 1 uv, plus github-actions), pinned by `scripts/tests/test_dependabot_coverage.py` |
 
 #### Suppressed advisories
 
