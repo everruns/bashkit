@@ -106,6 +106,15 @@ updates:
   # untrusted guest modules in CI, and a whole 38.x line with no fixed release
   # is not something to find out about by accident.
   #
+  # The two `test-fixtures/random-fs` workspaces are the reason to enumerate
+  # rather than eyeball: their lockfiles are gitignored and generated at test
+  # time, so the advisory scan in scripts/audit-lockfiles.sh never sees them in
+  # a fresh checkout. Dependabot is their *only* coverage. The python one was
+  # missing from this list while its napi twin was present, leaving its `pyo3`
+  # unwatched; scripts/tests/test_dependabot_coverage.py now fails when any
+  # workspace in the tree has no entry, since "add it by hand" is the step that
+  # has gone wrong here repeatedly.
+  #
   # Grouped per directory: these are example and fixture builds, so a week of
   # bumps should arrive as one reviewable PR each.
   - package-ecosystem: "cargo"
@@ -113,6 +122,7 @@ updates:
       - "/examples/hyperlight"
       - "/examples/hyperlight/host"
       - "/crates/bashkit-js/test-fixtures/random-fs"
+      - "/crates/bashkit-python/test-fixtures/random-fs"
     schedule:
       interval: "weekly"
     commit-message:
