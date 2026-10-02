@@ -1576,19 +1576,24 @@ This section documents the security tools used to detect and prevent vulnerabili
 
 | Tool | Purpose | CI Integration | Frequency |
 |------|---------|----------------|-----------|
-| **cargo-audit** | CVE scanning for dependencies | ✅ Required | Every PR + nightly |
+| **cargo-audit** | CVE scanning for cargo dependencies | ✅ Required | Every PR + nightly |
+| **pnpm audit** | CVE scanning for npm dependencies | ✅ Required | Every PR + nightly |
+| **OSV** | CVE scanning for PyPI dependencies | ✅ Required | Every PR + nightly |
 | **cargo-deny** | License + advisory checks | ✅ Required | Every PR |
 | **cargo-clippy** | Lint with security-focused warnings | ✅ Required | Every PR |
 | **cargo-geiger** | Count unsafe code blocks | ✅ Informational | Every PR |
 
 **cargo-audit** scans every `Cargo.lock` in the tree against the RustSec Advisory
-Database; **cargo-geiger** (`--all-features`) tracks unsafe code usage to keep it
-minimal and audited.
+Database, **pnpm audit** every `pnpm-lock.yaml` against the GitHub Advisory
+Database, and **OSV** every `uv.lock` against osv.dev; **cargo-geiger**
+(`--all-features`) tracks unsafe code usage to keep it minimal and audited.
 
 The advisory scan runs on a schedule as well as on push, because an advisory is
 published against code that has not changed: a push-only scan leaves `main`
 unaudited for as long as nobody pushes. `scripts/audit-lockfiles.sh` is the one
 implementation, called by the CI `audit` job and the nightly `advisories` job.
+It audits all three ecosystems on every run and reports each separately, so one
+ecosystem's advisory never masks another's.
 
 The repository holds **five** cargo lockfiles: the workspace root plus
 `crates/bashkit/fuzz`, `examples/hyperlight`, `examples/hyperlight/host`, and
@@ -1605,36 +1610,61 @@ Discovery removes the step a new workspace can forget.
 Dependabot still needs explicit directories (it cannot glob), so **that** list
 does have to grow with each new workspace. All five are currently covered.
 
-#### Non-cargo lockfiles are not advisory-scanned
+#### Every ecosystem's lockfiles are advisory-scanned
 
-The advisory scan is **cargo-only**. `scripts/audit-lockfiles.sh` discovers
-`Cargo.lock` files and runs `cargo audit`; nothing runs `pnpm audit` or a PyPI
-equivalent in CI or nightly. The tree holds six non-cargo lockfiles that no job
-audits:
+The scan covers all three ecosystems the tree resolves dependencies in, by the
+same discovery rule and from the same entry point:
 
-| Ecosystem | Lockfiles |
-|-----------|-----------|
-| npm (pnpm) | `crates/bashkit-js`, `site`, `examples`, `examples/browser`, `examples/bashkit-pi` |
-| PyPI (uv) | `examples/docs-grep-agent` |
+| Ecosystem | Discovers | Audits with | Lockfiles |
+|-----------|-----------|-------------|-----------|
+| cargo | `Cargo.lock` | `cargo audit` | root, `crates/bashkit/fuzz`, `examples/hyperlight`, `examples/hyperlight/host` |
+| npm (pnpm) | `pnpm-lock.yaml` | `pnpm audit` via `scripts/lib/npm_audit.py` | `crates/bashkit-js`, `site`, `examples`, `examples/browser`, `examples/bashkit-pi` |
+| PyPI (uv) | `uv.lock` | OSV via `scripts/lib/pypi_audit.py` | `examples/docs-grep-agent` |
 
-Dependabot covers these directories for version bumps, which is not the same as
-a scan: it opens a PR when a dependency has a newer release, so an advisory
+Each ecosystem asserts its own floor: discovering no lockfile of a kind fails
+the scan rather than quietly narrowing it, the same rule that already applied
+to a missing `Cargo.lock`.
+
+Neither non-cargo scan needs an install step. `pnpm audit` resolves the
+dependency tree from `pnpm-lock.yaml`, and the PyPI scan reads `uv.lock` with
+the standard library, so the `audit` job adds pnpm and node to PATH and nothing
+else. That matters for `examples/docs-grep-agent`, which no workflow builds —
+it is now audited without becoming a build target.
+
+Both wrappers **fail closed**. Output that cannot be parsed, an unreachable
+registry, an unreadable lockfile, or a batch response of the wrong size is
+reported as a failed scan, never as a clean one: a scan is at its most
+reassuring exactly when it has stopped working.
+
+One case is worth naming because it is invisible by construction. `pnpm audit`
+reports *its own* failures as a well-formed JSON document with an `error` key
+(`ERR_PNPM_BROKEN_LOCKFILE`, `ERR_PNPM_OUTDATED_LOCKFILE`), not as unparseable
+output or a missing document. Such a report parses cleanly and carries no
+advisories, so a naive reader cannot distinguish "the lockfile is unreadable"
+from "nothing found" — a lockfile the scan could not read would pass. The
+wrapper therefore rejects any document with an `error` key, and requires
+`metadata.vulnerabilities` as positive evidence that an audit actually ran,
+rather than inferring success from the absence of advisories.
+
+Why this was cargo-only until 2026-10-02, and why that was not visible:
+Dependabot covers the npm and PyPI directories for version bumps, which is not
+a scan. It opens a PR when a dependency has a newer release, so an advisory
 against a pinned transitive dependency surfaces only if some bump happens to
-move it. Between bumps the ecosystem goes unaudited, and nothing fails.
-
-That is how 2026-10-01 happened: seven advisories (four high) sat in three
+move it; between bumps the ecosystem went unaudited and nothing failed. On
+2026-10-01 seven advisories (four high) were found by hand sitting in three
 lockfiles — `brace-expansion` 2.1.4 and `fast-uri` 3.1.7 under stale
 `pnpm.overrides` security floors, `urllib3` 2.7.0 under `requests`. All were
 transitive and dev- or example-only, so nothing shipped to a consumer and no
-job was ever going to complain. `examples/docs-grep-agent` is worse off than
-the rest: no workflow references it at all, so its lockfile is neither built
-nor audited.
+job was ever going to complain.
 
 The same lesson as 2026-08-22 and 2026-09-27, one ecosystem out rather than one
 workspace in: coverage that stops at an ecosystem boundary is quiet, not clean.
-Closing it means scanning npm and PyPI beside cargo, not pinning floors by
-hand — a hand-raised floor is a fix with an expiry date, since it drifts again
-the moment the next advisory lands.
+Closing it meant scanning npm and PyPI beside cargo rather than pinning floors
+by hand — a hand-raised floor is a fix with an expiry date, since it drifts
+again the moment the next advisory lands. The regression test for the whole
+change is those same three lockfiles: restored to their pre-fix state, the scan
+now reports all three `brace-expansion` advisories and all six `urllib3` OSV
+ids and exits non-zero, where before it was green.
 
 ### Dynamic Analysis Tools
 
@@ -1660,7 +1690,9 @@ parser and interpreter; **Miri** (`cargo +nightly miri test --lib`) detects UB i
 
 | Tool | Purpose | CI Integration |
 |------|---------|----------------|
-| **cargo-audit** | Known CVE detection | ✅ Required |
+| **cargo-audit** | Known CVE detection (cargo) | ✅ Required |
+| **pnpm audit** | Known CVE detection (npm) | ✅ Required |
+| **OSV** | Known CVE detection (PyPI) | ✅ Required |
 | **cargo-deny** | License compliance | ✅ Required |
 | **Dependabot** | Automated dependency updates | GitHub-native (one entry per workspace: `/` and `/crates/bashkit/fuzz`) |
 
@@ -1668,10 +1700,19 @@ parser and interpreter; **Miri** (`cargo +nightly miri test --lib`) detects UB i
 
 Every advisory suppression must be listed here with a rationale and a condition
 for removal, a bare `--ignore` flag or `deny.toml` entry with no recorded
-reasoning is not acceptable. `cargo audit` suppressions live in
-`scripts/audit-lockfiles.sh` (`IGNORED_ADVISORIES`) and `cargo deny`
-suppressions in `deny.toml`; keep the two lists in sync so a local `cargo deny
-check advisories` matches CI. The `cargo audit` list may be the smaller of the
+reasoning is not acceptable. `scripts/audit-lockfiles.sh` holds one list per
+ecosystem — `IGNORED_ADVISORIES` (cargo, RustSec ids),
+`IGNORED_NPM_ADVISORIES` and `IGNORED_PYPI_ADVISORIES` (GHSA, CVE or OSV ids) —
+and `cargo deny` suppressions live in `deny.toml`; keep the cargo list and
+`deny.toml` in sync so a local `cargo deny check advisories` matches CI.
+
+The two non-cargo lists are empty and meant to stay that way: those
+dependencies are all dev- or example-only, so a patched release is almost
+always reachable by a bump. `pnpm audit` has no suppression flag of its own (it
+reads `pnpm.auditConfig.ignoreGhsas` from each project's package.json), so
+filtering happens in the wrapper rather than across five package.json files
+where it could drift. A suppressed finding is still printed, so a stale
+suppression stays visible instead of becoming silently permanent. The `cargo audit` list may be the smaller of the
 two — it carries only advisories that fail that scan — but never suppresses
 something `cargo deny` still enforces, which `scripts/tests/test_audit_lockfiles.py`
 checks.
