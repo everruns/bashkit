@@ -11,6 +11,7 @@ with no job that would ever fail, so each ecosystem now asserts its own floor.
 
 import os
 from pathlib import Path
+import re
 import shutil
 import stat
 import subprocess
@@ -22,6 +23,16 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / 'scripts/audit-lockfiles.sh'
+
+
+def suppressions(name):
+    """The advisory ids in one of the script's suppression lists.
+
+    Read out of the script rather than duplicated here, so the tests cannot
+    drift from the list they are guarding.
+    """
+    body = SCRIPT.read_text().split(f'{name}=(')[1].split(')')[0]
+    return [line.strip() for line in body.splitlines() if line.strip()]
 
 # Stubs that record each invocation and report success. Each exits non-zero for
 # a path under a directory named "poison", which is how the failure-propagation
@@ -114,9 +125,15 @@ class AuditLockfilesTests(unittest.TestCase):
         self.assertEqual(pypi, {'./examples/docs-grep-agent/uv.lock'})
 
     def test_passes_suppressions_to_every_audit(self):
+        # Every lockfile in an ecosystem gets that ecosystem's whole list: a
+        # suppression that reached only the first project audited would leave
+        # the others red for an advisory already accepted.
         _, calls = self.run_script(ALL_LOCKS)
         for call in self.by_label(calls, 'cargo'):
             self.assertIn('--ignore RUSTSEC-2023-0071', call)
+        for call in self.by_label(calls, 'npm'):
+            for advisory in suppressions('IGNORED_NPM_ADVISORIES'):
+                self.assertIn(f'--ignore {advisory}', call)
 
     def test_skips_build_and_dependency_directories(self):
         result, calls = self.run_script(
@@ -176,15 +193,41 @@ class AuditLockfilesTests(unittest.TestCase):
     def test_suppressions_are_a_subset_of_deny_toml(self):
         # cargo-audit needs only the advisories that actually fail it, but it
         # must never ignore something cargo-deny still enforces.
-        script = SCRIPT.read_text()
-        in_list = script.split('IGNORED_ADVISORIES=(')[1].split(')')[0]
-        script_ignores = {
-            line.strip() for line in in_list.splitlines() if line.strip()
-        }
+        script_ignores = set(suppressions('IGNORED_ADVISORIES'))
         with open(ROOT / 'deny.toml', 'rb') as handle:
             deny_ignores = set(tomllib.load(handle)['advisories']['ignore'])
         self.assertTrue(script_ignores)
         self.assertLessEqual(script_ignores, deny_ignores)
+
+    def test_every_suppression_is_documented_in_the_threat_model(self):
+        # A bare --ignore with no recorded reasoning is the thing the
+        # suppression contract forbids, and prose is the easiest half of a
+        # change to skip. Each id must appear in the "Suppressed advisories"
+        # table, which is where the rationale and the removal condition live.
+        threat_model = (ROOT / 'knowledge/security/threat-model.md').read_text()
+        section = threat_model.split('#### Suppressed advisories')[1]
+        # Stop at the next heading: the file is full of other tables, and an id
+        # mentioned in one of those is not a recorded suppression.
+        section = re.split(r'^#+ ', section, maxsplit=1, flags=re.M)[0]
+        rows = '\n'.join(
+            line for line in section.splitlines() if line.startswith('|')
+        )
+        self.assertIn('| Advisory |', rows)
+
+        documented = 0
+        for name in (
+            'IGNORED_ADVISORIES',
+            'IGNORED_NPM_ADVISORIES',
+            'IGNORED_PYPI_ADVISORIES',
+        ):
+            for advisory in suppressions(name):
+                with self.subTest(advisory=advisory):
+                    self.assertIn(advisory, rows)
+                documented += 1
+
+        # Guard the guard: a parser that stopped finding ids would pass this
+        # by checking nothing at all.
+        self.assertGreater(documented, 0)
 
     def test_every_ecosystem_has_a_suppression_list(self):
         # The escape hatch has to exist per ecosystem, otherwise an advisory
