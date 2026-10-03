@@ -42,6 +42,12 @@ criteria = "safe-to-deploy"
 delta = "0.44.0 -> 0.45.0"
 notes = "Reviewed C/FFI and generated symbol-prefix delta. EVP buffers final padded block; GCM checks IV length before subtraction; ML-DSA exact signature/extmu sizes, ML-KEM constant-time validation and parameter bounds retained. Keccak contexts bounded and cleansed; Brainpool immutable once groups. Builder flags preserve jitterentropy O0; fixed CPU discovery and existing compiler toolchain only. Source safety review, not cryptographic proof."
 
+[[audits.bigdecimal]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.4.10 -> 0.4.11"
+notes = "Reviewed allocation-reduction delta: new in-place assign paths (addassign_scaled_biguint, mulassign_bigdecimal_ref, mulassign_bigint_biguint_ref) and a WithScale wrapper replace clone-and-rebuild, and the inverse Newton iteration reuses one scratch BigDecimal. New division and exp modules: the exp series loop is bounded by 2*precision with a minimum of 10, division asserts a non-zero denominator and uses checked_sub on bit counts. Digit/bit count helpers go through f64, where Rust's saturating casts bound the result. No unsafe, no fs/net/process/env access, build.rs unchanged, no new dependencies; Cargo.toml adds only a clippy lint level."
+
 [[audits.blake2]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
