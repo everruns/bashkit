@@ -53,14 +53,40 @@ IGNORED_ADVISORIES=(
     RUSTSEC-2023-0071
 )
 
-# npm advisories, by GHSA (or CVE) id. Empty, and meant to stay that way: the
-# npm dependencies are all dev- or example-only, so a patched release is almost
-# always reachable by a bump. The mechanism exists so that an advisory with no
-# fix is an explicit, documented decision rather than a pinned floor nobody
-# records — a hand-raised floor is a fix with an expiry date.
-IGNORED_NPM_ADVISORIES=()
+# npm advisories, by GHSA (or CVE) id. A patched release is almost always
+# reachable by a bump, because the npm dependencies are all dev- or
+# example-only; these two are the exception the mechanism exists for. Both
+# advisories landed on 2026-10-02 against the newest published version of the
+# package, with no fixed release to move to, so the choice is an explicit,
+# documented acceptance or a red scan that stays red — not a pinned floor
+# nobody records.
+#
+# Both are `last_affected` advisories in OSV, not `fixed` ones: there is no
+# patched version, so check the advisory's own fixed-range before dropping
+# either entry. Neither package reaches a consumer of a published artifact.
+#
+# GHSA-vfj7-8cjw-p6xm — stack-exhaustion DoS in `braces` from deeply nested
+# patterns. Reached only as ava → globby → fast-glob → micromatch → braces, a
+# devDependency of crates/bashkit-js: the test runner globbing test-file
+# patterns that live in this repo. `braces` 3.0.3 is both the latest release
+# and the last affected one. The published package ships the files listed in
+# its package.json `files` array, so no consumer installs this chain. Drop
+# once `braces` ships a release above 3.0.3.
+#
+# GHSA-ch52-4w7c-c8xp — `http-cache-semantics` max-stale handling can disclose
+# cross-user cached responses from a shared HTTP cache. A direct dependency of
+# astro 7.3.5, which is the site's build tooling; the exposure needs a cache
+# serving more than one user, and this one is a single-tenant build step that
+# caches its own fetches. 4.2.0 is both the latest release and the last
+# affected one. Drop once `http-cache-semantics` ships a release above 4.2.0.
+IGNORED_NPM_ADVISORIES=(
+    GHSA-vfj7-8cjw-p6xm
+    GHSA-ch52-4w7c-c8xp
+)
 
-# PyPI advisories, by OSV (or GHSA) id. Empty for the same reason.
+# PyPI advisories, by OSV (or GHSA) id. Empty: nothing has yet needed
+# suppressing here. Same bar as the npm list above — an entry needs a rationale
+# and a removal condition in the threat model, which a test enforces.
 IGNORED_PYPI_ADVISORIES=()
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
