@@ -29,9 +29,9 @@
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.10",
-    "@types/node": "^26.6.2",
+    "@types/node": "^26.6.3",
     "typescript": "^7.0.2",
-    "wrangler": "^4.140.0"
+    "wrangler": "^4.143.0"
   },
   "pnpm": {
     "overrides": {
