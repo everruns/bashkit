@@ -1720,13 +1720,17 @@ ecosystem — `IGNORED_ADVISORIES` (cargo, RustSec ids),
 and `cargo deny` suppressions live in `deny.toml`; keep the cargo list and
 `deny.toml` in sync so a local `cargo deny check advisories` matches CI.
 
-The two non-cargo lists are empty and meant to stay that way: those
-dependencies are all dev- or example-only, so a patched release is almost
-always reachable by a bump. `pnpm audit` has no suppression flag of its own (it
-reads `pnpm.auditConfig.ignoreGhsas` from each project's package.json), so
-filtering happens in the wrapper rather than across five package.json files
-where it could drift. A suppressed finding is still printed, so a stale
-suppression stays visible instead of becoming silently permanent. The `cargo audit` list may be the smaller of the
+A patched release is almost always reachable by a bump in the two non-cargo
+ecosystems, because those dependencies are all dev- or example-only — so the
+npm list carries only advisories published against the newest release of a
+package, where there is nothing to upgrade to. `pnpm audit` has no suppression
+flag of its own (it reads `pnpm.auditConfig.ignoreGhsas` from each project's
+package.json), so filtering happens in the wrapper rather than across five
+package.json files where it could drift. A suppressed finding is still printed,
+so a stale suppression stays visible instead of becoming silently permanent.
+Every id in any of the three lists must appear in the table below;
+`scripts/tests/test_audit_lockfiles.py` fails when one does not, so a
+suppression cannot be added without its rationale and removal condition. The `cargo audit` list may be the smaller of the
 two — it carries only advisories that fail that scan — but never suppresses
 something `cargo deny` still enforces, which `scripts/tests/test_audit_lockfiles.py`
 checks.
@@ -1735,6 +1739,8 @@ checks.
 |----------|-------|----------------|-------------|
 | RUSTSEC-2023-0071 | `rsa` | Marvin timing sidechannel (TM-CRY-002). No patched version exists; reachable only via the opt-in `ssh` feature | `rsa` ships a constant-time release |
 | RUSTSEC-2023-0089 | `atomic-polyfill` | Unmaintained, no known vulnerability; transitive via `monty` → `postcard` → `heapless` (pinned at 0.7, which still requires it) | Upstream drops the dependency |
+| GHSA-vfj7-8cjw-p6xm | `braces` (npm) | Stack-exhaustion DoS through deeply nested patterns. No patched version exists — 3.0.3 is both the latest release and the last affected one. Reached only as `ava` → `globby` → `fast-glob` → `micromatch` → `braces`, a devDependency of `crates/bashkit-js`, globbing test-file patterns committed to this repo; it is not in the published package's `files` list, so no consumer installs it | `braces` ships a release above 3.0.3 |
+| GHSA-ch52-4w7c-c8xp | `http-cache-semantics` (npm) | `max-stale` handling can disclose cross-user cached responses. No patched version exists — 4.2.0 is both the latest release and the last affected one. A direct dependency of `astro` 7.3.5, the site's build tooling; the exposure needs a cache serving more than one user, and this is a single-tenant build step caching its own fetches | `http-cache-semantics` ships a release above 4.2.0 |
 
 A suppression that stops matching is not evidence that it can be dropped.
 `cargo deny check advisories` currently warns `advisory-not-detected` for
