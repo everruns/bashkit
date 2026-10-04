@@ -349,6 +349,7 @@ dependencies = [
  "base64 0.23.1",
  "bigdecimal",
  "bitflags 2.13.2",
+ "branches",
  "bstr",
  "bytes",
  "bzip2",
