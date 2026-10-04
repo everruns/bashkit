@@ -154,6 +154,10 @@ zapcode-core = { version = "1.5.1", optional = true }
 # Pulls a multi-MB transitive dep tree only when the `sqlite` feature is active.
 turso_core = { workspace = true, optional = true }
 
+# Feature-unification shim for `branches`, a transitive dep of `turso_core`.
+# Never referenced in code — see the comment in the workspace Cargo.toml.
+branches = { workspace = true, optional = true }
+
 [features]
 default = ["bash_tool", "ring", "tzdata"]
 # Named IANA timezone support for the `date` builtin's `TZ=` handling, via the
@@ -258,7 +262,7 @@ typescript = ["dep:zapcode-core"]
 # Requires the multi-threaded tokio runtime so the sync `IO` trait can bridge
 # back to the async VFS via `block_in_place`.
 # Usage: cargo build --features sqlite
-sqlite = ["dep:turso_core", "tokio/rt-multi-thread"]
+sqlite = ["dep:turso_core", "dep:branches", "tokio/rt-multi-thread"]
 # Enable RealFs backend for accessing host filesystem directories
 # WARNING: This intentionally breaks the sandbox boundary.
 # Usage: cargo build --features realfs

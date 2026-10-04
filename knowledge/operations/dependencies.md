@@ -92,6 +92,29 @@ the existing Python graph. Remove it when Monty's AST upgrades its string
 type. The Python binding's `num-bigint` dependency must still match Monty's
 0.4 line.
 
+## Feature-unification edges
+
+`branches` is a direct dependency of `bashkit` under the `sqlite` feature and is
+never referenced by any Bashkit code. It exists only to turn its `std` feature on
+for the whole graph. `turso_core` depends on `branches` with
+`default-features = false`, and the resulting `no_std` body of `branches::abort()`
+is `core::intrinsics::abort()`, an unstable intrinsic rustc removed in
+1.101.0-nightly. Stable CI stayed green; the nightly AddressSanitizer job went red
+on an unchanged tree (nightly run #242, 2026-10-04), because that job is the only
+one that both tracks floating nightly and builds `turso_core` — `bashkit-cli`
+enables `sqlite` by default, and Miri only builds `bashkit --lib` without it.
+
+There is no version to bump to: `branches` 0.5.0, its latest release, carries the
+same line, and `turso_core` requires `^0.4.3` regardless. Cargo has no way to add
+a feature to a transitive dependency other than a direct edge, so the edge is the
+fix. Enabling `std` is also the behaviour this build wants on its own terms —
+`abort()` becomes `std::process::abort()`, which raises `SIGABRT` and honours
+registered abort handlers, instead of a bare trap — and it drops the unstable
+intrinsic from the graph entirely. The edge adds no crate to the tree and enables
+no runtime surface by itself.
+
+Remove it when `branches` compiles on nightly without `std`.
+
 ## Measure size and audit surface separately
 
 The `idna_adapter` pin removes 21 crates but only **15 KB (0.16%)** from the

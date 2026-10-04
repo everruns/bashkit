@@ -80,6 +80,26 @@ updates:
       # pin comment sits next to the dep in crates/bashkit/Cargo.toml.
       - dependency-name: "get-size2"
 
+      # branches is not a dependency bashkit uses — no bashkit source
+      # references it. It is declared under the `sqlite` feature purely to turn
+      # ON `branches/std` for the whole graph: `turso_core` depends on
+      # `branches` with `default-features = false`, and that no_std path
+      # compiles `core::intrinsics::abort()`, which rustc removed in
+      # 1.101.0-nightly — it turned the nightly ASan job red on an unchanged
+      # tree (nightly run #242).
+      #
+      # Cargo unifies features per *version*, so the shim only works while
+      # bashkit and turso_core resolve to the same copy. turso_core requires
+      # `^0.4.3`; a bump of bashkit's declaration to 0.5.0 would resolve a
+      # second copy and leave turso_core's 0.4.x one with no `std` again,
+      # silently re-breaking nightly. Ignore outright rather than by
+      # update-type: 0.5.0 carries the same unstable intrinsic, so there is
+      # nothing to gain from any bump.
+      #
+      # Drop this once `branches` compiles on nightly without `std`; the
+      # rationale sits next to the dep in the root Cargo.toml.
+      - dependency-name: "branches"
+
   # Fuzz targets are a separate cargo workspace with their own lockfile, so the
   # "/" entry above never touches them. Without this the fuzz lockfile silently
   # rots between releases (it drifted onto an unsound `anyhow` and two yanked
