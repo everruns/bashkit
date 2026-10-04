@@ -1740,7 +1740,6 @@ checks.
 | RUSTSEC-2023-0071 | `rsa` | Marvin timing sidechannel (TM-CRY-002). No patched version exists; reachable only via the opt-in `ssh` feature | `rsa` ships a constant-time release |
 | RUSTSEC-2023-0089 | `atomic-polyfill` | Unmaintained, no known vulnerability; transitive via `monty` → `postcard` → `heapless` (pinned at 0.7, which still requires it) | Upstream drops the dependency |
 | GHSA-vfj7-8cjw-p6xm | `braces` (npm) | Stack-exhaustion DoS through deeply nested patterns. No patched version exists — 3.0.3 is both the latest release and the last affected one. Reached only as `ava` → `globby` → `fast-glob` → `micromatch` → `braces`, a devDependency of `crates/bashkit-js`, globbing test-file patterns committed to this repo; it is not in the published package's `files` list, so no consumer installs it | `braces` ships a release above 3.0.3 |
-| GHSA-ch52-4w7c-c8xp | `http-cache-semantics` (npm) | `max-stale` handling can disclose cross-user cached responses. No patched version exists — 4.2.0 is both the latest release and the last affected one. A direct dependency of `astro` 7.3.5, the site's build tooling; the exposure needs a cache serving more than one user, and this is a single-tenant build step caching its own fetches | `http-cache-semantics` ships a release above 4.2.0 |
 
 A suppression that stops matching is not evidence that it can be dropped.
 `cargo deny check advisories` currently warns `advisory-not-detected` for
