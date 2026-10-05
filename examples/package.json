@@ -12,9 +12,9 @@
     "@ai-sdk/openai": "^4.0.83",
     "@langchain/core": "^1.2.14",
     "@langchain/langgraph": "^1.4.18",
-    "@langchain/openai": "^1.6.1",
-    "ai": "^7.0.126",
-    "openai": "^7.25.0",
+    "@langchain/openai": "^1.6.2",
+    "ai": "^7.0.127",
+    "openai": "^7.27.0",
     "zod": "^4.6.5"
   },
   "pnpm": {
