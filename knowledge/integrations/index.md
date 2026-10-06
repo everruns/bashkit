@@ -6,3 +6,4 @@
 * [Git Support](git-support.md) - Sandboxed Git operations over the virtual filesystem.
 * [SSH Support](ssh-support.md) - Sandboxed SSH, SCP, and SFTP operations and security boundaries.
 * [Interactive Shell](interactive-shell.md) - Interactive REPL design with rustyline-based line editing.
+* [In-Process Terminal](in-process-terminal.md) - PTY-like in-memory terminal around a Bash session, with a screen model, raw-mode device, and the vi builtin.

@@ -159,6 +159,16 @@ export const DOC_META: DocMeta[] = [
     editPath: "docs/filesystem.md",
   },
   {
+    slug: "terminal",
+    title: "In-process terminal",
+    summary: "Drive an interactive shell and vi on an in-memory terminal, and read the screen as text.",
+    seoTitle: "Bashkit in-process terminal with vi",
+    seoDescription:
+      "Run an interactive Bashkit shell on an in-memory terminal: send keystrokes, edit files in the built-in vi, and read the screen as plain text for agents and UIs.",
+    section: "Concepts",
+    editPath: "docs/terminal.md",
+  },
+  {
     slug: "security",
     title: "Security",
     summary: "Sandbox boundaries, threat model, and what scripts cannot do.",
