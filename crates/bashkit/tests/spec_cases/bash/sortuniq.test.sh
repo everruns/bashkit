@@ -452,3 +452,11 @@ aab
 abc
 abc
 ### end
+
+### sort_keeps_empty_lines
+# Empty records are data: they sort first and are not dropped
+printf 'b\n\na\n\n' | sort | od -c | head -2
+### expect
+0000000  \n  \n   a  \n   b  \n
+0000006
+### end
