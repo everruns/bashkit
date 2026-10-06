@@ -87,6 +87,23 @@ TM-ESC-032), and the deferred error rejects the script the way bash does.
 Process substitution keeps its part for the same reason, and hard-errors on
 budget failures (TM-DOS-021).
 
+**Partial execution before a syntax error.** Bash reads and runs a script line
+by line, so `echo a` on line 1 runs before `if then` on line 2 is reported
+(exit 2). `Parser::parse_recovering` returns the complete top-level commands
+that ended on lines *before* the line where the failing command starts, plus
+the error; `Bash::exec` and child `bash`/`sh` run them and then report the
+error via `Script::trailing_error` (stderr + exit 2), unless `exit` or
+`set -e` stopped the script first. With nothing runnable before the error,
+`exec` still returns `Err(Parse)`. `bash -n` keeps whole-script rejection.
+Deferred `$(...)` errors carry no reliable position, so they never run a
+prefix.
+
+**End of `$(...)`.** `parser/subst_scan.rs` is the one scanner the lexer and
+`parse_word` share to find the closing `)`: it tracks quotes, escapes,
+backticks, nested `$(`, comments and heredoc bodies (`<<`, `<<-`, quoted
+delimiters; `<<<` and arithmetic `<<` excluded). Known gap: a bare `case`
+pattern `)` inside `$(...)` still closes early.
+
 ## Alternatives Considered
 
 - PEG (pest, pom): rejected, bash grammar is context-sensitive, here-docs awkward, manual parser gives better errors.

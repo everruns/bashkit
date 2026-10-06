@@ -640,6 +640,24 @@ fn decode_file_bytes_for_path(_path: &Path, bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }
 
+/// Child-shell counterpart of `recover_partial_parse` in `lib.rs`: commands
+/// before a syntax error run, then the error is reported (exit 2). `bash -n`
+/// keeps whole-script rejection since it only checks syntax.
+fn nested_partial_parse(
+    (mut script, error): (Script, Option<crate::error::Error>),
+    noexec: bool,
+    shell_name: &str,
+) -> Result<Script> {
+    match error {
+        None => Ok(script),
+        Some(e) if noexec || script.commands.is_empty() => Err(e),
+        Some(e) => {
+            script.trailing_error = Some(format!("{shell_name}: syntax error: {e}\n"));
+            Ok(script)
+        }
+    }
+}
+
 /// Check if a path refers to /dev/null after normalization.
 /// Handles attempts to bypass via paths like `/dev/../dev/null`.
 fn is_dev_null(path: &Path) -> bool {
@@ -2698,6 +2716,7 @@ impl Interpreter {
         let max_stdout = self.limits.max_stdout_bytes;
         let max_stderr = self.limits.max_stderr_bytes;
 
+        let mut stopped = false;
         for command in &script.commands {
             self.check_cancelled()?;
             let emit_before = self.output_emit_count;
@@ -2750,14 +2769,17 @@ impl Interpreter {
                             Some(event) => {
                                 exit_code = event.code;
                                 self.last_exit_code = exit_code;
+                                stopped = true;
                                 break;
                             }
                             None => continue,
                         }
                     } else {
+                        stopped = true;
                         break;
                     }
                 } else {
+                    stopped = true;
                     break;
                 }
             }
@@ -2783,9 +2805,23 @@ impl Interpreter {
                 let suppressed = matches!(command, Command::Pipeline(p) if p.negated)
                     || result.errexit_suppressed;
                 if !suppressed {
+                    stopped = true;
                     break;
                 }
             }
+        }
+
+        // Syntax error after the commands that ran: bash reads and runs a
+        // script line by line, so it reports the error only on reaching it.
+        if !stopped && let Some(message) = &script.trailing_error {
+            let emit_before = self.output_emit_count;
+            let err = crate::StreamData::from(message.clone());
+            self.maybe_emit_output(&crate::StreamData::new(), &err, emit_before);
+            if !stderr_truncated {
+                stderr.append(&err);
+            }
+            exit_code = 2;
+            self.last_exit_code = 2;
         }
 
         // Run EXIT trap if registered (only for top-level execute)
@@ -4737,7 +4773,7 @@ impl Interpreter {
                 Some(parser_timeout),
             )
             .with_execution_budget(self.execution_budget.clone());
-            match parser.parse() {
+            match nested_partial_parse(parser.parse_recovering(), noexec, shell_name) {
                 Ok(s) => s,
                 Err(e) => {
                     return Ok(ExecResult::err(
@@ -4759,12 +4795,12 @@ impl Interpreter {
                     let parser =
                         Parser::with_limits(&script_owned, max_ast_depth, max_parser_operations)
                             .with_execution_budget(execution_budget);
-                    parser.parse()
+                    parser.parse_recovering()
                 })
                 .await
             })
             .await;
-            match parse_result {
+            match parse_result.map(|r| r.map(|p| nested_partial_parse(p, noexec, shell_name))) {
                 Ok(Ok(Ok(s))) => s,
                 Ok(Ok(Err(e))) => {
                     return Ok(ExecResult::err(

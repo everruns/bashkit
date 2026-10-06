@@ -390,6 +390,7 @@ mod tests {
         let ast = Script {
             commands,
             span: Span::new(),
+            trailing_error: None,
         };
         let limits = ExecutionLimits::default();
         let err = validate(&ast, &limits).unwrap_err();
