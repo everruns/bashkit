@@ -118,6 +118,11 @@ or `kind = "stderr"`; chunk data is JSON string content.
 
 `ToolOutput.metadata.extra` currently includes `{ "exit_code": 0 }`.
 
+Contract helpers are public so `Tool` implementations outside core share one
+request/response shape: `tool::{tool_request_schema, tool_response_schema,
+tool_request_from_value, tool_output_from_response, timeout_response,
+localized}` and `ToolExecution::new`.
+
 ## Scripted tool specifics
 
 `ScriptedToolBuilder` and `ScriptingToolSetBuilder` follow the same contract:

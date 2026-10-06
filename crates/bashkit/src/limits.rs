@@ -852,16 +852,8 @@ impl ExecutionBudget {
 
     /// Await request-owned async work while polling cancellation and rejecting
     /// results that arrive after the request boundary has closed.
-    #[cfg(all(
-        not(target_family = "wasm"),
-        any(
-            feature = "python",
-            feature = "typescript",
-            feature = "http_client",
-            feature = "scripted_tool"
-        )
-    ))]
-    pub(crate) async fn run<F>(&self, future: F) -> Result<F::Output, LimitExceeded>
+    #[cfg(not(target_family = "wasm"))]
+    pub async fn run<F>(&self, future: F) -> Result<F::Output, LimitExceeded>
     where
         F: std::future::Future,
     {
@@ -882,16 +874,8 @@ impl ExecutionBudget {
 
     /// wasm has no reliable timer driver; synchronous checkpoints still reject
     /// closed/cancelled work before and after the awaited operation.
-    #[cfg(all(
-        target_family = "wasm",
-        any(
-            feature = "python",
-            feature = "typescript",
-            feature = "http_client",
-            feature = "scripted_tool"
-        )
-    ))]
-    pub(crate) async fn run<F>(&self, future: F) -> Result<F::Output, LimitExceeded>
+    #[cfg(target_family = "wasm")]
+    pub async fn run<F>(&self, future: F) -> Result<F::Output, LimitExceeded>
     where
         F: std::future::Future,
     {

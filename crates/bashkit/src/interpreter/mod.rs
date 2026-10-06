@@ -100,108 +100,85 @@ fn format_history_entries(entries: &[HistoryEntry]) -> String {
     content
 }
 
-/// Runtime command surface for an interpreter instance.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) enum ShellProfile {
-    /// Full Bashkit shell with VFS-backed commands.
-    #[default]
-    Full,
-    /// Logic-only shell for ScriptedTool code mode: no filesystem primitives.
-    LogicOnly,
+/// Shell language features that reach beyond in-memory computation.
+///
+/// All are enabled by default. Turning them off (with
+/// [`crate::BashBuilder::shell_features`], usually together with
+/// [`crate::BashBuilder::builtin_filter`] and a rejecting
+/// [`crate::FileSystem`]) is how embedders build restricted shells, such as
+/// the shell `ScriptedTool` runs scripts in. Decision: core knows the
+/// switches, not any named restricted mode; modes are assembled by callers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ShellFeatures {
+    file_redirects: bool,
+    process_substitution: bool,
+    script_execution: bool,
 }
 
-impl ShellProfile {
-    pub(crate) fn is_logic_only(self) -> bool {
-        self == Self::LogicOnly
+impl Default for ShellFeatures {
+    fn default() -> Self {
+        Self::all()
     }
 }
 
-fn logic_only_builtin_allowed(name: &str) -> bool {
-    matches!(
-        name,
-        // Core shell/data flow
-        "echo"
-            | "true"
-            | "false"
-            | "exit"
-            | "break"
-            | "continue"
-            | "return"
-            | "test"
-            | "["
-            | "printf"
-            | "export"
-            | "read"
-            | "set"
-            | "unset"
-            | "shift"
-            | "local"
-            | ":"
-            | "readonly"
-            | "times"
-            | "eval"
-            // Text and data transforms that work from stdin
-            | "grep"
-            | "sed"
-            | "awk"
-            | "head"
-            | "tail"
-            | "sort"
-            | "uniq"
-            | "cut"
-            | "tr"
-            | "wc"
-            | "nl"
-            | "paste"
-            | "column"
-            | "comm"
-            | "strings"
-            | "tac"
-            | "rev"
-            | "fold"
-            | "expand"
-            | "unexpand"
-            | "join"
-            | "split"
-            | "jq"
-            | "seq"
-            | "expr"
-            | "bc"
-            | "numfmt"
-            // Shell state, introspection, and structured transforms
-            | "env"
-            | "printenv"
-            | "type"
-            | "which"
-            | "hash"
-            | "alias"
-            | "unalias"
-            | "trap"
-            | "caller"
-            | "mapfile"
-            | "readarray"
-            | "shopt"
-            | "clear"
-            | "envsubst"
-            | "assert"
-            | "log"
-            | "retry"
-            | "semver"
-            | "verify"
-            | "compgen"
-            | "csv"
-            | "help"
-            | "iconv"
-            | "json"
-            | "parallel"
-            | "template"
-            | "tomlq"
-            | "yq"
-            | "timeout"
-            | "xargs"
-            | "wait"
-    )
+impl ShellFeatures {
+    /// Every feature enabled (the default full shell).
+    pub const fn all() -> Self {
+        Self {
+            file_redirects: true,
+            process_substitution: true,
+            script_execution: true,
+        }
+    }
+
+    /// Every feature disabled.
+    pub const fn none() -> Self {
+        Self {
+            file_redirects: false,
+            process_substitution: false,
+            script_execution: false,
+        }
+    }
+
+    /// File redirects (`<`, `>`, `>>`, `&>`, `>|`, `$(<file)`, `time -o`).
+    /// `/dev/null` targets keep working when disabled.
+    pub const fn file_redirects(mut self, enabled: bool) -> Self {
+        self.file_redirects = enabled;
+        self
+    }
+
+    /// Process substitution (`<(cmd)`, `>(cmd)`).
+    pub const fn process_substitution(mut self, enabled: bool) -> Self {
+        self.process_substitution = enabled;
+        self
+    }
+
+    /// Running scripts from the filesystem or as nested shells: path
+    /// execution (`./x.sh`), `$PATH` lookup, `source`/`.`, `exec`, `bash`,
+    /// and `sh`.
+    pub const fn script_execution(mut self, enabled: bool) -> Self {
+        self.script_execution = enabled;
+        self
+    }
+
+    /// Whether file redirects are enabled.
+    pub const fn has_file_redirects(self) -> bool {
+        self.file_redirects
+    }
+
+    /// Whether process substitution is enabled.
+    pub const fn has_process_substitution(self) -> bool {
+        self.process_substitution
+    }
+
+    /// Whether script execution is enabled.
+    pub const fn has_script_execution(self) -> bool {
+        self.script_execution
+    }
 }
+
+/// Predicate selecting which default builtins a shell registers.
+pub(crate) type BuiltinFilter = Arc<dyn Fn(&str) -> bool + Send + Sync>;
 
 fn word_literal_text(word: &Word) -> Option<&str> {
     if word.parts.len() == 1
@@ -1306,9 +1283,8 @@ pub struct Interpreter {
     /// Uses `AtomicU32` for interior mutability so $RANDOM can advance state
     /// in `expand_variable(&self, ...)` while remaining `Send + Sync`.
     random_state: AtomicU32,
-    /// Runtime command surface. ScriptedTool uses LogicOnly to prevent scripts
-    /// from reaching VFS-backed commands while preserving shell logic.
-    shell_profile: ShellProfile,
+    /// Language features enabled for this shell (see [`ShellFeatures`]).
+    shell_features: ShellFeatures,
     /// Hardened profiles intentionally reduce elapsed-time precision.
     hardened_timing: bool,
 }
@@ -1363,7 +1339,8 @@ impl Interpreter {
             None,
             HashMap::new(),
             None,
-            ShellProfile::Full,
+            ShellFeatures::default(),
+            None,
             false,
         )
     }
@@ -1385,7 +1362,8 @@ impl Interpreter {
         epoch_offset: Option<i64>,
         custom_builtins: HashMap<String, Box<dyn Builtin>>,
         host_builtins: Option<crate::builtins::BuiltinRegistry>,
-        shell_profile: ShellProfile,
+        shell_features: ShellFeatures,
+        builtin_filter: Option<BuiltinFilter>,
         hardened_timing: bool,
     ) -> Self {
         // Macro to reduce boilerplate for simple zero-arg builtin registration.
@@ -1624,8 +1602,8 @@ impl Interpreter {
             builtins.insert("sftp".to_string(), Arc::new(builtins::Sftp));
         }
 
-        if shell_profile.is_logic_only() {
-            builtins.retain(|name, _| logic_only_builtin_allowed(name));
+        if let Some(filter) = builtin_filter {
+            builtins.retain(|name, _| filter(name));
         }
 
         // Merge custom builtins (override defaults if same name).
@@ -1723,7 +1701,7 @@ impl Interpreter {
             deferred_proc_subs: Vec::new(),
             proc_sub_paths: HashSet::new(),
             random_state: AtomicU32::new(random_seed),
-            shell_profile,
+            shell_features,
             hardened_timing,
         }
     }
@@ -2968,7 +2946,7 @@ impl Interpreter {
                 Command::Pipeline(pipeline) => self.execute_pipeline(pipeline).await,
                 Command::List(list) => self.execute_list(list).await,
                 Command::Compound(compound, redirects) => {
-                    if let Some(stderr) = self.logic_only_redirect_error(redirects) {
+                    if let Some(stderr) = self.disabled_redirect_error(redirects) {
                         return Ok(ExecResult::err(stderr, 1));
                     }
 
@@ -4231,11 +4209,8 @@ impl Interpreter {
             None
         };
         let output = if let Some(word) = &time_cmd.output {
-            if self.shell_profile.is_logic_only() {
-                return Ok(ExecResult::err(
-                    "time: output files disabled in logic-only shell\n",
-                    1,
-                ));
+            if !self.shell_features.has_file_redirects() {
+                return Ok(ExecResult::err("time: output files disabled\n", 1));
             }
             Some(self.expand_word(word).await?)
         } else {
@@ -6104,7 +6079,7 @@ impl Interpreter {
                 });
             }
 
-            if let Some(stderr) = self.logic_only_redirect_error(&command.redirects) {
+            if let Some(stderr) = self.disabled_redirect_error(&command.redirects) {
                 return Ok(ExecResult::err(stderr, 1));
             }
 
@@ -6683,7 +6658,7 @@ impl Interpreter {
         stdin: Option<crate::StreamData>,
         redirects: &[Redirect],
     ) -> Option<Result<ExecResult>> {
-        if self.shell_profile.is_logic_only()
+        if !self.shell_features.has_script_execution()
             && matches!(name, "exec" | "bash" | "sh" | "source" | ".")
         {
             return Some(Ok(ExecResult::err(
@@ -6770,7 +6745,7 @@ impl Interpreter {
 
             // Script execution by path
             if name.contains('/') {
-                if self.shell_profile.is_logic_only() {
+                if !self.shell_features.has_script_execution() {
                     return Ok(ExecResult::err(
                         format!("bash: {}: command not found\n", name),
                         127,
@@ -6791,7 +6766,7 @@ impl Interpreter {
                 .flatten();
 
             // $PATH search
-            if !self.shell_profile.is_logic_only()
+            if self.shell_features.has_script_execution()
                 && let Some(result) = self
                     .try_execute_script_via_path_search(name, &args, stdin, &command.redirects)
                     .await?
@@ -6915,7 +6890,7 @@ impl Interpreter {
     /// Resolve a command name to its full path via PATH search on VFS.
     /// Returns the resolved path string if found, None otherwise.
     async fn resolve_command_path(&self, name: &str) -> Option<String> {
-        if self.shell_profile.is_logic_only() {
+        if !self.shell_features.has_script_execution() {
             return None;
         }
 
@@ -8938,9 +8913,9 @@ impl Interpreter {
         commands: &[Command],
         is_input: bool,
     ) -> Result<String> {
-        if self.shell_profile.is_logic_only() {
+        if !self.shell_features.has_process_substitution() {
             return Err(crate::error::Error::Execution(
-                "bash: process substitution disabled in logic-only shell".to_string(),
+                "bash: process substitution disabled".to_string(),
             ));
         }
 
@@ -9012,7 +8987,7 @@ impl Interpreter {
         exit_code: i32,
         redirects: &[Redirect],
     ) -> Result<ExecResult> {
-        if let Some(stderr) = self.logic_only_redirect_error(redirects) {
+        if let Some(stderr) = self.disabled_redirect_error(redirects) {
             self.last_exit_code = 1;
             return Ok(ExecResult::err(stderr, 1));
         }
@@ -9072,7 +9047,7 @@ impl Interpreter {
                 // command and produce nothing.
                 // The optimized read replaces execution, not its accounting.
                 self.charge_command_execution()?;
-                let read = if self.logic_only_redirect_error(redirects).is_some() {
+                let read = if self.disabled_redirect_error(redirects).is_some() {
                     Err(crate::error::Error::CommandFailure(String::new()))
                 } else {
                     self.process_input_redirections(None, redirects).await

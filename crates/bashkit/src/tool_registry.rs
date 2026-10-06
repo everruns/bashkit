@@ -2,9 +2,7 @@
 // Surface adapters only translate arguments/results; policy, validation,
 // deadlines, sanitization, callback identity, and tracing stay here.
 
-use crate::builtins::Context;
-#[cfg(not(target_family = "wasm"))]
-use crate::builtins::ExecutionDeadline;
+use crate::BuiltinContext as Context;
 use crate::scripted_tool::{
     CallbackKind, RegisteredTool, ScriptedCommandKind, ToolDefInvocationTrace,
 };
@@ -84,34 +82,54 @@ impl ToolCallRequest {
     }
 }
 
+// Built only from public request accessors (`BuiltinContext` for shell
+// commands, `RuntimeCallContext` for embedded Python/TypeScript) so the
+// registry needs no interpreter internals.
 #[derive(Clone)]
-pub(crate) struct ToolCallScope {
+struct ToolCallScope {
     request: Option<crate::ExecutionCapability<ToolCallRequest>>,
-    budget: Option<crate::limits::ExecutionBudget>,
+    budget: Option<crate::ExecutionBudget>,
     lease: Option<crate::ExecutionCapability<()>>,
     #[cfg(not(target_family = "wasm"))]
     deadline: Option<crate::time_compat::Instant>,
 }
 
 impl ToolCallScope {
-    pub(crate) fn from_context(ctx: &Context<'_>) -> Self {
+    fn from_context(ctx: &Context<'_>) -> Self {
+        Self::new(
+            ctx.execution_extension::<ToolCallRequest>(),
+            ctx.execution_budget(),
+            ctx.execution_capability(()),
+            ctx.remaining_deadline(),
+        )
+    }
+
+    #[cfg(any(feature = "python", feature = "typescript"))]
+    fn from_runtime() -> Self {
+        let ctx = crate::RuntimeCallContext::current();
+        Self::new(
+            ctx.execution_extension::<ToolCallRequest>(),
+            ctx.execution_budget(),
+            ctx.execution_capability(()),
+            ctx.remaining_deadline(),
+        )
+    }
+
+    fn new(
+        request: Option<crate::ExecutionCapability<ToolCallRequest>>,
+        budget: Option<crate::ExecutionCapability<crate::ExecutionBudget>>,
+        lease: Option<crate::ExecutionCapability<()>>,
+        #[cfg_attr(target_family = "wasm", allow(unused_variables))] remaining: Option<
+            std::time::Duration,
+        >,
+    ) -> Self {
         Self {
-            request: ctx.execution_extension::<ToolCallRequest>(),
-            budget: ctx
-                .execution_budget()
-                .and_then(|budget| budget.try_with(Clone::clone).ok()),
-            lease: ctx.execution_capability(()),
+            request,
+            budget: budget.and_then(|budget| budget.try_with(Clone::clone).ok()),
+            lease,
             #[cfg(not(target_family = "wasm"))]
-            deadline: ctx
-                .execution_extension::<ExecutionDeadline>()
-                .and_then(|deadline| {
-                    deadline
-                        .try_with(ExecutionDeadline::remaining)
-                        .ok()
-                        .and_then(|remaining| {
-                            crate::time_compat::Instant::now().checked_add(remaining)
-                        })
-                }),
+            deadline: remaining
+                .and_then(|remaining| crate::time_compat::Instant::now().checked_add(remaining)),
         }
     }
 
@@ -137,29 +155,6 @@ impl ToolCallScope {
                 .unwrap_or_default()
         })
     }
-}
-
-#[cfg(any(feature = "python", feature = "typescript"))]
-tokio::task_local! {
-    static RUNTIME_TOOL_SCOPE: ToolCallScope;
-}
-
-#[cfg(any(feature = "python", feature = "typescript"))]
-pub(crate) async fn scope_runtime_call<F: Future>(scope: ToolCallScope, future: F) -> F::Output {
-    RUNTIME_TOOL_SCOPE.scope(scope, future).await
-}
-
-#[cfg(any(feature = "python", feature = "typescript"))]
-fn runtime_scope() -> ToolCallScope {
-    RUNTIME_TOOL_SCOPE
-        .try_with(Clone::clone)
-        .unwrap_or(ToolCallScope {
-            request: None,
-            budget: None,
-            lease: None,
-            #[cfg(not(target_family = "wasm"))]
-            deadline: None,
-        })
 }
 
 #[derive(Clone)]
@@ -333,8 +328,15 @@ impl ToolRegistry {
         params: Value,
         surface: ToolCallSurface,
     ) -> RegistryOutput {
-        self.invoke(name, params, None, surface, runtime_scope(), Vec::new())
-            .await
+        self.invoke(
+            name,
+            params,
+            None,
+            surface,
+            ToolCallScope::from_runtime(),
+            Vec::new(),
+        )
+        .await
     }
 
     async fn invoke(
@@ -492,7 +494,7 @@ impl ToolRegistry {
 
     #[cfg(any(feature = "python", feature = "typescript"))]
     fn discover_runtime(&self, params: &Value) -> Value {
-        let scope = runtime_scope();
+        let scope = ToolCallScope::from_runtime();
         let trace = match scope.trace() {
             Ok(Some(trace)) => trace,
             Ok(None) => self.default_trace(),

@@ -33,7 +33,7 @@ impl Interpreter {
         for redirect in redirects {
             match redirect.kind {
                 RedirectKind::Input => {
-                    if self.shell_profile.is_logic_only()
+                    if !self.shell_features.has_file_redirects()
                         && !word_is_literal_dev_null(&redirect.target)
                     {
                         return Err(crate::error::Error::Execution(format!(
@@ -48,7 +48,7 @@ impl Interpreter {
                         // `< /dev/stdin` re-reads the current stdin: no-op.
                     } else if is_dev_null(&path) {
                         stdin = Some(crate::StreamData::new()); // EOF
-                    } else if self.shell_profile.is_logic_only() {
+                    } else if !self.shell_features.has_file_redirects() {
                         return Err(crate::error::Error::Execution(format!(
                             "bash: {}: filesystem redirection disabled",
                             target_path
@@ -105,7 +105,7 @@ impl Interpreter {
         mut result: ExecResult,
         redirects: &[Redirect],
     ) -> Result<ExecResult> {
-        if let Some(stderr) = self.logic_only_redirect_error(redirects) {
+        if let Some(stderr) = self.disabled_redirect_error(redirects) {
             result.stdout = crate::StreamData::new();
             result.stderr = stderr.into();
             result.exit_code = 1;
@@ -324,26 +324,24 @@ impl Interpreter {
         Ok(())
     }
 
-    pub(super) fn logic_only_redirect_error(&self, redirects: &[Redirect]) -> Option<String> {
-        if !self.shell_profile.is_logic_only() {
-            return None;
-        }
-
+    pub(super) fn disabled_redirect_error(&self, redirects: &[Redirect]) -> Option<String> {
         for redirect in redirects {
-            if word_has_process_substitution(&redirect.target) {
-                return Some(
-                    "bash: process substitution disabled in logic-only shell\n".to_string(),
-                );
+            if !self.shell_features.has_process_substitution()
+                && word_has_process_substitution(&redirect.target)
+            {
+                return Some("bash: process substitution disabled\n".to_string());
             }
 
-            if matches!(
-                redirect.kind,
-                RedirectKind::Output
-                    | RedirectKind::Clobber
-                    | RedirectKind::Append
-                    | RedirectKind::Input
-                    | RedirectKind::OutputBoth
-            ) && !word_is_literal_dev_null(&redirect.target)
+            if !self.shell_features.has_file_redirects()
+                && matches!(
+                    redirect.kind,
+                    RedirectKind::Output
+                        | RedirectKind::Clobber
+                        | RedirectKind::Append
+                        | RedirectKind::Input
+                        | RedirectKind::OutputBoth
+                )
+                && !word_is_literal_dev_null(&redirect.target)
             {
                 return Some(format!(
                     "bash: {}: filesystem redirection disabled\n",
