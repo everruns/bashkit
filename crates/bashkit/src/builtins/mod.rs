@@ -78,6 +78,8 @@ mod mkfifo;
 mod navigation;
 mod nl;
 mod numfmt;
+#[cfg(feature = "terminal")]
+mod pager;
 mod parallel;
 mod paste;
 mod patch;
@@ -206,6 +208,8 @@ pub use semver::Semver;
 pub use seq::Seq;
 pub use shuf::Shuf;
 
+#[cfg(feature = "terminal")]
+pub use pager::More;
 pub use sleep::Sleep;
 pub use sortuniq::{Sort, Uniq};
 pub use source::Source;

@@ -24,7 +24,7 @@ use async_trait::async_trait;
 use super::{Builtin, Context, resolve_path};
 use crate::error::{Error, Result};
 use crate::interpreter::ExecResult;
-use crate::terminal::{Tty, TtyEvent};
+use crate::terminal::{Key, ScreenGuard, Tty, read_key};
 
 // THREAT[TM-DOS-119]: bounded editor memory.
 /// Largest buffer the editor will load or grow to.
@@ -99,28 +99,9 @@ impl Builtin for Vi {
         editor.path = path;
         editor.saved_hash = editor.buffer_hash();
 
-        let _screen = ScreenGuard::enter(&tty);
+        let _screen = ScreenGuard::enter(&tty, true);
         editor.run(&tty, &ctx).await;
         Ok(ExecResult::ok(""))
-    }
-}
-
-/// Raw mode + alternate screen for the editor's lifetime, restored on drop
-/// (including when the execution is cancelled mid-edit).
-struct ScreenGuard<'a>(&'a Tty);
-
-impl<'a> ScreenGuard<'a> {
-    fn enter(tty: &'a Tty) -> Self {
-        tty.set_raw(true);
-        tty.write(b"\x1b[?1049h\x1b[H\x1b[2J");
-        Self(tty)
-    }
-}
-
-impl Drop for ScreenGuard<'_> {
-    fn drop(&mut self) {
-        self.0.write(b"\x1b[?25h\x1b[?1049l");
-        self.0.set_raw(false);
     }
 }
 
@@ -130,22 +111,6 @@ enum Mode {
     Insert,
     /// Command line: `:` ex command or `/` search.
     Prompt(char),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Key {
-    Char(char),
-    Esc,
-    Enter,
-    Backspace,
-    Delete,
-    Up,
-    Down,
-    Left,
-    Right,
-    Home,
-    End,
-    Ctrl(u8),
 }
 
 #[derive(Clone)]
@@ -1178,74 +1143,6 @@ impl Editor {
             }
         }
     }
-}
-
-/// Read one key, decoding UTF-8 and CSI/SS3 escape sequences.
-/// `Some(Err(()))` means the terminal was resized; `None` that it closed.
-async fn read_key(tty: &Tty) -> Option<std::result::Result<Key, ()>> {
-    let b = match tty.read_event().await {
-        TtyEvent::Byte(b) => b,
-        TtyEvent::Resize => return Some(Err(())),
-        TtyEvent::Closed => return None,
-    };
-    let key = match b {
-        0x1b => match tty.peek_byte() {
-            Some(b'[') | Some(b'O') => {
-                tty.try_read_byte();
-                let mut params = Vec::new();
-                let mut final_byte = 0;
-                for _ in 0..16 {
-                    match tty.try_read_byte() {
-                        Some(b) if (0x40..=0x7e).contains(&b) => {
-                            final_byte = b;
-                            break;
-                        }
-                        Some(b) => params.push(b),
-                        None => break,
-                    }
-                }
-                match (final_byte, params.as_slice()) {
-                    (b'A', _) => Key::Up,
-                    (b'B', _) => Key::Down,
-                    (b'C', _) => Key::Right,
-                    (b'D', _) => Key::Left,
-                    (b'H', _) | (b'~', b"1") | (b'~', b"7") => Key::Home,
-                    (b'F', _) | (b'~', b"4") | (b'~', b"8") => Key::End,
-                    (b'~', b"3") => Key::Delete,
-                    _ => return Some(Ok(Key::Ctrl(0))),
-                }
-            }
-            _ => Key::Esc,
-        },
-        b'\r' | b'\n' => Key::Enter,
-        0x7f | 0x08 => Key::Backspace,
-        b'\t' => Key::Ctrl(b'i'),
-        b if b < 0x20 => Key::Ctrl(b + b'a' - 1),
-        b if b < 0x80 => Key::Char(b as char),
-        lead => {
-            let len = match lead {
-                0xc0..=0xdf => 2,
-                0xe0..=0xef => 3,
-                0xf0..=0xf7 => 4,
-                _ => return Some(Ok(Key::Char('\u{fffd}'))),
-            };
-            let mut buf = vec![lead];
-            while buf.len() < len {
-                match tty.read_event().await {
-                    TtyEvent::Byte(b) => buf.push(b),
-                    TtyEvent::Resize => continue,
-                    TtyEvent::Closed => return None,
-                }
-            }
-            Key::Char(
-                std::str::from_utf8(&buf)
-                    .ok()
-                    .and_then(|s| s.chars().next())
-                    .unwrap_or('\u{fffd}'),
-            )
-        }
-    };
-    Some(Ok(key))
 }
 
 #[cfg(test)]

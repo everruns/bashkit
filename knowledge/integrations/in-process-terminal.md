@@ -109,11 +109,27 @@ history, 1 MiB compiled regex. Writes go through the session VFS.
 
 Without a terminal, `vi` exits 1 (`vi: not a terminal`).
 
+## less / more
+
+`builtins/pager.rs`. Interactive only when the `Tty` extension is present
+(i.e. inside a `Terminal`); otherwise `less` keeps its cat-like path and
+`more` delegates to it, so `exec()`, `BashTool` and CLI callers can never
+block on a pager. `more` is registered only with the `terminal` feature.
+Content is read up front (VFS/stdin limits apply), wrapped to the terminal
+width, with control characters rendered in caret notation so file content
+cannot inject escape sequences into the host terminal. `less`: alternate
+screen, paging/line/half-page/top/bottom keys, regex `/ ?` search with
+`n N`, `-F`. `more`: normal screen, `--More--(NN%)`, space/Enter/q, prints
+short input directly. Key decoding and the raw/alternate-screen guard are
+shared with `vi` in `terminal/keys.rs`. Pagers cannot tell whether stdout is
+redirected (L-TERM-004).
+
 ## Tests
 
 - Unit: `terminal::tests` (line discipline, prompts, resize, exit, timeout
-  exclusion, Ctrl-C) and `builtins::vi::tests` (editing commands end-to-end
-  through a `Terminal`).
+  exclusion, Ctrl-C) `builtins::vi::tests` (editing commands end-to-end
+  through a `Terminal`), and `builtins::pager::tests` (paging, search, and
+  `pagers_are_cat_like_without_terminal`).
 - Integration: `tests/integration/terminal_tests.rs` (agent-style config edit,
   raw output replay, resize redraw, drop mid-edit) and `l_term_*` evidence
   tests.

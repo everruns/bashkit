@@ -122,6 +122,28 @@ Not supported: visual mode, named registers, macros, splits, vimrc, and `:!`
 `vi` needs a terminal. Under plain `Bash::exec()` it exits 1 with
 `vi: not a terminal`.
 
+## less and more
+
+`less` and `more` page interactively inside a terminal session, from files or
+a pipe (`git log | less`, `seq 1 1000 | more`).
+
+- **less** uses the alternate screen. Keys: `q` quit, space/`f`/PageDown next
+  page, `b`/PageUp previous page, `j`/Enter/Down and `k`/Up by line, `d`/`u`
+  half page, `g`/`G` top/bottom, `/pattern` and `?pattern` search (regex),
+  `n`/`N` repeat. The status line shows the file name, `:` or `(END)`. `-F`
+  prints input that fits on one screen and exits.
+- **more** scrolls on the normal screen with a `--More--(NN%)` prompt: space
+  for the next page, Enter for the next line, `q` to stop. Input that fits on
+  one screen is printed directly.
+
+Control characters in content show in caret notation (`^[`), so a file cannot
+send escape sequences to your terminal.
+
+Outside a terminal session (`Bash::exec()`, `BashTool`, the CLI), `less` and
+`more` behave like `cat` and never wait for input, so existing scripts and
+tools are unaffected. Inside a session they page even when stdout is
+redirected (`less file > out`).
+
 ## Limits and security
 
 Everything runs inside the normal sandbox: the same virtual filesystem, the

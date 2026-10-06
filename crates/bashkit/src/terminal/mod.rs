@@ -48,6 +48,7 @@
 //!   (L-CLI-002), so `read` does not block on the terminal; programs that need
 //!   keystrokes (`vi`) read the device directly in raw mode.
 
+mod keys;
 mod tty;
 
 use std::future::Future;
@@ -55,6 +56,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
+pub(crate) use keys::{Key, ScreenGuard, read_key};
 pub(crate) use tty::{Tty, TtyEvent};
 
 use crate::fs::FileSystem;

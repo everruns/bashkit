@@ -1560,6 +1560,8 @@ impl Interpreter {
         // vi builtin (requires terminal feature; needs a Terminal session)
         #[cfg(feature = "terminal")]
         builtins.insert("vi".to_string(), Arc::new(builtins::Vi));
+        #[cfg(feature = "terminal")]
+        builtins.insert("more".to_string(), Arc::new(builtins::More));
         #[cfg(feature = "jq")]
         builtins.insert("jq".to_string(), Arc::new(builtins::Jq));
         #[cfg(feature = "jq")]
