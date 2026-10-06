@@ -9,6 +9,10 @@
 //!   lock between them. The core loop is cancellation-safe, so this changes
 //!   nothing for the session, and it lets `send("\x03")` or `screenText()`
 //!   from JS get in while a long command runs instead of waiting for it.
+//! - Async methods are plain methods that clone the `Arc` and spawn a free
+//!   async function (`Env::spawn_future`), not `async fn(&self)`: the pending
+//!   promise never dereferences the napi-wrapped object (CodeQL
+//!   `rust/access-invalid-pointer`).
 //! - Construction options are a small subset of `Bash` options (identity,
 //!   cwd, env, size).
 
@@ -18,7 +22,8 @@ use std::time::Duration;
 
 use bashkit::Bash as RustBash;
 use bashkit::terminal::{TerminalActivity, TerminalSize, TerminalStatus, TerminalTool};
-use napi::bindgen_prelude::{Buffer, Either};
+use napi::Env;
+use napi::bindgen_prelude::{Buffer, Either, PromiseRaw};
 use napi_derive::napi;
 use tokio::sync::Mutex;
 
@@ -119,48 +124,23 @@ impl Terminal {
     /// `"exited"`, or `"timeout"` when `timeoutMs` passes first (the command
     /// keeps running state; call again or send Ctrl-C).
     #[napi(ts_return_type = "Promise<'idle' | 'exited' | 'timeout'>")]
-    pub async fn run_until_idle(&self, timeout_ms: Option<u32>) -> napi::Result<String> {
-        let tool = Arc::clone(&self.tool);
-        let deadline =
-            timeout_ms.map(|ms| tokio::time::Instant::now() + Duration::from_millis(u64::from(ms)));
-        loop {
-            let mut slice = SLICE;
-            if let Some(d) = deadline {
-                let left = d.saturating_duration_since(tokio::time::Instant::now());
-                if left.is_zero() {
-                    return Ok("timeout".into());
-                }
-                slice = slice.min(left);
-            }
-            let mut guard = tool.lock().await;
-            match tokio::time::timeout(slice, guard.terminal_mut().run_until_idle()).await {
-                Ok(TerminalStatus::Idle) => return Ok("idle".into()),
-                Ok(TerminalStatus::Exited(_)) => return Ok("exited".into()),
-                Err(_) => {}
-            }
-            drop(guard);
-            tokio::task::yield_now().await;
-        }
+    pub fn run_until_idle<'env>(
+        &self,
+        env: &'env Env,
+        timeout_ms: Option<u32>,
+    ) -> napi::Result<PromiseRaw<'env, String>> {
+        env.spawn_future(run_until_idle(Arc::clone(&self.tool), timeout_ms))
     }
 
     /// Agent step as a JSON string; the JS wrapper parses it (see `call`).
-    #[napi(js_name = "__callJson")]
-    pub async fn call_json(
+    #[napi(js_name = "__callJson", ts_return_type = "Promise<string>")]
+    pub fn call_json<'env>(
         &self,
+        env: &'env Env,
         input: Option<String>,
         wait_ms: Option<u32>,
-    ) -> napi::Result<String> {
-        let tool = Arc::clone(&self.tool);
-        let mut args = serde_json::json!({ "input": input.unwrap_or_default() });
-        if let Some(ms) = wait_ms {
-            args["wait_ms"] = ms.into();
-        }
-        let mut guard = tool.lock().await;
-        let out = guard
-            .call(args)
-            .await
-            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-        Ok(out.to_string())
+    ) -> napi::Result<PromiseRaw<'env, String>> {
+        env.spawn_future(call_json(Arc::clone(&self.tool), input, wait_ms))
     }
 
     /// Visible screen as plain text.
@@ -246,15 +226,13 @@ impl Terminal {
     }
 
     /// Read a file from the session's virtual filesystem.
-    #[napi]
-    pub async fn read_file(&self, path: String) -> napi::Result<Buffer> {
-        // Clone the Arc before awaiting: no `&self` across `.await` (see lib.rs).
-        let tool = Arc::clone(&self.tool);
-        let fs = tool.lock().await.terminal().fs();
-        fs.read_file(std::path::Path::new(&path))
-            .await
-            .map(Buffer::from)
-            .map_err(|e| napi::Error::from_reason(e.to_string()))
+    #[napi(ts_return_type = "Promise<Buffer>")]
+    pub fn read_file<'env>(
+        &self,
+        env: &'env Env,
+        path: String,
+    ) -> napi::Result<PromiseRaw<'env, Buffer>> {
+        env.spawn_future(read_file(Arc::clone(&self.tool), path))
     }
 
     /// OpenAI-compatible function definition for `call`, as JSON.
@@ -268,4 +246,59 @@ impl Terminal {
     pub fn system_prompt(&self) -> String {
         self.with(|t| t.system_prompt())
     }
+}
+
+// Async work runs in free functions that own a cloned `Arc`: the spawned
+// future never touches the napi-wrapped `Terminal`, so it stays valid even if
+// JS drops the object while the promise is pending.
+
+async fn run_until_idle(
+    tool: Arc<Mutex<TerminalTool>>,
+    timeout_ms: Option<u32>,
+) -> napi::Result<String> {
+    let deadline =
+        timeout_ms.map(|ms| tokio::time::Instant::now() + Duration::from_millis(u64::from(ms)));
+    loop {
+        let mut slice = SLICE;
+        if let Some(d) = deadline {
+            let left = d.saturating_duration_since(tokio::time::Instant::now());
+            if left.is_zero() {
+                return Ok("timeout".into());
+            }
+            slice = slice.min(left);
+        }
+        let mut guard = tool.lock().await;
+        match tokio::time::timeout(slice, guard.terminal_mut().run_until_idle()).await {
+            Ok(TerminalStatus::Idle) => return Ok("idle".into()),
+            Ok(TerminalStatus::Exited(_)) => return Ok("exited".into()),
+            Err(_) => {}
+        }
+        drop(guard);
+        tokio::task::yield_now().await;
+    }
+}
+
+async fn call_json(
+    tool: Arc<Mutex<TerminalTool>>,
+    input: Option<String>,
+    wait_ms: Option<u32>,
+) -> napi::Result<String> {
+    let mut args = serde_json::json!({ "input": input.unwrap_or_default() });
+    if let Some(ms) = wait_ms {
+        args["wait_ms"] = ms.into();
+    }
+    let mut guard = tool.lock().await;
+    let out = guard
+        .call(args)
+        .await
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    Ok(out.to_string())
+}
+
+async fn read_file(tool: Arc<Mutex<TerminalTool>>, path: String) -> napi::Result<Buffer> {
+    let fs = tool.lock().await.terminal().fs();
+    fs.read_file(std::path::Path::new(&path))
+        .await
+        .map(Buffer::from)
+        .map_err(|e| napi::Error::from_reason(e.to_string()))
 }
