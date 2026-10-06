@@ -21,10 +21,15 @@ impl Builtin for Less {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
         if let Some(r) = super::check_help_version(
             ctx.args,
-            "Usage: less [FILE]...\nView file contents (pager).\n\nIn bashkit, less behaves like cat (no interactive paging).\n\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            "Usage: less [FILE]...\nView file contents (pager).\n\nInside a bashkit::terminal::Terminal session, less pages interactively\n(q quit, space/b page, j/k line, g/G ends, /pattern n N search, -F).\nEverywhere else it behaves like cat.\n\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
             Some("less (bashkit) 0.1"),
         ) {
             return Ok(r);
+        }
+        // Interactive only with a terminal device; plain exec() stays cat-like.
+        #[cfg(feature = "terminal")]
+        if let Some(tty) = super::pager::terminal(&ctx)? {
+            return super::pager::page(&ctx, &tty, super::pager::Pager::Less).await;
         }
         // less without args reads from stdin
         if ctx.args.is_empty() {

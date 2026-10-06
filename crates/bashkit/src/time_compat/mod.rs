@@ -268,3 +268,108 @@ mod tests {
         assert_eq!(round_tripped, original);
     }
 }
+
+/// Tracks time an execution spends blocked on interactive terminal input.
+///
+/// THREAT[TM-DOS-120]: see the threat model for why this is safe.
+///
+/// Important decision: the execution timeout (TM-DOS-057) bounds work the
+/// sandbox does, not how long a human or agent takes to type. A `vi` session
+/// waiting for the next keystroke burns no CPU, and the host controls when
+/// input arrives, so that wait is excluded from the deadline. Everything else
+/// (loops, `sleep`, pending callbacks) still counts.
+#[cfg(feature = "terminal")]
+#[derive(Clone, Default)]
+pub(crate) struct InputWaitClock {
+    inner: std::sync::Arc<std::sync::Mutex<InputWaitState>>,
+}
+
+#[cfg(feature = "terminal")]
+#[derive(Default)]
+struct InputWaitState {
+    paused_since: Option<Instant>,
+    total: Duration,
+}
+
+#[cfg(feature = "terminal")]
+impl InputWaitClock {
+    fn lock(&self) -> std::sync::MutexGuard<'_, InputWaitState> {
+        self.inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Start excluding time until the returned guard drops.
+    pub(crate) fn pause(&self) -> InputWaitGuard {
+        let mut state = self.lock();
+        if state.paused_since.is_none() {
+            state.paused_since = Some(Instant::now());
+        }
+        InputWaitGuard {
+            clock: self.clone(),
+        }
+    }
+
+    /// Total excluded time, including a wait still in progress.
+    fn excluded(&self) -> Duration {
+        let state = self.lock();
+        state.total
+            + state
+                .paused_since
+                .map(|since| {
+                    Instant::now()
+                        .checked_duration_since(since)
+                        .unwrap_or_default()
+                })
+                .unwrap_or_default()
+    }
+}
+
+/// Ends an input wait started by [`InputWaitClock::pause`].
+#[cfg(feature = "terminal")]
+pub(crate) struct InputWaitGuard {
+    clock: InputWaitClock,
+}
+
+#[cfg(feature = "terminal")]
+impl Drop for InputWaitGuard {
+    fn drop(&mut self) {
+        let mut state = self.clock.lock();
+        if let Some(since) = state.paused_since.take() {
+            state.total += Instant::now()
+                .checked_duration_since(since)
+                .unwrap_or_default();
+        }
+    }
+}
+
+/// [`timeout`], but time recorded on `clock` as input wait does not count.
+///
+/// Re-arms the portable timer with the remaining active budget each time it
+/// fires, so it works on every target `timeout` supports. A long input wait
+/// costs one wakeup per remaining-budget interval, never a busy loop.
+#[cfg(feature = "terminal")]
+pub(crate) async fn timeout_excluding_input_wait<F: Future>(
+    duration: Duration,
+    clock: &InputWaitClock,
+    future: F,
+) -> Result<F::Output, TimeoutElapsed> {
+    let start = Instant::now();
+    let excluded_at_start = clock.excluded();
+    let mut future = std::pin::pin!(future);
+    let mut remaining = duration;
+    loop {
+        if let Ok(output) = timeout(remaining, future.as_mut()).await {
+            return Ok(output);
+        }
+        let elapsed = Instant::now()
+            .checked_duration_since(start)
+            .unwrap_or_default();
+        let excluded = clock.excluded().saturating_sub(excluded_at_start);
+        let active = elapsed.saturating_sub(excluded);
+        remaining = duration.saturating_sub(active);
+        if remaining.is_zero() {
+            return Err(TimeoutElapsed);
+        }
+    }
+}

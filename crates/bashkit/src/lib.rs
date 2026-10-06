@@ -460,6 +460,8 @@ mod runtime_call;
 pub mod scripted_tool;
 mod snapshot;
 mod stream;
+#[cfg(feature = "terminal")]
+pub mod terminal;
 /// Test-only helpers shared between internal `#[cfg(test)]` modules,
 /// integration tests in `tests/*.rs`, and cargo-fuzz targets in
 /// `fuzz/fuzz_targets/*.rs`. See `knowledge/security/threat-model.md` for the
@@ -828,6 +830,10 @@ pub struct Bash {
     /// Real host directories mounted into the VFS, for host-path resolution.
     #[cfg(feature = "realfs")]
     host_mounts: HostMounts,
+    /// Set by [`terminal::Terminal`]: time blocked on terminal input is
+    /// excluded from the execution timeout.
+    #[cfg(feature = "terminal")]
+    input_wait_clock: Option<time_compat::InputWaitClock>,
 }
 
 impl Default for Bash {
@@ -1167,18 +1173,32 @@ impl Bash {
         // THREAT[TM-DOS-057]: Wrap execution with a host-backed timeout to
         // prevent sleep and pending async callbacks from bypassing the budget.
         let execution_timeout = self.interpreter.limits().timeout;
-        let result =
-            match crate::time_compat::timeout(execution_timeout, self.interpreter.execute(&ast))
+        #[cfg(feature = "terminal")]
+        let timed = match self.input_wait_clock.clone() {
+            Some(clock) => {
+                crate::time_compat::timeout_excluding_input_wait(
+                    execution_timeout,
+                    &clock,
+                    self.interpreter.execute(&ast),
+                )
                 .await
-            {
-                Ok(r) => r,
-                Err(_elapsed) => {
-                    self.interpreter.clear_cancelled_execution_state();
-                    Err(Error::ResourceLimit(LimitExceeded::Timeout(
-                        execution_timeout,
-                    )))
-                }
-            };
+            }
+            None => {
+                crate::time_compat::timeout(execution_timeout, self.interpreter.execute(&ast)).await
+            }
+        };
+        #[cfg(not(feature = "terminal"))]
+        let timed =
+            crate::time_compat::timeout(execution_timeout, self.interpreter.execute(&ast)).await;
+        let result = match timed {
+            Ok(r) => r,
+            Err(_elapsed) => {
+                self.interpreter.clear_cancelled_execution_state();
+                Err(Error::ResourceLimit(LimitExceeded::Timeout(
+                    execution_timeout,
+                )))
+            }
+        };
         // Positional parameters are per-invocation: drop the synthetic frame
         // (and anything the interpreter leaked above it on an error path) so
         // the next exec starts with `$#` back at 0.
@@ -3711,6 +3731,8 @@ impl BashBuilder {
             sqlite_inprocess_opt_in,
             #[cfg(feature = "realfs")]
             host_mounts: HostMounts::default(),
+            #[cfg(feature = "terminal")]
+            input_wait_clock: None,
         }
     }
 }
