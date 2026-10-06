@@ -72,7 +72,7 @@ impl ScriptedTool {
         if let Some(ref profile) = self.profile {
             builder = builder.profile(profile.clone());
         }
-        builder = builder.logic_only();
+        builder = builder.code_mode();
 
         if let Some(ref limits) = self.limits {
             builder = builder.limits(limits.clone());

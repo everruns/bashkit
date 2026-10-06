@@ -452,6 +452,8 @@ mod network;
 /// Parser module - exposed for fuzzing and testing
 pub mod parser;
 mod profile;
+#[cfg(any(feature = "python", feature = "typescript"))]
+mod runtime_call;
 /// Scripted tool: compose ToolDef+callback pairs into a single Tool via bash scripts.
 /// Requires the `scripted_tool` feature.
 #[cfg(feature = "scripted_tool")]
@@ -486,7 +488,7 @@ pub use builtins::git::GitConfig;
 pub use builtins::ssh::{SshAllowlist, SshConfig, TrustedHostKey};
 pub use builtins::{
     BashkitContext, Builtin, BuiltinRegistry, ClapBuiltin, CommandResolver,
-    Context as BuiltinContext, Extension,
+    Context as BuiltinContext, ExecutionPlan, Extension, SubCommand,
 };
 pub use clap;
 #[cfg(feature = "http_client")]
@@ -573,11 +575,13 @@ pub use builtins::git::GitClient;
 pub use builtins::ssh::{SshClient, SshHandler, SshOutput, SshTarget};
 
 #[cfg(feature = "python")]
-pub use builtins::{PythonExternalFnHandler, PythonExternalFns, PythonLimits};
+pub use builtins::{Python, PythonExternalFnHandler, PythonExternalFns, PythonLimits};
 
 // Shared resource-limit core for embedded language VMs (Python, TypeScript).
 #[cfg(any(feature = "python", feature = "typescript"))]
 pub use builtins::RuntimeLimits;
+#[cfg(any(feature = "python", feature = "typescript"))]
+pub use runtime_call::RuntimeCallContext;
 
 #[cfg(feature = "sqlite")]
 pub use builtins::{Sqlite, SqliteBackend, SqliteLimits};
@@ -2030,9 +2034,16 @@ impl BashBuilder {
         self
     }
 
-    /// Restrict this shell to logic/data-flow commands and custom builtins.
-    #[cfg(feature = "scripted_tool")]
-    pub(crate) fn logic_only(mut self) -> Self {
+    /// Code mode: restrict this shell to logic/data-flow commands and custom
+    /// builtins.
+    ///
+    /// Bash becomes a control-flow and data-transformation language rather
+    /// than a VFS shell. Every filesystem operation is rejected, file
+    /// redirects, process substitution and path script execution are
+    /// unavailable, and only stdin-to-stdout builtins (`echo`, `printf`,
+    /// `test`, `read`, `grep`, `sed`, `awk`, `jq`, `sort`, ...) plus custom
+    /// builtins and extensions stay registered.
+    pub fn code_mode(mut self) -> Self {
         self.shell_profile = interpreter::ShellProfile::LogicOnly;
         self
     }

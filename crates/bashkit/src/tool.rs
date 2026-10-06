@@ -183,7 +183,11 @@ pub struct ToolExecution {
 }
 
 impl ToolExecution {
-    pub(crate) fn new<F, Fut>(runner: F) -> Self
+    /// Wrap a runner for a [`Tool::execution`] implementation.
+    ///
+    /// `runner` receives a stream sender only when the caller asked for
+    /// [`Self::output_stream`] before executing.
+    pub fn new<F, Fut>(runner: F) -> Self
     where
         F: FnOnce(Option<tokio::sync::mpsc::UnboundedSender<ToolOutputChunk>>) -> Fut
             + Send
@@ -341,7 +345,10 @@ impl From<ExecResult> for ToolResponse {
 }
 
 /// JSON schema for the stable tool request contract.
-pub(crate) fn tool_request_schema() -> serde_json::Value {
+///
+/// Shared by every [`Tool`] that accepts `{commands, timeout_ms}` (e.g.
+/// `BashTool` and tools built outside core on the same contract).
+pub fn tool_request_schema() -> serde_json::Value {
     serde_json::json!({
         "type": "object",
         "required": ["commands"],
@@ -361,7 +368,7 @@ pub(crate) fn tool_request_schema() -> serde_json::Value {
 }
 
 /// JSON schema for the stable tool response contract.
-pub(crate) fn tool_response_schema() -> serde_json::Value {
+pub fn tool_response_schema() -> serde_json::Value {
     serde_json::json!({
         "type": "object",
         "required": ["stdout", "stderr", "exit_code"],
@@ -1182,8 +1189,7 @@ fn error_kind(e: &Error) -> String {
 }
 
 /// Build a ToolResponse for a timed-out execution (exit code 124, like bash `timeout`).
-///
-pub(crate) fn timeout_response(dur: Duration) -> ToolResponse {
+pub fn timeout_response(dur: Duration) -> ToolResponse {
     ToolResponse {
         stdout: String::new(),
         stderr: format!(
@@ -1196,7 +1202,8 @@ pub(crate) fn timeout_response(dur: Duration) -> ToolResponse {
     }
 }
 
-pub(crate) fn localized<'a>(locale: &str, en: &'a str, uk: &'a str) -> &'a str {
+/// Pick the English or Ukrainian variant of a message for `locale`.
+pub fn localized<'a>(locale: &str, en: &'a str, uk: &'a str) -> &'a str {
     if locale.starts_with("uk") { uk } else { en }
 }
 
@@ -1383,7 +1390,8 @@ fn build_bash_help(tool: &BashTool) -> String {
     doc
 }
 
-pub(crate) fn tool_request_from_value(
+/// Parse and validate `{commands, timeout_ms}` tool arguments.
+pub fn tool_request_from_value(
     locale: &str,
     args: serde_json::Value,
 ) -> Result<ToolRequest, ToolError> {
@@ -1429,7 +1437,8 @@ pub(crate) fn tool_request_from_value(
     })
 }
 
-pub(crate) fn tool_output_from_response(
+/// Convert a [`ToolResponse`] into the [`ToolOutput`] returned by an execution.
+pub fn tool_output_from_response(
     response: ToolResponse,
     duration: Duration,
 ) -> Result<ToolOutput, ToolError> {

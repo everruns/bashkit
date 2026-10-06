@@ -53,8 +53,8 @@ an arbitrary backend. Real read-write mounts retain their documented host-disk
 responsibility.
 
 `ScriptedTool` and `ScriptingToolSet` accept profiles for execution, session,
-and memory policy, but always retain logic-only mode: filesystem, network, and
-embedded-runtime capabilities stay unavailable.
+and memory policy, but always retain logic-only mode (`BashBuilder::code_mode()`):
+filesystem, network, and embedded-runtime capabilities stay unavailable.
 
 ## Validation and bindings
 

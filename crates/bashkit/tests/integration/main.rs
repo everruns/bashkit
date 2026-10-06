@@ -39,6 +39,7 @@ pub mod command_resolver_tests;
 pub mod competitor_regression_tests;
 pub mod compgen_tests;
 pub mod coproc_tests;
+pub mod core_extension_point_tests;
 pub mod coreutils_differential_tests;
 pub mod credential_injection_tests;
 pub mod curl_data_compat_tests;

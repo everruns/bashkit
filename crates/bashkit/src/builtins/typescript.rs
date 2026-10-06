@@ -302,7 +302,11 @@ impl TypeScriptExtension {
         }
     }
 
-    pub(crate) fn with_external_handler_and_prelude(
+    /// Like [`Self::with_external_handler`], plus a source prelude evaluated
+    /// before user code and `(from, to)` call rewrites (e.g. `tools.get_user`
+    /// to an external function name). Lets embedders expose namespaced host
+    /// APIs without core knowing their shape.
+    pub fn with_external_handler_and_prelude(
         limits: TypeScriptLimits,
         external_fns: Vec<String>,
         handler: TypeScriptExternalFnHandler,
@@ -835,11 +839,8 @@ impl Builtin for TypeScript {
             ctx.execution_budget()
                 .and_then(|budget| budget.try_with(Clone::clone).ok()),
         );
-        #[cfg(feature = "scripted_tool")]
-        let future = crate::tool_registry::scope_runtime_call(
-            crate::tool_registry::ToolCallScope::from_context(&ctx),
-            future,
-        );
+        // Host functions read the request through RuntimeCallContext::current().
+        let future = crate::runtime_call::scope(&ctx, future);
         match execution_budget {
             Some(budget) => budget.run(future).await?,
             None => future.await,
