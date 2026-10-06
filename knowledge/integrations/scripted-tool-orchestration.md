@@ -186,7 +186,7 @@ The logic-only shell keeps: variables, arrays, functions, arithmetic, command su
 Rejected filesystem surfaces: file commands (`cat`, `ls`, `find`, `mkdir`, `rm`, `cp`, `mv`, `touch`, `chmod`, `ln`, `stat`, `source`, `.`); path execution (`/tmp/script.sh`, `$PATH` lookup); file redirection (`<`, `>`, `>>`, `&>`) except `/dev/null`; process substitution; file operands to dual-use tools, the internal filesystem rejects all real operations with `filesystem access disabled`.
 
 Decision: core has no named restricted mode. The logic-only shell is assembled
-in `scripted_tool/orchestration.rs` from public switches:
+in `scripted_tool/logic_only.rs` from public switches:
 `ShellFeatures::none()` (file redirects except `/dev/null`, process
 substitution, and script execution — path, `$PATH`, `source`/`.`, `exec`,
 `bash`, `sh` — all off), `builtin_filter` with the default-builtin allowlist,

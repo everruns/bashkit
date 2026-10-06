@@ -1,11 +1,10 @@
-//! The restricted shell `ScriptedTool` runs scripts in.
+//! The logic-only shell: the restricted shell `ScriptedTool` runs scripts in.
 //!
 //! Important decision: core has no named restricted mode. This module
 //! assembles one from public building blocks: every [`ShellFeatures`] switch
 //! off, a default-builtin allowlist, and a filesystem that rejects every
 //! call. Bash stays a control-flow and data-transformation language;
 //! registered tool commands and custom builtins are the only way out.
-//! TODO(naming): "orchestration shell" is a placeholder until the name is chosen.
 
 use crate::{BashBuilder, DirEntry, FileSystem, FileSystemExt, Metadata, Result, ShellFeatures};
 use std::io::{Error as IoError, ErrorKind};
@@ -14,7 +13,7 @@ use std::sync::Arc;
 
 type SystemTime = crate::time_compat::SystemTime;
 
-/// Restrict `builder` to the orchestration shell.
+/// Restrict `builder` to the logic-only shell.
 pub(crate) fn apply(builder: BashBuilder) -> BashBuilder {
     builder
         .fs(Arc::new(DisabledFs))
@@ -22,7 +21,7 @@ pub(crate) fn apply(builder: BashBuilder) -> BashBuilder {
         .builtin_filter(builtin_allowed)
 }
 
-/// Default builtins kept in the orchestration shell: shell logic and
+/// Default builtins kept in the logic-only shell: shell logic and
 /// stdin-to-stdout transforms. Anything that reads or writes files is out.
 pub(crate) fn builtin_allowed(name: &str) -> bool {
     matches!(
@@ -114,7 +113,7 @@ pub(crate) fn builtin_allowed(name: &str) -> bool {
 /// Filesystem that rejects every operation.
 ///
 /// Important decision: the interpreter and builtin context require an
-/// `Arc<dyn FileSystem>`, so the orchestration shell installs one whose every
+/// `Arc<dyn FileSystem>`, so the logic-only shell installs one whose every
 /// real operation fails, and scripts cannot use a VFS as storage or input.
 pub(crate) struct DisabledFs;
 
