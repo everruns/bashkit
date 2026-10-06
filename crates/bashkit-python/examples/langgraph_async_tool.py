@@ -32,7 +32,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMe
 from langchain_core.tools import tool
 from langgraph.graph import END, StateGraph
 
-from bashkit import ScriptedTool
+from bashkit.scripted import ScriptedTool
 
 # ---------------------------------------------------------------------------
 # ContextVar — simulates LangGraph's get_stream_writer() pattern.

@@ -18,7 +18,8 @@ from bashkit_random_fs import create_random_filesystem_capsule, expected_random_
 from langchain_core.tools import StructuredTool  # noqa: E402
 from langgraph.graph import END, StateGraph  # noqa: E402
 
-from bashkit import Bash, FileSystem, ScriptedTool  # noqa: E402
+from bashkit import Bash, FileSystem  # noqa: E402
+from bashkit.scripted import ScriptedTool  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Simulate LangGraph's get_stream_writer() pattern

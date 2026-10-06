@@ -195,7 +195,7 @@ class TestJsonNesting:
 
     def test_deep_dict_nesting_rejected(self):
         """ScriptedTool callbacks should reject >64 levels of nesting."""
-        from bashkit import ScriptedTool
+        from bashkit.scripted import ScriptedTool
 
         # Build a deeply nested dict
         def deep_callback(params, stdin=None):
@@ -213,7 +213,7 @@ class TestJsonNesting:
 
     def test_normal_nesting_works(self):
         """Reasonable nesting levels should work fine."""
-        from bashkit import ScriptedTool
+        from bashkit.scripted import ScriptedTool
 
         def shallow_callback(params, stdin=None):
             return '{"a": {"b": {"c": "value"}}}'

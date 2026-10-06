@@ -470,7 +470,7 @@ an internal private loop and should not be called from an async endpoint.
 Use `ScriptedTool` to register Python callbacks as bash-callable tools:
 
 ```python
-from bashkit import ScriptedTool
+from bashkit.scripted import ScriptedTool
 
 
 def get_user(params, stdin=None):

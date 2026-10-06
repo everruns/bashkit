@@ -862,162 +862,6 @@ BashTool.fromSnapshotKeyed(data: Uint8Array, key: Uint8Array, options?: BashOpti
 
 Create a new BashTool instance from a HMAC-protected snapshot.
 
-## ScriptedTool
-
-Compose JS callbacks as bash builtins for multi-tool orchestration.
-
-Each registered tool becomes a bash builtin command. An LLM (or user) writes
-a single bash script that pipes, loops, and branches across all tools.
-
-```typescript
-import { ScriptedTool } from '@everruns/bashkit';
-
-const tool = new ScriptedTool({ name: "api" });
-tool.addTool("greet", "Greet user",
-  (params) => `hello ${params.name ?? "world"}\n`
-);
-const result = tool.executeSync("greet --name Alice");
-console.log(result.stdout); // hello Alice\n
-```
-
-### Constructor
-
-```typescript
-new ScriptedTool(options: ScriptedToolOptions): ScriptedTool
-```
-
-### `name`
-
-```typescript
-name: string
-```
-
-Tool name.
-
-### `shortDescription`
-
-```typescript
-shortDescription: string
-```
-
-Short description.
-
-### `version`
-
-```typescript
-version: string
-```
-
-Tool version.
-
-### `addTool`
-
-```typescript
-scriptedTool.addTool(name: string, description: string, callback: ToolCallback, schema?: Record<string, unknown>): void
-```
-
-Register a tool command.
-
-### `description`
-
-```typescript
-scriptedTool.description(): string
-```
-
-Token-efficient tool description.
-
-### `env`
-
-```typescript
-scriptedTool.env(key: string, value: string): void
-```
-
-Add an environment variable visible inside scripts.
-
-### `execute`
-
-```typescript
-scriptedTool.execute(commands: string): Promise<ExecResult>
-```
-
-Execute a bash script asynchronously, returning a Promise.
-
-This is the recommended execution method for ScriptedTool since
-tool callbacks require the Node.js event loop to be running.
-
-### `executeOrThrow`
-
-```typescript
-scriptedTool.executeOrThrow(commands: string): Promise<ExecResult>
-```
-
-Execute asynchronously. Throws `BashError` on non-zero exit.
-
-### `executeSync`
-
-```typescript
-scriptedTool.executeSync(commands: string): ExecResult
-```
-
-Execute a bash script synchronously.
-
-Note: ScriptedTool callbacks run asynchronously via Node's event loop.
-If a registered tool is invoked, this method returns a non-zero result
-instead of queueing a callback that would deadlock. Use `execute()`
-(async) for scripts that call registered tools. Only use this for scripts
-that don't invoke any registered tools (e.g., pure bash).
-
-### `executeSyncOrThrow`
-
-```typescript
-scriptedTool.executeSyncOrThrow(commands: string): ExecResult
-```
-
-Execute synchronously. Throws `BashError` on non-zero exit.
-
-Same caveats as `executeSync()` — throws when a registered tool would
-require the blocked Node event loop. Use `executeOrThrow()` instead.
-
-### `help`
-
-```typescript
-scriptedTool.help(): string
-```
-
-Markdown help document.
-
-### `inputSchema`
-
-```typescript
-scriptedTool.inputSchema(): string
-```
-
-JSON input schema as string.
-
-### `outputSchema`
-
-```typescript
-scriptedTool.outputSchema(): string
-```
-
-JSON output schema as string.
-
-### `systemPrompt`
-
-```typescript
-scriptedTool.systemPrompt(): string
-```
-
-Compact system prompt for orchestration.
-
-### `toolCount`
-
-```typescript
-scriptedTool.toolCount(): number
-```
-
-Number of registered tools.
-
 ## FileSystem
 
 ### Constructor
@@ -1634,17 +1478,6 @@ the builtin registry, the network allowlist, and the mount policy.
 
   Node budget hit — `commands` and `redirects` are incomplete.
 
-## ScriptedToolOptions
-
-Options for creating a ScriptedTool instance.
-
-### Fields
-
-- **`maxCommands?`** — `number`
-- **`maxLoopIterations?`** — `number`
-- **`name`** — `string`
-- **`shortDescription?`** — `string`
-
 ## ShellState
 
 Lightweight snapshot of shell state for inspection (prompt rendering,
@@ -1749,7 +1582,185 @@ type FileValue = string | () => string | () => Promise<string>
 type OnOutput = (chunk: OutputChunk) => void
 ```
 
-## ToolCallback
+---
+
+# Subpath modules
+
+## `@everruns/bashkit/scripted`
+
+Multi-tool orchestration for Bashkit (`ScriptedTool`).
+
+Register JS callbacks as bash builtins; one bash script composes them with
+pipes, loops, and `jq` in a logic-only shell.
+
+### ScriptedTool
+
+Compose JS callbacks as bash builtins for multi-tool orchestration.
+
+Each registered tool becomes a bash builtin command. An LLM (or user) writes
+a single bash script that pipes, loops, and branches across all tools.
+
+```typescript
+import { ScriptedTool } from '@everruns/bashkit/scripted';
+
+const tool = new ScriptedTool({ name: "api" });
+tool.addTool("greet", "Greet user",
+  (params) => `hello ${params.name ?? "world"}\n`
+);
+const result = tool.executeSync("greet --name Alice");
+console.log(result.stdout); // hello Alice\n
+```
+
+### Constructor
+
+```typescript
+new ScriptedTool(options: ScriptedToolOptions): ScriptedTool
+```
+
+### `name`
+
+```typescript
+name: string
+```
+
+Tool name.
+
+### `shortDescription`
+
+```typescript
+shortDescription: string
+```
+
+Short description.
+
+### `version`
+
+```typescript
+version: string
+```
+
+Tool version.
+
+### `addTool`
+
+```typescript
+scriptedTool.addTool(name: string, description: string, callback: ToolCallback, schema?: Record<string, unknown>): void
+```
+
+Register a tool command.
+
+### `description`
+
+```typescript
+scriptedTool.description(): string
+```
+
+Token-efficient tool description.
+
+### `env`
+
+```typescript
+scriptedTool.env(key: string, value: string): void
+```
+
+Add an environment variable visible inside scripts.
+
+### `execute`
+
+```typescript
+scriptedTool.execute(commands: string): Promise<ExecResult>
+```
+
+Execute a bash script asynchronously, returning a Promise.
+
+This is the recommended execution method for ScriptedTool since
+tool callbacks require the Node.js event loop to be running.
+
+### `executeOrThrow`
+
+```typescript
+scriptedTool.executeOrThrow(commands: string): Promise<ExecResult>
+```
+
+Execute asynchronously. Throws `BashError` on non-zero exit.
+
+### `executeSync`
+
+```typescript
+scriptedTool.executeSync(commands: string): ExecResult
+```
+
+Execute a bash script synchronously.
+
+Note: ScriptedTool callbacks run asynchronously via Node's event loop.
+If a registered tool is invoked, this method returns a non-zero result
+instead of queueing a callback that would deadlock. Use `execute()`
+(async) for scripts that call registered tools. Only use this for scripts
+that don't invoke any registered tools (e.g., pure bash).
+
+### `executeSyncOrThrow`
+
+```typescript
+scriptedTool.executeSyncOrThrow(commands: string): ExecResult
+```
+
+Execute synchronously. Throws `BashError` on non-zero exit.
+
+Same caveats as `executeSync()` — throws when a registered tool would
+require the blocked Node event loop. Use `executeOrThrow()` instead.
+
+### `help`
+
+```typescript
+scriptedTool.help(): string
+```
+
+Markdown help document.
+
+### `inputSchema`
+
+```typescript
+scriptedTool.inputSchema(): string
+```
+
+JSON input schema as string.
+
+### `outputSchema`
+
+```typescript
+scriptedTool.outputSchema(): string
+```
+
+JSON output schema as string.
+
+### `systemPrompt`
+
+```typescript
+scriptedTool.systemPrompt(): string
+```
+
+Compact system prompt for orchestration.
+
+### `toolCount`
+
+```typescript
+scriptedTool.toolCount(): number
+```
+
+Number of registered tools.
+
+### ScriptedToolOptions
+
+Options for creating a ScriptedTool instance.
+
+### Fields
+
+- **`maxCommands?`** — `number`
+- **`maxLoopIterations?`** — `number`
+- **`name`** — `string`
+- **`shortDescription?`** — `string`
+
+### ToolCallback
 
 Callback type for ScriptedTool tool commands.
 
@@ -1759,10 +1770,6 @@ Must return a string.
 ```typescript
 type ToolCallback = (params: Record<string, unknown>, stdin: string | null) => string
 ```
-
----
-
-# Framework integrations
 
 ## `@everruns/bashkit/langchain`
 
@@ -1779,7 +1786,7 @@ const tool = createBashTool();
 const result = await tool.invoke({ commands: "echo hello" });
 
 // Scripted tool
-import { ScriptedTool } from '@everruns/bashkit';
+import { ScriptedTool } from '@everruns/bashkit/scripted';
 const st = new ScriptedTool({ name: "api" });
 st.addTool("greet", "Greet user", (p) => `hello ${p.name}\n`);
 const langchainTool = createScriptedTool(st);
@@ -1815,7 +1822,7 @@ Create a LangChain-compatible tool from a configured ScriptedTool.
 The ScriptedTool should already have tools registered via `addTool()`.
 
 ```typescript
-import { ScriptedTool } from '@everruns/bashkit';
+import { ScriptedTool } from '@everruns/bashkit/scripted';
 import { createScriptedTool } from '@everruns/bashkit/langchain';
 
 const st = new ScriptedTool({ name: "api" });

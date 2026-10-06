@@ -8,7 +8,8 @@ import re
 
 import pytest
 
-from bashkit import Bash, BashTool, ScriptedTool
+from bashkit import Bash, BashTool
+from bashkit.scripted import ScriptedTool
 
 # Decision: keep the issue-1264 parity cases in this hidden core module while
 # the public `test_security.py` module re-exports the merged security suite.

@@ -17,7 +17,7 @@ import weakref
 
 import pytest
 
-from bashkit import ScriptedTool
+from bashkit.scripted import ScriptedTool
 
 # ---------------------------------------------------------------------------
 # ContextVar used across tests
@@ -550,7 +550,7 @@ def test_async_callback_execute_sync_first_private_loop_call_does_not_deadlock()
 
     script = textwrap.dedent("""
         import asyncio
-        from bashkit import ScriptedTool
+        from bashkit.scripted import ScriptedTool
 
         async def greet(params, stdin=None):
             return "hello\\n"

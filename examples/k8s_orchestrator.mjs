@@ -12,7 +12,7 @@
  *   node examples/k8s_orchestrator.mjs
  */
 
-import { ScriptedTool } from "@everruns/bashkit";
+import { ScriptedTool } from "@everruns/bashkit/scripted";
 
 // =============================================================================
 // Fake k8s data

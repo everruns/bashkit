@@ -289,6 +289,12 @@ recovered by re-dispatching from `main`: fix the cause and cut a patch release,
 whose tag then publishes `latest`. v0.17.0 landed on `next` this way, and
 v0.17.1 is what put the native package back on `latest`.
 
+The publish job never runs `tsc`; it ships whatever the `js-stubs` artifact
+carries. That artifact must list every `tsc` output (`.js` + `.d.ts` for each
+`tsconfig.json` include). It once listed only `wrapper.*`, so 0.18.2 shipped
+without `langchain.js`/`ai.js`/`anthropic.js`/`openai.js` while `package.json`
+exported them. Guarded by `scripts/tests/test_js_publish_files.py`.
+
 ### publish-wasm.yml
 
 Dispatched by `release.yml` from the verified release tag. Builds the

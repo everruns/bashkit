@@ -81,10 +81,38 @@ let bash = registry.install(Bash::builder().limits(limits)).build();
 Configure limits on the builder before `install`: Python and TypeScript tool
 bridges read the builder's execution profile at install time.
 
-## Python and JavaScript
+## Python
 
-No change in this release: the bindings re-export the same classes from the
-same import paths.
+Import from `bashkit.scripted`:
+
+```python
+# Before
+from bashkit import ScriptedTool
+
+# After
+from bashkit.scripted import ScriptedTool
+```
+
+The old import still works for now and emits a `FutureWarning`. Run your tests
+with `-W error::FutureWarning` to find the remaining call sites. The class, its
+methods, and `bashkit.langchain.create_scripted_tool` are unchanged.
+
+## JavaScript and TypeScript
+
+Import from the `@everruns/bashkit/scripted` entry:
+
+```typescript
+// Before
+import { ScriptedTool } from "@everruns/bashkit";
+
+// After
+import { ScriptedTool } from "@everruns/bashkit/scripted";
+```
+
+The root export is kept as a `@deprecated` alias of the same class, so
+`instanceof` checks keep working, and editors flag the old import. The
+`ScriptedToolOptions` and `ToolCallback` types move the same way.
+`createScriptedTool` stays in `@everruns/bashkit/langchain`.
 
 ## See also
 

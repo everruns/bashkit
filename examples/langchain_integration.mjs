@@ -14,7 +14,7 @@
  */
 
 import { createBashTool, createScriptedTool } from "@everruns/bashkit/langchain";
-import { ScriptedTool } from "@everruns/bashkit";
+import { ScriptedTool } from "@everruns/bashkit/scripted";
 import { ChatOpenAI } from "@langchain/openai";
 import { createReactAgent } from "@langchain/langgraph/prebuilt";
 

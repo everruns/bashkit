@@ -18,7 +18,8 @@ import time
 
 import pytest
 
-from bashkit import Bash, ScriptedTool
+from bashkit import Bash
+from bashkit.scripted import ScriptedTool
 
 PROC_AVAILABLE = os.path.exists("/proc/self/task")
 
@@ -169,7 +170,7 @@ def test_dropped_tool_cancels_abandoned_callback():
 
 _EXIT_SCRIPT_CLEAN = """
 import asyncio
-from bashkit import ScriptedTool
+from bashkit.scripted import ScriptedTool
 
 async def cb(params, stdin=None):
     await asyncio.sleep(0)
@@ -183,7 +184,7 @@ assert t.execute_sync("hit").exit_code == 0
 
 _EXIT_SCRIPT_ABANDONED = """
 import asyncio
-from bashkit import ScriptedTool
+from bashkit.scripted import ScriptedTool
 
 async def slow(params, stdin=None):
     await asyncio.sleep(30)

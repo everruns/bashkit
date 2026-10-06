@@ -13,7 +13,7 @@
  * const result = await tool.invoke({ commands: "echo hello" });
  *
  * // Scripted tool
- * import { ScriptedTool } from '@everruns/bashkit';
+ * import { ScriptedTool } from '@everruns/bashkit/scripted';
  * const st = new ScriptedTool({ name: "api" });
  * st.addTool("greet", "Greet user", (p) => `hello ${p.name}\n`);
  * const langchainTool = createScriptedTool(st);
@@ -24,7 +24,8 @@
 
 import { DynamicStructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
-import { BashTool, ScriptedTool } from "./wrapper.js";
+import { BashTool } from "./wrapper.js";
+import { ScriptedTool } from "./scripted.js";
 import type { BashOptions } from "./wrapper.js";
 
 const bashInputSchema = z.object({
@@ -102,7 +103,7 @@ export function createBashTool(
  *
  * @example
  * ```typescript
- * import { ScriptedTool } from '@everruns/bashkit';
+ * import { ScriptedTool } from '@everruns/bashkit/scripted';
  * import { createScriptedTool } from '@everruns/bashkit/langchain';
  *
  * const st = new ScriptedTool({ name: "api" });
