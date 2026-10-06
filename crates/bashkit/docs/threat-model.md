@@ -87,7 +87,8 @@ through configurable limits.
 | Builtin parser depth (TM-DOS-027) | Deeply nested awk/jq | `MAX_AWK_PARSER_DEPTH` (100) + `MAX_JQ_JSON_DEPTH` (100) | MITIGATED |
 | Collect dirs recursion (TM-DOS-049) | Deep VFS tree | Mitigated by `max_path_depth` | MITIGATED |
 | Python read-only self-mount recursion (TM-DOS-118) | `bash.mount("/", bash.fs(), read_only=True)` hides the live filesystem identity behind a wrapper | Python validates the resolved filesystem identity before wrapping it | MITIGATED |
-| find traversal amplification (TM-DOS-121) | `find -L` over a symlink cycle, unbounded `-exec ... {} +` batches, or `*`-heavy `-name` patterns | Canonical-path loop detection with a 40-hop symlink cap, budget-charged directory listings, capped output, batches flushed every 4096 paths, linear-time glob matching |
+| find traversal amplification (TM-DOS-121) | `find -L` over a symlink cycle, unbounded `-exec ... {} +` batches, or `*`-heavy `-name` patterns | Canonical-path loop detection with a 40-hop symlink cap, budget-charged directory listings, capped output, batches flushed every 4096 paths, linear-time glob matching | MITIGATED |
+| Background job flooding (TM-DOS-122) | `while :; do sleep 99 & done` holds unbounded concurrent interpreters | `max_background_jobs` (64 default, 16 hardened) caps live jobs; extra `&` fails like bash's fork EAGAIN; jobs share the session budget, timeout and cancellation; every job is reaped when `exec()` returns | MITIGATED |
 
 **Parser and Arithmetic:**
 

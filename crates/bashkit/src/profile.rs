@@ -157,6 +157,7 @@ impl ExecutionProfile {
             max_history_output_bytes: 262_144,
             max_word_split_fields: 10_000,
             max_word_split_bytes: 1_000_000,
+            max_background_jobs: 16,
             capture_final_env: false,
         };
         let session = SessionLimits::new()

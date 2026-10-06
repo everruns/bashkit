@@ -992,54 +992,6 @@ impl Builtin for Chown {
     }
 }
 
-/// The kill builtin - send signal to process (no-op in VFS).
-///
-/// Usage: kill [-s SIGNAL] [-SIGNAL] PID...
-///
-/// Since there are no real processes in the virtual environment, kill is a no-op
-/// that accepts the command syntax for compatibility.
-pub struct Kill;
-
-#[async_trait]
-impl Builtin for Kill {
-    async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        if let Some(r) = super::check_help_version(
-            ctx.args,
-            "Usage: kill [-s SIGNAL | -SIGNAL] PID...\nSend a signal to a process.\n\n  -s SIGNAL\tspecify the signal to send\n  -l, -L\tlist signal names\n      --help\tdisplay this help and exit\n      --version\toutput version information and exit\n",
-            Some("kill (bashkit) 0.1"),
-        ) {
-            return Ok(r);
-        }
-
-        let mut pids: Vec<&str> = Vec::new();
-
-        for arg in ctx.args {
-            if arg == "-l" || arg == "-L" {
-                // List signal names
-                return Ok(ExecResult::ok(
-                    "HUP INT QUIT ILL TRAP ABRT BUS FPE KILL USR1 SEGV USR2 PIPE ALRM TERM\n"
-                        .to_string(),
-                ));
-            }
-            if arg.starts_with('-') {
-                continue; // skip signal spec
-            }
-            pids.push(arg);
-        }
-
-        if pids.is_empty() {
-            return Ok(ExecResult::err(
-                "kill: usage: kill [-s sigspec | -n signum | -sigspec] pid | jobspec ...\n"
-                    .to_string(),
-                2,
-            ));
-        }
-
-        // In VFS, no real processes exist — just succeed silently
-        Ok(ExecResult::ok(String::new()))
-    }
-}
-
 /// The mktemp builtin - create temporary files or directories.
 ///
 /// Argument surface is generated from uutils/coreutils' `uu_app()` via

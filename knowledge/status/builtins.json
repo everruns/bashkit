@@ -55,6 +55,10 @@
     },
     {
       "feature": null,
+      "name": "bg"
+    },
+    {
+      "feature": null,
       "name": "break"
     },
     {
@@ -179,6 +183,10 @@
     },
     {
       "feature": null,
+      "name": "disown"
+    },
+    {
+      "feature": null,
       "name": "dotenv"
     },
     {
@@ -236,6 +244,10 @@
     {
       "feature": null,
       "name": "fc"
+    },
+    {
+      "feature": null,
+      "name": "fg"
     },
     {
       "feature": null,
@@ -312,6 +324,10 @@
     {
       "feature": null,
       "name": "install"
+    },
+    {
+      "feature": null,
+      "name": "jobs"
     },
     {
       "feature": null,
@@ -419,6 +435,14 @@
     },
     {
       "feature": null,
+      "name": "pgrep"
+    },
+    {
+      "feature": null,
+      "name": "pkill"
+    },
+    {
+      "feature": null,
       "name": "popd"
     },
     {
@@ -428,6 +452,10 @@
     {
       "feature": null,
       "name": "printf"
+    },
+    {
+      "feature": null,
+      "name": "ps"
     },
     {
       "feature": null,
@@ -750,5 +778,5 @@
       "name": "zip"
     }
   ],
-  "count": 187
+  "count": 194
 }
