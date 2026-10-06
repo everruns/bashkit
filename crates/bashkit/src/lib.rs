@@ -1929,6 +1929,8 @@ pub struct BashBuilder {
     readonly_filesystem: bool,
     /// When true, skip the default `/etc`, `/proc`, `/bin`, `/usr/bin` layer.
     no_rootfs: bool,
+    /// When true, symlinks are stored but not followed (pre-0.19 behavior).
+    no_follow_symlinks: bool,
     /// Interceptor hooks
     hooks_on_exit: Vec<hooks::Interceptor<hooks::ExitEvent>>,
     hooks_before_exec: Vec<hooks::Interceptor<hooks::ExecInput>>,
@@ -3296,6 +3298,35 @@ impl BashBuilder {
         self
     }
 
+    /// Follow symbolic links in path lookups (on by default).
+    ///
+    /// `cat link`, `cd linkdir`, `echo x > link` and `[ -d linkdir ]` act on
+    /// the link's target, as on Linux; `rm`, `mv`, `readlink`, `[ -L ]` and
+    /// `ls -l` act on the link itself. Targets are VFS paths, so a link can
+    /// never reach the host, and lookups give up after 40 links with "Too
+    /// many levels of symbolic links". With `false`, links are stored but
+    /// opening one fails. See `knowledge/foundations/vfs.md` ("Symlink
+    /// Handling").
+    ///
+    /// ```rust
+    /// # use bashkit::Bash;
+    /// # #[tokio::main]
+    /// # async fn main() -> bashkit::Result<()> {
+    /// let mut bash = Bash::builder().build();
+    /// let r = bash.exec("echo hi > /tmp/t; ln -s t /tmp/l; cat /tmp/l").await?;
+    /// assert_eq!(r.stdout, "hi\n");
+    ///
+    /// let mut bare = Bash::builder().follow_symlinks(false).build();
+    /// let r = bare.exec("echo hi > /tmp/t; ln -s t /tmp/l; cat /tmp/l").await?;
+    /// assert_eq!(r.exit_code, 1);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn follow_symlinks(mut self, enabled: bool) -> Self {
+        self.no_follow_symlinks = !enabled;
+        self
+    }
+
     /// Build the Bash instance.
     ///
     /// If mounted files are specified, they are added via an [`OverlayFs`] layer
@@ -3399,6 +3430,13 @@ impl BashBuilder {
         // Layer 4: Wrap in MountableFs for post-build live mount/unmount
         let mountable = Arc::new(MountableFs::new(base_fs));
         let fs: Arc<dyn FileSystem> = Arc::clone(&mountable) as Arc<dyn FileSystem>;
+
+        // Layer 5: follow symlinks across every layer and mount.
+        let fs: Arc<dyn FileSystem> = if self.no_follow_symlinks {
+            fs
+        } else {
+            Arc::new(fs::FollowFs::new(fs))
+        };
 
         let mut result = Self::build_with_fs(
             fs,

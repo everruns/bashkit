@@ -399,7 +399,7 @@ Default limits (configurable):
 |---------|--------|-------|
 | Virtual filesystem | ✅ | InMemoryFs, OverlayFs, MountableFs |
 | Real filesystem | ❌ | Virtual by default |
-| Symlinks | ✅ | Stored but not followed |
+| Symlinks | ✅ | Followed in the VFS (40-link cap); `..` resolves lexically |
 | Permissions | ✅ | Metadata stored, not enforced |
 | `/dev/null` | ✅ | Interpreter-level handling (cannot be bypassed) |
 | `/dev/zero` | ✅ | 1 MiB of zeros per read |

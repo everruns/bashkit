@@ -433,6 +433,10 @@ impl crate::FileSystem for ExecutionFileSystem {
         self.run(self.inner.stat(path)).await?
     }
 
+    async fn lstat(&self, path: &std::path::Path) -> crate::Result<crate::Metadata> {
+        self.run(self.inner.lstat(path)).await?
+    }
+
     async fn read_dir(&self, path: &std::path::Path) -> crate::Result<Vec<crate::DirEntry>> {
         self.run(self.inner.read_dir(path)).await?
     }

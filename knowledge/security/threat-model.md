@@ -206,7 +206,7 @@ delegation (see TM-DOS-046). Regression tests: `path_validation_security` module
 
 | ID | Threat | Attack Vector | Mitigation | Status |
 |----|--------|--------------|------------|--------|
-| TM-DOS-011 | Symlink loops | `ln -s /a /b; ln -s /b /a` | No symlink following | **MITIGATED** |
+| TM-DOS-011 | Symlink loops | `ln -s /a /b; ln -s /b /a` | `FollowFs` follows at most 40 links per lookup (Linux MAXSYMLINKS), then fails with "Too many levels of symbolic links"; `find -L` adds canonical-path loop detection (TM-DOS-121). Regressions: `fs::follow::tests::loops_fail_with_eloop`, `hop_limit_allows_long_chains`, `symlink_loop_is_reported` spec | **MITIGATED** |
 | TM-DOS-012 | Deep directory nesting | `mkdir -p a/b/c/.../z` (1000 levels) | `max_path_depth` limit (100) | **MITIGATED** |
 | TM-DOS-013 | Long filenames | Create 10KB filename | `max_filename_length` (255) + `max_path_length` (4096) | **MITIGATED** |
 | TM-DOS-014 | Many directory entries | Create 1M files in one dir | `max_file_count` limit | **MITIGATED** |
@@ -214,8 +214,9 @@ delegation (see TM-DOS-046). Regression tests: `path_validation_security` module
 
 **Current Risk**: LOW. Implementation: `FsLimits` in `fs/limits.rs`, `max_path_depth` 100 (TM-DOS-012), `max_filename_length` 255 + `max_path_length` 4096 (TM-DOS-013); `validate_path()` rejects control chars and bidi overrides (TM-DOS-015).
 
-**Note**: Symlink loops (TM-DOS-011) are mitigated because InMemoryFs stores symlinks but doesn't
-follow them during path resolution - symlink targets are only returned by `read_link()`.
+**Note**: Symlinks are followed only by the session's outermost layer (`fs/follow.rs`); inner
+layers never follow. Each lookup is capped at 40 links, so a loop costs at most 40 x path-depth
+`lstat` calls before failing with ELOOP (TM-DOS-011).
 
 #### 1.2 Infinite Loops
 
@@ -324,7 +325,7 @@ panicked. Resolved with `wrapping_*` ops, masked shift amounts, clamped exponent
 | ID | Threat | Attack Vector | Mitigation | Status |
 |----|--------|--------------|------------|--------|
 | TM-ESC-001 | Path traversal | `cat ../../../etc/passwd` | Path normalization | **MITIGATED** |
-| TM-ESC-002 | Symlink escape | `ln -s /etc/passwd /tmp/x` | Symlinks not followed | **MITIGATED** |
+| TM-ESC-002 | Symlink escape | `ln -s /etc/passwd /tmp/x` | Links are followed in the VFS namespace only: targets are VFS paths (absolute from the VFS root, `..` clamped there) and every resolved path goes back through mounts and `RealFs` containment; permission errors are never retried through resolution, so host-planted links inside a real mount stay blocked. Regressions: `fs::follow::tests::absolute_targets_stay_in_vfs`, `realfs_host_planted_symlink_is_not_followed_out`, `a_forged_symlink_cannot_reach_outside_the_vfs` | **MITIGATED** |
 | TM-ESC-003 | Real FS access | Direct syscalls | No real FS by default; `RealFs` canonicalizes existing paths and nearest existing ancestors before attaching missing suffixes | **MITIGATED** |
 | TM-ESC-004 | Mount escape | Mount real paths | MountableFs controlled | **MITIGATED** |
 | TM-ESC-016 | Symlink escape via overlay rename | `ln -s /etc/passwd x; mv x y` | Overlay rename/copy preserve symlinks as symlinks | **FIXED** |
@@ -1382,7 +1383,6 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | Threat ID | Vulnerability | Impact | Rationale |
 |-----------|---------------|--------|-----------|
 | TM-CRY-002 | RSA timing sidechannel in `rsa` (RUSTSEC-2023-0071) | Private key recovery over the network | No upstream patch exists for any `rsa` version; reachable only via the opt-in `ssh` feature, and Ed25519 keys avoid the affected path |
-| TM-DOS-011 | Symlinks not followed | Functionality gap | By design - prevents symlink attacks |
 | TM-DOS-025 | Regex backtracking | CPU exhaustion | Linear-time `regex` engine by default; fancy-regex paths (`grep -P`, `sed`) capped by `FANCY_BACKTRACK_LIMIT` |
 | TM-UNI-004 | Zero-width chars in variable names | Variable confusion | Matches Bash behavior |
 | TM-UNI-006 | Homoglyph filenames | Visual confusion | Impractical to fully detect |
@@ -1420,7 +1420,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | Path char validation | TM-DOS-015 | `fs/limits.rs` | Yes |
 | Archive bomb protection | TM-DOS-007, TM-DOS-102, TM-NET-013 | `builtins/archive.rs` | Yes |
 | Path normalization | TM-ESC-001, TM-ESC-033, TM-INJ-005 | `fs/mod.rs`, `fs/realfs.rs` | Yes |
-| No symlink following | TM-ESC-002, TM-DOS-011 | `fs/memory.rs` | Yes |
+| VFS-only symlink following, 40-link cap | TM-ESC-002, TM-DOS-011 | `fs/follow.rs` | Yes |
 | Network allowlist | TM-INF-010, TM-NET-001 to TM-NET-007 | `network/allowlist.rs` | Yes |
 | Domain allowlist | TM-NET-015, TM-NET-016, TM-NET-017 | `network/allowlist.rs` | Planned |
 | Sandboxed eval/bash/sh, no exec | TM-ESC-005 to TM-ESC-008, TM-ESC-015, TM-INJ-003 | `interpreter/mod.rs` | Yes |

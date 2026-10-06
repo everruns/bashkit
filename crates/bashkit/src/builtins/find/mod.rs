@@ -193,7 +193,7 @@ async fn canonicalize(fs: &dyn FileSystem, path: &Path) -> std::result::Result<P
             continue;
         }
         let candidate = out.join(&comp);
-        match fs.stat(&candidate).await {
+        match fs.lstat(&candidate).await {
             Ok(m) if m.file_type.is_symlink() => {
                 hops += 1;
                 if hops > MAX_SYMLINK_HOPS {
@@ -726,7 +726,7 @@ impl FindRun {
     async fn start_root(&mut self, index: usize) {
         let root = self.cfg.roots[index].clone();
         let abs = resolve_path(&self.cwd, &root);
-        if self.cfg.fs.stat(&abs).await.is_err() {
+        if self.cfg.fs.lstat(&abs).await.is_err() {
             self.error(format!("find: '{root}': No such file or directory\n"));
             return;
         }
@@ -767,7 +767,7 @@ impl FindRun {
             } => (abs, display, root, depth, ancestors),
         };
         let fs = self.cfg.fs.clone();
-        let lmeta = match fs.stat(&abs).await {
+        let lmeta = match fs.lstat(&abs).await {
             Ok(m) => m,
             Err(e) => {
                 self.error(format!("find: '{display}': {e}\n"));

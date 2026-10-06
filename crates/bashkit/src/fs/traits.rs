@@ -326,6 +326,15 @@ pub trait FileSystem: FileSystemExt {
     /// Returns an error if the path does not exist.
     async fn stat(&self, path: &Path) -> Result<Metadata>;
 
+    /// Get metadata without following a symlink in the final component.
+    ///
+    /// Bashkit's own layers never follow links below the session's outermost
+    /// layer, so for them `stat` already has `lstat` semantics and the default
+    /// forwards to it. The session's link-following layer overrides both.
+    async fn lstat(&self, path: &Path) -> Result<Metadata> {
+        self.stat(path).await
+    }
+
     /// List directory contents.
     ///
     /// Returns a list of entries (files, directories, symlinks) in the directory.
