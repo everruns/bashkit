@@ -14,8 +14,8 @@ tags:
 ## Status
 
 Implemented behind the `terminal` cargo feature (off by default). Python
-exposes it as `bashkit.Terminal` (the Python package enables the feature);
-JS and C bindings are not wired yet.
+exposes it as `bashkit.Terminal` and the NAPI package as `Terminal` (both
+packages enable the feature); browser wasm and C bindings are not wired yet.
 
 Code: `crates/bashkit/src/terminal/` (`Terminal`, the `Tty` device),
 `crates/bashkit/src/builtins/vi.rs`, `InputWaitClock` in
@@ -174,9 +174,12 @@ redirected (L-TERM-004).
 
 ## Follow-ups
 
-- JS (NAPI, browser wasm) and C bindings. Python ships `bashkit.Terminal`
+- Browser wasm and C bindings. Shipped: Python `bashkit.Terminal`
   (`crates/bashkit-python/src/terminal.rs`, sync API on a per-instance
-  current-thread runtime, wraps `TerminalTool`).
+  current-thread runtime, wraps `TerminalTool`) and NAPI `Terminal`
+  (`crates/bashkit-js/src/terminal.rs`, async `runUntilIdle`/`call` that
+  drive the session in 20 ms slices so sync `send("\x03")` and `screenText()`
+  interleave with a long command).
 - Reader-backed stdin so `read` blocks on the terminal (lifts L-TERM-002 and
   helps L-CLI-002).
 - Expose the device to custom builtins for host-defined TUIs; `stty`/`tput`.

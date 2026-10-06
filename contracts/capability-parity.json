@@ -165,7 +165,7 @@
     },
     "napi": {
       "label": "NAPI JavaScript",
-      "supported": ["execution_limits", "cancellation", "deadlines", "output_caps", "cwd", "env", "runtime_env", "custom_builtins", "tool_callbacks", "network_policy", "virtual_filesystem", "mounts", "snapshots", "runtime_python", "runtime_sqlite"],
+      "supported": ["execution_limits", "cancellation", "deadlines", "output_caps", "cwd", "env", "runtime_env", "custom_builtins", "tool_callbacks", "network_policy", "virtual_filesystem", "mounts", "snapshots", "runtime_python", "runtime_sqlite", "interactive_terminal"],
       "evidence": {
         "execution_limits": ["crates/bashkit-js/__test__/security.spec.ts#WB: command limit is enforced"],
         "cancellation": ["crates/bashkit-js/__test__/basic.spec.ts#Bash: cancel works after reset"],
@@ -181,14 +181,14 @@
         "mounts": ["crates/bashkit-js/__test__/vfs.spec.ts#real filesystem requires and enforces allowedMountPaths"],
         "snapshots": ["crates/bashkit-js/__test__/snapshot-history.spec.ts#commit and checkout round-trip shell state and files"],
         "runtime_python": ["crates/bashkit-js/__test__/integration.spec.ts#integration: python opt-in executes embedded Python"],
-        "runtime_sqlite": ["crates/bashkit-js/__test__/runtime-compat/sqlite.test.mjs#sqlite"]
+        "runtime_sqlite": ["crates/bashkit-js/__test__/runtime-compat/sqlite.test.mjs#sqlite"],
+        "interactive_terminal": ["crates/bashkit-js/__test__/terminal.spec.ts#terminal: call edits a file in vi"]
       },
       "unsupported": {
         "stdin": "execute() accepts a command string and output callback, not top-level host stdin.",
         "host_call_suspension": "NAPI custom builtins await callbacks directly; no request and resume handle is exposed.",
         "transport_hooks": "NAPI exposes network policy and credentials but no JavaScript HttpTransport hook.",
-        "runtime_typescript": "The NAPI package does not compile or expose the TypeScript runtime.",
-        "interactive_terminal": "Not exposed in the NAPI package yet."
+        "runtime_typescript": "The NAPI package does not compile or expose the TypeScript runtime."
       }
     },
     "browser_wasm": {

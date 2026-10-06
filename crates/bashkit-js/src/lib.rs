@@ -13,6 +13,8 @@
 //! work. This prevents CodeQL `rust/access-invalid-pointer` alerts caused by
 //! holding a raw-pointer-derived `&self` across `block_on` or `.await` points.
 
+mod terminal;
+
 use bashkit::interop::fs::{
     BashkitFsAbiHandleV1, BashkitFsAbiOwnedHandleV1, export_filesystem, import_filesystem,
 };
