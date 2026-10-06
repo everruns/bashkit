@@ -90,7 +90,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
 
       - name: Check bashkit for wasm32-unknown-unknown
-        run: cargo check -p bashkit --target wasm32-unknown-unknown --features scripted_tool,jq,wasm_js
+        run: cargo check -p bashkit --target wasm32-unknown-unknown --features scripted_tool,jq,wasm_js,terminal
         env:
           # getrandom needs an explicit JS backend opt-in on this target.
           RUSTFLAGS: --cfg getrandom_backend="wasm_js" -D warnings
@@ -100,7 +100,7 @@ jobs:
       # as the browser package; no getrandom cfg here (wasip2 has a native
       # backend). Check-only: there is no WASI entry-point crate yet.
       - name: Check bashkit for wasm32-wasip2
-        run: cargo check -p bashkit --target wasm32-wasip2 --features scripted_tool,jq
+        run: cargo check -p bashkit --target wasm32-wasip2 --features scripted_tool,jq,terminal
         env:
           RUSTFLAGS: -D warnings
 
@@ -303,6 +303,14 @@ jobs:
       - name: Run realfs integration tests
         run: cargo test -p bashkit --test integration --features realfs -- host_mounts_tests thirdparty_adoption_tests
 
+      # In-process terminal + vi builtin are `cfg(terminal)` (off by default),
+      # so the main "Run tests" step compiles them out entirely.
+      - name: Run terminal tests
+        run: |
+          cargo test -p bashkit --features terminal --lib -- terminal:: builtins::vi::
+          cargo test -p bashkit --features terminal --test integration -- terminal_tests l_term_
+          cargo test -p bashkit --features terminal --doc terminal
+
       - name: Run fail-point tests (single-threaded)
         run: cargo test --features failpoints --test security_failpoint_tests -- --test-threads=1
 
@@ -414,6 +422,7 @@ jobs:
           cargo run --example realfs_readwrite --features realfs
           cargo run --example sqlite_basic --features sqlite
           cargo run --example sqlite_workflow --features sqlite
+          cargo run --example terminal_vi --features terminal
 
       # SSH tests
       - name: Run ssh builtin tests (mock handler)

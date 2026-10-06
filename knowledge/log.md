@@ -1,5 +1,9 @@
 # Bashkit Knowledge Update Log
 
+## 2026-10-06
+
+* **Feature**: [In-Process Terminal](integrations/in-process-terminal.md) behind the `terminal` feature (off by default): `Terminal` drives a `Bash` session from raw keystrokes, reports `Idle` when the session waits for input, and exposes the screen as text through the `vt100` crate. libghostty was considered and rejected because it needs Zig and C FFI, which would break the wasm and binding builds. The new `vi` builtin reads the device in raw mode and edits VFS files. Time blocked on terminal input is excluded from the execution timeout so an editor session is not killed while an agent thinks; busy work still times out (TM-DOS-120). Buffers are bounded (TM-DOS-119). Gaps recorded as L-TERM-001..003: vi is a subset, `read` does not wait for typed input, Ctrl-C lands at the next command boundary.
+
 ## 2026-10-04
 
 * **Build**: Nightly went red on a tree nobody had touched. `turso_core` depends on `branches` with `default-features = false`, and that no_std path compiles `core::intrinsics::abort()` — an unstable intrinsic rustc removed in 1.101.0-nightly. Only the AddressSanitizer job both tracks floating nightly and builds `turso_core` (`bashkit-cli` enables `sqlite` by default; Miri builds `bashkit --lib` without it), so stable CI stayed green and the same commit that passed as run #241 failed as #242 a day later. There is no version to bump to: `branches` 0.5.0, its latest release, carries the same line, and `turso_core` requires `^0.4.3` regardless. Cargo cannot add a feature to a transitive dependency, so `bashkit` now declares a direct `branches` edge under the `sqlite` feature purely to turn `std` on for the whole graph — `abort()` becomes `std::process::abort()`, which is what a std-linking build wants anyway, and the unstable intrinsic leaves the tree. Recorded in [Dependency Policy](operations/dependencies.md#feature-unification-edges).

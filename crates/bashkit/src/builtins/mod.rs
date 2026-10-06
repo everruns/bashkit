@@ -108,6 +108,8 @@ mod tree;
 mod truncate;
 mod vars;
 mod verify;
+#[cfg(feature = "terminal")]
+mod vi;
 mod wait;
 mod wc;
 mod yes;
@@ -220,6 +222,8 @@ pub use tree::Tree;
 pub use truncate::Truncate;
 pub use vars::{Eval, Local, Readonly, Set, Shift, Shopt, Times, Unset};
 pub use verify::Verify;
+#[cfg(feature = "terminal")]
+pub use vi::Vi;
 pub use wait::Wait;
 pub use wc::Wc;
 pub use yes::Yes;
