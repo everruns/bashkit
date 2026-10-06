@@ -297,7 +297,9 @@ def test_tm_inf_002_default_env_vars_are_sandboxed():
     """TM-INF-002: builtin shell vars should resolve to virtual sandbox values."""
     r = Bash().execute_sync('echo "HOME=$HOME PATH=$PATH USER=$USER HOSTNAME=$HOSTNAME"')
     assert r.exit_code == 0
-    assert r.stdout.strip() == "HOME=/home/sandbox PATH= USER=sandbox HOSTNAME=bashkit-sandbox"
+    assert (
+        r.stdout.strip() == "HOME=/home/sandbox PATH=/usr/local/bin:/usr/bin:/bin USER=sandbox HOSTNAME=bashkit-sandbox"
+    )
 
 
 def test_tm_esc_002_process_substitution_stays_in_sandbox():

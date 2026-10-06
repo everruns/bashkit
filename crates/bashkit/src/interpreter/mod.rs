@@ -2986,89 +2986,21 @@ impl Interpreter {
 
             match command {
                 Command::Simple(simple) => {
-                    let result = self.execute_simple_command(simple, None).await?;
-                    self.set_simple_pipestatus(result.exit_code);
-                    Ok(result)
+                    // One Result local (not `?` + a second ExecResult copy):
+                    // this frame repeats per `$(...)` nesting level.
+                    let result = self.execute_simple_command(simple, None).await;
+                    if let Ok(r) = &result {
+                        self.set_simple_pipestatus(r.exit_code);
+                    }
+                    result
                 }
                 Command::Pipeline(pipeline) => self.execute_pipeline(pipeline).await,
                 Command::List(list) => self.execute_list(list).await,
                 Command::Compound(compound, redirects) => {
-                    if let Some(stderr) = self.logic_only_redirect_error(redirects) {
-                        return Ok(ExecResult::err(stderr, 1));
-                    }
-
-                    // Process input redirections before executing compound
-                    let stdin = match self.process_input_redirections(None, redirects).await {
-                        Ok(s) => s,
-                        Err(crate::error::Error::CommandFailure(msg)) => {
-                            return Ok(ExecResult::err(msg, 1));
-                        }
-                        Err(e) => return Err(e),
-                    };
-                    let prev_pipeline_stdin = if stdin.is_some() {
-                        let prev = self.pipeline_stdin.take();
-                        self.pipeline_stdin = stdin;
-                        Some(prev)
-                    } else {
-                        None
-                    };
-
-                    // Suspend output callback while output redirects are active
-                    // so that maybe_emit_output inside the compound body does not
-                    // leak output that will be redirected (e.g. `{ cmd; } 2>/dev/null`).
-                    let has_output_redirect = redirects.iter().any(|r| {
-                        !matches!(
-                            r.kind,
-                            RedirectKind::Input | RedirectKind::HereDoc | RedirectKind::HereString
-                        )
-                    });
-                    let saved_callback = if has_output_redirect {
-                        self.output_callback.take()
-                    } else {
-                        None
-                    };
-
-                    let has_dup_output =
-                        redirects.iter().any(|r| r.kind == RedirectKind::DupOutput);
-                    let has_file_redirect = redirects.iter().any(|r| {
-                        matches!(
-                            r.kind,
-                            RedirectKind::Output
-                                | RedirectKind::Clobber
-                                | RedirectKind::Append
-                                | RedirectKind::OutputBoth
-                        )
-                    });
-                    let capture_pending_fd = has_dup_output && has_file_redirect;
-                    if capture_pending_fd {
-                        if self.pending_fd_capture_depth == 0 {
-                            self.clear_pending_fd_redirect_state();
-                        }
-                        self.pending_fd_capture_depth += 1;
-                    }
-                    let result = self.execute_compound(compound).await;
-                    if capture_pending_fd {
-                        self.pending_fd_capture_depth =
-                            self.pending_fd_capture_depth.saturating_sub(1);
-                        if result.is_err() {
-                            self.clear_pending_fd_redirect_state();
-                        }
-                    }
-                    let result = result?;
-
-                    // Restore callback before applying redirections
-                    if let Some(cb) = saved_callback {
-                        self.output_callback = Some(cb);
-                    }
-
-                    if let Some(prev) = prev_pipeline_stdin {
-                        self.pipeline_stdin = prev;
-                    }
-                    if redirects.is_empty() {
-                        Ok(result)
-                    } else {
-                        self.apply_redirections(result, redirects).await
-                    }
+                    // Own frame: keeps this arm's temporaries off the stack
+                    // of every `$(...)`/function nesting level.
+                    self.execute_compound_with_redirects(compound, redirects)
+                        .await
                 }
                 Command::Function(func_def) => {
                     // THREAT[TM-DOS-060]: Check function count/size budget
@@ -9101,6 +9033,89 @@ impl Interpreter {
             && redirect.fd_var.is_none()
             && matches!(redirect.fd, None | Some(0)))
         .then_some(cmd.redirects.as_slice())
+    }
+
+    fn execute_compound_with_redirects<'a>(
+        &'a mut self,
+        compound: &'a CompoundCommand,
+        redirects: &'a [Redirect],
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecResult>> + Send + 'a>> {
+        Box::pin(async move {
+            if let Some(stderr) = self.logic_only_redirect_error(redirects) {
+                return Ok(ExecResult::err(stderr, 1));
+            }
+
+            // Process input redirections before executing compound
+            let stdin = match self.process_input_redirections(None, redirects).await {
+                Ok(s) => s,
+                Err(crate::error::Error::CommandFailure(msg)) => {
+                    return Ok(ExecResult::err(msg, 1));
+                }
+                Err(e) => return Err(e),
+            };
+            let prev_pipeline_stdin = if stdin.is_some() {
+                let prev = self.pipeline_stdin.take();
+                self.pipeline_stdin = stdin;
+                Some(prev)
+            } else {
+                None
+            };
+
+            // Suspend output callback while output redirects are active
+            // so that maybe_emit_output inside the compound body does not
+            // leak output that will be redirected (e.g. `{ cmd; } 2>/dev/null`).
+            let has_output_redirect = redirects.iter().any(|r| {
+                !matches!(
+                    r.kind,
+                    RedirectKind::Input | RedirectKind::HereDoc | RedirectKind::HereString
+                )
+            });
+            let saved_callback = if has_output_redirect {
+                self.output_callback.take()
+            } else {
+                None
+            };
+
+            let has_dup_output = redirects.iter().any(|r| r.kind == RedirectKind::DupOutput);
+            let has_file_redirect = redirects.iter().any(|r| {
+                matches!(
+                    r.kind,
+                    RedirectKind::Output
+                        | RedirectKind::Clobber
+                        | RedirectKind::Append
+                        | RedirectKind::OutputBoth
+                )
+            });
+            let capture_pending_fd = has_dup_output && has_file_redirect;
+            if capture_pending_fd {
+                if self.pending_fd_capture_depth == 0 {
+                    self.clear_pending_fd_redirect_state();
+                }
+                self.pending_fd_capture_depth += 1;
+            }
+            let result = self.execute_compound(compound).await;
+            if capture_pending_fd {
+                self.pending_fd_capture_depth = self.pending_fd_capture_depth.saturating_sub(1);
+                if result.is_err() {
+                    self.clear_pending_fd_redirect_state();
+                }
+            }
+            let result = result?;
+
+            // Restore callback before applying redirections
+            if let Some(cb) = saved_callback {
+                self.output_callback = Some(cb);
+            }
+
+            if let Some(prev) = prev_pipeline_stdin {
+                self.pipeline_stdin = prev;
+            }
+            if redirects.is_empty() {
+                Ok(result)
+            } else {
+                self.apply_redirections(result, redirects).await
+            }
+        })
     }
 
     fn execute_cmd_subst<'a>(
