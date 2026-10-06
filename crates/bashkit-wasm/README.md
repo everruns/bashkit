@@ -113,6 +113,46 @@ as the `Bash` VFS helpers below.
 - `executeWithOutput(cmd, callback)`, async execution plus incremental
   `(stdout, stderr)` chunks. The returned `ExecResult` remains authoritative.
 
+## Interactive terminal
+
+`Terminal` runs an interactive shell session on an in-memory terminal: you
+forward keystrokes, it returns escape-sequence bytes for a renderer such as
+[xterm.js](https://xtermjs.org). `vi`, `less` and `more` run full-screen. Try it
+on the [bashkit.sh playground](https://bashkit.sh/playground).
+
+```js
+import { Terminal as XTerm } from "@xterm/xterm";
+import { initBashkit, Terminal } from "@everruns/bashkit-wasm";
+
+await initBashkit();
+const xterm = new XTerm();
+xterm.open(document.getElementById("term"));
+
+const term = new Terminal({ rows: xterm.rows, cols: xterm.cols, cwd: "/home/user" });
+let running = false;
+let again = false;
+async function pump() {
+  if (running) return void (again = true);
+  running = true;
+  do {
+    again = false;
+    await term.runUntilIdle(); // { status: "idle" } or { status: "exited", exitCode }
+    xterm.write(term.takeOutput());
+  } while (again);
+  running = false;
+}
+xterm.onData((keys) => { term.send(keys); pump(); });
+xterm.onResize(({ rows, cols }) => term.resize(rows, cols));
+pump();
+```
+
+`runUntilIdle()` resolves once the session waits for input; keystrokes sent
+while a command runs are queued. `screenText()` returns the visible screen as
+plain text and `fs()` reads what `vi` saved. `Terminal` takes every `Bash`
+option plus `rows` and `cols`. It is `undefined` in custom builds made with
+`BASHKIT_WASM_FEATURES=""`. See the [terminal guide](https://bashkit.sh/docs/terminal/)
+for the line editor, `vi` keys and limits.
+
 ## Options
 
 ```ts

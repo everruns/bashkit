@@ -249,6 +249,45 @@ export class Bash {
   ls(path: string): string[];
 }
 
+/** Options for constructing a {@link Terminal}. */
+export interface TerminalOptions extends BashOptions {
+  /** Rows (default 24, min 2). */
+  rows?: number;
+  /** Columns (default 80, min 2). */
+  cols?: number;
+}
+
+/** Result of {@link Terminal.runUntilIdle}. */
+export type TerminalStatus =
+  | { status: "idle" }
+  | { status: "exited"; exitCode: number };
+
+/**
+ * Interactive bash session on an in-memory terminal: keystrokes in,
+ * escape-sequence bytes out, for renderers such as xterm.js. Runs `vi`,
+ * `less` and `more` full-screen.
+ */
+export class Terminal {
+  constructor(options?: TerminalOptions);
+  /** Queue keystrokes (`\r` Enter, `\x03` Ctrl-C). Returns bytes accepted. */
+  send(input: string): number;
+  sendBytes(input: Uint8Array): number;
+  /** Run until the session waits for input or the shell exits. */
+  runUntilIdle(): Promise<TerminalStatus>;
+  /** Drain output bytes produced since the last call. */
+  takeOutput(): Uint8Array;
+  /** Visible screen as plain text. */
+  screenText(): string;
+  resize(rows: number, cols: number): void;
+  readonly rows: number;
+  readonly cols: number;
+  isAlternateScreen(): boolean;
+  /** Exit code once the shell has exited. */
+  readonly exitCode: number | undefined;
+  /** Live handle to the session's virtual filesystem. */
+  fs(): FileSystem;
+}
+
 /**
  * Initialize the WebAssembly module. Must resolve before constructing `Bash`.
  * Idempotent.

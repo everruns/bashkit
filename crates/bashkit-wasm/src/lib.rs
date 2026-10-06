@@ -38,6 +38,9 @@ use wasm_bindgen_futures::{JsFuture, future_to_promise};
 mod hostfs;
 use hostfs::HostFs;
 
+#[cfg(feature = "terminal")]
+mod terminal;
+
 /// Install a panic hook that forwards Rust panics to `console.error` with a
 /// readable message and stack, instead of the default unhelpful
 /// `RuntimeError: unreachable`.
@@ -816,6 +819,13 @@ fn set_property(object: &js_sys::Object, name: &str, value: &JsValue) -> Result<
 }
 
 fn build_core(config: &Config, sync_flag: &Arc<AtomicBool>) -> Result<CoreBash, JsError> {
+    let core = core_builder(config, sync_flag).build();
+    seed_files(&core.fs(), &config.files)?;
+    Ok(core)
+}
+
+/// Interpreter builder from parsed options, shared by `Bash` and `Terminal`.
+fn core_builder(config: &Config, sync_flag: &Arc<AtomicBool>) -> bashkit::BashBuilder {
     let profile = bashkit::ExecutionProfile::named(config.profile);
     let mut builder = CoreBash::builder().profile(profile.clone());
 
@@ -866,11 +876,12 @@ fn build_core(config: &Config, sync_flag: &Arc<AtomicBool>) -> Result<CoreBash, 
         );
     }
 
-    let core = builder.build();
+    builder
+}
 
-    // Seed pre-created files as normal writable VFS entries.
-    for (path, content) in &config.files {
-        let fs = core.fs();
+/// Seed pre-created files as normal writable VFS entries.
+fn seed_files(fs: &Arc<dyn FileSystemTrait>, files: &[(String, String)]) -> Result<(), JsError> {
+    for (path, content) in files {
         if let Some(parent) = Path::new(path).parent() {
             let _ = fs.mkdir(parent, true).now_or_never();
         }
@@ -879,8 +890,7 @@ fn build_core(config: &Config, sync_flag: &Arc<AtomicBool>) -> Result<CoreBash, 
             .ok_or_else(|| JsError::new("seeding files did not complete synchronously"))?
             .map_err(|e| JsError::new(&e.to_string()))?;
     }
-
-    Ok(core)
+    Ok(())
 }
 
 fn parse_options(options: &JsValue) -> Result<Config, JsError> {

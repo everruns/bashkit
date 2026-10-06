@@ -72,6 +72,23 @@ interpreter. Present: full bash syntax, the text-tool builtins (`grep`, `sed`,
 custom builtins (sync + async), streaming output, cancellation, static script
 analysis, and content-addressed commit/checkout persistence.
 
+Also present: the `Terminal` class (cargo feature `terminal` on
+`bashkit-wasm`, wrapping `bashkit::terminal`). The crate feature is off by
+default like the core one, but `scripts/build.sh` enables it for the npm
+package (`BASHKIT_WASM_FEATURES`, default `terminal`; `""` drops it). Decision:
+it adds ~157 KB raw / ~60 KB gzipped (about 2% of the bundle) and does nothing
+until a page constructs `Terminal`, so one package serves both plain `Bash`
+users and xterm.js terminals such as the bashkit.sh `/playground`. The JS entry
+re-exports it as `glue.Terminal`, so a build without the feature exports
+`undefined` instead of failing to import; the playground falls back to a
+line editor over `Bash.execute` in that case.
+
+`Terminal.runUntilIdle()` polls the core `run_until_idle` future once per wake
+and drops it, releasing the `RefCell` borrow between polls. The core call is
+cancellation-safe (the session future lives inside the terminal), so this
+matches awaiting it, and `send`/`takeOutput`/`resize` stay callable while a
+command such as `sleep` is in flight.
+
 Absent (need sockets, threads, or a host FS the browser sandbox lacks):
 `http_client` (`curl`/`wget`), `ssh`, `sqlite`, embedded `python`, `realfs`
 mounts, and native `interop`. Reach the network from a custom builtin that calls
