@@ -248,3 +248,30 @@ printf '%q\n' "it's"
 ### expect
 it\'s
 ### end
+
+### printf_time_directive_epoch
+# %(fmt)T formats epoch seconds
+TZ=UTC printf '%(%Y-%m-%d %H:%M:%S)T\n' 86400
+### expect
+1970-01-02 00:00:00
+### end
+
+### printf_time_directive_width_and_repeat
+TZ=UTC printf '[%-8(%H:%M)T] %s\n' 3600 a 7200 b
+### expect
+[01:00   ] a
+[02:00   ] b
+### end
+
+### printf_time_directive_missing_arg_is_now
+# A missing argument means now; only check the shape
+printf '%(%Y)T\n' | grep -cE '^[0-9]{4}$'
+### expect
+1
+### end
+
+### printf_time_directive_v
+TZ=UTC printf -v d '%(%F)T' 0; echo "$d"
+### expect
+1970-01-01
+### end

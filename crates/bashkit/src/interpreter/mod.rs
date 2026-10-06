@@ -1414,7 +1414,6 @@ impl Interpreter {
             "return" => Return,
             "test" => Test,
             "[" => Bracket,
-            "printf" => Printf,
             "export" => Export,
             "read" => Read,
             "set" => Set,
@@ -1575,18 +1574,19 @@ impl Interpreter {
 
         // THREAT[TM-INF-018]: Resolve the virtual clock mode for `date`.
         // Priority: fixed_epoch > epoch_offset > real clock.
+        // printf's `%(fmt)T` shares the same clock.
+        let clock = if let Some(epoch) = fixed_epoch {
+            use chrono::DateTime;
+            builtins::Date::with_fixed_epoch(DateTime::from_timestamp(epoch, 0).unwrap_or_default())
+        } else if let Some(offset) = epoch_offset {
+            builtins::Date::with_offset_seconds(offset)
+        } else {
+            builtins::Date::new()
+        };
+        builtins.insert("date".to_string(), Arc::new(clock));
         builtins.insert(
-            "date".to_string(),
-            Arc::new(if let Some(epoch) = fixed_epoch {
-                use chrono::DateTime;
-                builtins::Date::with_fixed_epoch(
-                    DateTime::from_timestamp(epoch, 0).unwrap_or_default(),
-                )
-            } else if let Some(offset) = epoch_offset {
-                builtins::Date::with_offset_seconds(offset)
-            } else {
-                builtins::Date::new()
-            }),
+            "printf".to_string(),
+            Arc::new(builtins::Printf::with_clock(clock)),
         );
 
         // System info builtins (configurable virtual values)

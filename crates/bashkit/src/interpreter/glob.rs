@@ -707,7 +707,7 @@ impl Interpreter {
         &self,
         item: &str,
     ) -> std::result::Result<Vec<String>, String> {
-        if !self.contains_glob_chars(item) || self.is_noglob() {
+        if !(self.contains_glob_chars(item) || self.contains_extglob(item)) || self.is_noglob() {
             return Ok(vec![item.to_string()]);
         }
         let glob_matches = self.expand_glob(item).await.unwrap_or_default();
@@ -827,7 +827,7 @@ impl Interpreter {
             let is_last = idx + 1 == components.len();
             let mut next: Vec<(PathBuf, String)> = Vec::new();
 
-            if self.contains_glob_chars(component) {
+            if self.contains_glob_chars(component) || self.contains_extglob(component) {
                 // Dotfiles are hidden per component unless dotglob is set or this
                 // component explicitly starts with '.'.
                 let component_starts_with_dot = component.starts_with('.');

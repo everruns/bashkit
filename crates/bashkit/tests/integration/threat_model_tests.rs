@@ -4181,6 +4181,19 @@ mod tm_inf_018_date {
         assert_eq!(r.stdout.trim(), "1700000000");
     }
 
+    /// TM-INF-018: printf `%(fmt)T` reads the same virtual clock as `date`,
+    /// so it can't bypass `fixed_epoch`, and it ignores host timezone state.
+    #[tokio::test]
+    async fn fixed_epoch_freezes_printf_time_directive() {
+        let mut bash = Bash::builder().fixed_epoch(1_700_000_000).build();
+        let r = bash
+            .exec("printf '%(%s %z)T|%(%s)T\\n' -1 ''")
+            .await
+            .unwrap();
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.stdout, "1700000000 +0000|1700000000\n");
+    }
+
     /// TM-INF-018: `Bash::builder().epoch_offset(N)` keeps the clock
     /// ticking but shifts its absolute value by N seconds. Verify two
     /// consecutive reads differ by less than 1s (ticking) yet sit at
