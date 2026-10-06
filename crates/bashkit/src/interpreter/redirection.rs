@@ -44,7 +44,9 @@ impl Interpreter {
                     let target_path = self.expand_word(&redirect.target).await?;
                     let path = self.resolve_path(&target_path);
                     // Handle /dev/null at interpreter level - cannot be bypassed
-                    if is_dev_null(&path) {
+                    if dev_fd_alias(&path) == Some(0) {
+                        // `< /dev/stdin` re-reads the current stdin: no-op.
+                    } else if is_dev_null(&path) {
                         stdin = Some(crate::StreamData::new()); // EOF
                     } else if !self.shell_features.has_file_redirects() {
                         return Err(crate::error::Error::Execution(format!(
@@ -134,7 +136,10 @@ impl Interpreter {
                 RedirectKind::Output | RedirectKind::Clobber => {
                     let target_path = self.expand_word(&redirect.target).await?;
                     let path = self.resolve_path(&target_path);
-                    if is_dev_null(&path) {
+                    if let Some(target_fd) = dev_fd_alias(&path) {
+                        self.dup_output_fast(&mut result, redirect.fd.unwrap_or(1), target_fd)
+                            .await?;
+                    } else if is_dev_null(&path) {
                         match redirect.fd {
                             Some(2) => result.stderr = crate::StreamData::new(),
                             _ => result.stdout = crate::StreamData::new(),
@@ -183,7 +188,10 @@ impl Interpreter {
                 RedirectKind::Append => {
                     let target_path = self.expand_word(&redirect.target).await?;
                     let path = self.resolve_path(&target_path);
-                    if is_dev_null(&path) {
+                    if let Some(target_fd) = dev_fd_alias(&path) {
+                        self.dup_output_fast(&mut result, redirect.fd.unwrap_or(1), target_fd)
+                            .await?;
+                    } else if is_dev_null(&path) {
                         match redirect.fd {
                             Some(2) => result.stderr = crate::StreamData::new(),
                             _ => result.stdout = crate::StreamData::new(),
@@ -221,7 +229,18 @@ impl Interpreter {
                 RedirectKind::OutputBoth => {
                     let target_path = self.expand_word(&redirect.target).await?;
                     let path = self.resolve_path(&target_path);
-                    if is_dev_null(&path) {
+                    if let Some(target_fd) = dev_fd_alias(&path) {
+                        // `&> /dev/fd/N` == `>&N 2>&N`, resolved against the
+                        // original descriptors.
+                        if target_fd == 2 {
+                            let mut combined = std::mem::take(&mut result.stdout);
+                            combined.append(&result.stderr);
+                            result.stderr = combined;
+                        } else {
+                            self.dup_output_fast(&mut result, 1, target_fd).await?;
+                            self.dup_output_fast(&mut result, 2, target_fd).await?;
+                        }
+                    } else if is_dev_null(&path) {
                         result.stdout = crate::StreamData::new();
                         result.stderr = crate::StreamData::new();
                     } else {
@@ -241,48 +260,7 @@ impl Interpreter {
                     let target = self.expand_word(&redirect.target).await?;
                     let target_fd: i32 = target.parse().unwrap_or(1);
                     let src_fd = redirect.fd.unwrap_or(1);
-
-                    // Check exec_fd_table for persistent fd targets
-                    if let Some(fd_target) = self.exec_fd_table.get(&target_fd).cloned() {
-                        let data = if src_fd == 2 {
-                            std::mem::take(&mut result.stderr)
-                        } else {
-                            std::mem::take(&mut result.stdout)
-                        };
-                        match &fd_target {
-                            FdTarget::Stdout => result.stdout.append(&data),
-                            FdTarget::Stderr => result.stderr.append(&data),
-                            FdTarget::DevNull => {}
-                            FdTarget::WriteFile(path, _) | FdTarget::AppendFile(path, _) => {
-                                self.fs.append_file(path, data.as_bytes()).await?;
-                            }
-                        }
-                    } else {
-                        match (src_fd, target_fd) {
-                            (2, 1) => {
-                                result.stdout.append(&result.stderr);
-                                result.stderr = crate::StreamData::new();
-                            }
-                            (1, 2) => {
-                                result.stderr.append(&result.stdout);
-                                result.stdout = crate::StreamData::new();
-                            }
-                            (src, dst) if dst >= 3 => {
-                                let data = if src == 2 {
-                                    std::mem::take(&mut result.stderr)
-                                } else {
-                                    std::mem::take(&mut result.stdout)
-                                };
-                                if self.pending_fd_capture_depth > 0 {
-                                    // Move content to pending_fd_output for compound
-                                    // redirect routing (e.g. `echo msg 1>&3` inside
-                                    // `{ ... } 3>&1 >file`).
-                                    self.append_pending_fd_output(dst, &data);
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
+                    self.dup_output_fast(&mut result, src_fd, target_fd).await?;
                 }
                 RedirectKind::Input
                 | RedirectKind::HereString
@@ -293,6 +271,57 @@ impl Interpreter {
         }
 
         Ok(result)
+    }
+
+    /// `src_fd>&target_fd` on the fast (single-pass) redirect path.
+    async fn dup_output_fast(
+        &mut self,
+        result: &mut ExecResult,
+        src_fd: i32,
+        target_fd: i32,
+    ) -> Result<()> {
+        // Check exec_fd_table for persistent fd targets
+        if let Some(fd_target) = self.exec_fd_table.get(&target_fd).cloned() {
+            let data = if src_fd == 2 {
+                std::mem::take(&mut result.stderr)
+            } else {
+                std::mem::take(&mut result.stdout)
+            };
+            match &fd_target {
+                FdTarget::Stdout => result.stdout.append(&data),
+                FdTarget::Stderr => result.stderr.append(&data),
+                FdTarget::DevNull => {}
+                FdTarget::WriteFile(path, _) | FdTarget::AppendFile(path, _) => {
+                    self.fs.append_file(path, data.as_bytes()).await?;
+                }
+            }
+        } else {
+            match (src_fd, target_fd) {
+                (2, 1) => {
+                    result.stdout.append(&result.stderr);
+                    result.stderr = crate::StreamData::new();
+                }
+                (1, 2) => {
+                    result.stderr.append(&result.stdout);
+                    result.stdout = crate::StreamData::new();
+                }
+                (src, dst) if dst >= 3 => {
+                    let data = if src == 2 {
+                        std::mem::take(&mut result.stderr)
+                    } else {
+                        std::mem::take(&mut result.stdout)
+                    };
+                    if self.pending_fd_capture_depth > 0 {
+                        // Move content to pending_fd_output for compound
+                        // redirect routing (e.g. `echo msg 1>&3` inside
+                        // `{ ... } 3>&1 >file`).
+                        self.append_pending_fd_output(dst, &data);
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(())
     }
 
     pub(super) fn disabled_redirect_error(&self, redirects: &[Redirect]) -> Option<String> {
@@ -340,6 +369,11 @@ impl Interpreter {
                 RedirectKind::Output | RedirectKind::Clobber => {
                     let target_path = self.expand_word(&redirect.target).await?;
                     let path = self.resolve_path(&target_path);
+                    if let Some(target_fd) = dev_fd_alias(&path) {
+                        let src_fd = redirect.fd.unwrap_or(1);
+                        self.dup_output_fd_table(src_fd, target_fd, &mut fd1, &mut fd2);
+                        continue;
+                    }
 
                     if redirect.kind == RedirectKind::Output
                         && self.scoped.variables.get("SHOPT_C").map(|v| v.as_str()) == Some("1")
@@ -368,6 +402,11 @@ impl Interpreter {
                 RedirectKind::Append => {
                     let target_path = self.expand_word(&redirect.target).await?;
                     let path = self.resolve_path(&target_path);
+                    if let Some(target_fd) = dev_fd_alias(&path) {
+                        let src_fd = redirect.fd.unwrap_or(1);
+                        self.dup_output_fd_table(src_fd, target_fd, &mut fd1, &mut fd2);
+                        continue;
+                    }
                     let target = if is_dev_null(&path) {
                         FdTarget::DevNull
                     } else {
@@ -381,6 +420,11 @@ impl Interpreter {
                 RedirectKind::OutputBoth => {
                     let target_path = self.expand_word(&redirect.target).await?;
                     let path = self.resolve_path(&target_path);
+                    if let Some(target_fd) = dev_fd_alias(&path) {
+                        self.dup_output_fd_table(1, target_fd, &mut fd1, &mut fd2);
+                        self.dup_output_fd_table(2, 1, &mut fd1, &mut fd2);
+                        continue;
+                    }
                     let target = if is_dev_null(&path) {
                         FdTarget::DevNull
                     } else {
@@ -393,32 +437,7 @@ impl Interpreter {
                     let target = self.expand_word(&redirect.target).await?;
                     let target_fd: i32 = target.parse().unwrap_or(1);
                     let src_fd = redirect.fd.unwrap_or(1);
-
-                    // Look up exec_fd_table for persistent fd targets
-                    if let Some(exec_target) = self.exec_fd_table.get(&target_fd).cloned() {
-                        match src_fd {
-                            2 => fd2 = exec_target,
-                            _ => fd1 = exec_target,
-                        }
-                    } else {
-                        // Resolve target from current fd table state
-                        let resolved = match target_fd {
-                            1 => Some(fd1.clone()),
-                            2 => Some(fd2.clone()),
-                            _ => None,
-                        };
-                        if let Some(target) = resolved {
-                            match src_fd {
-                                1 => fd1 = target,
-                                2 => fd2 = target,
-                                n if n >= 3 => {
-                                    // Store fd3+ target for routing pending_fd_output later
-                                    self.pending_fd_targets.push((n, target));
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
+                    self.dup_output_fd_table(src_fd, target_fd, &mut fd1, &mut fd2);
                 }
                 RedirectKind::Input
                 | RedirectKind::HereString
@@ -460,5 +479,40 @@ impl Interpreter {
         result.stdout = new_stdout;
         result.stderr = new_stderr;
         Ok(result)
+    }
+
+    /// `src_fd>&target_fd` on the fd-table redirect path.
+    fn dup_output_fd_table(
+        &mut self,
+        src_fd: i32,
+        target_fd: i32,
+        fd1: &mut FdTarget,
+        fd2: &mut FdTarget,
+    ) {
+        // Look up exec_fd_table for persistent fd targets
+        if let Some(exec_target) = self.exec_fd_table.get(&target_fd).cloned() {
+            match src_fd {
+                2 => *fd2 = exec_target,
+                _ => *fd1 = exec_target,
+            }
+        } else {
+            // Resolve target from current fd table state
+            let resolved = match target_fd {
+                1 => Some(fd1.clone()),
+                2 => Some(fd2.clone()),
+                _ => None,
+            };
+            if let Some(target) = resolved {
+                match src_fd {
+                    1 => *fd1 = target,
+                    2 => *fd2 = target,
+                    n if n >= 3 => {
+                        // Store fd3+ target for routing pending_fd_output later
+                        self.pending_fd_targets.push((n, target));
+                    }
+                    _ => {}
+                }
+            }
+        }
     }
 }

@@ -821,44 +821,10 @@ impl<'a> Lexer<'a> {
                             }
                         }
                     } else {
-                        // THREAT[TM-DOS]: Track substitution nesting depth to
-                        // enforce max_subst_depth consistently in both quoted
-                        // and unquoted contexts (issue #996).
-                        let mut depth = 1;
-                        let mut subst_depth = 1usize;
-                        while let Some(c) = self.peek_char() {
-                            word.push(c);
-                            self.advance();
-                            if c == '$' && self.peek_char() == Some('(') {
-                                subst_depth += 1;
-                                if subst_depth > self.max_subst_depth {
-                                    // Depth limit exceeded — consume remaining
-                                    // parens and stop nesting deeper.
-                                    while let Some(ic) = self.peek_char() {
-                                        word.push(ic);
-                                        self.advance();
-                                        if ic == '(' {
-                                            depth += 1;
-                                        } else if ic == ')' {
-                                            depth -= 1;
-                                            if depth == 0 {
-                                                break;
-                                            }
-                                        }
-                                    }
-                                    break;
-                                }
-                            }
-                            if c == '(' {
-                                depth += 1;
-                            } else if c == ')' {
-                                depth -= 1;
-                                if depth == 0 {
-                                    break;
-                                }
-                            }
-                        }
-                        if depth > 0 {
+                        // Quote/heredoc-aware end of the body (see subst_scan).
+                        // Nesting depth is bounded where bodies are parsed
+                        // (parser max_depth) and run (max_subst_depth).
+                        if !self.read_command_subst_body(&mut word) {
                             return Some(Token::Error(
                                 "unterminated command substitution".to_string(),
                             ));
@@ -1634,112 +1600,25 @@ impl<'a> Lexer<'a> {
         result
     }
 
-    /// Read command substitution content after `$(`, handling nested parens and quotes.
-    /// Appends chars to `content` and adds the closing `)`.
-    /// THREAT[TM-DOS-044]: `subst_depth` tracks nesting to prevent stack overflow.
+    /// Read command substitution content after `$(`, handling nested parens,
+    /// quotes, comments and heredoc bodies (see `subst_scan`). Appends chars
+    /// to `content` and adds the closing `)`.
     fn read_command_subst_into(&mut self, content: &mut String) {
-        self.read_command_subst_into_depth(content, 0);
+        self.read_command_subst_body(content);
     }
 
-    fn read_command_subst_into_depth(&mut self, content: &mut String, subst_depth: usize) {
-        if subst_depth >= self.max_subst_depth {
-            // Depth limit exceeded — consume until matching ')' and emit error token
-            let mut depth = 1;
-            while let Some(c) = self.peek_char() {
-                self.advance();
-                match c {
-                    '(' => depth += 1,
-                    ')' => {
-                        depth -= 1;
-                        if depth == 0 {
-                            content.push(')');
-                            return;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            return;
-        }
-
-        let mut depth = 1;
-        while let Some(c) = self.peek_char() {
-            match c {
-                '(' => {
-                    depth += 1;
-                    content.push(c);
-                    self.advance();
-                }
-                ')' => {
-                    depth -= 1;
-                    self.advance();
-                    if depth == 0 {
-                        content.push(')');
-                        break;
-                    }
-                    content.push(c);
-                }
-                '"' => {
-                    // Nested double-quoted string inside $()
-                    content.push('"');
-                    self.advance();
-                    while let Some(qc) = self.peek_char() {
-                        match qc {
-                            '"' => {
-                                content.push('"');
-                                self.advance();
-                                break;
-                            }
-                            '\\' => {
-                                content.push('\\');
-                                self.advance();
-                                if let Some(esc) = self.peek_char() {
-                                    content.push(esc);
-                                    self.advance();
-                                }
-                            }
-                            '$' => {
-                                content.push('$');
-                                self.advance();
-                                if self.peek_char() == Some('(') {
-                                    content.push('(');
-                                    self.advance();
-                                    self.read_command_subst_into_depth(content, subst_depth + 1);
-                                }
-                            }
-                            _ => {
-                                content.push(qc);
-                                self.advance();
-                            }
-                        }
-                    }
-                }
-                '\'' => {
-                    // Single-quoted string inside $()
-                    content.push('\'');
-                    self.advance();
-                    while let Some(qc) = self.peek_char() {
-                        content.push(qc);
-                        self.advance();
-                        if qc == '\'' {
-                            break;
-                        }
-                    }
-                }
-                '\\' => {
-                    content.push('\\');
-                    self.advance();
-                    if let Some(esc) = self.peek_char() {
-                        content.push(esc);
-                        self.advance();
-                    }
-                }
-                _ => {
-                    content.push(c);
-                    self.advance();
-                }
+    /// Like `read_command_subst_into`; returns whether the closing `)` was
+    /// found. The scanner is iterative, so deep nesting cannot overflow the
+    /// host stack here (TM-DOS-044).
+    fn read_command_subst_body(&mut self, content: &mut String) -> bool {
+        let mut scanner = super::subst_scan::SubstScanner::new();
+        while let Some(c) = self.advance() {
+            content.push(c);
+            if scanner.feed(c) == super::subst_scan::Step::Close {
+                return true;
             }
         }
+        false
     }
 
     /// Read parameter expansion content after `${`, handling nested braces and quotes.

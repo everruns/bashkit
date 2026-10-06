@@ -14,6 +14,12 @@ pub struct Script {
     pub commands: Vec<Command>,
     /// Source span of the entire script
     pub span: Span,
+    /// Syntax error found after `commands` (see `Parser::parse_recovering`).
+    /// Reported as stderr + exit 2 once every command ran, unless one of
+    /// them stopped the script first (`exit`, `set -e`), matching bash's
+    /// line-by-line read-then-execute model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trailing_error: Option<String>,
 }
 
 /// A single command in the script.
@@ -1281,6 +1287,7 @@ mod tests {
         let script = Script {
             commands: vec![],
             span: Span::new(),
+            trailing_error: None,
         };
         assert!(script.commands.is_empty());
     }

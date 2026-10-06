@@ -54,6 +54,7 @@ pub mod date_timezone_differential_tests;
 pub mod date_timezone_no_tzdata_tests;
 #[cfg(feature = "tzdata")]
 pub mod date_timezone_tests;
+pub mod dev_fd_path_tests;
 pub mod dev_null_tests;
 pub mod exec_options_tests;
 pub mod execution_budget_tests;
@@ -100,6 +101,7 @@ pub mod nested_subscript_tests;
 pub mod network_security_tests;
 pub mod output_truncation_tests;
 pub mod parallel_sessions_tests;
+pub mod partial_parse_tests;
 pub mod proptest_differential;
 pub mod python_integration_tests;
 pub mod python_security_tests;

@@ -617,9 +617,53 @@ fn decode_file_bytes_for_path(_path: &Path, bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }
 
+/// Child-shell counterpart of `recover_partial_parse` in `lib.rs`: commands
+/// before a syntax error run, then the error is reported (exit 2). `bash -n`
+/// keeps whole-script rejection since it only checks syntax.
+fn nested_partial_parse(
+    (mut script, error): (Script, Option<crate::error::Error>),
+    noexec: bool,
+    shell_name: &str,
+) -> Result<Script> {
+    match error {
+        None => Ok(script),
+        Some(e) if noexec || script.commands.is_empty() => Err(e),
+        Some(e) => {
+            script.trailing_error = Some(format!("{shell_name}: syntax error: {e}\n"));
+            Ok(script)
+        }
+    }
+}
+
 /// Check if a path refers to /dev/null after normalization.
 /// Handles attempts to bypass via paths like `/dev/../dev/null`.
 fn is_dev_null(path: &Path) -> bool {
+    normalize_dev_path(path) == Path::new(DEV_NULL)
+}
+
+/// File descriptor aliased by `/dev/stdin`, `/dev/stdout`, `/dev/stderr` or
+/// `/dev/fd/N` (after `..` normalization), as on Linux.
+///
+/// Decision: these paths are resolved at the interpreter level like
+/// `/dev/null`, never through the VFS. Writing them as regular files silently
+/// swallowed `echo err > /dev/stderr`, a pattern agents use constantly.
+fn dev_fd_alias(path: &Path) -> Option<i32> {
+    let normalized = normalize_dev_path(path);
+    match normalized.to_str()? {
+        "/dev/stdin" => Some(0),
+        "/dev/stdout" => Some(1),
+        "/dev/stderr" => Some(2),
+        other => {
+            let n = other.strip_prefix("/dev/fd/")?;
+            if n.is_empty() || n.len() > 9 || !n.bytes().all(|b| b.is_ascii_digit()) {
+                return None;
+            }
+            n.parse().ok()
+        }
+    }
+}
+
+fn normalize_dev_path(path: &Path) -> PathBuf {
     // Normalize the path to handle .. and . components
     let mut normalized = PathBuf::new();
     for component in path.components() {
@@ -636,7 +680,7 @@ fn is_dev_null(path: &Path) -> bool {
     if normalized.as_os_str().is_empty() {
         normalized.push("/");
     }
-    normalized == Path::new(DEV_NULL)
+    normalized
 }
 
 /// THREAT[TM-INJ-009,TM-INJ-016]: Check if a variable name is an internal marker.
@@ -2650,6 +2694,7 @@ impl Interpreter {
         let max_stdout = self.limits.max_stdout_bytes;
         let max_stderr = self.limits.max_stderr_bytes;
 
+        let mut stopped = false;
         for command in &script.commands {
             self.check_cancelled()?;
             let emit_before = self.output_emit_count;
@@ -2702,14 +2747,17 @@ impl Interpreter {
                             Some(event) => {
                                 exit_code = event.code;
                                 self.last_exit_code = exit_code;
+                                stopped = true;
                                 break;
                             }
                             None => continue,
                         }
                     } else {
+                        stopped = true;
                         break;
                     }
                 } else {
+                    stopped = true;
                     break;
                 }
             }
@@ -2735,9 +2783,23 @@ impl Interpreter {
                 let suppressed = matches!(command, Command::Pipeline(p) if p.negated)
                     || result.errexit_suppressed;
                 if !suppressed {
+                    stopped = true;
                     break;
                 }
             }
+        }
+
+        // Syntax error after the commands that ran: bash reads and runs a
+        // script line by line, so it reports the error only on reaching it.
+        if !stopped && let Some(message) = &script.trailing_error {
+            let emit_before = self.output_emit_count;
+            let err = crate::StreamData::from(message.clone());
+            self.maybe_emit_output(&crate::StreamData::new(), &err, emit_before);
+            if !stderr_truncated {
+                stderr.append(&err);
+            }
+            exit_code = 2;
+            self.last_exit_code = 2;
         }
 
         // Run EXIT trap if registered (only for top-level execute)
@@ -4686,7 +4748,7 @@ impl Interpreter {
                 Some(parser_timeout),
             )
             .with_execution_budget(self.execution_budget.clone());
-            match parser.parse() {
+            match nested_partial_parse(parser.parse_recovering(), noexec, shell_name) {
                 Ok(s) => s,
                 Err(e) => {
                     return Ok(ExecResult::err(
@@ -4708,12 +4770,12 @@ impl Interpreter {
                     let parser =
                         Parser::with_limits(&script_owned, max_ast_depth, max_parser_operations)
                             .with_execution_budget(execution_budget);
-                    parser.parse()
+                    parser.parse_recovering()
                 })
                 .await
             })
             .await;
-            match parse_result {
+            match parse_result.map(|r| r.map(|p| nested_partial_parse(p, noexec, shell_name))) {
                 Ok(Ok(Ok(s))) => s,
                 Ok(Ok(Err(e))) => {
                     return Ok(ExecResult::err(
@@ -5738,11 +5800,37 @@ impl Interpreter {
             let deferred_proc_sub_start = self.deferred_proc_subs.len();
             let (_debug_stdout, _debug_stderr) = self.run_debug_trap().await;
 
-            let name = match self.expand_word(&command.name).await {
-                Ok(name) => name,
-                Err(err) => {
-                    self.discard_deferred_proc_subs_from(deferred_proc_sub_start);
-                    return Err(err);
+            // The command word undergoes the same field splitting as args:
+            // `"$@"`, `$cmd`, `$(...)` may yield several words (first is the
+            // name, rest are prepended args) or none at all (no command).
+            // Pure literals skip the field path (hot path, no splitting).
+            let start_subst_gen = self.subst_generation;
+            let name_is_literal = command
+                .name
+                .parts
+                .iter()
+                .all(|p| matches!(p, WordPart::Literal(_)));
+            let (name, name_extra_args, name_vanished) = if name_is_literal {
+                match self.expand_word(&command.name).await {
+                    Ok(name) => (name, Vec::new(), false),
+                    Err(err) => {
+                        self.discard_deferred_proc_subs_from(deferred_proc_sub_start);
+                        return Err(err);
+                    }
+                }
+            } else {
+                match self.expand_word_to_fields(&command.name).await {
+                    Ok(fields) => {
+                        let mut fields = fields.into_iter();
+                        match fields.next() {
+                            Some(first) => (first, fields.collect::<Vec<_>>(), false),
+                            None => (String::new(), Vec::new(), true),
+                        }
+                    }
+                    Err(err) => {
+                        self.discard_deferred_proc_subs_from(deferred_proc_sub_start);
+                        return Err(err);
+                    }
                 }
             };
 
@@ -5760,7 +5848,12 @@ impl Interpreter {
 
             let pre_expanded_args = if !name.is_empty() {
                 match self.expand_command_args(command).await {
-                    Ok(args) => Some(args),
+                    Ok(args) if name_extra_args.is_empty() => Some(args),
+                    Ok(args) => {
+                        let mut all = name_extra_args;
+                        all.extend(args);
+                        Some(all)
+                    }
                     Err(err) => {
                         self.discard_deferred_proc_subs_from(deferred_proc_sub_start);
                         return Err(err);
@@ -5794,7 +5887,7 @@ impl Interpreter {
 
             // Empty command handling
             if name.is_empty() {
-                if command.name.quoted && command.assignments.is_empty() {
+                if command.name.quoted && !name_vanished && command.assignments.is_empty() {
                     self.last_exit_code = 127;
                     self.discard_deferred_proc_subs_from(deferred_proc_sub_start);
                     return Ok(ExecResult::err(
@@ -5808,6 +5901,10 @@ impl Interpreter {
                     0
                 } else if command.assignments.is_empty() && !command.redirects.is_empty() {
                     // Redirect-only null command (`> file`, `< file`).
+                    0
+                } else if self.subst_generation == start_subst_gen {
+                    // Name expanded to nothing (`"$@"` with no params, empty
+                    // `$x`) and no command substitution ran: status 0.
                     0
                 } else {
                     self.last_exit_code
@@ -6132,7 +6229,10 @@ impl Interpreter {
                     let target_path = self.expand_word(&redirect.target).await?;
                     let path = self.resolve_path(&target_path);
                     self.ensure_persistent_fd_capacity(fd)?;
-                    if is_dev_null(&path) {
+                    if let Some(target_fd) = dev_fd_alias(&path) {
+                        let entry = self.exec_fd_alias_target(target_fd);
+                        self.exec_fd_table.insert(fd, entry);
+                    } else if is_dev_null(&path) {
                         self.exec_fd_table.insert(fd, FdTarget::DevNull);
                     } else {
                         // Truncate file on open (like real exec >file)
@@ -6146,7 +6246,10 @@ impl Interpreter {
                     let target_path = self.expand_word(&redirect.target).await?;
                     let path = self.resolve_path(&target_path);
                     self.ensure_persistent_fd_capacity(fd)?;
-                    if is_dev_null(&path) {
+                    if let Some(target_fd) = dev_fd_alias(&path) {
+                        let entry = self.exec_fd_alias_target(target_fd);
+                        self.exec_fd_table.insert(fd, entry);
+                    } else if is_dev_null(&path) {
                         self.exec_fd_table.insert(fd, FdTarget::DevNull);
                     } else {
                         self.exec_fd_table
@@ -6161,16 +6264,7 @@ impl Interpreter {
                         self.exec_fd_table.remove(&fd);
                     } else if let Ok(target_fd) = target.parse::<i32>() {
                         // exec N>&M duplicates fd M to fd N
-                        let target_entry = if target_fd == 1 {
-                            FdTarget::Stdout
-                        } else if target_fd == 2 {
-                            FdTarget::Stderr
-                        } else {
-                            self.exec_fd_table
-                                .get(&target_fd)
-                                .cloned()
-                                .unwrap_or(FdTarget::Stdout)
-                        };
+                        let target_entry = self.exec_fd_alias_target(target_fd);
                         self.ensure_persistent_fd_capacity(fd)?;
                         self.exec_fd_table.insert(fd, target_entry);
                     }
@@ -6180,6 +6274,20 @@ impl Interpreter {
         }
         let result = ExecResult::default();
         self.apply_redirections(result, redirects).await
+    }
+
+    /// Target for `exec N>&M` / `exec N>/dev/fd/M`.
+    fn exec_fd_alias_target(&self, target_fd: i32) -> FdTarget {
+        if target_fd == 1 {
+            FdTarget::Stdout
+        } else if target_fd == 2 {
+            FdTarget::Stderr
+        } else {
+            self.exec_fd_table
+                .get(&target_fd)
+                .cloned()
+                .unwrap_or(FdTarget::Stdout)
+        }
     }
 
     fn ensure_persistent_fd_capacity(&self, fd: i32) -> Result<()> {
