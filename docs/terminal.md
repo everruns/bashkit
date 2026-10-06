@@ -192,6 +192,31 @@ call again, with empty input, to keep waiting, or send `<C-c>`. One
 It is not a `BashTool`: that tool runs each call in a fresh shell, while a
 terminal keeps the shell, open programs and the screen between calls.
 
+## From Python
+
+The `bashkit` Python package ships the terminal as `bashkit.Terminal`, with
+the same calls as the Rust type plus the agent-style `call`:
+
+```python
+from bashkit import Terminal
+
+t = Terminal(rows=24, cols=80, cwd="/tmp")
+out = t.call("vi notes.txt<Enter>")            # Vim key notation
+assert out["activity"] == "running" and out["full_screen"]
+out = t.call("ihello<Esc>:wq<Enter>")
+assert out["commands"][0]["exit_code"] == 0
+assert t.fs().read_file("/tmp/notes.txt") == b"hello\n"
+
+# Low level: raw keys, bounded waits, screen and transcript.
+t.send("seq 1 100\r")
+t.run_until_idle(timeout=5)                    # "idle", "exited" or "timeout"
+print(t.screen_text(), t.history_text(), t.take_transcript(), t.activity())
+```
+
+`tool_definition()` and `system_prompt()` return the same tool metadata as
+`TerminalTool`. Calls are synchronous and release the GIL while the session
+runs; `timeout` bounds the wait.
+
 ## vi
 
 `vi [FILE]` opens the editor on the alternate screen; quitting restores the
