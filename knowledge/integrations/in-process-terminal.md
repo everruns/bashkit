@@ -83,6 +83,21 @@ programs write to the device, not the streaming callback, so they never land
 in the transcript. Transcript is drained (like `take_output`) and bounded
 (64 KiB output per record, 1 MiB total, oldest dropped).
 
+## Decision: TerminalTool is its own tool, not a `Tool` impl
+
+`terminal::TerminalTool` (`terminal/tool.rs`) exposes one session to an LLM:
+`call({"input", "wait_ms"})` returns screen, activity, `full_screen`,
+`waiting_for_input` and the drained transcript. It does not implement the
+`Tool` trait ([Tool Contract](tool-contract.md)): that contract is one isolated
+shell per call with `{"commands"}` input, while a terminal session carries
+state, open programs and the screen across calls. It mirrors the metadata
+names (`name`, `description`, `system_prompt`, `input_schema`,
+`output_schema`, `tool_definition`) so hosts register it the same way.
+Keys use Vim notation (`ihi<Esc>:wq<Enter>`, `<C-c>`, `<lt>`), unknown
+`<...>` tokens are typed literally, so heredocs (`<<EOF`) pass through. Each
+call waits up to `wait_ms` (default 5 s, max 60 s); an unfinished command is
+reported as `running`, never killed. Input per call is capped at 64 KiB.
+
 ## Decision: line discipline split
 
 - Cooked mode (prompt): the shell loop's own small line editor (echo, Backspace,
@@ -140,7 +155,9 @@ redirected (L-TERM-004).
 ## Tests
 
 - Unit: `terminal::tests` (line discipline, prompts, resize, exit, timeout
-  exclusion, Ctrl-C, transcript, activity, scrollback bounds) `builtins::vi::tests` (editing commands end-to-end
+  exclusion, Ctrl-C, transcript, activity, scrollback bounds) and
+  `terminal::tool::tests` (key notation, multi-call vi edit, running/finish,
+  exit, argument errors, definition). `builtins::vi::tests` (editing commands end-to-end
   through a `Terminal`), and `builtins::pager::tests` (paging, search, and
   `pagers_are_cat_like_without_terminal`).
 - Integration: `tests/integration/terminal_tests.rs` (agent-style config edit,

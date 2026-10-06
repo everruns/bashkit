@@ -148,6 +148,50 @@ default prompt is `$ `.
 `[ -t 0 ]` is true inside the session, and `COLUMNS`, `LINES` and `TERM` are
 set. `resize()` changes the size; a running `vi` redraws.
 
+## As an LLM tool
+
+`TerminalTool` wraps one session as a tool an agent can call repeatedly. Keys
+go in one string in Vim notation, and each call returns the screen, what the
+session is doing, and the commands that finished during the call:
+
+```rust
+use bashkit::Bash;
+use bashkit::terminal::TerminalTool;
+use serde_json::json;
+
+let mut tool = TerminalTool::new(Bash::builder());
+// Register tool.tool_definition() (OpenAI function format) and
+// tool.system_prompt() with your model, then forward its calls:
+let out = tool.call(json!({"input": "vi notes.txt<Enter>"})).await?;
+// out["activity"] == "running", out["full_screen"] == true
+let out = tool.call(json!({"input": "ihello<Esc>:wq<Enter>"})).await?;
+// out["activity"] == "prompt", out["commands"][0]["exit_code"] == 0
+```
+
+| `input` token | Key |
+|---------------|-----|
+| plain text | typed as-is |
+| `<Enter>` `<Esc>` `<Tab>` `<BS>` `<Del>` `<Space>` | the named key |
+| `<Up>` `<Down>` `<Left>` `<Right>` `<Home>` `<End>` `<PageUp>` `<PageDown>` | cursor keys |
+| `<C-c>`, `<C-d>`, any `<C-x>` | Ctrl plus a letter |
+| `<lt>` | a literal `<` |
+
+Anything else in angle brackets, such as `<foo>` or a heredoc's `<<`, is typed
+literally.
+
+The result has `screen`, `activity` (`prompt`, `continuation`, `running` or
+`exited`), `running_command` or `exit_code` when they apply, `full_screen`
+(true while `vi` or `less` is open), `waiting_for_input`, and `commands` (the
+transcript records finished during the call). Each call waits up to `wait_ms`
+(default 5 s, at most 60 s) for the session to need input. A command still
+running after that is reported with `waiting_for_input: false`, not killed:
+call again, with empty input, to keep waiting, or send `<C-c>`. One
+`TerminalTool` is one session, so keep it for the whole conversation.
+`call` takes at most 64 KiB of `input` per call.
+
+It is not a `BashTool`: that tool runs each call in a fresh shell, while a
+terminal keeps the shell, open programs and the screen between calls.
+
 ## vi
 
 `vi [FILE]` opens the editor on the alternate screen; quitting restores the
