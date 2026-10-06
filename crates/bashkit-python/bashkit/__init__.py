@@ -60,6 +60,7 @@ from bashkit._bashkit import (
     ShellState,
     SnapshotDiff,
     SnapshotGraph,
+    Terminal,
     create_langchain_tool_spec,
     get_version,
 )
@@ -82,6 +83,7 @@ __all__ = [
     "ScriptAnalysis",
     "SnapshotDiff",
     "SnapshotGraph",
+    "Terminal",
     "create_langchain_tool_spec",
     "get_version",
 ]

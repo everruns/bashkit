@@ -13,8 +13,9 @@ tags:
 
 ## Status
 
-Implemented behind the `terminal` cargo feature (off by default). Rust core
-only; Python/JS/C bindings are not wired yet.
+Implemented behind the `terminal` cargo feature (off by default). Python
+exposes it as `bashkit.Terminal` (the Python package enables the feature);
+JS and C bindings are not wired yet.
 
 Code: `crates/bashkit/src/terminal/` (`Terminal`, the `Tty` device),
 `crates/bashkit/src/builtins/vi.rs`, `InputWaitClock` in
@@ -173,7 +174,9 @@ redirected (L-TERM-004).
 
 ## Follow-ups
 
-- Python/JS/C bindings (`send`, `run_until_idle`, `screen_text`, `take_output`).
+- JS (NAPI, browser wasm) and C bindings. Python ships `bashkit.Terminal`
+  (`crates/bashkit-python/src/terminal.rs`, sync API on a per-instance
+  current-thread runtime, wraps `TerminalTool`).
 - Reader-backed stdin so `read` blocks on the terminal (lifts L-TERM-002 and
   helps L-CLI-002).
 - Expose the device to custom builtins for host-defined TUIs; `stty`/`tput`.
