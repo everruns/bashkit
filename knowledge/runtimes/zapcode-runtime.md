@@ -144,7 +144,7 @@ for the full threat analysis.
 
 ### Tool registry access
 
-With `scripted_tool`, `BashBuilder::tool_registry` exposes dot-separated
+With the `bashkit-scripted-tool` crate (feature `typescript`), `ToolRegistry::install(builder)` exposes dot-separated
 `ToolDef` names as `await tools.orders.list({customer: "acme"})` and provides
 `tools.discover({...})`. Calls reuse the existing external-function
 suspend/resume bridge and the registry's one schema, policy, deadline, sanitizer,

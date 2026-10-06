@@ -23,7 +23,8 @@ not move together.
 ## What the graph actually costs
 
 Measured on `bashkit` at the browser feature set
-(`--no-default-features --features scripted_tool,jq`):
+(`--no-default-features --features bash_tool,jq`; the former `scripted_tool`
+feature was an alias for `bash_tool`, so the numbers are unchanged):
 
 | Configuration | Crates |
 |---|---|

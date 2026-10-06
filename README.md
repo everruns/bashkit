@@ -23,7 +23,7 @@ Homepage: [bashkit.sh](https://bashkit.sh)
 - **LLM tool contract** - `BashTool` with discovery metadata, streaming output, and system prompts
 - **Script analysis** - Inspect commands, arguments, and file writes *before* running, to drive permission prompts ([guide](docs/script-analysis.md))
 - **Snapshotting** - Serialize shell state and VFS contents for checkpoint/resume workflows
-- **Scripted tool orchestration** - Compose ToolDef+callback pairs into multi-tool bash scripts (`scripted_tool` feature)
+- **Scripted tool orchestration** - Compose ToolDef+callback pairs into multi-tool bash scripts ([`bashkit-scripted-tool`](crates/bashkit-scripted-tool) crate)
 - **Async-first** - Built on tokio
 - **Language bindings** - Python (PyO3) and JavaScript/TypeScript (NAPI-RS) for Node.js, Bun, and Deno
 - **Experimental: Git support** - Virtual git operations on the virtual filesystem (`git` feature)
@@ -45,7 +45,12 @@ cargo add bashkit --features python           # Embedded Python interpreter
 cargo add bashkit --features typescript       # Embedded TypeScript interpreter
 cargo add bashkit --features sqlite           # Embedded SQLite engine (Turso)
 cargo add bashkit --features realfs           # Real filesystem backend
-cargo add bashkit --features scripted_tool    # Tool orchestration framework
+```
+
+Tool orchestration (`ScriptedTool`, `ToolDef`, `ToolRegistry`) is a separate crate:
+
+```bash
+cargo add bashkit-scripted-tool
 ```
 
 ## Agent Development

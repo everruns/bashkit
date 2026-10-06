@@ -5,12 +5,12 @@ use super::{
     CallbackKind, RegisteredTool, ScriptedCommandInvocation, ScriptedCommandKind, ToolArgs,
     ToolDef, ToolImpl,
 };
-use crate::builtins::{Builtin, Context, Extension};
-use crate::error::Result;
-use crate::interpreter::ExecResult;
 use crate::tool_def::{parse_flags, usage_from_schema};
 use crate::{ToolCallSurface, ToolRegistry};
 use async_trait::async_trait;
+use bashkit::ExecResult;
+use bashkit::Result;
+use bashkit::{Builtin, BuiltinContext as Context, Extension};
 use std::collections::VecDeque;
 use std::future::Future;
 use std::sync::{Arc, Mutex};
@@ -454,7 +454,7 @@ impl Builtin for ToolBuiltinAdapter {
                 if let Some(budget) = ctx.execution_budget() {
                     budget
                         .try_with(|budget| budget.check())
-                        .map_err(|_| crate::Error::Cancelled)??;
+                        .map_err(|_| bashkit::Error::Cancelled)??;
                 }
                 ExecResult {
                     stdout: output.stdout.into(),

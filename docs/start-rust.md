@@ -19,7 +19,7 @@ cargo add bashkit --features python
 cargo add bashkit --features typescript
 cargo add bashkit --features sqlite
 cargo add bashkit --features realfs
-cargo add bashkit --features scripted_tool
+cargo add bashkit-scripted-tool   # ScriptedTool / ToolDef / ToolRegistry
 ```
 
 `http_client` enables `curl`/`wget` and the network allowlist; it uses rustls

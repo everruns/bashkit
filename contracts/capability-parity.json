@@ -80,12 +80,12 @@
       "label": "Rust ScriptedTool",
       "supported": ["execution_limits", "deadlines", "output_caps", "env", "stdin", "tool_callbacks"],
       "evidence": {
-        "execution_limits": ["crates/bashkit/src/scripted_tool/execute.rs#test_scripted_tool_forwards_limits_and_output_caps"],
-        "deadlines": ["crates/bashkit/src/scripted_tool/execute.rs#test_scripted_tool_execute_honors_timeout_ms"],
-        "output_caps": ["crates/bashkit/src/scripted_tool/execute.rs#test_scripted_tool_forwards_limits_and_output_caps"],
-        "env": ["crates/bashkit/src/scripted_tool/mod.rs#test_execute_with_env"],
-        "stdin": ["crates/bashkit/src/scripted_tool/mod.rs#test_execute_stdin_pipe"],
-        "tool_callbacks": ["crates/bashkit/src/scripted_tool/mod.rs#test_execute_single_tool"]
+        "execution_limits": ["crates/bashkit-scripted-tool/src/scripted_tool/execute.rs#test_scripted_tool_forwards_limits_and_output_caps"],
+        "deadlines": ["crates/bashkit-scripted-tool/src/scripted_tool/execute.rs#test_scripted_tool_execute_honors_timeout_ms"],
+        "output_caps": ["crates/bashkit-scripted-tool/src/scripted_tool/execute.rs#test_scripted_tool_forwards_limits_and_output_caps"],
+        "env": ["crates/bashkit-scripted-tool/src/scripted_tool/mod.rs#test_execute_with_env"],
+        "stdin": ["crates/bashkit-scripted-tool/src/scripted_tool/mod.rs#test_execute_stdin_pipe"],
+        "tool_callbacks": ["crates/bashkit-scripted-tool/src/scripted_tool/mod.rs#test_execute_single_tool"]
       },
       "unsupported": {
         "runtime_env": "Each execution uses a fresh logic-only shell; env is configured before the run.",

@@ -7,9 +7,9 @@
 //   one at a time via individual tool_use blocks.
 
 use anyhow::{Context, Result};
-use bashkit::{
+use bashkit::ToolRequest;
+use bashkit_scripted_tool::{
     ScriptedCommandInvocation, ScriptedCommandKind, ScriptingToolSet, ToolArgs, ToolDef,
-    ToolRequest,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

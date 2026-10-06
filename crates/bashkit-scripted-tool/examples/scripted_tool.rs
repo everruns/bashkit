@@ -3,12 +3,13 @@
 //! Demonstrates composing multiple API-like tools (ToolDef + closures) into a
 //! single ScriptedTool that an LLM agent can call with bash scripts.
 //!
-//! Run with: cargo run --example scripted_tool --features scripted_tool
+//! Run with: cargo run -p bashkit-scripted-tool --example scripted_tool
 //!
 //! This example simulates an e-commerce API with tools for users, orders, and
 //! inventory. The ScriptedTool lets an agent compose these in one call.
 
-use bashkit::{ScriptedTool, Tool};
+use bashkit::Tool;
+use bashkit_scripted_tool::ScriptedTool;
 
 async fn run_script(tool: &ScriptedTool, commands: &str) -> anyhow::Result<String> {
     let output = tool
@@ -140,7 +141,7 @@ async fn main() -> anyhow::Result<()> {
 // ScriptedTool builder API and the demo scenarios.
 // ---------------------------------------------------------------------------
 mod fakes {
-    use bashkit::{ToolArgs, ToolDef};
+    use bashkit_scripted_tool::{ToolArgs, ToolDef};
 
     // -- get_user --------------------------------------------------------
 

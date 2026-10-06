@@ -90,7 +90,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
 
       - name: Check bashkit for wasm32-unknown-unknown
-        run: cargo check -p bashkit --target wasm32-unknown-unknown --features scripted_tool,jq,wasm_js,terminal
+        run: cargo check -p bashkit -p bashkit-scripted-tool --target wasm32-unknown-unknown --features bashkit/jq,bashkit/wasm_js,bashkit/terminal
         env:
           # getrandom needs an explicit JS backend opt-in on this target.
           RUSTFLAGS: --cfg getrandom_backend="wasm_js" -D warnings
@@ -100,7 +100,7 @@ jobs:
       # as the browser package; no getrandom cfg here (wasip2 has a native
       # backend). Check-only: there is no WASI entry-point crate yet.
       - name: Check bashkit for wasm32-wasip2
-        run: cargo check -p bashkit --target wasm32-wasip2 --features scripted_tool,jq,terminal
+        run: cargo check -p bashkit -p bashkit-scripted-tool --target wasm32-wasip2 --features bashkit/jq,bashkit/terminal
         env:
           RUSTFLAGS: -D warnings
 
@@ -277,6 +277,11 @@ jobs:
       - name: Run tests
         run: cargo test --workspace --lib --bins --tests --features http_client,ssh,sqlite
 
+      # The registry's Python/TypeScript surfaces sit behind the crate's own
+      # features, which no workspace member turns on together.
+      - name: Run scripted tool tests (shell, Python, TypeScript surfaces)
+        run: cargo test -p bashkit-scripted-tool --features python,typescript,jq
+
       # All three differential gates (bash, sed, grep), not just bash: each is
       # the only thing checking that its spec expectations still describe the
       # real tool. `spec_tests::` + `--ignored` selects exactly the gates —
@@ -411,7 +416,7 @@ jobs:
           cargo run --example custom_fs
           cargo run --example clap_builtin
           cargo run --example clap_builtin_subcommands
-          cargo run --example scripted_tool_clap_builtin --features scripted_tool
+          cargo run -p bashkit-scripted-tool --example scripted_tool_clap_builtin
           cargo run --example resource_limits
           cargo run --example text_processing
           cargo run --example live_mounts

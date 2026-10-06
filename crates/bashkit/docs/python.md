@@ -38,18 +38,20 @@ assert_eq!(result.stdout, "hello from Monty\n");
 
 ### Shared Tool Registry
 
-With `scripted_tool`, one `ToolRegistry` can expose the same definitions and
+With the [`bashkit-scripted-tool`](https://docs.rs/bashkit-scripted-tool) crate
+(feature `python`), one `ToolRegistry` can expose the same definitions and
 callbacks as shell commands and Python functions:
 
-```rust,no_run
-use bashkit::{Bash, ToolArgs, ToolDef, ToolRegistry};
+```rust,ignore
+use bashkit::Bash;
+use bashkit_scripted_tool::{ToolArgs, ToolDef, ToolRegistry};
 
 let registry = ToolRegistry::builder()
     .tool_fn(ToolDef::new("orders.list", "List orders"), |_args: &ToolArgs| {
         Ok(r#"[{"id": 1}]"#.to_string())
     })
     .build();
-let bash = Bash::builder().tool_registry(registry).build();
+let bash = registry.install(Bash::builder()).build();
 ```
 
 ```python

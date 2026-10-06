@@ -36,7 +36,7 @@ The entire tool layer (`tool` module: `Tool` trait, `BashTool*`,
 `--no-default-features` drops the module and its exclusive dependencies
 (`tower`, `futures-core`), leaving just the embeddable `Bash` interpreter.
 
-- `scripted_tool` builds on this layer and so enables `bash_tool`.
+- The `bashkit-scripted-tool` crate builds on this layer and depends on core with `bash_tool`.
 - Consumers that only drive `Bash` directly (e.g. `bashkit-cli`) set
   `default-features = false` to avoid pulling in the tool dependencies.
 

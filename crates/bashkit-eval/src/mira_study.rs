@@ -270,7 +270,7 @@ fn scripting_subject() -> impl Subject {
 }
 
 fn scripting_transcript(trace: ScriptingTrace) -> Transcript {
-    use bashkit::ScriptedCommandKind;
+    use bashkit_scripted_tool::ScriptedCommandKind;
 
     let tool_outputs: Vec<ToolOutput> = trace
         .tool_calls

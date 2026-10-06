@@ -18,7 +18,7 @@ readme = "../../README.md"
 tokio = { workspace = true }
 async-trait = { workspace = true }
 # futures-core / tower are only pulled in by the LLM `BashTool` wrapper
-# (and the `scripted_tool` layer on top of it). Optional, gated under `bash_tool`.
+# (and the `bashkit-scripted-tool` crate on top of it). Optional, gated under `bash_tool`.
 futures-core = { workspace = true, optional = true }
 futures-util = { workspace = true }
 tower = { workspace = true, optional = true }
@@ -253,10 +253,6 @@ git = []
 # Enable ssh/scp/sftp builtins for remote command execution and file transfer
 # Usage: cargo build --features ssh
 ssh = ["russh"]
-# Enable ScriptedTool: compose ToolDef+callback pairs into a single Tool
-# Builds on the `BashTool` contract, so it pulls in the `bash_tool` feature.
-# Usage: cargo build --features scripted_tool
-scripted_tool = ["bash_tool"]
 # Enable python/python3 builtins via embedded Monty interpreter
 # Usage: cargo build --features python
 python = ["dep:monty", "dep:monty-types", "dep:get-size2"]
@@ -358,10 +354,6 @@ required-features = ["ssh"]
 [[example]]
 name = "show_tool_output"
 required-features = ["bash_tool"]
-
-[[example]]
-name = "scripted_tool"
-required-features = ["scripted_tool"]
 
 [[example]]
 name = "python_scripts"

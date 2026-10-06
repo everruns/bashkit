@@ -6,12 +6,12 @@
 //! call. Bash stays a control-flow and data-transformation language;
 //! registered tool commands and custom builtins are the only way out.
 
-use crate::{BashBuilder, DirEntry, FileSystem, FileSystemExt, Metadata, Result, ShellFeatures};
+use bashkit::{BashBuilder, DirEntry, FileSystem, FileSystemExt, Metadata, Result, ShellFeatures};
 use std::io::{Error as IoError, ErrorKind};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-type SystemTime = crate::time_compat::SystemTime;
+type SystemTime = bashkit::time::SystemTime;
 
 /// Restrict `builder` to the logic-only shell.
 pub(crate) fn apply(builder: BashBuilder) -> BashBuilder {
@@ -117,7 +117,7 @@ pub(crate) fn builtin_allowed(name: &str) -> bool {
 /// real operation fails, and scripts cannot use a VFS as storage or input.
 pub(crate) struct DisabledFs;
 
-fn disabled_fs_error() -> crate::Error {
+fn disabled_fs_error() -> bashkit::Error {
     IoError::new(ErrorKind::PermissionDenied, "filesystem access disabled").into()
 }
 
