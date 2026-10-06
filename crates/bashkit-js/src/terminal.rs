@@ -245,7 +245,9 @@ impl Terminal {
     /// Read a file from the session's virtual filesystem.
     #[napi]
     pub async fn read_file(&self, path: String) -> napi::Result<Buffer> {
-        let fs = self.tool.lock().await.terminal().fs();
+        // Clone the Arc before awaiting: no `&self` across `.await` (see lib.rs).
+        let tool = Arc::clone(&self.tool);
+        let fs = tool.lock().await.terminal().fs();
         fs.read_file(std::path::Path::new(&path))
             .await
             .map(Buffer::from)
