@@ -82,6 +82,7 @@ export const GET: APIRoute = () => {
     `- [All docs (Markdown index)](${SITE}/docs.md): grouped index of every guide.`,
     `- [Full text](${SITE}/llms-full.txt): every guide inlined into one document.`,
     `- [Builtins](${SITE}/builtins): the full sandboxed command surface.`,
+    `- [Playground](${SITE}/playground): try Bashkit in the browser (WebAssembly terminal).`,
     ...resources.map(
       (item) =>
         `- [${item.title}](${item.href.startsWith("/") ? SITE + item.href : item.href}): ${item.detail}`,

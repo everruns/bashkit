@@ -38,6 +38,10 @@ you type leaves this page. Launch it and run some bash:
 
 <div data-bashkit-terminal></div>
 
+For a full-screen terminal with `vi` and `less`, open the
+[playground](https://bashkit.sh/playground). It uses the package's `Terminal`
+class with xterm.js; see [In-process terminal](terminal.md#in-the-browser).
+
 ## No bundler
 
 Straight from a CDN, in a plain `<script type="module">`:
