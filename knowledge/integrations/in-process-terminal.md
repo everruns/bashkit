@@ -70,6 +70,19 @@ normal command output is streamed per command.
 `Tty` is `pub(crate)`: only internal builtins can be full-screen programs for
 now. Exposing it to custom builtins is a deliberate later step.
 
+## Decision: three read paths for agents
+
+`screen_text()` (what a person sees), `history_text()` (screen plus 1000 rows
+of vt100 scrollback, read by paging the scrollback offset and restoring it),
+and `take_transcript()` (one `CommandRecord` per finished command line:
+command, exact stdout+stderr from the streaming callback, exit code).
+`activity()` reports `Prompt` / `ContinuationPrompt` / `Running { command }` /
+`Exited`, set by the shell loop. Why: agents should not parse prompts out of
+screen text to learn exit codes or recover scrolled-off output. Full-screen
+programs write to the device, not the streaming callback, so they never land
+in the transcript. Transcript is drained (like `take_output`) and bounded
+(64 KiB output per record, 1 MiB total, oldest dropped).
+
 ## Decision: line discipline split
 
 - Cooked mode (prompt): the shell loop's own small line editor (echo, Backspace,
@@ -127,7 +140,7 @@ redirected (L-TERM-004).
 ## Tests
 
 - Unit: `terminal::tests` (line discipline, prompts, resize, exit, timeout
-  exclusion, Ctrl-C) `builtins::vi::tests` (editing commands end-to-end
+  exclusion, Ctrl-C, transcript, activity, scrollback bounds) `builtins::vi::tests` (editing commands end-to-end
   through a `Terminal`), and `builtins::pager::tests` (paging, search, and
   `pagers_are_cat_like_without_terminal`).
 - Integration: `tests/integration/terminal_tests.rs` (agent-style config edit,

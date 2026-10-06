@@ -20,6 +20,8 @@ pub(crate) const MAX_PENDING_INPUT: usize = 1024 * 1024;
 /// Cap on raw output retained for `take_output`. Oldest bytes drop first; the
 /// screen model still sees every byte.
 pub(crate) const MAX_PENDING_OUTPUT: usize = 4 * 1024 * 1024;
+/// Lines of primary-screen history kept for `history_text`.
+pub(crate) const SCROLLBACK_LINES: usize = 1000;
 
 /// What a blocking terminal read returned.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,7 +69,7 @@ impl Tty {
                 foreground: false,
                 resized: false,
                 closed: false,
-                screen: vt100::Parser::new(size.rows, size.cols, 0),
+                screen: vt100::Parser::new(size.rows, size.cols, SCROLLBACK_LINES),
                 output: Vec::new(),
             }),
             input_ready: Notify::new(),
@@ -146,6 +148,30 @@ impl Tty {
 
     pub(crate) fn with_screen<R>(&self, f: impl FnOnce(&vt100::Screen) -> R) -> R {
         f(self.lock().screen.screen())
+    }
+
+    /// Every retained row of the current screen buffer, oldest first:
+    /// scrollback history, then the visible rows. One string per row.
+    pub(crate) fn history_rows(&self) -> Vec<String> {
+        let mut st = self.lock();
+        let screen = st.screen.screen_mut();
+        let (rows, cols) = screen.size();
+        let rows = usize::from(rows);
+        screen.set_scrollback(usize::MAX);
+        let total = screen.scrollback();
+        let mut out = Vec::with_capacity(total + rows);
+        // At offset `off` the view starts `off` rows into history; take the
+        // history part of each page until the live screen is reached.
+        let mut off = total;
+        while off > 0 {
+            screen.set_scrollback(off);
+            let take = off.min(rows);
+            out.extend(screen.rows(0, cols).take(take));
+            off -= take;
+        }
+        screen.set_scrollback(0);
+        out.extend(screen.rows(0, cols));
+        out
     }
 
     // ---- device side -----------------------------------------------------
