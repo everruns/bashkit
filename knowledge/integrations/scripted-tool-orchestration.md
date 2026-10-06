@@ -169,7 +169,7 @@ Two arguments per tool: definition + callback. `.tool_fn()` sync, `.async_tool_f
 
 `.builtin(name, Box<dyn Builtin>)` registers a raw-argv builtin alongside the `ToolDef` tools, mirroring `BashBuilder::builtin` and `BashToolBuilder::builtin`. Stored as `Arc<dyn Builtin>` so one instance is reused by the fresh shell each `execute()` builds.
 
-Why it exists: `parse_flags` is schema-driven and only understands `--key value`. Commands that need positionals, short flags, `--`, or parse-time required-argument checking cannot be expressed as a `ToolDef`, and before this the only workaround was to rebuild the shell on `Bash::builder()` downstream, which was not possible while the logic-only switch was `pub(crate)` (now public as `BashBuilder::code_mode()`). Registering the builtin gives it `ctx.args` unparsed, so it can use [`ClapBuiltin`](../foundations/builtins.md) — the house parser for `Bash` builtins — inside a `ScriptedTool`. Example: `crates/bashkit/examples/scripted_tool_clap_builtin.rs`.
+Why it exists: `parse_flags` is schema-driven and only understands `--key value`. Commands that need positionals, short flags, `--`, or parse-time required-argument checking cannot be expressed as a `ToolDef`, and before this the only workaround was to rebuild the shell on `Bash::builder()` downstream, which was not possible while the logic-only switch was `pub(crate)` (core now exposes the generic `BashBuilder::shell_features` / `builtin_filter` switches it is built from). Registering the builtin gives it `ctx.args` unparsed, so it can use [`ClapBuiltin`](../foundations/builtins.md) — the house parser for `Bash` builtins — inside a `ScriptedTool`. Example: `crates/bashkit/examples/scripted_tool_clap_builtin.rs`.
 
 Security posture is unchanged. The builtin runs in the same logic-only shell and gets the same rejecting filesystem, so it cannot reach a real file; the logic-only decision stays enforced by the profile, not by the builtin allowlist. Registration order is custom builtins first, `ToolDefExtension` second: `BashBuilder` keys custom builtins by name and later registrations win, so a custom builtin can never shadow a registered tool command, `help`, or `discover`. A custom builtin is otherwise ordinary trusted host code — whatever it reaches, the script reaches. Its fatal `Err(Error)` diagnostics cross the same `sanitize_errors` boundary as `ToolDef` callback errors: generic by default, raw only after explicit opt-out. Cancellation and resource-limit errors are preserved because callers need their categories for control flow.
 
@@ -184,6 +184,14 @@ Implements the `Tool` trait. Each `execute()`: fresh logic-only `Bash`, callback
 The logic-only shell keeps: variables, arrays, functions, arithmetic, command substitution; `if`/`case`/`for`/`while`; pipelines, heredocs, here-strings; callback commands plus `help` and `discover`; stdin transforms (`jq`, `grep`, `sed`, `awk`, `sort`, `cut`, `tr`, `wc`, `head`, `tail`, `seq`, `expr`).
 
 Rejected filesystem surfaces: file commands (`cat`, `ls`, `find`, `mkdir`, `rm`, `cp`, `mv`, `touch`, `chmod`, `ln`, `stat`, `source`, `.`); path execution (`/tmp/script.sh`, `$PATH` lookup); file redirection (`<`, `>`, `>>`, `&>`) except `/dev/null`; process substitution; file operands to dual-use tools, the internal filesystem rejects all real operations with `filesystem access disabled`.
+
+Decision: core has no named restricted mode. The logic-only shell is assembled
+in `scripted_tool/orchestration.rs` from public switches:
+`ShellFeatures::none()` (file redirects except `/dev/null`, process
+substitution, and script execution — path, `$PATH`, `source`/`.`, `exec`,
+`bash`, `sh` — all off), `builtin_filter` with the default-builtin allowlist,
+and a filesystem that rejects every call. Any embedder can build its own
+restricted shell the same way; the interpreter only enforces the switches.
 
 ### Built-in `help` command
 

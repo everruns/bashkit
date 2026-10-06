@@ -508,7 +508,8 @@ pub use fs::{
 pub use fs::{RealFs, RealFsMode};
 pub use host_call::{ExecutionEvent, ExecutionHandle, HostCallId, HostCallRequest};
 pub use interpreter::{
-    ControlFlow, ExecResult, HistoryEntry, OutputCallback, ShellState, ShellStateView,
+    ControlFlow, ExecResult, HistoryEntry, OutputCallback, ShellFeatures, ShellState,
+    ShellStateView,
 };
 pub use limits::{
     ExecutionBudget, ExecutionBudgetExceeded, ExecutionBudgetLease, ExecutionCounters,
@@ -1867,7 +1868,8 @@ pub struct BashBuilder {
     fixed_epoch: Option<i64>,
     /// Constant seconds offset applied to real-clock for `date` (TM-INF-018)
     epoch_offset: Option<i64>,
-    shell_profile: interpreter::ShellProfile,
+    shell_features: ShellFeatures,
+    builtin_filter: Option<interpreter::BuiltinFilter>,
     custom_builtins: HashMap<String, Box<dyn Builtin>>,
     /// Optional host-owned mutable registry. Entries here are consulted at
     /// dispatch time, so embedders can register/remove builtins after build.
@@ -2034,17 +2036,22 @@ impl BashBuilder {
         self
     }
 
-    /// Code mode: restrict this shell to logic/data-flow commands and custom
-    /// builtins.
+    /// Enable or disable shell language features that reach beyond in-memory
+    /// computation (file redirects, process substitution, script execution).
     ///
-    /// Bash becomes a control-flow and data-transformation language rather
-    /// than a VFS shell. Every filesystem operation is rejected, file
-    /// redirects, process substitution and path script execution are
-    /// unavailable, and only stdin-to-stdout builtins (`echo`, `printf`,
-    /// `test`, `read`, `grep`, `sed`, `awk`, `jq`, `sort`, ...) plus custom
-    /// builtins and extensions stay registered.
-    pub fn code_mode(mut self) -> Self {
-        self.shell_profile = interpreter::ShellProfile::LogicOnly;
+    /// Combine with [`Self::builtin_filter`] and a rejecting [`Self::fs`] to
+    /// build a restricted shell. See [`ShellFeatures`].
+    pub fn shell_features(mut self, features: ShellFeatures) -> Self {
+        self.shell_features = features;
+        self
+    }
+
+    /// Keep only the default builtins for which `keep(name)` returns true.
+    ///
+    /// Applies to Bashkit's own builtins only: builtins added with
+    /// [`Self::builtin`] and extensions are always registered.
+    pub fn builtin_filter(mut self, keep: impl Fn(&str) -> bool + Send + Sync + 'static) -> Self {
+        self.builtin_filter = Some(Arc::new(keep));
         self
     }
 
@@ -3285,9 +3292,7 @@ impl BashBuilder {
     /// # }
     /// ```
     pub fn build(self) -> Bash {
-        let base_fs: Arc<dyn FileSystem> = if self.shell_profile.is_logic_only() {
-            Arc::new(fs::DisabledFs)
-        } else if let Some(fs) = self.fs {
+        let base_fs: Arc<dyn FileSystem> = if let Some(fs) = self.fs {
             fs
         } else {
             // No custom filesystem was supplied: provision the default
@@ -3349,7 +3354,8 @@ impl BashBuilder {
             self.fixed_epoch,
             self.epoch_offset,
             self.cwd,
-            self.shell_profile,
+            self.shell_features,
+            self.builtin_filter,
             self.profile.name() == ExecutionProfileName::Hardened,
             self.limits,
             self.session_limits,
@@ -3568,7 +3574,8 @@ impl BashBuilder {
         fixed_epoch: Option<i64>,
         epoch_offset: Option<i64>,
         cwd: Option<PathBuf>,
-        shell_profile: interpreter::ShellProfile,
+        shell_features: ShellFeatures,
+        builtin_filter: Option<interpreter::BuiltinFilter>,
         hardened_timing: bool,
         limits: ExecutionLimits,
         session_limits: SessionLimits,
@@ -3607,7 +3614,8 @@ impl BashBuilder {
             epoch_offset,
             custom_builtins,
             host_builtins,
-            shell_profile,
+            shell_features,
+            builtin_filter,
             hardened_timing,
         );
 

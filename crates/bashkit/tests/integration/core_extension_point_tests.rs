@@ -1,10 +1,13 @@
 //! Public extension points that let tool layers live outside core:
-//! `RuntimeCallContext` for embedded-runtime host functions, `code_mode()`,
-//! and `BuiltinContext::remaining_deadline()`.
+//! `RuntimeCallContext` for embedded-runtime host functions, `ShellFeatures`
+//! and `builtin_filter` for restricted shells, and
+//! `BuiltinContext::remaining_deadline()`.
 
 #[cfg(any(feature = "python", feature = "typescript"))]
 use bashkit::ExecutionExtensions;
-use bashkit::{Bash, Builtin, BuiltinContext, ExecResult, ExecutionLimits, async_trait};
+use bashkit::{
+    Bash, Builtin, BuiltinContext, ExecResult, ExecutionLimits, ShellFeatures, async_trait,
+};
 use std::time::Duration;
 
 #[cfg(any(feature = "python", feature = "typescript"))]
@@ -120,9 +123,76 @@ impl Builtin for Upper {
 }
 
 #[tokio::test]
-async fn code_mode_keeps_logic_and_custom_builtins() {
+async fn shell_features_default_to_full_shell() {
+    assert_eq!(ShellFeatures::default(), ShellFeatures::all());
+    let mut bash = Bash::builder().build();
+    let result = bash
+        .exec("echo hi > /tmp/out; cat /tmp/out; cat <(echo sub)")
+        .await
+        .unwrap();
+    assert_eq!(result.stdout, "hi\nsub\n");
+}
+
+#[tokio::test]
+async fn disabled_file_redirects_reject_files_but_keep_dev_null() {
     let mut bash = Bash::builder()
-        .code_mode()
+        .shell_features(ShellFeatures::all().file_redirects(false))
+        .build();
+
+    let write = bash.exec("echo secret > /tmp/out").await.unwrap();
+    assert_ne!(write.exit_code, 0);
+    assert!(write.stderr.contains("filesystem redirection disabled"));
+
+    let read = bash.exec("cat < /etc/passwd").await.unwrap();
+    assert_ne!(read.exit_code, 0);
+
+    let null = bash.exec("echo quiet > /dev/null; echo ok").await.unwrap();
+    assert_eq!(null.stdout, "ok\n");
+
+    // Other features stay on.
+    let sub = bash.exec("cat <(echo sub)").await.unwrap();
+    assert_eq!(sub.stdout, "sub\n");
+}
+
+#[tokio::test]
+async fn disabled_process_substitution_is_rejected() {
+    let mut bash = Bash::builder()
+        .shell_features(ShellFeatures::all().process_substitution(false))
+        .build();
+    // Expansion-time rejection surfaces as an execution error.
+    let err = match bash.exec("cat <(echo sub)").await {
+        Ok(result) => panic!("expected rejection, got {result:?}"),
+        Err(err) => err.to_string(),
+    };
+    assert!(err.contains("process substitution disabled"), "{err}");
+}
+
+#[tokio::test]
+async fn disabled_script_execution_rejects_paths_and_nested_shells() {
+    let mut bash = Bash::builder()
+        .shell_features(ShellFeatures::all().script_execution(false))
+        .mount_text("/work/x.sh", "echo ran\n")
+        .build();
+    for script in [
+        "/work/x.sh",
+        "source /work/x.sh",
+        ". /work/x.sh",
+        "bash /work/x.sh",
+        "sh -c 'echo ran'",
+    ] {
+        let result = bash.exec(script).await.unwrap();
+        assert_eq!(result.exit_code, 127, "{script}: {}", result.stderr);
+        assert!(!result.stdout.contains("ran"), "{script}");
+    }
+    // Files themselves are still readable: only execution is off.
+    let read = bash.exec("cat /work/x.sh").await.unwrap();
+    assert_eq!(read.stdout, "echo ran\n");
+}
+
+#[tokio::test]
+async fn builtin_filter_drops_defaults_but_keeps_custom_builtins() {
+    let mut bash = Bash::builder()
+        .builtin_filter(|name| matches!(name, "echo" | "sort"))
         .builtin("upper", Box::new(Upper))
         .build();
     let result = bash
@@ -130,21 +200,9 @@ async fn code_mode_keeps_logic_and_custom_builtins() {
         .await
         .unwrap();
     assert_eq!(result.stdout, "B\nA\n");
-    assert_eq!(result.exit_code, 0);
-}
 
-#[tokio::test]
-async fn code_mode_rejects_filesystem_access() {
-    let mut bash = Bash::builder().code_mode().build();
-
-    let redirect = bash.exec("echo secret > /tmp/out").await.unwrap();
-    assert_ne!(redirect.exit_code, 0, "file redirect must fail");
-
-    let read = bash.exec("cat /etc/passwd").await.unwrap();
-    assert_ne!(read.exit_code, 0, "cat is not a code-mode builtin");
-
-    let write = bash.exec("mkdir /work").await.unwrap();
-    assert_ne!(write.exit_code, 0, "mkdir is not a code-mode builtin");
+    let missing = bash.exec("cat /etc/passwd").await.unwrap();
+    assert_eq!(missing.exit_code, 127);
 }
 
 struct Deadline;
