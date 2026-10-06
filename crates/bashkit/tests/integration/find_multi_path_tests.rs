@@ -238,7 +238,7 @@ async fn find_dangling_not_fails_closed() {
 
     assert_ne!(result.exit_code, 0);
     assert!(
-        result.stderr.contains("missing predicate after '-not'"),
+        result.stderr.contains("expected an expression after '-not'"),
         "Expected fail-closed diagnostic, got: {:?}",
         result.stderr
     );

@@ -59,6 +59,7 @@ mod expr;
 mod factor;
 mod fc;
 mod fileops;
+mod find;
 mod flow;
 mod fold;
 mod generated;
@@ -184,6 +185,7 @@ pub use expr::Expr;
 pub use factor::Factor;
 pub use fc::Fc;
 pub use fileops::{Chmod, Chown, Cp, Kill, Ln, Mkdir, Mktemp, Mv, Rm, Touch};
+pub use find::Find;
 pub use flow::{Break, Colon, Continue, Exit, False, Return, True};
 pub use fold::Fold;
 pub use glob_cmd::GlobCmd;
@@ -201,8 +203,8 @@ pub use join::Join;
 pub use jq::Jq;
 pub use json::Json;
 pub use log::Log;
-pub(crate) use ls::glob_match;
-pub use ls::{Find, Ls, Rmdir};
+pub use ls::{Ls, Rmdir};
+pub(crate) use ls::{fnmatch, glob_match};
 pub use mapfile::Mapfile;
 pub use mkfifo::Mkfifo;
 pub use navigation::{Cd, Pwd};
@@ -585,6 +587,36 @@ pub struct SubCommand {
     pub assignments: Vec<(String, String)>,
 }
 
+/// One step requested by a [`PlanDriver`].
+pub enum PlanStep {
+    /// Run `command` (in `cwd` when set, restoring the shell cwd afterwards)
+    /// and pass its result to the next [`PlanDriver::next`] call.
+    Run {
+        /// The command to execute.
+        command: SubCommand,
+        /// Working directory for this command only.
+        cwd: Option<PathBuf>,
+    },
+    /// The plan is finished; this is the builtin's result.
+    Done(ExecResult),
+}
+
+/// Resumable sub-command driver for [`ExecutionPlan::Driver`].
+///
+/// The interpreter calls `next(None)` first, then `next(Some(result))` after
+/// each [`PlanStep::Run`], until the driver returns [`PlanStep::Done`].
+#[async_trait]
+pub trait PlanDriver: Send {
+    /// Advance the plan with the previous command's result.
+    async fn next(&mut self, last: Option<ExecResult>) -> Result<PlanStep>;
+}
+
+impl std::fmt::Debug for dyn PlanDriver {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("PlanDriver")
+    }
+}
+
 /// Execution plan returned by builtins that need to run sub-commands.
 ///
 /// Instead of executing commands directly (which would require interpreter
@@ -619,6 +651,9 @@ pub enum ExecutionPlan {
         /// Commands to execute in order.
         commands: Vec<SubCommand>,
     },
+    /// Step-wise driver: the builtin decides each next command from the
+    /// previous one's result (e.g. `find -exec ... \;` as a predicate).
+    Driver(Box<dyn PlanDriver>),
     /// Run a sequence of commands, then merge builtin-generated stderr/exit semantics.
     BatchWithStatus {
         /// Commands to execute in order.

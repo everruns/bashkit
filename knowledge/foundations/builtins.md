@@ -236,15 +236,31 @@ plan instead of using the `execute()` result.
 
 Variants: `Timeout { duration, preserve_status, command }`,
 `Batch { commands }`, `BatchWithStatus`, `Env { command, clear, unset, set,
-chdir }` (`builtins/mod.rs`).
+chdir }`, `Driver(Box<dyn PlanDriver>)` (`builtins/mod.rs`).
+
+`Driver` is for builtins whose next command depends on the previous result.
+The interpreter calls `PlanDriver::next(None)`, runs each `PlanStep::Run {
+command, cwd }` (temporarily switching cwd when set), feeds the `ExecResult`
+back through `next(Some(..))`, and stops at `PlanStep::Done`. The driver owns
+everything it needs (`Arc<dyn FileSystem>`, cwd, budget capability) so it is
+`'static` and outlives the borrowed `Context`.
 
 Each `SubCommand` carries optional command-scoped `assignments`
 (`VAR=value cmd ...`), which the interpreter applies as the inner command's
 environment. `xargs --process-slot-var=VAR` uses this to expose a
 per-invocation parallel-slot index.
 
-**Current users:** `timeout` → Timeout, `xargs` → Batch, `find -exec` → Batch,
-`env CMD` → Env.
+**Current users:** `timeout` → Timeout, `xargs` → Batch, `find -exec` /
+`-execdir` → Driver, `env CMD` → Env.
+
+`find` (`builtins/find/`) parses GNU's full expression grammar into a tree
+and evaluates it in a resumable walker. `-exec ... \;` suspends evaluation,
+the interpreter runs the command, and evaluation of that entry restarts with
+the cached exit status, so `-exec test ... \; -print` filters like GNU and
+output stays in order. Effects (prints, exec output, `-delete` results) are
+committed per entry once its expression completes; `-delete` runs once and is
+cached across restarts. Without `-exec`, `execute()` drives the same walker.
+Gaps are listed as L-FIND-001/002.
 
 `env [-i] [-u NAME] [-C DIR] [NAME=V]... CMD` runs CMD in a child-like scope:
 the interpreter snapshots shell state + exported env, applies `-i` (keeps only

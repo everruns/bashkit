@@ -1489,14 +1489,12 @@ impl Interpreter {
             "rm" => Rm,
             "cp" => Cp,
             "mv" => Mv,
-            "touch" => Touch,
             "chmod" => Chmod,
             "ln" => Ln,
             "chown" => Chown,
             "rmdir" => Rmdir,
             // Directory listing and search
             "ls" => Ls,
-            "find" => Find,
             "tree" => Tree,
             "truncate" => Truncate,
             "shuf" => Shuf,
@@ -1639,6 +1637,10 @@ impl Interpreter {
             "printf".to_string(),
             Arc::new(builtins::Printf::with_clock(clock)),
         );
+        builtins.insert(
+            "touch".to_string(),
+            Arc::new(builtins::Touch::with_clock(clock)),
+        );
 
         // System info builtins (configurable virtual values)
         let hostname_val = hostname.unwrap_or_else(|| builtins::DEFAULT_HOSTNAME.to_string());
@@ -1654,6 +1656,10 @@ impl Interpreter {
         builtins.insert(
             "whoami".to_string(),
             Arc::new(builtins::Whoami::with_username(&username_val)),
+        );
+        builtins.insert(
+            "find".to_string(),
+            Arc::new(builtins::Find::new(clock, &username_val)),
         );
         builtins.insert(
             "id".to_string(),
@@ -8811,6 +8817,26 @@ impl Interpreter {
                 set,
                 chdir,
             } => Box::pin(self.execute_env_plan(command, clear, unset, set, chdir)).await?,
+            builtins::ExecutionPlan::Driver(mut driver) => {
+                let mut last = None;
+                loop {
+                    match driver.next(last.take()).await? {
+                        builtins::PlanStep::Run { command, cwd } => {
+                            let inner_cmd = subcommand_to_command(&command);
+                            let saved_stdin = self.pipeline_stdin.take();
+                            self.pipeline_stdin = command.stdin;
+                            let saved_cwd = cwd.map(|dir| std::mem::replace(&mut self.cwd, dir));
+                            let result = self.execute_command(&inner_cmd).await;
+                            if let Some(dir) = saved_cwd {
+                                self.cwd = dir;
+                            }
+                            self.pipeline_stdin = saved_stdin;
+                            last = Some(result?);
+                        }
+                        builtins::PlanStep::Done(result) => break result,
+                    }
+                }
+            }
             builtins::ExecutionPlan::Batch { commands } => {
                 let mut combined_stdout = crate::StreamData::new();
                 let mut combined_stderr = crate::StreamData::new();
