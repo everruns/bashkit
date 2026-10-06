@@ -154,6 +154,7 @@ pass in CI); only divergences and boundaries are recorded here.
 | L-CURL-001 | curl | Spec-test coverage for methods/headers/auth/redirects not ported (needs `http_client` + allowlist in harness); payload behavior has integration and real-curl differential coverage | stance |
 | L-CURL-002 | curl/wget | Unknown options are ignored for compatibility, not rejected (real curl/wget error); deliberate leniency | `curl.rs` |
 | L-PRINTF-001 | printf | `%(fmt)T` argument `-2` (bash: shell start time) formats the current time; the shell start instant is not tracked. GNU-only `%N` in the time format is expanded to nanoseconds, bash prints it literally | `printf.rs::expand_time_directives` |
+| L-FACTOR-001 | factor | Numbers above 2^64-1 are rejected ("too large"); GNU factor accepts arbitrary precision | `factor.rs::rejects_bad_tokens` |
 | L-STR-001 | strings | Accepts dash-prefixed filenames (e.g. `-data.bin`), so only a lone unknown short option (`-Q`) is rejected as invalid; GNU rejects `-data.bin` too | `strings.rs` |
 
 Safety boundaries (enforced, not bugs): printf width/precision caps,

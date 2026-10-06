@@ -19,7 +19,7 @@
 //! - **Python (CPython)** - Real CPython 3.14 in a WebAssembly sandbox (`cpython` feature)
 //! - **Experimental: SQLite** - Embedded SQLite-compatible engine via [Turso](https://github.com/tursodatabase/turso) (`sqlite` feature)
 //!
-//! # Built-in Commands (164)
+//! # Built-in Commands (175)
 //!
 //! | Category | Commands |
 //! |----------|----------|
@@ -32,12 +32,12 @@
 //! | File operations | `mkdir`, `mktemp`, `mkfifo`, `rm`, `cp`, `mv`, `touch`, `chmod`, `chown`, `ln`, `rmdir`, `realpath`, `readlink`, `truncate`, `glob`, `patch` |
 //! | File inspection | `file`, `stat`, `less` |
 //! | Archives | `tar`, `gzip`, `gunzip`, `bzip2`, `bunzip2`, `bzcat`, `zip`, `unzip` |
-//! | Byte tools | `od`, `xxd`, `hexdump`, `base64` |
-//! | Checksums | `md5sum`, `sha1sum`, `sha256sum`, `verify` |
-//! | Utilities | `sleep`, `date`, `basename`, `dirname`, `timeout`, `wait`, `watch`, `yes`, `kill`, `clear`, `numfmt`, `retry`, `parallel` |
+//! | Byte tools | `od`, `xxd`, `hexdump`, `base64`, `base32`, `basenc`, `cmp` |
+//! | Checksums | `md5sum`, `sha1sum`, `sha224sum`, `sha256sum`, `sha384sum`, `sha512sum`, `b2sum`, `cksum`, `verify` |
+//! | Utilities | `sleep`, `date`, `basename`, `dirname`, `timeout`, `wait`, `watch`, `yes`, `kill`, `clear`, `numfmt`, `factor`, `tsort`, `retry`, `parallel` |
 //! | Disk | `df`, `du` |
 //! | Pipeline | `xargs`, `tee` |
-//! | System info | `whoami`, `hostname`, `uname`, `id`, `env`, `printenv`, `history` |
+//! | System info | `whoami`, `hostname`, `uname`, `id`, `nproc`, `env`, `printenv`, `history` |
 //! | Structured data | `json`, `csv`, `tomlq`, `semver` |
 //! | Network | `curl`, `wget`, `http` (requires [`NetworkAllowlist`])
 //! | Arithmetic | `bc` |

@@ -632,7 +632,7 @@ Bash::builder()
 | TM-INF-005 | Hostname | `hostname`, `$HOSTNAME` | Returns configurable virtual value | **MITIGATED** |
 | TM-INF-006 | Username | `whoami`, `$USER` | Returns configurable virtual value | **MITIGATED** |
 | TM-INF-007 | IP address | `ip addr`, `ifconfig` | Not implemented | **MITIGATED** |
-| TM-INF-008 | System info | `uname -a` | Returns configurable virtual values | **MITIGATED** |
+| TM-INF-008 | System info | `uname -a`, `nproc` | Returns configurable virtual values; `nproc` reports the constant `VIRTUAL_NPROC` (4), never the host core count | **MITIGATED** |
 | TM-INF-009 | User ID | `id` | Returns hardcoded uid=1000 | **MITIGATED** |
 
 **Current Risk**: NONE. Implementation: `builtins/system.rs`, `hostname` (default

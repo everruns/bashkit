@@ -27,11 +27,23 @@
     },
     {
       "feature": null,
+      "name": "b2sum"
+    },
+    {
+      "feature": null,
+      "name": "base32"
+    },
+    {
+      "feature": null,
       "name": "base64"
     },
     {
       "feature": null,
       "name": "basename"
+    },
+    {
+      "feature": null,
+      "name": "basenc"
     },
     {
       "feature": null,
@@ -83,7 +95,15 @@
     },
     {
       "feature": null,
+      "name": "cksum"
+    },
+    {
+      "feature": null,
       "name": "clear"
+    },
+    {
+      "feature": null,
+      "name": "cmp"
     },
     {
       "feature": null,
@@ -192,6 +212,10 @@
     {
       "feature": null,
       "name": "expr"
+    },
+    {
+      "feature": null,
+      "name": "factor"
     },
     {
       "feature": null,
@@ -335,10 +359,6 @@
     },
     {
       "feature": null,
-      "name": "more"
-    },
-    {
-      "feature": null,
       "name": "mv"
     },
     {
@@ -348,6 +368,10 @@
     {
       "feature": "typescript",
       "name": "node"
+    },
+    {
+      "feature": null,
+      "name": "nproc"
     },
     {
       "feature": null,
@@ -475,7 +499,19 @@
     },
     {
       "feature": null,
+      "name": "sha224sum"
+    },
+    {
+      "feature": null,
       "name": "sha256sum"
+    },
+    {
+      "feature": null,
+      "name": "sha384sum"
+    },
+    {
+      "feature": null,
+      "name": "sha512sum"
     },
     {
       "feature": null,
@@ -591,6 +627,10 @@
     },
     {
       "feature": null,
+      "name": "tsort"
+    },
+    {
+      "feature": null,
       "name": "type"
     },
     {
@@ -628,10 +668,6 @@
     {
       "feature": null,
       "name": "verify"
-    },
-    {
-      "feature": null,
-      "name": "vi"
     },
     {
       "feature": null,
@@ -678,5 +714,5 @@
       "name": "zip"
     }
   ],
-  "count": 169
+  "count": 178
 }

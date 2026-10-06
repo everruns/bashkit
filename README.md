@@ -169,12 +169,12 @@ check must consult it. Available in Rust, Node (`bash.analyze()`), and Python
 | File operations | `mkdir`, `mktemp`, `mkfifo`, `rm`, `cp`, `mv`, `touch`, `chmod`, `chown`, `ln`, `rmdir`, `realpath`, `readlink`, `split`, `truncate` |
 | File inspection | `file`, `stat`, `less` |
 | Archives | `tar`, `gzip`, `gunzip`, `zip`, `unzip` |
-| Byte tools | `od`, `xxd`, `hexdump`, `base64` |
-| Checksums | `md5sum`, `sha1sum`, `sha256sum` |
-| Utilities | `sleep`, `date`, `basename`, `dirname`, `timeout`, `wait`, `watch`, `yes`, `kill`, `bc`, `clear`, `numfmt` |
+| Byte tools | `od`, `xxd`, `hexdump`, `base64`, `base32`, `basenc`, `cmp` |
+| Checksums | `md5sum`, `sha1sum`, `sha224sum`, `sha256sum`, `sha384sum`, `sha512sum`, `b2sum`, `cksum` (all `*sum` support `-c`) |
+| Utilities | `sleep`, `date`, `basename`, `dirname`, `timeout`, `wait`, `watch`, `yes`, `kill`, `bc`, `clear`, `numfmt`, `factor`, `tsort` |
 | Disk | `df`, `du` |
 | Pipeline | `xargs`, `tee` |
-| System info | `whoami`, `hostname`, `uname`, `id`, `env`, `printenv`, `history` |
+| System info | `whoami`, `hostname`, `uname`, `id`, `nproc`, `env`, `printenv`, `history` |
 | Data formats | `csv`, `json`, `yaml`, `tomlq`, `template`, `envsubst` |
 | Network | `curl`, `wget` (requires allowlist), `http` |
 | DevOps | `assert`, `dotenv`, `glob`, `log`, `retry`, `semver`, `verify`, `parallel`, `patch` |

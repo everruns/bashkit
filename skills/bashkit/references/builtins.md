@@ -35,7 +35,7 @@ The project tracks 164 built-in commands (generated knowledge/status/builtins.js
 - Text: `grep`, `rg`, `sed`, `awk`, `jq`, `head`, `tail`, `sort`, `uniq`, `cut`, `tr`, `wc`, `diff`, `seq`, `expr`
 - Files: `mkdir`, `mktemp`, `rm`, `cp`, `mv`, `touch`, `chmod`, `ln`, `realpath`, `split`
 - Archives: `tar`, `gzip`, `gunzip`, `zip`, `unzip`
-- Checksums/bytes: `md5sum`, `sha1sum`, `sha256sum`, `od`, `xxd`, `hexdump`, `base64`
+- Checksums/bytes: `md5sum`, `sha1sum`, `sha224sum`, `sha256sum`, `sha384sum`, `sha512sum`, `b2sum`, `cksum`, `cmp`, `od`, `xxd`, `hexdump`, `base64`, `base32`, `basenc`
 - Data formats: `csv`, `json`, `yaml`, `tomlq`, `template`, `envsubst`
 - Network: `curl`, `wget`, `http`
 - DevOps: `assert`, `dotenv`, `glob`, `log`, `retry`, `semver`, `verify`, `parallel`, `patch`

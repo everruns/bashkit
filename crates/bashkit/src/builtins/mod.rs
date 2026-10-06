@@ -29,6 +29,7 @@ mod assert;
 mod atomic_write;
 mod awk;
 mod base64;
+mod basenc;
 mod bc;
 mod caller;
 mod cat;
@@ -36,6 +37,7 @@ mod checksum;
 mod clap_cache;
 mod clap_env;
 mod clear;
+mod cmp;
 mod column;
 mod comm;
 mod compgen;
@@ -53,6 +55,7 @@ mod envsubst;
 mod expand;
 mod export;
 mod expr;
+mod factor;
 mod fc;
 mod fileops;
 mod flow;
@@ -108,6 +111,7 @@ mod tomlq;
 mod trap;
 mod tree;
 mod truncate;
+mod tsort;
 mod vars;
 mod verify;
 #[cfg(feature = "terminal")]
@@ -149,11 +153,13 @@ pub use archive::{Bunzip2, Bzcat, Bzip2, Gunzip, Gzip, Tar};
 pub use assert::Assert;
 pub use awk::Awk;
 pub use base64::Base64;
+pub use basenc::{Base32, Basenc};
 pub use bc::Bc;
 pub use caller::Caller;
 pub use cat::Cat;
-pub use checksum::{Md5sum, Sha1sum, Sha256sum};
+pub use checksum::{B2sum, Cksum, Md5sum, Sha1sum, Sha224sum, Sha256sum, Sha384sum, Sha512sum};
 pub use clear::Clear;
+pub use cmp::Cmp;
 pub use column::Column;
 pub use comm::Comm;
 pub use compgen::Compgen;
@@ -171,6 +177,7 @@ pub use envsubst::Envsubst;
 pub use expand::{Expand, Unexpand};
 pub use export::Export;
 pub use expr::Expr;
+pub use factor::Factor;
 pub use fc::Fc;
 pub use fileops::{Chmod, Chown, Cp, Kill, Ln, Mkdir, Mktemp, Mv, Rm, Touch};
 pub use flow::{Break, Colon, Continue, Exit, False, Return, True};
@@ -209,6 +216,7 @@ pub use sed::Sed;
 pub use semver::Semver;
 pub use seq::Seq;
 pub use shuf::Shuf;
+pub use tsort::Tsort;
 
 #[cfg(feature = "terminal")]
 pub use pager::More;
@@ -217,7 +225,7 @@ pub use sortuniq::{Sort, Uniq};
 pub use source::Source;
 pub use split::Split;
 pub use strings::Strings;
-pub use system::{DEFAULT_HOSTNAME, DEFAULT_USERNAME, Hostname, Id, Uname, Whoami};
+pub use system::{DEFAULT_HOSTNAME, DEFAULT_USERNAME, Hostname, Id, Nproc, Uname, Whoami};
 pub use template::Template;
 pub use test::{Bracket, Test};
 pub use textrev::{Rev, Tac};
@@ -1865,6 +1873,16 @@ mod tests {
             "md5sum",
             "sha1sum",
             "sha256sum",
+            "sha224sum",
+            "sha384sum",
+            "sha512sum",
+            "b2sum",
+            "cksum",
+            "base32",
+            "basenc",
+            "cmp",
+            "nproc",
+            "tsort",
             "tar",
             "gzip",
             "gunzip",
