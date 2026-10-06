@@ -24,7 +24,8 @@ import gc
 
 import pytest
 
-from bashkit import Bash, BashTool, BuiltinContext, ScriptedTool
+from bashkit import Bash, BashTool, BuiltinContext
+from bashkit.scripted import ScriptedTool
 
 trace_id: contextvars.ContextVar[str] = contextvars.ContextVar("trace_id")
 

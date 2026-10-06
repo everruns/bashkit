@@ -13,6 +13,6 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true
   },
-  "include": ["wrapper.ts", "langchain.ts", "anthropic.ts", "openai.ts", "ai.ts"],
+  "include": ["wrapper.ts", "scripted.ts", "internal.ts", "langchain.ts", "anthropic.ts", "openai.ts", "ai.ts"],
   "exclude": ["node_modules", "__test__"]
 }

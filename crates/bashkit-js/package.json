@@ -13,6 +13,9 @@
       "browser": "./bashkit.wasi-browser.js",
       "default": "./wrapper.js"
     },
+    "./scripted": {
+      "default": "./scripted.js"
+    },
     "./langchain": {
       "default": "./langchain.js"
     },
@@ -52,6 +55,10 @@
   "files": [
     "wrapper.js",
     "wrapper.d.ts",
+    "scripted.js",
+    "scripted.d.ts",
+    "internal.js",
+    "internal.d.ts",
     "langchain.js",
     "langchain.d.ts",
     "anthropic.js",

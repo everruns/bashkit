@@ -26,6 +26,12 @@ Compose tool definitions (`ToolDef`) + execution callbacks into a single `Script
 
 Separate crate `bashkit-scripted-tool` (lib `bashkit_scripted_tool`), published to crates.io in lockstep with `bashkit` (was the `scripted_tool` feature of core until 0.18.x). Decision: core stays the sandboxed interpreter + `BashTool`; everything built on `ToolDef` (`ToolDef`/`ToolArgs`/`ToolImpl`, `ToolRegistry`, `ScriptedTool`, `ScriptingToolSet`, the logic-only shell profile) lives here, built only on core public APIs. Features: `python`, `typescript`, `jq` (forward to core), `tracing`. `ToolRegistry::install(builder)` replaces the old `BashBuilder::tool_registry`; it reads `BashBuilder::execution_profile()` for Python/TypeScript limits and registers `python`/`python3` + the TypeScript extension with the registry's external handler + prelude. Core extension points it depends on: `RuntimeCallContext`, `ShellFeatures` + `builtin_filter`, `Python::with_external_handler_and_prelude`, `TypeScriptExtension::with_external_handler_and_prelude`, `ExecutionCapability::derive`, `ExecutionBudget::run`, `bashkit::time` (wasm-safe `Instant`/`timeout`/`sleep`). Migration guide: `docs/migrating-scripted-tool.md`.
 
+## Bindings
+
+Python: `from bashkit.scripted import ScriptedTool` (`bashkit/scripted.py` re-exports the native class). `bashkit.ScriptedTool` resolves through a module `__getattr__` that emits `FutureWarning`; it is not in `bashkit.__all__`, so `from bashkit import *` stays silent.
+
+JS: `import { ScriptedTool } from "@everruns/bashkit/scripted"` (`scripted.ts`, `exports["./scripted"]`). The root keeps `@deprecated` aliases (`ScriptedTool`, `ScriptedToolOptions`, `ToolCallback`) bound to the same class. Helpers shared with `Bash`/`BashTool` (native loader, input-size guard, async queue, `BashError`) live in non-exported `internal.ts`, so neither entry imports the other and there is no ESM cycle. Generated API references render `bashkit.scripted` / `@everruns/bashkit/scripted` as their own sections and skip deprecated aliases. Both shims are transition-only, removal tracked by `TODO` in `bashkit/__init__.py` and `wrapper.ts`.
+
 ## Motivation
 
 With many tools, each LLM tool call is a separate round-trip; a 5-tool data-gathering task costs 5+ turns. `ScriptedTool` lets the LLM write one bash script that calls all tools, pipes results through `jq`, and returns composed output, reducing latency and token cost.

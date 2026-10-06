@@ -1,5 +1,6 @@
 import test from "ava";
-import { Bash, BashError, BashTool, ScriptedTool } from "../wrapper.js";
+import { Bash, BashError, BashTool } from "../wrapper.js";
+import { ScriptedTool } from "../scripted.js";
 
 test("integration: python opt-in executes embedded Python", (t) => {
   const bash = new Bash({ python: true });

@@ -18,9 +18,9 @@ LLM tool wrapper with schema and system prompt (``BashTool``)::
     Hello, World!
     >>> print(tool.input_schema())   # JSON Schema for LLM function calling
 
-Multi-tool orchestration (``ScriptedTool``)::
+Multi-tool orchestration (``ScriptedTool``, in ``bashkit.scripted``)::
 
-    >>> from bashkit import ScriptedTool
+    >>> from bashkit.scripted import ScriptedTool
     >>> tool = ScriptedTool("api")
     >>> tool.add_tool("greet", "Greet user",
     ...     callback=lambda p, s=None: f"hello {p.get('name', 'world')}\\n")
@@ -57,7 +57,6 @@ from bashkit._bashkit import (
     FileSystem,
     PackedCommit,
     ScriptAnalysis,
-    ScriptedTool,
     ShellState,
     SnapshotDiff,
     SnapshotGraph,
@@ -81,9 +80,28 @@ __all__ = [
     "PackedCommit",
     "ShellState",
     "ScriptAnalysis",
-    "ScriptedTool",
     "SnapshotDiff",
     "SnapshotGraph",
     "create_langchain_tool_spec",
     "get_version",
 ]
+
+
+_MOVED = {"ScriptedTool": "bashkit.scripted"}
+
+
+def __getattr__(name: str):
+    # Transition shim: ScriptedTool moved to bashkit.scripted.
+    # TODO: remove after one release cycle (see docs/migrating-scripted-tool.md).
+    if name in _MOVED:
+        import importlib
+        import warnings
+
+        target = _MOVED[name]
+        warnings.warn(
+            f"bashkit.{name} moved to {target}; use `from {target} import {name}`",
+            FutureWarning,
+            stacklevel=2,
+        )
+        return getattr(importlib.import_module(target), name)
+    raise AttributeError(f"module 'bashkit' has no attribute {name!r}")

@@ -34,7 +34,7 @@ import httpx
 import uvicorn
 from fastapi import FastAPI, Request
 
-from bashkit import ScriptedTool
+from bashkit.scripted import ScriptedTool
 
 # ---------------------------------------------------------------------------
 # Request-scoped ContextVar (like Flask's g or Starlette's request state)

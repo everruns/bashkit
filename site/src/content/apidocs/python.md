@@ -1139,241 +1139,6 @@ Example:
 '/skills/my-skill\n'
 ```
 
-## ScriptedTool
-
-Compose Python callbacks as bash builtins for multi-tool orchestration.
-
-Each registered tool becomes a bash builtin command. An LLM (or user)
-writes a single bash script that pipes, loops, and branches across tools.
-
-### Fields
-
-- **`name`** — `str`
-- **`short_description`** — `str`
-- **`version`** — `str`
-
-### Constructor
-
-```python
-ScriptedTool(name: str, short_description: str | None = None, max_commands: int | None = None, max_loop_iterations: int | None = None) -> None
-```
-
-Create a new ScriptedTool.
-
-**Parameters:**
-
-- **`name`** — Tool name (used as the LLM tool identifier).
-- **`short_description`** — One-line description of the tool.
-- **`max_commands`** — Limit total commands per execution.
-- **`max_loop_iterations`** — Limit iterations per loop.
-
-Example:
-
-```python
->>> tool = ScriptedTool("data_pipeline", short_description="ETL tools")
->>> print(tool.name)
-data_pipeline
-```
-
-### `add_tool`
-
-```python
-ScriptedTool.add_tool(name: str, description: str, callback: Callable[[dict[str, Any], str | None], str], schema: dict[str, Any] | None = None) -> None
-```
-
-Register a Python callback as a bash builtin command.
-
-**Parameters:**
-
-- **`name`** — Command name (becomes a bash builtin).
-- **`description`** — Human-readable description of the sub-tool.
-- **`callback`** — ``(params_dict, stdin_or_none) -> output_string`` or an async callback that resolves to one. Async callbacks run on the caller's active asyncio loop for ``await execute()`` and on a private loop for ``execute_sync()``.
-- **`schema`** — Optional JSON Schema for the tool's parameters.
-
-Example:
-
-```python
->>> tool = ScriptedTool("math")
->>> tool.add_tool(
-...     "add", "Add two numbers",
-...     callback=lambda p, s=None: str(int(p["a"]) + int(p["b"])) + "\n",
-...     schema={
-...         "type": "object",
-...         "properties": {"a": {"type": "integer"}, "b": {"type": "integer"}},
-...     },
-... )
->>> result = tool.execute_sync("add --a 2 --b 3")
->>> result.stdout.strip()
-'5'
-```
-
-### `env`
-
-```python
-ScriptedTool.env(key: str, value: str) -> None
-```
-
-Set an environment variable for subsequent executions.
-
-Example:
-
-```python
->>> tool = ScriptedTool("demo")
->>> tool.env("API_KEY", "secret-123")
->>> result = tool.execute_sync("echo $API_KEY")
->>> result.stdout.strip()
-'secret-123'
-```
-
-### `execute`
-
-```python
-ScriptedTool.execute(commands: str) -> ExecResult
-```
-
-Execute commands asynchronously.
-
-Async callbacks run on the caller's active asyncio loop.
-
-Example:
-
-```python
->>> tool = ScriptedTool("demo")
->>> tool.add_tool("hi", "Say hi", callback=lambda p, s=None: "hi\n")
->>> result = await tool.execute("hi")
->>> result.stdout.strip()
-'hi'
-```
-
-### `execute_sync`
-
-```python
-ScriptedTool.execute_sync(commands: str) -> ExecResult
-```
-
-Execute commands synchronously (blocking).
-
-Async callbacks run on a private loop here.
-
-Example:
-
-```python
->>> tool = ScriptedTool("demo")
->>> tool.add_tool("ping", "Ping", callback=lambda p, s=None: "pong\n")
->>> result = tool.execute_sync("ping")
->>> result.stdout.strip()
-'pong'
-```
-
-### `tool_count`
-
-```python
-ScriptedTool.tool_count() -> int
-```
-
-Return the number of registered sub-tools.
-
-Example:
-
-```python
->>> tool = ScriptedTool("demo")
->>> tool.tool_count()
-0
->>> tool.add_tool("a", "A", callback=lambda p, s=None: "")
->>> tool.tool_count()
-1
-```
-
-### `description`
-
-```python
-ScriptedTool.description() -> str
-```
-
-Return the tool description for LLM consumption.
-
-Example:
-
-```python
->>> tool = ScriptedTool("api", short_description="API tools")
->>> desc = tool.description()
->>> len(desc) > 0
-True
-```
-
-### `help`
-
-```python
-ScriptedTool.help() -> str
-```
-
-Return extended help text listing all registered sub-tools.
-
-Example:
-
-```python
->>> tool = ScriptedTool("api")
->>> tool.add_tool("fetch", "Fetch URL", callback=lambda p, s=None: "")
->>> "fetch" in tool.help()
-True
-```
-
-### `system_prompt`
-
-```python
-ScriptedTool.system_prompt() -> str
-```
-
-Return the system prompt for LLM agents.
-
-Includes descriptions of all registered sub-tools and usage examples.
-
-Example:
-
-```python
->>> tool = ScriptedTool("api")
->>> tool.add_tool("fetch", "Fetch URL", callback=lambda p, s=None: "")
->>> prompt = tool.system_prompt()
->>> "fetch" in prompt.lower()
-True
-```
-
-### `input_schema`
-
-```python
-ScriptedTool.input_schema() -> str
-```
-
-Return the JSON Schema for tool input.
-
-Example:
-
-```python
->>> import json
->>> tool = ScriptedTool("api")
->>> schema = json.loads(tool.input_schema())
->>> "commands" in str(schema)
-True
-```
-
-### `output_schema`
-
-```python
-ScriptedTool.output_schema() -> str
-```
-
-Return the JSON Schema for tool output.
-
-Example:
-
-```python
->>> import json
->>> tool = ScriptedTool("api")
->>> schema = json.loads(tool.output_schema())
->>> isinstance(schema, dict)
-True
-```
-
 ## FileSystem
 
 Direct access to Bashkit's virtual filesystem or a standalone mountable FS.
@@ -1876,6 +1641,247 @@ Example:
 ```python
 >>> version = get_version()
 >>> isinstance(version, str)
+True
+```
+
+---
+
+# `bashkit.scripted`
+
+Multi-tool orchestration. Import with `from bashkit.scripted import ScriptedTool`.
+
+## ScriptedTool
+
+Compose Python callbacks as bash builtins for multi-tool orchestration.
+
+Each registered tool becomes a bash builtin command. An LLM (or user)
+writes a single bash script that pipes, loops, and branches across tools.
+
+### Fields
+
+- **`name`** — `str`
+- **`short_description`** — `str`
+- **`version`** — `str`
+
+### Constructor
+
+```python
+ScriptedTool(name: str, short_description: str | None = None, max_commands: int | None = None, max_loop_iterations: int | None = None) -> None
+```
+
+Create a new ScriptedTool.
+
+**Parameters:**
+
+- **`name`** — Tool name (used as the LLM tool identifier).
+- **`short_description`** — One-line description of the tool.
+- **`max_commands`** — Limit total commands per execution.
+- **`max_loop_iterations`** — Limit iterations per loop.
+
+Example:
+
+```python
+>>> tool = ScriptedTool("data_pipeline", short_description="ETL tools")
+>>> print(tool.name)
+data_pipeline
+```
+
+### `add_tool`
+
+```python
+ScriptedTool.add_tool(name: str, description: str, callback: Callable[[dict[str, Any], str | None], str], schema: dict[str, Any] | None = None) -> None
+```
+
+Register a Python callback as a bash builtin command.
+
+**Parameters:**
+
+- **`name`** — Command name (becomes a bash builtin).
+- **`description`** — Human-readable description of the sub-tool.
+- **`callback`** — ``(params_dict, stdin_or_none) -> output_string`` or an async callback that resolves to one. Async callbacks run on the caller's active asyncio loop for ``await execute()`` and on a private loop for ``execute_sync()``.
+- **`schema`** — Optional JSON Schema for the tool's parameters.
+
+Example:
+
+```python
+>>> tool = ScriptedTool("math")
+>>> tool.add_tool(
+...     "add", "Add two numbers",
+...     callback=lambda p, s=None: str(int(p["a"]) + int(p["b"])) + "\n",
+...     schema={
+...         "type": "object",
+...         "properties": {"a": {"type": "integer"}, "b": {"type": "integer"}},
+...     },
+... )
+>>> result = tool.execute_sync("add --a 2 --b 3")
+>>> result.stdout.strip()
+'5'
+```
+
+### `env`
+
+```python
+ScriptedTool.env(key: str, value: str) -> None
+```
+
+Set an environment variable for subsequent executions.
+
+Example:
+
+```python
+>>> tool = ScriptedTool("demo")
+>>> tool.env("API_KEY", "secret-123")
+>>> result = tool.execute_sync("echo $API_KEY")
+>>> result.stdout.strip()
+'secret-123'
+```
+
+### `execute`
+
+```python
+ScriptedTool.execute(commands: str) -> ExecResult
+```
+
+Execute commands asynchronously.
+
+Async callbacks run on the caller's active asyncio loop.
+
+Example:
+
+```python
+>>> tool = ScriptedTool("demo")
+>>> tool.add_tool("hi", "Say hi", callback=lambda p, s=None: "hi\n")
+>>> result = await tool.execute("hi")
+>>> result.stdout.strip()
+'hi'
+```
+
+### `execute_sync`
+
+```python
+ScriptedTool.execute_sync(commands: str) -> ExecResult
+```
+
+Execute commands synchronously (blocking).
+
+Async callbacks run on a private loop here.
+
+Example:
+
+```python
+>>> tool = ScriptedTool("demo")
+>>> tool.add_tool("ping", "Ping", callback=lambda p, s=None: "pong\n")
+>>> result = tool.execute_sync("ping")
+>>> result.stdout.strip()
+'pong'
+```
+
+### `tool_count`
+
+```python
+ScriptedTool.tool_count() -> int
+```
+
+Return the number of registered sub-tools.
+
+Example:
+
+```python
+>>> tool = ScriptedTool("demo")
+>>> tool.tool_count()
+0
+>>> tool.add_tool("a", "A", callback=lambda p, s=None: "")
+>>> tool.tool_count()
+1
+```
+
+### `description`
+
+```python
+ScriptedTool.description() -> str
+```
+
+Return the tool description for LLM consumption.
+
+Example:
+
+```python
+>>> tool = ScriptedTool("api", short_description="API tools")
+>>> desc = tool.description()
+>>> len(desc) > 0
+True
+```
+
+### `help`
+
+```python
+ScriptedTool.help() -> str
+```
+
+Return extended help text listing all registered sub-tools.
+
+Example:
+
+```python
+>>> tool = ScriptedTool("api")
+>>> tool.add_tool("fetch", "Fetch URL", callback=lambda p, s=None: "")
+>>> "fetch" in tool.help()
+True
+```
+
+### `system_prompt`
+
+```python
+ScriptedTool.system_prompt() -> str
+```
+
+Return the system prompt for LLM agents.
+
+Includes descriptions of all registered sub-tools and usage examples.
+
+Example:
+
+```python
+>>> tool = ScriptedTool("api")
+>>> tool.add_tool("fetch", "Fetch URL", callback=lambda p, s=None: "")
+>>> prompt = tool.system_prompt()
+>>> "fetch" in prompt.lower()
+True
+```
+
+### `input_schema`
+
+```python
+ScriptedTool.input_schema() -> str
+```
+
+Return the JSON Schema for tool input.
+
+Example:
+
+```python
+>>> import json
+>>> tool = ScriptedTool("api")
+>>> schema = json.loads(tool.input_schema())
+>>> "commands" in str(schema)
+True
+```
+
+### `output_schema`
+
+```python
+ScriptedTool.output_schema() -> str
+```
+
+Return the JSON Schema for tool output.
+
+Example:
+
+```python
+>>> import json
+>>> tool = ScriptedTool("api")
+>>> schema = json.loads(tool.output_schema())
+>>> isinstance(schema, dict)
 True
 ```
 

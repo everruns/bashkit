@@ -6,7 +6,6 @@ export {
   Bash,
   BashTool,
   BashError,
-  ScriptedTool,
   getVersion,
   snapshotAncestry,
   snapshotCapabilities,
@@ -16,3 +15,4 @@ export {
   snapshotPlanCheckout,
   snapshotReachable,
 } from "../../wrapper.js";
+export { ScriptedTool } from "../../scripted.js";

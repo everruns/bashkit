@@ -19,7 +19,8 @@ from bashkit_random_fs import create_random_filesystem_capsule, expected_random_
 from fastapi import FastAPI, Request  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
-from bashkit import Bash, FileSystem, ScriptedTool  # noqa: E402
+from bashkit import Bash, FileSystem  # noqa: E402
+from bashkit.scripted import ScriptedTool  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # ContextVar for request-scoped state

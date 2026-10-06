@@ -18,7 +18,8 @@ from pathlib import Path
 
 import pytest
 
-from bashkit import Bash, BashTool, ScriptedTool
+from bashkit import Bash, BashTool
+from bashkit.scripted import ScriptedTool
 
 # ===========================================================================
 # 1. BLACK-BOX: Creative sandbox escape attempts
