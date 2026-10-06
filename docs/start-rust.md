@@ -33,7 +33,9 @@ cargo add bashkit --no-default-features --features http_client,aws-lc-rs
 
 `python` embeds the [Monty](https://github.com/pydantic/monty) interpreter, see the
 [Python builtin](../crates/bashkit/docs/python.md) guide to run Python inside the shell, and [Get
-started in Python](start-python.md) to embed Bashkit *in* a Python app.
+started in Python](start-python.md) to embed Bashkit *in* a Python app. `cpython` runs real
+CPython 3.14 in a WebAssembly sandbox instead, see the
+[CPython guide](../crates/bashkit/docs/cpython.md).
 
 ## First script
 

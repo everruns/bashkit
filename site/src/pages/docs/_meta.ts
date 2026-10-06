@@ -230,6 +230,17 @@ export const DOC_META: DocMeta[] = [
     editPath: "crates/bashkit/docs/python.md",
   },
   {
+    slug: "cpython",
+    title: "CPython builtin",
+    summary: "Real CPython 3.14 in a WebAssembly sandbox: full stdlib, CLI, limits.",
+    seoTitle: "Bashkit CPython builtin: sandboxed Python 3.14 in WebAssembly",
+    seoDescription:
+      "Run real CPython 3.14 inside Bashkit as python3, compiled to WebAssembly with a pre-initialized snapshot, VFS access, resource limits, and per-call isolation.",
+    section: "Runtimes",
+    collection: "rustdocs",
+    editPath: "crates/bashkit/docs/cpython.md",
+  },
+  {
     slug: "builtin_typescript",
     title: "TypeScript builtin",
     summary: "Embedded ZapCode TypeScript runtime shared with bash in-memory.",

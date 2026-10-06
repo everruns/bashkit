@@ -9,6 +9,7 @@ a pure-Rust implementation of Python 3.12. Python runs entirely in-memory with
 configurable resource limits and no host access.
 
 **See also:**
+- [Embedded CPython (WebAssembly)](./cpython.md) - Full CPython 3.14 in a wasm sandbox (`cpython` feature)
 - [Threat Model](./threat-model.md) - Security considerations (TM-PY-*)
 - [Custom Builtins](./custom_builtins.md) - Writing your own builtins
 - [Compatibility Reference](./compatibility.md) - Bash feature support
