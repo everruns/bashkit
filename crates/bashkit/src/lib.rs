@@ -1058,7 +1058,7 @@ impl Bash {
                 Some(parser_timeout),
             )
             .with_execution_budget(self.interpreter.execution_budget().clone());
-            parser.parse()?
+            recover_partial_parse(parser.parse_recovering())?
         };
 
         // On native targets, parse inline for small scripts (avoid threadpool
@@ -1068,7 +1068,7 @@ impl Bash {
         let ast = if input_len <= SPAWN_BLOCKING_THRESHOLD {
             let parser = Parser::with_limits(script, max_ast_depth, max_parser_operations)
                 .with_execution_budget(self.interpreter.execution_budget().clone());
-            match parser.parse() {
+            match recover_partial_parse(parser.parse_recovering()) {
                 Ok(ast) => {
                     #[cfg(feature = "logging")]
                     tracing::debug!(target: "bashkit::parser", "Parse completed (inline)");
@@ -1088,7 +1088,7 @@ impl Bash {
                     let parser =
                         Parser::with_limits(&script_owned, max_ast_depth, max_parser_operations)
                             .with_execution_budget(execution_budget);
-                    parser.parse()
+                    recover_partial_parse(parser.parse_recovering())
                 })
                 .await
             })
@@ -3977,6 +3977,26 @@ pub mod logging_guide {}
 /// **Related:** [`BashBuilder`], [`hooks`], [`custom_builtins_guide`]
 #[doc = include_str!("../docs/hooks.md")]
 pub mod hooks_guide {}
+
+/// Turn a [`parser::Parser::parse_recovering`] result into the script to run.
+///
+/// Decision: like bash, commands on lines before a syntax error still run and
+/// the error is reported afterwards (stderr + exit 2, via
+/// `Script::trailing_error`). With nothing runnable before it, the error stays
+/// a hard `Err` exactly as before, so callers that only validate syntax are
+/// unaffected.
+fn recover_partial_parse(
+    (mut script, error): (parser::Script, Option<Error>),
+) -> Result<parser::Script> {
+    match error {
+        None => Ok(script),
+        Some(e) if script.commands.is_empty() => Err(e),
+        Some(e) => {
+            script.trailing_error = Some(format!("bash: syntax error: {e}\n"));
+            Ok(script)
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -6923,15 +6943,15 @@ if true; then
 echo missing fi"#,
             )
             .await;
-        // Should fail to parse due to missing 'fi'
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        let err_msg = format!("{}", err);
+        // Like bash: line 1 runs, then the missing 'fi' is reported (exit 2)
+        let result = result.unwrap();
+        assert_eq!(result.stdout, "ok\n");
+        assert_eq!(result.exit_code, 2);
         // Error should mention line number
         assert!(
-            err_msg.contains("line") || err_msg.contains("parse"),
+            result.stderr.contains("line") && result.stderr.contains("parse"),
             "Error should be a parse error: {}",
-            err_msg
+            result.stderr
         );
     }
 

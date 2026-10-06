@@ -17,6 +17,7 @@ mod ast;
 pub mod budget;
 mod lexer;
 mod span;
+mod subst_scan;
 mod tokens;
 
 pub use ast::*;
@@ -73,6 +74,12 @@ pub struct Parser<'a> {
     /// when a `$(...)` body fails to parse; `parse_script` converts it into a
     /// hard parse error so the script is rejected the way bash rejects it.
     deferred_error: Cell<Option<Error>>,
+    /// The returned error came from (or coexisted with) a deferred `$(...)`
+    /// error, whose position is unreliable; see [`Parser::parse_recovering`].
+    error_was_deferred: bool,
+    /// Line the top-level command being parsed starts on; on failure, only
+    /// commands that ended on earlier lines are runnable.
+    failed_command_line: usize,
     /// Aggregate request budget shared by every child parser.
     execution_budget: Option<crate::limits::ExecutionBudget>,
 }
@@ -128,6 +135,8 @@ impl<'a> Parser<'a> {
             timeout,
             started_at: Instant::now(),
             deferred_error: Cell::new(None),
+            error_was_deferred: false,
+            failed_command_line: 0,
             execution_budget: None,
         }
     }
@@ -255,15 +264,66 @@ impl<'a> Parser<'a> {
 
     /// Parse the input and return the AST.
     pub fn parse(mut self) -> Result<Script> {
-        self.parse_script()
+        let mut commands = Vec::new();
+        let start_span = self.current_span;
+        self.parse_script_into(&mut commands)?;
+        let end_span = self.current_span;
+        Ok(Script {
+            commands: commands.into_iter().map(|(cmd, _)| cmd).collect(),
+            span: start_span.merge(end_span),
+            trailing_error: None,
+        })
     }
 
-    fn parse_script(&mut self) -> Result<Script> {
+    /// Parse like bash reads a script: on a syntax error, also return the
+    /// complete commands that ended on lines *before* the line where the
+    /// failing command starts, so the caller can run them first (bash executes
+    /// line by line and only then reports the error, exit 2). Commands sharing
+    /// that line are dropped, as bash parses a whole line before running any
+    /// of it.
+    ///
+    /// Errors deferred from a `$(...)` body carry no reliable position, so
+    /// they keep whole-script semantics: no prefix is returned.
+    pub fn parse_recovering(mut self) -> (Script, Option<Error>) {
+        let mut commands = Vec::new();
+        let start_span = self.current_span;
+        let result = self.parse_script_into(&mut commands);
+        let end_span = self.current_span;
+        let (keep, err) = match result {
+            Ok(()) => (commands.len(), None),
+            Err(e) => {
+                if self.deferred_error.take().is_some() {
+                    self.error_was_deferred = true;
+                }
+                let keep = match &e {
+                    Error::Parse { .. } if !self.error_was_deferred => {
+                        let failed_line = self.failed_command_line;
+                        commands
+                            .iter()
+                            .take_while(|(_, end)| *end < failed_line)
+                            .count()
+                    }
+                    _ => 0,
+                };
+                (keep, Some(e))
+            }
+        };
+        commands.truncate(keep);
+        (
+            Script {
+                commands: commands.into_iter().map(|(cmd, _)| cmd).collect(),
+                span: start_span.merge(end_span),
+                trailing_error: None,
+            },
+            err,
+        )
+    }
+
+    /// Top-level command loop. Each command is stored with the line its
+    /// terminator (newline, `;`, `&` or EOF) sits on.
+    fn parse_script_into(&mut self, commands: &mut Vec<(Command, usize)>) -> Result<()> {
         // Check if the very first token is an error
         self.check_error_token()?;
-
-        let start_span = self.current_span;
-        let mut commands = Vec::new();
 
         while self.current_token.is_some() {
             self.tick()?;
@@ -273,8 +333,9 @@ impl<'a> Parser<'a> {
                 break;
             }
             let start_offset = self.current_span.start.offset;
+            self.failed_command_line = self.current_span.start.line;
             if let Some(cmd) = self.parse_command_list()? {
-                commands.push(cmd);
+                commands.push((cmd, self.current_span.start.line));
             } else if self.current_token.is_some() && self.current_span.start.offset == start_offset
             {
                 return Err(self.error("unexpected token"));
@@ -285,14 +346,10 @@ impl<'a> Parser<'a> {
         // script, exactly as in bash. Surfaced here because `parse_word` cannot
         // return `Result`.
         if let Some(err) = self.deferred_error.take() {
+            self.error_was_deferred = true;
             return Err(err);
         }
-
-        let end_span = self.current_span;
-        Ok(Script {
-            commands,
-            span: start_span.merge(end_span),
-        })
+        Ok(())
     }
 
     fn advance(&mut self) {
@@ -2950,13 +3007,16 @@ impl<'a> Parser<'a> {
                     inner_parser.execution_budget = self.execution_budget.clone();
                     inner_parser.current_depth = self.current_depth + 1;
                     inner_parser.started_at = self.started_at;
-                    let result = inner_parser.parse_script();
+                    let mut commands = Vec::new();
+                    let result = inner_parser
+                        .parse_script_into(&mut commands)
+                        .map(|()| commands.into_iter().map(|(cmd, _)| cmd).collect::<Vec<_>>());
                     (result, inner_parser.fuel)
                 };
                 let (parse_result, remaining_fuel) = inner_result;
                 self.fuel = remaining_fuel;
                 let commands = match parse_result {
-                    Ok(script) => script.commands,
+                    Ok(commands) => commands,
                     Err(err) if Self::is_parser_budget_error(&err) => return Err(err),
                     Err(_) => Vec::new(),
                 };
@@ -3114,22 +3174,14 @@ impl<'a> Parser<'a> {
                         }
                         push_part!(WordPart::ArithmeticExpansion(expr));
                     } else {
-                        // Command substitution $(...)
+                        // Command substitution $(...): quote/heredoc-aware end.
                         let mut cmd_str = String::new();
-                        let mut depth = 1;
+                        let mut scanner = subst_scan::SubstScanner::new();
                         for c in chars.by_ref() {
-                            if c == '(' {
-                                depth += 1;
-                                cmd_str.push(c);
-                            } else if c == ')' {
-                                depth -= 1;
-                                if depth == 0 {
-                                    break;
-                                }
-                                cmd_str.push(c);
-                            } else {
-                                cmd_str.push(c);
+                            if scanner.feed(c) == subst_scan::Step::Close {
+                                break;
                             }
+                            cmd_str.push(c);
                         }
                         // THREAT[TM-DOS-021]: Propagate parent parser limits to child parser
                         // to prevent depth limit bypass via nested command substitution.
