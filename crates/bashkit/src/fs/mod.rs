@@ -410,6 +410,7 @@ mod posix;
 mod readonly;
 #[cfg(feature = "realfs")]
 mod realfs;
+mod rootfs;
 mod search;
 mod std_streams;
 mod traits;
@@ -424,10 +425,11 @@ pub use posix::PosixFs;
 pub use readonly::ReadOnlyFs;
 #[cfg(feature = "realfs")]
 pub use realfs::{RealFs, RealFsMode};
+#[allow(unused_imports)]
+pub(crate) use rootfs::{BIN_DIRS, RootFs, stub_command};
 pub use search::{
     SearchCapabilities, SearchCapable, SearchMatch, SearchProvider, SearchQuery, SearchResults,
 };
-#[allow(unused_imports)]
 pub(crate) use std_streams::{StdStreamsFs, args_name_std_stream};
 pub use traits::{DirEntry, FileSystem, FileSystemExt, FileType, Metadata, fs_errors};
 

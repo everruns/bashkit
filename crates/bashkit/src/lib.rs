@@ -1927,6 +1927,8 @@ pub struct BashBuilder {
     history_file: Option<PathBuf>,
     /// When true, deny all filesystem mutations after configured mounts/files are applied.
     readonly_filesystem: bool,
+    /// When true, skip the default `/etc`, `/proc`, `/bin`, `/usr/bin` layer.
+    no_rootfs: bool,
     /// Interceptor hooks
     hooks_on_exit: Vec<hooks::Interceptor<hooks::ExitEvent>>,
     hooks_before_exec: Vec<hooks::Interceptor<hooks::ExecInput>>,
@@ -3264,6 +3266,36 @@ impl BashBuilder {
         self
     }
 
+    /// Provide the default root filesystem layout (on by default).
+    ///
+    /// Adds a read-only system layer under the session filesystem:
+    /// `/etc/{os-release,passwd,group,hostname,hosts,shells,timezone}`,
+    /// `/proc/{cpuinfo,meminfo,version,loadavg}`, and a stub in `/bin` and
+    /// `/usr/bin` for every registered command, so `which ls` prints
+    /// `/usr/bin/ls` and `/usr/bin/env` runs. Content comes from the virtual
+    /// identity (username, hostname), never the host. Session files shadow
+    /// system files; system files cannot be modified or removed. See
+    /// `knowledge/foundations/vfs.md` ("Root filesystem layout").
+    ///
+    /// ```rust
+    /// # use bashkit::Bash;
+    /// # #[tokio::main]
+    /// # async fn main() -> bashkit::Result<()> {
+    /// let mut bash = Bash::builder().build();
+    /// let r = bash.exec("which ls; grep ^ID= /etc/os-release").await?;
+    /// assert_eq!(r.stdout, "/usr/bin/ls\nID=bashkit\n");
+    ///
+    /// let mut bare = Bash::builder().rootfs(false).build();
+    /// let r = bare.exec("test -e /etc/passwd || echo none").await?;
+    /// assert_eq!(r.stdout, "none\n");
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn rootfs(mut self, enabled: bool) -> Self {
+        self.no_rootfs = !enabled;
+        self
+    }
+
     /// Build the Bash instance.
     ///
     /// If mounted files are specified, they are added via an [`OverlayFs`] layer
@@ -3322,6 +3354,23 @@ impl BashBuilder {
             self.mount_path_allowlist.as_deref(),
             base_fs,
         );
+
+        // Layer 1.5: default root filesystem layout (/etc, /proc, /usr/bin).
+        let rootfs = (!self.no_rootfs).then(|| {
+            Arc::new(fs::RootFs::new(
+                base_fs.clone(),
+                self.username
+                    .as_deref()
+                    .unwrap_or(builtins::DEFAULT_USERNAME),
+                self.hostname
+                    .as_deref()
+                    .unwrap_or(builtins::DEFAULT_HOSTNAME),
+            ))
+        });
+        let base_fs: Arc<dyn FileSystem> = match &rootfs {
+            Some(root) => Arc::clone(root) as Arc<dyn FileSystem>,
+            None => base_fs,
+        };
 
         // Layer 2: If there are mounted text/lazy files, wrap in an OverlayFs
         let has_mounts = !self.mounted_files.is_empty() || !self.mounted_lazy_files.is_empty();
@@ -3395,6 +3444,10 @@ impl BashBuilder {
         #[cfg(feature = "realfs")]
         {
             result.host_mounts = host_mounts;
+        }
+
+        if let Some(root) = &rootfs {
+            root.set_commands(result.interpreter.rootfs_command_names());
         }
 
         // Set hooks after build — avoids adding another arg to build_with_fs.

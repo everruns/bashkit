@@ -50,7 +50,7 @@ describe("security", () => {
     const bash = new Bash();
     assert.notEqual(bash.executeSync("exec /bin/bash").exitCode, 0);
     assert.notEqual(bash.executeSync("cat /proc/self/maps 2>&1").exitCode, 0);
-    assert.notEqual(bash.executeSync("cat /etc/passwd 2>&1").exitCode, 0);
+    assert.ok(!bash.executeSync("cat /etc/passwd 2>&1").stdout.includes("root:x:0:0"));
     assert.notEqual(
       bash
         .executeSync("echo test > /dev/udp/127.0.0.1/53 2>&1; echo $?")

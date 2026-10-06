@@ -175,11 +175,32 @@ object exposes. Reads and writes bypass the in-memory quotas. See
 [`@everruns/bashkit-wasm`](https://github.com/everruns/bashkit/blob/main/crates/bashkit-wasm/README.md#host-backed-filesystem)
 for the full method table and error-code list.
 
+## System directories
+
+By default a read-only system layer sits just above the base, so scripts see a
+Linux-like root: `/etc` (`os-release`, `passwd`, `group`, `hostname`, `hosts`),
+a static `/proc` (`cpuinfo`, `meminfo`, `version`, `loadavg`), `/bin` and
+`/usr/bin` entries for every builtin, `/root` and `/dev/zero`.
+
+```bash
+which ls                  # /usr/bin/ls
+grep ^ID= /etc/os-release # ID=bashkit
+/usr/bin/env FOO=1 env    # stubs run the builtin
+head -c 4 /dev/zero | od -An -tx1
+```
+
+Everything is synthetic and built from session config (username, hostname),
+never read from the host. The synthetic `/etc/passwd` has no root entry.
+Your own files win: anything in the base filesystem or a mount shadows the
+system layer, and new files under `/etc` are created in your filesystem.
+System files can't be modified or removed. The layer costs no quota and is not
+part of snapshots. Turn it off with `Bash::builder().rootfs(false)`.
+
 ## Special files and symlinks
 
 - **`/dev/null`** is handled at the interpreter level (not the filesystem), so a
   custom backend can't intercept it. **`/dev/urandom`** / **`/dev/random`**
-  return bounded random data.
+  return bounded random data; **`/dev/zero`** returns 1 MiB of zeros per read.
 - **Symlinks** are stored but never followed, this closes symlink-escape
   (TM-ESC-002) and symlink-loop DoS (TM-DOS-011).
 

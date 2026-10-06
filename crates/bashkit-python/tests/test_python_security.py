@@ -34,7 +34,7 @@ class TestSandboxEscape:
     def test_tm_inf_001_no_real_filesystem_read(self):
         bash = Bash()
         r = bash.execute_sync("cat /etc/passwd")
-        # VFS has no /etc/passwd
+        # Synthetic /etc/passwd has no root entry; root: means a host leak
         assert "root:" not in r.stdout
 
     def test_tm_esc_003_no_real_filesystem_proc(self):

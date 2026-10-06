@@ -251,7 +251,7 @@ Scripts may attempt to leak sensitive information.
 |--------|---------------|------------|--------|
 | Env var leak (TM-INF-001) | `echo $SECRET` | Caller responsibility | CALLER RISK |
 | File secrets (TM-INF-002) | `cat /secrets/key` | Virtual FS isolation | MITIGATED |
-| Proc secrets (TM-INF-003) | `/proc/self/environ` | No /proc filesystem | MITIGATED |
+| Proc secrets (TM-INF-003) | `/proc/self/environ` | Static synthetic /proc only, no `self` | MITIGATED |
 | Memory dump (TM-INF-004) | Core dumps | No crash dumps | MITIGATED |
 
 **Host Information:**
@@ -524,7 +524,7 @@ echo $user_input
 | Concurrent FS leakage (TM-ISO-015) | Race condition leaks files | Separate `Arc<FileSystem>` per instance | MITIGATED |
 | Snapshot/restore side effects (TM-ISO-016) | `restore_shell_state()` affects others | Snapshot is per-instance | MITIGATED |
 | Adversarial variable probing (TM-ISO-017) | Enumerate common secret var names | Default-empty env, no host env inheritance | MITIGATED |
-| /proc /sys probing (TM-ISO-018) | Read `/proc/self/environ` | VFS has no real /proc or /etc | MITIGATED |
+| /proc /sys probing (TM-ISO-018) | Read `/proc/self/environ` | /proc and /etc are synthetic, built from session config | MITIGATED |
 | jq cross-session env (TM-ISO-019) | `jq 'env.X'` sees other vars | jaq reads from injected global | MITIGATED |
 | Subshell mutation leakage (TM-ISO-020) | Subshell vars leak to parent | Snapshot/restore + per-instance state | MITIGATED |
 | EXIT trap cross-exec leak (TM-ISO-021) | EXIT trap fires in next `exec()` | Reset traps in `reset_for_execution()` | **MITIGATED** |

@@ -1456,12 +1456,13 @@ mod security {
     async fn no_real_filesystem_access() {
         let mut bash = bash_python();
         let r = bash
-            .exec("python3 -c \"from pathlib import Path\ntry:\n    Path('/etc/passwd').read_text()\n    print('LEAKED')\nexcept FileNotFoundError:\n    print('safe')\"")
+            .exec("python3 -c \"from pathlib import Path\nprint(Path('/etc/passwd').read_text())\"")
             .await
             .unwrap();
+        // /etc/passwd is the synthetic rootfs file, never the host's.
         assert_eq!(r.exit_code, 0);
-        assert!(r.stdout.contains("safe"));
-        assert!(!r.stdout.contains("LEAKED"));
+        assert!(r.stdout.starts_with("sandbox:x:1000:1000"), "{}", r.stdout);
+        assert!(!r.stdout.contains("root:x:0:0"));
     }
 
     #[tokio::test]
@@ -1486,10 +1487,11 @@ mod security {
     async fn path_traversal_blocked() {
         let mut bash = bash_python();
         let r = bash
-            .exec("python3 -c \"from pathlib import Path\ntry:\n    Path('/tmp/../../../etc/passwd').read_text()\n    print('ESCAPED')\nexcept FileNotFoundError:\n    print('blocked')\"")
+            .exec("python3 -c \"from pathlib import Path\ntry:\n    print(Path('/tmp/../../../etc/passwd').read_text())\nexcept FileNotFoundError:\n    print('blocked')\"")
             .await
             .unwrap();
-        assert!(!r.stdout.contains("ESCAPED"));
+        // `..` clamps at the VFS root, so this reads the synthetic file.
+        assert!(!r.stdout.contains("root:x:0:0"), "{}", r.stdout);
     }
 
     #[tokio::test]
