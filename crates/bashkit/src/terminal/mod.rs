@@ -63,6 +63,7 @@
 //!   keystrokes (`vi`) read the device directly in raw mode.
 
 mod keys;
+mod tool;
 mod tty;
 
 use std::collections::VecDeque;
@@ -72,6 +73,7 @@ use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 pub(crate) use keys::{Key, ScreenGuard, read_key};
+pub use tool::{TERMINAL_TOOL_NAME, TerminalTool, TerminalToolError};
 pub(crate) use tty::{Tty, TtyEvent};
 
 use crate::fs::FileSystem;
