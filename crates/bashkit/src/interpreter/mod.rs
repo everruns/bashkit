@@ -643,6 +643,32 @@ fn decode_file_bytes_for_path(_path: &Path, bytes: &[u8]) -> String {
 /// Check if a path refers to /dev/null after normalization.
 /// Handles attempts to bypass via paths like `/dev/../dev/null`.
 fn is_dev_null(path: &Path) -> bool {
+    normalize_dev_path(path) == Path::new(DEV_NULL)
+}
+
+/// File descriptor aliased by `/dev/stdin`, `/dev/stdout`, `/dev/stderr` or
+/// `/dev/fd/N` (after `..` normalization), as on Linux.
+///
+/// Decision: these paths are resolved at the interpreter level like
+/// `/dev/null`, never through the VFS. Writing them as regular files silently
+/// swallowed `echo err > /dev/stderr`, a pattern agents use constantly.
+fn dev_fd_alias(path: &Path) -> Option<i32> {
+    let normalized = normalize_dev_path(path);
+    match normalized.to_str()? {
+        "/dev/stdin" => Some(0),
+        "/dev/stdout" => Some(1),
+        "/dev/stderr" => Some(2),
+        other => {
+            let n = other.strip_prefix("/dev/fd/")?;
+            if n.is_empty() || n.len() > 9 || !n.bytes().all(|b| b.is_ascii_digit()) {
+                return None;
+            }
+            n.parse().ok()
+        }
+    }
+}
+
+fn normalize_dev_path(path: &Path) -> PathBuf {
     // Normalize the path to handle .. and . components
     let mut normalized = PathBuf::new();
     for component in path.components() {
@@ -659,7 +685,7 @@ fn is_dev_null(path: &Path) -> bool {
     if normalized.as_os_str().is_empty() {
         normalized.push("/");
     }
-    normalized == Path::new(DEV_NULL)
+    normalized
 }
 
 /// THREAT[TM-INJ-009,TM-INJ-016]: Check if a variable name is an internal marker.
@@ -6192,7 +6218,10 @@ impl Interpreter {
                     let target_path = self.expand_word(&redirect.target).await?;
                     let path = self.resolve_path(&target_path);
                     self.ensure_persistent_fd_capacity(fd)?;
-                    if is_dev_null(&path) {
+                    if let Some(target_fd) = dev_fd_alias(&path) {
+                        let entry = self.exec_fd_alias_target(target_fd);
+                        self.exec_fd_table.insert(fd, entry);
+                    } else if is_dev_null(&path) {
                         self.exec_fd_table.insert(fd, FdTarget::DevNull);
                     } else {
                         // Truncate file on open (like real exec >file)
@@ -6206,7 +6235,10 @@ impl Interpreter {
                     let target_path = self.expand_word(&redirect.target).await?;
                     let path = self.resolve_path(&target_path);
                     self.ensure_persistent_fd_capacity(fd)?;
-                    if is_dev_null(&path) {
+                    if let Some(target_fd) = dev_fd_alias(&path) {
+                        let entry = self.exec_fd_alias_target(target_fd);
+                        self.exec_fd_table.insert(fd, entry);
+                    } else if is_dev_null(&path) {
                         self.exec_fd_table.insert(fd, FdTarget::DevNull);
                     } else {
                         self.exec_fd_table
@@ -6221,16 +6253,7 @@ impl Interpreter {
                         self.exec_fd_table.remove(&fd);
                     } else if let Ok(target_fd) = target.parse::<i32>() {
                         // exec N>&M duplicates fd M to fd N
-                        let target_entry = if target_fd == 1 {
-                            FdTarget::Stdout
-                        } else if target_fd == 2 {
-                            FdTarget::Stderr
-                        } else {
-                            self.exec_fd_table
-                                .get(&target_fd)
-                                .cloned()
-                                .unwrap_or(FdTarget::Stdout)
-                        };
+                        let target_entry = self.exec_fd_alias_target(target_fd);
                         self.ensure_persistent_fd_capacity(fd)?;
                         self.exec_fd_table.insert(fd, target_entry);
                     }
@@ -6240,6 +6263,20 @@ impl Interpreter {
         }
         let result = ExecResult::default();
         self.apply_redirections(result, redirects).await
+    }
+
+    /// Target for `exec N>&M` / `exec N>/dev/fd/M`.
+    fn exec_fd_alias_target(&self, target_fd: i32) -> FdTarget {
+        if target_fd == 1 {
+            FdTarget::Stdout
+        } else if target_fd == 2 {
+            FdTarget::Stderr
+        } else {
+            self.exec_fd_table
+                .get(&target_fd)
+                .cloned()
+                .unwrap_or(FdTarget::Stdout)
+        }
     }
 
     fn ensure_persistent_fd_capacity(&self, fd: i32) -> Result<()> {
