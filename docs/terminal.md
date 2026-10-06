@@ -49,6 +49,19 @@ A runnable version lives in
 [`crates/bashkit/examples/terminal_vi.rs`](../crates/bashkit/examples/terminal_vi.rs):
 `cargo run --example terminal_vi --features terminal`.
 
+### Recording a session
+
+`take_output()` is a byte-exact stream, so a session can be recorded and
+replayed in any terminal player.
+[`crates/bashkit/examples/terminal_record.rs`](../crates/bashkit/examples/terminal_record.rs)
+types a scenario key by key (a `vi` edit and `less` paging) and writes an
+[asciicast v2](https://docs.asciinema.org/manual/asciicast/v2/) file:
+
+```bash
+cargo run --example terminal_record --features terminal -- demo.cast
+asciinema play demo.cast
+```
+
 ## How it works
 
 `Terminal` owns a `Bash` and a virtual terminal device. Nothing runs in the

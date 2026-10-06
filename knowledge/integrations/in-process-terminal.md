@@ -133,7 +133,8 @@ redirected (L-TERM-004).
 - Integration: `tests/integration/terminal_tests.rs` (agent-style config edit,
   raw output replay, resize redraw, drop mid-edit) and `l_term_*` evidence
   tests.
-- Example: `examples/terminal_vi.rs`, run in CI.
+- Examples: `examples/terminal_vi.rs` and `examples/terminal_record.rs`
+  (asciicast recording from `take_output()`), both run in CI.
 - CI step "Run terminal tests" runs these with `--features terminal`; the main
   test step compiles them out.
 

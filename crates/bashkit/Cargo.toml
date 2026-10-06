@@ -340,6 +340,10 @@ name = "terminal_vi"
 required-features = ["terminal"]
 
 [[example]]
+name = "terminal_record"
+required-features = ["terminal"]
+
+[[example]]
 name = "agent_tool"
 required-features = ["http_client"]
 

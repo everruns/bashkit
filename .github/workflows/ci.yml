@@ -423,6 +423,7 @@ jobs:
           cargo run --example sqlite_basic --features sqlite
           cargo run --example sqlite_workflow --features sqlite
           cargo run --example terminal_vi --features terminal
+          cargo run --example terminal_record --features terminal
 
       # SSH tests
       - name: Run ssh builtin tests (mock handler)
