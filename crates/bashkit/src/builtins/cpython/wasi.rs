@@ -14,12 +14,13 @@
 //! - Paths are normalized lexically and clamped at `/`; `..` cannot escape the
 //!   VFS root (which is itself the whole sandbox).
 
+use crate::time_compat::{SystemTime, UNIX_EPOCH};
 use std::borrow::Cow;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use wasmtime::{Caller, Extern, Linker, Memory, StoreLimits};
 
@@ -1387,7 +1388,7 @@ async fn fd_readdir(
                 Ok(items) => items
                     .into_iter()
                     .map(|e| {
-                        let child = path.join(&e.name);
+                        let child = crate::fs::vfs_join(&path, &e.name);
                         (e.name, filetype_of(e.metadata.file_type), inode(&child))
                     })
                     .collect(),
