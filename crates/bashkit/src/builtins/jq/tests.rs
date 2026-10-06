@@ -1745,3 +1745,20 @@ mod differential {
         assert_matches(&[r#"capture("(?<word>\\w+),")"#], r#""apple,banana""#).await;
     }
 }
+
+#[tokio::test]
+async fn filter_from_file_treats_positionals_as_inputs() {
+    let files = [
+        ("/f.jq", "# doubled\n.a | map(. * 2)\n"),
+        ("/in.json", r#"{"a":[1,2]}"#),
+    ];
+    let result = run_jq_with_files(&["-c", "-f", "/f.jq", "/in.json"], &files)
+        .await
+        .expect("jq -f runs");
+    assert_eq!(result.stdout, "[2,4]\n");
+    let result = run_jq_with_files(&["-cf", "/missing.jq", "/in.json"], &files)
+        .await
+        .expect("jq -f runs");
+    assert_eq!(result.exit_code, 2);
+    assert!(result.stderr.contains("Could not open /missing.jq"));
+}

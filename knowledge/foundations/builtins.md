@@ -235,14 +235,24 @@ before `execute()`, when it returns `Some(plan)`, the interpreter fulfills the
 plan instead of using the `execute()` result.
 
 Variants: `Timeout { duration, preserve_status, command }`,
-`Batch { commands }` (`builtins/mod.rs`).
+`Batch { commands }`, `BatchWithStatus`, `Env { command, clear, unset, set,
+chdir }` (`builtins/mod.rs`).
 
 Each `SubCommand` carries optional command-scoped `assignments`
 (`VAR=value cmd ...`), which the interpreter applies as the inner command's
 environment. `xargs --process-slot-var=VAR` uses this to expose a
 per-invocation parallel-slot index.
 
-**Current users:** `timeout` → Timeout, `xargs` → Batch, `find -exec` → Batch.
+**Current users:** `timeout` → Timeout, `xargs` → Batch, `find -exec` → Batch,
+`env CMD` → Env.
+
+`env [-i] [-u NAME] [-C DIR] [NAME=V]... CMD` runs CMD in a child-like scope:
+the interpreter snapshots shell state + exported env, applies `-i` (keeps only
+`_`-prefixed internal variables), unsets, assignments and `-C`, runs CMD, then
+restores everything, so neither the env edits nor anything CMD does leak back
+(matches a real `env` exec). Shell-only builtins (`cd`, `exit`, `export`, ...)
+give 127 like bash, since `env` can only exec programs; an unknown command gives
+`env: 'NAME': No such file or directory`. Option errors exit 125 (GNU).
 
 #### `xargs -P` / `--process-slot-var` (parallelism)
 

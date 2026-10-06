@@ -352,6 +352,55 @@ pub(crate) struct ShellRef<'a> {
 // interpreter state; others (e.g. `bash`, `command`, `exec`, `getopts`) live
 // only here. Listing every name guarantees inventory completeness regardless of
 // map membership.
+// Builtins that exist only inside a shell (no `/usr/bin` program of that
+// name), so `env NAME` cannot run them.
+const ENV_SHELL_ONLY_BUILTINS: &[&str] = &[
+    ".",
+    "alias",
+    "bg",
+    "break",
+    "builtin",
+    "caller",
+    "cd",
+    "compgen",
+    "continue",
+    "declare",
+    "dirs",
+    "enable",
+    "eval",
+    "exec",
+    "exit",
+    "export",
+    "fc",
+    "fg",
+    "getopts",
+    "hash",
+    "help",
+    "history",
+    "jobs",
+    "let",
+    "local",
+    "mapfile",
+    "popd",
+    "pushd",
+    "readarray",
+    "readonly",
+    "return",
+    "set",
+    "shift",
+    "shopt",
+    "source",
+    "times",
+    "trap",
+    "type",
+    "typeset",
+    "ulimit",
+    "umask",
+    "unalias",
+    "unset",
+    "wait",
+];
+
 const SPECIAL_BUILTIN_NAMES: &[&str] = &[
     ".", "bash", "builtin", "command", "declare", "eval", "exec", "getopts", "let", "local", "sh",
     "source", "typeset", "unset",
@@ -8755,6 +8804,13 @@ impl Interpreter {
                     }
                 }
             }
+            builtins::ExecutionPlan::Env {
+                command,
+                clear,
+                unset,
+                set,
+                chdir,
+            } => Box::pin(self.execute_env_plan(command, clear, unset, set, chdir)).await?,
             builtins::ExecutionPlan::Batch { commands } => {
                 let mut combined_stdout = crate::StreamData::new();
                 let mut combined_stderr = crate::StreamData::new();
@@ -8818,6 +8874,77 @@ impl Interpreter {
         };
 
         self.apply_redirections(result, redirects).await
+    }
+
+    /// `env [-i] [-u NAME] [-C DIR] [NAME=VALUE]... CMD`: run CMD like a
+    /// child process. Shell state is snapshotted and restored, so neither the
+    /// environment edits nor anything CMD does leaks back to the caller.
+    async fn execute_env_plan(
+        &mut self,
+        command: builtins::SubCommand,
+        clear: bool,
+        unset: Vec<String>,
+        set: Vec<(String, String)>,
+        chdir: Option<String>,
+    ) -> Result<ExecResult> {
+        let snapshot = self.snapshot_subshell_state();
+        let saved_env = self.env.clone();
+        let saved_stdin = self.pipeline_stdin.take();
+        if clear {
+            // A child started with an empty environment sees no shell
+            // variables at all; internal option markers stay.
+            self.vars_mut().retain(|name, _| is_internal_variable(name));
+            self.env.clear();
+        }
+        for name in unset {
+            self.env.remove(&name);
+            self.vars_mut().remove(&name);
+        }
+        for (name, value) in set {
+            if is_internal_variable(&name) {
+                continue;
+            }
+            self.env.insert(name.clone(), value.clone());
+            self.vars_mut().insert(name, value);
+        }
+        let mut result = Ok(None);
+        if let Some(dir) = chdir {
+            let path = crate::builtins::resolve_path(&self.cwd, &dir);
+            if self
+                .fs
+                .stat(&path)
+                .await
+                .is_ok_and(|m| m.file_type.is_dir())
+            {
+                self.cwd = path;
+            } else {
+                result = Ok(Some(ExecResult::err(
+                    format!("env: cannot change directory to '{dir}': No such file or directory\n"),
+                    125,
+                )));
+            }
+        }
+        if matches!(result, Ok(None)) && ENV_SHELL_ONLY_BUILTINS.contains(&command.name.as_str()) {
+            // No program by this name exists on a real system.
+            result = Ok(Some(ExecResult::err(String::new(), 127)));
+        } else if matches!(result, Ok(None)) {
+            self.pipeline_stdin = command.stdin.clone();
+            let inner = subcommand_to_command(&command);
+            result = self.execute_command(&inner).await.map(Some);
+        }
+        self.pipeline_stdin = saved_stdin;
+        self.restore_subshell_state(snapshot);
+        self.env = saved_env;
+        let mut result = result?.unwrap_or_default();
+        // A child process can't break, return or exit the calling shell.
+        result.control_flow = ControlFlow::None;
+        if result.exit_code == 127
+            && (result.stderr.is_empty() || result.stderr.contains("command not found"))
+        {
+            // env execs a program, so a missing command reads like execvp's error.
+            result.stderr = format!("env: '{}': No such file or directory\n", command.name).into();
+        }
+        Ok(result)
     }
 
     /// Restore interpreter stacks/counters after an in-flight command future is cancelled.

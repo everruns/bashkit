@@ -2,80 +2,153 @@
 
 use async_trait::async_trait;
 
-use super::{Builtin, Context};
+use super::{Builtin, Context, ExecutionPlan, SubCommand};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
 
 /// The env builtin - run command in modified environment or print environment.
 ///
-/// Usage: env [-i] [NAME=VALUE]... [COMMAND [ARG]...]
+/// Usage: env [-i] [-u NAME]... [-C DIR] [-0] [NAME=VALUE]... [COMMAND [ARG]...]
 ///
-/// Options:
-///   -i   Start with empty environment
-///
-/// If no COMMAND is given, prints the environment.
+/// With a COMMAND, env returns an [`ExecutionPlan::Env`] and the interpreter
+/// runs the command in a subshell-scoped copy of the environment, so the
+/// changes (and anything the command does to shell state) never leak back.
 pub struct Env;
+
+#[derive(Debug, Default, PartialEq)]
+struct EnvArgs {
+    clear: bool,
+    unset: Vec<String>,
+    set: Vec<(String, String)>,
+    chdir: Option<String>,
+    null: bool,
+    command: Vec<String>,
+}
+
+fn parse_env_args(args: &[String]) -> std::result::Result<EnvArgs, String> {
+    let mut parsed = EnvArgs::default();
+    let mut i = 0;
+    let mut options_done = false;
+    while i < args.len() {
+        let arg = args[i].as_str();
+        if !options_done && arg.starts_with('-') && arg != "-" && !arg.contains('=') {
+            let mut value =
+                |name: &str, inline: Option<&str>| -> std::result::Result<String, String> {
+                    if let Some(v) = inline.filter(|v| !v.is_empty()) {
+                        return Ok(v.to_string());
+                    }
+                    i += 1;
+                    args.get(i)
+                        .cloned()
+                        .ok_or_else(|| format!("env: option requires an argument -- '{name}'"))
+                };
+            match arg {
+                "--" => options_done = true,
+                "-i" | "--ignore-environment" => parsed.clear = true,
+                "-0" | "--null" => parsed.null = true,
+                "-u" | "--unset" => parsed.unset.push(value("u", None)?),
+                "-C" | "--chdir" => parsed.chdir = Some(value("C", None)?),
+                a if a.starts_with("--unset=") => parsed.unset.push(a[8..].to_string()),
+                a if a.starts_with("--chdir=") => parsed.chdir = Some(a[8..].to_string()),
+                a if a.starts_with("-u") => parsed.unset.push(a[2..].to_string()),
+                a if a.starts_with("-C") => parsed.chdir = Some(a[2..].to_string()),
+                a if a.starts_with("--") => return Err(format!("env: unrecognized option '{a}'")),
+                a => return Err(format!("env: invalid option -- '{}'", &a[1..2])),
+            }
+            i += 1;
+            continue;
+        }
+        if arg == "-" && !options_done {
+            parsed.clear = true;
+            i += 1;
+            continue;
+        }
+        options_done = true;
+        match arg.split_once('=') {
+            Some((name, value)) if parsed.command.is_empty() && !name.is_empty() => {
+                parsed.set.push((name.to_string(), value.to_string()));
+            }
+            _ => {
+                parsed.command = args[i..].to_vec();
+                break;
+            }
+        }
+        i += 1;
+    }
+    if parsed.null && !parsed.command.is_empty() {
+        return Err("env: cannot specify --null (-0) with command".to_string());
+    }
+    if parsed.chdir.is_some() && parsed.command.is_empty() {
+        return Err("env: must specify command with --chdir (-C)".to_string());
+    }
+    Ok(parsed)
+}
 
 #[async_trait]
 impl Builtin for Env {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
         if let Some(r) = super::check_help_version(
             ctx.args,
-            "Usage: env [-i] [NAME=VALUE]... [COMMAND [ARG]...]\nRun a command in a modified environment, or print the environment.\n\n  -i, --ignore-environment\tstart with an empty environment\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            "Usage: env [OPTION]... [-] [NAME=VALUE]... [COMMAND [ARG]...]\nSet each NAME to VALUE in the environment and run COMMAND.\n\n  -i, --ignore-environment\tstart with an empty environment\n  -0, --null\tend each output line with NUL, not newline\n  -u, --unset=NAME\tremove variable from the environment\n  -C, --chdir=DIR\tchange working directory to DIR\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
             Some("env (bashkit) 0.1"),
         ) {
             return Ok(r);
         }
-        let mut ignore_env = false;
-        let mut env_vars: Vec<(String, String)> = Vec::new();
-        let mut command_start = 0;
-
-        // Parse arguments
-        for (i, arg) in ctx.args.iter().enumerate() {
-            if arg == "-i" || arg == "--ignore-environment" {
-                ignore_env = true;
-            } else if arg == "-u" {
-                // -u NAME would unset a variable, but we'll skip for simplicity
+        let parsed = match parse_env_args(ctx.args) {
+            Ok(p) => p,
+            Err(e) => {
                 return Ok(ExecResult::err(
-                    "env: -u option not supported\n".to_string(),
-                    1,
+                    format!("{e}\nTry 'env --help' for more information.\n"),
+                    125,
                 ));
-            } else if let Some((name, value)) = arg.split_once('=') {
-                env_vars.push((name.to_string(), value.to_string()));
-            } else {
-                // This is the start of the command
-                command_start = i;
-                break;
             }
+        };
+        // A command is run through `execution_plan`; reaching here with one
+        // means the plan path was unavailable.
+        if !parsed.command.is_empty() {
+            return Ok(ExecResult::err(
+                format!("env: '{}': cannot run here\n", parsed.command[0]),
+                126,
+            ));
         }
-
-        // If no command, print environment
-        if command_start == 0 || command_start == ctx.args.len() {
-            let mut output = String::new();
-
-            // If not ignoring environment, print existing env vars
-            if !ignore_env {
-                let mut pairs: Vec<_> = ctx.env.iter().collect();
-                pairs.sort_by_key(|(k, _)| *k);
-                for (key, value) in pairs {
-                    output.push_str(&format!("{}={}\n", key, value));
-                }
-            }
-
-            // Print specified env vars
-            for (key, value) in env_vars {
-                output.push_str(&format!("{}={}\n", key, value));
-            }
-
-            return Ok(ExecResult::ok(output));
+        let mut vars: std::collections::BTreeMap<&str, &str> = if parsed.clear {
+            Default::default()
+        } else {
+            ctx.env
+                .iter()
+                .map(|(k, v)| (k.as_str(), v.as_str()))
+                .collect()
+        };
+        for name in &parsed.unset {
+            vars.remove(name.as_str());
         }
+        for (k, v) in &parsed.set {
+            vars.insert(k, v);
+        }
+        let end = if parsed.null { '\0' } else { '\n' };
+        let output: String = vars.iter().map(|(k, v)| format!("{k}={v}{end}")).collect();
+        Ok(ExecResult::ok(output))
+    }
 
-        // We have a command - but since we're in a virtual environment, we can't execute arbitrary commands
-        // Return an error indicating this
-        Ok(ExecResult::err(
-            "env: executing commands not supported in virtual mode\n".to_string(),
-            126,
-        ))
+    async fn execution_plan(&self, ctx: &Context<'_>) -> Result<Option<ExecutionPlan>> {
+        let Ok(parsed) = parse_env_args(ctx.args) else {
+            return Ok(None);
+        };
+        let Some((name, args)) = parsed.command.split_first() else {
+            return Ok(None);
+        };
+        Ok(Some(ExecutionPlan::Env {
+            command: SubCommand {
+                name: name.clone(),
+                args: args.to_vec(),
+                stdin: ctx.stdin.cloned(),
+                assignments: Vec::new(),
+            },
+            clear: parsed.clear,
+            unset: parsed.unset,
+            set: parsed.set,
+            chdir: parsed.chdir,
+        }))
     }
 }
 
@@ -463,7 +536,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_env_command_not_supported() {
+    async fn test_env_command_outside_plan_is_rejected() {
         let (fs, mut cwd, mut variables) = create_test_ctx().await;
         let env = HashMap::new();
 
@@ -489,8 +562,9 @@ mod tests {
         };
 
         let result = Env.execute(ctx).await.unwrap();
+        // Commands run via `execution_plan`; direct execute refuses them.
         assert_eq!(result.exit_code, 126);
-        assert!(result.stderr.contains("not supported"));
+        assert!(result.stderr.contains("cannot run here"));
     }
 
     // ==================== printenv tests ====================
@@ -744,5 +818,35 @@ mod tests {
         let result = History.execute(ctx).await.unwrap();
         // No shell state → graceful no-op
         assert_eq!(result.exit_code, 0);
+    }
+}
+
+#[cfg(test)]
+mod env_arg_tests {
+    use super::*;
+
+    fn args(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn parses_options_assignments_and_command() {
+        let p = parse_env_args(&args(&["-i", "-u", "X", "-uY", "A=1", "sh", "-c", "B=2"])).unwrap();
+        assert!(p.clear);
+        assert_eq!(p.unset, vec!["X", "Y"]);
+        assert_eq!(p.set, vec![("A".to_string(), "1".to_string())]);
+        assert_eq!(p.command, args(&["sh", "-c", "B=2"]));
+        let p = parse_env_args(&args(&["--", "-x"])).unwrap();
+        assert_eq!(p.command, args(&["-x"]));
+        let p = parse_env_args(&args(&["-", "env"])).unwrap();
+        assert!(p.clear);
+    }
+
+    #[test]
+    fn rejects_bad_option_combinations() {
+        assert!(parse_env_args(&args(&["-z"])).is_err());
+        assert!(parse_env_args(&args(&["-0", "true"])).is_err());
+        assert!(parse_env_args(&args(&["-C", "/"])).is_err());
+        assert!(parse_env_args(&args(&["-u"])).is_err());
     }
 }

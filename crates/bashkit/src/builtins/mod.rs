@@ -600,6 +600,20 @@ pub enum ExecutionPlan {
         /// The command to execute.
         command: SubCommand,
     },
+    /// Run one command in a modified copy of the environment (`env`).
+    /// Changes are scoped to the command, like a child process.
+    Env {
+        /// The command to execute.
+        command: SubCommand,
+        /// Start from an empty environment (`env -i`).
+        clear: bool,
+        /// Names to remove (`env -u NAME`).
+        unset: Vec<String>,
+        /// Assignments to apply (`env NAME=VALUE`).
+        set: Vec<(String, String)>,
+        /// Working directory for the command (`env -C DIR`).
+        chdir: Option<String>,
+    },
     /// Run a sequence of commands, collecting their output.
     Batch {
         /// Commands to execute in order.
