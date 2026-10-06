@@ -96,8 +96,11 @@ impl Terminal {
         }
     }
 
+    /// Clone the Arc before blocking on the lock, so no raw-pointer-derived
+    /// `&self` is held while blocked (same pattern as `block_on_with` in lib.rs).
     fn with<R>(&self, f: impl FnOnce(&mut TerminalTool) -> R) -> R {
-        let mut guard = self.tool.blocking_lock();
+        let tool = Arc::clone(&self.tool);
+        let mut guard = tool.blocking_lock();
         f(&mut guard)
     }
 
