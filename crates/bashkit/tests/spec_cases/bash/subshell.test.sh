@@ -138,3 +138,17 @@ echo "survived: $?"
 ### expect
 survived: 1
 ### end
+
+### subshell_after_reserved_words
+# A reserved word followed by `(` starts a subshell, not a function named
+# `then`/`else`/`do`.
+if true; then ( echo then-sub ); fi
+if false; then :; else (echo else-sub); fi
+for i in 1; do ( echo do-sub ); done
+while false; do :; done; if false; then :; elif true; then (echo elif-sub); fi
+### expect
+then-sub
+else-sub
+do-sub
+elif-sub
+### end
