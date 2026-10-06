@@ -135,6 +135,9 @@ redirected (L-TERM-004).
   tests.
 - Examples: `examples/terminal_vi.rs` and `examples/terminal_record.rs`
   (asciicast recording from `take_output()`), both run in CI.
+- Docs site: `site/public/casts/terminal-demo.cast` is that example's output,
+  played on /docs/terminal by `site/src/components/TerminalRecording.astro`
+  (lazy-loaded asciinema-player). Re-record when terminal output changes.
 - CI step "Run terminal tests" runs these with `--features terminal`; the main
   test step compiles them out.
 

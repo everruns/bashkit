@@ -1,0 +1,78 @@
+---
+// Recorded terminal session player (asciinema-player).
+//
+// Decision: same opt-in pattern as BashkitTerminal. Docs stay plain Markdown
+// and drop `<div data-terminal-recording="/casts/NAME.cast"></div>` where a
+// recording should appear. The player and its CSS load via dynamic import only
+// when a marker scrolls into view, so other pages pay nothing. Casts are the
+// byte-exact `Terminal::take_output()` stream written by
+// `crates/bashkit/examples/terminal_record.rs`, committed under `public/casts/`.
+---
+
+<script>
+  const mounts = document.querySelectorAll<HTMLElement>("[data-terminal-recording]");
+  if (mounts.length > 0) {
+    const io =
+      "IntersectionObserver" in window
+        ? new IntersectionObserver(
+            (entries) => {
+              for (const e of entries) {
+                if (e.isIntersecting) {
+                  io!.unobserve(e.target);
+                  mount(e.target as HTMLElement);
+                }
+              }
+            },
+            { rootMargin: "200px" },
+          )
+        : null;
+    mounts.forEach((el) => {
+      el.classList.add("bk-rec");
+      if (io) io.observe(el);
+      else mount(el);
+    });
+  }
+
+  async function mount(el: HTMLElement) {
+    const src = el.dataset.terminalRecording;
+    if (!src) return;
+    try {
+      const [{ create }] = await Promise.all([
+        import("asciinema-player"),
+        import("asciinema-player/dist/bundle/asciinema-player.css"),
+      ]);
+      const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      create(src, el, {
+        autoPlay: !reduceMotion,
+        loop: true,
+        fit: "width",
+        idleTimeLimit: 2,
+        theme: "asciinema",
+      });
+    } catch (err) {
+      el.textContent = `Couldn't load the recording player: ${String(err)}`;
+    }
+  }
+</script>
+
+<style is:global>
+  .bk-rec {
+    margin: var(--space-md) 0 var(--space-lg);
+    border: 1px solid rgb(10 22 54 / 0.15);
+    border-radius: 8px;
+    overflow: hidden;
+    background: #121314;
+    min-height: 12rem;
+    padding: 0.6rem;
+    box-shadow: 0 12px 30px rgb(10 22 54 / 0.12);
+  }
+  /* The player renders the screen as a <pre>; undo the docs' code-block styling. */
+  .bk-rec .ap-player pre.ap-terminal {
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+</style>

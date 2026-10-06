@@ -5,6 +5,12 @@ keystrokes and read back what the screen shows, as plain text, without a real
 PTY, process, or host terminal. Full-screen programs work too: the built-in
 `vi` edits files in the virtual filesystem.
 
+This recording is the session's real output: every keystroke went through
+`send()` and every byte shown came from `take_output()`
+([how it was recorded](#recording-a-session)).
+
+<div data-terminal-recording="/casts/terminal-demo.cast"></div>
+
 Use it when a one-shot `exec()` is not enough:
 
 - an LLM agent that should operate a shell the way a person does, including
@@ -61,6 +67,10 @@ types a scenario key by key (a `vi` edit and `less` paging) and writes an
 cargo run --example terminal_record --features terminal -- demo.cast
 asciinema play demo.cast
 ```
+
+The recording at the top of this page is that file, served from
+`site/public/casts/terminal-demo.cast`. Re-record it after changing terminal
+output by running the example with that path.
 
 ## How it works
 

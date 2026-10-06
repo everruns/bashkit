@@ -31,6 +31,9 @@ importers:
       '@everruns/bashkit-wasm':
         specifier: 0.17.1
         version: 0.17.1
+      asciinema-player:
+        specifier: 3.10.0
+        version: 3.10.0
       astro:
         specifier: ^7.3.5
         version: 7.3.5(@astrojs/markdown-remark@7.3.1)(@types/node@26.6.4)(yaml@2.9.0)
@@ -179,6 +182,10 @@ packages:
     resolution: {integrity: sha512-CjXrNHTnvqBVqHgdBysY3vk2T8tpJHb5/RMeHJBTyVa9xgugCB0CJTx/3oO8RV2QRQP391RWpB7D6hLjm8V9uA==}
     engines: {node: '>=6.0.0'}
     hasBin: true
+
+  '@babel/runtime@7.29.7':
+    resolution: {integrity: sha512-Nq8OhGWiZIZGV6hLHoyAKLLcJihP/xFeBMGJoUrxTX2psI8dCifzLhZISFb+VWS3wFMRDmCGw5R+dOySCqPLhw==}
+    engines: {node: '>=6.9.0'}
 
   '@babel/types@7.29.8':
     resolution: {integrity: sha512-Vj1jF3cPfxg7OAfoI7QnVKLoILlm2JF9pnVHrX8qx7AHMiYWT+NDAA7jChlNgRS4WTLc/fD1lXLmPixluj+3Gg==}
@@ -1044,6 +1051,9 @@ packages:
   array-iterate@2.0.1:
     resolution: {integrity: sha512-I1jXZMjAgCMmxT4qxXfPXa6SthSoE8h6gkSI9BGGNv8mP8G/v0blc+qFnZu6K42vTOiuME596QaLO0TP3Lk0xg==}
 
+  asciinema-player@3.10.0:
+    resolution: {integrity: sha512-shoOK6F606nDKZxDVM7JuGSCAyWLePoGRFNlV+FqiP5Sqvyn0BlE7wlbjZyd2X4P1iRhv/HKfVNtnQIxmgphRA==}
+
   astring@1.9.0:
     resolution: {integrity: sha512-LElXdjswlqjWrPpJFg1Fx4wpkOCxj1TDHlSV4PlaRxHGWko024xICaa97ZkMfs6DRKlCguiAI+rbXv5GWwXIkg==}
     hasBin: true
@@ -1152,6 +1162,9 @@ packages:
   csso@5.0.5:
     resolution: {integrity: sha512-0LrrStPOdJj+SPCCrGhzryycLjwcgUSHBtxNA8aIDxf0GLsRh1cKYhB00Gd1lDOS4yGH69+SNn13+TWbVHETFQ==}
     engines: {node: ^10 || ^12.20.0 || ^14.13.0 || >=15.0.0, npm: '>=7.0.0'}
+
+  csstype@3.2.3:
+    resolution: {integrity: sha512-z1HGKcYy2xA8AGQfwrn0PAy+PB7X/GSj3UVJW9qKyn43xWa+gl5nXmU4qqLMRzWVLFC8KusUX8T/0kCiOYpAIQ==}
 
   debug@4.4.3:
     resolution: {integrity: sha512-RGwwWnwQvkVfavKVt22FGLw+xYSdzARwm0ru6DhTVA3umU5hZc28V3kO4stgYryrTlLpuvgI9GiijltAjNbcqA==}
@@ -1913,6 +1926,16 @@ packages:
     engines: {node: '>=10'}
     hasBin: true
 
+  seroval-plugins@1.6.8:
+    resolution: {integrity: sha512-N7mWAMydj89EnYTHtRpS3LBrAz3J9O6oVrqpuXuvlAHfAUG8WEKqtbAd7SBiJNY5NfCAFhSdyAh7wI4Shjqy4g==}
+    engines: {node: '>=10'}
+    peerDependencies:
+      seroval: ^1.0
+
+  seroval@1.6.8:
+    resolution: {integrity: sha512-HlSgSAkTk4EqHcje1ptJjfZi1YDv5KbhVJ/d3P7T/nAXua2VmDu+AKDX5VTdFfZf48nDkWB2TKYt0DrCSa+3wg==}
+    engines: {node: '>=10'}
+
   sharp@0.35.5:
     resolution: {integrity: sha512-Ywn4OnzGukp7CDMrp08RQ50YKmuwG47brZgIVPTvBaaAfQlRlygrRqSrxdCiL9M+LlzLBiJ68IR1QqvzHyjC7g==}
     engines: {node: '>=20.9.0'}
@@ -1937,6 +1960,9 @@ packages:
   smol-toml@1.9.0:
     resolution: {integrity: sha512-hpd+HLON7HdZXqYchMM/+LaTTbdK0AU3NngIJ4KVyWbY9bfQqdL9cD+4yf6dUoU2Ap4VsU0JkQi6FxAI1B2mXQ==}
     engines: {node: '>= 18'}
+
+  solid-js@1.9.16:
+    resolution: {integrity: sha512-vESESWrNRebA0sQv+Vr9/2wOFOL6NK2QQow7F5/WCBH4c+OVoDyQNEbiVKVL7YqE1M7MPd7z7p27KElLkaD0bw==}
 
   source-map-js@1.2.2:
     resolution: {integrity: sha512-KGj/8Y43x35aZVDtt+J4mK1hoLGHULMYfSkODJNQjNDC3oW1PqPoxMwo0pLUsWM/UEGzON/NxeHywEfNXNP3Vw==}
@@ -2540,6 +2566,8 @@ snapshots:
   '@babel/parser@7.29.9':
     dependencies:
       '@babel/types': 7.29.8
+
+  '@babel/runtime@7.29.7': {}
 
   '@babel/types@7.29.8':
     dependencies:
@@ -3222,6 +3250,11 @@ snapshots:
 
   array-iterate@2.0.1: {}
 
+  asciinema-player@3.10.0:
+    dependencies:
+      '@babel/runtime': 7.29.7
+      solid-js: 1.9.16
+
   astring@1.9.0: {}
 
   astro@7.3.5(@astrojs/markdown-remark@7.3.1)(@types/node@26.6.4)(yaml@2.9.0):
@@ -3391,6 +3424,8 @@ snapshots:
   csso@5.0.5:
     dependencies:
       css-tree: 2.2.1
+
+  csstype@3.2.3: {}
 
   debug@4.4.3:
     dependencies:
@@ -4591,6 +4626,12 @@ snapshots:
 
   semver@7.8.5: {}
 
+  seroval-plugins@1.6.8(seroval@1.6.8):
+    dependencies:
+      seroval: 1.6.8
+
+  seroval@1.6.8: {}
+
   sharp@0.35.5(@types/node@26.6.4):
     dependencies:
       '@img/colour': 1.1.0
@@ -4645,6 +4686,12 @@ snapshots:
       sax: 1.6.1
 
   smol-toml@1.9.0: {}
+
+  solid-js@1.9.16:
+    dependencies:
+      csstype: 3.2.3
+      seroval: 1.6.8
+      seroval-plugins: 1.6.8(seroval@1.6.8)
 
   source-map-js@1.2.2: {}
 
