@@ -636,6 +636,11 @@ Bash::builder()
 **Current Risk**: NONE. Implementation: `builtins/system.rs`, `hostname` (default
 "bashkit-sandbox"), `uname` (hardcoded Linux 5.15.0), `whoami` (default "sandbox"),
 `id` (uid/gid 1000), all configurable via `Bash::builder().username(..).hostname(..)`.
+Shell identity variables are synthetic constants, never host values:
+`PATH=/usr/local/bin:/usr/bin:/bin` (`DEFAULT_PATH`), `SHELL=/bin/bash`,
+`SHLVL=1`, `OSTYPE=linux-gnu`, `HOSTTYPE=x86_64`,
+`MACHTYPE=x86_64-pc-linux-gnu`, `PPID=0`. Builder `env(..)` overrides them.
+Covered by `threat_env_vars_explicit_only`.
 
 #### 3.3 Network Exfiltration
 
