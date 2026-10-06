@@ -142,7 +142,7 @@ export const DOC_META: DocMeta[] = [
     slug: "migrating-scripted-tool",
     title: "Migrating to bashkit-scripted-tool",
     summary: "Move ScriptedTool, ToolDef, and ToolRegistry code to the new crate.",
-    seoTitle: "Migrate from the bashkit scripted_tool feature to bashkit-scripted-tool",
+    seoTitle: "Migrate from scripted_tool to bashkit-scripted-tool",
     seoDescription:
       "Cargo.toml, import, and ToolRegistry::install changes for code that used the scripted_tool feature of bashkit.",
     section: "LLM tools",
