@@ -84,6 +84,12 @@ impl TerminalTool {
         &self.terminal
     }
 
+    /// Mutable access to the underlying terminal, to drive it directly
+    /// between tool calls.
+    pub fn terminal_mut(&mut self) -> &mut Terminal {
+        &mut self.terminal
+    }
+
     /// Tool name: `terminal`.
     pub fn name(&self) -> &str {
         TERMINAL_TOOL_NAME
