@@ -2156,6 +2156,16 @@ criteria = "safe-to-deploy"
 version = "0.9.5"
 criteria = "safe-to-deploy"
 
+[[exemptions.vt100]]
+version = "0.16.2"
+criteria = "safe-to-deploy"
+notes = "Terminal screen model for the optional `terminal` feature. Pure parsing/state; reviewed: no unsafe, no host I/O, process, or network access."
+
+[[exemptions.vte]]
+version = "0.15.0"
+criteria = "safe-to-deploy"
+notes = "ANSI escape parser under vt100. Reviewed: no host I/O, process, or network access; unsafe limited to UTF-8 already validated by from_utf8 and an OSC param slice cast bounded by osc_num_params."
+
 [[exemptions.wait-timeout]]
 version = "0.2.1"
 criteria = "safe-to-run"
