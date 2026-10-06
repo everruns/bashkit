@@ -1,17 +1,17 @@
 //! ScriptedTool execution: Tool impl and documentation helpers.
 
 use super::{ScriptedExecutionTrace, ScriptedTool, ToolDefExtension, extension::InvocationLog};
-use crate::Bash;
-use crate::builtins::{Builtin, Context, ExecutionPlan};
-use crate::tool::timeout_response;
-use crate::tool::{
+use crate::tool_def::usage_from_schema;
+use async_trait::async_trait;
+use bashkit::Bash;
+use bashkit::tool::timeout_response;
+use bashkit::tool::{
     Tool, ToolError, ToolExecution, ToolOutputChunk, ToolRequest, ToolResponse, ToolStatus,
     VERSION, localized, tool_output_from_response, tool_request_from_value, tool_request_schema,
     tool_response_schema,
 };
-use crate::tool_def::usage_from_schema;
-use crate::{Error, ExecResult};
-use async_trait::async_trait;
+use bashkit::{Builtin, BuiltinContext as Context, ExecutionPlan};
+use bashkit::{Error, ExecResult};
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -27,7 +27,7 @@ struct ScriptedBuiltin {
 }
 
 impl ScriptedBuiltin {
-    fn sanitize<T>(&self, result: crate::Result<T>) -> crate::Result<T> {
+    fn sanitize<T>(&self, result: bashkit::Result<T>) -> bashkit::Result<T> {
         match result {
             Err(err)
                 if self.sanitize_errors
@@ -42,12 +42,12 @@ impl ScriptedBuiltin {
 
 #[async_trait]
 impl Builtin for ScriptedBuiltin {
-    async fn execute(&self, ctx: Context<'_>) -> crate::Result<ExecResult> {
+    async fn execute(&self, ctx: Context<'_>) -> bashkit::Result<ExecResult> {
         let result = self.inner.execute(ctx).await;
         self.sanitize(result)
     }
 
-    async fn execution_plan(&self, ctx: &Context<'_>) -> crate::Result<Option<ExecutionPlan>> {
+    async fn execution_plan(&self, ctx: &Context<'_>) -> bashkit::Result<Option<ExecutionPlan>> {
         let result = self.inner.execution_plan(ctx).await;
         self.sanitize(result)
     }
@@ -188,7 +188,8 @@ impl ScriptedTool {
         let fut = async {
             let result = if let Some(sender) = stream_sender {
                 let output_cb = Box::new(
-                    move |stdout_chunk: &crate::StreamData, stderr_chunk: &crate::StreamData| {
+                    move |stdout_chunk: &bashkit::StreamData,
+                          stderr_chunk: &bashkit::StreamData| {
                         if !stdout_chunk.is_empty() {
                             let _ = sender.send(ToolOutputChunk {
                                 data: serde_json::json!(stdout_chunk),
@@ -224,7 +225,7 @@ impl ScriptedTool {
         // timeouts must abort the whole orchestration, including callbacks.
         let response = if let Some(ms) = timeout_ms {
             let duration = Duration::from_millis(ms);
-            match crate::time_compat::timeout(duration, fut).await {
+            match bashkit::time::timeout(duration, fut).await {
                 Ok(response) => response,
                 Err(_) => timeout_response(duration),
             }
@@ -293,7 +294,7 @@ impl Tool for ScriptedTool {
         let req = tool_request_from_value(self.locale(), args)?;
         let tool = self.clone();
         Ok(ToolExecution::new(move |stream_sender| async move {
-            let start = crate::time_compat::Instant::now();
+            let start = bashkit::time::Instant::now();
             let response = tool.run_request_with_stream(req, stream_sender).await;
             tool_output_from_response(response, start.elapsed())
         }))
@@ -333,10 +334,10 @@ impl Tool for ScriptedTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ExecutionLimits;
     use crate::ToolArgs;
     use crate::ToolDef;
     use crate::tool_def::parse_flags;
+    use bashkit::ExecutionLimits;
 
     #[test]
     fn test_parse_flags_key_value() {
@@ -468,7 +469,7 @@ mod tests {
                 },
             )
             .build();
-        let start = crate::time_compat::Instant::now();
+        let start = bashkit::time::Instant::now();
 
         let resp = tool
             .execute(ToolRequest {
@@ -511,7 +512,7 @@ mod tests {
                 },
             )
             .build();
-        let start = crate::time_compat::Instant::now();
+        let start = bashkit::time::Instant::now();
 
         let resp = tool
             .execute_with_status(
@@ -654,7 +655,7 @@ mod tests {
     async fn test_error_uses_display_not_debug() {
         use super::ScriptedTool;
         use crate::ToolDef;
-        use crate::tool::Tool;
+        use bashkit::tool::Tool;
 
         let tool = ScriptedTool::builder("test")
             .short_description("test")
@@ -908,11 +909,10 @@ mod tests {
 
 #[cfg(test)]
 mod custom_builtin_tests {
-    use crate::builtins::{Builtin, Context};
-    use crate::{
-        BashkitContext, ClapBuiltin, Error, ExecResult, ScriptedTool, Tool, ToolArgs, ToolDef,
-    };
+    use crate::{ScriptedTool, ToolArgs, ToolDef};
     use async_trait::async_trait;
+    use bashkit::{BashkitContext, ClapBuiltin, Error, ExecResult, Tool};
+    use bashkit::{Builtin, BuiltinContext as Context};
     use clap::Parser;
 
     /// Echoes raw argv so tests can assert the builtin saw it unparsed.
@@ -920,7 +920,7 @@ mod custom_builtin_tests {
 
     #[async_trait]
     impl Builtin for RawArgv {
-        async fn execute(&self, ctx: Context<'_>) -> crate::Result<ExecResult> {
+        async fn execute(&self, ctx: Context<'_>) -> bashkit::Result<ExecResult> {
             Ok(ExecResult::ok(format!("argv:[{}]\n", ctx.args.join("|"))))
         }
     }
@@ -930,7 +930,7 @@ mod custom_builtin_tests {
 
     #[async_trait]
     impl Builtin for ReadsFile {
-        async fn execute(&self, ctx: Context<'_>) -> crate::Result<ExecResult> {
+        async fn execute(&self, ctx: Context<'_>) -> bashkit::Result<ExecResult> {
             match ctx.fs.read_file(std::path::Path::new("/etc/passwd")).await {
                 Ok(_) => Ok(ExecResult::ok("read ok\n")),
                 Err(e) => Ok(ExecResult::err(format!("denied: {e}\n"), 1)),
@@ -942,7 +942,7 @@ mod custom_builtin_tests {
 
     #[async_trait]
     impl Builtin for LeakyBuiltin {
-        async fn execute(&self, _ctx: Context<'_>) -> crate::Result<ExecResult> {
+        async fn execute(&self, _ctx: Context<'_>) -> bashkit::Result<ExecResult> {
             Err(Error::Network(
                 "postgres://admin:secret@internal-db/prod".into(),
             ))
@@ -963,7 +963,7 @@ mod custom_builtin_tests {
             &self,
             _args: Self::Args,
             _ctx: &mut BashkitContext<'_>,
-        ) -> crate::Result<()> {
+        ) -> bashkit::Result<()> {
             Err(Error::Execution(
                 "SDK diagnostic: postgres://admin:secret@internal-db/prod".into(),
             ))

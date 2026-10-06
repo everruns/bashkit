@@ -420,6 +420,23 @@ release-check:
         --no-verify
 
     echo ""
+    echo "Dry-run publish bashkit-scripted-tool..."
+    # Same structural proxy as the CLI: point the copy's core pin at the latest
+    # published bashkit. Every core feature it forwards (bash_tool, jq, python,
+    # typescript) is already on crates.io.
+    ST_TOML="$CLI_VERIFY_ROOT/workspace/crates/bashkit-scripted-tool/Cargo.toml"
+    sed -i.bak \
+        "s/version = \"$WORKSPACE_VERSION\"/version = \"$LATEST_CORE\"/" \
+        "$ST_TOML"
+    rm "$ST_TOML.bak"
+    cargo publish \
+        --manifest-path "$CLI_VERIFY_ROOT/workspace/Cargo.toml" \
+        -p bashkit-scripted-tool \
+        --dry-run \
+        --allow-dirty \
+        --no-verify
+
+    echo ""
     echo "All release checks passed!"
 
 # Create and push release tag

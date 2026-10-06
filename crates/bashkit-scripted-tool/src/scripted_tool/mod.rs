@@ -5,11 +5,11 @@
 //! so an LLM can orchestrate many operations in one call using pipes, variables,
 //! loops, and conditionals.
 //!
-//! This module follows the same contract surface as [`crate::tool`]:
+//! This module follows the same contract surface as [`bashkit::tool`]:
 //!
 //! - [`ScriptedToolBuilder::build`] -> immutable metadata object
 //! - [`ScriptedToolBuilder::build_service`] -> `tower::Service<Value, Value>`
-//! - [`Tool::execution`] -> validated, single-use [`crate::ToolExecution`]
+//! - [`Tool::execution`] -> validated, single-use [`bashkit::ToolExecution`]
 //! - [`Tool::help`] -> Markdown docs
 //! - [`Tool::system_prompt`] -> terse plain-text instructions
 //!
@@ -31,7 +31,8 @@
 //! # Example
 //!
 //! ```rust
-//! use bashkit::{ScriptedTool, Tool, ToolArgs, ToolDef};
+//! use bashkit::Tool;
+//! use bashkit_scripted_tool::{ScriptedTool, ToolArgs, ToolDef};
 //!
 //! # tokio_test::block_on(async {
 //! let tool = ScriptedTool::builder("api")
@@ -66,7 +67,7 @@
 //! config), use the standard Rust closure-capture pattern with `Arc`:
 //!
 //! ```rust
-//! use bashkit::{ScriptedTool, ToolArgs, ToolDef};
+//! use bashkit_scripted_tool::{ScriptedTool, ToolArgs, ToolDef};
 //! use std::sync::Arc;
 //!
 //! let api_key = Arc::new("sk-secret-key".to_string());
@@ -100,7 +101,7 @@
 //! For mutable shared state, use `Arc<Mutex<T>>`:
 //!
 //! ```rust
-//! use bashkit::{ScriptedTool, ToolArgs, ToolDef};
+//! use bashkit_scripted_tool::{ScriptedTool, ToolArgs, ToolDef};
 //! use std::sync::{Arc, Mutex};
 //!
 //! let call_count = Arc::new(Mutex::new(0u64));
@@ -140,8 +141,8 @@ pub use crate::tool_def::{
     AsyncToolCallback, AsyncToolExec, SyncToolExec, ToolArgs, ToolCallback, ToolDef, ToolImpl,
 };
 
-use crate::builtins::Builtin;
-use crate::{ExecutionLimits, ExecutionProfile, Tool, ToolService};
+use bashkit::Builtin;
+use bashkit::{ExecutionLimits, ExecutionProfile, Tool, ToolService};
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 
@@ -221,7 +222,7 @@ impl RegisteredTool {
 /// Builder for [`ScriptedTool`].
 ///
 /// ```rust
-/// use bashkit::{ScriptedTool, ToolArgs, ToolDef};
+/// use bashkit_scripted_tool::{ScriptedTool, ToolArgs, ToolDef};
 ///
 /// let tool = ScriptedTool::builder("net")
 ///     .short_description("Network tools")
@@ -298,7 +299,7 @@ impl ScriptedToolBuilder {
     /// positionals, short flags, `--`, or parse-time checking of required
     /// arguments gets none of that. Registering it here hands the builtin the
     /// raw `ctx.args` instead, so it can parse them however it likes —
-    /// including with [`ClapBuiltin`](crate::ClapBuiltin), the house parser for
+    /// including with [`ClapBuiltin`](bashkit::ClapBuiltin), the house parser for
     /// `Bash` builtins.
     ///
     /// The builtin runs in the same logic-only shell as the `ToolDef` commands
@@ -312,7 +313,8 @@ impl ScriptedToolBuilder {
     ///
     /// ```rust
     /// # use async_trait::async_trait;
-    /// # use bashkit::{Builtin, BuiltinContext, ExecResult, ScriptedTool};
+    /// # use bashkit::{Builtin, BuiltinContext, ExecResult};
+    /// # use bashkit_scripted_tool::ScriptedTool;
     /// struct Ping;
     ///
     /// #[async_trait]
@@ -448,7 +450,7 @@ impl ScriptedToolBuilder {
             short_desc,
             description: format!(
                 "{}: {}",
-                super::tool::localized(
+                bashkit::tool::localized(
                     self.locale.as_str(),
                     "Compose tool callbacks through bash scripts",
                     "Компонує виклики інструментів через bash-скрипти",
@@ -494,12 +496,12 @@ impl ScriptedToolBuilder {
 
     /// Build the input schema without constructing the full tool.
     pub fn build_input_schema(&self) -> serde_json::Value {
-        crate::tool::tool_request_schema()
+        bashkit::tool::tool_request_schema()
     }
 
     /// Build the output schema for `ToolOutput::result`.
     pub fn build_output_schema(&self) -> serde_json::Value {
-        crate::tool::tool_response_schema()
+        bashkit::tool::tool_response_schema()
     }
 }
 
@@ -566,7 +568,7 @@ impl ScriptedTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tool::{Tool, ToolRequest, VERSION};
+    use bashkit::tool::{Tool, ToolRequest, VERSION};
 
     fn build_test_tool() -> ScriptedTool {
         ScriptedTool::builder("test_api")
@@ -1517,7 +1519,7 @@ mod tests {
             )
             .build();
 
-        let mut bash = crate::Bash::builder().extension(extension).build();
+        let mut bash = bashkit::Bash::builder().extension(extension).build();
         let result = bash
             .exec("discover --category users\nhelp get_user\nget_user --id 7")
             .await
@@ -1542,8 +1544,8 @@ mod tests {
         let handle_a = ext_a.invocation_trace();
         let handle_b = ext_b.invocation_trace();
 
-        let mut bash_a = crate::Bash::builder().extension(ext_a).build();
-        let mut bash_b = crate::Bash::builder().extension(ext_b).build();
+        let mut bash_a = bashkit::Bash::builder().extension(ext_a).build();
+        let mut bash_b = bashkit::Bash::builder().extension(ext_b).build();
         bash_a
             .exec("echo_arg --msg alpha")
             .await
@@ -1580,8 +1582,8 @@ mod tests {
         let extension_trace = extension.invocation_trace();
         let clone_trace = clone.invocation_trace();
 
-        let mut bash_a = crate::Bash::builder().extension(extension).build();
-        let mut bash_b = crate::Bash::builder().extension(clone).build();
+        let mut bash_a = bashkit::Bash::builder().extension(extension).build();
+        let mut bash_b = bashkit::Bash::builder().extension(clone).build();
         bash_a
             .exec("echo_arg --msg gamma")
             .await
@@ -1613,7 +1615,7 @@ mod tests {
             })
             .build();
         let handle = extension.invocation_trace();
-        let mut bash = crate::Bash::builder().extension(extension).build();
+        let mut bash = bashkit::Bash::builder().extension(extension).build();
 
         for _ in 0..300 {
             let cmd = format!("noop --msg {}", "x".repeat(1500));
@@ -1639,7 +1641,7 @@ mod tests {
             })
             .build();
         let handle = extension.invocation_trace();
-        let mut bash = crate::Bash::builder().extension(extension).build();
+        let mut bash = bashkit::Bash::builder().extension(extension).build();
 
         let big = "\u{1F600}".repeat(400);
         let cmd = format!("noop --msg {}", big);

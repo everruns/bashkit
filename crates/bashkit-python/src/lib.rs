@@ -26,10 +26,10 @@ use bashkit::{
     ExecutionLimits, ExtFunctionResult, FileSystem, FileSystemExt, FileType as FsFileType,
     FsLimits, InMemoryFs, Metadata as FsMetadata, MontyException, MontyObject, NetworkAllowlist,
     OutputCallback as RustOutputCallback, OverlayFs, PosixFs, PythonExternalFnHandler,
-    PythonLimits, ReadOnlyFs, ScriptedTool as RustScriptedTool,
-    ShellStateView as RustShellStateView, SnapshotOptions as RustSnapshotOptions, Tool, ToolArgs,
-    ToolDef, ToolRequest, async_trait,
+    PythonLimits, ReadOnlyFs, ShellStateView as RustShellStateView,
+    SnapshotOptions as RustSnapshotOptions, Tool, ToolRequest, async_trait,
 };
+use bashkit_scripted_tool::{ScriptedTool as RustScriptedTool, ToolArgs, ToolDef};
 
 /// Typed named execution-policy selector for Python constructors.
 #[pyclass(name = "ExecutionProfile", eq, eq_int, from_py_object)]

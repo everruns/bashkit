@@ -46,7 +46,8 @@ let bash = Bash::builder()
 
 ### Shared Tool Registry
 
-With `scripted_tool`, one `ToolRegistry` exposes dot-separated definitions as
+With the [`bashkit-scripted-tool`](https://docs.rs/bashkit-scripted-tool) crate
+(feature `typescript`), one `ToolRegistry` exposes dot-separated definitions as
 shell commands and ergonomic TypeScript namespaces:
 
 ```typescript

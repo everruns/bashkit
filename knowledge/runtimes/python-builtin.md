@@ -234,7 +234,7 @@ catastrophic-backtracking DoS risk in untrusted code execution.
 provides *code*, not data, matches real python's no-arg behavior), command
 substitution, and conditionals.
 
-With the `scripted_tool` feature, `BashBuilder::tool_registry` generates an
+With the `bashkit-scripted-tool` crate (feature `python`), `ToolRegistry::install(builder)` generates an
 explicit `tools` namespace from dot-separated `ToolDef` names. Calls such as
 `tools.orders.list({"customer": "acme"})` use Monty's existing external-function
 suspend/resume bridge and dispatch through the registry's shared schema, policy,

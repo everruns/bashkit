@@ -1,7 +1,6 @@
 //! Adversarial contract for request-owned async execution boundaries.
 
 #[cfg(any(
-    feature = "scripted_tool",
     feature = "http_client",
     feature = "python",
     feature = "typescript",
@@ -9,54 +8,28 @@
 ))]
 use bashkit::{Bash, Error};
 #[cfg(any(
-    feature = "scripted_tool",
     feature = "http_client",
     feature = "python",
     feature = "typescript",
     feature = "sqlite"
 ))]
 use std::sync::atomic::Ordering;
-#[cfg(any(
-    feature = "scripted_tool",
-    feature = "http_client",
-    feature = "python",
-    feature = "typescript"
-))]
+#[cfg(any(feature = "http_client", feature = "python", feature = "typescript"))]
 use std::sync::{Arc, atomic::AtomicBool};
-#[cfg(any(
-    feature = "scripted_tool",
-    feature = "http_client",
-    feature = "python",
-    feature = "typescript"
-))]
+#[cfg(any(feature = "http_client", feature = "python", feature = "typescript"))]
 use tokio::sync::Notify;
 
-#[cfg(any(
-    feature = "scripted_tool",
-    feature = "http_client",
-    feature = "python",
-    feature = "typescript"
-))]
+#[cfg(any(feature = "http_client", feature = "python", feature = "typescript"))]
 struct ReleaseProbe(Arc<AtomicBool>);
 
-#[cfg(any(
-    feature = "scripted_tool",
-    feature = "http_client",
-    feature = "python",
-    feature = "typescript"
-))]
+#[cfg(any(feature = "http_client", feature = "python", feature = "typescript"))]
 impl Drop for ReleaseProbe {
     fn drop(&mut self) {
         self.0.store(true, Ordering::SeqCst);
     }
 }
 
-#[cfg(any(
-    feature = "scripted_tool",
-    feature = "http_client",
-    feature = "python",
-    feature = "typescript"
-))]
+#[cfg(any(feature = "http_client", feature = "python", feature = "typescript"))]
 async fn assert_cancel_drops_boundary(
     mut bash: Bash,
     script: &str,
@@ -80,34 +53,6 @@ async fn assert_cancel_drops_boundary(
         bash.exec("echo reusable").await.unwrap().stdout,
         "reusable\n"
     );
-}
-
-#[cfg(feature = "scripted_tool")]
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn runtime_tool_callback_obeys_request_lifecycle() {
-    use bashkit::{ToolArgs, ToolDef, ToolRegistry};
-
-    let started = Arc::new(Notify::new());
-    let released = Arc::new(AtomicBool::new(false));
-    let callback_started = started.clone();
-    let callback_released = released.clone();
-    let registry = ToolRegistry::builder()
-        .async_tool_fn(
-            ToolDef::new("pending_tool", "wait forever"),
-            move |_args: ToolArgs| {
-                let started = callback_started.clone();
-                let released = callback_released.clone();
-                async move {
-                    let _probe = ReleaseProbe(released);
-                    started.notify_one();
-                    std::future::pending::<std::result::Result<String, String>>().await
-                }
-            },
-        )
-        .build();
-    let bash = Bash::builder().tool_registry(registry).build();
-
-    assert_cancel_drops_boundary(bash, "pending_tool", started, released).await;
 }
 
 #[cfg(feature = "http_client")]

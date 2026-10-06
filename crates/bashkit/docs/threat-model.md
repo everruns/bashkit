@@ -944,7 +944,7 @@ builtin silently fails.
 - Python bindings (bashkit-python): PyO3 `String` extraction, no manual byte/char ops
 - eval harness: `chars().take()`, `from_utf8_lossy()`, all safe patterns
 - curl/bc/export/date/comm/echo/archive/base64: All `.find()` use ASCII delimiters only
-- scripted_tool: No byte/char patterns
+- bashkit-scripted-tool: No byte/char patterns
 
 **Path Validation:**
 

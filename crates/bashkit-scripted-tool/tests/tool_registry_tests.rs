@@ -1,7 +1,5 @@
-use bashkit::{
-    Bash, ExecOptions, ExecutionCapabilityError, ExecutionExtensions, ExecutionLimits, ToolArgs,
-    ToolCallDecision, ToolCallRequest, ToolDef, ToolRegistry,
-};
+use bashkit::{Bash, ExecOptions, ExecutionCapabilityError, ExecutionExtensions, ExecutionLimits};
+use bashkit_scripted_tool::{ToolArgs, ToolCallDecision, ToolCallRequest, ToolDef, ToolRegistry};
 use serde_json::json;
 use std::sync::{
     Arc, Mutex,
@@ -35,7 +33,7 @@ async fn tool_callback_context_is_revoked_when_the_request_completes() {
             }
         })
         .build();
-    let mut bash = Bash::builder().tool_registry(registry.clone()).build();
+    let mut bash = registry.install(Bash::builder()).build();
 
     let result = bash
         .exec_with_options("orders.list --customer x", request("tenant-a", &registry))
@@ -73,8 +71,8 @@ async fn one_registry_dispatches_shell_python_and_typescript_with_shared_policy_
             ToolCallDecision::Allow
         })
         .build();
-    let mut bash = Bash::builder()
-        .tool_registry(registry.clone())
+    let mut bash = registry
+        .install(Bash::builder())
         .env("BASHKIT_ALLOW_INPROCESS_PYTHON", "1")
         .build();
 
@@ -123,8 +121,8 @@ async fn registry_enforces_schema_denial_sanitization_discovery_and_request_trac
         .build();
     let allowed = ToolCallRequest::new("allowed", registry.trace());
     let allowed_trace = allowed.trace();
-    let mut bash = Bash::builder()
-        .tool_registry(registry.clone())
+    let mut bash = registry
+        .install(Bash::builder())
         .env("BASHKIT_ALLOW_INPROCESS_PYTHON", "1")
         .build();
 
@@ -185,7 +183,7 @@ async fn registry_resolves_local_schema_references_before_callback() {
             Ok("unexpected".into())
         })
         .build();
-    let mut bash = Bash::builder().tool_registry(registry).build();
+    let mut bash = registry.install(Bash::builder()).build();
 
     let result = bash.exec("customers.get --unknown attacker").await.unwrap();
 
@@ -216,9 +214,8 @@ async fn registry_deadline_cancels_callback_and_tenants_do_not_share_context_or_
         })
         .build();
     let limits = ExecutionLimits::new().timeout(Duration::from_millis(25));
-    let mut bash = Bash::builder()
-        .limits(limits)
-        .tool_registry(registry.clone())
+    let mut bash = registry
+        .install(Bash::builder().limits(limits))
         .env("BASHKIT_ALLOW_INPROCESS_PYTHON", "1")
         .build();
     let timeout = bash
@@ -241,7 +238,7 @@ async fn registry_deadline_cancels_callback_and_tenants_do_not_share_context_or_
     let a_trace = a.trace();
     let b = ToolCallRequest::new("b", registry.trace());
     let b_trace = b.trace();
-    let mut bash = Bash::builder().tool_registry(registry).build();
+    let mut bash = registry.install(Bash::builder()).build();
     let first = bash
         .exec_with_options(
             "orders.list --customer x",

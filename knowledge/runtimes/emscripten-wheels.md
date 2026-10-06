@@ -64,12 +64,14 @@ Per-target dependency split:
 
 ```toml
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-bashkit = { path = "../bashkit", features = ["scripted_tool","python","realfs","jq","interop","http_client","sqlite"] }
+bashkit = { path = "../bashkit", features = ["python","realfs","jq","interop","http_client","sqlite"] }
+bashkit-scripted-tool = { path = "../bashkit-scripted-tool", features = ["python","jq"] }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 pyo3-async-runtimes = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-bashkit = { path = "../bashkit", features = ["scripted_tool","python","jq"] }
+bashkit = { path = "../bashkit", features = ["python","jq"] }
+bashkit-scripted-tool = { path = "../bashkit-scripted-tool", features = ["python","jq"] }
 tokio = { workspace = true }   # wasm-safe base features only
 ```
 

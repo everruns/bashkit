@@ -24,7 +24,8 @@ path = "src/main.rs"
 # (our own agent loop + provider stack) so we do NOT need mira-everruns.
 mira-eval = { version = "0.5", features = ["macros"] }
 
-bashkit = { path = "../bashkit", features = ["scripted_tool", "jq"] }
+bashkit = { path = "../bashkit", features = ["jq"] }
+bashkit-scripted-tool = { path = "../bashkit-scripted-tool", features = ["jq"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "io-std", "io-util", "fs"] }
 serde.workspace = true
 serde_json.workspace = true

@@ -22,6 +22,7 @@ Bashkit uses a Cargo workspace with multiple crates:
 | Crate | Purpose |
 |-------|---------|
 | `crates/bashkit/` | Core library (parser, interpreter, VFS, builtins, tool contract) |
+| `crates/bashkit-scripted-tool/` | `ScriptedTool`, `ToolDef`, `ToolRegistry` (published, lockstep with core) |
 | `crates/bashkit-cli/` | CLI binary |
 | `crates/bashkit-python/` | Python bindings (PyO3) |
 | `crates/bashkit-js/` | JavaScript bindings (NAPI-RS) |
@@ -29,7 +30,8 @@ Bashkit uses a Cargo workspace with multiple crates:
 | `crates/bashkit-eval/` | LLM eval study (mira framework) |
 
 Core library modules: `parser/`, `interpreter/`, `fs/`, `builtins/`,
-`network/`, `git/`, `ssh/`, `scripted_tool/`. See source, structure evolves.
+`network/`, `git/`, `ssh/`. `ScriptedTool` / `ToolDef` / `ToolRegistry` live in
+the separate `crates/bashkit-scripted-tool/` crate. See source, structure evolves.
 
 ### Public API
 

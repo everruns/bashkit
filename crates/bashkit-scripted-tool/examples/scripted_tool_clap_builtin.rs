@@ -1,7 +1,7 @@
 //! Clap-backed builtin inside a ScriptedTool.
 //!
 //! Run with:
-//!   cargo run --example scripted_tool_clap_builtin --features scripted_tool
+//!   cargo run -p bashkit-scripted-tool --example scripted_tool_clap_builtin
 //!
 //! `ToolDef` + `parse_flags` covers `--key value` argument shapes. A control-plane
 //! command tree that wants positionals, short flags, `--`, or required-argument
@@ -11,7 +11,8 @@
 
 use async_trait::async_trait;
 use bashkit::clap::Parser;
-use bashkit::{BashkitContext, ClapBuiltin, ScriptedTool, Tool, ToolArgs, ToolDef};
+use bashkit::{BashkitContext, ClapBuiltin, Tool};
+use bashkit_scripted_tool::{ScriptedTool, ToolArgs, ToolDef};
 
 #[derive(Parser)]
 #[command(name = "get_agent", about = "Fetch one agent by id")]

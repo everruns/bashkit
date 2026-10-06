@@ -5,10 +5,10 @@
 //
 // Dependency direction:  builtins → tool_def → {lib.rs, scripted_tool, tool.rs}
 
-use crate::builtins::{Builtin, Context};
-use crate::error::Result;
-use crate::interpreter::ExecResult;
 use async_trait::async_trait;
+use bashkit::ExecResult;
+use bashkit::Result;
+use bashkit::{Builtin, BuiltinContext as Context};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -86,7 +86,7 @@ pub struct ToolArgs {
 
 #[derive(Default)]
 struct ToolArgsContext {
-    capability: Option<crate::ExecutionCapability<ToolArgsContextData>>,
+    capability: Option<bashkit::ExecutionCapability<ToolArgsContextData>>,
 }
 
 #[derive(Clone)]
@@ -120,7 +120,7 @@ impl ToolArgs {
     pub(crate) fn with_context(
         params: serde_json::Value,
         stdin: Option<String>,
-        capability: crate::ExecutionCapability<ToolArgsContextData>,
+        capability: bashkit::ExecutionCapability<ToolArgsContextData>,
     ) -> Self {
         Self {
             params,
@@ -134,7 +134,7 @@ impl ToolArgs {
     /// Request tenant while the originating execution remains active.
     pub fn tenant_id(
         &self,
-    ) -> std::result::Result<Option<String>, crate::ExecutionCapabilityError> {
+    ) -> std::result::Result<Option<String>, bashkit::ExecutionCapabilityError> {
         self.context
             .capability
             .as_ref()
@@ -148,7 +148,7 @@ impl ToolArgs {
         &self,
     ) -> std::result::Result<
         Option<crate::tool_registry::ToolCallSurface>,
-        crate::ExecutionCapabilityError,
+        bashkit::ExecutionCapabilityError,
     > {
         self.context
             .capability
@@ -217,7 +217,7 @@ pub type AsyncToolCallback = AsyncToolExec;
 /// # Example
 ///
 /// ```rust
-/// use bashkit::{ToolDef, ToolImpl};
+/// use bashkit_scripted_tool::{ToolDef, ToolImpl};
 ///
 /// let tool = ToolImpl::new(
 ///     ToolDef::new("greet", "Greet a user")
@@ -295,7 +295,7 @@ impl ToolImpl {
 impl Builtin for ToolImpl {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
         let params = parse_flags(ctx.args, &self.def.input_schema)
-            .map_err(|e| crate::error::Error::Execution(format!("{}: {e}", self.def.name)))?;
+            .map_err(|e| bashkit::Error::Execution(format!("{}: {e}", self.def.name)))?;
         let context = ToolArgsContextData::new(None, crate::tool_registry::ToolCallSurface::Shell);
         let stdin = ctx.stdin.map(String::from);
         let tool_args = match ctx.execution_capability(context) {
@@ -312,17 +312,17 @@ impl Builtin for ToolImpl {
             if let Some(budget) = ctx.execution_budget() {
                 budget
                     .try_with(|budget| budget.check())
-                    .map_err(|_| crate::Error::Cancelled)??;
+                    .map_err(|_| bashkit::Error::Cancelled)??;
             }
             let result = (cb)(&tool_args);
             if let Some(budget) = ctx.execution_budget() {
                 budget
                     .try_with(|budget| budget.check())
-                    .map_err(|_| crate::Error::Cancelled)??;
+                    .map_err(|_| bashkit::Error::Cancelled)??;
             }
             result
         } else {
-            return Err(crate::error::Error::Execution(format!(
+            return Err(bashkit::Error::Execution(format!(
                 "{}: no exec defined",
                 self.def.name
             )));
@@ -1549,14 +1549,14 @@ mod tests {
         assert_eq!(tool.def.name, "greet");
     }
 
-    fn tool_test_context<'a>(
-        args: &'a [String],
-        env: &'a std::collections::HashMap<String, String>,
-        vars: &'a mut std::collections::HashMap<String, String>,
-        cwd: &'a mut std::path::PathBuf,
-    ) -> Context<'a> {
-        let fs = Arc::new(crate::fs::InMemoryFs::new());
-        Context::new_for_test(args, env, vars, cwd, fs, None)
+    /// Run `tool` as a registered builtin. Uses the public `Bash` API: the
+    /// interpreter's `BuiltinContext` test constructor is core-internal.
+    async fn run_builtin(tool: ToolImpl, script: &str) -> Result<ExecResult> {
+        let name = tool.def.name.clone();
+        let mut bash = bashkit::Bash::builder()
+            .builtin(&name, Box::new(tool))
+            .build();
+        bash.exec(script).await
     }
 
     #[tokio::test]
@@ -1573,12 +1573,7 @@ mod tests {
         });
 
         // Verify it works as a Builtin
-        let args = vec!["--name".to_string(), "Alice".to_string()];
-        let env = std::collections::HashMap::new();
-        let mut vars = std::collections::HashMap::new();
-        let mut cwd = std::path::PathBuf::from("/");
-        let ctx = tool_test_context(&args, &env, &mut vars, &mut cwd);
-        let result = tool.execute(ctx).await.unwrap();
+        let result = run_builtin(tool, "greet --name Alice").await.unwrap();
         assert_eq!(result.stdout, "hello Alice\n");
         assert_eq!(result.exit_code, 0);
     }
@@ -1593,12 +1588,7 @@ mod tests {
                 ))
             });
 
-        let args = vec![];
-        let env = std::collections::HashMap::new();
-        let mut vars = std::collections::HashMap::new();
-        let mut cwd = std::path::PathBuf::from("/");
-        let ctx = tool_test_context(&args, &env, &mut vars, &mut cwd);
-        let result = tool.execute(ctx).await.unwrap();
+        let result = run_builtin(tool, "lookup").await.unwrap();
 
         assert_eq!(result.exit_code, 1);
         assert_eq!(result.stderr, "lookup: callback failed\n");
@@ -1613,12 +1603,7 @@ mod tests {
             .with_exec_sync(|_| Err("raw diagnostic".to_string()))
             .sanitize_errors(false);
 
-        let args = vec![];
-        let env = std::collections::HashMap::new();
-        let mut vars = std::collections::HashMap::new();
-        let mut cwd = std::path::PathBuf::from("/");
-        let ctx = tool_test_context(&args, &env, &mut vars, &mut cwd);
-        let result = tool.execute(ctx).await.unwrap();
+        let result = run_builtin(tool, "lookup").await.unwrap();
 
         assert_eq!(result.exit_code, 1);
         assert_eq!(result.stderr, "raw diagnostic");
@@ -1640,12 +1625,7 @@ mod tests {
     async fn test_tool_impl_no_exec_errors() {
         let tool = ToolImpl::new(ToolDef::new("empty", "No exec"));
 
-        let args = vec![];
-        let env = std::collections::HashMap::new();
-        let mut vars = std::collections::HashMap::new();
-        let mut cwd = std::path::PathBuf::from("/");
-        let ctx = tool_test_context(&args, &env, &mut vars, &mut cwd);
-        let result = tool.execute(ctx).await;
+        let result = run_builtin(tool, "empty").await;
         assert!(result.is_err());
     }
 }

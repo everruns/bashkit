@@ -62,7 +62,6 @@ cargo binstall bashkit-cli
 | `python` | on | `python`/`python3` builtin via Monty |
 | `sqlite` | on | `sqlite`/`sqlite3` builtin via Turso (BETA upstream) |
 | `realfs` | off | `--mount-ro` / `--mount-rw` host filesystem mounts |
-| `scripted_tool` | off | Scripted tool orchestration |
 
 Build without interactive (library-only deps):
 

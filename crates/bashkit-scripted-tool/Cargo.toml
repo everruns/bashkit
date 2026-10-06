@@ -1,0 +1,56 @@
+# ScriptedTool and the ToolDef layer, split out of bashkit core.
+#
+# Important decision: everything built on `ToolDef` lives here, not in
+# `bashkit`. Core only offers generic public extension points
+# (`RuntimeCallContext`, `ShellFeatures`, `builtin_filter`, Tool contract
+# helpers); this crate composes them. Released in lockstep with `bashkit`.
+# See knowledge/integrations/scripted-tool-orchestration.md.
+
+[package]
+name = "bashkit-scripted-tool"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "ScriptedTool for bashkit: compose ToolDef callbacks into one LLM tool driven by bash scripts"
+keywords = ["bash", "llm", "tool", "agent", "everruns"]
+categories.workspace = true
+readme = "README.md"
+
+[features]
+default = []
+# Expose registry tools to embedded Python (`python`/`python3` builtins).
+python = ["bashkit/python"]
+# Expose registry tools to embedded TypeScript (`ts`/`node` builtins).
+typescript = ["bashkit/typescript"]
+# Admit the optional `jq` builtin in the logic-only shell.
+jq = ["bashkit/jq"]
+# Debug logs for sanitized callback errors.
+tracing = ["dep:tracing"]
+
+[dependencies]
+bashkit = { path = "../bashkit", version = "0.18.2", default-features = false, features = ["bash_tool"] }
+tokio = { workspace = true }
+async-trait = { workspace = true }
+tower = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true, optional = true }
+
+[dev-dependencies]
+bashkit = { path = "../bashkit", features = ["bash_tool", "jq"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+clap = { workspace = true }
+anyhow = { workspace = true }
+tokio-test = { workspace = true }
+
+[[example]]
+name = "scripted_tool"
+
+[[example]]
+name = "scripted_tool_clap_builtin"
+
+[[test]]
+name = "tool_registry_tests"
+required-features = ["python", "typescript"]

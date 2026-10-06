@@ -43,13 +43,26 @@ tool calls.
   </defs>
 </svg>
 
+## Install
+
+`ScriptedTool` ships in its own crate, released in lockstep with `bashkit`:
+
+```bash
+cargo add bashkit-scripted-tool
+cargo add bashkit-scripted-tool --features python,typescript   # tools.* in python / ts
+```
+
+Coming from the old `scripted_tool` feature of `bashkit`? See
+[Migrating to bashkit-scripted-tool](migrating-scripted-tool.md).
+
 ## Building one
 
 A tool is a `ToolDef` (name, description, JSON-Schema input) paired with a
 callback that returns stdout on success or an error string on failure:
 
 ```rust,no_run
-use bashkit::{ScriptedTool, ToolArgs, ToolDef, Tool};
+use bashkit::Tool;
+use bashkit_scripted_tool::{ScriptedTool, ToolArgs, ToolDef};
 
 fn get_user(args: &ToolArgs) -> Result<String, String> {
     let id = args.param_i64("id").ok_or("missing --id")?;
@@ -83,7 +96,7 @@ Flags parse from the schema: `--id 1` becomes `{"id": 1}` (coerced per the
 schema's property types). Use `.async_tool_fn(def, cb)` for async callbacks,
 sync and async tools mix freely in one `ScriptedTool`. The full e-commerce demo
 lives in
-[`examples/scripted_tool.rs`](https://github.com/everruns/bashkit/blob/main/crates/bashkit/examples/scripted_tool.rs).
+[`examples/scripted_tool.rs`](https://github.com/everruns/bashkit/blob/main/crates/bashkit-scripted-tool/examples/scripted_tool.rs).
 
 ## Code mode, not a file shell
 
@@ -123,7 +136,7 @@ a real usage message. The builtin runs in the same logic-only shell and gets the
 same disabled filesystem, so this does not widen what a script can touch. Tool
 commands win on a name collision, so a builtin cannot shadow one, nor `help` or
 `discover`. Full example:
-[`scripted_tool_clap_builtin.rs`](https://github.com/everruns/bashkit/blob/main/crates/bashkit/examples/scripted_tool_clap_builtin.rs).
+[`scripted_tool_clap_builtin.rs`](https://github.com/everruns/bashkit/blob/main/crates/bashkit-scripted-tool/examples/scripted_tool_clap_builtin.rs).
 
 For schema-parsed commands, adding `"additionalProperties": false` turns an
 unrecognised flag into an error listing the valid ones, instead of silently
