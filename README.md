@@ -164,9 +164,9 @@ check must consult it. Available in Rust, Node (`bash.analyze()`), and Python
 | Navigation | `cd`, `pwd`, `ls`, `tree`, `find`, `pushd`, `popd`, `dirs` |
 | Flow control | `true`, `false`, `exit`, `return`, `break`, `continue`, `test`, `[` |
 | Variables | `export`, `set`, `unset`, `local`, `shift`, `source`, `.`, `eval`, `readonly`, `times`, `declare`, `typeset`, `let`, `alias`, `unalias` |
-| Shell | `bash`, `sh` (virtual re-invocation), `exec`, `:`, `trap`, `caller`, `getopts`, `shopt`, `command`, `type`, `which`, `hash`, `compgen`, `fc`, `help` |
+| Shell | `bash`, `sh` (virtual re-invocation), `exec`, `:`, `trap`, `caller`, `getopts`, `shopt`, `command`, `builtin`, `enable`, `umask`, `ulimit`, `type`, `which`, `hash`, `compgen`, `fc`, `help` |
 | Text processing | `grep`, `rg`, `sed`, `awk`, `jq` (requires `jq` feature), `head`, `tail`, `sort`, `uniq`, `cut`, `tr`, `wc`, `paste`, `column`, `diff`, `comm`, `strings`, `tac`, `rev`, `seq`, `expr`, `fold`, `expand`, `unexpand`, `join`, `iconv`, `shuf` |
-| File operations | `mkdir`, `mktemp`, `mkfifo`, `rm`, `cp`, `mv`, `touch`, `chmod`, `chown`, `ln`, `rmdir`, `realpath`, `readlink`, `split`, `truncate` |
+| File operations | `mkdir`, `mktemp`, `mkfifo`, `rm`, `cp`, `mv`, `touch`, `chmod`, `chown`, `ln`, `rmdir`, `realpath`, `readlink`, `split`, `truncate`, `install`, `dd` |
 | File inspection | `file`, `stat`, `less` |
 | Archives | `tar`, `gzip`, `gunzip`, `zip`, `unzip` |
 | Byte tools | `od`, `xxd`, `hexdump`, `base64`, `base32`, `basenc`, `cmp` |
@@ -174,7 +174,7 @@ check must consult it. Available in Rust, Node (`bash.analyze()`), and Python
 | Utilities | `sleep`, `date`, `basename`, `dirname`, `timeout`, `wait`, `watch`, `yes`, `kill`, `bc`, `clear`, `numfmt`, `factor`, `tsort` |
 | Disk | `df`, `du` |
 | Pipeline | `xargs`, `tee` |
-| System info | `whoami`, `hostname`, `uname`, `id`, `nproc`, `env`, `printenv`, `history` |
+| System info | `whoami`, `hostname`, `uname`, `id`, `nproc`, `locale`, `env`, `printenv`, `history` |
 | Data formats | `csv`, `json`, `yaml`, `tomlq`, `template`, `envsubst` |
 | Network | `curl`, `wget` (requires allowlist), `http` |
 | DevOps | `assert`, `dotenv`, `glob`, `log`, `retry`, `semver`, `verify`, `parallel`, `patch` |

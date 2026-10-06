@@ -58,6 +58,10 @@
       "name": "break"
     },
     {
+      "feature": null,
+      "name": "builtin"
+    },
+    {
       "feature": "typescript",
       "name": "bun"
     },
@@ -147,6 +151,10 @@
     },
     {
       "feature": null,
+      "name": "dd"
+    },
+    {
+      "feature": null,
       "name": "declare"
     },
     {
@@ -180,6 +188,10 @@
     {
       "feature": null,
       "name": "echo"
+    },
+    {
+      "feature": null,
+      "name": "enable"
     },
     {
       "feature": null,
@@ -299,6 +311,10 @@
     },
     {
       "feature": null,
+      "name": "install"
+    },
+    {
+      "feature": null,
       "name": "join"
     },
     {
@@ -328,6 +344,10 @@
     {
       "feature": null,
       "name": "local"
+    },
+    {
+      "feature": null,
+      "name": "locale"
     },
     {
       "feature": null,
@@ -643,6 +663,14 @@
     },
     {
       "feature": null,
+      "name": "ulimit"
+    },
+    {
+      "feature": null,
+      "name": "umask"
+    },
+    {
+      "feature": null,
       "name": "unalias"
     },
     {
@@ -714,5 +742,5 @@
       "name": "zip"
     }
   ],
-  "count": 178
+  "count": 185
 }

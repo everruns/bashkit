@@ -31,9 +31,9 @@ The project tracks 164 built-in commands (generated knowledge/status/builtins.js
 - Core: `echo`, `printf`, `cat`, `nl`, `read`, `mapfile`, `readarray`
 - Navigation: `cd`, `pwd`, `ls`, `tree`, `find`, `pushd`, `popd`, `dirs`
 - Flow control: `true`, `false`, `exit`, `return`, `break`, `continue`, `test`, `[`
-- Variables/shell: `export`, `set`, `unset`, `local`, `source`, `.`, `eval`, `declare`, `alias`, `trap`, `getopts`, `help`
+- Variables/shell: `export`, `set`, `unset`, `local`, `source`, `.`, `eval`, `declare`, `alias`, `trap`, `getopts`, `help`, `builtin`, `enable`, `umask`, `ulimit`, `locale`
 - Text: `grep`, `rg`, `sed`, `awk`, `jq`, `head`, `tail`, `sort`, `uniq`, `cut`, `tr`, `wc`, `diff`, `seq`, `expr`
-- Files: `mkdir`, `mktemp`, `rm`, `cp`, `mv`, `touch`, `chmod`, `ln`, `realpath`, `split`
+- Files: `mkdir`, `mktemp`, `rm`, `cp`, `mv`, `touch`, `chmod`, `ln`, `realpath`, `split`, `install`, `dd`
 - Archives: `tar`, `gzip`, `gunzip`, `zip`, `unzip`
 - Checksums/bytes: `md5sum`, `sha1sum`, `sha224sum`, `sha256sum`, `sha384sum`, `sha512sum`, `b2sum`, `cksum`, `cmp`, `od`, `xxd`, `hexdump`, `base64`, `base32`, `basenc`
 - Data formats: `csv`, `json`, `yaml`, `tomlq`, `template`, `envsubst`

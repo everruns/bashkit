@@ -353,8 +353,8 @@ pub(crate) struct ShellRef<'a> {
 // only here. Listing every name guarantees inventory completeness regardless of
 // map membership.
 const SPECIAL_BUILTIN_NAMES: &[&str] = &[
-    ".", "bash", "command", "declare", "eval", "exec", "getopts", "let", "local", "sh", "source",
-    "typeset", "unset",
+    ".", "bash", "builtin", "command", "declare", "eval", "exec", "getopts", "let", "local", "sh",
+    "source", "typeset", "unset",
 ];
 
 /// Sorted, deduped union of baked-in/custom builtins, interpreter-special
@@ -696,6 +696,8 @@ pub(crate) fn is_internal_variable(name: &str) -> bool {
         || name.starts_with("_LOWER_")
         || name.starts_with("_INTEGER_")
         || name.starts_with("_ARRAY_READ_")
+        || name == "_UMASK"
+        || name.starts_with("_ULIMIT_")
         || name == "_SHIFT_COUNT"
         || name == "_SET_POSITIONAL"
 }
@@ -1472,6 +1474,12 @@ impl Interpreter {
             "factor" => Factor,
             "tsort" => Tsort,
             "nproc" => Nproc,
+            "dd" => Dd,
+            "install" => Install,
+            "umask" => Umask,
+            "ulimit" => Ulimit,
+            "locale" => Locale,
+            "enable" => Enable,
             // Archive operations
             "tar" => Tar,
             "gzip" => Gzip,
@@ -6671,6 +6679,7 @@ impl Interpreter {
             "source" | "." => Some(self.execute_source(args, redirects).await),
             "eval" => Some(self.execute_eval(args, stdin, redirects).await),
             "command" => Some(self.execute_command_builtin(args, stdin, redirects).await),
+            "builtin" => Some(self.execute_builtin_builtin(args, stdin, redirects).await),
             "declare" | "typeset" => Some(self.execute_declare_builtin(args, redirects).await),
             "let" => Some(self.execute_let_builtin(args, redirects).await),
             "unset" => Some(self.execute_unset_builtin(args, redirects).await),
@@ -8184,6 +8193,37 @@ impl Interpreter {
         Ok(result)
     }
 
+    /// `builtin NAME [ARGS]`: run a shell builtin, bypassing functions.
+    async fn execute_builtin_builtin(
+        &mut self,
+        args: &[String],
+        stdin: Option<crate::StreamData>,
+        redirects: &[Redirect],
+    ) -> Result<ExecResult> {
+        let args = match args.first().map(String::as_str) {
+            Some("--") => &args[1..],
+            _ => args,
+        };
+        let Some(name) = args.first() else {
+            return Ok(ExecResult::ok(String::new()));
+        };
+        if !(Self::is_special_builtin_name(name)
+            || self.builtins.contains_key(name.as_str())
+            || self.has_host_builtin(name))
+        {
+            return Ok(ExecResult::err(
+                format!("bash: builtin: {name}: not a shell builtin\n"),
+                1,
+            ));
+        }
+        // `command NAME` already runs the builtin and skips functions; a
+        // leading `--` keeps a `-v`-named builtin from becoming a flag.
+        let mut command_args = Vec::with_capacity(args.len() + 1);
+        command_args.push("--".to_string());
+        command_args.extend(args.iter().cloned());
+        Box::pin(self.execute_command_builtin(&command_args, stdin, redirects)).await
+    }
+
     /// Execute the `command` builtin.
     ///
     /// - `command -v name` — print command path/name if found (exit 0) or nothing (exit 1)
@@ -8200,7 +8240,8 @@ impl Interpreter {
         }
 
         let mut mode = ' '; // default: run the command
-        let mut cmd_args_start = 0;
+        // Stays past the end when only flags were given (`command -v`).
+        let mut cmd_args_start = args.len();
 
         // Parse flags
         let mut i = 0;
@@ -8215,6 +8256,9 @@ impl Interpreter {
             } else if arg == "-p" {
                 // -p: use default PATH (ignore in sandboxed env)
                 i += 1;
+            } else if arg == "--" {
+                cmd_args_start = i + 1;
+                break;
             } else {
                 cmd_args_start = i;
                 break;

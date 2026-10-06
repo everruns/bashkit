@@ -116,7 +116,7 @@ embedded in rustdoc. It contains:
 |----|--------|--------------|------------|--------|
 | TM-DOS-001 | Large script input | `Bash::exec(huge_string)` | `max_input_bytes` limit (10MB) | **MITIGATED** |
 | TM-DOS-002 | Output flooding | `yes \| head -n 1000000000` | Command limit stops loop | Mitigated |
-| TM-DOS-003 | Variable explosion | `x=$(cat /dev/urandom)` | /dev/urandom returns bounded 8KB | Mitigated |
+| TM-DOS-003 | Variable explosion | `x=$(cat /dev/urandom)`, `dd if=/dev/zero` | /dev/urandom returns bounded 8KB; `dd` generates `/dev/zero`/`/dev/urandom` only up to `DD_MAX_BYTES` (64 MiB) per invocation | Mitigated |
 | TM-DOS-004 | Array growth | `arr+=(element)` in loop | Command limit | Mitigated |
 
 **Current Risk**: LOW. Implementation: `ExecutionLimits` in `limits.rs`, `max_input_bytes` 10MB (TM-DOS-001), `max_commands` 10K per `exec()` (TM-DOS-002, TM-DOS-004).

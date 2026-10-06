@@ -599,7 +599,7 @@ pub struct Chmod;
 /// Parse a symbolic mode string and apply it to an existing mode.
 /// Handles: [ugoa]*[+-=][rwxXst]+ (comma-separated clauses).
 /// Examples: +x, u+x, a+r, go-w, u=rwx, ug+rw
-fn apply_symbolic_mode(mode_str: &str, current_mode: u32) -> Option<u32> {
+pub(super) fn apply_symbolic_mode(mode_str: &str, current_mode: u32) -> Option<u32> {
     let mut mode = current_mode;
 
     for clause in mode_str.split(',') {

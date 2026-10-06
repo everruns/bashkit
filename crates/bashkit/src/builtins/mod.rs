@@ -45,6 +45,7 @@ mod csv;
 mod curl;
 mod cuttr;
 mod date;
+mod dd;
 mod diff;
 mod dirstack;
 mod disk;
@@ -69,6 +70,7 @@ mod hextools;
 mod http;
 mod iconv;
 mod inspect;
+mod install;
 mod introspect;
 mod join;
 #[cfg(feature = "jq")]
@@ -96,6 +98,7 @@ pub(crate) mod search_common;
 mod sed;
 mod semver;
 mod seq;
+mod shellenv;
 mod shuf;
 mod sleep;
 mod sortuniq;
@@ -167,6 +170,7 @@ pub use csv::Csv;
 pub use curl::{Curl, Wget};
 pub use cuttr::{Cut, Tr};
 pub use date::Date;
+pub use dd::Dd;
 pub use diff::Diff;
 pub use dirstack::{Dirs, Popd, Pushd};
 pub use disk::{Df, Du};
@@ -190,6 +194,7 @@ pub use hextools::{Hexdump, Od, Xxd};
 pub use http::Http;
 pub use iconv::Iconv;
 pub use inspect::{File, Less, Stat};
+pub use install::Install;
 pub use introspect::{Hash, Type, Which};
 pub use join::Join;
 #[cfg(feature = "jq")]
@@ -215,6 +220,7 @@ pub use rg::Rg;
 pub use sed::Sed;
 pub use semver::Semver;
 pub use seq::Seq;
+pub use shellenv::{Enable, Locale, Ulimit, Umask};
 pub use shuf::Shuf;
 pub use tsort::Tsort;
 
@@ -1883,6 +1889,9 @@ mod tests {
             "cmp",
             "nproc",
             "tsort",
+            "factor",
+            "install",
+            "locale",
             "tar",
             "gzip",
             "gunzip",
