@@ -94,6 +94,9 @@ it again.
 | Method | Returns |
 |--------|---------|
 | `screen_text()` | The visible screen as plain text, one line per row, trailing blanks trimmed |
+| `history_text()` | The screen plus up to 1000 lines of scrollback above it, same format |
+| `take_transcript()` | Commands finished since the last call: command line, exact output, exit code |
+| `activity()` | `Prompt`, `ContinuationPrompt`, `Running { command }` (for example an open `vi`) or `Exited(code)` |
 | `cursor()` | Cursor `(row, col)`, zero-based |
 | `is_alternate_screen()` | `true` while a full-screen program such as `vi` is open |
 | `take_output()` | Raw bytes (with escape sequences) produced since the last call, for a renderer like xterm.js |
@@ -102,6 +105,28 @@ it again.
 
 For most agent use, `screen_text()` plus `fs()` is all you need: the screen
 shows what happened, and the filesystem holds what was saved.
+
+When an agent needs exact results instead of screen text, use the transcript.
+Each `CommandRecord` holds the command line, its combined stdout and stderr
+with plain `\n` line endings, and its exit code (`130` after Ctrl-C, `2` for a
+syntax error). Output that scrolled off the screen is still there, and no
+prompt scraping is needed:
+
+```rust
+let mut term = Terminal::new(Bash::builder());
+term.send("ls /nope\r");
+term.run_until_idle().await;
+
+let record = &term.take_transcript()[0];
+assert_eq!(record.command, "ls /nope");
+assert_ne!(record.exit_code, 0);
+assert_eq!(term.activity(), TerminalActivity::Prompt);
+```
+
+Full-screen programs (`vi`, `less`) draw straight to the terminal, so their
+screens are not in the transcript; read them with `screen_text()`. Each record
+keeps up to 64 KiB of output (`output_truncated` says when more was dropped),
+and untaken records are capped at 1 MiB in total, oldest first.
 
 ### Sending keys
 
