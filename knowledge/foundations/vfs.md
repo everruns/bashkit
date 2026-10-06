@@ -156,6 +156,17 @@ Handled at the **interpreter level**, not filesystem. Security-critical: custom
 filesystem implementations cannot intercept `/dev/null` behavior. Path
 normalization handles bypass attempts.
 
+#### /dev/stdin, /dev/stdout, /dev/stderr, /dev/fd/N
+Redirection targets resolved at the **interpreter level** (`dev_fd_alias` in
+`interpreter/mod.rs`), like `/dev/null`: `> /dev/stderr` is `>&2`,
+`> /dev/fd/3` is `>&3`, `< /dev/stdin` keeps the current stdin, and
+`exec 3>/dev/stderr` dups fd 2. The target is the descriptor's *current*
+target, so `2>&1 >/dev/stderr` sends both streams to stdout, as on Linux.
+These paths never reach the VFS: writing them as regular files silently
+swallowed agents' `echo err > /dev/stderr`. Same `..` normalization as
+`/dev/null`. Builtin file operands (`tee /dev/stderr`, `cat /dev/stdin`)
+are not aliased yet.
+
 #### /dev/urandom and /dev/random
 Handled at filesystem level: return 8192 bytes of random data per read
 (bounded to prevent memory growth).
