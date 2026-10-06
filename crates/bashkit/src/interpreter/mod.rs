@@ -6543,6 +6543,16 @@ impl Interpreter {
 
             let execution_extensions = self.current_execution_extensions();
             let fs = self.builtin_file_system(access, &execution_extensions);
+            // /dev/stdin, /dev/stdout, /dev/stderr as file operands.
+            let (fs, std_capture) = if crate::fs::args_name_std_stream(args) {
+                let (fs, capture) = crate::fs::StdStreamsFs::wrap(
+                    fs,
+                    stdin.map_or(&[][..], crate::StreamData::as_bytes),
+                );
+                (fs, Some(capture))
+            } else {
+                (fs, None)
+            };
             let shell_ref = ShellRef {
                 builtins: &self.builtins,
                 host_builtins: self.host_builtins.as_ref(),
@@ -6577,13 +6587,27 @@ impl Interpreter {
             // THREAT[TM-INT-001]: Execute builtin with panic catching for security
             let result = AssertUnwindSafe(builtin.execute(ctx)).catch_unwind().await;
 
-            let result = match result {
+            let mut result = match result {
                 Ok(Ok(exec_result)) => exec_result,
                 Ok(Err(e)) => return Err(e),
                 Err(_panic) => {
                     ExecResult::err(format!("bash: {}: builtin failed unexpectedly\n", name), 1)
                 }
             };
+            if let Some(capture) = std_capture {
+                let capture =
+                    std::mem::take(&mut *capture.lock().unwrap_or_else(|e| e.into_inner()));
+                if !capture.stdout.is_empty() {
+                    result
+                        .stdout
+                        .append(&crate::StreamData::from(capture.stdout));
+                }
+                if !capture.stderr.is_empty() {
+                    result
+                        .stderr
+                        .append(&crate::StreamData::from(capture.stderr));
+                }
+            }
             self.execution_budget.consume_work(
                 u64::try_from(
                     result
