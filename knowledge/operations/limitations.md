@@ -165,6 +165,19 @@ what remains is how stdin is obtained.
 |----|------------|-----|----------|
 | L-CLI-002 | Host stdin is read to EOF *before* execution, not lazily when a command asks for it, and only when stdin is not a terminal. `cmd \| bashkit -c 'echo hi'` waits for the writer to finish even though the script never reads; `--no-stdin` opts out | The interpreter takes its stdin as a value up front (`ExecOptions::stdin`); lazy reads would need a reader-backed fd 0 in the sandbox. Capped at 10 MiB and bounded by the selected execution timeout | `crates/bashkit-cli/tests/cli_oneshot.rs` |
 
+## Terminal
+
+Divergences in the in-process terminal (`terminal` feature,
+[In-Process Terminal](../integrations/in-process-terminal.md)) from a real
+PTY running GNU bash and vim.
+
+| ID | Limitation | Why | Evidence |
+|----|------------|-----|----------|
+| L-TERM-001 | `vi` is a subset editor: normal/insert/command-line modes, counts, common motions and operators, undo/redo, `/` search, `:s`, `:w :q :wq :x`. No visual mode, named registers, macros, splits, vimrc, or `:!` shell escape; unsupported keys are ignored | Enough to edit config and source files from an agent or a browser terminal without vendoring an editor; `:!` would re-enter the shell from inside a running command | `l_term_001_vi_is_a_subset` |
+| L-TERM-002 | Command stdin is not wired to the terminal: `read` and `cat` with no file get EOF instead of waiting for typed input. Only programs that read the terminal device directly (`vi`) see keystrokes | Same root as L-CLI-002, the interpreter takes stdin as a value before the command starts | `l_term_002_read_does_not_wait_for_terminal_input` |
+| L-TERM-003 | Ctrl-C cancels at the next command boundary: a running builtin (`sleep 5`) finishes first, and `$?` keeps the previous value rather than 130 | Cancellation uses the interpreter's cooperative cancel token; dropping a running execution mid-command would leave interpreter state half-updated | `terminal::tests::ctrl_c_cancels_at_next_command_boundary` |
+| L-TERM-004 | Inside a terminal session, `less` and `more` page even when stdout is redirected (`less file > out` shows the pager and writes nothing to `out`). Outside a session they are always cat-like | Builtins cannot see whether their stdout is a pipe or redirect; TTY state is per-session, not per-fd-redirect | `builtins::pager::tests::pagers_are_cat_like_without_terminal` |
+
 ## Parser
 
 - Single-quoted strings are completely literal (correct behavior)

@@ -39,6 +39,7 @@ fancy-regex = { workspace = true }
 # Date/Time
 chrono = { workspace = true }
 chrono-tz = { workspace = true, optional = true }
+vt100 = { workspace = true, optional = true }
 
 # HTTP client (for curl/wget) - optional, enabled with http_client feature
 reqwest = { workspace = true, optional = true }
@@ -195,6 +196,16 @@ wasm_js = [
     "dep:send_wrapper",
     "dep:wasm-bindgen-futures",
 ]
+# In-process terminal: a PTY-like `Terminal` (keystrokes in, screen text out)
+# wrapping a `Bash`, plus the `vi` builtin that needs it. Off by default.
+#
+# Important decision: the screen model is the pure-Rust `vt100` crate, not
+# libghostty. vt100 is MIT, has three small pure-Rust deps, and builds for every
+# bashkit target (wasm32 included). libghostty needs a Zig toolchain and C FFI,
+# which would break the wasm, PyPI and npm builds for a feature this small.
+# See knowledge/integrations/in-process-terminal.md.
+# Usage: cargo build --features terminal
+terminal = ["dep:vt100"]
 # Enable jq builtin via embedded jaq interpreter
 # Usage: cargo build --features jq
 jq = [
@@ -323,6 +334,14 @@ harness = false
 name = "sqlite"
 harness = false
 required-features = ["sqlite"]
+
+[[example]]
+name = "terminal_vi"
+required-features = ["terminal"]
+
+[[example]]
+name = "terminal_record"
+required-features = ["terminal"]
 
 [[example]]
 name = "agent_tool"

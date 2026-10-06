@@ -126,3 +126,40 @@ async fn l_grep_001_noop_flags() {
     assert_eq!(colored.exit_code, 0);
     assert_eq!(plain.stdout, colored.stdout);
 }
+
+/// L-TERM-001: `vi` is a subset — e.g. `:!cmd` (shell escape) is rejected as
+/// an unknown editor command and runs nothing.
+#[cfg(feature = "terminal")]
+#[tokio::test]
+async fn l_term_001_vi_is_a_subset() {
+    use bashkit::terminal::{Terminal, TerminalStatus};
+    let mut term = Terminal::new(Bash::builder());
+    term.run_until_idle().await;
+    term.send("vi /tmp/f\r:!touch /tmp/escaped\r");
+    assert_eq!(term.run_until_idle().await, TerminalStatus::Idle);
+    assert!(
+        term.screen_text().contains("E492"),
+        "{}",
+        term.screen_text()
+    );
+    term.send(":q\r");
+    term.run_until_idle().await;
+    assert!(!term.fs().exists("/tmp/escaped".as_ref()).await.unwrap());
+}
+
+/// L-TERM-002: `read` in a terminal session gets EOF instead of waiting for
+/// the next typed line.
+#[cfg(feature = "terminal")]
+#[tokio::test]
+async fn l_term_002_read_does_not_wait_for_terminal_input() {
+    use bashkit::terminal::Terminal;
+    let mut term = Terminal::new(Bash::builder());
+    term.run_until_idle().await;
+    term.send("read x; echo rc=$?\r");
+    term.run_until_idle().await;
+    assert!(
+        term.screen_text().ends_with("rc=1\n$"),
+        "{}",
+        term.screen_text()
+    );
+}

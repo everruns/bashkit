@@ -452,12 +452,16 @@ mod network;
 /// Parser module - exposed for fuzzing and testing
 pub mod parser;
 mod profile;
+#[cfg(any(feature = "python", feature = "typescript"))]
+mod runtime_call;
 /// Scripted tool: compose ToolDef+callback pairs into a single Tool via bash scripts.
 /// Requires the `scripted_tool` feature.
 #[cfg(feature = "scripted_tool")]
 pub mod scripted_tool;
 mod snapshot;
 mod stream;
+#[cfg(feature = "terminal")]
+pub mod terminal;
 /// Test-only helpers shared between internal `#[cfg(test)]` modules,
 /// integration tests in `tests/*.rs`, and cargo-fuzz targets in
 /// `fuzz/fuzz_targets/*.rs`. See `knowledge/security/threat-model.md` for the
@@ -486,7 +490,7 @@ pub use builtins::git::GitConfig;
 pub use builtins::ssh::{SshAllowlist, SshConfig, TrustedHostKey};
 pub use builtins::{
     BashkitContext, Builtin, BuiltinRegistry, ClapBuiltin, CommandResolver,
-    Context as BuiltinContext, Extension,
+    Context as BuiltinContext, ExecutionPlan, Extension, SubCommand,
 };
 pub use clap;
 #[cfg(feature = "http_client")]
@@ -506,7 +510,8 @@ pub use fs::{
 pub use fs::{RealFs, RealFsMode};
 pub use host_call::{ExecutionEvent, ExecutionHandle, HostCallId, HostCallRequest};
 pub use interpreter::{
-    ControlFlow, ExecResult, HistoryEntry, OutputCallback, ShellState, ShellStateView,
+    ControlFlow, ExecResult, HistoryEntry, OutputCallback, ShellFeatures, ShellState,
+    ShellStateView,
 };
 pub use limits::{
     ExecutionBudget, ExecutionBudgetExceeded, ExecutionBudgetLease, ExecutionCounters,
@@ -573,11 +578,13 @@ pub use builtins::git::GitClient;
 pub use builtins::ssh::{SshClient, SshHandler, SshOutput, SshTarget};
 
 #[cfg(feature = "python")]
-pub use builtins::{PythonExternalFnHandler, PythonExternalFns, PythonLimits};
+pub use builtins::{Python, PythonExternalFnHandler, PythonExternalFns, PythonLimits};
 
 // Shared resource-limit core for embedded language VMs (Python, TypeScript).
 #[cfg(any(feature = "python", feature = "typescript"))]
 pub use builtins::RuntimeLimits;
+#[cfg(any(feature = "python", feature = "typescript"))]
+pub use runtime_call::RuntimeCallContext;
 
 #[cfg(feature = "sqlite")]
 pub use builtins::{Sqlite, SqliteBackend, SqliteLimits};
@@ -823,6 +830,10 @@ pub struct Bash {
     /// Real host directories mounted into the VFS, for host-path resolution.
     #[cfg(feature = "realfs")]
     host_mounts: HostMounts,
+    /// Set by [`terminal::Terminal`]: time blocked on terminal input is
+    /// excluded from the execution timeout.
+    #[cfg(feature = "terminal")]
+    input_wait_clock: Option<time_compat::InputWaitClock>,
 }
 
 impl Default for Bash {
@@ -1162,18 +1173,32 @@ impl Bash {
         // THREAT[TM-DOS-057]: Wrap execution with a host-backed timeout to
         // prevent sleep and pending async callbacks from bypassing the budget.
         let execution_timeout = self.interpreter.limits().timeout;
-        let result =
-            match crate::time_compat::timeout(execution_timeout, self.interpreter.execute(&ast))
+        #[cfg(feature = "terminal")]
+        let timed = match self.input_wait_clock.clone() {
+            Some(clock) => {
+                crate::time_compat::timeout_excluding_input_wait(
+                    execution_timeout,
+                    &clock,
+                    self.interpreter.execute(&ast),
+                )
                 .await
-            {
-                Ok(r) => r,
-                Err(_elapsed) => {
-                    self.interpreter.clear_cancelled_execution_state();
-                    Err(Error::ResourceLimit(LimitExceeded::Timeout(
-                        execution_timeout,
-                    )))
-                }
-            };
+            }
+            None => {
+                crate::time_compat::timeout(execution_timeout, self.interpreter.execute(&ast)).await
+            }
+        };
+        #[cfg(not(feature = "terminal"))]
+        let timed =
+            crate::time_compat::timeout(execution_timeout, self.interpreter.execute(&ast)).await;
+        let result = match timed {
+            Ok(r) => r,
+            Err(_elapsed) => {
+                self.interpreter.clear_cancelled_execution_state();
+                Err(Error::ResourceLimit(LimitExceeded::Timeout(
+                    execution_timeout,
+                )))
+            }
+        };
         // Positional parameters are per-invocation: drop the synthetic frame
         // (and anything the interpreter leaked above it on an error path) so
         // the next exec starts with `$#` back at 0.
@@ -1863,7 +1888,8 @@ pub struct BashBuilder {
     fixed_epoch: Option<i64>,
     /// Constant seconds offset applied to real-clock for `date` (TM-INF-018)
     epoch_offset: Option<i64>,
-    shell_profile: interpreter::ShellProfile,
+    shell_features: ShellFeatures,
+    builtin_filter: Option<interpreter::BuiltinFilter>,
     custom_builtins: HashMap<String, Box<dyn Builtin>>,
     /// Optional host-owned mutable registry. Entries here are consulted at
     /// dispatch time, so embedders can register/remove builtins after build.
@@ -2030,10 +2056,22 @@ impl BashBuilder {
         self
     }
 
-    /// Restrict this shell to logic/data-flow commands and custom builtins.
-    #[cfg(feature = "scripted_tool")]
-    pub(crate) fn logic_only(mut self) -> Self {
-        self.shell_profile = interpreter::ShellProfile::LogicOnly;
+    /// Enable or disable shell language features that reach beyond in-memory
+    /// computation (file redirects, process substitution, script execution).
+    ///
+    /// Combine with [`Self::builtin_filter`] and a rejecting [`Self::fs`] to
+    /// build a restricted shell. See [`ShellFeatures`].
+    pub fn shell_features(mut self, features: ShellFeatures) -> Self {
+        self.shell_features = features;
+        self
+    }
+
+    /// Keep only the default builtins for which `keep(name)` returns true.
+    ///
+    /// Applies to Bashkit's own builtins only: builtins added with
+    /// [`Self::builtin`] and extensions are always registered.
+    pub fn builtin_filter(mut self, keep: impl Fn(&str) -> bool + Send + Sync + 'static) -> Self {
+        self.builtin_filter = Some(Arc::new(keep));
         self
     }
 
@@ -3274,9 +3312,7 @@ impl BashBuilder {
     /// # }
     /// ```
     pub fn build(self) -> Bash {
-        let base_fs: Arc<dyn FileSystem> = if self.shell_profile.is_logic_only() {
-            Arc::new(fs::DisabledFs)
-        } else if let Some(fs) = self.fs {
+        let base_fs: Arc<dyn FileSystem> = if let Some(fs) = self.fs {
             fs
         } else {
             // No custom filesystem was supplied: provision the default
@@ -3338,7 +3374,8 @@ impl BashBuilder {
             self.fixed_epoch,
             self.epoch_offset,
             self.cwd,
-            self.shell_profile,
+            self.shell_features,
+            self.builtin_filter,
             self.profile.name() == ExecutionProfileName::Hardened,
             self.limits,
             self.session_limits,
@@ -3557,7 +3594,8 @@ impl BashBuilder {
         fixed_epoch: Option<i64>,
         epoch_offset: Option<i64>,
         cwd: Option<PathBuf>,
-        shell_profile: interpreter::ShellProfile,
+        shell_features: ShellFeatures,
+        builtin_filter: Option<interpreter::BuiltinFilter>,
         hardened_timing: bool,
         limits: ExecutionLimits,
         session_limits: SessionLimits,
@@ -3596,7 +3634,8 @@ impl BashBuilder {
             epoch_offset,
             custom_builtins,
             host_builtins,
-            shell_profile,
+            shell_features,
+            builtin_filter,
             hardened_timing,
         );
 
@@ -3692,6 +3731,8 @@ impl BashBuilder {
             sqlite_inprocess_opt_in,
             #[cfg(feature = "realfs")]
             host_mounts: HostMounts::default(),
+            #[cfg(feature = "terminal")]
+            input_wait_clock: None,
         }
     }
 }

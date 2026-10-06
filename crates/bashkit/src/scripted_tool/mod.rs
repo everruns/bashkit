@@ -129,6 +129,7 @@
 
 mod execute;
 mod extension;
+mod logic_only;
 mod toolset;
 
 pub use extension::{ToolDefExtension, ToolDefExtensionBuilder, ToolDefInvocationTrace};

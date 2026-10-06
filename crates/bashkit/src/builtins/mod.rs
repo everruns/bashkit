@@ -78,6 +78,8 @@ mod mkfifo;
 mod navigation;
 mod nl;
 mod numfmt;
+#[cfg(feature = "terminal")]
+mod pager;
 mod parallel;
 mod paste;
 mod patch;
@@ -108,6 +110,8 @@ mod tree;
 mod truncate;
 mod vars;
 mod verify;
+#[cfg(feature = "terminal")]
+mod vi;
 mod wait;
 mod wc;
 mod yes;
@@ -204,6 +208,8 @@ pub use semver::Semver;
 pub use seq::Seq;
 pub use shuf::Shuf;
 
+#[cfg(feature = "terminal")]
+pub use pager::More;
 pub use sleep::Sleep;
 pub use sortuniq::{Sort, Uniq};
 pub use source::Source;
@@ -220,6 +226,8 @@ pub use tree::Tree;
 pub use truncate::Truncate;
 pub use vars::{Eval, Local, Readonly, Set, Shift, Shopt, Times, Unset};
 pub use verify::Verify;
+#[cfg(feature = "terminal")]
+pub use vi::Vi;
 pub use wait::Wait;
 pub use wc::Wc;
 pub use yes::Yes;
@@ -782,8 +790,10 @@ impl<'a> Context<'a> {
     }
 
     /// Run async boundary work under this request's cancellation/lifecycle gate.
-    #[cfg(any(feature = "http_client", feature = "scripted_tool"))]
-    pub(crate) async fn run_budgeted<F>(&self, future: F) -> Result<F::Output>
+    ///
+    /// Host callbacks invoked from a builtin should run through this so a
+    /// cancelled or over-budget request drops the callback future.
+    pub async fn run_budgeted<F>(&self, future: F) -> Result<F::Output>
     where
         F: std::future::Future,
     {
@@ -806,6 +816,20 @@ impl<'a> Context<'a> {
         self.shell
             .as_ref()
             .and_then(|shell| shell.execution_extensions.get::<T>())
+    }
+
+    /// Remaining wall-clock budget of the current `exec*` call, if limited.
+    pub fn remaining_deadline(&self) -> Option<std::time::Duration> {
+        self.execution_extension::<ExecutionDeadline>()?
+            .try_with(ExecutionDeadline::remaining)
+            .ok()
+    }
+
+    #[cfg(any(feature = "python", feature = "typescript"))]
+    pub(crate) fn execution_extensions(&self) -> Option<std::sync::Arc<ExecutionExtensions>> {
+        self.shell
+            .as_ref()
+            .map(|shell| shell.execution_extensions.clone())
     }
 
     /// Bind a host value to the current execution lease.

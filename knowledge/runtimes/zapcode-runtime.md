@@ -111,6 +111,12 @@ Hosts can register custom external functions callable by name from TypeScript
 where `handler: TypeScriptExternalFnHandler` is an
 `Arc` async closure `(name, args) -> Result<serde_json::Value>`. See rustdoc.
 
+Inside the handler, `RuntimeCallContext::current()` returns the calling
+request's extensions, budget, execution lease, and remaining deadline (same
+contract as Python). `TypeScriptExtension::with_external_handler_and_prelude`
+(public) adds a source prelude and `(from, to)` call rewrites so hosts can
+expose namespaced APIs (`tools.orders.list(...)`) without core knowing them.
+
 ### Security
 
 See [Threat Model](../security/threat-model.md) section "TypeScript / ZapCode Security (TM-TS)"
