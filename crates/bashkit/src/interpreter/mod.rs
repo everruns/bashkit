@@ -5763,11 +5763,37 @@ impl Interpreter {
             let deferred_proc_sub_start = self.deferred_proc_subs.len();
             let (_debug_stdout, _debug_stderr) = self.run_debug_trap().await;
 
-            let name = match self.expand_word(&command.name).await {
-                Ok(name) => name,
-                Err(err) => {
-                    self.discard_deferred_proc_subs_from(deferred_proc_sub_start);
-                    return Err(err);
+            // The command word undergoes the same field splitting as args:
+            // `"$@"`, `$cmd`, `$(...)` may yield several words (first is the
+            // name, rest are prepended args) or none at all (no command).
+            // Pure literals skip the field path (hot path, no splitting).
+            let start_subst_gen = self.subst_generation;
+            let name_is_literal = command
+                .name
+                .parts
+                .iter()
+                .all(|p| matches!(p, WordPart::Literal(_)));
+            let (name, name_extra_args, name_vanished) = if name_is_literal {
+                match self.expand_word(&command.name).await {
+                    Ok(name) => (name, Vec::new(), false),
+                    Err(err) => {
+                        self.discard_deferred_proc_subs_from(deferred_proc_sub_start);
+                        return Err(err);
+                    }
+                }
+            } else {
+                match self.expand_word_to_fields(&command.name).await {
+                    Ok(fields) => {
+                        let mut fields = fields.into_iter();
+                        match fields.next() {
+                            Some(first) => (first, fields.collect::<Vec<_>>(), false),
+                            None => (String::new(), Vec::new(), true),
+                        }
+                    }
+                    Err(err) => {
+                        self.discard_deferred_proc_subs_from(deferred_proc_sub_start);
+                        return Err(err);
+                    }
                 }
             };
 
@@ -5785,7 +5811,12 @@ impl Interpreter {
 
             let pre_expanded_args = if !name.is_empty() {
                 match self.expand_command_args(command).await {
-                    Ok(args) => Some(args),
+                    Ok(args) if name_extra_args.is_empty() => Some(args),
+                    Ok(args) => {
+                        let mut all = name_extra_args;
+                        all.extend(args);
+                        Some(all)
+                    }
                     Err(err) => {
                         self.discard_deferred_proc_subs_from(deferred_proc_sub_start);
                         return Err(err);
@@ -5819,7 +5850,7 @@ impl Interpreter {
 
             // Empty command handling
             if name.is_empty() {
-                if command.name.quoted && command.assignments.is_empty() {
+                if command.name.quoted && !name_vanished && command.assignments.is_empty() {
                     self.last_exit_code = 127;
                     self.discard_deferred_proc_subs_from(deferred_proc_sub_start);
                     return Ok(ExecResult::err(
@@ -5833,6 +5864,10 @@ impl Interpreter {
                     0
                 } else if command.assignments.is_empty() && !command.redirects.is_empty() {
                     // Redirect-only null command (`> file`, `< file`).
+                    0
+                } else if self.subst_generation == start_subst_gen {
+                    // Name expanded to nothing (`"$@"` with no params, empty
+                    // `$x`) and no command substitution ran: status 0.
                     0
                 } else {
                     self.last_exit_code
