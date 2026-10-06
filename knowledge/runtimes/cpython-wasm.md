@@ -61,9 +61,11 @@ call:
    cost ~100 ms instead of ~5 ms.
 
 Measured on a 4-vCPU x86-64 VM (see `criterion-python-*` results under
-`crates/bashkit/benches/results/`): engine + module + link in well under a
-millisecond on the first call of a process; `python3 -c pass` ~4.6 ms per
-call warm; Monty ~15 µs. CPU-bound Python is ~10-30x slower than Monty.
+`crates/bashkit/benches/results/`): first `python3` in a fresh process
+~22 ms (one-time engine/module load and first-touch page faults), then
+`python3 -c pass` ~5.5 ms per call warm; Monty ~15 µs (first call ~0.4 ms).
+CPU-bound Python is ~4-30x slower than Monty. 1024 concurrent tenants × 4
+calls: 0 failures, ~90 calls/s on 4 vCPUs, 4.7 GB peak RSS.
 
 ### Guest contract (snapshot invariants)
 
