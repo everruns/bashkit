@@ -41,8 +41,9 @@ No runtime opt-in variable is needed (unlike Monty's
 `BASHKIT_ALLOW_INPROCESS_PYTHON`): calling `.cpython()` is the opt-in, because
 the guest never runs native code in your process.
 
-The interpreter loads on the first call (well under a millisecond on the
-reference machine). To move even that out of the first request, call
+The interpreter loads on the first call of a process: the first `python3`
+takes about 22 ms on the reference machine, later calls about 6 ms. To move
+that one-time cost out of the first request, call
 `bashkit::CPython::warm_up()` at startup.
 
 ## Why CPython instead of Monty
@@ -59,8 +60,8 @@ return a value. Scripts written by people and agents expect a Python
 | CLI | `-c`, file, `-` | `-c`, `-m`, file, directory with `__main__.py`, `-`, stdin, `-x`, `-W`, `-V`, `-h` |
 | Errors | Monty-specific text | CPython tracebacks, exit codes, `sys.exit` semantics |
 | Isolation | In-process Rust interpreter | WebAssembly sandbox (memory-safe boundary), fresh instance per call |
-| Start per call | ~15 µs | ~5 ms |
-| CPU-bound speed | Native | ~10-30x slower than Monty (interpreted wasm) |
+| Start per call | ~15 µs | ~5-6 ms (first call in a process ~22 ms) |
+| CPU-bound speed | Native | ~4-30x slower than Monty (interpreted wasm) |
 | Host callbacks | Yes (external functions) | Not yet |
 
 Pick CPython when scripts need real Python behavior; pick Monty when you
@@ -136,7 +137,7 @@ let bash = Bash::builder()
   levels) ends the call with `python3: fatal error: stack overflow in the
   interpreter` instead of `RecursionError`.
 - **CPU-bound code is slow**: the guest runs on Wasmtime's portable Pulley
-  interpreter, roughly 10-30x slower than Monty and far slower than native
+  interpreter, roughly 4-30x slower than Monty and far slower than native
   CPython. Start-up, not throughput, is what this runtime is tuned for.
 - **No host callbacks** (Monty's external functions) or `ToolDef`
   integration yet.
