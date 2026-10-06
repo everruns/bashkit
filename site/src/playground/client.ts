@@ -207,6 +207,8 @@ function attachLineEditor(xterm: XTerm, bash: WasmBash): Playground {
   const history: string[] = [];
   let historyIndex = 0;
   let line = "";
+  // Cursor position within `line`, in characters.
+  let cursor = 0;
   let busy = false;
 
   const crlf = (s: string) => s.replace(/\r?\n/g, "\r\n");
@@ -223,11 +225,20 @@ function attachLineEditor(xterm: XTerm, bash: WasmBash): Playground {
     xterm.write(ps1);
   }
 
-  function replaceLine(next: string) {
-    xterm.write("\b \b".repeat(line.length));
+  // Redraw the edited line in place: back to its start, rewrite it, clear
+  // what's left of the old text, then put the cursor where it belongs.
+  function render(next: string, nextCursor: number) {
+    let out = "\b".repeat(cursor) + next + "\x1b[K";
+    const back = next.length - nextCursor;
+    if (back > 0) out += `\x1b[${back}D`;
+    xterm.write(out);
     line = next;
-    xterm.write(line);
+    cursor = nextCursor;
   }
+
+  const replaceLine = (next: string) => render(next, next.length);
+  const insert = (text: string) =>
+    render(line.slice(0, cursor) + text + line.slice(cursor), cursor + text.length);
 
   async function submit(command: string) {
     xterm.write("\r\n");
@@ -238,6 +249,10 @@ function attachLineEditor(xterm: XTerm, bash: WasmBash): Playground {
         const r = await bash.execute(command);
         xterm.write(crlf(r.stdout));
         if (r.stderr) xterm.write(`\x1b[31m${crlf(r.stderr)}\x1b[0m`);
+        // Keep the next prompt on its own line when output lacks a final
+        // newline (`printf abc`, or stderr from older packages).
+        const tail = r.stderr || r.stdout;
+        if (tail && !tail.endsWith("\n")) xterm.write("\r\n");
       } catch (err) {
         xterm.write(`\x1b[31m${crlf(String(err))}\x1b[0m\r\n`);
       }
@@ -245,45 +260,82 @@ function attachLineEditor(xterm: XTerm, bash: WasmBash): Playground {
     }
     historyIndex = history.length;
     line = "";
+    cursor = 0;
     await prompt();
+  }
+
+  // Escape sequences (arrows, Home/End, Delete) arrive as one chunk.
+  function handleEscape(seq: string) {
+    switch (seq) {
+      case "\x1b[A": // Up: older history
+        if (historyIndex > 0) replaceLine(history[--historyIndex]);
+        break;
+      case "\x1b[B": // Down: newer history
+        if (historyIndex < history.length) replaceLine(history[++historyIndex] ?? "");
+        break;
+      case "\x1b[D": // Left
+        if (cursor > 0) render(line, cursor - 1);
+        break;
+      case "\x1b[C": // Right
+        if (cursor < line.length) render(line, cursor + 1);
+        break;
+      case "\x1b[H":
+      case "\x1bOH":
+      case "\x1b[1~": // Home
+        render(line, 0);
+        break;
+      case "\x1b[F":
+      case "\x1bOF":
+      case "\x1b[4~": // End
+        render(line, line.length);
+        break;
+      case "\x1b[3~": // Delete
+        if (cursor < line.length) render(line.slice(0, cursor) + line.slice(cursor + 1), cursor);
+        break;
+    }
   }
 
   xterm.onData((data) => {
     if (busy) return;
-    // Escape sequences (arrow keys etc.) arrive as one chunk.
     if (data.startsWith("\x1b")) {
-      if (data === "\x1b[A" && historyIndex > 0) {
-        historyIndex -= 1;
-        replaceLine(history[historyIndex]);
-      } else if (data === "\x1b[B" && historyIndex < history.length) {
-        historyIndex += 1;
-        replaceLine(history[historyIndex] ?? "");
-      }
+      handleEscape(data);
       return;
     }
+    let text = "";
+    const flushText = () => {
+      if (text) insert(text);
+      text = "";
+    };
     for (const ch of data) {
+      if (ch >= " " && ch !== "\x7f") {
+        text += ch;
+        continue;
+      }
+      flushText();
       if (ch === "\r") {
         void submit(line);
         return;
       }
       if (ch === "\x7f" || ch === "\b") {
-        if (line.length > 0) {
-          line = line.slice(0, -1);
-          xterm.write("\b \b");
-        }
+        if (cursor > 0) render(line.slice(0, cursor - 1) + line.slice(cursor), cursor - 1);
       } else if (ch === "\x03") {
         xterm.write("^C\r\n");
         line = "";
+        cursor = 0;
         void prompt();
+      } else if (ch === "\x01") {
+        render(line, 0); // Ctrl-A
+      } else if (ch === "\x05") {
+        render(line, line.length); // Ctrl-E
+      } else if (ch === "\x0b") {
+        render(line.slice(0, cursor), cursor); // Ctrl-K
       } else if (ch === "\x15") {
-        replaceLine("");
+        render(line.slice(cursor), 0); // Ctrl-U
       } else if (ch === "\x0c") {
         xterm.clear();
-      } else if (ch >= " ") {
-        line += ch;
-        xterm.write(ch);
       }
     }
+    flushText();
   });
 
   void prompt();
