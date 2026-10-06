@@ -19,6 +19,9 @@ tags:
 ## Status
 Implemented (experimental)
 
+For full CPython semantics in a WebAssembly sandbox, see
+[CPython WebAssembly Runtime](cpython-wasm.md) (`cpython` feature).
+
 ## Decision
 
 Bashkit provides sandboxed Python execution via `python` and `python3` builtins,

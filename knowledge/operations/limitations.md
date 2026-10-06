@@ -114,6 +114,22 @@ builtins are currently tracked; partial boundaries follow.
 |----|------|------------|----------|
 | L-DATE-001 | date | `TZ` accepts bundled IANA identifiers/aliases only. POSIX rule strings and `:zoneinfo` paths are unsupported and intentionally resolve to UTC because the sandbox has no trusted host zoneinfo filesystem. GNU nanosecond formatting supports the useful `%N`/`%3N`/`%6N`/`%9N` forms, not other widths | `date_timezone_tests` |
 
+### CPython runtime (`cpython` feature)
+
+Boundaries of the WebAssembly CPython guest; see
+[CPython WebAssembly Runtime](../runtimes/cpython-wasm.md).
+
+| ID | Limitation | Why | Evidence |
+|----|------------|-----|----------|
+| L-CPY-001 | No subprocesses from Python (`subprocess`, `os.system`, `os.fork`, `os.popen` fail); Python cannot call back into the shell | The guest has no process API; a shell bridge is a deliberate follow-up, not an accident | `processes_unavailable` (cpython_security_tests) |
+| L-CPY-002 | No network from Python (`socket`, `urllib.request` cannot connect) | No socket imports in the WASI host; egress stays with the allowlisted shell builtins | TM-PY-CPY-003, `network_unavailable` |
+| L-CPY-003 | No threads, `multiprocessing`, `ctypes`, native extensions or third-party packages | Single-threaded wasm guest with only the bundled pure-Python stdlib | `threads_and_native_code_unavailable` |
+| L-CPY-004 | `errno` values are WASI's (`ENOENT` is 44); exception types and the `errno` module agree | wasi-libc numbering; rewriting it would desync the guest's `errno` module | `cpython_integration_tests::missing_script_exits_2`, stance |
+| L-CPY-005 | `hash()` of `str`/`bytes` uses one seed baked into the snapshot | The seed is chosen during snapshot initialization; per-call re-seeding would require re-hashing every interned object | stance |
+| L-CPY-006 | Deep C-level recursion ends the call with `python3: fatal error: stack overflow` instead of `RecursionError` | The interpreter's wasm stack is bounded (4 MiB); the trap is contained | `deep_c_recursion_is_contained` |
+| L-CPY-007 | No interactive REPL; `python3` with no program reads one from stdin | No TTY inside the sandbox | stance |
+| L-CPY-008 | Guest memory per call is capped at 1 GiB even if `max_memory` is higher | Pooled instance slots have a fixed maximum size | [CPython WebAssembly Runtime](../runtimes/cpython-wasm.md) |
+
 ## Text Processing
 
 What each tool does is covered by its spec tests (all unskipped tests
