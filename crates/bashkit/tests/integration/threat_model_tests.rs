@@ -602,8 +602,11 @@ mod information_disclosure {
         let result = bash.exec("echo $ALLOWED_VAR").await.unwrap();
         assert_eq!(result.stdout.trim(), "allowed_value");
 
-        // But other vars aren't magically available
+        // But host vars aren't magically available: $PATH is the synthetic
+        // sandbox default, never the host's.
         let result = bash.exec("echo $PATH").await.unwrap();
+        assert_eq!(result.stdout.trim(), "/usr/local/bin:/usr/bin:/bin");
+        let result = bash.exec("echo $HOST_ONLY_SENTINEL_VAR").await.unwrap();
         assert!(result.stdout.trim().is_empty());
     }
 

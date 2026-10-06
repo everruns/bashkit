@@ -257,6 +257,8 @@ use fail::fail_point;
 /// The canonical /dev/null path.
 /// This is handled at the interpreter level to prevent custom filesystems from bypassing it.
 const DEV_NULL: &str = "/dev/null";
+/// Default `$PATH`, matching the Debian-style layout `uname` reports.
+pub(crate) const DEFAULT_PATH: &str = "/usr/local/bin:/usr/bin:/bin";
 
 /// Convert a [`SubCommand`](crate::builtins::SubCommand)'s command-scoped
 /// `(VAR, value)` pairs into AST [`Assignment`]s, so a plan's inner command
@@ -1637,6 +1639,14 @@ impl Interpreter {
         variables.insert("EUID".to_string(), "1000".to_string());
         variables.insert("PPID".to_string(), "0".to_string());
         variables.insert("HOSTNAME".to_string(), hostname_val.clone());
+        // Platform/shell identity agents branch on (`$OSTYPE`, `$PATH`, ...).
+        // Synthetic, never read from the host (TM-INF rules).
+        variables.insert("PATH".to_string(), DEFAULT_PATH.to_string());
+        variables.insert("SHELL".to_string(), "/bin/bash".to_string());
+        variables.insert("SHLVL".to_string(), "1".to_string());
+        variables.insert("OSTYPE".to_string(), "linux-gnu".to_string());
+        variables.insert("HOSTTYPE".to_string(), "x86_64".to_string());
+        variables.insert("MACHTYPE".to_string(), "x86_64-pc-linux-gnu".to_string());
 
         // BASH_VERSINFO array: (major minor patch build status machine)
         let mut arrays = HashMap::new();
@@ -1801,6 +1811,22 @@ impl Interpreter {
     }
 
     #[inline]
+    /// A simple command is a one-element pipeline: bash sets
+    /// `PIPESTATUS=(status)` after it. Skips the write when unchanged so the
+    /// copy-on-write array map is not cloned on every command.
+    fn set_simple_pipestatus(&mut self, code: i32) {
+        let unchanged = self.scoped.arrays.get("PIPESTATUS").is_some_and(|arr| {
+            arr.len() == 1 && arr.get(&0).is_some_and(|v| v.parse() == Ok(code))
+        });
+        self.pipestatus.clear();
+        self.pipestatus.push(code);
+        if !unchanged {
+            let mut ps_arr = HashMap::with_capacity(1);
+            ps_arr.insert(0, code.to_string());
+            self.arrays_mut().insert("PIPESTATUS".to_string(), ps_arr);
+        }
+    }
+
     fn arrays_mut(&mut self) -> &mut HashMap<String, HashMap<usize, String>> {
         Arc::make_mut(&mut self.scoped.arrays)
     }
@@ -2959,7 +2985,11 @@ impl Interpreter {
             self.charge_command_execution()?;
 
             match command {
-                Command::Simple(simple) => self.execute_simple_command(simple, None).await,
+                Command::Simple(simple) => {
+                    let result = self.execute_simple_command(simple, None).await?;
+                    self.set_simple_pipestatus(result.exit_code);
+                    Ok(result)
+                }
                 Command::Pipeline(pipeline) => self.execute_pipeline(pipeline).await,
                 Command::List(list) => self.execute_list(list).await,
                 Command::Compound(compound, redirects) => {
@@ -9783,12 +9813,32 @@ impl Interpreter {
     fn lookup_regular_variable(&self, name: &str) -> Option<String> {
         for frame in self.call_stack.iter().rev() {
             if let Some(value) = frame.locals.get(name) {
+                // `local -a x=(...)` also leaves a scalar placeholder; the
+                // array it shadows-in is the real value.
+                if frame.local_arrays.contains_key(name)
+                    && let Some(arr) = self.scoped.arrays.get(name)
+                {
+                    return arr.get(&0).cloned();
+                }
+                if frame.local_assoc_arrays.contains_key(name)
+                    && let Some(arr) = self.scoped.assoc_arrays.get(name)
+                {
+                    return arr.get("0").cloned();
+                }
                 return Some(value.clone());
             }
         }
 
         if let Some(value) = self.scoped.variables.get(name) {
             return Some(value.clone());
+        }
+
+        // `$arr` on an array is `${arr[0]}` (indexed) or `${arr["0"]}` (assoc).
+        if let Some(arr) = self.scoped.arrays.get(name) {
+            return arr.get(&0).cloned();
+        }
+        if let Some(arr) = self.scoped.assoc_arrays.get(name) {
+            return arr.get("0").cloned();
         }
 
         self.env.get(name).cloned()
