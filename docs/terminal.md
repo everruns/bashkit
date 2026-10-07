@@ -147,8 +147,10 @@ the `PS2` prompt and waits for more lines. Shell state persists between lines,
 as in any `Bash` session. `PS1` and `PS2` are honoured (`\u \h \w \W \$`); the
 default prompt is `$ `.
 
-`[ -t 0 ]` is true inside the session, and `COLUMNS`, `LINES` and `TERM` are
-set. `resize()` changes the size; a running `vi` redraws.
+`[ -t 0 ]` is true inside the session, and `COLUMNS`, `LINES`, `TERM` and
+`EDITOR` (`vi`) are set. `git commit` without `-m` opens the editor on the
+commit message, as in real git: save and quit to commit, `:cq` or an empty
+message aborts. Only `vi`/`vim` work as `$EDITOR`. `resize()` changes the size; a running `vi` redraws.
 
 ## As an LLM tool
 
@@ -267,7 +269,8 @@ shell screen. It supports:
   `yy yw Y`, `p P`, `r`, `J`, `u`, Ctrl-R.
 - **Search and replace:** `/pattern`, `n N`, `:s/pat/rep/`, `:%s/pat/rep/g`
   (regex patterns; `&` in the replacement is the match).
-- **Files:** `:w`, `:w FILE`, `:q`, `:q!`, `:wq`, `:x`, `ZZ`, `ZQ`.
+- **Files:** `:w`, `:w FILE`, `:q`, `:q!`, `:wq`, `:x`, `ZZ`, `ZQ`, `:cq`
+  (quit with exit status 1).
   `:q` refuses to discard unsaved changes, as in vim.
 
 Not supported: visual mode, named registers, macros, splits, vimrc, and `:!`

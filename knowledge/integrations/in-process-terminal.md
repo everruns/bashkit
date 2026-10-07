@@ -156,7 +156,21 @@ load/write, so entering insert mode and leaving without changes is not dirty.
 Bounds (TM-DOS-119): 8 MiB buffer (load/insert/put/substitute), 16 MiB undo
 history, 1 MiB compiled regex. Writes go through the session VFS.
 
-Without a terminal, `vi` exits 1 (`vi: not a terminal`).
+Without a terminal, `vi` exits 1 (`vi: not a terminal`). `:cq` quits with
+status 1.
+
+## Decision: $EDITOR flows run vi in-process
+
+Builtins that need an editor call `builtins::edit_file(ctx, path)`, which runs
+the vi editor on the session terminal from inside the calling builtin (no
+re-entry into the shell, no subprocess). It returns `None` outside a terminal
+so callers keep their non-interactive behavior. `$VISUAL` then `$EDITOR` are
+honored only to the extent of naming `vi`/`vim` (any path, args ignored);
+any other editor is reported as unavailable instead of silently swapping in
+vi. A session sets `EDITOR=vi` when unset. Consumers: `git commit` without
+`-m` (edits `.git/COMMIT_EDITMSG` with git's template, `#` lines dropped,
+empty message or `:cq` aborts with exit 1). `git rebase -i` and `crontab -e`
+are not consumers because neither command exists in bashkit.
 
 ## less / more
 
