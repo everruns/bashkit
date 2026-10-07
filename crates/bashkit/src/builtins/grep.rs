@@ -620,6 +620,23 @@ impl Builtin for Grep {
 
         let matcher = opts.build_matcher()?;
 
+        // A pipeline stage that prints matching lines streams them: lines
+        // go out as they are found, and `loop | grep y | head -1` ends with
+        // SIGPIPE. Options that summarize (-c, -l, -L, -q), look around (-A,
+        // -B, -C), offset (-b) or recurse keep the buffered path.
+        if !opts.recursive
+            && !opts.count_only
+            && !opts.files_with_matches
+            && !opts.files_without_matches
+            && !opts.quiet
+            && !opts.byte_offset
+            && opts.before_context == 0
+            && opts.after_context == 0
+            && let Some(out) = ctx.stdout_stream()
+        {
+            return stream_grep(&ctx, &opts, &matcher, &out).await;
+        }
+
         let mut output = String::new();
         // Diagnostics are a separate stream: a `grep: FILE: ...` line written
         // into `output` lands in the data a pipeline consumes, so
@@ -650,7 +667,11 @@ impl Builtin for Grep {
         let inputs: Vec<(String, String)> = if opts.files.is_empty() {
             // Read from stdin
             // No NUL filtering here either — see `process_content`.
-            let stdin_content = ctx.stdin.map(ToString::to_string).unwrap_or_default();
+            let stdin_content = ctx
+                .stdin_to_end()
+                .await
+                .map(|s| s.to_string())
+                .unwrap_or_default();
             vec![(stdin_name.to_string(), stdin_content)]
         } else if opts.recursive {
             // Try indexed search via SearchCapable if available. Skip it for -P:
@@ -1073,6 +1094,139 @@ impl Builtin for Grep {
             ..ExecResult::with_code(output, exit_code)
         })
     }
+}
+
+/// `grep` as a pipeline stage writing straight into the stage pipe: each
+/// input is read in record-sized pieces and matching lines are written as
+/// they are found. Same output as the buffered path for the options it
+/// takes; a reader that went away ends it with 141 (SIGPIPE), and `-m`
+/// stops reading as soon as the budget is spent.
+async fn stream_grep(
+    ctx: &Context<'_>,
+    opts: &GrepOptions,
+    matcher: &Matcher,
+    out: &super::StdoutStream,
+) -> Result<ExecResult> {
+    let term = if opts.null_terminated { b'\0' } else { b'\n' };
+    let fname_sep = if opts.null_filename { '\0' } else { ':' };
+    let show_filename = !opts.no_filename && (opts.show_filename || opts.files.len() > 1);
+    let mut errors = String::new();
+    let mut read_failed = false;
+    let mut any_match = false;
+    let sources: Vec<Option<&String>> = if opts.files.is_empty() {
+        vec![None]
+    } else {
+        opts.files.iter().map(Some).collect()
+    };
+    for source in sources {
+        let (name, mut input) = match source {
+            None => ("(standard input)", super::InputChunks::stdin(ctx)),
+            Some(file) => {
+                let path = if file.starts_with('/') {
+                    std::path::PathBuf::from(file)
+                } else {
+                    vfs_join(ctx.cwd, file)
+                };
+                match ctx.fs.read_file(&path).await {
+                    Ok(bytes) => (file.as_str(), super::InputChunks::bytes(bytes)),
+                    Err(e) => {
+                        read_failed = true;
+                        if !opts.suppress_errors {
+                            let reason = crate::error::io_error_reason(&e);
+                            errors.push_str(&format!("grep: {file}: {reason}\n"));
+                        }
+                        continue;
+                    }
+                }
+            }
+        };
+        let mut line_no = 0usize;
+        let mut match_count = 0usize;
+        let mut binary = false;
+        let budget_spent = |count: usize| opts.max_count.is_some_and(|max| count >= max);
+        'file: while let Some(piece) = input.next(super::cut_records(term)).await {
+            ctx.consume_budget_work(1)?;
+            // Binary input (a NUL without -a/-z): matches are reported once
+            // on stderr instead of printed; -I makes it a non-match.
+            if !binary && !opts.binary_as_text && !opts.null_terminated && piece.contains(&0) {
+                binary = true;
+                if opts.skip_binary {
+                    break 'file;
+                }
+            }
+            let mut output = Vec::new();
+            let mut stop = false;
+            for record in piece.split_inclusive(|&b| b == term) {
+                let record = record.strip_suffix(&[term]).unwrap_or(record);
+                let text = String::from_utf8_lossy(record);
+                // Same line text as `str::lines` in the buffered path.
+                let line = if term == b'\n' {
+                    text.strip_suffix('\r').unwrap_or(&text)
+                } else {
+                    &text
+                };
+                line_no += 1;
+                let prefix = |output: &mut Vec<u8>| {
+                    if show_filename {
+                        output.extend_from_slice(name.as_bytes());
+                        output.push(fname_sep as u8);
+                    }
+                    if opts.line_numbers {
+                        output.extend_from_slice(format!("{line_no}:").as_bytes());
+                    }
+                };
+                if opts.only_matching && !opts.invert_match {
+                    matcher.for_each_range(line, |(start, end)| {
+                        if budget_spent(match_count) {
+                            return false;
+                        }
+                        any_match = true;
+                        match_count += 1;
+                        if binary {
+                            stop = true;
+                            return false;
+                        }
+                        prefix(&mut output);
+                        output.extend_from_slice(&line.as_bytes()[start..end]);
+                        output.push(term);
+                        true
+                    });
+                } else if matcher.is_match(line) != opts.invert_match {
+                    any_match = true;
+                    match_count += 1;
+                    if binary {
+                        stop = true;
+                    } else {
+                        prefix(&mut output);
+                        output.extend_from_slice(line.as_bytes());
+                        output.push(term);
+                    }
+                }
+                if stop || budget_spent(match_count) {
+                    stop = true;
+                    break;
+                }
+            }
+            if !output.is_empty() && !out.write(&output).await {
+                return Ok(ExecResult::err(errors, 141));
+            }
+            if stop {
+                if binary && match_count > 0 {
+                    // GNU grep >= 3.5: a diagnostic, never pipeline data.
+                    errors.push_str(&format!("grep: {name}: binary file matches\n"));
+                }
+                break 'file;
+            }
+        }
+    }
+    let code = if read_failed {
+        2
+    } else if any_match {
+        0
+    } else {
+        1
+    };
+    Ok(ExecResult::err(errors, code))
 }
 
 /// Name a file found under a recursive-grep operand the way GNU grep does:

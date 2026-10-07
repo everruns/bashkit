@@ -5862,14 +5862,17 @@ impl Interpreter {
         simple.redirects.is_empty()
             && matches!(
                 simple.name.parts.as_slice(),
-                [WordPart::Literal(name)] if matches!(name.as_str(), "yes" | "seq" | "cat")
+                [WordPart::Literal(name)]
+                    if matches!(name.as_str(), "yes" | "seq" | "cat" | "grep" | "tr")
             )
     }
 
     /// Streaming stages that also read their stdin pipe incrementally
-    /// (`Context::stdin_stream`), so `loop | cat | head -1` stops early.
+    /// (`Context::stdin_stream`), so `loop | grep y | head -1` stops early.
+    /// They read the pipe to the end themselves when an option needs the
+    /// whole input (`grep -c`, `tr -s`).
     fn streams_stdin(name: &str) -> bool {
-        name == "cat"
+        matches!(name, "cat" | "grep" | "tr")
     }
 
     /// Run `commands` (the tail of a pipeline) concurrently: every stage but
