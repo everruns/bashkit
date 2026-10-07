@@ -1430,46 +1430,61 @@ async fn double_dash_separator() {
 // Security: jq filters must not terminate the host process (#1571)
 // =========================================================================
 
+// The tests reaching their assertions at all proves the host wasn't killed:
+// `halt` ends the jq command with its code, never the process.
 #[tokio::test]
-async fn halt_does_not_terminate_host_process() {
-    // Regression for #1571: the upstream `halt` native calls
-    // `std::process::exit(...)`, which would tear down the embedding
-    // process. We strip it from the funs chain; calling `halt` therefore
-    // surfaces as an ordinary jq compile/runtime error rather than process
-    // termination.
-    //
-    // The test reaching the assertion at all proves the host wasn't killed.
-    let result = run_jq_result("halt", r#"{}"#).await.unwrap();
-    assert_ne!(
-        result.exit_code, 0,
-        "halt should fail safely; stdout=<{}> stderr=<{}>",
-        result.stdout, result.stderr
-    );
+async fn halt_ends_the_command_not_the_host() {
+    let result = run_jq_result_with_args(&["-n", "1, halt, 2"], "")
+        .await
+        .unwrap();
+    assert_eq!(result.stdout, "1\n");
+    assert_eq!(result.exit_code, 0);
+    let result = run_jq_result_with_args(&["-n", "halt(7)"], "")
+        .await
+        .unwrap();
+    assert_eq!(result.exit_code, 7);
 }
 
 #[tokio::test]
-async fn halt_with_arg_does_not_terminate_host_process() {
-    // Regression for #1571: the explicit-arity form `halt(N)` must also
-    // be neutered, not just the wrapper-def `halt`.
-    let result = run_jq_result("halt(7)", r#"{}"#).await.unwrap();
-    assert_ne!(
-        result.exit_code, 0,
-        "halt(7) should fail safely; stdout=<{}> stderr=<{}>",
-        result.stdout, result.stderr
-    );
+async fn halt_stops_remaining_inputs() {
+    let result = run_jq_result_with_args(&["-c", "if . == 2 then halt else . end"], "1 2 3")
+        .await
+        .unwrap();
+    assert_eq!(result.stdout, "1\n");
+    assert_eq!(result.exit_code, 0);
 }
 
 #[tokio::test]
-async fn halt_error_does_not_terminate_host_process() {
-    // Regression for #1571: `halt_error` is a jq-syntax def in jaq-std
-    // that ultimately calls `halt(...)`. Stripping the native makes the
-    // whole family fail closed.
-    let result = run_jq_result("halt_error", r#""boom""#).await.unwrap();
-    assert_ne!(
-        result.exit_code, 0,
-        "halt_error should fail safely; stdout=<{}> stderr=<{}>",
-        result.stdout, result.stderr
-    );
+async fn halt_error_prints_message_and_exits() {
+    let result = run_jq_result("halt_error", r#""boom\n""#).await.unwrap();
+    assert_eq!(result.stderr, "boom\n");
+    assert_eq!(result.exit_code, 5);
+    let result = run_jq_result("halt_error(3)", r#"{"a":1}"#).await.unwrap();
+    assert_eq!(result.stderr, "{\"a\":1}\n");
+    assert_eq!(result.exit_code, 3);
+    let result = run_jq_result("try halt_error catch 9", "null")
+        .await
+        .unwrap();
+    assert_eq!(result.stdout, "");
+    assert_eq!(result.exit_code, 5);
+}
+
+#[tokio::test]
+async fn debug_and_stderr_write_to_jq_stderr() {
+    let result = run_jq_result_with_args(&["-c", "debug, debug(\"m\"), stderr"], "[1]")
+        .await
+        .unwrap();
+    assert_eq!(result.stdout, "[1]\n[1]\n[1]\n");
+    assert_eq!(result.stderr, "[\"DEBUG:\",[1]]\n[\"DEBUG:\",\"m\"]\n[1]");
+}
+
+#[tokio::test]
+async fn debug_output_is_capped() {
+    let result = run_jq_result_with_args(&["-n", "[range(200000)] | debug | length"], "")
+        .await
+        .unwrap();
+    assert_eq!(result.stdout, "200000\n");
+    assert!(result.stderr.len() <= super::messages::MAX_MESSAGE_BYTES);
 }
 
 // =========================================================================
@@ -2140,4 +2155,10 @@ async fn tostream_round_trips() {
         out,
         "[[[0],1],[[1,\"a\"],2],[[1,\"a\"]],[[2],[]],[[2]]]\n[1,{\"a\":2},[]]\n[[[0],2],[[0]]]\ntrue\n"
     );
+}
+
+#[test]
+fn run_loop_never_calls_unwrap_valr() {
+    // THREAT[TM-INF-023]: `jaq_core::unwrap_valr` exits the process on halt.
+    assert!(!include_str!("mod.rs").contains("unwrap_valr("));
 }

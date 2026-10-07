@@ -15,6 +15,9 @@
 //!    `truncate_stream`: jq 1.7's definitions (capture groups in `scan`,
 //!    null for an unmatched group, null joins as "", non-strings pass
 //!    through the trim filters).
+//!  - `halt_error`: jq prints a string as is, null as nothing, and other
+//!    values as JSON plus a newline, then halts (the run loop turns the
+//!    halt into the command's exit code, never a process exit).
 //!  - `@tsv` / `@csv`: jaq-std doesn't define them. Strict variants reject
 //!    non-scalars with a runtime error matching real jq's wording.
 //!  - `input_filename` / `input_line_number`: bashkit threads these as
@@ -111,6 +114,10 @@ def fromstream(f):
 def truncate_stream(stream):
   . as $n | null | stream
   | if (.[0] | length) > $n then setpath([0]; .[0][$n:]) else empty end;
+def halt_error($code):
+  (if type == "string" then . elif . == null then empty else tojson + "\n" end
+   | stderr_empty), halt($code);
+def halt_error: halt_error(5);
 def @tsv:
   [.[] |
     if type == "string" then

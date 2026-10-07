@@ -35,6 +35,7 @@ mod convert;
 mod errors;
 mod format;
 mod input;
+mod messages;
 // Vendored jaq-json (MIT, Michael Färber, https://github.com/01mf02/jaq),
 // see jaq_json/UPSTREAM_VERSION and knowledge/runtimes/jaq-json-vendor.md.
 // Kept byte-close to upstream so `scripts/sync-jaq-json.sh` can merge new
@@ -321,30 +322,38 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
         .into_iter()
         .map(|(name, arity, run)| (name, arity, jaq_core::Native::<D>::new(run)))
         .collect();
-    // SECURITY (TM-INF-023, #1571): replace the upstream `halt` native.
-    // jaq-std's impl calls `std::process::exit(...)`, which would tear
-    // down the entire embedding process — a sandbox escape via DoS for
-    // any caller hosting bashkit. Strip it from the `funs` chain and add
-    // a safe stub so the wrapper defs in jaq-std's `defs.jq`
-    // (`def halt: halt(0);`, `def halt_error(...): ..., halt(...);`)
-    // still resolve, but produce a normal jq runtime error instead of
-    // killing the host.
-    let safe_halt_run: jaq_core::RunPtr<D> = |mut cv| {
-        let _ = cv.0.pop_var();
-        jaq_core::native::bome(Err(jaq_core::Error::str(
-            "halt is disabled in the bashkit sandbox",
-        )))
-    };
-    let safe_halt: jaq_core::native::Fun<D> = (
-        "halt",
-        jaq_core::native::v(1),
-        jaq_core::Native::<D>::new(safe_halt_run),
-    );
+    // SECURITY (TM-INF-023, #1571): jaq-std's `halt` native only raises
+    // `Exn::halt`; it is `jaq_core::unwrap_valr` that turns that into
+    // `std::process::exit`. The run loop below never calls `unwrap_valr`:
+    // it ends the jq command with the halt code instead, so `halt` and
+    // `halt_error` behave like jq without touching the host process.
+    //
+    // jaq-std's `stderr_empty`/`debug_empty` write to the host (`log`);
+    // ours buffer the text for this command's stderr (see `messages`).
+    let message_funs: Vec<jaq_core::native::Fun<D>> = vec![
+        (
+            "stderr_empty",
+            jaq_core::native::v(0),
+            jaq_core::Native::<D>::new(|cv| {
+                messages::stderr(&cv.1);
+                Box::new(std::iter::empty())
+            }),
+        ),
+        (
+            "debug_empty",
+            jaq_core::native::v(0),
+            jaq_core::Native::<D>::new(|cv| {
+                messages::debug(&cv.1);
+                Box::new(std::iter::empty())
+            }),
+        ),
+    ];
     let native_funs = jaq_core::funs::<D>()
         .chain(jaq_std::funs::<D>().filter(|(name, _, _)| {
-            *name != "env" && *name != "halt" && !regex_compat::SHADOWED_NATIVE_NAMES.contains(name)
+            !matches!(*name, "env" | "stderr_empty" | "debug_empty")
+                && !regex_compat::SHADOWED_NATIVE_NAMES.contains(name)
         }))
-        .chain(std::iter::once(safe_halt))
+        .chain(message_funs)
         .chain(input_funs)
         .chain(regex_funs)
         .chain(self::jaq_json::funs::<D>());
@@ -509,12 +518,15 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
     // runtime error, else 0; with `-e`, 1 when the last output was null or
     // false and 4 when nothing was ever output.
     let mut status: Option<i32> = None;
+    // `halt`/`halt_error` end the whole command with this code.
+    let mut halted: Option<i32> = None;
+    messages::take();
 
     // THREAT[TM-DOS-110]: the meter aborts a run by unwinding where jaq
     // gives it no error channel (see jaq_json::meter::Abort).
     let run_filter = std::panic::AssertUnwindSafe(|| -> Result<Option<ExecResult>> {
         let mut first = true;
-        loop {
+        'inputs: loop {
             let jaq_input: Val = if null_input {
                 if !first {
                     break;
@@ -553,7 +565,19 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
                     // The value may have been cut short at the limit.
                     return size_error(&meter).map(Some);
                 }
-                match jaq_core::unwrap_valr(result) {
+                stderr_out.push_str(&messages::take());
+                // Never `jaq_core::unwrap_valr`: it exits the process on halt.
+                let result = match result {
+                    Ok(val) => Ok(val),
+                    Err(exn) => match exn.get_err() {
+                        Ok(e) => Err(e),
+                        Err(exn) => {
+                            halted = Some(exn.get_halt().unwrap_or(5));
+                            break 'inputs;
+                        }
+                    },
+                };
+                match result {
                     Ok(val) => {
                         let Some(mut jq) = val_to_jq_capped(&val, max_output_bytes) else {
                             return Ok(Some(ExecResult::err(
@@ -640,14 +664,18 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
         },
     }
 
+    stderr_out.push_str(&messages::take());
     let mut code = status.unwrap_or(if parsed.exit_status { 4 } else { 0 });
-    if let Some(e) = parse_error {
+    if let Some(e) = parse_error.filter(|_| halted.is_none()) {
         stderr_out.push_str(&e);
         stderr_out.push('\n');
         code = 5;
     }
     if input_failed {
         code = 2;
+    }
+    if let Some(h) = halted {
+        code = h;
     }
     Ok(ExecResult {
         stdout: output.into(),
