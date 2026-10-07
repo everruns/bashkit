@@ -151,7 +151,7 @@ default prompt is `$ `.
 `[ -t 0 ]` is true inside the session, and `COLUMNS`, `LINES`, `TERM` and
 `EDITOR` (`vi`) are set. `git commit` without `-m` opens the editor on the
 commit message, as in real git: save and quit to commit, `:cq` or an empty
-message aborts. Only `vi`/`vim` work as `$EDITOR`. `resize()` changes the size; a running `vi` redraws.
+message aborts. `vi`, `vim` and `nano` work as `$EDITOR`. `resize()` changes the size; a running `vi` redraws.
 
 ## As an LLM tool
 
@@ -281,6 +281,17 @@ Not supported: visual mode, named registers, macros, splits, vimrc, and `:!`
 
 `vi` needs a terminal. Under plain `Bash::exec()` it exits 1 with
 `vi: not a terminal`.
+
+## nano
+
+`nano FILE` is a small GNU-nano-style editor: type to insert, move with the
+arrow keys, Home/End and PageUp/PageDown, `^O` to write (Enter accepts the
+name), `^X` to exit (it asks to save a modified buffer: `Y`, `N` or `^C`),
+`^K` and `^U` to cut and paste lines (repeated `^K` collects several), `^W`
+to search, `^G` for help and `^C` for the cursor position. `EDITOR=nano`
+works for `git commit`. Not supported: undo, multiple buffers, syntax colors
+and nanorc (L-TERM-005 in the
+[limitations](../knowledge/operations/limitations.md#terminal)).
 
 ## less and more
 
