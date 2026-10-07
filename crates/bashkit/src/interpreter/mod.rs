@@ -16,7 +16,7 @@ mod brace_expansion;
 mod expansion;
 mod glob;
 mod jobs;
-mod pipe;
+pub(crate) mod pipe;
 mod redirection;
 mod state;
 mod time_command;
@@ -366,6 +366,8 @@ pub(crate) struct ShellRef<'a> {
     pub(crate) jobs: &'a SharedJobTable,
     /// Typed per-execution extensions for the current `exec*()` call.
     pub(crate) execution_extensions: Arc<builtins::ExecutionExtensions>,
+    /// Stdout of a streaming pipeline stage (see `Context::stdout_stream`).
+    pub(crate) stdout_pipe: Option<Arc<pipe::Pipe>>,
 }
 
 // Interpreter-dispatched "special" builtins, listed here so the public
@@ -1413,6 +1415,12 @@ pub struct Interpreter {
     /// Stdout pipe of this forked pipeline stage: command boundaries wait
     /// here for room and stop with 141 once the reader is gone.
     pipe_out: Option<Arc<pipe::Pipe>>,
+    /// Address of the stage's own simple command when it is a streaming
+    /// builtin (`yes`, `seq`): only that command writes straight into
+    /// `pipe_out`, never a command run from its argument expansions.
+    stream_stdout_command: Option<usize>,
+    /// Pipe handed to the next builtin's `Context` (taken at dispatch).
+    builtin_stdout_pipe: Option<Arc<pipe::Pipe>>,
     /// Position within the current argument while `getopts` walks a clustered
     /// short-option group (e.g. `-abc`). Interpreter-internal working state for
     /// `execute_getopts`; `0` means "at the start of the next option group".
@@ -1652,6 +1660,7 @@ impl Interpreter {
             "strings" => Strings,
             "tac" => Tac,
             "rev" => Rev,
+            "fmt" => Fmt,
             "fold" => Fold,
             "expand" => Expand,
             "unexpand" => Unexpand,
@@ -1985,6 +1994,8 @@ impl Interpreter {
             pipeline_stdin: None,
             pipe_in: None,
             pipe_out: None,
+            stream_stdout_command: None,
+            builtin_stdout_pipe: None,
             getopts_char_idx: 0,
             last_bg_pid: None,
             output_callback: None,
@@ -2140,6 +2151,8 @@ impl Interpreter {
             pipeline_stdin: None,
             pipe_in: None,
             pipe_out: None,
+            stream_stdout_command: None,
+            builtin_stdout_pipe: None,
             getopts_char_idx: self.getopts_char_idx,
             last_bg_pid: self.last_bg_pid.clone(),
             output_callback: None,
@@ -3641,30 +3654,33 @@ impl Interpreter {
         // Get iteration values: expand fields, then apply brace/glob expansion
         let values: Vec<String> = if let Some(words) = &for_cmd.words {
             let mut vals = Vec::new();
-            for w in words {
-                let fields = self.expand_word_to_fields(w).await?;
+            for w0 in words {
+                // Brace expansion runs first, on the unexpanded word.
+                let braced = self.brace_expand_word(w0);
+                for w in braced.as_deref().unwrap_or(std::slice::from_ref(w0)) {
+                    let fields = self.expand_word_to_fields(w).await?;
 
-                // Quoted words skip brace/glob expansion — unless the
-                // word has unquoted glob chars (e.g. `"$var"*.ext`)
-                if w.quoted && !w.has_unquoted_glob {
-                    vals.extend(fields);
-                    continue;
-                }
+                    // Quoted words skip brace/glob expansion — unless the
+                    // word has unquoted glob chars (e.g. `"$var"*.ext`)
+                    if w.quoted && !w.has_unquoted_glob {
+                        vals.extend(fields);
+                        continue;
+                    }
 
-                for expanded in fields {
-                    let brace_expanded = self.expand_braces(&expanded);
-                    for item in brace_expanded {
-                        match self
-                            .expand_glob_item(&item, w.quoted && w.has_unquoted_glob)
-                            .await
-                        {
-                            Ok(items) => vals.extend(items),
-                            Err(pat) => {
-                                self.last_exit_code = 1;
-                                return Ok(ExecResult::err(
-                                    format!("-bash: no match: {}\n", pat),
-                                    1,
-                                ));
+                    for expanded in fields {
+                        for item in [expanded] {
+                            match self
+                                .expand_glob_item(&item, w.quoted && w.has_unquoted_glob)
+                                .await
+                            {
+                                Ok(items) => vals.extend(items),
+                                Err(pat) => {
+                                    self.last_exit_code = 1;
+                                    return Ok(ExecResult::err(
+                                        format!("-bash: no match: {}\n", pat),
+                                        1,
+                                    ));
+                                }
                             }
                         }
                     }
@@ -3775,25 +3791,28 @@ impl Interpreter {
 
         // Expand word list
         let mut values = Vec::new();
-        for w in &select_cmd.words {
-            let fields = self.expand_word_to_fields(w).await?;
-            if w.quoted && !w.has_unquoted_glob {
-                values.extend(fields);
-            } else {
-                for expanded in fields {
-                    let brace_expanded = self.expand_braces(&expanded);
-                    for item in brace_expanded {
-                        match self
-                            .expand_glob_item(&item, w.quoted && w.has_unquoted_glob)
-                            .await
-                        {
-                            Ok(items) => values.extend(items),
-                            Err(pat) => {
-                                self.last_exit_code = 1;
-                                return Ok(ExecResult::err(
-                                    format!("-bash: no match: {}\n", pat),
-                                    1,
-                                ));
+        for w0 in &select_cmd.words {
+            // Brace expansion runs first, on the unexpanded word.
+            let braced = self.brace_expand_word(w0);
+            for w in braced.as_deref().unwrap_or(std::slice::from_ref(w0)) {
+                let fields = self.expand_word_to_fields(w).await?;
+                if w.quoted && !w.has_unquoted_glob {
+                    values.extend(fields);
+                } else {
+                    for expanded in fields {
+                        for item in [expanded] {
+                            match self
+                                .expand_glob_item(&item, w.quoted && w.has_unquoted_glob)
+                                .await
+                            {
+                                Ok(items) => values.extend(items),
+                                Err(pat) => {
+                                    self.last_exit_code = 1;
+                                    return Ok(ExecResult::err(
+                                        format!("-bash: no match: {}\n", pat),
+                                        1,
+                                    ));
+                                }
                             }
                         }
                     }
@@ -5825,6 +5844,19 @@ impl Interpreter {
         !matches!(name, "eval" | "source" | "." | "bash" | "sh")
             && !self.scoped.functions.contains_key(name)
             && !self.scoped.aliases.contains_key(name)
+            && !Self::streams_stdout(simple)
+    }
+
+    /// Builtins that write their stdout to a pipeline as they go
+    /// (`Context::stdout_stream`): generators whose output is unbounded or
+    /// large, so `yes | head -1` and `seq 1000000 | head -1` stop at the
+    /// first line with SIGPIPE instead of running into the output caps.
+    fn streams_stdout(simple: &SimpleCommand) -> bool {
+        simple.redirects.is_empty()
+            && matches!(
+                simple.name.parts.as_slice(),
+                [WordPart::Literal(name)] if matches!(name.as_str(), "yes" | "seq")
+            )
     }
 
     /// Run `commands` (the tail of a pipeline) concurrently: every stage but
@@ -5866,6 +5898,11 @@ impl Interpreter {
             let command = command.clone();
             stages.push(Box::pin(async move {
                 let _read_end = read_end;
+                if let Command::Simple(simple) = &command
+                    && Self::streams_stdout(simple)
+                {
+                    child.stream_stdout_command = Some(simple as *const SimpleCommand as usize);
+                }
                 let jobs = Arc::clone(&child.jobs);
                 let result = jobs::with_jobs(&jobs, child.execute_command(&command)).await;
                 jobs.finish_all().await;
@@ -6898,34 +6935,37 @@ impl Interpreter {
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<String>>> + Send + 'a>> {
         Box::pin(async move {
             let mut args: Vec<String> = Vec::new();
-            for word in &command.args {
-                // Use field expansion so "${arr[@]}" produces multiple args
-                let fields = self.expand_word_to_fields(word).await?;
+            for word0 in &command.args {
+                // Brace expansion runs first, on the unexpanded word.
+                let braced = self.brace_expand_word(word0);
+                for word in braced.as_deref().unwrap_or(std::slice::from_ref(word0)) {
+                    // Use field expansion so "${arr[@]}" produces multiple args
+                    let fields = self.expand_word_to_fields(word).await?;
 
-                // Skip brace and glob expansion for quoted words — unless the
-                // word has unquoted glob chars (e.g. `"$var"*.ext`) in which case
-                // the quoted expansion suppresses IFS splitting but the unquoted
-                // portion must still undergo glob expansion.
-                if word.quoted && !word.has_unquoted_glob {
-                    args.extend(fields);
-                    continue;
-                }
+                    // Skip brace and glob expansion for quoted words — unless the
+                    // word has unquoted glob chars (e.g. `"$var"*.ext`) in which case
+                    // the quoted expansion suppresses IFS splitting but the unquoted
+                    // portion must still undergo glob expansion.
+                    if word.quoted && !word.has_unquoted_glob {
+                        args.extend(fields);
+                        continue;
+                    }
 
-                // For each field, apply brace and glob expansion
-                for expanded in fields {
-                    // Step 1: Brace expansion (produces multiple strings)
-                    let brace_expanded = self.expand_braces(&expanded);
-
-                    // Step 2: For each brace-expanded item, do glob expansion
-                    for item in brace_expanded {
-                        match self
-                            .expand_glob_item(&item, word.quoted && word.has_unquoted_glob)
-                            .await
-                        {
-                            Ok(items) => args.extend(items),
-                            Err(pat) => {
-                                self.last_exit_code = 1;
-                                return Ok(vec![format!("\x00ERR\x00-bash: no match: {}\n", pat)]);
+                    // For each field, apply glob expansion
+                    for expanded in fields {
+                        for item in [expanded] {
+                            match self
+                                .expand_glob_item(&item, word.quoted && word.has_unquoted_glob)
+                                .await
+                            {
+                                Ok(items) => args.extend(items),
+                                Err(pat) => {
+                                    self.last_exit_code = 1;
+                                    return Ok(vec![format!(
+                                        "\x00ERR\x00-bash: no match: {}\n",
+                                        pat
+                                    )]);
+                                }
                             }
                         }
                     }
@@ -6950,6 +6990,16 @@ impl Interpreter {
         stdin: Option<crate::StreamData>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecResult>> + Send + 'a>> {
         Box::pin(async move {
+            // The stage's own `yes`/`seq` writes straight into the pipe.
+            self.builtin_stdout_pipe = if self.stream_stdout_command
+                == Some(command as *const SimpleCommand as usize)
+                && command.redirects.is_empty()
+                && !self.scoped.functions.contains_key(name)
+            {
+                self.pipe_out.clone()
+            } else {
+                None
+            };
             // Track $_ (last argument of previous command, from already-expanded args)
             if let Some(last) = args.last() {
                 self.insert_variable_checked("_".to_string(), last.clone());
@@ -7003,20 +7053,13 @@ impl Interpreter {
             } else if let Some(ref ps) = self.pipeline_stdin {
                 if !ps.is_empty() {
                     if name == "read" {
-                        // Consume one line from pipeline stdin
+                        // Consume one record (line, `-d` delimiter, `-n` count,
+                        // `\<newline>` continuation) from pipeline stdin.
                         let data = ps.clone();
-                        if let Some(newline_pos) =
-                            data.as_bytes().iter().position(|&byte| byte == b'\n')
-                        {
-                            let line = String::from_utf8_lossy(&data.as_bytes()[..=newline_pos])
-                                .into_owned();
-                            self.pipeline_stdin = Some(data.as_bytes()[newline_pos + 1..].into());
-                            Some(line.into())
-                        } else {
-                            // Last line without trailing newline
-                            self.pipeline_stdin = Some(crate::StreamData::new());
-                            Some(data)
-                        }
+                        let bytes = data.as_bytes();
+                        let used = builtins::read_consumed_len(bytes, &args);
+                        self.pipeline_stdin = Some(bytes[used..].into());
+                        Some(bytes[..used].into())
                     } else {
                         Some(ps.clone())
                     }
@@ -7353,6 +7396,7 @@ impl Interpreter {
                     limits: &self.limits,
                     jobs: &self.jobs,
                     execution_extensions,
+                    stdout_pipe: None,
                 };
                 let plan_ctx = builtins::Context {
                     args,
@@ -7418,6 +7462,7 @@ impl Interpreter {
                 limits: &self.limits,
                 jobs: &self.jobs,
                 execution_extensions,
+                stdout_pipe: self.builtin_stdout_pipe.take(),
             };
             let ctx = builtins::Context {
                 args,
@@ -7480,7 +7525,7 @@ impl Interpreter {
                 .unwrap_or(u64::MAX),
             )?;
 
-            self.apply_builtin_side_effects(&result).await;
+            self.apply_builtin_side_effects(&mut result).await;
 
             // Sync successful export operands into env so subprocess isolation can see them.
             // Keep syncing even if export returned nonzero for other args (bash-compatible).
@@ -8444,10 +8489,10 @@ impl Interpreter {
                     pattern,
                     replacement,
                 } => out.push_str(&format!("${{{}//{}/{}}}", name, pattern, replacement)),
-                ParameterOp::UpperFirst => out.push_str(&format!("${{{}^}}", name)),
-                ParameterOp::UpperAll => out.push_str(&format!("${{{}^^}}", name)),
-                ParameterOp::LowerFirst => out.push_str(&format!("${{{},}}", name)),
-                ParameterOp::LowerAll => out.push_str(&format!("${{{},,}}", name)),
+                ParameterOp::UpperFirst => out.push_str(&format!("${{{}^{}}}", name, operand)),
+                ParameterOp::UpperAll => out.push_str(&format!("${{{}^^{}}}", name, operand)),
+                ParameterOp::LowerFirst => out.push_str(&format!("${{{},{}}}", name, operand)),
+                ParameterOp::LowerAll => out.push_str(&format!("${{{},,{}}}", name, operand)),
             },
             WordPart::Length(name) => out.push_str(&format!("${{#{}}}", name)),
             WordPart::ArrayAccess { name, index } => {
@@ -9996,7 +10041,7 @@ impl Interpreter {
     }
 
     /// Process structured side effects from builtin execution.
-    async fn apply_builtin_side_effects(&mut self, result: &ExecResult) {
+    async fn apply_builtin_side_effects(&mut self, result: &mut ExecResult) {
         // Builtins that mutate SHOPT_* directly via `ctx.variables` (e.g. the
         // `set -e` / `set +u` paths in the `set` builtin) don't update the
         // cached `flags` bitfield. Resync once after every builtin so the
@@ -10004,6 +10049,7 @@ impl Interpreter {
         // ~10 SHOPT_* entries — cheaper than threading a structured "shopt
         // changed" channel through every builtin.
         self.refresh_shopt_flags();
+        let mut shift_failed = false;
         for effect in &result.side_effects {
             match effect {
                 builtins::BuiltinSideEffect::SetArray { name, elements } => {
@@ -10027,12 +10073,12 @@ impl Interpreter {
                     self.arrays_mut().remove(name);
                 }
                 builtins::BuiltinSideEffect::ShiftPositional(n) => {
-                    if let Some(frame) = self.call_stack.last_mut() {
-                        if *n <= frame.positional.len() {
-                            frame.positional.drain(..*n);
-                        } else {
-                            frame.positional.clear();
-                        }
+                    // bash: a count above `$#` shifts nothing and fails.
+                    let len = self.call_stack.last().map_or(0, |f| f.positional.len());
+                    if *n > len {
+                        shift_failed = true;
+                    } else if let Some(frame) = self.call_stack.last_mut() {
+                        frame.positional.drain(..*n);
                     }
                 }
                 builtins::BuiltinSideEffect::SetPositional(new_positional) => {
@@ -10062,6 +10108,9 @@ impl Interpreter {
                     self.set_variable(name.clone(), value.clone());
                 }
             }
+        }
+        if shift_failed {
+            result.exit_code = 1;
         }
     }
 
@@ -10325,14 +10374,30 @@ impl Interpreter {
                 }
             }
             let commands: &[Command] = if file_read.is_some() { &[] } else { commands };
+            // Captured output must not reach the streaming callback: compound
+            // commands (`case`, `{ }`, `if`) emit through it as they run.
+            let saved_callback = self.output_callback.take();
+            let mut run: Result<()> = Ok(());
             for cmd in commands {
-                let cmd_result = self.execute_command(cmd).await?;
-                stdout.try_push_str(&cmd_result.stdout.command_substitution_text())?;
+                let cmd_result = match self.execute_command(cmd).await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        run = Err(e);
+                        break;
+                    }
+                };
+                if let Err(e) = stdout.try_push_str(&cmd_result.stdout.command_substitution_text())
+                {
+                    run = Err(e.into());
+                    break;
+                }
                 self.last_exit_code = cmd_result.exit_code;
                 if matches!(cmd_result.control_flow, ControlFlow::Exit(_)) {
                     break;
                 }
             }
+            self.output_callback = saved_callback;
+            run?;
             // Fire EXIT trap set inside the command substitution
             if let Some(trap_cmd) = self.scoped.traps.get("EXIT").cloned()
                 && snapshot.scoped.traps.get("EXIT") != Some(&trap_cmd)
@@ -11108,8 +11173,10 @@ impl Interpreter {
                 }
                 return String::new();
             }
-            "$" => {
-                // THREAT[TM-INF-014]: Return sandboxed PID, not real host PID.
+            // THREAT[TM-INF-014]: Return sandboxed PID, not real host PID.
+            // `$BASHPID` is the same: subshells and jobs report the shell's
+            // pid too (they have no process of their own).
+            "$" | "BASHPID" => {
                 return "1".to_string();
             }
             "!" => {

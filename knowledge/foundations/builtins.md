@@ -416,6 +416,19 @@ commands report 127. Gaps are L-AWK-001..004 in
 -028, -033, -109, -110, -116 and -128 in the
 [Threat Model](../security/threat-model.md).
 
+### fmt
+
+`fmt` vendors the uutils/coreutils `fmt` engine (MIT): `builtins/fmt/
+linebreak.rs` (Knuth-Plass optimal fit) and `parasplit.rs` (paragraphs,
+prefixes, crown/tagged indents), pinned to the same uutils revision as the
+generated argument files. Bashkit owns only `fmt/mod.rs`: option parsing and
+I/O. Options are GNU's (`-w`, `-g`, `-c`, `-t`, `-s`, `-u`, `-p`, obsolete
+`-WIDTH`) plus the uutils extras (`-m`, `-P`, `-x`, `-X`, `-q`, `-T`). Width
+rules and error messages follow GNU: goal is 93% of the width, `-g` alone sets
+the width to goal + 10, width is capped at 2500, goal at the width. Vendored
+`panic!`/`unwrap` paths were turned into early returns. GNU `fmt.c` is GPL and
+must not be ported; line-break differences are L-FMT-001.
+
 ### Network Builtins
 
 `curl`, `wget`, `http` require the `http_client` feature + URL allowlist.

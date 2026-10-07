@@ -62,6 +62,7 @@ mod fc;
 mod fileops;
 mod find;
 mod flow;
+mod fmt;
 mod fold;
 mod generated;
 mod glob_cmd;
@@ -196,6 +197,7 @@ pub use fc::Fc;
 pub use fileops::{Chmod, Chown, Cp, Ln, Mkdir, Mktemp, Mv, Rm, Touch};
 pub use find::Find;
 pub use flow::{Break, Colon, Continue, Exit, False, Return, True};
+pub use fmt::Fmt;
 pub use fold::Fold;
 pub use glob_cmd::GlobCmd;
 pub use grep::Grep;
@@ -230,6 +232,7 @@ pub use pr::Pr;
 pub use printf::Printf;
 pub use random::{Openssl, Uuidgen};
 pub use read::Read;
+pub(crate) use read::consumed_len as read_consumed_len;
 pub use retry::Retry;
 pub use rg::Rg;
 pub use sed::Sed;
@@ -950,6 +953,17 @@ pub struct Context<'a> {
     pub(crate) shell: Option<ShellRef<'a>>,
 }
 
+/// Stdout pipe of a streaming pipeline stage, see [`Context::stdout_stream`].
+pub(crate) struct StdoutStream(std::sync::Arc<crate::interpreter::pipe::Pipe>);
+
+impl StdoutStream {
+    /// Wait for room in the pipe, then write. False once nobody reads.
+    pub(crate) async fn write(&self, data: &[u8]) -> bool {
+        self.0.writable().await;
+        self.0.write(data)
+    }
+}
+
 impl<'a> Context<'a> {
     /// Exact pipeline stdin bytes.
     pub fn stdin_bytes(&self) -> Option<&[u8]> {
@@ -1030,6 +1044,17 @@ impl<'a> Context<'a> {
         self.shell
             .as_ref()
             .and_then(|shell| shell.execution_extensions.get::<T>())
+    }
+
+    /// Streaming stdout when this builtin is a producer stage of a
+    /// concurrent pipeline (`yes | head -1`). Write chunks as they are made
+    /// instead of returning them in `ExecResult::stdout`; when a write
+    /// reports the reader gone, stop and exit 141 (SIGPIPE).
+    pub(crate) fn stdout_stream(&self) -> Option<StdoutStream> {
+        self.shell
+            .as_ref()
+            .and_then(|shell| shell.stdout_pipe.clone())
+            .map(StdoutStream)
     }
 
     /// Remaining wall-clock budget of the current `exec*` call, if limited.
@@ -2059,6 +2084,7 @@ mod tests {
             "column",
             "join",
             "split",
+            "fmt",
             "fold",
             "expand",
             "unexpand",

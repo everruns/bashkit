@@ -6,10 +6,13 @@ Bashkit's design or whose test case formats have inspired our testing approach.
 ## Important Notes
 
 1. **Bashkit is an independent implementation.** No source code has been copied
-   from any of these projects, with one exception: the jq value type in
+   from any of these projects, with two exceptions: the jq value type in
    `crates/bashkit/src/builtins/jq/jaq_json/` is a modified copy of the
    jaq-json crate (MIT, Michael Färber, https://github.com/01mf02/jaq), kept
-   under its MIT license (`MIT.txt`).
+   under its MIT license (`MIT.txt`), and the `fmt` line breaker in
+   `crates/bashkit/src/builtins/fmt/` (`linebreak.rs`, `parasplit.rs`) is a
+   modified copy of uutils coreutils `fmt` (MIT, uutils developers,
+   https://github.com/uutils/coreutils), also under `MIT.txt`.
 
 2. **Test cases are original.** While our testing methodology was inspired by
    projects like Oils, the actual test cases are written specifically for
@@ -24,7 +27,7 @@ Bashkit's design or whose test case formats have inspired our testing approach.
 | File | Projects | License Type |
 |------|----------|--------------|
 | `APACHE-2.0.txt` | just-bash, Oils | Apache License 2.0 |
-| `MIT.txt` | jq, jaq crates, most dependencies | MIT License |
+| `MIT.txt` | jq, jaq crates, uutils coreutils, most dependencies | MIT License |
 | `LUCENT.txt` | One True AWK | Lucent Public License |
 
 ## Full Dependency Licenses

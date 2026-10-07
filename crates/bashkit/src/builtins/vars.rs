@@ -245,14 +245,88 @@ pub struct Shift;
 #[async_trait]
 impl Builtin for Shift {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        // Number of positions to shift (default 1)
-        let n: usize = ctx.args.first().and_then(|s| s.parse().ok()).unwrap_or(1);
+        // Number of positions to shift (default 1). A count above `$#` is
+        // applied by the interpreter, which fails it with status 1.
+        let n: usize = match ctx.args.first() {
+            None => 1,
+            Some(arg) => match arg.parse::<i64>() {
+                Ok(v) if v >= 0 => usize::try_from(v).unwrap_or(usize::MAX),
+                Ok(_) => {
+                    return Ok(ExecResult::err(
+                        format!("bash: shift: {arg}: shift count out of range\n"),
+                        1,
+                    ));
+                }
+                Err(_) => {
+                    return Ok(ExecResult::err(
+                        format!("bash: shift: {arg}: numeric argument required\n"),
+                        1,
+                    ));
+                }
+            },
+        };
 
         let mut result = ExecResult::ok(String::new());
         result
             .side_effects
             .push(BuiltinSideEffect::ShiftPositional(n));
         Ok(result)
+    }
+}
+
+impl Shopt {
+    /// `shopt -o`: the same operations on `set -o` option names.
+    fn set_o_options(
+        variables: &mut std::collections::HashMap<String, String>,
+        mode: Option<char>,
+        opts: &[String],
+    ) -> ExecResult {
+        let mut names: Vec<(&str, &'static str)> = Vec::new();
+        if opts.is_empty() {
+            names.extend(SET_O_OPTIONS.iter().copied());
+        }
+        for opt in opts {
+            match option_name_to_var(opt) {
+                Some(var) => names.push((opt.as_str(), var)),
+                None => {
+                    return ExecResult::err(
+                        format!("bash: shopt: {opt}: invalid option name\n"),
+                        1,
+                    );
+                }
+            }
+        }
+        let on = |vars: &std::collections::HashMap<String, String>, var: &str| {
+            vars.get(var).is_some_and(|v| v == "1")
+        };
+        let mut output = String::new();
+        let mut all_on = true;
+        for (name, var) in names {
+            match mode {
+                Some('s') => {
+                    variables.insert(var.to_string(), "1".to_string());
+                }
+                Some('u') => {
+                    variables.remove(var);
+                }
+                Some('q') => all_on &= on(variables, var),
+                Some('p') => {
+                    let flag = if on(variables, var) { "-o" } else { "+o" };
+                    output.push_str(&format!("set {flag} {name}\n"));
+                }
+                _ => {
+                    let enabled = on(variables, var);
+                    all_on &= enabled;
+                    let state = if enabled { "on" } else { "off" };
+                    output.push_str(&format!("{name:<15}\t{state}\n"));
+                }
+            }
+        }
+        let mut result = ExecResult::ok(output);
+        if matches!(mode, Some('q')) || (mode.is_none() && !opts.is_empty()) {
+            result.exit_code = i32::from(!all_on);
+        }
+        result
     }
 }
 
@@ -485,12 +559,16 @@ impl Builtin for Shopt {
         }
 
         let mut mode: Option<char> = None; // 's'=set, 'u'=unset, 'q'=query, 'p'=print
+        let mut set_o = false; // -o: act on `set -o` options
         let mut opts: Vec<String> = Vec::new();
 
         for arg in ctx.args {
             if arg.starts_with('-') && opts.is_empty() {
                 for ch in arg.chars().skip(1) {
                     match ch {
+                        'o' => set_o = true,
+                        // -p combines with -s/-u/-q as a print request.
+                        'p' if mode.is_some() => {}
                         's' | 'u' | 'q' | 'p' => mode = Some(ch),
                         _ => {
                             return Ok(ExecResult::err(
@@ -503,6 +581,10 @@ impl Builtin for Shopt {
             } else {
                 opts.push(arg.to_string());
             }
+        }
+
+        if set_o {
+            return Ok(Self::set_o_options(ctx.variables, mode, &opts));
         }
 
         match mode {

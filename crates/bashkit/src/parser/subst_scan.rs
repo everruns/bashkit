@@ -6,8 +6,10 @@
 //! and `$(echo ")")` at the quoted `)`. Bash finds the end by parsing; this
 //! tracks the contexts that can hide a `)`: single/double quotes, backslash
 //! escapes, backticks, nested `$(...)`, comments and heredoc bodies.
-//! Known gap: a `case` pattern's bare `)` inside `$(...)` still closes early,
-//! as before this scanner (`$(case x in x) ...esac)`); bash accepts it.
+//! `case` is tracked too: the bare `)` that ends a case pattern
+//! (`$(case x in x) ...;; esac)`) does not close the substitution. Words are
+//! split at blanks and operators, and `case`/`in`/`esac` count only as
+//! unquoted words in the right place (command position for `case`/`esac`).
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Frame {
@@ -17,6 +19,41 @@ enum Frame {
     Double,
     Backtick,
 }
+
+/// Where an open `case` (inside one code frame) is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CasePhase {
+    /// After `case`, reading the subject word.
+    Subject,
+    /// Expecting `in`.
+    In,
+    /// Reading a pattern list; `started` once any pattern text was seen.
+    Pattern { started: bool },
+    /// In a branch body, until `;;`, `;&`, `;;&` or `esac`.
+    Body,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CaseCtx {
+    phase: CasePhase,
+    /// Paren depth of the frame when `case` started.
+    depth: usize,
+}
+
+/// Word and `case` tracking for one `Code` frame.
+#[derive(Debug, Clone, Default)]
+struct CodeState {
+    /// Unquoted text of the current word, capped (only keywords matter).
+    word: String,
+    /// The current word has quoted or escaped parts, so it is no keyword.
+    word_quoted: bool,
+    /// The next word starts a command.
+    cmd_pos: bool,
+    cases: Vec<CaseCtx>,
+}
+
+/// Longest keyword we need to recognise (`case`, `esac`).
+const MAX_KEYWORD: usize = 8;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Heredoc {
@@ -60,6 +97,8 @@ pub(crate) struct SubstScanner {
     stack: Vec<Frame>,
     /// Paren depth per `Code` frame (parallel to Code entries in `stack`).
     parens: Vec<usize>,
+    /// Word/`case` state per `Code` frame (parallel to `parens`).
+    code: Vec<CodeState>,
     mode: Mode,
     prev: Option<char>,
     /// `<` chars seen in a row in code context.
@@ -81,6 +120,10 @@ impl SubstScanner {
         Self {
             stack: vec![Frame::Code],
             parens: vec![0],
+            code: vec![CodeState {
+                cmd_pos: true,
+                ..CodeState::default()
+            }],
             mode: Mode::Normal,
             prev: None,
             lt_run: 0,
@@ -250,6 +293,109 @@ impl SubstScanner {
     fn push_code(&mut self) {
         self.stack.push(Frame::Code);
         self.parens.push(0);
+        self.code.push(CodeState {
+            cmd_pos: true,
+            ..CodeState::default()
+        });
+    }
+
+    /// Mark the current word as quoted (a quote or escape starts in code).
+    fn quote_word(&mut self) {
+        if let Some(st) = self.code.last_mut() {
+            st.word_quoted = true;
+            st.word.push('"');
+        }
+    }
+
+    /// End the current word in the top code frame and update `case` state.
+    fn end_word(&mut self) {
+        let Some(st) = self.code.last_mut() else {
+            return;
+        };
+        if st.word.is_empty() {
+            return;
+        }
+        let word = std::mem::take(&mut st.word);
+        let keyword = !std::mem::take(&mut st.word_quoted);
+        let cmd_pos = st.cmd_pos;
+        let depth = self.parens.last().copied().unwrap_or(0);
+        let kw = |k: &str| keyword && word == k;
+        let mut next_cmd_pos = false;
+        match st.cases.last_mut().map(|c| (c.phase, c.depth)) {
+            Some((CasePhase::Subject, _)) => {
+                if let Some(c) = st.cases.last_mut() {
+                    c.phase = CasePhase::In;
+                }
+            }
+            Some((CasePhase::In, _)) => {
+                if let Some(c) = st.cases.last_mut() {
+                    c.phase = if kw("in") {
+                        CasePhase::Pattern { started: false }
+                    } else {
+                        // Not `in`: not a case we understand; stop tracking.
+                        st.cases.pop();
+                        return;
+                    };
+                }
+            }
+            Some((CasePhase::Pattern { started }, d)) if d == depth => {
+                if !started && kw("esac") {
+                    st.cases.pop();
+                } else if let Some(c) = st.cases.last_mut() {
+                    c.phase = CasePhase::Pattern { started: true };
+                }
+            }
+            Some((CasePhase::Body, d)) if d == depth && cmd_pos && kw("esac") => {
+                st.cases.pop();
+            }
+            _ => {
+                if cmd_pos && kw("case") {
+                    st.cases.push(CaseCtx {
+                        phase: CasePhase::Subject,
+                        depth,
+                    });
+                } else if cmd_pos
+                    && keyword
+                    && matches!(
+                        word.as_str(),
+                        "if" | "then"
+                            | "else"
+                            | "elif"
+                            | "do"
+                            | "while"
+                            | "until"
+                            | "{"
+                            | "!"
+                            | "time"
+                    )
+                {
+                    next_cmd_pos = true;
+                }
+            }
+        }
+        st.cmd_pos = next_cmd_pos;
+    }
+
+    /// The open case in the top frame, if it is at the current paren depth.
+    fn case_here(&self) -> Option<CasePhase> {
+        let depth = self.parens.last().copied().unwrap_or(0);
+        self.code
+            .last()
+            .and_then(|st| st.cases.last())
+            .filter(|c| c.depth == depth)
+            .map(|c| c.phase)
+    }
+
+    fn set_case_phase(&mut self, phase: CasePhase) {
+        if let Some(c) = self.code.last_mut().and_then(|st| st.cases.last_mut()) {
+            c.phase = phase;
+        }
+    }
+
+    fn set_cmd_pos(&mut self, on: bool) {
+        if let Some(st) = self.code.last_mut() {
+            st.cmd_pos = on;
+        }
     }
 
     fn feed_code(&mut self, c: char) -> Step {
@@ -266,43 +412,107 @@ impl SubstScanner {
             };
             return self.feed_inner(c);
         }
-        match c {
-            '\\' => self.mode = Mode::Escape,
-            '\'' => self.stack.push(Frame::Single),
-            '"' => self.stack.push(Frame::Double),
-            '`' => self.stack.push(Frame::Backtick),
-            '#' if self
-                .prev
-                .is_none_or(|p| p.is_whitespace() || matches!(p, ';' | '|' | '&' | '(' | ')')) =>
+        let word_char = !c.is_whitespace()
+            && !matches!(
+                c,
+                ';' | '|' | '&' | '(' | ')' | '<' | '>' | '\\' | '\'' | '"' | '`'
+            );
+        if word_char {
+            if c == '#'
+                && self
+                    .prev
+                    .is_none_or(|p| p.is_whitespace() || matches!(p, ';' | '|' | '&' | '(' | ')'))
             {
+                self.end_word();
                 self.mode = Mode::Comment;
+                return Step::Body;
             }
-            '\n' => self.on_newline(),
+            if let Some(st) = self.code.last_mut()
+                && st.word.len() < MAX_KEYWORD
+            {
+                st.word.push(c);
+            } else if let Some(st) = self.code.last_mut() {
+                st.word_quoted = true; // too long to be a keyword
+            }
+            return Step::Body;
+        }
+        match c {
+            '\\' => {
+                self.quote_word();
+                self.mode = Mode::Escape;
+            }
+            '\'' => {
+                self.quote_word();
+                self.stack.push(Frame::Single);
+            }
+            '"' => {
+                self.quote_word();
+                self.stack.push(Frame::Double);
+            }
+            '`' => {
+                self.quote_word();
+                self.stack.push(Frame::Backtick);
+            }
+            '\n' => {
+                self.end_word();
+                self.set_cmd_pos(true);
+                self.on_newline();
+            }
             '(' => {
+                self.end_word();
+                // The optional `(` before a case pattern is not nesting.
+                if let Some(CasePhase::Pattern { started: false }) = self.case_here() {
+                    self.set_case_phase(CasePhase::Pattern { started: true });
+                    return Step::Body;
+                }
                 if let Some(depth) = self.parens.last_mut() {
                     *depth += 1;
                     if self.prev == Some('(') && self.arith_at.is_none() {
                         self.arith_at = Some(depth.saturating_sub(2));
                     }
                 }
+                self.set_cmd_pos(true);
             }
             ')' => {
+                self.end_word();
+                // `)` ending a case pattern list starts the branch body.
+                if let Some(CasePhase::Pattern { .. }) = self.case_here() {
+                    self.set_case_phase(CasePhase::Body);
+                    self.set_cmd_pos(true);
+                    return Step::Body;
+                }
                 let depth = self.parens.last_mut().expect("code frame");
                 if *depth > 0 {
                     *depth -= 1;
                     if self.arith_at.is_some_and(|at| *depth <= at) {
                         self.arith_at = None;
                     }
+                    self.set_cmd_pos(false);
                 } else {
                     // Closes this `$(` frame.
                     self.parens.pop();
+                    self.code.pop();
                     self.stack.pop();
                     if self.stack.is_empty() {
                         return Step::Close;
                     }
                 }
             }
-            _ => {}
+            ';' | '&' => {
+                self.end_word();
+                // `;;`, `;&` and `;;&` end a case branch.
+                if self.prev == Some(';') && self.case_here() == Some(CasePhase::Body) {
+                    self.set_case_phase(CasePhase::Pattern { started: false });
+                }
+                self.set_cmd_pos(true);
+            }
+            '|' => {
+                self.end_word();
+                if !matches!(self.case_here(), Some(CasePhase::Pattern { .. })) {
+                    self.set_cmd_pos(true);
+                }
+            }
+            _ => self.end_word(),
         }
         Step::Body
     }
@@ -372,6 +582,35 @@ mod tests {
         assert_eq!(body("cat <<< x) y"), Some("cat <<< x"));
         // arithmetic shift is not a heredoc
         assert_eq!(body("echo $((1<<2))) y"), Some("echo $((1<<2))"));
+    }
+
+    #[test]
+    fn case_patterns_do_not_close() {
+        assert_eq!(
+            body("case $x in a) echo A;; *) echo B;; esac) y"),
+            Some("case $x in a) echo A;; *) echo B;; esac")
+        );
+        assert_eq!(
+            body("case x in (a|b) echo;; esac) y"),
+            Some("case x in (a|b) echo;; esac")
+        );
+        assert_eq!(
+            body("case x in\n a)\n  echo;;\nesac\n) y"),
+            Some("case x in\n a)\n  echo;;\nesac\n")
+        );
+        // nested case, fallthrough terminators
+        assert_eq!(
+            body("case a in a) case b in b) :;& *) :;;& esac;; esac) y"),
+            Some("case a in a) case b in b) :;& *) :;;& esac;; esac")
+        );
+        // `case`/`esac` only count in command position
+        assert_eq!(body("echo case) y"), Some("echo case"));
+        assert_eq!(body("echo esac) y"), Some("echo esac"));
+        // a `case` word inside a pattern body subshell
+        assert_eq!(
+            body("case x in x) (echo case);; esac) y"),
+            Some("case x in x) (echo case);; esac")
+        );
     }
 
     #[test]

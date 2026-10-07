@@ -74,6 +74,11 @@ jaq-json (MIT), vendored in crates/bashkit/src/builtins/jq/jaq_json/
   - Copyright (c) Michael Färber
   - Repository: https://github.com/01mf02/jaq
 
+uutils/coreutils fmt (MIT), vendored in crates/bashkit/src/builtins/fmt/
+  - linebreak.rs and parasplit.rs: fmt line breaking and paragraph splitting
+  - Copyright (c) uutils developers
+  - Repository: https://github.com/uutils/coreutils
+
 grep, grep-regex, grep-searcher (MIT/Apache-2.0)
   - Text search functionality
   - Part of the ripgrep project by Andrew Gallant
@@ -107,4 +112,6 @@ It is not affiliated with, endorsed by, or derived from:
 The shell syntax parser, interpreter, virtual filesystem, and all builtins
 (except where noted) are original implementations written in Rust. The jq
 value type in crates/bashkit/src/builtins/jq/jaq_json/ is a modified copy of
-jaq-json (MIT, Michael Färber), see RUST DEPENDENCIES above.
+jaq-json (MIT, Michael Färber), see RUST DEPENDENCIES above. The fmt line
+breaker in crates/bashkit/src/builtins/fmt/ is a modified copy of uutils
+coreutils fmt (MIT, uutils developers).
