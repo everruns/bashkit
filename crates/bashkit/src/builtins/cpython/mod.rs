@@ -245,9 +245,9 @@ impl Builtin for CPython {
             "python/python3: CPython 3.14 in a WebAssembly sandbox. Full pure-Python \
              stdlib plus json, re, csv, sqlite3, zlib, hashlib, decimal, datetime. \
              open()/pathlib/os work on the virtual filesystem. -c, -m, script files and \
-             stdin work. HTTP only via urllib.request/http.client and only to hosts the \
-             network allowlist permits; no raw sockets, no subprocess, no threads, no pip \
-             or third-party packages.",
+             stdin work. HTTP via requests, httpx (common API subsets) or \
+             urllib.request, only to hosts the network allowlist permits; no raw sockets, \
+             no subprocess, no threads, no pip or other third-party packages.",
         )
     }
 

@@ -289,8 +289,26 @@ pub struct Shift;
 #[async_trait]
 impl Builtin for Shift {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        // Number of positions to shift (default 1)
-        let n: usize = ctx.args.first().and_then(|s| s.parse().ok()).unwrap_or(1);
+        // Number of positions to shift (default 1). A count above `$#` is
+        // applied by the interpreter, which fails it with status 1.
+        let n: usize = match ctx.args.first() {
+            None => 1,
+            Some(arg) => match arg.parse::<i64>() {
+                Ok(v) if v >= 0 => usize::try_from(v).unwrap_or(usize::MAX),
+                Ok(_) => {
+                    return Ok(ExecResult::err(
+                        format!("bash: shift: {arg}: shift count out of range\n"),
+                        1,
+                    ));
+                }
+                Err(_) => {
+                    return Ok(ExecResult::err(
+                        format!("bash: shift: {arg}: numeric argument required\n"),
+                        1,
+                    ));
+                }
+            },
+        };
 
         let mut result = ExecResult::ok(String::new());
         result
@@ -512,13 +530,14 @@ fn shopt_set_o(
     } else {
         opts.iter().map(String::as_str).collect()
     };
+    // An unknown name fails the whole command before anything changes.
+    if let Some(bad) = names.iter().find(|n| set_option_by_name(n).is_none()) {
+        return ExecResult::err(format!("bash: shopt: {bad}: invalid option name\n"), 1);
+    }
     let mut out = String::new();
-    let mut err = String::new();
     let mut status = 0;
     for name in names {
         let Some((_, _, var, default)) = set_option_by_name(name) else {
-            err.push_str(&format!("bash: shopt: {name}: invalid option name\n"));
-            status = 1;
             continue;
         };
         match mode {
@@ -534,11 +553,16 @@ fn shopt_set_o(
                 }
             }
             Some('p') => out.push_str(&format_plus_o_line(variables, name)),
-            _ => out.push_str(&format_dash_o_line(variables, name)),
+            _ => {
+                // Naming options reports their state in the status too.
+                if !opts.is_empty() && !set_option_on(variables, var, *default) {
+                    status = 1;
+                }
+                out.push_str(&format_dash_o_line(variables, name));
+            }
         }
     }
     let mut result = ExecResult::ok(out);
-    result.stderr = err.into();
     result.exit_code = status;
     result
 }
@@ -579,9 +603,8 @@ impl Builtin for Shopt {
                 for ch in arg.chars().skip(1) {
                     match ch {
                         'o' => set_o = true,
-                        // -p combines with -s/-u (print those); keep the
-                        // action letter.
-                        'p' if matches!(mode, Some('s' | 'u')) => {}
+                        // -p combines with -s/-u/-q as a print request.
+                        'p' if mode.is_some() => {}
                         's' | 'u' | 'q' | 'p' => mode = Some(ch),
                         _ => {
                             return Ok(ExecResult::err(

@@ -1037,3 +1037,39 @@ FOO=bar jq -n '$ENV.FOO'
 ### expect
 "bar"
 ### end
+
+### jq_object_key_order_preserved
+# Real jq keeps object keys in input order (no implicit sort)
+echo '{"b":1,"a":2,"c":{"z":1,"y":2}}' | jq -c '.'
+### expect
+{"b":1,"a":2,"c":{"z":1,"y":2}}
+### end
+
+### jq_object_key_order_sort_keys
+# -S sorts keys recursively
+echo '{"b":1,"a":2,"c":{"z":1,"y":2}}' | jq -S -c '.'
+### expect
+{"a":2,"b":1,"c":{"y":2,"z":1}}
+### end
+
+### jq_object_key_order_del
+# del keeps the remaining keys in place
+echo '{"users":[1],"meta":{"x":1},"id":3}' | jq -c 'del(.meta)'
+### expect
+{"users":[1],"id":3}
+### end
+
+### jq_object_duplicate_key
+# Duplicate key: last value wins, first position kept
+echo '{"a":1,"b":2,"a":3}' | jq -c '.'
+### expect
+{"a":3,"b":2}
+### end
+
+### jq_argjson_key_order
+# --argjson and --slurpfile values keep key order too
+echo '{"z":1,"y":2}' > /tmp/kv.json
+jq -nc --argjson v '{"q":1,"p":2}' --slurpfile s /tmp/kv.json '[$v, $s]'
+### expect
+[{"q":1,"p":2},[{"z":1,"y":2}]]
+### end

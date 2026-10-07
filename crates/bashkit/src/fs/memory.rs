@@ -942,6 +942,28 @@ impl InMemoryFs {
         );
     }
 
+    /// Add a symlink whose parent already exists (synchronous, for the
+    /// read-only system layer). The target is stored, never followed.
+    pub(crate) fn add_symlink(&self, target: impl AsRef<Path>, link: impl AsRef<Path>) {
+        let link = Self::normalize_path(link.as_ref());
+        let target = target.as_ref().to_path_buf();
+        let mut entries = self.entries.write().unwrap_or_else(|e| e.into_inner());
+        let size = target.as_os_str().len() as u64;
+        entries.insert(
+            link,
+            FsEntry::Symlink {
+                target,
+                metadata: Metadata {
+                    file_type: FileType::Symlink,
+                    size,
+                    mode: 0o777,
+                    modified: SystemTime::now(),
+                    created: SystemTime::now(),
+                },
+            },
+        );
+    }
+
     /// Add a directory, creating parent directories as needed (synchronous,
     /// for initial setup).
     ///

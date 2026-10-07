@@ -457,8 +457,9 @@ const CASES: &[Case] = &[
     ),
     sandbox_only(
         "third_party_unavailable",
-        "try:\n    import requests\nexcept ImportError:\n    print('no requests')",
-        "no requests\n",
+        // requests/httpx are bashkit's own modules; other packages are absent.
+        "try:\n    import numpy\nexcept ImportError:\n    print('no numpy')",
+        "no numpy\n",
     ),
 ];
 

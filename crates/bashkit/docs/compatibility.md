@@ -54,7 +54,7 @@ for sandbox security reasons. See the compliance spec for details.
 | `test` | `-f`, `-d`, `-e`, `-z`, `-n`, `-eq`, `-ne`, `-lt`, `-gt`, `-le`, `-ge` | Conditionals |
 | `[` | (same as test) | Alias for test |
 | `export` | `VAR=value` | Export variables |
-| `read` | `VAR` | Read line into variable |
+| `read` | `VAR`, `-r`, `-a`, `-d`, `-n`, `-p`, `-s`, `-t` | Read a record; without `-r` backslashes escape and `\<newline>` continues; status 1 at end of input |
 | `set` | `-e`, `+e`, positional | Set options and positional params |
 | `unset` | `VAR` | Unset variable |
 | `shift` | `[N]` | Shift positional params |
@@ -183,7 +183,7 @@ Chrono's validated strftime implementation, plus GNU `%N`, `%3N`, `%6N`, and
 | `caller` | `[FRAME]` | Display call stack frame |
 | `mapfile` | `-n`, `-O`, `-s`, `-t`, `-d` | Read lines into array |
 | `readarray` | `-n`, `-O`, `-s`, `-t`, `-d` | Alias for mapfile |
-| `shopt` | `-s`, `-u`, `-q` | Shell options |
+| `shopt` | `-s`, `-u`, `-q`, `-p`, `-o` | Shell options; `-o` acts on `set -o` names |
 | `seq` | `[FIRST [INCR]] LAST` | Print number sequence |
 | `tac` | (none) | Reverse file lines |
 | `rev` | (none) | Reverse characters per line |
@@ -237,7 +237,7 @@ Chrono's validated strftime implementation, plus GNU `%N`, `%3N`, `%6N`, and
 | `>>` | ✅ | `cmd >> file` | Append to file |
 | `<` | ✅ | `cmd < file` | Input from file |
 | `<<<` | ✅ | `cmd <<< "string"` | Here-string |
-| `<<EOF` | ✅ | Heredoc | Multi-line input |
+| `<<EOF` | ✅ | Heredoc | Multi-line input; unquoted bodies expand `$`, `$( )`, backticks and `\$`/`` \` ``/`\\` escapes |
 | `2>` | ✅ | `cmd 2> file` | Stderr redirect |
 | `2>&1` | ✅ | `cmd 2>&1` | Stderr to stdout |
 | `&>` | ✅ | `cmd &> file` | Both to file |
@@ -282,6 +282,9 @@ Chrono's validated strftime implementation, plus GNU `%N`, `%3N`, `%6N`, and
 | `${var^^}` | ✅ | `${s^^}` | Uppercase all |
 | `${var,}` | ✅ | `${s,}` | Lowercase first |
 | `${var,,}` | ✅ | `${s,,}` | Lowercase all |
+| `${var^^pat}` | ✅ | `${s^^[aeiou]}` | Case change only for characters matching `pat` (also `^`, `,`, `,,`) |
+| `${var@op}` | ✅ | `${s@Q}` | Transform: `Q` quote, `E` escapes, `U`/`u`/`L` case, `A` assignment, `a` attributes |
+| `${arr[@]op}` | ✅ | `${a[@]/x/y}`, `${a[@]^^}`, `${a[@]@Q}` | Pattern, case and transform operators apply per element (also `${a[i]op}`, `$@`, `$*`) |
 
 ### Prefix Environment Assignments
 
@@ -318,7 +321,7 @@ Chrono's validated strftime implementation, plus GNU `%N`, `%3N`, `%6N`, and
 | `*`, `?` | ✅ | `*.txt` | Glob patterns |
 | `[abc]` | ✅ | `[0-9]` | Bracket globs |
 | `{a,b,c}` | ✅ | `{1..5}` | Brace expansion |
-| `~` | ✅ | `~/file` | Tilde expansion |
+| `~` | ✅ | `~/file`, `~+`, `~-` | Tilde expansion: HOME, PWD, OLDPWD |
 | `<(cmd)` | ✅ | `diff <(a) <(b)` | Process substitution |
 
 ---

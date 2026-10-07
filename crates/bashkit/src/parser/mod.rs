@@ -721,7 +721,7 @@ impl<'a> Parser<'a> {
                     let target = if quoted {
                         Word::quoted_literal(content)
                     } else {
-                        self.parse_word(content)
+                        self.parse_word(heredoc_body_escapes(&content))
                     };
                     let kind = if strip_tabs {
                         RedirectKind::HereDocStrip
@@ -2533,7 +2533,7 @@ impl<'a> Parser<'a> {
         let target = if quoted {
             Word::quoted_literal(content)
         } else {
-            self.parse_word(content)
+            self.parse_word(heredoc_body_escapes(&content))
         };
 
         let kind = if strip_tabs {
@@ -3200,10 +3200,15 @@ impl<'a> Parser<'a> {
                 if let Some(literal_ch) = chars.next() {
                     current.push(literal_ch);
                 }
-            } else if ch == '\u{1e}' {
-                in_quoted_segment = true;
-            } else if ch == '\u{1f}' {
-                in_quoted_segment = false;
+            } else if ch == '\u{1e}' || ch == '\u{1f}' {
+                // A quote boundary ends the literal run, so `part_quoted`
+                // records which literal text was quoted (brace expansion
+                // only sees unquoted literals).
+                let quoted = ch == '\u{1e}';
+                if quoted != in_quoted_segment && !current.is_empty() {
+                    push_part!(WordPart::Literal(std::mem::take(&mut current)));
+                }
+                in_quoted_segment = quoted;
             } else if ch == '$' {
                 // Flush current literal
                 if !current.is_empty() {
@@ -3490,6 +3495,10 @@ impl<'a> Parser<'a> {
                         }
 
                         // Check for array access ${arr[index]} or ${arr[@]:offset:length}
+                        // `${arr[i]OP...}` with a pattern/case/transform OP reuses the
+                        // scalar operator parsing below on the name `arr[i]`.
+                        let mut subscript_op = false;
+                        let had_subscript = chars.peek() == Some(&'[');
                         if chars.peek() == Some(&'[') {
                             chars.next(); // consume '['
                             let mut index = String::new();
@@ -3584,7 +3593,7 @@ impl<'a> Parser<'a> {
                                             chars.next();
                                         }
                                         push_part!(WordPart::ArraySlice {
-                                            name: var_name,
+                                            name: std::mem::take(&mut var_name),
                                             offset,
                                             length,
                                         });
@@ -3607,23 +3616,29 @@ impl<'a> Parser<'a> {
                                         operand,
                                         colon_variant: false,
                                     });
+                                } else if matches!(next_c, '#' | '%' | '/' | '^' | ',' | '@') {
+                                    var_name = format!("{}[{}]", var_name, index);
+                                    subscript_op = true;
                                 } else {
                                     // Plain array access ${arr[index]}
                                     if chars.peek() == Some(&'}') {
                                         chars.next();
                                     }
                                     push_part!(WordPart::ArrayAccess {
-                                        name: var_name,
+                                        name: std::mem::take(&mut var_name),
                                         index,
                                     });
                                 }
                             } else {
                                 push_part!(WordPart::ArrayAccess {
-                                    name: var_name,
+                                    name: std::mem::take(&mut var_name),
                                     index,
                                 });
                             }
-                        } else if let Some(&c) = chars.peek() {
+                        }
+                        if (!had_subscript || subscript_op)
+                            && let Some(&c) = chars.peek()
+                        {
                             // Check for operator
                             match c {
                                 ':' => {
@@ -3836,13 +3851,12 @@ impl<'a> Parser<'a> {
                                     } else {
                                         ParameterOp::UpperFirst
                                     };
-                                    if chars.peek() == Some(&'}') {
-                                        chars.next();
-                                    }
+                                    // `${v^^pat}`: only characters matching `pat`.
+                                    let operand = self.read_brace_operand(&mut chars);
                                     push_part!(WordPart::ParameterExpansion {
                                         name: var_name,
                                         operator: op,
-                                        operand: String::new(),
+                                        operand,
                                         colon_variant: false,
                                     });
                                 }
@@ -3854,13 +3868,12 @@ impl<'a> Parser<'a> {
                                     } else {
                                         ParameterOp::LowerFirst
                                     };
-                                    if chars.peek() == Some(&'}') {
-                                        chars.next();
-                                    }
+                                    // `${v^^pat}`: only characters matching `pat`.
+                                    let operand = self.read_brace_operand(&mut chars);
                                     push_part!(WordPart::ParameterExpansion {
                                         name: var_name,
                                         operator: op,
-                                        operand: String::new(),
+                                        operand,
                                         colon_variant: false,
                                     });
                                 }
@@ -3901,7 +3914,7 @@ impl<'a> Parser<'a> {
                                     }
                                 }
                             }
-                        } else if !var_name.is_empty() {
+                        } else if !had_subscript && !var_name.is_empty() {
                             push_part!(WordPart::Variable(var_name));
                         }
                     }
@@ -4097,6 +4110,80 @@ pub(crate) fn unescape_glob_literal(s: &str) -> String {
             continue;
         }
         out.push(ch);
+    }
+    out
+}
+
+/// Backslash handling in an unquoted heredoc body, as in double quotes but
+/// without `"`: `\$`, `` \` `` and `\\` become literal characters (NUL
+/// sentinel for `parse_word`), `\<newline>` joins lines, and any other
+/// backslash is kept. Text inside `$(...)`, `${...}` and `$((...))` is copied
+/// for its own parser (only `\<newline>` is removed); backticks become
+/// `$(...)`.
+fn heredoc_body_escapes(content: &str) -> String {
+    if !content.contains(['\\', '`']) {
+        return content.to_string();
+    }
+    let mut out = String::with_capacity(content.len());
+    let mut chars = content.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => match chars.peek() {
+                Some('$' | '`' | '\\') => {
+                    out.push('\x00');
+                    out.push(chars.next().unwrap_or_default());
+                }
+                Some('\n') => {
+                    chars.next();
+                }
+                _ => out.push('\\'),
+            },
+            '$' if matches!(chars.peek(), Some('(' | '{')) => {
+                out.push('$');
+                let open = chars.next().unwrap_or_default();
+                out.push(open);
+                let close = if open == '(' { ')' } else { '}' };
+                let mut depth = 1usize;
+                while let Some(ch) = chars.next() {
+                    if ch == '\\' && chars.peek() == Some(&'\n') {
+                        chars.next();
+                        continue;
+                    }
+                    out.push(ch);
+                    if ch == '\\' {
+                        if let Some(n) = chars.next() {
+                            out.push(n);
+                        }
+                    } else if ch == open {
+                        depth += 1;
+                    } else if ch == close {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                }
+            }
+            // `cmd` is command substitution, as `$(cmd)`; inside it `\``,
+            // `\$` and `\\` lose their backslash.
+            '`' => {
+                out.push_str("$(");
+                while let Some(ch) = chars.next() {
+                    match ch {
+                        '`' => break,
+                        '\\' if matches!(chars.peek(), Some('`' | '$' | '\\')) => {
+                            out.push(chars.next().unwrap_or_default());
+                        }
+                        '\\' if chars.peek() == Some(&'\n') => {
+                            chars.next();
+                        }
+                        _ => out.push(ch),
+                    }
+                }
+                out.push(')');
+            }
+            _ => out.push(c),
+        }
     }
     out
 }

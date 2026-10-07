@@ -56,7 +56,7 @@ return a value. Scripts written by people and agents expect a Python
 | | Monty (`python` feature) | CPython (`cpython` feature) |
 |---|---|---|
 | Language | Subset (no classes, limited stdlib) | Full Python 3.14 |
-| Stdlib | `math`, `pathlib`, `os.getenv`, `sys`, `typing`, ... | Full pure-Python stdlib plus `json`, `re`, `csv`, `sqlite3`, `zlib`, `hashlib`, `decimal`, `datetime`, `asyncio`, ... |
+| Stdlib | `math`, `pathlib`, `os.getenv`, `sys`, `typing`, ... | Pure-Python stdlib for scripts (see [Limitations](#limitations)) plus `json`, `re`, `csv`, `sqlite3`, `zlib`, `hashlib`, `decimal`, `datetime`, `asyncio`, ... |
 | CLI | `-c`, file, `-` | `-c`, `-m`, file, directory with `__main__.py`, `-`, stdin, `-x`, `-W`, `-V`, `-h` |
 | Errors | Monty-specific text | CPython tracebacks, exit codes, `sys.exit` semantics |
 | Isolation | In-process Rust interpreter | WebAssembly sandbox (memory-safe boundary), fresh instance per call |
@@ -149,7 +149,44 @@ with urllib.request.urlopen("https://api.example.com/v1/items") as r:
 - `CPythonLimits::max_http_requests` caps requests per call (default
   100); a request's timeout never outlasts the call's deadline.
 
-`requests` and `httpx` are not bundled yet.
+### `requests` and `httpx`
+
+`import requests`, `import httpx` and `import httpx2` work out of the box.
+They are Bashkit's own compact implementations of the common API, written
+on top of the same host bridge (not the upstream packages, which take
+seconds to import in the sandbox). They are preloaded in the snapshot, so
+importing them costs nothing.
+
+```python
+import requests
+r = requests.get("https://api.example.com/v1/items", params={"page": 2}, timeout=5)
+r.raise_for_status()
+print(r.json())
+
+import httpx
+with httpx.Client(base_url="https://api.example.com", headers={"X-Key": "..."}) as c:
+    print(c.post("/v1/items", json={"name": "a"}).status_code)
+```
+
+- **requests**: `get`/`post`/`put`/`patch`/`delete`/`head`/`request`,
+  `Session` (headers, params, auth, cookies, hooks), `params`, `data`,
+  `json`, `files` (multipart), `headers`, `cookies`, basic `auth`,
+  `timeout`, `allow_redirects`; `Response` with `status_code`, `ok`,
+  `reason`, `headers`, `content`, `text`, `json()`, `url`, `history`,
+  `links`, `iter_content`/`iter_lines`, `raise_for_status()`; the upstream
+  exception classes (`ConnectionError`, `ReadTimeout`, `HTTPError`, ...).
+- **httpx** (and `httpx2`, the same module): the verb functions and
+  `stream()`, `Client` and `AsyncClient` (`base_url`, `headers`, `params`,
+  `cookies`, `auth`, `timeout`, `follow_redirects`, `event_hooks`,
+  `transport=httpx.MockTransport(...)`), `Response`, `URL`, `Headers`,
+  `QueryParams`, `Cookies`, `Timeout`, `BasicAuth`, `codes` and the
+  upstream exception classes. As in httpx, redirects are not followed
+  unless `follow_redirects=True`.
+- Not supported: retries (`HTTPAdapter(max_retries=...)` is accepted and
+  ignored), proxies, client certificates, HTTP/2, `OPTIONS` (not an allowed
+  method), digest auth, streaming uploads. Bodies are buffered, so
+  `stream=True` and `iter_*` walk a body that is already complete.
+  `AsyncClient` requests run one at a time.
 
 ## Limitations
 
@@ -160,17 +197,25 @@ with urllib.request.urlopen("https://api.example.com/v1/items") as r:
 - **No threads**: `threading.Thread.start()` raises `RuntimeError`;
   `multiprocessing` and `concurrent.futures.ProcessPoolExecutor` are absent.
   `asyncio` works.
-- **No native extensions or pip**: only the bundled stdlib. `ctypes`,
-  `numpy`, `requests` and other third-party packages are unavailable; `ssl`,
+- **No native extensions or pip**: only the bundled stdlib (plus Bashkit's
+  own `requests`/`httpx`, see [HTTP](#http)). `ctypes`, `numpy` and other
+  third-party packages are unavailable; `ssl`,
   `_hashlib` (OpenSSL), `tkinter`, `curses`, `readline`, `dbm.gnu` are not
   built. `hashlib` still provides md5, sha1, sha2, sha3 and blake2.
 - **No interactive mode**: `python3` with no program reads one from stdin;
-  there is no REPL, and `pdb` and `pydoc` (`help()`) are not shipped.
+  there is no REPL, `pydoc` (`help()`) is not shipped, and `breakpoint()`
+  prints a notice and continues (no debugger).
 - **Stdlib is bytecode only**: tracebacks through stdlib code show no source
   line, and `inspect.getsource()` fails on stdlib objects. Your own code
   keeps full tracebacks. Non-HTTP network clients and servers (`smtplib`,
   `ftplib`, `http.server`, `xmlrpc`, ...) are not shipped since the guest has
   no sockets.
+- **Trimmed for scripts**: the stdlib targets agents running file-processing
+  and glue scripts. Test, profiling and packaging tools (`unittest`,
+  `doctest`, `cProfile`, `profile`, `trace`, `compileall`, `zipapp`, ...),
+  `dbm`/`shelve`, `plistlib`, `wave`, `netrc`, `cmd`, `tty`/`pty`, and
+  `bz2`/`lzma`/`compression.zstd` (no C codec in the guest) are not
+  shipped. `gzip`, `zipfile` (deflate) and `tarfile` (plain or gzip) work.
 - **Symlinks are not followed**, like everywhere in the Bashkit VFS.
 - **`errno` numbers are WASI's** (`ENOENT` is 44, not 2). Exception types
   (`FileNotFoundError`, ...) and messages are correct; code comparing
@@ -207,7 +252,7 @@ Nothing is compiled at run time with either option.
 
 The `cpython` feature adds about 45 MB to a binary: the precompiled
 interpreter snapshot (~41 MB, mostly the pre-initialized 40 MB heap image so
-it can be mapped copy-on-write) and the zipped stdlib bytecode (~3.5 MB) are embedded,
+it can be mapped copy-on-write) and the zipped stdlib bytecode (~3.2 MB) are embedded,
 plus the Wasmtime runtime. Pages are mapped on demand, so resident memory per
 process is far smaller.
 

@@ -114,16 +114,31 @@ impl Interpreter {
 
     /// Apply a `${var@operator}` transformation.
     pub(super) fn apply_transformation(&self, name: &str, operator: char) -> String {
-        let value = self.expand_variable(name);
+        // `${a[@]@Q}`, `${@@U}`: value transforms apply to each element.
+        if matches!(operator, 'Q' | 'E' | 'P' | 'u' | 'U' | 'L')
+            && let Some(elems) = self.resolve_param_expansion_elements(name)
+        {
+            // THREAT[TM-DOS]: same output cap as per-element pattern ops.
+            let mut out = String::new();
+            for v in &elems {
+                let t = Self::transform_value(v, operator);
+                if out.len().saturating_add(t.len() + 1) > Self::MAX_EXPANSION_RESULT_BYTES {
+                    return elems.join(" ");
+                }
+                if !out.is_empty() {
+                    out.push(' ');
+                }
+                out.push_str(&t);
+            }
+            return out;
+        }
+        let value = if name.contains('[') {
+            self.resolve_param_expansion_name(name).1
+        } else {
+            self.expand_variable(name)
+        };
         match operator {
-            'Q' => format!("'{}'", value.replace('\'', "'\\''")),
-            'E' => value
-                .replace("\\n", "\n")
-                .replace("\\t", "\t")
-                .replace("\\\\", "\\"),
-            'P' => value.clone(),
             'A' => format!("{}='{}'", name, value.replace('\'', "'\\''")),
-            'K' => value.clone(),
             'a' => {
                 let mut attrs = String::new();
                 if self.is_var_readonly(name) {
@@ -134,19 +149,28 @@ impl Interpreter {
                 }
                 attrs
             }
-            'u' | 'U' => {
-                if operator == 'U' {
-                    value.to_uppercase()
-                } else {
-                    let mut chars = value.chars();
-                    match chars.next() {
-                        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
-                        None => String::new(),
-                    }
+            _ => Self::transform_value(&value, operator),
+        }
+    }
+
+    /// The `${v@op}` transforms that depend only on the value.
+    fn transform_value(value: &str, operator: char) -> String {
+        match operator {
+            'Q' => format!("'{}'", value.replace('\'', "'\\''")),
+            'E' => value
+                .replace("\\n", "\n")
+                .replace("\\t", "\t")
+                .replace("\\\\", "\\"),
+            'U' => value.to_uppercase(),
+            'u' => {
+                let mut chars = value.chars();
+                match chars.next() {
+                    Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                    None => String::new(),
                 }
             }
             'L' => value.to_lowercase(),
-            _ => value.clone(),
+            _ => value.to_string(),
         }
     }
 
@@ -184,7 +208,7 @@ impl Interpreter {
     fn needs_glob_escape(ch: char) -> bool {
         matches!(
             ch,
-            '\\' | '*' | '?' | '[' | ']' | '{' | '}' | '@' | '!' | '+' | '(' | ')' | '|'
+            '\\' | '*' | '?' | '[' | ']' | '{' | '}' | ',' | '@' | '!' | '+' | '(' | ')' | '|'
         )
     }
 
@@ -258,21 +282,43 @@ impl Interpreter {
                 }
                 WordPart::Literal(s) => {
                     // Tilde expansion: ~ at start of word expands to $HOME
-                    if is_first_part && s.starts_with('~') {
-                        let home = self
-                            .env
-                            .get("HOME")
-                            .or_else(|| self.scoped.variables.get("HOME"))
-                            .cloned()
-                            .unwrap_or_else(|| "/home/user".to_string());
-
-                        if s == "~" {
-                            result.push_str(&home);
-                        } else if s.starts_with("~/") {
-                            result.push_str(&home);
-                            result.push_str(&s[1..]);
-                        } else {
-                            result.push_str(s);
+                    // A fully quoted word (`"~"`, `'~'`) keeps its tilde.
+                    let tilde_ok = !word.quoted
+                        || (word.has_unquoted_glob && word.part_quoted.first() == Some(&false));
+                    if is_first_part && tilde_ok && s.starts_with('~') {
+                        // Tilde prefix runs to the first `/`: `~` is HOME,
+                        // `~+` PWD, `~-` OLDPWD (literal when unset).
+                        let (prefix, rest) = match s.find('/') {
+                            Some(i) => (&s[1..i], &s[i..]),
+                            None => (&s[1..], ""),
+                        };
+                        let lookup = |name: &str| {
+                            self.scoped
+                                .variables
+                                .get(name)
+                                .or_else(|| self.env.get(name))
+                                .cloned()
+                        };
+                        let dir = match prefix {
+                            "" => Some(
+                                self.env
+                                    .get("HOME")
+                                    .or_else(|| self.scoped.variables.get("HOME"))
+                                    .cloned()
+                                    .unwrap_or_else(|| "/home/user".to_string()),
+                            ),
+                            "+" => Some(
+                                lookup("PWD").unwrap_or_else(|| self.cwd.display().to_string()),
+                            ),
+                            "-" => lookup("OLDPWD"),
+                            _ => None,
+                        };
+                        match dir {
+                            Some(dir) => {
+                                result.push_str(&dir);
+                                result.push_str(rest);
+                            }
+                            None => result.push_str(s),
                         }
                     } else {
                         result.push_str(s);
@@ -623,6 +669,20 @@ impl Interpreter {
                         return Ok(vec![values.join(&sep)]);
                     }
                     return Ok(values);
+                }
+                // "${a[@]/x/y}", "${@^}", "${a[@]@Q}": one field per element.
+                if let Some((elems, star)) = self.elementwise_fields(&word.parts[0]) {
+                    if word.quoted {
+                        if star {
+                            return Ok(vec![elems.join(&self.get_ifs_separator())]);
+                        }
+                        return Ok(elems);
+                    }
+                    let mut fields = Vec::new();
+                    for e in &elems {
+                        fields.extend(self.ifs_split(e)?);
+                    }
+                    return Ok(fields);
                 }
                 // "${!arr[@]}" - array keys/indices as separate fields
                 if let WordPart::ArrayIndices(name) = &word.parts[0] {
@@ -1272,16 +1332,62 @@ impl Interpreter {
     ///
     /// Extracted from the async `expand_word_inner` path to keep `Vec<String>`
     /// locals off the async state machine (prevents stack overflow at depth 32).
-    pub(super) fn apply_param_op_maybe_per_element(
-        &mut self,
-        value: &str,
-        name: &str,
-        operator: &ParameterOp,
-        operand: &str,
-        colon_variant: bool,
-        is_set: bool,
-    ) -> String {
-        let needs_per_element = matches!(
+    /// Per-element results of a pattern, case or transform operator applied
+    /// to `@`, `*`, `a[@]` or `a[*]`, plus whether the subscript was `*`.
+    /// Sync so the async field expansion keeps its small state machine.
+    fn elementwise_fields(&mut self, part: &WordPart) -> Option<(Vec<String>, bool)> {
+        let (name, results) = match part {
+            WordPart::ParameterExpansion {
+                name,
+                operator,
+                operand,
+                colon_variant,
+            } if Self::is_elementwise_op(operator) => {
+                let elems = self.resolve_param_expansion_elements(name)?;
+                let (is_set, _) = self.resolve_param_expansion_name(name);
+                let mut out = Vec::with_capacity(elems.len());
+                let mut total = 0usize;
+                for elem in &elems {
+                    let r = self.apply_parameter_op(
+                        elem,
+                        name,
+                        operator,
+                        operand,
+                        *colon_variant,
+                        is_set,
+                    );
+                    // THREAT[TM-DOS]: same cap as the joined per-element path.
+                    total = total.saturating_add(r.len() + 1);
+                    if total > Self::MAX_EXPANSION_RESULT_BYTES {
+                        return None;
+                    }
+                    out.push(r);
+                }
+                (name, out)
+            }
+            WordPart::Transformation { name, operator }
+                if matches!(operator, 'Q' | 'E' | 'P' | 'u' | 'U' | 'L') =>
+            {
+                let elems = self.resolve_param_expansion_elements(name)?;
+                let mut out = Vec::with_capacity(elems.len());
+                let mut total = 0usize;
+                for elem in &elems {
+                    let r = Self::transform_value(elem, *operator);
+                    total = total.saturating_add(r.len() + 1);
+                    if total > Self::MAX_EXPANSION_RESULT_BYTES {
+                        return None;
+                    }
+                    out.push(r);
+                }
+                (name, out)
+            }
+            _ => return None,
+        };
+        Some((results, name == "*" || name.ends_with("[*]")))
+    }
+
+    fn is_elementwise_op(operator: &ParameterOp) -> bool {
+        matches!(
             operator,
             ParameterOp::RemovePrefixShort
                 | ParameterOp::RemovePrefixLong
@@ -1293,7 +1399,19 @@ impl Interpreter {
                 | ParameterOp::UpperAll
                 | ParameterOp::LowerFirst
                 | ParameterOp::LowerAll
-        );
+        )
+    }
+
+    pub(super) fn apply_param_op_maybe_per_element(
+        &mut self,
+        value: &str,
+        name: &str,
+        operator: &ParameterOp,
+        operand: &str,
+        colon_variant: bool,
+        is_set: bool,
+    ) -> String {
+        let needs_per_element = Self::is_elementwise_op(operator);
         if needs_per_element && let Some(elems) = self.resolve_param_expansion_elements(name) {
             let mut result = String::new();
             for elem in &elems {
@@ -1420,31 +1538,36 @@ impl Interpreter {
                 let expanded_pat = self.expand_replace_pattern(pattern);
                 self.replace_pattern(value, &expanded_pat, &expanded_rep, true)
             }
-            ParameterOp::UpperFirst => {
-                // ${var^} - uppercase first character
-                let mut chars = value.chars();
-                match chars.next() {
-                    Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
-                    None => String::new(),
-                }
-            }
-            ParameterOp::UpperAll => {
-                // ${var^^} - uppercase all characters
-                value.to_uppercase()
-            }
-            ParameterOp::LowerFirst => {
-                // ${var,} - lowercase first character
-                let mut chars = value.chars();
-                match chars.next() {
-                    Some(first) => first.to_lowercase().collect::<String>() + chars.as_str(),
-                    None => String::new(),
-                }
-            }
-            ParameterOp::LowerAll => {
-                // ${var,,} - lowercase all characters
-                value.to_lowercase()
+            ParameterOp::UpperFirst => self.change_case(value, operand, true, false),
+            ParameterOp::UpperAll => self.change_case(value, operand, true, true),
+            ParameterOp::LowerFirst => self.change_case(value, operand, false, false),
+            ParameterOp::LowerAll => self.change_case(value, operand, false, true),
+        }
+    }
+
+    /// `${v^pat}`, `${v^^pat}`, `${v,pat}`, `${v,,pat}`: change the case of
+    /// the first (or every) character that matches `pat` on its own. An empty
+    /// pattern matches any character, as in bash.
+    fn change_case(&mut self, value: &str, operand: &str, upper: bool, all: bool) -> String {
+        let pattern = if operand.is_empty() {
+            String::new()
+        } else {
+            self.expand_pattern_operand(operand)
+        };
+        let mut out = String::with_capacity(value.len());
+        let mut buf = [0u8; 4];
+        for (i, ch) in value.chars().enumerate() {
+            let selected = (all || i == 0)
+                && (pattern.is_empty() || self.pattern_matches(ch.encode_utf8(&mut buf), &pattern));
+            if !selected {
+                out.push(ch);
+            } else if upper {
+                out.extend(ch.to_uppercase());
+            } else {
+                out.extend(ch.to_lowercase());
             }
         }
+        out
     }
 
     /// Replace pattern in value

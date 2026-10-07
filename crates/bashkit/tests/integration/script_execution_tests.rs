@@ -233,7 +233,7 @@ async fn command_not_found_sandbox_hint() {
     assert_eq!(result.exit_code, 127);
     assert!(result.stderr.contains("Package managers"));
 
-    let result = bash.exec("sudo ls").await.unwrap();
+    let result = bash.exec("doas ls").await.unwrap();
     assert_eq!(result.exit_code, 127);
     assert!(result.stderr.contains("privilege"));
 

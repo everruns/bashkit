@@ -3,5 +3,5 @@ wasi_sdk=24
 wasmtime_wizer=49.0.1
 zlib=1.3.1
 sqlite=sqlite-amalgamation-3500400
-8cbd501c5b6e0f73d986be9b5bf48f4f0f28d40ef83774e666ffbb854758b0a8  python.wasm.gz
-abf5df19ec01bb180672e94b816711fc03dfd92e109b94fc10e5399523bb464c  python314.zip
+93b66c1e1357a3b77481fee8e14448b55ca83a0dec4b05ec0284b33b58099b75  python.wasm.xz
+a2fbfc15b11fe851fffe3a84369f4d8c73992904ea23bbc045d89373737e15ea  python314.zip

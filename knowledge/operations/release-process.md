@@ -82,7 +82,7 @@ silently failed.
    `cargo publish` packaging step, missing files, version drift):
    - `cargo publish --dry-run -p bashkit-cpython-wasm` must succeed and the
      `.crate` must stay under crates.io's 10 MiB limit (it embeds the CPython
-     snapshot; ~9.5 MiB as of 0.18). `bashkit` depends on the same version
+     snapshot as xz; ~7.8 MiB with requests/httpx and urllib.request preloaded). `bashkit` depends on the same version
      of it, so `publish.yml` publishes it first and the `bashkit` dry-run only
      resolves once that version is live.
    - `cargo publish --dry-run -p bashkit` must succeed. Package

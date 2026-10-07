@@ -32,6 +32,20 @@ Malformed quoting is rejected by the boundary with a stable jq-shaped error.
 Controls outside strings remain untouched, so only JSON whitespace is accepted
 there by the strict parser.
 
+## Object key order
+
+Real jq keeps object keys in input order and only sorts under `-S`. The jq
+builtin therefore never routes JSON through `serde_json::Value`, whose map is
+sorted unless the crate-wide `preserve_order` feature is on (flipping it would
+change every other `serde_json` user in the workspace). Instead
+`convert::parse_json_stream` and `convert::parse_json_value` deserialize
+straight into `JqJson` with a depth-tracking `DeserializeSeed`, keeping keys as
+an ordered `Vec`. A duplicate key keeps its first position and takes the last
+value, matching jq. This covers main input, `--slurpfile`, `--argjson`,
+`--jsonargs` and `$ARGS`. `$ENV`/`env` stay sorted by name for determinism.
+The nesting cap (TM-DOS-027) is enforced while reading; a depth violation is
+reported verbatim, not as a generic parse error.
+
 ## Resource accounting
 
 Normalization is a bounded single pass. It charges input length to the shared
@@ -47,6 +61,8 @@ lease remains live until strict parsing finishes (TM-DOS-100).
 escapes, structural controls, NDJSON/concatenated values, malformed quoting,
 stdin/file/slurpfile paths, exact work/live-memory boundaries, debug-leak
 invariants, and differential filter/output semantics against real jq.
+`spec_cases/jq/jq.test.sh` `jq_object_key_order_*` cases pin key order for
+input, `del`, duplicate keys, `-S`, `--argjson` and `--slurpfile`.
 `builtins::json::tests::literal_control_in_string_remains_invalid_json` proves
 the exception does not cross into the strict `json` builtin.
 

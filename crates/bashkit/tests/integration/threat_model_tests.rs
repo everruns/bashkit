@@ -1016,11 +1016,20 @@ echo "$PRIVATE_KEY"
         // These should not expose host information
         // /proc and /etc hold only synthetic files (checked below).
         let listing = bash.exec("ls /proc").await.unwrap();
-        assert_eq!(listing.stdout, "cpuinfo\nloadavg\nmeminfo\nsys\nversion\n");
+        assert_eq!(
+            listing.stdout,
+            "1\ncpuinfo\nloadavg\nmeminfo\nmounts\nself\nsys\nuptime\nversion\n"
+        );
+        // The shell's own process view is static and synthetic.
+        let own = bash
+            .exec("cat /proc/self/cmdline | tr '\\0' ' '; readlink /proc/self/exe; grep ^Uid /proc/1/status")
+            .await
+            .unwrap();
+        assert_eq!(own.stdout, "bash /bin/bash\nUid:\t1000\t1000\t1000\t1000\n");
         let probes = vec![
             "cat /proc/self/environ 2>/dev/null",
-            "cat /proc/self/cmdline 2>/dev/null",
             "cat /proc/1/environ 2>/dev/null",
+            "ls /proc/2 2>/dev/null",
             "cat /etc/shadow 2>/dev/null",
         ];
 
