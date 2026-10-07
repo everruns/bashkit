@@ -25,7 +25,7 @@
     "@everruns/bashkit-wasm": "0.17.1",
     "@xterm/addon-fit": "0.11.0",
     "@xterm/xterm": "6.0.0",
-    "asciinema-player": "3.10.0",
+    "asciinema-player": "3.17.0",
     "astro": "^7.3.5",
     "rehype-autolink-headings": "^7.1.0",
     "rehype-slug": "^6.0.0"
@@ -34,7 +34,7 @@
     "@astrojs/check": "^0.9.10",
     "@types/node": "^26.6.4",
     "typescript": "^7.0.2",
-    "wrangler": "^4.146.0"
+    "wrangler": "^4.147.0"
   },
   "pnpm": {
     "overrides": {
