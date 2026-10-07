@@ -1,0 +1,16 @@
+# Bashkit adapter for the pseudo-linus Debian-oracle test bench.
+#
+# Not a bashkit workspace member: `run.sh` copies this crate into a pinned
+# pseudo-linus checkout (testbench/crates/bk-oracle) and points the bashkit
+# dependency at this repository, because it links the bench's `harness` crate.
+[package]
+name = "bk-oracle"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+harness = { workspace = true }
+anyhow = "1"
+tokio = { version = "1", features = ["rt", "time"] }
+bashkit = { path = "@BASHKIT@", features = ["jq", "git", "sqlite"] }

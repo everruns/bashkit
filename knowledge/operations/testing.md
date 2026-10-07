@@ -315,6 +315,32 @@ Do not re-import over existing files; fix cases in place. If an intentional
 divergence is found, switch the case to `### bash_diff` with a canonical `L-*`
 row in [Known Limitations](limitations.md).
 
+## Debian-Oracle Scoreboard
+
+`scripts/debian-oracle/run.sh` (`just debian-oracle`) runs the
+[pseudo-linus](https://github.com/JoaoHenriqueBarbosa/pseudo-linus) test bench
+(MIT) against Bashkit: about 9,600 command cases across 45 tools (awk, jq,
+sed, grep, coreutils, ...) whose stdout, stderr, exit status and final file
+tree were recorded on real Debian. The adapter in
+`scripts/debian-oracle/adapter/` loads each fixture into the in-memory
+filesystem and compares with the bench's own `harness::compare_outcome`.
+
+- **Fetched, not vendored.** Parts of the bench corpus derive from GPL test
+  suites (GNU grep/sed), so the script clones it at a pinned commit
+  (`PSEUDO_LINUS_REV`) into `target/debian-oracle/` at run time. Bump the pin
+  deliberately and refresh floors in the same change.
+- **Floors.** `scripts/debian-oracle/floors.tsv` holds each tool's minimum
+  lenient pass count. The run fails when a tool drops more than one case below
+  its floor (one case of slack for wall-clock timeouts). After a fix raises a
+  score, run `scripts/debian-oracle/run.sh --update-floors` and commit the
+  floors so the gain is locked in.
+- **CI.** `.github/workflows/debian-oracle.yml` runs on PRs touching
+  builtins, the interpreter or the scoreboard, weekly, and on demand. The
+  table goes to the job summary; failing cases are uploaded as an artifact.
+- Goldens come from Debian's tool versions (jq 1.7.1, GNU grep 3.11, gawk);
+  version-specific gaps (Bashkit targets jq 1.8) stay as failures rather than
+  being special-cased.
+
 ## SQLite CLI Differential Tests
 
 CSV comparisons explicitly set the host CLI row separator to LF. SQLite

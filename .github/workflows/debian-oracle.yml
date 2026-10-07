@@ -1,0 +1,62 @@
+name: Debian Oracle Scoreboard
+
+# Runs the pseudo-linus Debian-oracle bench (fetched at a pinned commit, see
+# scripts/debian-oracle/run.sh) and fails when a tool's score drops below
+# scripts/debian-oracle/floors.tsv. Scores go to the job summary. See
+# knowledge/operations/testing.md "Debian-Oracle Scoreboard".
+
+on:
+  pull_request:
+    paths:
+      - 'crates/bashkit/src/builtins/**'
+      - 'crates/bashkit/src/interpreter/**'
+      - 'crates/bashkit/src/parser/**'
+      - 'crates/bashkit/src/fs/**'
+      - 'crates/jaq-json/**'
+      - 'scripts/debian-oracle/**'
+      - '.github/workflows/debian-oracle.yml'
+  schedule:
+    # Weekly Mondays 06:00 UTC.
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: debian-oracle-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  scoreboard:
+    name: Debian oracle scoreboard
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: target/debian-oracle/pseudo-linus/testbench -> ../../target
+
+      - name: Run scoreboard
+        run: scripts/debian-oracle/run.sh
+
+      - name: Upload failing cases
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: debian-oracle-fails
+          path: |
+            target/debian-oracle/fails.txt
+            target/debian-oracle/report.md
+          if-no-files-found: ignore

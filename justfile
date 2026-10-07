@@ -217,6 +217,12 @@ run-script file *args:
 
 # === Benchmarks ===
 
+# Debian-oracle scoreboard (pseudo-linus bench, fetched at a pinned commit).
+# Fails on a regression below scripts/debian-oracle/floors.tsv; pass
+# --update-floors after a fix raises a score. Optional TOOL args narrow the run.
+debian-oracle *ARGS:
+    scripts/debian-oracle/run.sh {{ARGS}}
+
 # Run benchmarks comparing bashkit to bash and save site-indexed JSON/Markdown results
 bench:
     cargo run -p bashkit-bench --release -- --save
