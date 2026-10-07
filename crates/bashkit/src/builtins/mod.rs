@@ -62,6 +62,7 @@ mod fc;
 mod fileops;
 mod find;
 mod flow;
+mod fmt;
 mod fold;
 mod generated;
 mod glob_cmd;
@@ -196,6 +197,7 @@ pub use fc::Fc;
 pub use fileops::{Chmod, Chown, Cp, Ln, Mkdir, Mktemp, Mv, Rm, Touch};
 pub use find::Find;
 pub use flow::{Break, Colon, Continue, Exit, False, Return, True};
+pub use fmt::Fmt;
 pub use fold::Fold;
 pub use glob_cmd::GlobCmd;
 pub use grep::Grep;
@@ -2059,6 +2061,7 @@ mod tests {
             "column",
             "join",
             "split",
+            "fmt",
             "fold",
             "expand",
             "unexpand",
