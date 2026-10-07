@@ -422,6 +422,19 @@ impl Interpreter {
                     name,
                     offset,
                     length,
+                } if name == "@" || name == "*" => {
+                    let items = self.positional_slice(offset, length.as_deref());
+                    let sep = if name == "*" {
+                        self.get_ifs_separator()
+                    } else {
+                        " ".to_string()
+                    };
+                    Self::append_expansion_for_word(&mut result, word, &items.join(&sep));
+                }
+                WordPart::Substring {
+                    name,
+                    offset,
+                    length,
                 } => {
                     let value = self.expand_variable(name);
                     let char_count = value.chars().count();
@@ -1457,9 +1470,46 @@ impl Interpreter {
                 }
                 (name, out)
             }
+            WordPart::Substring {
+                name,
+                offset,
+                length,
+            } if name == "@" || name == "*" => {
+                let items = self.positional_slice(offset, length.as_deref());
+                (name, items)
+            }
             _ => return None,
         };
         Some((results, name == "*" || name.ends_with("[*]")))
+    }
+
+    /// `${@:offset:length}`: positional parameters counted from `$0`
+    /// (offset 0 includes it); a negative offset counts back from the last.
+    fn positional_slice(&mut self, offset: &str, length: Option<&str>) -> Vec<String> {
+        let positional = self
+            .call_stack
+            .last()
+            .map(|f| f.positional.clone())
+            .unwrap_or_default();
+        let mut all = Vec::with_capacity(positional.len() + 1);
+        all.push(self.expand_variable("0"));
+        all.extend(positional);
+        let off = self.evaluate_arithmetic(offset);
+        let start = if off < 0 {
+            let back = usize::try_from(off.unsigned_abs()).unwrap_or(usize::MAX);
+            match all.len().checked_sub(back) {
+                Some(s) => s,
+                None => return Vec::new(),
+            }
+        } else {
+            usize::try_from(off).unwrap_or(usize::MAX).min(all.len())
+        };
+        let mut items: Vec<String> = all.into_iter().skip(start).collect();
+        if let Some(len) = length {
+            let n = self.evaluate_arithmetic(len);
+            items.truncate(usize::try_from(n.max(0)).unwrap_or(usize::MAX));
+        }
+        items
     }
 
     fn is_elementwise_op(operator: &ParameterOp) -> bool {

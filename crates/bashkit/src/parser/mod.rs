@@ -2661,7 +2661,7 @@ impl<'a> Parser<'a> {
         let mut target = if quoted {
             Word::quoted_literal(content.clone())
         } else {
-            self.parse_word(content.clone())
+            self.parse_word(heredoc_body_escapes(&content))
         };
         target.raw = Some(content);
 
@@ -3570,7 +3570,12 @@ impl<'a> Parser<'a> {
                             if chars.peek() == Some(&'}') {
                                 chars.next();
                             }
-                            push_part!(WordPart::Length(var_name));
+                            if var_name.is_empty() {
+                                // `${#}` is `$#`, not a length.
+                                push_part!(WordPart::Variable("#".to_string()));
+                            } else {
+                                push_part!(WordPart::Length(var_name));
+                            }
                         }
                     } else if chars.peek() == Some(&'!') {
                         // Check for ${!arr[@]} or ${!arr[*]} - array indices
@@ -3708,10 +3713,11 @@ impl<'a> Parser<'a> {
                             }
                         }
 
-                        // Handle special parameters: ${@...}, ${*...}
+                        // Handle special parameters: ${@...}, ${*...}, ${-...},
+                        // ${?...}, ${$...}
                         if var_name.is_empty()
                             && let Some(&c) = chars.peek()
-                            && matches!(c, '@' | '*')
+                            && matches!(c, '@' | '*' | '-' | '?' | '$')
                         {
                             var_name.push(chars.next().unwrap());
                         }
@@ -4405,6 +4411,80 @@ fn split_arith_for_parts(body: &str) -> Vec<String> {
 /// `(( ... ))` like `let "..."`).
 pub(crate) fn arith_exec_text(raw: &str) -> String {
     raw.trim().chars().filter(|&c| c != '"').collect()
+}
+
+/// Backslash handling in an unquoted heredoc body, as in double quotes but
+/// without `"`: `\$`, `` \` `` and `\\` become literal characters (NUL
+/// sentinel for `parse_word`), `\<newline>` joins lines, and any other
+/// backslash is kept. Text inside `$(...)`, `${...}` and `$((...))` is copied
+/// for its own parser (only `\<newline>` is removed); backticks become
+/// `$(...)`.
+fn heredoc_body_escapes(content: &str) -> String {
+    if !content.contains(['\\', '`']) {
+        return content.to_string();
+    }
+    let mut out = String::with_capacity(content.len());
+    let mut chars = content.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => match chars.peek() {
+                Some('$' | '`' | '\\') => {
+                    out.push('\x00');
+                    out.push(chars.next().unwrap_or_default());
+                }
+                Some('\n') => {
+                    chars.next();
+                }
+                _ => out.push('\\'),
+            },
+            '$' if matches!(chars.peek(), Some('(' | '{')) => {
+                out.push('$');
+                let open = chars.next().unwrap_or_default();
+                out.push(open);
+                let close = if open == '(' { ')' } else { '}' };
+                let mut depth = 1usize;
+                while let Some(ch) = chars.next() {
+                    if ch == '\\' && chars.peek() == Some(&'\n') {
+                        chars.next();
+                        continue;
+                    }
+                    out.push(ch);
+                    if ch == '\\' {
+                        if let Some(n) = chars.next() {
+                            out.push(n);
+                        }
+                    } else if ch == open {
+                        depth += 1;
+                    } else if ch == close {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                }
+            }
+            // `cmd` is command substitution, as `$(cmd)`; inside it `\``,
+            // `\$` and `\\` lose their backslash.
+            '`' => {
+                out.push_str("$(");
+                while let Some(ch) = chars.next() {
+                    match ch {
+                        '`' => break,
+                        '\\' if matches!(chars.peek(), Some('`' | '$' | '\\')) => {
+                            out.push(chars.next().unwrap_or_default());
+                        }
+                        '\\' if chars.peek() == Some(&'\n') => {
+                            chars.next();
+                        }
+                        _ => out.push(ch),
+                    }
+                }
+                out.push(')');
+            }
+            _ => out.push(c),
+        }
+    }
+    out
 }
 
 #[cfg(test)]

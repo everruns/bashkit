@@ -126,10 +126,21 @@ impl Builtin for Read {
         #[cfg(not(feature = "terminal"))]
         let _ = (prompt, silent, timeout);
 
+        // Split line by IFS (default: space, tab, newline)
+        // IFS whitespace chars (space, tab, newline) collapse runs and trim.
+        // Non-whitespace IFS chars preserve empty fields between consecutive delimiters.
+        // Check shell variables first (IFS=","), then env, then default.
+        let ifs = ctx
+            .variables
+            .get("IFS")
+            .or_else(|| ctx.env.get("IFS"))
+            .map(|s| s.as_str())
+            .unwrap_or(" \t\n");
+
         // EOF with no data: clear all target variables to empty and return 1.
         // This prevents the common `while read line || [[ -n "$line" ]]`
         // pattern from looping infinitely on the stale last value.
-        let input = match input {
+        let input = match input.filter(|s| !s.is_empty()) {
             Some(s) => s,
             None => {
                 let var_names: Vec<&str> = if var_args.is_empty() {
@@ -151,40 +162,13 @@ impl Builtin for Read {
             }
         };
 
-        // Extract input based on delimiter or nchars
-        let line = if let Some(n) = nchars {
-            // -n N: read at most N chars
-            input.chars().take(n).collect::<String>()
-        } else if let Some(delim) = delimiter {
-            // -d delim: read until delimiter
-            input.split(delim).next().unwrap_or("").to_string()
-        } else if raw_mode {
-            // -r: treat backslashes literally
-            input.lines().next().unwrap_or("").to_string()
-        } else {
-            // Without -r: handle backslash line continuation
-            let mut result = String::new();
-            for l in input.lines() {
-                if let Some(stripped) = l.strip_suffix('\\') {
-                    result.push_str(stripped);
-                } else {
-                    result.push_str(l);
-                    break;
-                }
-            }
-            result
-        };
+        // One record up to the delimiter (newline by default) or N chars.
+        // Data that ends before the delimiter is still assigned, but the
+        // status is 1, as in bash.
+        let (line, terminated) =
+            read_record(&input, delimiter.unwrap_or('\n'), nchars, raw_mode, ifs);
+        let status = if terminated { 0 } else { 1 };
 
-        // Split line by IFS (default: space, tab, newline)
-        // IFS whitespace chars (space, tab, newline) collapse runs and trim.
-        // Non-whitespace IFS chars preserve empty fields between consecutive delimiters.
-        // Check shell variables first (IFS=","), then env, then default.
-        let ifs = ctx
-            .variables
-            .get("IFS")
-            .or_else(|| ctx.env.get("IFS"))
-            .map(|s| s.as_str())
-            .unwrap_or(" \t\n");
         struct ReadField<'a> {
             text: &'a str,
             start: usize,
@@ -229,7 +213,6 @@ impl Builtin for Read {
                 let mut fields: Vec<ReadField<'_>> = Vec::new();
                 let mut field_start = 0usize;
                 let mut i = 0usize;
-                let mut last_delim_was_non_ws = false;
 
                 while i < line.len() {
                     let mut iter = line[i..].char_indices();
@@ -237,7 +220,6 @@ impl Builtin for Read {
                     let ch_len = ch.len_utf8();
                     if !ifs.contains(ch) {
                         i += ch_len;
-                        last_delim_was_non_ws = false;
                         continue;
                     }
 
@@ -257,7 +239,6 @@ impl Builtin for Read {
                             }
                         }
                         field_start = i;
-                        last_delim_was_non_ws = true;
                     } else {
                         let pushed_field = field_start != i;
                         if pushed_field {
@@ -297,11 +278,12 @@ impl Builtin for Read {
                         }
 
                         field_start = i;
-                        last_delim_was_non_ws = false;
                     }
                 }
 
-                if field_start < line.len() || last_delim_was_non_ws {
+                // A single trailing delimiter ends the last field; it does
+                // not start an empty one (`a,b,` is two fields).
+                if field_start < line.len() {
                     fields.push(ReadField {
                         text: &line[field_start..],
                         start: field_start,
@@ -319,18 +301,20 @@ impl Builtin for Read {
                 return Ok(ExecResult::ok(String::new()));
             }
             let mut result = ExecResult::ok(String::new());
+            result.exit_code = status;
             result.side_effects.push(BuiltinSideEffect::SetArray {
                 name: arr_name.to_string(),
-                elements: words.iter().map(|w| w.text.to_string()).collect(),
+                elements: words.iter().map(|w| unprotect(w.text)).collect(),
             });
             return Ok(result);
         }
 
         if var_args.is_empty() {
             let mut result = ExecResult::ok(String::new());
+            result.exit_code = status;
             result.side_effects.push(BuiltinSideEffect::SetVariable {
                 name: "REPLY".to_string(),
-                value: line,
+                value: unprotect(&line),
             });
             return Ok(result);
         }
@@ -339,25 +323,31 @@ impl Builtin for Read {
 
         // Assign words to variables via side effects (respects local scoping)
         let mut result = ExecResult::ok(String::new());
+        result.exit_code = status;
         for (i, var_name) in var_names.iter().enumerate() {
             // THREAT[TM-INJ-009]: Block internal variable prefix injection via read
             if is_internal_variable(var_name) {
                 continue;
             }
-            let value = if i == var_names.len() - 1 {
+            let value = if i == var_names.len() - 1 && words.len() == i + 1 {
+                // Only one field left: it is the value, without the
+                // delimiter that ended it (`IFS=, read x y <<< a,b,` gives `b`).
+                unprotect(words[i].text)
+            } else if i == var_names.len() - 1 {
                 // Bash gives the final variable the unsplit remaining input,
                 // then strips trailing IFS whitespace. Preserve original
                 // separators without keeping whitespace Bash trims.
                 words
                     .get(i)
                     .map(|field| {
-                        line[field.start..]
-                            .trim_end_matches(|ch| ifs.contains(ch) && " \t\n".contains(ch))
-                            .to_string()
+                        unprotect(
+                            line[field.start..]
+                                .trim_end_matches(|ch| ifs.contains(ch) && " \t\n".contains(ch)),
+                        )
                     })
                     .unwrap_or_default()
             } else if i < words.len() {
-                words[i].text.to_string()
+                unprotect(words[i].text)
             } else {
                 // Not enough words - set to empty
                 String::new()
@@ -369,6 +359,152 @@ impl Builtin for Read {
         }
 
         Ok(result)
+    }
+}
+
+/// Bytes of `input` one `read` with these `args` consumes from a shared
+/// stdin (pipe feeding a loop): the record plus its delimiter, following
+/// `-r`, `-d`, `-n` and `\<newline>` continuation like [`read_record`].
+pub(crate) fn consumed_len(input: &[u8], args: &[String]) -> usize {
+    let mut raw = false;
+    let mut delim = '\n';
+    let mut limit = None::<usize>;
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        let Some(flags) = arg.strip_prefix('-').filter(|f| !f.is_empty()) else {
+            break;
+        };
+        let mut chars = flags.chars();
+        while let Some(flag) = chars.next() {
+            let mut value = || {
+                let rest: String = chars.clone().collect();
+                if rest.is_empty() {
+                    iter.next().cloned().unwrap_or_default()
+                } else {
+                    rest
+                }
+            };
+            match flag {
+                'r' => raw = true,
+                'd' => {
+                    delim = value().chars().next().unwrap_or('\0');
+                    break;
+                }
+                'n' | 'N' => {
+                    limit = value().parse().ok();
+                    if flag == 'N' {
+                        delim = '\0';
+                    }
+                    break;
+                }
+                'p' | 't' | 'u' => {
+                    value();
+                    break;
+                }
+                _ => {}
+            }
+        }
+    }
+    // Byte scan: keeps non-UTF-8 input intact. A multi-byte delimiter
+    // matches on its first byte.
+    let mut delim_buf = [0u8; 4];
+    let delim = delim.encode_utf8(&mut delim_buf).as_bytes()[0];
+    let mut count = 0usize;
+    let mut i = 0usize;
+    while i < input.len() {
+        let b = input[i];
+        // UTF-8 continuation bytes belong to the previous character.
+        let starts_char = b & 0xC0 != 0x80;
+        if starts_char && limit.is_some_and(|n| count >= n) {
+            return i;
+        }
+        if b == delim {
+            return i + 1;
+        }
+        if b == b'\\' && !raw {
+            match input.get(i + 1) {
+                Some(b'\n') => {
+                    i += 2;
+                    continue;
+                }
+                Some(_) => i += 1,
+                None => return input.len(),
+            }
+        }
+        if starts_char {
+            count += 1;
+        }
+        i += 1;
+    }
+    input.len()
+}
+
+/// Escaped IFS characters are carried through field splitting as
+/// private-use placeholders, so `read a b <<< 'x\ y z'` keeps `x y` whole.
+const PROTECT_BASE: u32 = 0xF0000;
+
+fn protect(ch: char) -> char {
+    let c = ch as u32;
+    if c < 0x10000 {
+        char::from_u32(PROTECT_BASE + c).unwrap_or(ch)
+    } else {
+        ch
+    }
+}
+
+fn unprotect(s: &str) -> String {
+    s.chars()
+        .map(|ch| {
+            let c = ch as u32;
+            if (PROTECT_BASE..PROTECT_BASE + 0x10000).contains(&c) {
+                char::from_u32(c - PROTECT_BASE).unwrap_or(ch)
+            } else {
+                ch
+            }
+        })
+        .collect()
+}
+
+/// Read one record from `input`: up to `delim` (not included) or `limit`
+/// characters. Without `raw`, `\<newline>` joins lines and `\c` is a
+/// literal `c` (protected from IFS splitting). Returns the record and
+/// whether it ended at the delimiter or limit rather than at end of input.
+fn read_record(
+    input: &str,
+    delim: char,
+    limit: Option<usize>,
+    raw: bool,
+    ifs: &str,
+) -> (String, bool) {
+    let mut out = String::new();
+    let mut count = 0usize;
+    let mut chars = input.chars();
+    loop {
+        if limit.is_some_and(|n| count >= n) {
+            return (out, true);
+        }
+        let Some(c) = chars.next() else {
+            return (out, false);
+        };
+        if c == delim {
+            return (out, true);
+        }
+        if c == '\\' && !raw {
+            match chars.next() {
+                Some('\n') => continue,
+                Some(next) => {
+                    out.push(if ifs.contains(next) {
+                        protect(next)
+                    } else {
+                        next
+                    });
+                }
+                None => return (out, false),
+            }
+        } else {
+            out.push(c);
+        }
+        count += 1;
     }
 }
 
@@ -475,7 +611,7 @@ mod tests {
             &mut variables,
             &mut cwd,
             fs.clone(),
-            Some("hello world"),
+            Some("hello world\n"),
         );
         let result = Read.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 0);
@@ -494,7 +630,7 @@ mod tests {
             &mut variables,
             &mut cwd,
             fs.clone(),
-            Some("secret  "),
+            Some("secret  \n"),
         );
         let result = Read.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 0);
@@ -515,7 +651,7 @@ mod tests {
             &mut variables,
             &mut cwd,
             fs.clone(),
-            Some("test_value"),
+            Some("test_value\n"),
         );
         let result = Read.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 0);
@@ -536,7 +672,7 @@ mod tests {
             &mut variables,
             &mut cwd,
             fs.clone(),
-            Some("one two three four"),
+            Some("one two three four\n"),
         );
         let result = Read.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 0);
@@ -558,7 +694,7 @@ mod tests {
             &mut variables,
             &mut cwd,
             fs.clone(),
-            Some("one"),
+            Some("one\n"),
         );
         let result = Read.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 0);
@@ -581,7 +717,7 @@ mod tests {
             &mut variables,
             &mut cwd,
             fs.clone(),
-            Some("hello\\world"),
+            Some("hello\\world\n"),
         );
         let result = Read.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 0);
@@ -600,7 +736,7 @@ mod tests {
             &mut variables,
             &mut cwd,
             fs.clone(),
-            Some("hello\\\nworld"),
+            Some("hello\\\nworld\n"),
         );
         let result = Read.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 0);
@@ -641,7 +777,7 @@ mod tests {
             &mut variables,
             &mut cwd,
             fs.clone(),
-            Some("hi"),
+            Some("hi\n"),
         );
         let result = Read.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 0);
@@ -683,7 +819,7 @@ mod tests {
             &mut variables,
             &mut cwd,
             fs.clone(),
-            Some("one two three"),
+            Some("one two three\n"),
         );
         let result = Read.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 0);
@@ -708,7 +844,7 @@ mod tests {
             &mut variables,
             &mut cwd,
             fs.clone(),
-            Some("a b"),
+            Some("a b\n"),
         );
         let result = Read.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 0);
@@ -733,7 +869,7 @@ mod tests {
             &mut variables,
             &mut cwd,
             fs.clone(),
-            Some("path\\to\\file"),
+            Some("path\\to\\file\n"),
         );
         let result = Read.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 0);
@@ -776,7 +912,7 @@ mod tests {
             &mut variables,
             &mut cwd,
             fs.clone(),
-            Some("foo:bar:baz"),
+            Some("foo:bar:baz\n"),
         );
         let result = Read.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 0);
@@ -797,7 +933,7 @@ mod tests {
             &mut variables,
             &mut cwd,
             fs.clone(),
-            Some("1,2:3"),
+            Some("1,2:3\n"),
         );
         let result = Read.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 0);
@@ -818,7 +954,7 @@ mod tests {
             &mut variables,
             &mut cwd,
             fs.clone(),
-            Some("a   b  c  "),
+            Some("a   b  c  \n"),
         );
         let result = Read.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 0);
@@ -839,7 +975,7 @@ mod tests {
             &mut variables,
             &mut cwd,
             fs.clone(),
-            Some("1,2:3  "),
+            Some("1,2:3  \n"),
         );
         let result = Read.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 0);
@@ -865,7 +1001,7 @@ mod tests {
             &mut variables,
             &mut cwd,
             fs.clone(),
-            Some("one::three:"),
+            Some("one::three:\n"),
         );
         let result = Read.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 0);
@@ -888,7 +1024,7 @@ mod tests {
             &mut variables,
             &mut cwd,
             fs.clone(),
-            Some("one two:three"),
+            Some("one two:three\n"),
         );
         let result = Read.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 0);
@@ -910,7 +1046,7 @@ mod tests {
             &mut variables,
             &mut cwd,
             fs.clone(),
-            Some("one : two"),
+            Some("one : two\n"),
         );
         let result = Read.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 0);
@@ -932,7 +1068,7 @@ mod tests {
             &mut variables,
             &mut cwd,
             fs.clone(),
-            Some("no splitting here"),
+            Some("no splitting here\n"),
         );
         let result = Read.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 0);
@@ -953,7 +1089,7 @@ mod tests {
             &mut variables,
             &mut cwd,
             fs.clone(),
-            Some("one,two,three"),
+            Some("one,two,three\n"),
         );
         let result = Read.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 0);
@@ -976,7 +1112,7 @@ mod tests {
             &mut variables,
             &mut cwd,
             fs.clone(),
-            Some("a:b:c"),
+            Some("a:b:c\n"),
         );
         let result = Read.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 0);

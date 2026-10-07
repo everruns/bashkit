@@ -75,6 +75,7 @@ through configurable limits.
 | Long computation (TM-DOS-023) | Complex awk/sed regex, including repeated awk and `[[ =~ ]]` operands | Linear-time engine; bounded runtime regex caches; timeout (30s) | MITIGATED |
 | Regex backtrack (TM-DOS-025) | `grep "a](*b)*c" file` | Regex crate limits | PARTIAL |
 | AWK unbounded loops (TM-DOS-033) | `BEGIN { while(1){} }`, nested loops, deep recursion | Per-loop and whole-program loop caps from `ExecutionLimits`, call-depth cap; all fatal (exit 2) | MITIGATED |
+| awk commands (TM-DOS-128) | `system()`, `print \| cmd` or `cmd \| getline` in a loop | Each command runs as `sh -c` in the sandbox shell under the session's command budget and timeout; awk's loop, output and getline caps still apply | MITIGATED |
 
 **Stack Overflow / Recursion:**
 
@@ -384,6 +385,7 @@ Network access is disabled by default. When enabled, strict controls apply.
 | IPv4-mapped IPv6 SSRF bypass (TM-NET-022) | AAAA returns `::ffff:127.0.0.1` / metadata IP | `is_private_ip` normalizes v4-mapped/compatible v6 to v4 and applies the v4 classifier | FIXED |
 | HTTP-transport SSRF via fail-open precheck (TM-NET-023) | Malformed/no-host URL or rebind window bypasses the IP filter | Precheck fails closed on bad URLs; transports receive pinned addresses + `is_private_ip` | MITIGATED |
 | Repeated curl data bypasses body cap (TM-NET-028) | Many data/file parts plus encoding expansion exceed 10 MB in aggregate | Checked aggregate appends; file metadata checked against remaining capacity before reads | MITIGATED |
+| Private IP behind NAT64/6to4 or reserved range (TM-NET-029) | AAAA `64:ff9b::a9fe:a9fe` / `2002:7f00:1::`, or A in `0.0.0.0/8`, `198.18.0.0/15`, multicast | `is_private_ip` checks the embedded IPv4 of NAT64/6to4 and blocks all non-global special-purpose ranges | MITIGATED |
 
 **Credential Injection (TM-NET-024–027):**
 

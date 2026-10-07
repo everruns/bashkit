@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use std::ffi::OsString;
 use std::path::Path;
 
-use super::{Builtin, Context};
+use super::{Builtin, Context, STREAM_CHUNK_BYTES};
 use crate::error::Result;
 use crate::fs::vfs_join;
 use crate::interpreter::ExecResult;
@@ -63,11 +63,25 @@ impl Builtin for Cat {
             .map(|vs| vs.map(|v| v.to_string_lossy().into_owned()).collect())
             .unwrap_or_default();
 
+        let plain = !(show_ends
+            || show_tabs
+            || show_nonprinting
+            || number_all
+            || number_nonblank
+            || squeeze);
+        if plain && let Some(stream) = ctx.stdout_stream() {
+            return stream_plain(&ctx, &files, &stream).await;
+        }
+
         let mut raw = Vec::new();
+        let mut stderr = String::new();
         for file in &files {
             if file == "-" {
                 if let Some(stdin) = ctx.stdin {
                     raw.extend_from_slice(stdin.as_bytes());
+                }
+                if let Some(input) = ctx.stdin_stream() {
+                    raw.extend_from_slice(&input.read_to_end().await);
                 }
             } else {
                 let path = if Path::new(file).is_absolute() {
@@ -77,30 +91,92 @@ impl Builtin for Cat {
                 };
                 match ctx.fs.read_file(Path::new(&path)).await {
                     Ok(bytes) => raw.extend_from_slice(&bytes),
+                    // GNU cat reports the operand and goes on with the rest.
                     Err(e) => {
                         let reason = crate::error::io_error_reason(&e);
-                        return Ok(ExecResult::err(format!("cat: {file}: {reason}\n"), 1));
+                        stderr.push_str(&format!("cat: {file}: {reason}\n"));
                     }
                 }
             }
         }
 
-        if !(show_ends || show_tabs || show_nonprinting || number_all || number_nonblank || squeeze)
-        {
-            return Ok(ExecResult::ok_bytes(raw));
+        let mut result = if plain {
+            ExecResult::ok_bytes(raw)
+        } else {
+            ExecResult::ok_bytes(render(
+                &raw,
+                show_ends,
+                show_tabs,
+                show_nonprinting,
+                number_all,
+                number_nonblank,
+                squeeze,
+            ))
+        };
+        if !stderr.is_empty() {
+            result.stderr = stderr.into();
+            result.exit_code = 1;
         }
-
-        let output = render(
-            &raw,
-            show_ends,
-            show_tabs,
-            show_nonprinting,
-            number_all,
-            number_nonblank,
-            squeeze,
-        );
-        Ok(ExecResult::ok(output))
+        Ok(result)
     }
+}
+
+/// Plain `cat` as a pipeline stage: copy each operand into the stage pipe
+/// as it is read, stdin chunk by chunk, so `loop | cat | head -1` and
+/// `cat big | head -1` stop early. A closed reader ends with 141 (SIGPIPE).
+async fn stream_plain(
+    ctx: &Context<'_>,
+    files: &[String],
+    stream: &super::StdoutStream,
+) -> Result<ExecResult> {
+    async fn send(ctx: &Context<'_>, stream: &super::StdoutStream, data: &[u8]) -> Result<bool> {
+        for chunk in data.chunks(STREAM_CHUNK_BYTES) {
+            ctx.consume_budget_work(1)?;
+            if !stream.write(chunk).await {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+    let mut stderr = String::new();
+    let mut code = 0;
+    for file in files {
+        let sent = if file == "-" {
+            let mut ok = match ctx.stdin {
+                Some(stdin) => send(ctx, stream, stdin.as_bytes()).await?,
+                None => true,
+            };
+            if let Some(input) = ctx.stdin_stream() {
+                while ok {
+                    let chunk = input.read().await;
+                    if chunk.is_empty() {
+                        break;
+                    }
+                    ok = send(ctx, stream, &chunk).await?;
+                }
+            }
+            ok
+        } else {
+            let path = if Path::new(file).is_absolute() {
+                file.clone()
+            } else {
+                vfs_join(ctx.cwd, file).to_string_lossy().into_owned()
+            };
+            match ctx.fs.read_file(Path::new(&path)).await {
+                Ok(bytes) => send(ctx, stream, &bytes).await?,
+                Err(e) => {
+                    let reason = crate::error::io_error_reason(&e);
+                    stderr.push_str(&format!("cat: {file}: {reason}\n"));
+                    code = 1;
+                    true
+                }
+            }
+        };
+        if !sent {
+            return Ok(ExecResult::err(stderr, 141));
+        }
+    }
+    Ok(ExecResult::err(stderr, code))
 }
 
 /// Apply cat's display transforms in a single pass.

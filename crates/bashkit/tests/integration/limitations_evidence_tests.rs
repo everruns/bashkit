@@ -172,16 +172,55 @@ async fn l_term_002_cat_does_not_wait_for_terminal_input() {
 }
 
 /// L-PIPE-001: a leading single-builtin stage (other than the streaming
-/// generators `yes`/`seq`) runs to completion before `head` reads, and never
-/// sees SIGPIPE: bash reports `141 0` here.
+/// `yes`/`seq`/`cat`/`grep`/`tr`) runs to completion before `head` reads,
+/// and never sees SIGPIPE: bash reports `141 0` here.
 #[tokio::test]
 async fn l_pipe_001_stages_run_sequentially() {
     let mut bash = Bash::new();
     let result = bash
-        .exec("seq 20000 > /tmp/big; cat /tmp/big | head -1; echo \"${PIPESTATUS[*]}\"")
+        .exec("seq 20000 > /tmp/big; sort -n /tmp/big | head -1; echo \"${PIPESTATUS[*]}\"")
         .await
         .unwrap();
     assert_eq!(result.stdout, "1\n0 0\n");
+}
+
+/// Line filters stream too: `grep` and `tr` between an endless producer and
+/// `head` stop with SIGPIPE, as in bash.
+#[tokio::test]
+async fn l_pipe_001_grep_tr_stream() {
+    let mut bash = Bash::new();
+    let result = bash
+        .exec(
+            "seq 20000 > /tmp/big; grep . /tmp/big | head -1; echo \"${PIPESTATUS[*]}\"\n\
+             while :; do echo y; done | grep y | head -2; echo \"${PIPESTATUS[*]}\"\n\
+             yes | tr y n | head -1; echo \"${PIPESTATUS[*]}\"\n\
+             yes | tr -d '\\n' | head -c 5; echo \" ${PIPESTATUS[*]}\"\n\
+             yes | grep -n y | head -2\n\
+             yes | grep -o -m3 y | cat; echo \"${PIPESTATUS[*]}\"",
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        result.stdout,
+        "1\n141 0\ny\ny\n141 141 0\nn\n141 141 0\nyyyyy 141 141 0\n1:y\n2:y\ny\ny\ny\n141 0 0\n"
+    );
+    assert!(result.stderr.is_empty(), "{}", result.stderr);
+}
+
+/// Plain `cat` streams as a stage, so it gets SIGPIPE like bash, and a
+/// `cat` between an endless loop and `head` no longer runs to a limit.
+#[tokio::test]
+async fn l_pipe_001_cat_streams() {
+    let mut bash = Bash::new();
+    let result = bash
+        .exec(
+            "seq 20000 > /tmp/big; cat /tmp/big | head -1; echo \"${PIPESTATUS[*]}\"\n\
+             while :; do echo y; done | cat | head -2; echo \"${PIPESTATUS[*]}\"",
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.stdout, "1\n141 0\ny\ny\n141 141 0\n");
+    assert!(result.stderr.is_empty(), "{}", result.stderr);
 }
 
 /// The generators stream: `yes | head -1` stops with SIGPIPE, as in bash.
@@ -194,6 +233,24 @@ async fn l_pipe_001_generators_stream() {
         .unwrap();
     assert_eq!(result.stdout, "y\n141 0\n");
     assert!(result.stderr.is_empty(), "{}", result.stderr);
+}
+
+/// Options that need the whole input still see all of it when the stage
+/// reads a streaming pipe (`grep -c`, `tr -s`, context lines).
+#[tokio::test]
+async fn l_pipe_001_buffered_filter_options_drain_pipe() {
+    let mut bash = Bash::new();
+    let result = bash
+        .exec(
+            "src() { for i in 1 2 3 3 4; do echo \"a$i\"; done; }\n\
+             src | grep -c a | cat\n\
+             src | grep -A1 a2 | cat\n\
+             src | tr -s 3 | tr -d '\\n' | cat; echo\n\
+             src | grep -q a4 | cat; echo \"${PIPESTATUS[*]}\"",
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.stdout, "5\na2\na3\na1a2a3a3a4\n0 0 0\n");
 }
 
 /// L-PROC-004: child shells nest at most 8 deep.

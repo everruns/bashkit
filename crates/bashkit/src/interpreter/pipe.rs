@@ -164,7 +164,6 @@ impl Pipe {
     }
 
     /// Read everything until the writer closes.
-    #[cfg(test)]
     pub(crate) async fn read_to_end(&self) -> Vec<u8> {
         let mut out = Vec::new();
         loop {

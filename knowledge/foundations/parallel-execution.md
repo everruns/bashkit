@@ -64,6 +64,19 @@ Implemented
   matched by address, never to a command run from its arguments), so
   `seq 1000000 | head -1` stops after one chunk with `PIPESTATUS` `141 0`.
   Their output caps still apply when the reader takes everything.
+- Plain `cat` (no display flags) streams the same way and is also a
+  streaming filter: the interpreter hands it its input pipe through
+  `Context::stdin_stream` instead of collecting stdin up front, so
+  `while :; do echo; done | cat | head -1` stops with SIGPIPE. `cat` with
+  flags drains the input pipe and runs buffered.
+- `grep` and `tr` are streaming filters too. They pull input through
+  `InputChunks` (builtins/mod.rs): the data buffered before the stage
+  started, then the stdin pipe, cut into pieces of about 4 KiB that end on
+  a record (`grep`, `\n` or `\0` with `-z`) or a UTF-8 character (`tr`).
+  `grep` prints matches per piece and stops at `-m`; `tr` translates per
+  piece. Options that need the whole input stay buffered and drain the pipe
+  with `Context::stdin_to_end`: `grep -c/-l/-L/-q/-A/-B/-C/-b/-r`,
+  `tr -s` (a squeezed run could straddle two pieces).
 - From the first stage that runs shell code (loop, group, function, `eval`,
   nested shell), the rest run concurrently (`execute_streaming_stages`, on
   with `concurrent_jobs`). Each non-last stage is a forked interpreter like a
