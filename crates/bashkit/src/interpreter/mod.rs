@@ -16,7 +16,7 @@ mod brace_expansion;
 mod expansion;
 mod glob;
 mod jobs;
-mod pipe;
+pub(crate) mod pipe;
 mod redirection;
 mod state;
 mod time_command;
@@ -366,6 +366,8 @@ pub(crate) struct ShellRef<'a> {
     pub(crate) jobs: &'a SharedJobTable,
     /// Typed per-execution extensions for the current `exec*()` call.
     pub(crate) execution_extensions: Arc<builtins::ExecutionExtensions>,
+    /// Stdout of a streaming pipeline stage (see `Context::stdout_stream`).
+    pub(crate) stdout_pipe: Option<Arc<pipe::Pipe>>,
 }
 
 // Interpreter-dispatched "special" builtins, listed here so the public
@@ -1413,6 +1415,12 @@ pub struct Interpreter {
     /// Stdout pipe of this forked pipeline stage: command boundaries wait
     /// here for room and stop with 141 once the reader is gone.
     pipe_out: Option<Arc<pipe::Pipe>>,
+    /// Address of the stage's own simple command when it is a streaming
+    /// builtin (`yes`, `seq`): only that command writes straight into
+    /// `pipe_out`, never a command run from its argument expansions.
+    stream_stdout_command: Option<usize>,
+    /// Pipe handed to the next builtin's `Context` (taken at dispatch).
+    builtin_stdout_pipe: Option<Arc<pipe::Pipe>>,
     /// Position within the current argument while `getopts` walks a clustered
     /// short-option group (e.g. `-abc`). Interpreter-internal working state for
     /// `execute_getopts`; `0` means "at the start of the next option group".
@@ -1986,6 +1994,8 @@ impl Interpreter {
             pipeline_stdin: None,
             pipe_in: None,
             pipe_out: None,
+            stream_stdout_command: None,
+            builtin_stdout_pipe: None,
             getopts_char_idx: 0,
             last_bg_pid: None,
             output_callback: None,
@@ -2141,6 +2151,8 @@ impl Interpreter {
             pipeline_stdin: None,
             pipe_in: None,
             pipe_out: None,
+            stream_stdout_command: None,
+            builtin_stdout_pipe: None,
             getopts_char_idx: self.getopts_char_idx,
             last_bg_pid: self.last_bg_pid.clone(),
             output_callback: None,
@@ -5826,6 +5838,19 @@ impl Interpreter {
         !matches!(name, "eval" | "source" | "." | "bash" | "sh")
             && !self.scoped.functions.contains_key(name)
             && !self.scoped.aliases.contains_key(name)
+            && !Self::streams_stdout(simple)
+    }
+
+    /// Builtins that write their stdout to a pipeline as they go
+    /// (`Context::stdout_stream`): generators whose output is unbounded or
+    /// large, so `yes | head -1` and `seq 1000000 | head -1` stop at the
+    /// first line with SIGPIPE instead of running into the output caps.
+    fn streams_stdout(simple: &SimpleCommand) -> bool {
+        simple.redirects.is_empty()
+            && matches!(
+                simple.name.parts.as_slice(),
+                [WordPart::Literal(name)] if matches!(name.as_str(), "yes" | "seq")
+            )
     }
 
     /// Run `commands` (the tail of a pipeline) concurrently: every stage but
@@ -5867,6 +5892,11 @@ impl Interpreter {
             let command = command.clone();
             stages.push(Box::pin(async move {
                 let _read_end = read_end;
+                if let Command::Simple(simple) = &command
+                    && Self::streams_stdout(simple)
+                {
+                    child.stream_stdout_command = Some(simple as *const SimpleCommand as usize);
+                }
                 let jobs = Arc::clone(&child.jobs);
                 let result = jobs::with_jobs(&jobs, child.execute_command(&command)).await;
                 jobs.finish_all().await;
@@ -6951,6 +6981,16 @@ impl Interpreter {
         stdin: Option<crate::StreamData>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecResult>> + Send + 'a>> {
         Box::pin(async move {
+            // The stage's own `yes`/`seq` writes straight into the pipe.
+            self.builtin_stdout_pipe = if self.stream_stdout_command
+                == Some(command as *const SimpleCommand as usize)
+                && command.redirects.is_empty()
+                && !self.scoped.functions.contains_key(name)
+            {
+                self.pipe_out.clone()
+            } else {
+                None
+            };
             // Track $_ (last argument of previous command, from already-expanded args)
             if let Some(last) = args.last() {
                 self.insert_variable_checked("_".to_string(), last.clone());
@@ -7354,6 +7394,7 @@ impl Interpreter {
                     limits: &self.limits,
                     jobs: &self.jobs,
                     execution_extensions,
+                    stdout_pipe: None,
                 };
                 let plan_ctx = builtins::Context {
                     args,
@@ -7419,6 +7460,7 @@ impl Interpreter {
                 limits: &self.limits,
                 jobs: &self.jobs,
                 execution_extensions,
+                stdout_pipe: self.builtin_stdout_pipe.take(),
             };
             let ctx = builtins::Context {
                 args,
