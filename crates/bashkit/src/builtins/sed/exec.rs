@@ -226,6 +226,7 @@ impl<'a> Machine<'a> {
         // without bound. The per-cycle step budget cannot see across restarts,
         // so they get their own budget, reset whenever a line is read.
         let mut restarts = 0usize;
+        let mut restart_cursor = self.cursor;
         loop {
             if self.exit_code.is_some() {
                 break;
@@ -235,6 +236,13 @@ impl<'a> Machine<'a> {
             // line is actually read, so the reset lives in `read_next`.
             if restart {
                 restarts += 1;
+                if self.cursor != restart_cursor {
+                    // The restarted cycles consumed input (`$!N;P;D`), so
+                    // they are bounded by the input; only count restarts
+                    // that read nothing.
+                    restarts = 0;
+                    restart_cursor = self.cursor;
+                }
                 if restarts > SED_MAX_CYCLE_STEPS {
                     self.warn_loop_limit();
                     break;
@@ -244,6 +252,7 @@ impl<'a> Machine<'a> {
                     break;
                 }
                 restarts = 0;
+                restart_cursor = self.cursor;
             }
             restart = false;
 
@@ -280,8 +289,15 @@ impl<'a> Machine<'a> {
         let cmds = &self.prog.cmds;
         let mut pc = 0usize;
         let mut steps = 0usize;
+        // The step budget is per line read: a loop that keeps reading input
+        // with `N`/`n` (`:b;$!N;...;bb`) is bounded by the input instead.
+        let mut step_cursor = self.cursor;
 
         while pc < cmds.len() {
+            if self.cursor != step_cursor {
+                step_cursor = self.cursor;
+                steps = 0;
+            }
             steps += 1;
             if steps > SED_MAX_CYCLE_STEPS {
                 self.warn_loop_limit();
@@ -359,7 +375,7 @@ impl<'a> Machine<'a> {
                 }
                 Kind::Delete => return Cycle::Silent,
                 Kind::DeleteFirstLine => {
-                    return match self.ps.find('\n') {
+                    return match self.ps.find(self.sep) {
                         Some(idx) => {
                             self.ps.drain(..=idx);
                             Cycle::Restart
@@ -374,7 +390,7 @@ impl<'a> Machine<'a> {
                 }
                 Kind::PrintFirstLine => {
                     let ps = std::mem::take(&mut self.ps);
-                    match ps.find('\n') {
+                    match ps.find(self.sep) {
                         Some(idx) => self.out.line(&ps[..idx], true),
                         None => self.out.line(&ps, self.ps_had_newline),
                     }
@@ -400,7 +416,8 @@ impl<'a> Machine<'a> {
                         return Cycle::Auto;
                     }
                     let line = &self.lines[self.cursor];
-                    self.ps.push('\n');
+                    // GNU joins with the buffer delimiter (NUL under -z).
+                    self.ps.push(self.sep);
                     self.ps.push_str(&line.text);
                     self.ps_had_newline = line.had_newline;
                     self.cur_file = line.file;
@@ -436,7 +453,7 @@ impl<'a> Machine<'a> {
                     self.hold_had_newline = self.ps_had_newline;
                 }
                 Kind::HoldAppend => {
-                    self.hold.push('\n');
+                    self.hold.push(self.sep);
                     self.hold.push_str(&self.ps);
                     self.hold_had_newline = self.ps_had_newline;
                 }
@@ -445,7 +462,7 @@ impl<'a> Machine<'a> {
                     self.ps_had_newline = self.hold_had_newline;
                 }
                 Kind::GetAppend => {
-                    self.ps.push('\n');
+                    self.ps.push(self.sep);
                     self.ps.push_str(&self.hold);
                     self.ps_had_newline = self.hold_had_newline;
                 }

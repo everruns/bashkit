@@ -98,6 +98,20 @@ tripped, and a non-emitting loop is not interrupted.
   very deeply nested values overflow the stack. This predates the vendoring
   and is a stack-depth issue, not memory growth.
 
+## jq compatibility patches
+
+Besides the meter, a few `BASHKIT PATCH` hunks make values behave like jq
+1.7 where jaq differs, so `catch` and `tostring` see jq's text too:
+
+- `num.rs` `jq_format_f64`: floats print like jq (`1024`, `1e+17`, `1e-05`,
+  NaN as `null`, infinities as the largest double).
+- `jqmsg.rs` (bashkit-only): jq's wording for math and index errors
+  (`string ("a") and number (1) cannot be added`, operands cut at 11 bytes).
+- `mod.rs`: division and `%` by zero fail, `%` truncates operands, a
+  fractional array index truncates, an object indexed by a non-string fails.
+- `defs.jq`: `nan`/`infinite` without dividing by zero (and the jaq-std
+  filters built on them), `gamma` as log-gamma.
+
 ## Syncing upstream
 
 Part of the [maintenance](../operations/maintenance.md) pass:

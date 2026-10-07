@@ -184,8 +184,12 @@ pub(super) fn jq_to_val(v: &JqJson) -> Val {
             {
                 return Val::from(i);
             }
-            if let Ok(f) = s.parse::<f64>() {
-                return Val::from(f);
+            // Other literals keep their token (`1.0` prints `1.0`, as in jq)
+            // until arithmetic turns them into floats.
+            if s.parse::<f64>().is_ok() {
+                return Val::Num(super::jaq_json::Num::Dec(super::jaq_json::Rc::new(
+                    s.clone(),
+                )));
             }
             Val::from(0isize)
         }
