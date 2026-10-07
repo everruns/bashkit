@@ -202,3 +202,71 @@ async fn l_proc_004_child_shell_depth() {
         r.stderr
     );
 }
+
+/// L-MAKE-001: `$(eval)` and `$(file)` stop make with a fatal error instead
+/// of being half-supported.
+#[tokio::test]
+async fn l_make_001_eval_and_file_unsupported() {
+    let mut bash = Bash::new();
+    for f in ["$(eval X=1)", "$(file >out,x)"] {
+        let script = format!("printf 'all:\\n\\t@echo %s\\n' '{f}' > Makefile; make");
+        let result = bash.exec(&script).await.unwrap();
+        assert_eq!(result.exit_code, 2, "{f}");
+        assert!(
+            result.stderr.contains("L-MAKE-001"),
+            "{f}: {}",
+            result.stderr
+        );
+    }
+}
+
+/// L-MAKE-002: no built-in implicit rules, pattern rules do not chain
+/// through intermediate files, and `vpath`/`VPATH` are not searched.
+#[tokio::test]
+async fn l_make_002_no_builtin_or_chained_rules() {
+    let mut bash = Bash::new();
+    // GNU make would compile x.c with its built-in %.o: %.c rule.
+    let result = bash
+        .exec("cd /tmp && touch x.c && printf 'all: x.o\\n' > Makefile && make")
+        .await
+        .unwrap();
+    assert_eq!(result.exit_code, 2);
+    assert!(result.stderr.contains("No rule to make target 'x.o'"));
+    // GNU make chains x.a -> x.b -> x.c.
+    let result = bash
+        .exec(
+            "cd /tmp && touch x.a && printf '%%.b: %%.a\\n\\tcp $< $@\\n%%.c: %%.b\\n\\tcp $< $@\\nall: y.c\\n' > Makefile; mv x.a y.a; make",
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.exit_code, 2, "{}", result.stdout);
+    assert!(result.stderr.contains("No rule to make target 'y.c'"));
+    // GNU make finds src/z.c through vpath.
+    let result = bash
+        .exec("cd /tmp && mkdir -p src && touch src/z.c && printf 'vpath %%.c src\\nall: z.c\\n\\t@echo built\\n' > Makefile && make")
+        .await
+        .unwrap();
+    assert_eq!(result.exit_code, 2);
+    assert!(!result.stdout.contains("built"));
+}
+
+/// L-MAKE-003: recipes always run in the sandbox shell one at a time:
+/// `SHELL` is ignored, `-j` is accepted but sequential, and `$(MAKE)`
+/// recursion fails at MAKELEVEL 8.
+#[tokio::test]
+async fn l_make_003_sequential_sandbox_shell() {
+    let mut bash = Bash::new();
+    let result = bash
+        .exec("cd /tmp && printf 'SHELL=/bin/zsh\\nall: a b\\na:\\n\\t@echo a\\nb:\\n\\t@echo b\\n' > Makefile && make -j4")
+        .await
+        .unwrap();
+    assert_eq!(result.exit_code, 0, "{}", result.stderr);
+    assert_eq!(result.stdout, "a\nb\n");
+    let result = bash
+        .exec("cd /tmp && printf 'r:\\n\\t@echo $(MAKELEVEL)\\n\\t@$(MAKE) -s r\\n' > Makefile && make -s r")
+        .await
+        .unwrap();
+    assert_ne!(result.exit_code, 0);
+    assert_eq!(result.stdout.lines().last(), Some("7"), "{}", result.stdout);
+    assert!(result.stderr.contains("recursive make depth exceeds 8"));
+}

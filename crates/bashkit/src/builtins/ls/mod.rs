@@ -1,6 +1,6 @@
 //! Directory listing builtins - ls, rmdir, and shared glob matching.
 
-mod glob;
+pub(crate) mod glob;
 mod list;
 mod rmdir;
 

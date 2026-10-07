@@ -81,6 +81,7 @@ mod jq;
 mod json;
 mod log;
 mod ls;
+mod make;
 mod man;
 mod mapfile;
 mod mkfifo;
@@ -212,6 +213,7 @@ pub use json::Json;
 pub use log::Log;
 pub use ls::{Ls, Rmdir};
 pub(crate) use ls::{fnmatch, glob_match};
+pub use make::Make;
 pub use man::Man;
 pub use mapfile::Mapfile;
 pub use mkfifo::Mkfifo;
@@ -719,6 +721,24 @@ pub enum PlanStep {
         command: SubCommand,
         /// Working directory for this command only.
         cwd: Option<PathBuf>,
+    },
+    /// Like [`PlanStep::Run`], but the command's output is only returned to
+    /// the driver, never streamed (`$(shell ...)` in make).
+    Capture {
+        /// The command to execute.
+        command: SubCommand,
+        /// Working directory for this command only.
+        cwd: Option<PathBuf>,
+    },
+    /// Stream output the driver produced itself (progress lines, errors)
+    /// now, ordered before the next command's output. The driver still
+    /// returns its full output in [`PlanStep::Done`] for callers that
+    /// capture instead of stream. The next call is `next(None)`.
+    Emit {
+        /// Standard output to stream.
+        stdout: crate::StreamData,
+        /// Standard error to stream.
+        stderr: crate::StreamData,
     },
     /// The plan is finished; this is the builtin's result.
     Done(ExecResult),

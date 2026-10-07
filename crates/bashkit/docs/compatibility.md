@@ -99,6 +99,7 @@ for sandbox security reasons. See the compliance spec for details.
 | `disown`, `fg`, `bg` | `[JOBSPEC]` | `fg` waits; `bg` is a no-op (jobs already run) |
 | `uuidgen` | `-r` | Random (v4) UUID from the OS CSPRNG |
 | `openssl` | `rand [-hex\|-base64] [-out FILE] NUM` | Only `rand`; other subcommands fail with `Invalid command` |
+| `make` | `-f`, `-C`, `-n`, `-k`, `-q`, `-s`, `-i`, `-B`, `-e`, `-j` (sequential), `VAR=value` | GNU make subset; recipes run in the sandbox shell; no built-in implicit rules, `$(eval)` or `vpath` (L-MAKE-001..003) |
 | `curl` | `-s`, `-o`, `-X`, `-d`/`--data`, `--data-raw`, `--data-binary`, `--data-urlencode`, `-G`/`--get`, `-H`, `-I`, `-f`, `-L`, `-w`, `--compressed`, `-u`, `-A`, `-e`, `-v`, `-m` | HTTP client (requires http_client feature) |
 | `wget` | `-q`, `-O`, `--spider`, `--header`, `-U`, `--post-data`, `-t` | Download files (requires http_client feature) |
 | `time` | `[-p] [-f FORMAT] [-o FILE] [-a] [-v] [--] PIPELINE` | Reserved-word timing; elapsed/status/Bashkit counters are truthful, host CPU/RSS fields say `unavailable` |
