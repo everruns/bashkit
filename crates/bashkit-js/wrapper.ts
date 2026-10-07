@@ -14,6 +14,10 @@ import type {
   AnalyzedCommand,
   AnalyzedRedirect,
   ExecutionProfileName as NativeExecutionProfileName,
+  Terminal as NativeTerminalType,
+  TerminalOptions,
+  TerminalCommandRecord,
+  TerminalActivityInfo,
 } from "./index.cjs";
 import {
   BashError,
@@ -25,6 +29,7 @@ import {
 
 export type { ScriptAnalysis, AnalyzedCommand, AnalyzedRedirect };
 export { BashError };
+export type { TerminalOptions, TerminalCommandRecord, TerminalActivityInfo };
 
 /** Closed typed execution-policy selectors. */
 export const ExecutionProfile = Object.freeze({
@@ -37,6 +42,7 @@ export type ExecutionProfileName =
 
 const NativeBash: typeof NativeBashType = native.Bash;
 const NativeBashTool: typeof NativeBashToolType = native.BashTool;
+const NativeTerminal: typeof NativeTerminalType = native.Terminal;
 const nativeGetVersion: () => string = native.getVersion;
 const nativeCreateFileSystem: () => any = native.__createFileSystem;
 const nativeRealFileSystem: (
@@ -1944,6 +1950,151 @@ export function snapshotDiff(
   objects: Record<string, Buffer>,
 ): SnapshotDiff {
   return native.snapshotDiff(commitA, commitB, objects);
+}
+
+/** Result of {@link Terminal.call}. */
+/** OpenAI-compatible function definition returned by `Terminal.toolDefinition()`. */
+export interface TerminalToolDefinition {
+  type: "function";
+  function: {
+    name: string;
+    description: string;
+    parameters: {
+      type: "object";
+      properties: Record<string, Record<string, unknown>>;
+      required?: string[];
+    };
+  };
+}
+
+export interface TerminalCallResult {
+  /** Visible screen as plain text. */
+  screen: string;
+  activity: "prompt" | "continuation" | "running" | "exited";
+  /** Command line still running (activity `running`). */
+  running_command?: string;
+  /** Shell exit code (activity `exited`). */
+  exit_code?: number;
+  /** False when `waitMs` ran out while a command was still working. */
+  waiting_for_input: boolean;
+  /** A full-screen program such as vi or less is open. */
+  full_screen: boolean;
+  /** Commands that finished during this call. */
+  commands: Array<{
+    command: string;
+    output: string;
+    exit_code: number;
+    output_truncated?: boolean;
+  }>;
+}
+
+/**
+ * Interactive bash session on an in-memory terminal: type keys, run until
+ * the shell needs input, read the screen as text. `vi`, `less` and `more`
+ * work.
+ *
+ * @example
+ * ```typescript
+ * const t = new Terminal({ rows: 24, cols: 80 });
+ * await t.call("vi notes.txt<Enter>");
+ * const out = await t.call("ihello<Esc>:wq<Enter>");
+ * out.commands[0].exit_code; // 0
+ * ```
+ */
+export class Terminal {
+  private readonly native: NativeTerminalType;
+
+  constructor(options?: TerminalOptions) {
+    this.native = new NativeTerminal(options);
+  }
+
+  /** Queue raw input as if typed (`"\r"` Enter, `"\x1b"` Escape, `"\x03"` Ctrl-C). */
+  send(data: string | Uint8Array): number {
+    return this.native.send(
+      typeof data === "string" ? data : Buffer.from(data),
+    );
+  }
+
+  /** Run until the session needs input or exits, or `timeoutMs` passes. */
+  runUntilIdle(timeoutMs?: number): Promise<"idle" | "exited" | "timeout"> {
+    return this.native.runUntilIdle(timeoutMs) as Promise<
+      "idle" | "exited" | "timeout"
+    >;
+  }
+
+  /**
+   * Agent step: type `input` in Vim key notation (`"ls<Enter>"`,
+   * `"ihi<Esc>:wq<Enter>"`, `"<C-c>"`), wait up to `waitMs` (default 5000),
+   * and report the screen, activity and finished commands.
+   */
+  async call(input = "", waitMs?: number): Promise<TerminalCallResult> {
+    return JSON.parse(await this.native.__callJson(input, waitMs));
+  }
+
+  /** Visible screen as plain text. */
+  screenText(): string {
+    return this.native.screenText();
+  }
+
+  /** Screen plus up to 1000 lines of scrollback. */
+  historyText(): string {
+    return this.native.historyText();
+  }
+
+  /** Raw output bytes since the last call, for a renderer such as xterm.js. */
+  takeOutput(): Buffer {
+    return this.native.takeOutput();
+  }
+
+  /** Commands that finished since the last call. */
+  takeTranscript(): TerminalCommandRecord[] {
+    return this.native.takeTranscript();
+  }
+
+  /** What the session is doing. */
+  activity(): TerminalActivityInfo {
+    return this.native.activity();
+  }
+
+  /** Cursor position `[row, col]`, zero-based. */
+  cursor(): [number, number] {
+    return this.native.cursor();
+  }
+
+  /** True while a full-screen program such as `vi` is open. */
+  isAlternateScreen(): boolean {
+    return this.native.isAlternateScreen();
+  }
+
+  /** Resize the terminal; a running `vi` redraws. */
+  resize(rows: number, cols: number): void {
+    this.native.resize(rows, cols);
+  }
+
+  /** `[rows, cols]`. */
+  size(): [number, number] {
+    return this.native.size();
+  }
+
+  /** Shell exit code once the session has exited. */
+  get exitCode(): number | null {
+    return this.native.exitCode ?? null;
+  }
+
+  /** Read a file from the session's virtual filesystem. */
+  readFile(path: string): Promise<Buffer> {
+    return this.native.readFile(path);
+  }
+
+  /** OpenAI-compatible function definition for {@link Terminal.call}. */
+  toolDefinition(): TerminalToolDefinition {
+    return JSON.parse(this.native.__toolDefinitionJson());
+  }
+
+  /** Terse usage guide for a system prompt. */
+  systemPrompt(): string {
+    return this.native.systemPrompt();
+  }
 }
 
 /**
