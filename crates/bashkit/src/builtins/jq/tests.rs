@@ -2217,3 +2217,37 @@ async fn seq_flag_uses_record_separators() {
         .unwrap();
     assert_eq!(out, "\x1e[1]\n\x1e2\n");
 }
+
+#[tokio::test]
+async fn destructuring_alternatives_follow_jq() {
+    let out = run_jq_with_args(
+        &["-c", ".[] as [$x, $y] ?// $x | [$x, $y]"],
+        r#"[1, {"b": 2}, [4, 5]]"#,
+    )
+    .await
+    .unwrap();
+    assert_eq!(out, "[1,null]\n[{\"b\":2},null]\n[4,5]\n");
+    // An error in the body moves on to the next pattern; the last one's
+    // error propagates.
+    let result = run_jq_result_with_args(
+        &[
+            "-c",
+            ".[] as [$a] ?// $a | if $a == 1 then error(\"x\") else $a end",
+        ],
+        "[[1]]",
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.stdout, "[1]\n");
+    let result = run_jq_result_with_args(&["-c", ". as [$a] ?// $a | error(\"e\")"], "[1]")
+        .await
+        .unwrap();
+    assert_eq!(result.stderr, "jq: error (at <stdin>:0): e\n");
+    let result = run_jq_result_with_args(&["-c", ". as [$a] ?// {a: $a} | error(\"e\")"], "[1]")
+        .await
+        .unwrap();
+    assert_eq!(
+        result.stderr,
+        "jq: error (at <stdin>:0): Cannot index array with string \"a\"\n"
+    );
+}

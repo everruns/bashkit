@@ -29,6 +29,7 @@ use crate::error::Result;
 use crate::interpreter::ExecResult;
 use crate::limits::ExecutionLimits;
 
+mod altpat;
 mod args;
 mod compat;
 mod convert;
@@ -264,6 +265,7 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
         None => std::borrow::Cow::Borrowed(parsed.filter),
     };
     let filter_text = loc::expand_loc(&filter_text);
+    let filter_text = altpat::expand_alternatives(&filter_text);
     let compat_filter = format!("{prefix}\n{filter_text}");
     let filter_src = compat_filter.as_str();
 

@@ -107,6 +107,12 @@ need a larger `max_live_intermediate_bytes`.
 `$__loc__` is `{"file":"<top-level>","line":N}`, N being the filter line it
 appears on.
 
+## Destructuring alternatives
+
+`. as [$a, $b] ?// {a: $a} | ...` tries each pattern in turn, as in jq:
+every variable named in any pattern is bound (null when its pattern did not
+set it), and an error moves on to the next pattern.
+
 ## Messages and halt
 
 `stderr`, `debug` and `halt_error` write to the jq command's stderr.

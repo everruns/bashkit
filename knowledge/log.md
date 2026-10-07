@@ -2,6 +2,7 @@
 
 ## 2026-10-07
 
+* **Feature**: jq destructuring alternatives `T as P1 ?// P2 | BODY`: every pattern variable is bound (null when unbound), an error in a pattern or the body moves to the next pattern, the last error propagates. jaq does not parse `?//`; `builtins/jq/altpat.rs` rewrites it to `try`/`catch` before compiling (body copied per pattern, at most 16 rewrites).
 * **Feature**: jq `$__loc__` (`{"file":"<top-level>","line":N}`), including `{$__loc__}` shorthand and string interpolation. jaq has no `$__loc__`, so the filter text is rewritten before compiling (`builtins/jq/loc.rs` skips strings and comments).
 * **Feature**: jq `-a`/`--ascii-output` (escape non-ASCII, quoted even with `-r`), `--raw-output0` (NUL after each output, NUL in a string is an error), `--seq` (RS before each output, RS read as a separator) and `--stream` (inputs become `tostream` path events, also with `-n`/`-s`). `-a` was accepted and ignored before.
 * **Fix**: jq `halt`, `halt_error`, `stderr` and `debug` work like jq. `halt` ends the jq command (not the host) with its code and skips the remaining inputs; `halt_error` prints a string as is or other values as JSON to stderr; `stderr`/`debug` write to the command's stderr in order with its errors (capped buffer) instead of the host logger. TM-INF-023 updated: the guard is now that the run loop never calls `jaq_core::unwrap_valr`.
