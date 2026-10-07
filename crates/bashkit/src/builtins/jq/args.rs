@@ -45,6 +45,14 @@ pub(super) struct JqArgs<'a> {
     pub null_input: bool,
     pub slurp: bool,
     pub sort_keys: bool,
+    /// `-a`: escape non-ASCII characters as `\uXXXX`.
+    pub ascii_output: bool,
+    /// `--raw-output0`: like `-r`, but a NUL after each output.
+    pub raw_output0: bool,
+    /// `--seq`: RS (0x1e) before each output; RS separates inputs.
+    pub seq: bool,
+    /// `--stream`: feed each input as `[path, leaf]` / `[path]` events.
+    pub stream: bool,
     /// `-e` flag — set exit status from output.
     pub exit_status: bool,
     pub indent: Indent,
@@ -99,6 +107,10 @@ const HELP_TEXT: &str = "Usage: jq [OPTIONS...] FILTER [FILE...]\n\n\
     \t-e, --exit-status\tset exit status code based on output\n\
     \t-S, --sort-keys\t\tsort object keys in output\n\
     \t-j, --join-output\tlike -r without trailing newline\n\
+    \t-a, --ascii-output\toutput strings by only ASCII characters using escape sequences\n\
+    \t--raw-output0\t\timplies -r and output NUL after each output\n\
+    \t--seq\t\t\tparse input/output as application/json-seq\n\
+    \t--stream\t\tparse the input value in streaming fashion\n\
     \t--tab\t\t\tuse tabs for indentation\n\
     \t--indent N\t\tuse N spaces for indentation (0..7, default 2)\n\
     \t--arg name value\tset variable $name to string value\n\
@@ -138,6 +150,10 @@ pub(super) fn parse<'a>(args: &'a [String]) -> ParseOutcome<'a> {
         compact_output: false,
         null_input: false,
         slurp: false,
+        ascii_output: false,
+        raw_output0: false,
+        seq: false,
+        stream: false,
         sort_keys: false,
         exit_status: false,
         indent: Indent::Spaces(2),
@@ -203,15 +219,13 @@ pub(super) fn parse<'a>(args: &'a [String]) -> ParseOutcome<'a> {
             "--exit-status" => out.exit_status = true,
             "--tab" => out.indent = Indent::Tab,
             "--join-output" => out.join_output = true,
-            "--ascii-output"
-            | "-a"
-            | "-C"
-            | "-M"
-            | "--color-output"
-            | "--monochrome-output"
-            | "--unbuffered" => {
+            "--ascii-output" | "-a" => out.ascii_output = true,
+            "--raw-output0" => out.raw_output0 = true,
+            "--seq" => out.seq = true,
+            "--stream" => out.stream = true,
+            "-C" | "--color-output" | "--monochrome-output" | "-M" | "--unbuffered" => {
                 // Recognised but no-op: rendering is not TTY-aware in this
-                // sandbox, and ASCII-only output isn't implemented yet.
+                // sandbox.
             }
             "--indent" => match args.get(i + 1) {
                 Some(n) => match n.parse::<u8>() {
@@ -330,7 +344,8 @@ pub(super) fn parse<'a>(args: &'a [String]) -> ParseOutcome<'a> {
                         's' => out.slurp = true,
                         'e' => out.exit_status = true,
                         'j' => out.join_output = true,
-                        'a' | 'C' | 'M' => {} // ASCII / color / monochrome — accept silently
+                        'a' => out.ascii_output = true,
+                        'C' | 'M' => {} // color / monochrome — accept silently
                         unknown => {
                             return ParseOutcome::Done(unknown_option(&format!("-{unknown}")));
                         }
@@ -666,10 +681,13 @@ mod tests {
     }
 
     #[test]
-    fn ascii_output_silently_accepted() {
-        match parse_strs(&["-a", "."]) {
-            ParseOutcome::Args(a) => assert_eq!(a.filter, "."),
-            _ => panic!("expected Args (-a should be accepted)"),
+    fn output_mode_flags_parse() {
+        match parse_strs(&["-a", "--raw-output0", "--seq", "--stream", "."]) {
+            ParseOutcome::Args(a) => {
+                assert_eq!(a.filter, ".");
+                assert!(a.ascii_output && a.raw_output0 && a.seq && a.stream);
+            }
+            _ => panic!("expected Args"),
         }
     }
 
