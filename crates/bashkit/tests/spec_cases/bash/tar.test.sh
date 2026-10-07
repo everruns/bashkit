@@ -117,7 +117,7 @@ p/a.txt
 
 ### tar_long_mode_options
 mkdir -p /tmp/lm; echo z > /tmp/lm/z
-tar --create --file=/tmp/lm.tar -C /tmp lm
+cd /tmp/ && tar --create --file=/tmp/lm.tar lm
 tar --list --file /tmp/lm.tar | grep -v '/$'
 tar --unknown-thing -tf /tmp/lm.tar 2>/dev/null || echo rejected
 ### expect
