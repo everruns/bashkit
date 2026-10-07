@@ -61,7 +61,7 @@ return a value. Scripts written by people and agents expect a Python
 | Errors | Monty-specific text | CPython tracebacks, exit codes, `sys.exit` semantics |
 | Isolation | In-process Rust interpreter | WebAssembly sandbox (memory-safe boundary), fresh instance per call |
 | Start per call | ~15 µs | ~4.4 ms (first call in a process ~19 ms) |
-| CPU-bound speed | Native | ~4-30x slower than Monty (interpreted wasm) |
+| CPU-bound speed | Native | ~4-30x slower than Monty (interpreted wasm); ~4x slower with `cpython-native` |
 | Host callbacks | Yes (external functions) | Not yet |
 
 Pick CPython when scripts need real Python behavior; pick Monty when you
@@ -148,6 +148,21 @@ let bash = Bash::builder()
   integration yet.
 - Interpreter-start options (`-E`, `-I`, `-s`, `-S`, `-B`, `-u`, `-O`, `-q`,
   `-X ...`) are accepted and ignored.
+
+## Native code (opt-in)
+
+By default the interpreter ships as portable Pulley bytecode, which needs no
+executable memory. Enable `cpython-native` instead of `cpython` to compile it
+to machine code for your target at build time:
+
+```toml
+bashkit = { version = "0.18.2", features = ["cpython-native"] }
+```
+
+Calls get 4-10x faster (`print(1)` ~1 ms instead of ~4 ms; CPU-bound code
+~10x). In exchange the host must allow executable memory, and the first load
+in a process takes ~47 ms, so call `bashkit::CPython::warm_up()` at startup.
+Nothing is compiled at run time with either option.
 
 ## Binary size
 
