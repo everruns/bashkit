@@ -20,7 +20,7 @@ mod state;
 mod time_command;
 
 #[allow(unused_imports)]
-pub use jobs::{JobTable, SharedJobTable};
+pub use jobs::{JobInfo, JobState, JobTable, SharedJobTable};
 pub use state::{BuiltinSideEffect, ControlFlow, ExecResult};
 use time_command::{
     TimeUsage, render_time_format, sanitize_time_path, validate_time_format, verbose_time_report,
@@ -179,6 +179,27 @@ impl ShellFeatures {
 
 /// Predicate selecting which default builtins a shell registers.
 pub(crate) type BuiltinFilter = Arc<dyn Fn(&str) -> bool + Send + Sync>;
+
+/// Best-effort source text of a command, for `jobs` and `ps`.
+fn describe_command(cmd: &Command) -> String {
+    match cmd {
+        Command::Simple(c) => std::iter::once(&c.name)
+            .chain(c.args.iter())
+            .map(|w| w.to_string())
+            .filter(|w| !w.is_empty())
+            .collect::<Vec<_>>()
+            .join(" "),
+        Command::Pipeline(p) => p
+            .commands
+            .iter()
+            .map(describe_command)
+            .collect::<Vec<_>>()
+            .join(" | "),
+        Command::List(l) => describe_command(&l.first),
+        Command::Compound(..) => "(...)".to_string(),
+        Command::Function(f) => format!("{} ()", f.name),
+    }
+}
 
 fn word_literal_text(word: &Word) -> Option<&str> {
     if word.parts.len() == 1
@@ -366,6 +387,7 @@ const ENV_SHELL_ONLY_BUILTINS: &[&str] = &[
     "continue",
     "declare",
     "dirs",
+    "disown",
     "enable",
     "eval",
     "exec",
@@ -1233,13 +1255,13 @@ pub struct Interpreter {
     current_line: usize,
     /// HTTP client for network builtins (curl, wget)
     #[cfg(feature = "http_client")]
-    http_client: Option<crate::network::HttpClient>,
+    http_client: Option<Arc<crate::network::HttpClient>>,
     /// Git client for git builtins
     #[cfg(feature = "git")]
     git_client: Option<crate::builtins::git::GitClient>,
     /// SSH client for ssh/scp/sftp builtins
     #[cfg(feature = "ssh")]
-    ssh_client: Option<crate::builtins::ssh::SshClient>,
+    ssh_client: Option<Arc<crate::builtins::ssh::SshClient>>,
     /// Stdin inherited from pipeline for compound commands (while read, etc.)
     /// Each read operation consumes one line, advancing through the data.
     pipeline_stdin: Option<crate::StreamData>,
@@ -1315,7 +1337,7 @@ pub struct Interpreter {
     /// command boundary with `Error::Cancelled`.
     cancelled: Arc<AtomicBool>,
     /// Interceptor hooks registry (shared with Bash callers).
-    hooks: crate::hooks::Hooks,
+    hooks: Arc<crate::hooks::Hooks>,
     /// True while executing a trap handler. Suppresses recursive DEBUG trap
     /// invocation to prevent amplification attacks (TM-DOS-035).
     in_trap: bool,
@@ -1340,6 +1362,11 @@ pub struct Interpreter {
     shell_features: ShellFeatures,
     /// Hardened profiles intentionally reduce elapsed-time precision.
     hardened_timing: bool,
+    /// `&` jobs run concurrently (default) or to completion at spawn.
+    concurrent_jobs: bool,
+    /// Nesting depth of `execute_script_body`; finished background job output
+    /// is delivered only between top-level (depth 1) commands.
+    script_depth: usize,
 }
 
 struct ArithmeticExpansionState {
@@ -1546,6 +1573,11 @@ impl Interpreter {
             "sleep" => Sleep,
             "kill" => Kill,
             "wait" => Wait,
+            "jobs" => Jobs,
+            "disown" => Disown,
+            "bg" => Bg,
+            "fg" => Fg,
+            "ps" => Ps,
             "timeout" => Timeout,
             // Navigation
             "pushd" => Pushd,
@@ -1661,6 +1693,8 @@ impl Interpreter {
             "find".to_string(),
             Arc::new(builtins::Find::new(clock, &username_val)),
         );
+        builtins.insert("pgrep".to_string(), Arc::new(builtins::Pgrep::new()));
+        builtins.insert("pkill".to_string(), Arc::new(builtins::Pgrep::pkill()));
         builtins.insert(
             "id".to_string(),
             Arc::new(builtins::Id::with_username(&username_val)),
@@ -1779,7 +1813,7 @@ impl Interpreter {
             pending_fd_targets: Vec::new(),
             pending_fd_capture_depth: 0,
             cancelled: Arc::new(AtomicBool::new(false)),
-            hooks: crate::hooks::Hooks::default(),
+            hooks: Arc::new(crate::hooks::Hooks::default()),
             in_trap: false,
             condition_sequence_depth: 0,
             deferred_proc_subs: Vec::new(),
@@ -1787,6 +1821,8 @@ impl Interpreter {
             random_state: AtomicU32::new(random_seed),
             shell_features,
             hardened_timing,
+            concurrent_jobs: true,
+            script_depth: 0,
         }
     }
 
@@ -1850,9 +1886,91 @@ impl Interpreter {
         }
     }
 
+    /// Run `&` jobs concurrently (default) or to completion when spawned.
+    pub(crate) fn set_concurrent_jobs(&mut self, enabled: bool) {
+        self.concurrent_jobs = enabled;
+    }
+
+    /// Fork the shell for a background job: a subshell's view of the state
+    /// (variables, functions, cwd, fds, options) with shared filesystem,
+    /// builtins, hooks, budget and cancellation. The job gets its own job
+    /// table, output accumulators and history.
+    fn fork_for_job(&self) -> Interpreter {
+        let random_seed = self
+            .random_state
+            .load(Ordering::Relaxed)
+            .wrapping_mul(1_103_515_245)
+            .wrapping_add(12_345);
+        Interpreter {
+            fs: Arc::clone(&self.fs),
+            env: self.env.clone(),
+            scoped: self.scoped.clone(),
+            flags: self.flags,
+            cwd: self.cwd.clone(),
+            last_exit_code: self.last_exit_code,
+            builtins: self.builtins.clone(),
+            host_builtins: self.host_builtins.clone(),
+            command_resolver: self.command_resolver.clone(),
+            call_stack: self.call_stack.clone(),
+            bash_source_stack: self.bash_source_stack.clone(),
+            limits: self.limits.clone(),
+            session_limits: self.session_limits.clone(),
+            memory_limits: self.memory_limits.clone(),
+            memory_budget: self.memory_budget.clone(),
+            memory_limit_error: None,
+            trace: crate::trace::TraceCollector::new(self.trace.mode()),
+            counters: self.counters.clone(),
+            execution_budget: self.execution_budget.clone(),
+            jobs: self.jobs.fork(),
+            current_line: self.current_line,
+            #[cfg(feature = "http_client")]
+            http_client: self.http_client.clone(),
+            #[cfg(feature = "git")]
+            git_client: self.git_client.clone(),
+            #[cfg(feature = "ssh")]
+            ssh_client: self.ssh_client.clone(),
+            pipeline_stdin: None,
+            getopts_char_idx: self.getopts_char_idx,
+            last_bg_pid: self.last_bg_pid.clone(),
+            output_callback: None,
+            execution_extensions: Arc::clone(&self.execution_extensions),
+            output_emit_count: 0,
+            output_stream_stdout_bytes: 0,
+            output_stream_stderr_bytes: 0,
+            nounset_error: None,
+            pipestatus: Vec::new(),
+            expanding_aliases: HashSet::new(),
+            regex_cache: RuntimeRegexCache::default(),
+            history: Vec::new(),
+            history_bytes: 0,
+            history_saved_entries: 0,
+            history_needs_rewrite: false,
+            history_file: None,
+            history_loaded: true,
+            subst_generation: self.subst_generation,
+            coproc_buffers: HashMap::new(),
+            coproc_next_fd: self.coproc_next_fd,
+            exec_fd_table: self.exec_fd_table.clone(),
+            pending_fd_output: HashMap::new(),
+            pending_fd_targets: Vec::new(),
+            pending_fd_capture_depth: 0,
+            cancelled: Arc::clone(&self.cancelled),
+            hooks: Arc::clone(&self.hooks),
+            in_trap: false,
+            condition_sequence_depth: 0,
+            deferred_proc_subs: Vec::new(),
+            proc_sub_paths: HashSet::new(),
+            random_state: AtomicU32::new(random_seed),
+            shell_features: self.shell_features,
+            hardened_timing: self.hardened_timing,
+            concurrent_jobs: self.concurrent_jobs,
+            script_depth: 1,
+        }
+    }
+
     /// Replace the hooks registry (called from BashBuilder::build).
     pub(crate) fn set_hooks(&mut self, hooks: crate::hooks::Hooks) {
-        self.hooks = hooks;
+        self.hooks = Arc::new(hooks);
     }
 
     // === CoW accessors ===
@@ -2717,13 +2835,13 @@ impl Interpreter {
     /// This is only available when the `http_client` feature is enabled.
     #[cfg(feature = "http_client")]
     pub fn set_http_client(&mut self, client: crate::network::HttpClient) {
-        self.http_client = Some(client);
+        self.http_client = Some(Arc::new(client));
     }
 
     /// Get a mutable reference to the HTTP client (for setting hooks after build).
     #[cfg(feature = "http_client")]
     pub(crate) fn http_client_mut(&mut self) -> Option<&mut crate::network::HttpClient> {
-        self.http_client.as_mut()
+        self.http_client.as_mut().and_then(Arc::get_mut)
     }
 
     /// Set the git client for git builtins.
@@ -2739,7 +2857,7 @@ impl Interpreter {
     /// This is only available when the `ssh` feature is enabled.
     #[cfg(feature = "ssh")]
     pub fn set_ssh_client(&mut self, client: crate::builtins::ssh::SshClient) {
-        self.ssh_client = Some(client);
+        self.ssh_client = Some(Arc::new(client));
     }
 
     /// Execute a script.
@@ -2750,10 +2868,19 @@ impl Interpreter {
         // not represent host-level exec() invocations.
 
         let result = {
-            let result = self.execute_script_body(script, true, true).await;
-            // Script boundary cleanup: background jobs are scoped to a single exec()
-            // call, so they cannot accumulate across long-lived sessions.
-            let _ = self.jobs.lock().await.wait_all_results().await;
+            let jobs = Arc::clone(&self.jobs);
+            let mut result =
+                jobs::with_jobs(&jobs, self.execute_script_body(script, true, true)).await;
+            // Script boundary: background jobs are scoped to a single exec()
+            // call. Like a pipe reader waiting for EOF, the call waits for
+            // every job and delivers output not yet reported.
+            jobs.finish_all().await;
+            let (out, err) = jobs.lock().take_finished_output();
+            if let Ok(r) = &mut result {
+                r.stdout.append(&out);
+                r.stderr.append(&err);
+            }
+            jobs.lock().clear();
             if let Some(error) = &self.memory_limit_error {
                 Err(crate::error::Error::ResourceLimit(error.clone()))
             } else {
@@ -2791,6 +2918,20 @@ impl Interpreter {
         run_exit_trap: bool,
         fire_exit_hook: bool,
     ) -> Result<ExecResult> {
+        self.script_depth += 1;
+        // Boxed so this wrapper adds no stack per nested `$(...)` level.
+        let result =
+            Box::pin(self.execute_script_body_inner(script, run_exit_trap, fire_exit_hook)).await;
+        self.script_depth -= 1;
+        result
+    }
+
+    async fn execute_script_body_inner(
+        &mut self,
+        script: &Script,
+        run_exit_trap: bool,
+        fire_exit_hook: bool,
+    ) -> Result<ExecResult> {
         let mut stdout = crate::StreamData::new();
         let mut stderr = crate::StreamData::new();
         let mut exit_code = 0;
@@ -2800,10 +2941,18 @@ impl Interpreter {
         let max_stderr = self.limits.max_stderr_bytes;
 
         let mut stopped = false;
+        let top_level = self.script_depth == 1;
         for command in &script.commands {
             self.check_cancelled()?;
             let emit_before = self.output_emit_count;
-            let result = self.execute_command(command).await?;
+            let mut result = self.execute_command(command).await?;
+            if top_level {
+                // Background jobs that finished meanwhile report here, as
+                // bash prints their output while the script continues.
+                let (out, err) = self.take_finished_job_output();
+                result.stdout.append(&out);
+                result.stderr.append(&err);
+            }
             self.check_cancelled()?;
             self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
 
@@ -4407,10 +4556,7 @@ impl Interpreter {
         self.arrays_mut().insert(name.clone(), arr);
 
         // Set NAME_PID to a virtual PID (use job table counter)
-        let virtual_pid = {
-            let table = self.jobs.lock().await;
-            table.last_job_id().unwrap_or(0) + 1000
-        };
+        let virtual_pid = self.jobs.lock().alloc_pid();
         self.vars_mut()
             .insert(format!("{}_PID", name), virtual_pid.to_string());
 
@@ -5270,39 +5416,87 @@ impl Interpreter {
         }
     }
 
-    /// Run a command as a "background" job.
+    /// Run a command as a background job (`cmd &`).
     ///
-    /// Executes the command synchronously (deterministic in virtual env) but
-    /// stores the result in the job table so `wait` and `$!` work correctly.
-    /// The command's stdout is emitted immediately (like real bash terminal output).
+    /// With concurrent jobs (the default) the command runs on a forked shell
+    /// as a job future driven alongside the foreground (see `jobs.rs`). It is
+    /// polled once right away, so a job that never blocks finishes here and
+    /// its output is emitted in order, as before. Sequential mode runs the
+    /// command to completion here.
     async fn spawn_in_background(
         &mut self,
         cmd: &Command,
         parent_stdout: &mut crate::StreamData,
         parent_stderr: &mut crate::StreamData,
     ) -> Result<()> {
-        // Execute the command synchronously
+        let text = describe_command(cmd);
         let emit_before = self.output_emit_count;
-        let result = self.execute_command(cmd).await?;
-        self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
+        let finished = if self.concurrent_jobs {
+            // THREAT[TM-DOS-122]: cap live jobs.
+            // The cap is session-wide (nested jobs share it) and a job is a
+            // subshell for nesting depth, so `f(){ f & f & }; f` stays bounded.
+            let slot = self.jobs.try_claim(self.limits.max_background_jobs);
+            let mut child = self.fork_for_job();
+            let depth_ok = child.counters.push_subshell(&child.limits).is_ok();
+            let Some(slot) = slot.filter(|_| depth_ok) else {
+                let msg = format!(
+                    "bash: fork: retry: Resource temporarily unavailable (max {} background jobs, {} nested)\n",
+                    self.limits.max_background_jobs, self.limits.max_subshell_depth
+                );
+                parent_stderr.append(&crate::StreamData::from(msg));
+                self.last_exit_code = 1;
+                return Ok(());
+            };
+            let cmd = cmd.clone();
+            let mut fut: jobs::JobFuture = Box::pin(async move {
+                let _slot = slot;
+                let jobs = Arc::clone(&child.jobs);
+                let result = jobs::with_jobs(&jobs, child.execute_command(&cmd)).await;
+                jobs.finish_all().await;
+                let (out, err) = jobs.lock().take_finished_output();
+                match result {
+                    Ok(mut r) => {
+                        r.stdout.append(&out);
+                        r.stderr.append(&err);
+                        if let ControlFlow::Exit(code) = r.control_flow {
+                            r.exit_code = code;
+                        }
+                        r.control_flow = ControlFlow::None;
+                        r
+                    }
+                    Err(e) => ExecResult::err(format!("bash: {e}\n"), 1),
+                }
+            });
+            match std::future::poll_fn(|cx| std::task::Poll::Ready(fut.as_mut().poll(cx))).await {
+                std::task::Poll::Ready(result) => Some(result),
+                std::task::Poll::Pending => {
+                    let (_, pid) = self.jobs.lock().spawn_running(text.clone(), fut);
+                    self.last_bg_pid = Some(pid.to_string());
+                    None
+                }
+            }
+        } else {
+            Some(self.execute_command(cmd).await?)
+        };
 
-        // Emit output immediately (background output goes to terminal in real bash)
-        parent_stdout.append(&result.stdout);
-        parent_stderr.append(&result.stderr);
-
-        // Store only the exit code in the job table (output already emitted).
-        // The command already ran to completion synchronously, so the result is
-        // final — register it directly rather than round-tripping through
-        // tokio::spawn (which also panics on wasm, where no reactor runs).
-        let exit_code = result.exit_code;
-        let job_result = ExecResult::with_code(String::new(), exit_code);
-        let job_id = self.jobs.lock().await.spawn(job_result);
-        self.last_bg_pid = Some(job_id.to_string());
+        if let Some(result) = finished {
+            self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
+            // Emit output immediately (background output goes to terminal in real bash)
+            parent_stdout.append(&result.stdout);
+            parent_stderr.append(&result.stderr);
+            let (_, pid) = self.jobs.lock().spawn_finished(text, result);
+            self.last_bg_pid = Some(pid.to_string());
+        }
 
         // Background commands always return exit code 0 to the parent.
         // The real exit code lives in the job table for `wait` to read.
         self.last_exit_code = 0;
         Ok(())
+    }
+
+    /// Output of background jobs that finished since the last report.
+    fn take_finished_job_output(&self) -> (crate::StreamData, crate::StreamData) {
+        self.jobs.lock().take_finished_output()
     }
 
     /// Execute a command list (cmd1 && cmd2 || cmd3)
@@ -5319,8 +5513,9 @@ impl Interpreter {
         let first_is_bg = matches!(list.rest.first(), Some((ListOperator::Background, _)));
 
         if first_is_bg {
-            self.spawn_in_background(&list.first, &mut stdout, &mut stderr)
-                .await?;
+            // Boxed: the job path holds a forked Interpreter across an await,
+            // which would otherwise bloat every recursive execute_list frame.
+            Box::pin(self.spawn_in_background(&list.first, &mut stdout, &mut stderr)).await?;
             exit_code = 0;
             control_flow = ControlFlow::None;
             exit_code_from_conditional_context = false;
@@ -5408,8 +5603,7 @@ impl Interpreter {
 
             if should_execute {
                 if should_background {
-                    self.spawn_in_background(cmd, &mut stdout, &mut stderr)
-                        .await?;
+                    Box::pin(self.spawn_in_background(cmd, &mut stdout, &mut stderr)).await?;
                     exit_code = 0;
                     exit_code_from_conditional_context = false;
                 } else {
@@ -6497,11 +6691,11 @@ impl Interpreter {
                     fs,
                     stdin,
                     #[cfg(feature = "http_client")]
-                    http_client: self.http_client.as_ref(),
+                    http_client: self.http_client.as_deref(),
                     #[cfg(feature = "git")]
                     git_client: self.git_client.as_ref(),
                     #[cfg(feature = "ssh")]
-                    ssh_client: self.ssh_client.as_ref(),
+                    ssh_client: self.ssh_client.as_deref(),
                     shell: Some(shell_ref),
                 };
 
@@ -6562,11 +6756,11 @@ impl Interpreter {
                 fs,
                 stdin,
                 #[cfg(feature = "http_client")]
-                http_client: self.http_client.as_ref(),
+                http_client: self.http_client.as_deref(),
                 #[cfg(feature = "git")]
                 git_client: self.git_client.as_ref(),
                 #[cfg(feature = "ssh")]
-                ssh_client: self.ssh_client.as_ref(),
+                ssh_client: self.ssh_client.as_deref(),
                 shell: Some(shell_ref),
             };
 

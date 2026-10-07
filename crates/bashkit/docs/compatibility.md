@@ -92,7 +92,11 @@ for sandbox security reasons. See the compliance spec for details.
 | `cut` | `-d DELIM`, `-f FIELDS` | Extract fields |
 | `tr` | `-d`, character ranges | Translate/delete chars |
 | `date` | `+FORMAT`, `-u`, `-R`, `-I`, `-r`, `-d`/`--date` (relative, compound, epoch) | Display/format date with sandboxed IANA timezone support |
-| `wait` | `[JOB_ID...]` | Wait for background jobs |
+| `wait` | `[-n] [-p VAR] [-f] [ID...]` (PID or `%jobspec`) | Wait for background jobs |
+| `jobs` | `-l`, `-p` | List running background jobs |
+| `ps` | `-f`, `aux`, `-o`, `-p` | Virtual process list (shell + jobs) |
+| `pgrep`/`pkill` | `-f`, `-l`, `-a`, `-c`, `-x`, `-SIGNAL` | Match jobs by command |
+| `disown`, `fg`, `bg` | `[JOBSPEC]` | `fg` waits; `bg` is a no-op (jobs already run) |
 | `curl` | `-s`, `-o`, `-X`, `-d`/`--data`, `--data-raw`, `--data-binary`, `--data-urlencode`, `-G`/`--get`, `-H`, `-I`, `-f`, `-L`, `-w`, `--compressed`, `-u`, `-A`, `-e`, `-v`, `-m` | HTTP client (requires http_client feature) |
 | `wget` | `-q`, `-O`, `--spider`, `--header`, `-U`, `--post-data`, `-t` | Download files (requires http_client feature) |
 | `time` | `[-p] [-f FORMAT] [-o FILE] [-a] [-v] [--] PIPELINE` | Reserved-word timing; elapsed/status/Bashkit counters are truthful, host CPU/RSS fields say `unavailable` |
@@ -164,7 +168,7 @@ Chrono's validated strftime implementation, plus GNU `%N`, `%3N`, `%6N`, and
 |---------|-------------------|-------|
 | `ln` | `-s`, `-f` | Create links |
 | `chown` | `OWNER[:GROUP] FILE` | Change ownership (virtual) |
-| `kill` | `-SIGNAL PID` | Send signals (virtual) |
+| `kill` | `-l`, `-s SIG`, `-n NUM`, `-SIG`, `PID`/`%job` | Terminate background jobs (exit 128+signal); stop/continue signals are ignored |
 | `trap` | `COMMAND SIGNAL...`, `-p`, `-l` | Signal/event handlers |
 | `type` | `NAME...` | Describe command type |
 | `which` | `NAME...` | Locate a command |
@@ -465,7 +469,7 @@ cargo test --test spec_tests -- bash_comparison_tests --ignored
 - [x] Byte inspection (`strings`, `od`, `xxd`, `hexdump`)
 - [x] `basename`/`dirname` builtins
 - [x] `date` builtin
-- [x] Background execution (`&`, `wait`) - parsed, runs synchronously
+- [x] Background execution (`&`, `wait`) - jobs run concurrently on the session's task (no stop/continue)
 - [x] Network (`curl`, `wget`) - full HTTP implementation with security mitigations
 - [x] `timeout` builtin - stub, requires interpreter-level integration
 - [x] Process substitution (`<(cmd)`, `>(cmd)`)

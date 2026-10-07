@@ -8,19 +8,20 @@
 
 use bashkit::Bash;
 
-/// L-PROC-002: no job control — `jobs`/`fg`/`bg` are not commands.
+/// L-PROC-002: no stop/continue job control — background jobs run
+/// concurrently, but `kill -STOP` cannot suspend one and `suspend` does
+/// not exist.
 #[tokio::test]
 async fn l_proc_002_no_job_control() {
     let mut bash = Bash::new();
-    for cmd in ["jobs", "fg", "bg"] {
-        let result = bash.exec(cmd).await.unwrap();
-        assert_eq!(result.exit_code, 127, "{cmd} must be unknown");
-        assert!(
-            result.stderr.contains("command not found"),
-            "{cmd}: {}",
-            result.stderr
-        );
-    }
+    let result = bash
+        .exec("sleep 0.2 & kill -STOP %1; wait %1; echo rc=$?; suspend")
+        .await
+        .unwrap();
+    // The job was not stopped: it ran to completion.
+    assert!(result.stdout.contains("rc=0"), "stdout: {}", result.stdout);
+    assert_eq!(result.exit_code, 127);
+    assert!(result.stderr.contains("suspend: command not found"));
 }
 
 /// L-PROC-003: no process spawning — names outside the builtin registry,

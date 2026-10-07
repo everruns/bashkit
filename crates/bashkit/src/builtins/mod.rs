@@ -73,6 +73,7 @@ mod iconv;
 mod inspect;
 mod install;
 mod introspect;
+mod jobctl;
 mod join;
 #[cfg(feature = "jq")]
 mod jq;
@@ -184,7 +185,7 @@ pub use export::Export;
 pub use expr::Expr;
 pub use factor::Factor;
 pub use fc::Fc;
-pub use fileops::{Chmod, Chown, Cp, Kill, Ln, Mkdir, Mktemp, Mv, Rm, Touch};
+pub use fileops::{Chmod, Chown, Cp, Ln, Mkdir, Mktemp, Mv, Rm, Touch};
 pub use find::Find;
 pub use flow::{Break, Colon, Continue, Exit, False, Return, True};
 pub use fold::Fold;
@@ -226,6 +227,7 @@ pub use shellenv::{Enable, Locale, Ulimit, Umask};
 pub use shuf::Shuf;
 pub use tsort::Tsort;
 
+pub use jobctl::{Bg, Disown, Fg, Jobs, Kill, Pgrep, Ps};
 #[cfg(feature = "terminal")]
 pub use pager::More;
 pub use sleep::Sleep;

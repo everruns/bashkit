@@ -1931,6 +1931,8 @@ pub struct BashBuilder {
     no_rootfs: bool,
     /// When true, symlinks are stored but not followed (pre-0.19 behavior).
     no_follow_symlinks: bool,
+    /// When true, `&` jobs run to completion when spawned.
+    sequential_jobs: bool,
     /// Interceptor hooks
     hooks_on_exit: Vec<hooks::Interceptor<hooks::ExitEvent>>,
     hooks_before_exec: Vec<hooks::Interceptor<hooks::ExecInput>>,
@@ -3327,6 +3329,35 @@ impl BashBuilder {
         self
     }
 
+    /// Run background jobs (`cmd &`) concurrently (on by default).
+    ///
+    /// Jobs run on a forked shell and are polled together with the
+    /// foreground script on the same task (no threads), so `sleep 1 & sleep 1
+    /// & wait` takes one second and `kill $!` stops a running job. `exec()`
+    /// returns once every job finished. With `false`, each job runs to
+    /// completion when it is started, which keeps output order fully
+    /// deterministic (eval replay, snapshot tests). See
+    /// `knowledge/foundations/parallel-execution.md` ("Background jobs").
+    ///
+    /// ```rust
+    /// # use bashkit::Bash;
+    /// # #[tokio::main]
+    /// # async fn main() -> bashkit::Result<()> {
+    /// let mut bash = Bash::builder().build();
+    /// let r = bash.exec("sleep 5 & kill $!; wait $!; echo $?").await?;
+    /// assert_eq!(r.stdout, "143\n");
+    ///
+    /// let mut seq = Bash::builder().concurrent_jobs(false).build();
+    /// let r = seq.exec("(sleep 0.01; echo a) & echo b; wait").await?;
+    /// assert_eq!(r.stdout, "a\nb\n");
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn concurrent_jobs(mut self, enabled: bool) -> Self {
+        self.sequential_jobs = !enabled;
+        self
+    }
+
     /// Build the Bash instance.
     ///
     /// If mounted files are specified, they are added via an [`OverlayFs`] layer
@@ -3486,6 +3517,10 @@ impl BashBuilder {
 
         if let Some(root) = &rootfs {
             root.set_commands(result.interpreter.rootfs_command_names());
+        }
+
+        if self.sequential_jobs {
+            result.interpreter.set_concurrent_jobs(false);
         }
 
         // Set hooks after build — avoids adding another arg to build_with_fs.

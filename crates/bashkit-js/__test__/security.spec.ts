@@ -106,9 +106,13 @@ test("WB: recursive function depth limited (TM-DOS-020)", (t) => {
 test("WB: fork bomb pattern blocked (TM-DOS-021)", (t) => {
   const bash = new Bash({ maxCommands: 100 });
   const r = bash.executeSync(":(){ :|:& };:");
-  // Should fail — no real process forking and command limit
+  // Background jobs run concurrently, so like real bash the top-level `:`
+  // returns 0 once it has backgrounded the bomb. The bomb itself must hit a
+  // limit (job slots, function depth or command budget) and terminate.
   t.true(
-    r.exitCode !== 0 || r.error !== undefined,
+    r.exitCode !== 0 ||
+      r.error !== undefined ||
+      /limit|fork: retry/.test(r.stderr),
     "fork bomb pattern must not run indefinitely",
   );
 });
