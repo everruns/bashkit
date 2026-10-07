@@ -170,7 +170,6 @@ x=g; f(){ local x=1; printenv x; }; f; echo $?
 
 ### bashbox_local_scope_local_lineno_is_an_ordinary_variable
 # local LINENO is an ordinary variable
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 f(){ local LINENO=5; echo $LINENO; }; f; echo $LINENO
 ### expect
 5

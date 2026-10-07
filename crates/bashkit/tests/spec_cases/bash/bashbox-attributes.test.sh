@@ -65,7 +65,6 @@ declare -x A=1; declare +x A; printenv A; echo $?
 
 ### bashbox_attributes_set_a_exports_every_assignment_while_on
 # set -a exports every assignment while on
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 set -a; B=2; printenv B; echo $-; set +a; C=3; printenv C; echo $?
 ### expect
 2
@@ -187,7 +186,6 @@ f(){ :; }; export -f f; echo $?; export -f nosuch; echo $?
 
 ### bashbox_attributes_env_sees_only_exported_variables
 # env sees only exported variables
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 env | grep -c FOO; FOO=1 env | grep FOO; export E=1; (E=2; printenv E); printenv E; x=$(printenv E); echo $x
 ### expect
 0
@@ -206,7 +204,6 @@ export -- G=1; printenv G
 
 ### bashbox_attributes_o_in_a_cluster_takes_the_next_argument_as_its_option_name
 # o in a cluster takes the next argument as its option name
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 set -euo pipefail; echo "[${1-}]" $-; shopt -po pipefail
 ### expect
 [] ehuBc
@@ -215,7 +212,6 @@ set -o pipefail
 
 ### bashbox_attributes_several_o_options
 # several -o options
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 set -o errexit -o nounset; echo $-; set +o nounset; echo $-
 ### expect
 ehuBc
@@ -224,7 +220,6 @@ ehBc
 
 ### bashbox_attributes_o_at_the_end_of_a_cluster_lists_the_options_after_applying_t
 # o at the end of a cluster lists the options after applying the others
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 set -euo | grep -E '^(errexit|nounset|xtrace) '
 ### expect
 errexit        	on
@@ -242,7 +237,6 @@ set +o pipefail
 
 ### bashbox_attributes_an_unknown_option_name_changes_nothing
 # an unknown option name changes nothing
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 set -o bogus -u; echo $? $-
 ### expect
 2 hBc
@@ -250,7 +244,6 @@ set -o bogus -u; echo $? $-
 
 ### bashbox_attributes_an_unknown_letter_changes_nothing
 # an unknown letter changes nothing
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 set -ez; echo $? $-
 ### expect
 2 hBc
@@ -265,7 +258,6 @@ set --bogus; echo $?
 
 ### bashbox_attributes_letters_with_no_effect_here_are_accepted
 # letters with no effect here are accepted
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 set -hkB; echo $?
 ### expect
 0

@@ -359,7 +359,7 @@ impl Interpreter {
     }
 
     /// Is `name` local to any active function frame?
-    fn is_local_anywhere(&self, name: &str) -> bool {
+    pub(super) fn is_local_anywhere(&self, name: &str) -> bool {
         self.call_stack
             .iter()
             .any(|f| f.saved_vars.contains_key(name))
@@ -1088,7 +1088,7 @@ impl Interpreter {
                 self.insert_variable_checked(name.to_string(), v);
             }
             self.remove_var_attr(name, VarAttrs::EXPORT);
-            self.env.remove(name);
+            self.env_mut().remove(name);
         }
     }
 

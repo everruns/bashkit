@@ -1289,7 +1289,9 @@ struct PipelineStageScope {
 }
 
 struct SubshellSnapshot {
+    bash_subshell: usize,
     scoped: ScopedState,
+    env: Arc<HashMap<String, String>>,
     flags: BashFlags,
     cwd: PathBuf,
     memory_budget: crate::limits::MemoryBudget,
@@ -1303,7 +1305,7 @@ struct SubshellSnapshot {
 /// Interpreter state.
 pub struct Interpreter {
     fs: Arc<dyn FileSystem>,
-    env: HashMap<String, String>,
+    env: Arc<HashMap<String, String>>,
     // Important decision: the maps that get snapshotted by subshell ($(...))
     // boundaries live in `scoped: ScopedState`, whose fields are `Arc<HashMap>`
     // so the snapshot is an O(1) refcount bump instead of an O(n) HashMap clone.
@@ -1489,6 +1491,9 @@ pub struct Interpreter {
     script_depth: usize,
     /// Nested `bash`/`sh` child shells (TM-DOS-125).
     child_shell_depth: usize,
+    /// `$BASH_SUBSHELL`: subshell nesting, `(...)`, `$(...)`, `<(...)` and
+    /// forked pipeline stages each add one; saved in `SubshellSnapshot`.
+    bash_subshell: usize,
     /// First arithmetic error raised by a read-only evaluation site (array
     /// subscripts, `declare -i` values, substring offsets). The command
     /// boundary turns it into a line abort, as bash does.
@@ -1891,7 +1896,7 @@ impl Interpreter {
 
         Self {
             fs,
-            env: HashMap::new(),
+            env: Arc::new(HashMap::new()),
             scoped: ScopedState {
                 variables: Arc::new(variables),
                 arrays: Arc::new(arrays),
@@ -1967,6 +1972,7 @@ impl Interpreter {
             concurrent_jobs: true,
             script_depth: 0,
             child_shell_depth: 0,
+            bash_subshell: 0,
             arith_error: StdMutex::new(None),
             pending_compound_args: Vec::new(),
             assign_raw: false,
@@ -2124,6 +2130,7 @@ impl Interpreter {
             script_depth: 1,
             // Forks are polled on this task's stack, so they inherit its depth.
             child_shell_depth: self.child_shell_depth,
+            bash_subshell: self.bash_subshell,
             arith_error: StdMutex::new(None),
             pending_compound_args: Vec::new(),
             assign_raw: false,
@@ -2145,6 +2152,14 @@ impl Interpreter {
     #[inline]
     fn vars_mut(&mut self) -> &mut HashMap<String, String> {
         Arc::make_mut(&mut self.scoped.variables)
+    }
+
+    /// Mutable exported environment. `env` is an `Arc` for the same reason
+    /// as `scoped`: subshell snapshots take it in O(1), so `(E=2)` cannot
+    /// leak an export into the parent.
+    #[inline]
+    fn env_mut(&mut self) -> &mut HashMap<String, String> {
+        Arc::make_mut(&mut self.env)
     }
 
     #[inline]
@@ -2328,20 +2343,13 @@ impl Interpreter {
     /// transient and must be reset between exec() calls (TM-ISO-023).
     /// `shopt` options (SHOPT_expand_aliases, SHOPT_extglob, etc.) are
     /// persistent session configuration and are NOT reset.
-    const SET_OPTION_VARS: &'static [&'static str] = &[
-        "SHOPT_a",
-        "SHOPT_b",
-        "SHOPT_e",
-        "SHOPT_f",
-        "SHOPT_h",
-        "SHOPT_m",
-        "SHOPT_n",
-        "SHOPT_u",
-        "SHOPT_v",
-        "SHOPT_x",
-        "SHOPT_C",
-        "SHOPT_pipefail",
-    ];
+    /// (`interactive-comments` is shared with `shopt`, so it persists.)
+    fn set_option_vars() -> impl Iterator<Item = &'static str> {
+        builtins::SET_O_OPTIONS
+            .iter()
+            .map(|(_, _, var, _)| *var)
+            .filter(|var| *var != "SHOPT_interactive_comments")
+    }
 
     /// THREAT[TM-ISO-005/006/007]: Reset per-exec transient state.
     /// Called by Bash::exec() before each top-level execution to prevent
@@ -2365,8 +2373,8 @@ impl Interpreter {
         // the private stack and public array before reusing the Bash instance.
         self.bash_source_stack.clear();
         self.arrays_mut().remove("BASH_SOURCE");
-        for var in Self::SET_OPTION_VARS {
-            self.vars_mut().remove(*var);
+        for var in Self::set_option_vars() {
+            self.vars_mut().remove(var);
             if let Some(bit) = BashFlags::from_shopt_name(var) {
                 self.flags.remove(bit);
             }
@@ -2454,7 +2462,7 @@ impl Interpreter {
 
     /// Set an environment variable.
     pub fn set_env(&mut self, key: &str, value: &str) {
-        self.env.insert(key.to_string(), value.to_string());
+        self.env_mut().insert(key.to_string(), value.to_string());
     }
 
     /// Install the last-chance command resolver (public API for builder).
@@ -2661,7 +2669,7 @@ impl Interpreter {
         // ShellState struct (which holds plain HashMaps so users can mutate
         // it freely).
         ShellState {
-            env: self.env.clone(),
+            env: (*self.env).clone(),
             variables: (*self.scoped.variables).clone(),
             var_attrs: self
                 .scoped
@@ -2689,7 +2697,7 @@ impl Interpreter {
     /// Capture a lightweight shell-state view for prompt/UI inspection.
     pub fn shell_state_view(&self) -> ShellStateView {
         ShellStateView {
-            env: self.env.clone(),
+            env: (*self.env).clone(),
             variables: (*self.scoped.variables).clone(),
             arrays: (*self.scoped.arrays).clone(),
             assoc_arrays: (*self.scoped.assoc_arrays).clone(),
@@ -2702,7 +2710,7 @@ impl Interpreter {
 
     /// Restore shell state from a snapshot.
     pub fn restore_shell_state(&mut self, state: &ShellState) {
-        self.env = state.env.clone();
+        self.env = Arc::new(state.env.clone());
         let mut restored_variables = state.variables.clone();
         let mut restored_var_attrs: HashMap<String, VarAttrs> = state
             .var_attrs
@@ -3409,8 +3417,23 @@ impl Interpreter {
                 Command::Compound(compound, redirects) => {
                     // Own frame: keeps this arm's temporaries off the stack
                     // of every `$(...)`/function nesting level.
-                    self.execute_compound_with_redirects(compound, redirects)
-                        .await
+                    let result = self
+                        .execute_compound_with_redirects(compound, redirects)
+                        .await;
+                    // `( )`, `[[ ]]` and `(( ))` set PIPESTATUS to their own
+                    // status like a simple command; other compounds leave
+                    // the last inner command's (bash).
+                    if let Ok(r) = &result
+                        && matches!(
+                            compound,
+                            CompoundCommand::Subshell(_)
+                                | CompoundCommand::Conditional(_)
+                                | CompoundCommand::Arithmetic(_)
+                        )
+                    {
+                        self.set_simple_pipestatus(r.exit_code);
+                    }
+                    result
                 }
                 Command::Function(func_def) => {
                     // THREAT[TM-DOS-060]: Check function count/size budget
@@ -3512,6 +3535,7 @@ impl Interpreter {
                 // The Arc-wrapped maps make each snapshot an O(1) refcount
                 // bump; only mutations inside the subshell pay a clone.
                 let snap = self.snapshot_subshell_state();
+                self.bash_subshell += 1;
                 let saved_call_stack = self.call_stack.clone();
                 let saved_exit = self.last_exit_code;
                 let saved_coproc = self.coproc_buffers.clone();
@@ -5315,6 +5339,8 @@ impl Interpreter {
     /// keep only exported scalars in `variables`. The caller is expected to
     /// have just taken a snapshot to undo this on return. See issue #1777.
     fn reset_state_for_child_shell(&mut self) {
+        // A new bash process starts at BASH_SUBSHELL=0.
+        self.bash_subshell = 0;
         let exported_names: Vec<String> = self
             .scoped
             .var_attrs
@@ -5943,6 +5969,9 @@ impl Interpreter {
                 self.coproc_buffers.clone(),
             )
         });
+        if subshell {
+            self.bash_subshell += 1;
+        }
         let mut scope = PipelineStageScope {
             saved,
             prev_pipeline_stdin: None,
@@ -6698,7 +6727,7 @@ impl Interpreter {
                             .cloned()
                             .unwrap_or(None)
                     });
-                    self.env.insert(assignment.name.clone(), value);
+                    self.env_mut().insert(assignment.name.clone(), value);
                 }
             }
 
@@ -6726,10 +6755,10 @@ impl Interpreter {
             for (name, old) in env_saves {
                 match old {
                     Some(v) => {
-                        self.env.insert(name, v);
+                        self.env_mut().insert(name, v);
                     }
                     None => {
-                        self.env.remove(&name);
+                        self.env_mut().remove(&name);
                     }
                 }
             }
@@ -7894,7 +7923,7 @@ impl Interpreter {
         // Clear nounset_error to prevent parent expansion errors from leaking.
         // Reset attributes/namerefs/flags too — the child gets a fresh option
         // surface like real bash.
-        self.scoped.variables = Arc::new(self.env.clone());
+        self.scoped.variables = Arc::new((*self.env).clone());
         self.scoped.arrays = Arc::new(HashMap::new());
         self.arrays_mut()
             .insert("BASH_VERSINFO".to_string(), compat_bash_versinfo_array());
@@ -8685,7 +8714,7 @@ impl Interpreter {
     /// attributes, nameref and env entry.
     fn clear_live_binding(&mut self, name: &str) {
         self.remove_scalar_value(name);
-        self.env.remove(name);
+        self.env_mut().remove(name);
         // THREAT[TM-DOS-114]: `unset arr` must return the array's entry
         // slots and bytes to the budget. Without this a set/unset cycle
         // drifts until a healthy script is refused.
@@ -9318,17 +9347,17 @@ impl Interpreter {
             // A child started with an empty environment sees no shell
             // variables at all; internal option markers stay.
             self.vars_mut().retain(|name, _| is_internal_variable(name));
-            self.env.clear();
+            self.env_mut().clear();
         }
         for name in unset {
-            self.env.remove(&name);
+            self.env_mut().remove(&name);
             self.vars_mut().remove(&name);
         }
         for (name, value) in set {
             if is_internal_variable(&name) {
                 continue;
             }
-            self.env.insert(name.clone(), value.clone());
+            self.env_mut().insert(name.clone(), value.clone());
             self.vars_mut().insert(name, value);
         }
         let mut result = Ok(None);
@@ -9532,9 +9561,22 @@ impl Interpreter {
 
         if is_input {
             let mut stdout = String::new();
+            self.bash_subshell += 1;
+            let mut failed = None;
             for cmd in commands {
-                let cmd_result = self.execute_command(cmd).await?;
-                stdout.push_str(&cmd_result.stdout.command_substitution_text());
+                match self.execute_command(cmd).await {
+                    Ok(cmd_result) => {
+                        stdout.push_str(&cmd_result.stdout.command_substitution_text())
+                    }
+                    Err(e) => {
+                        failed = Some(e);
+                        break;
+                    }
+                }
+            }
+            self.bash_subshell -= 1;
+            if let Some(e) = failed {
+                return Err(e);
             }
             if self.fs.write_file(path, stdout.as_bytes()).await.is_err() {
                 Ok(stdout)
@@ -9562,7 +9604,9 @@ impl Interpreter {
     /// for a real HashMap clone, and only the maps it actually touched.
     fn snapshot_subshell_state(&self) -> SubshellSnapshot {
         SubshellSnapshot {
+            bash_subshell: self.bash_subshell,
             scoped: self.scoped.clone(),
+            env: self.env.clone(),
             flags: self.flags,
             cwd: self.cwd.clone(),
             memory_budget: self.memory_budget.clone(),
@@ -9575,7 +9619,9 @@ impl Interpreter {
     }
 
     fn restore_subshell_state(&mut self, snap: SubshellSnapshot) {
+        self.bash_subshell = snap.bash_subshell;
         self.scoped = snap.scoped;
+        self.env = snap.env;
         self.flags = snap.flags;
         self.cwd = snap.cwd;
         self.memory_budget = snap.memory_budget;
@@ -9728,6 +9774,7 @@ impl Interpreter {
             // Command substitution runs in a subshell: snapshot all
             // mutable state so mutations don't leak to the parent.
             let snapshot = self.snapshot_subshell_state();
+            self.bash_subshell += 1;
             // THREAT[TM-DOS-111]: Expansion happens before top-level output caps,
             // so reserve every byte before growing the substitution buffer.
             let mut stdout = BudgetedString::new(Some(&self.execution_budget))?;
@@ -10161,10 +10208,10 @@ impl Interpreter {
         }
         match saved.env {
             Some(e) => {
-                self.env.insert(name.to_string(), e);
+                self.env_mut().insert(name.to_string(), e);
             }
             None => {
-                self.env.remove(name);
+                self.env_mut().remove(name);
             }
         }
     }
@@ -10207,7 +10254,7 @@ impl Interpreter {
             return;
         }
 
-        self.env.insert(key, value);
+        self.env_mut().insert(key, value);
     }
 
     /// Pop a call frame and restore any global array bindings shadowed by `local -a/-A`.
@@ -10592,22 +10639,8 @@ impl Interpreter {
                 return String::new();
             }
             "-" => {
-                // $- - Current option flags as a string
-                // Build from SHOPT_* variables
-                let mut flags = String::new();
-                for opt in ['e', 'x', 'u', 'f', 'n', 'v', 'a', 'b', 'h', 'm'] {
-                    let opt_name = format!("SHOPT_{}", opt);
-                    if self
-                        .scoped
-                        .variables
-                        .get(&opt_name)
-                        .map(|v| v == "1")
-                        .unwrap_or(false)
-                    {
-                        flags.push(opt);
-                    }
-                }
-                return flags;
+                // $- - Current option flags, from the SHOPT_* variables.
+                return builtins::dollar_dash(&self.scoped.variables);
             }
             "RANDOM" => {
                 // $RANDOM - LCG matching bash behavior, seeded per-instance.
@@ -10625,8 +10658,10 @@ impl Interpreter {
                 }
                 return u32::from_le_bytes(b).to_string();
             }
-            "LINENO" => {
-                // $LINENO - current line number from command span
+            "BASH_SUBSHELL" => return self.bash_subshell.to_string(),
+            "LINENO" if !self.is_local_anywhere("LINENO") => {
+                // $LINENO - current line number from command span. A
+                // `local LINENO` is an ordinary variable (bash).
                 return self.current_line.to_string();
             }
             "PWD" => {
@@ -10701,6 +10736,7 @@ impl Interpreter {
                 | "HOSTNAME"
                 | "BASH_VERSION"
                 | "SECONDS"
+                | "BASH_SUBSHELL"
         ) {
             return true;
         }
