@@ -2,6 +2,7 @@
 
 ## 2026-10-07
 
+* **Fix**: Pipeline stages are subshells, as in bash: `echo x | read v` leaves `v` unset and `cd /tmp | true` keeps the cwd; `shopt -s lastpipe` keeps the last stage in the shell. Streaming callers no longer see a non-last stage's output (`for ...; done | tac` streamed the loop's lines in input order). Stages still run sequentially (new L-PIPE-001). See [Parallel Execution](foundations/parallel-execution.md#pipelines).
 * **Performance**: CPython `random` seeds lazily. The snapshot's `random._inst` gets a subclass whose entry points (`random`, `getrandbits`, `getstate`, `seed`, `setstate`) seed from `os.urandom` on first use, then switch it back to `Random` and rebind those five module functions. Calls that never touch `random` skip the reseed (`pass` 3.7 to 3.5 ms). See [CPython WebAssembly Runtime](runtimes/cpython-wasm.md).
 * **Performance**: Recorded CPython benches after #2534/#2535 (`criterion-python-vm-linux-x86_64-1791345434.md`): first call ~19 ms, warm `print(1)` 4.4 ms (was 6.3), 64 parallel sessions 157 ms (was 291), load ~165 calls/s (was ~90). `/benches` now shows Python startup (CPython vs Monty) from these reports. See [Performance Results](operations/performance-results.md).
 * **Feature**: Secret generators. `$SRANDOM` (bash 5.1, 32 bits from `getrandom`), `uuidgen` (v4 only, L-RAND-001) and `openssl rand [-hex|-base64] [-out] N` (only `rand`; capped at 1 MiB, TM-DOS-123). All draw from the OS CSPRNG like `/dev/urandom`, never the `$RANDOM` LCG.

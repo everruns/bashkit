@@ -206,7 +206,7 @@ Chrono's validated strftime implementation, plus GNU `%N`, `%3N`, `%6N`, and
 
 | Operator | Status | Example | Notes |
 |----------|--------|---------|-------|
-| `\|` | ✅ | `cmd1 \| cmd2` | Pipeline |
+| `\|` | ✅ | `cmd1 \| cmd2` | Pipeline; each stage is a subshell, `shopt -s lastpipe` keeps the last stage in the shell |
 | `&&` | ✅ | `cmd1 && cmd2` | AND list |
 | `\|\|` | ✅ | `cmd1 \|\| cmd2` | OR list |
 | `;` | ✅ | `cmd1; cmd2` | Sequential |

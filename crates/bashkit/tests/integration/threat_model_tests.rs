@@ -2804,7 +2804,7 @@ mod variable_namespace_injection {
     async fn tm_inj_009_read_rejects_internal_prefixes() {
         for prefix in INTERNAL_PREFIXES {
             let result = exec(&format!(
-                "echo injected | read {prefix}; echo ${{{prefix}:-blocked}}"
+                "shopt -s lastpipe; echo injected | read {prefix}; echo ${{{prefix}:-blocked}}"
             ))
             .await;
             assert!(
@@ -2817,14 +2817,17 @@ mod variable_namespace_injection {
 
     #[tokio::test]
     async fn tm_inj_009_read_allows_normal_vars() {
-        let result = exec("echo hello | read MY_VAR; echo $MY_VAR").await;
+        let result = exec("shopt -s lastpipe; echo hello | read MY_VAR; echo $MY_VAR").await;
         assert_eq!(result.exit_code, 0);
         assert!(result.stdout.contains("hello"));
     }
 
     #[tokio::test]
     async fn tm_inj_009_read_array_rejects_internal_prefixes() {
-        let result = exec("echo 'a b c' | read -a _NAMEREF_x; echo ${_NAMEREF_x:-blocked}").await;
+        let result = exec(
+            "shopt -s lastpipe; echo 'a b c' | read -a _NAMEREF_x; echo ${_NAMEREF_x:-blocked}",
+        )
+        .await;
         assert!(
             result.stdout.contains("blocked"),
             "read -a should block _NAMEREF_x: got {:?}",

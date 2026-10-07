@@ -105,6 +105,7 @@ pub mod network_security_tests;
 pub mod output_truncation_tests;
 pub mod parallel_sessions_tests;
 pub mod partial_parse_tests;
+pub mod pipeline_tests;
 pub mod proptest_differential;
 pub mod python_integration_tests;
 pub mod python_security_tests;

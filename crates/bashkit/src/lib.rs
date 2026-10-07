@@ -4872,7 +4872,10 @@ mod tests {
     #[tokio::test]
     async fn test_read_basic() {
         let mut bash = Bash::new();
-        let result = bash.exec("echo hello | read VAR; echo $VAR").await.unwrap();
+        let result = bash
+            .exec("shopt -s lastpipe; echo hello | read VAR; echo $VAR")
+            .await
+            .unwrap();
         assert_eq!(result.stdout, "hello\n");
     }
 
@@ -4880,7 +4883,7 @@ mod tests {
     async fn test_read_multiple_vars() {
         let mut bash = Bash::new();
         let result = bash
-            .exec("echo 'a b c' | read X Y Z; echo $X $Y $Z")
+            .exec("shopt -s lastpipe; echo 'a b c' | read X Y Z; echo $X $Y $Z")
             .await
             .unwrap();
         assert_eq!(result.stdout, "a b c\n");

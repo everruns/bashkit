@@ -91,9 +91,8 @@ printf '%o\n' 255
 ### end
 
 ### read_n_chars
-### bash_diff: pipe creates subshell in real bash, read -n result lost; bashkit keeps it
 # Read specific number of characters
-echo "hello" | read -n 3 x; echo "$x"
+shopt -s lastpipe; echo "hello" | read -n 3 x; echo "$x"
 ### expect
 hel
 ### end

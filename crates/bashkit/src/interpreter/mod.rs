@@ -5342,26 +5342,32 @@ impl Interpreter {
         let mut pipeline_stderr_truncated = false;
         let mut pipe_statuses = Vec::new();
 
+        // Every stage of a multi-command pipeline runs in a subshell, except
+        // the last one under `shopt -s lastpipe` (bash, job control off).
+        let multi = pipeline.commands.len() > 1;
+        let lastpipe = self
+            .scoped
+            .variables
+            .get("SHOPT_lastpipe")
+            .is_some_and(|v| v == "1");
+
         for (i, command) in pipeline.commands.iter().enumerate() {
             let is_last = i == pipeline.commands.len() - 1;
-
-            let result = match command {
-                Command::Simple(simple) => {
-                    self.execution_budget.consume_work(1)?;
-                    self.counters.tick_command(&self.limits)?;
-                    self.execute_simple_command(simple, stdin_data.take())
-                        .await?
-                }
-                _ => {
-                    // Compound commands, lists, etc. in pipeline:
-                    // set pipeline_stdin so inner commands (read, cat, etc.) can consume it
-                    let prev_pipeline_stdin = self.pipeline_stdin.take();
-                    self.pipeline_stdin = stdin_data.take();
-                    let result = self.execute_command(command).await?;
-                    self.pipeline_stdin = prev_pipeline_stdin;
-                    result
-                }
+            let subshell = multi && !(is_last && lastpipe);
+            // A non-last stage's stdout feeds the next stage, never the
+            // streaming observer.
+            let saved_callback = if is_last {
+                None
+            } else {
+                self.output_callback.take()
             };
+            let result = self
+                .execute_pipeline_stage(command, stdin_data.take(), subshell)
+                .await;
+            if let Some(cb) = saved_callback {
+                self.output_callback = Some(cb);
+            }
+            let result = result?;
 
             pipe_statuses.push(result.exit_code);
             if !pipeline_stderr_truncated {
@@ -5408,6 +5414,58 @@ impl Interpreter {
         }
 
         Ok(last_result)
+    }
+
+    /// Run one pipeline stage with `stdin` from the previous stage.
+    ///
+    /// With `subshell`, state changes (variables, cwd, options, fds) are
+    /// rolled back afterwards and `exit`/`return` end only the stage.
+    async fn execute_pipeline_stage(
+        &mut self,
+        command: &Command,
+        stdin: Option<crate::StreamData>,
+        subshell: bool,
+    ) -> Result<ExecResult> {
+        let saved = subshell.then(|| {
+            (
+                self.snapshot_subshell_state(),
+                self.call_stack.clone(),
+                self.coproc_buffers.clone(),
+            )
+        });
+        let result = match command {
+            Command::Simple(simple) => {
+                let ticked = self
+                    .execution_budget
+                    .consume_work(1)
+                    .and_then(|()| self.counters.tick_command(&self.limits));
+                match ticked {
+                    Ok(()) => self.execute_simple_command(simple, stdin).await,
+                    Err(e) => Err(e.into()),
+                }
+            }
+            _ => {
+                // Compound commands, lists, etc. in pipeline:
+                // set pipeline_stdin so inner commands (read, cat, etc.) can consume it
+                let prev_pipeline_stdin = std::mem::replace(&mut self.pipeline_stdin, stdin);
+                let result = self.execute_command(command).await;
+                self.pipeline_stdin = prev_pipeline_stdin;
+                result
+            }
+        };
+        let Some((snap, call_stack, coproc)) = saved else {
+            return result;
+        };
+        self.restore_subshell_state(snap);
+        self.call_stack = call_stack;
+        self.coproc_buffers = coproc;
+        let mut result = result?;
+        if let ControlFlow::Exit(code) | ControlFlow::Return(code) = result.control_flow {
+            result.exit_code = code;
+            result.control_flow = ControlFlow::None;
+        }
+        result.errexit_suppressed = false;
+        Ok(result)
     }
 
     /// Check if a command is the empty sentinel produced by the parser for trailing `&`.
