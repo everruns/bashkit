@@ -41,6 +41,16 @@ const pythonRows = latestPython
       },
     ]
   : [];
+const gapLatest = data.gapTelemetry?.latest ?? null;
+const gapRuns = (data.gapTelemetry?.runs ?? []).toSorted(
+  (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
+);
+const gapKindLabel: Record<string, string> = {
+  missing_command: "missing command",
+  unknown_option: "unknown option",
+  unsupported: "unsupported",
+  parse_error: "parse error",
+};
 const topBenchCategories = latestBench?.categories.slice(0, 8) ?? [];
 const evalCategories = latestEval?.categories.slice(0, 8) ?? [];
 
@@ -110,7 +120,7 @@ const evalResultsUrl =
   "https://github.com/everruns/bashkit/tree/main/crates/bashkit-eval/results";
 
 const pageDescription =
-  "Explore Bashkit benchmark, Python startup, Criterion bench, and LLM eval results with latest runtime snapshots, category scores, raw reports, and historical artifact links over time.";
+  "Explore Bashkit benchmark, Python startup, gap telemetry, Criterion bench, and LLM eval results with latest runtime snapshots, category scores, raw reports, and historical artifact links over time.";
 ---
 
 <BaseLayout title="Bashkit Benches" description={pageDescription}>
@@ -217,6 +227,74 @@ const pageDescription =
                         </td>
                         <td>{formatMs(run.cpython.firstCallMs)}</td>
                         <td>{formatMs(run.cpython.warmPrintMs)}</td>
+                      </tr>
+                    ))
+                  }
+                </tbody>
+              </table>
+            </article>
+          </section>
+        )
+      }
+
+      {
+        gapLatest && (
+          <section class="snapshot-columns">
+            <article class="snapshot-panel">
+              <div class="panel-head">
+                <span class="bench-eyebrow">Gap telemetry</span>
+                <h2>Top gaps in replayed agent calls</h2>
+                <a
+                  class="section-link"
+                  href={repoUrl(gapLatest.reportSource ?? gapLatest.source)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Open report ({gapLatest.date})
+                </a>
+              </div>
+              <table>
+                <thead>
+                  <tr><th>Gap</th><th>Calls now</th><th>Recorded</th></tr>
+                </thead>
+                <tbody>
+                  {
+                    gapLatest.top.map((gap) => (
+                      <tr>
+                        <td>
+                          <strong><code>{gap.key}</code></strong>
+                          <small>{gapKindLabel[gap.kind] ?? gap.kind}</small>
+                        </td>
+                        <td class="score">{gap.now}</td>
+                        <td>{gap.recorded}</td>
+                      </tr>
+                    ))
+                  }
+                </tbody>
+              </table>
+            </article>
+
+            <article class="snapshot-panel">
+              <div class="panel-head">
+                <span class="bench-eyebrow">Gap history</span>
+                <h2>Calls hitting a gap</h2>
+              </div>
+              <table>
+                <thead>
+                  <tr><th>Replay</th><th>Now</th><th>Recorded</th></tr>
+                </thead>
+                <tbody>
+                  {
+                    gapRuns.map((run) => (
+                      <tr>
+                        <td>
+                          <a href={repoUrl(run.reportSource ?? run.source)} target="_blank" rel="noopener noreferrer">
+                            {run.date}
+                          </a>
+                          <small>{`${compactNumber(run.calls)} calls, bashkit ${run.version}`}</small>
+                        </td>
+                        <td class="score">{compactNumber(run.gapCallsNow)}</td>
+                        <td>{compactNumber(run.gapCallsRecorded)}</td>
                       </tr>
                     ))
                   }

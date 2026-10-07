@@ -215,6 +215,33 @@ mock-tool stdout (no VFS file checks).
 Datasets: `crates/bashkit-eval/data/scripting-tool/`, `large-output.jsonl`,
 `many-tools.jsonl` (15–20 tools), `paginated.jsonl`, `discovery.jsonl`.
 
+## Gap Telemetry
+
+`bashkit-replay` (bin in `crates/bashkit-eval`, `just gaps`) turns the stored
+eval runs into a replay corpus. It loads every recorded bash tool call from
+`results/eval-*.json` (task files embedded) and `results/mira/*/cases/*/result.json`
+(task files looked up in `data/eval-tasks.jsonl`; samples no longer in the
+dataset are skipped), replays each session in order on a fresh `Bash` built
+like the eval agent's (`eval`@`bashkit-eval`, task files mounted, 10 s per
+call), and classifies stderr lines into gaps:
+
+| Kind | Matches | Key |
+|------|---------|-----|
+| missing command | `NAME: command not found` | `NAME` |
+| unknown option | `CMD: unrecognized/invalid/unknown/illegal option/predicate ... X` | `CMD X` |
+| parse error | `parse error` / `syntax error` | message without location prefixes, digits as `N` |
+| unsupported | `CMD: ... not supported / not implemented / unsupported` | `CMD` |
+
+Each gap counts at most once per call, in the recorded stderr and in today's
+replay. The report (`results/gaps/gaps-<UTC timestamp>.{json,md}`) ranks the
+top 20 gaps by today's hits, lists gaps fixed since recording, and counts
+calls whose stdout, stderr and exit code are unchanged. `/benches` shows the
+latest top 20 and the gap-call history (see [Performance Results](performance-results.md)).
+The ranking is what orders coverage work; it needs no model and no network,
+so rerun it after each fidelity change. Agent probes for host tools
+(`busybox`, `gawk`, `sudo`, `python3`) rank too: they are real turns lost even
+when the answer is a deliberate refusal.
+
 ## Non-Goals
 
 - No bespoke concurrency / scheduling, mira owns it.

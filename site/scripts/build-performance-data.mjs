@@ -12,6 +12,7 @@ const outputPath = path.join(siteDir, "src/data/performance-timeline.json");
 const benchDir = path.join(repoRoot, "crates/bashkit-bench/results");
 const criterionDir = path.join(repoRoot, "crates/bashkit/benches/results");
 const evalDir = path.join(repoRoot, "crates/bashkit-eval/results");
+const gapDir = path.join(evalDir, "gaps");
 
 const benchmarkCategoryDescriptions = {
   arithmetic: "Integer math, substitutions, and expression-heavy shell snippets.",
@@ -338,6 +339,45 @@ async function buildPythonStartup() {
   return runs.toSorted((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 }
 
+// Gap telemetry: one point per `bashkit-replay` report (recorded agent tool
+// calls replayed on the current bashkit). The latest report's top gaps pick
+// the order of coverage work; history shows gap calls shrinking.
+async function buildGapTelemetry() {
+  let files;
+  try {
+    files = (await listFiles(gapDir, ".json")).filter((file) => file.startsWith("gaps-"));
+  } catch {
+    return { runs: [], latest: null };
+  }
+  const runs = [];
+  for (const file of files) {
+    const report = await readJson(path.join(gapDir, file));
+    const source = `crates/bashkit-eval/results/gaps/${file}`;
+    runs.push({
+      id: file.replace(/\.json$/, ""),
+      date: dateLabel(report.generated_at),
+      timestamp: report.generated_at,
+      source,
+      reportSource: await existingMarkdownReport(source),
+      version: report.bashkit_version,
+      sessions: report.sessions,
+      calls: report.calls,
+      gapCallsNow: report.now.gap_calls,
+      gapCallsRecorded: report.recorded.gap_calls,
+      failedCallsNow: report.now.failed_calls,
+      failedCallsRecorded: report.recorded.failed_calls,
+      top: report.top,
+      fixed: report.fixed.slice(0, 10),
+    });
+  }
+  const sorted = runs.toSorted((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+  const latestRun = sorted.at(-1) ?? null;
+  return {
+    runs: sorted.map(({ top, fixed, ...point }) => point),
+    latest: latestRun,
+  };
+}
+
 async function buildEvalRuns() {
   const files = await listFiles(evalDir, ".json");
   const runs = [];
@@ -467,6 +507,7 @@ const benchRuns = await buildBenchRuns();
 const criterionRuns = await buildCriterionRuns();
 const evalRuns = await buildEvalRuns();
 const pythonStartup = await buildPythonStartup();
+const gapTelemetry = await buildGapTelemetry();
 const newestSourceTimestamp = latest([...benchRuns, ...criterionRuns, ...evalRuns])?.timestamp ?? null;
 
 const payload = {
@@ -475,6 +516,7 @@ const payload = {
     bench: "crates/bashkit-bench/results/*.json",
     criterion: "crates/bashkit/benches/results/*.md",
     evals: "crates/bashkit-eval/results/*.json",
+    gaps: "crates/bashkit-eval/results/gaps/gaps-*.json",
   },
   summary: {
     benchRuns: benchRuns.length,
@@ -493,6 +535,7 @@ const payload = {
   criterionRuns,
   evalRuns,
   pythonStartup,
+  gapTelemetry,
   modelTrends: buildModelTrends(evalRuns),
   milestones: buildMilestones({ benchRuns, criterionRuns, evalRuns }),
 };
