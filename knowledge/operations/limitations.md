@@ -167,7 +167,7 @@ pass in CI); only divergences and boundaries are recorded here.
 | L-STR-001 | strings | Accepts dash-prefixed filenames (e.g. `-data.bin`), so only a lone unknown short option (`-Q`) is rejected as invalid; GNU rejects `-data.bin` too | `strings.rs` |
 | L-MAKE-001 | make | `$(eval)` and `$(file)` stop make with `function '...' is not supported (L-MAKE-001)` | Both write makefile state or files mid-expansion; expansion restarts on a `$(shell)`/`$(wildcard)` miss, so side-effecting functions would run more than once | `l_make_001_eval_and_file_unsupported` |
 | L-MAKE-002 | make | No built-in implicit rules (as `make -r`), pattern rules do not chain through intermediate files, and `vpath`/`VPATH` are not searched | The sandbox has no compiler for built-in rules to call; chaining and directory search are the next steps if real makefiles need them | `l_make_002_no_builtin_or_chained_rules` |
-| L-MAKE-003 | make | Recipes always run in the sandbox shell one at a time: `SHELL` is ignored, `-j` is accepted but sequential, and `$(MAKE)` fails at MAKELEVEL 8 (`recursive make depth exceeds 8`) | Recipes must stay inside the interpreter; each nested make runs on the caller's stack (TM-DOS-126) | `l_make_003_sequential_sandbox_shell` |
+| L-MAKE-003 | make | Recipes always run in the sandbox shell one at a time: `SHELL` is ignored, `-j` is accepted but sequential, and `$(MAKE)` fails at MAKELEVEL 4 (`recursive make depth exceeds 4`; GNU has no cap) | Recipes must stay inside the interpreter; each nested make runs on the caller's stack (TM-DOS-126) | `l_make_003_sequential_sandbox_shell` |
 
 Safety boundaries (enforced, not bugs): printf width/precision caps,
 output buffer caps, getline file-cache cap, shared regex size limit, runtime regex

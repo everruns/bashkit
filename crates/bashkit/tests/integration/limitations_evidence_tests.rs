@@ -252,7 +252,7 @@ async fn l_make_002_no_builtin_or_chained_rules() {
 
 /// L-MAKE-003: recipes always run in the sandbox shell one at a time:
 /// `SHELL` is ignored, `-j` is accepted but sequential, and `$(MAKE)`
-/// recursion fails at MAKELEVEL 8.
+/// recursion fails at MAKELEVEL 4.
 #[tokio::test]
 async fn l_make_003_sequential_sandbox_shell() {
     let mut bash = Bash::new();
@@ -267,6 +267,6 @@ async fn l_make_003_sequential_sandbox_shell() {
         .await
         .unwrap();
     assert_ne!(result.exit_code, 0);
-    assert_eq!(result.stdout.lines().last(), Some("7"), "{}", result.stdout);
-    assert!(result.stderr.contains("recursive make depth exceeds 8"));
+    assert_eq!(result.stdout.lines().last(), Some("3"), "{}", result.stdout);
+    assert!(result.stderr.contains("recursive make depth exceeds 4"));
 }

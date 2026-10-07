@@ -29,8 +29,10 @@ use crate::interpreter::ExecResult;
 use expand::{Expander, Message, Need, Oracle, Origin, Stop, Var, Vars};
 use parse::{Makefile, ParseInput, RecipeLine};
 
-/// `$(MAKE)` recursion cap.
-const MAX_MAKELEVEL: u32 = 8;
+/// `$(MAKE)` recursion cap. Each level nests make, `sh -c` and the
+/// interpreter on the caller's stack (~200 KiB in debug builds); 4 levels
+/// keep the deepest chain well inside a 2 MiB thread stack (TM-DOS-126).
+const MAX_MAKELEVEL: u32 = 4;
 /// Targets a single run may visit.
 const MAX_TARGETS: usize = 100_000;
 /// `$(shell)`/`$(wildcard)`/`include` answers a single run may gather.
