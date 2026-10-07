@@ -296,6 +296,14 @@ a pipe (`git log | less`, `seq 1 1000 | more`).
   for the next page, Enter for the next line, `q` to stop. Input that fits on
   one screen is printed directly.
 
+`man CMD` shows a command's `--help` text as a manual page, in `less` inside a
+session (plain output elsewhere). Shell builtins such as `cd` use `help CMD`.
+
+`watch [-n SECS] [-t] [-g] [-x] COMMAND` reruns the command on the alternate
+screen until Ctrl-C, or until its output changes with `-g`. Each run and each
+interval count against the execution timeout, like `sleep`; outside a session
+it prints a notice instead of looping.
+
 Control characters in content show in caret notation (`^[`), so a file cannot
 send escape sequences to your terminal.
 

@@ -1107,6 +1107,75 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn watch_refreshes_until_ctrl_c() {
+        let mut term = Terminal::new(Bash::builder());
+        term.send("printf '0\\033[2J\\n' > /tmp/n; watch -n 0.1 'cat /tmp/n'\r");
+        let _ = tokio::time::timeout(std::time::Duration::from_millis(150), term.run_until_idle())
+            .await;
+        assert!(term.is_alternate_screen());
+        let text = term.screen_text();
+        // Escape sequences in the output show as text, not terminal control.
+        assert!(
+            text.starts_with("Every 0.1s: cat /tmp/n\n\n0^[[2J"),
+            "{text}"
+        );
+        // Change the file behind watch's back via the VFS; next tick shows it.
+        term.fs()
+            .write_file("/tmp/n".as_ref(), b"7\n")
+            .await
+            .unwrap();
+        let _ = tokio::time::timeout(std::time::Duration::from_millis(300), term.run_until_idle())
+            .await;
+        assert!(
+            term.screen_text().ends_with("\n7"),
+            "{}",
+            term.screen_text()
+        );
+        assert_eq!(run(&mut term, "\x03").await, TerminalStatus::Idle);
+        assert!(!term.is_alternate_screen());
+        assert!(
+            term.screen_text().ends_with("^C\n$"),
+            "{}",
+            term.screen_text()
+        );
+    }
+
+    #[tokio::test]
+    async fn watch_chgexit_returns_on_change() {
+        let mut term = Terminal::new(Bash::builder());
+        term.send("echo a > /tmp/g; watch -g -n 0.1 cat /tmp/g; echo changed\r");
+        let _ = tokio::time::timeout(std::time::Duration::from_millis(150), term.run_until_idle())
+            .await;
+        term.fs()
+            .write_file("/tmp/g".as_ref(), b"b\n")
+            .await
+            .unwrap();
+        let status =
+            tokio::time::timeout(std::time::Duration::from_secs(5), term.run_until_idle()).await;
+        assert_eq!(status, Ok(TerminalStatus::Idle));
+        assert!(!term.is_alternate_screen());
+        assert!(
+            term.screen_text().ends_with("changed\n$"),
+            "{}",
+            term.screen_text()
+        );
+    }
+
+    #[tokio::test]
+    async fn man_opens_in_less() {
+        let mut term = Terminal::new(Bash::builder());
+        run(&mut term, "man grep\r").await;
+        assert!(term.is_alternate_screen());
+        assert!(
+            term.screen_text().starts_with("GREP(1)"),
+            "{}",
+            term.screen_text()
+        );
+        run(&mut term, "q").await;
+        assert!(!term.is_alternate_screen());
+    }
+
+    #[tokio::test]
     async fn prompt_and_command_output_render_on_screen() {
         let mut term = Terminal::new(Bash::builder());
         assert_eq!(term.run_until_idle().await, TerminalStatus::Idle);

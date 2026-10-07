@@ -636,7 +636,7 @@ fn unavailable_command_hint(name: &str) -> Option<&'static str> {
         "vi" | "vim" | "nano" | "emacs" => {
             Some("Interactive editors are not available. Use echo/printf/cat to write files.")
         }
-        "man" | "info" => Some("Manual pages are not available in the sandbox."),
+        "info" => Some("Info pages are not available; try `man CMD` or `CMD --help`."),
         _ => None,
     }
 }
@@ -1529,6 +1529,7 @@ impl Interpreter {
             "shuf" => Shuf,
             // File inspection
             "less" => Less,
+            "man" => Man,
             "file" => File,
             "stat" => Stat,
             // Binary / encoding

@@ -375,6 +375,10 @@
     },
     {
       "feature": null,
+      "name": "man"
+    },
+    {
+      "feature": null,
       "name": "mapfile"
     },
     {
@@ -786,5 +790,5 @@
       "name": "zip"
     }
   ],
-  "count": 196
+  "count": 197
 }
