@@ -15,6 +15,7 @@ mod brace_expansion;
 mod expansion;
 mod glob;
 mod jobs;
+mod pipe;
 mod redirection;
 mod state;
 mod time_command;
@@ -557,6 +558,111 @@ impl Drop for ExecutionExtensionsGuard {
     fn drop(&mut self) {
         let _ = self.cleanup();
     }
+}
+
+/// Subshell depth above which pipelines run their stages one after another.
+///
+/// THREAT[TM-DOS-124]: every concurrent level polls the next one from inside
+/// its own poll, so nesting costs extra native stack (~25 KB per level in
+/// debug builds). Past this depth (`f() { f | f; }`) stages fall back to running in
+/// sequence, which recurses no deeper than a plain function call.
+const MAX_STREAMING_NESTING: usize = 4;
+
+/// Append a stage's stderr to the pipeline's, within `max` bytes.
+fn append_stage_stderr(
+    acc: &mut crate::StreamData,
+    truncated: &mut bool,
+    result: &ExecResult,
+    max: usize,
+) {
+    if *truncated {
+        return;
+    }
+    let remaining = max.saturating_sub(acc.len());
+    if result.stderr.len() <= remaining {
+        acc.append(&result.stderr);
+        *truncated = result.stderr_truncated;
+    } else {
+        acc.append(&result.stderr.prefix(remaining));
+        *truncated = true;
+    }
+}
+
+/// How much of a streaming stdin a command needs before it starts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StdinDemand {
+    /// Never reads stdin.
+    Nothing,
+    /// One line (`read`).
+    Line,
+    /// First N lines, then stops reading (`head -n N`).
+    Lines(usize),
+    /// First N bytes, then stops reading (`head -c N`).
+    Bytes(usize),
+    /// Everything up to end of input.
+    All,
+}
+
+impl StdinDemand {
+    fn satisfied(self, buf: &[u8]) -> bool {
+        match self {
+            Self::Nothing => true,
+            Self::Line => buf.contains(&b'\n'),
+            Self::Lines(n) => buf.iter().filter(|&&b| b == b'\n').count() >= n,
+            Self::Bytes(n) => buf.len() >= n,
+            Self::All => false,
+        }
+    }
+}
+
+fn stdin_demand(name: &str, args: &[String]) -> StdinDemand {
+    match name {
+        "echo" | "printf" | "true" | "false" | ":" | "exit" | "return" | "break" | "continue"
+        | "sleep" | "test" | "[" | "cd" | "export" | "local" | "declare" | "set" | "unset"
+        | "shift" | "" => StdinDemand::Nothing,
+        "read"
+            if !args
+                .iter()
+                .any(|a| a.starts_with('-') && (a.contains('d') || a.contains('N'))) =>
+        {
+            StdinDemand::Line
+        }
+        "head" => head_demand(args),
+        _ => StdinDemand::All,
+    }
+}
+
+/// `head [-n N | -c N | -N]` with no file operands; anything else reads all.
+fn head_demand(args: &[String]) -> StdinDemand {
+    let mut demand = StdinDemand::Lines(10);
+    let mut it = args.iter();
+    while let Some(arg) = it.next() {
+        let (lines, value) = match arg.as_str() {
+            "-n" | "--lines" => (true, it.next().map(String::as_str)),
+            "-c" | "--bytes" => (false, it.next().map(String::as_str)),
+            "-q" | "-v" | "--quiet" | "--silent" | "--verbose" => continue,
+            a if a.starts_with("--lines=") => (true, Some(&a[8..])),
+            a if a.starts_with("--bytes=") => (false, Some(&a[8..])),
+            a if a.starts_with("-n") => (true, Some(&a[2..])),
+            a if a.starts_with("-c") => (false, Some(&a[2..])),
+            a if a.len() > 1
+                && a.starts_with('-')
+                && a[1..].bytes().all(|b| b.is_ascii_digit()) =>
+            {
+                (true, Some(&a[1..]))
+            }
+            _ => return StdinDemand::All,
+        };
+        let Some(n) = value.and_then(|v| v.parse::<usize>().ok()) else {
+            return StdinDemand::All;
+        };
+        demand = if lines {
+            StdinDemand::Lines(n)
+        } else {
+            StdinDemand::Bytes(n)
+        };
+    }
+    demand
 }
 
 #[cfg(test)]
@@ -1182,6 +1288,24 @@ struct ScopedState {
 /// (`Arc::make_mut`). For substitutions that don't mutate state at all (the
 /// common case — `$(echo $x)`, command queries) this saves an entire deep
 /// HashMap clone per substitution.
+/// Results gathered while a pipeline runs (see `execute_pipeline`).
+#[derive(Default)]
+struct PipelineAcc {
+    statuses: Vec<i32>,
+    stderr: crate::StreamData,
+    stderr_truncated: bool,
+    last: ExecResult,
+}
+
+/// Subshell state a pipeline stage rolls back.
+type StageSnapshot = (SubshellSnapshot, Vec<CallFrame>, HashMap<i32, Vec<String>>);
+
+/// State held across one pipeline stage (see `enter_pipeline_stage`).
+struct PipelineStageScope {
+    saved: Option<StageSnapshot>,
+    prev_pipeline_stdin: Option<Option<crate::StreamData>>,
+}
+
 struct SubshellSnapshot {
     scoped: ScopedState,
     flags: BashFlags,
@@ -1265,6 +1389,12 @@ pub struct Interpreter {
     /// Stdin inherited from pipeline for compound commands (while read, etc.)
     /// Each read operation consumes one line, advancing through the data.
     pipeline_stdin: Option<crate::StreamData>,
+    /// Streaming stdin from a concurrent pipeline stage; read into
+    /// `pipeline_stdin` on demand (see `fill_stdin_from_pipe`).
+    pipe_in: Option<Arc<pipe::Pipe>>,
+    /// Stdout pipe of this forked pipeline stage: command boundaries wait
+    /// here for room and stop with 141 once the reader is gone.
+    pipe_out: Option<Arc<pipe::Pipe>>,
     /// Position within the current argument while `getopts` walks a clustered
     /// short-option group (e.g. `-abc`). Interpreter-internal working state for
     /// `execute_getopts`; `0` means "at the start of the next option group".
@@ -1788,6 +1918,8 @@ impl Interpreter {
             #[cfg(feature = "ssh")]
             ssh_client: None,
             pipeline_stdin: None,
+            pipe_in: None,
+            pipe_out: None,
             getopts_char_idx: 0,
             last_bg_pid: None,
             output_callback: None,
@@ -1938,6 +2070,8 @@ impl Interpreter {
             #[cfg(feature = "ssh")]
             ssh_client: self.ssh_client.clone(),
             pipeline_stdin: None,
+            pipe_in: None,
+            pipe_out: None,
             getopts_char_idx: self.getopts_char_idx,
             last_bg_pid: self.last_bg_pid.clone(),
             output_callback: None,
@@ -2823,7 +2957,12 @@ impl Interpreter {
             .limits
             .max_stderr_bytes
             .saturating_sub(self.output_stream_stderr_bytes);
-        let stdout_chunk = stdout.prefix(stdout_remaining);
+        // A stage's pipe is not caller-visible output: no stdout cap.
+        let stdout_chunk = if self.pipe_out.is_some() {
+            stdout.clone()
+        } else {
+            stdout.prefix(stdout_remaining)
+        };
         let stderr_chunk = stderr.prefix(stderr_remaining);
         if stdout_chunk.is_empty() && stderr_chunk.is_empty() {
             return false;
@@ -3197,6 +3336,12 @@ impl Interpreter {
             });
 
             self.charge_command_execution()?;
+
+            if self.pipe_out.is_some()
+                && let Some(killed) = Box::pin(self.wait_for_pipe_room()).await
+            {
+                return Ok(killed);
+            }
 
             match command {
                 Command::Simple(simple) => {
@@ -5390,25 +5535,34 @@ impl Interpreter {
     }
 
     /// Execute a pipeline (cmd1 | cmd2 | cmd3)
+    ///
+    /// Leading stages that are single commands run first, one after another,
+    /// handing over complete output. From the first stage that runs shell
+    /// code (a loop, group, function), the rest run concurrently over
+    /// bounded pipes (`execute_streaming_stages`), unless concurrency is off.
     async fn execute_pipeline(&mut self, pipeline: &Pipeline) -> Result<ExecResult> {
+        // Kept small: recursive pipelines (`f() { f | f; }`) nest this poll
+        // frame once per level, so bookkeeping lives in sync helpers.
+        let (stream_from, lastpipe) = self.plan_pipeline(pipeline);
+        let mut acc = PipelineAcc::default();
         let mut stdin_data: Option<crate::StreamData> = None;
-        let mut last_result = ExecResult::ok(String::new());
-        let mut pipeline_stderr = crate::StreamData::new();
-        let mut pipeline_stderr_truncated = false;
-        let mut pipe_statuses = Vec::new();
-
-        // Every stage of a multi-command pipeline runs in a subshell, except
-        // the last one under `shopt -s lastpipe` (bash, job control off).
-        let multi = pipeline.commands.len() > 1;
-        let lastpipe = self
-            .scoped
-            .variables
-            .get("SHOPT_lastpipe")
-            .is_some_and(|v| v == "1");
+        let count = pipeline.commands.len();
 
         for (i, command) in pipeline.commands.iter().enumerate() {
-            let is_last = i == pipeline.commands.len() - 1;
-            let subshell = multi && !(is_last && lastpipe);
+            if stream_from == Some(i) {
+                let stages = self
+                    .execute_streaming_group(&pipeline.commands[i..], stdin_data.take(), lastpipe)
+                    .await?;
+                for result in stages {
+                    self.absorb_stage(&mut acc, result, true);
+                }
+                break;
+            }
+            let is_last = i == count - 1;
+            // Every stage of a multi-command pipeline runs in a subshell,
+            // except the last one under `shopt -s lastpipe` (bash, job
+            // control off).
+            let subshell = count > 1 && !(is_last && lastpipe);
             // A non-last stage's stdout feeds the next stage, never the
             // streaming observer.
             let saved_callback = if is_last {
@@ -5416,37 +5570,100 @@ impl Interpreter {
             } else {
                 self.output_callback.take()
             };
-            let result = self
-                .execute_pipeline_stage(command, stdin_data.take(), subshell)
-                .await;
+            let result = match self.enter_pipeline_stage(command, stdin_data.take(), subshell) {
+                Ok((scope, stdin)) => {
+                    let result = match command {
+                        Command::Simple(simple) => self.execute_simple_command(simple, stdin).await,
+                        _ => self.execute_command(command).await,
+                    };
+                    self.exit_pipeline_stage(scope, result)
+                }
+                Err(e) => Err(e),
+            };
             if let Some(cb) = saved_callback {
                 self.output_callback = Some(cb);
             }
-            let result = result?;
-
-            pipe_statuses.push(result.exit_code);
-            if !pipeline_stderr_truncated {
-                let remaining = self
-                    .limits
-                    .max_stderr_bytes
-                    .saturating_sub(pipeline_stderr.len());
-                if result.stderr.len() <= remaining {
-                    pipeline_stderr.append(&result.stderr);
-                    pipeline_stderr_truncated = result.stderr_truncated;
-                } else {
-                    pipeline_stderr.append(&result.stderr.prefix(remaining));
-                    pipeline_stderr_truncated = true;
-                }
-            }
-
-            if is_last {
-                last_result = result;
-            } else {
-                stdin_data = Some(result.stdout);
-            }
+            stdin_data = self.absorb_stage(&mut acc, result?, is_last);
         }
-        last_result.stderr = pipeline_stderr;
-        last_result.stderr_truncated |= pipeline_stderr_truncated;
+        Ok(self.finish_pipeline(pipeline, acc))
+    }
+
+    /// Where streaming starts (first stage that runs shell code), and lastpipe.
+    #[inline(never)]
+    fn plan_pipeline(&self, pipeline: &Pipeline) -> (Option<usize>, bool) {
+        let count = pipeline.commands.len();
+        let lastpipe = self
+            .scoped
+            .variables
+            .get("SHOPT_lastpipe")
+            .is_some_and(|v| v == "1");
+        let stream_from = if count > 1
+            && self.concurrent_jobs
+            && self.counters.subshell_depth < MAX_STREAMING_NESTING
+        {
+            pipeline.commands[..count - 1]
+                .iter()
+                .position(|c| !self.is_single_command_stage(c))
+        } else {
+            None
+        };
+        (stream_from, lastpipe)
+    }
+
+    /// Run a concurrent tail of a pipeline as one subshell nesting level.
+    fn execute_streaming_group<'a>(
+        &'a mut self,
+        commands: &'a [Command],
+        stdin: Option<crate::StreamData>,
+        lastpipe: bool,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<ExecResult>>> + Send + 'a>>
+    {
+        Box::pin(async move {
+            // THREAT[TM-DOS-124]: concurrent stages nest like subshells
+            // (`f() { f | f; }`), so the whole group counts as one level.
+            self.counters.push_subshell(&self.limits)?;
+            let stages = self
+                .execute_streaming_stages(commands, stdin, lastpipe)
+                .await;
+            self.counters.pop_subshell();
+            stages
+        })
+    }
+
+    /// Record a finished stage; returns its stdout as the next stage's stdin
+    /// (the last stage's stdout stays in the accumulator).
+    #[inline(never)]
+    fn absorb_stage(
+        &self,
+        acc: &mut PipelineAcc,
+        mut result: ExecResult,
+        is_last: bool,
+    ) -> Option<crate::StreamData> {
+        acc.statuses.push(result.exit_code);
+        append_stage_stderr(
+            &mut acc.stderr,
+            &mut acc.stderr_truncated,
+            &result,
+            self.limits.max_stderr_bytes,
+        );
+        if is_last {
+            acc.last = result;
+            return None;
+        }
+        Some(std::mem::take(&mut result.stdout))
+    }
+
+    /// PIPESTATUS, pipefail and `!` for a finished pipeline.
+    #[inline(never)]
+    fn finish_pipeline(&mut self, pipeline: &Pipeline, acc: PipelineAcc) -> ExecResult {
+        let PipelineAcc {
+            statuses: pipe_statuses,
+            stderr,
+            stderr_truncated,
+            last: mut last_result,
+        } = acc;
+        last_result.stderr = stderr;
+        last_result.stderr_truncated |= stderr_truncated;
 
         // Store PIPESTATUS array
         self.pipestatus = pipe_statuses.clone();
@@ -5467,20 +5684,216 @@ impl Interpreter {
         if pipeline.negated {
             last_result.exit_code = if last_result.exit_code == 0 { 1 } else { 0 };
         }
-
-        Ok(last_result)
+        last_result
     }
 
-    /// Run one pipeline stage with `stdin` from the previous stage.
-    ///
-    /// With `subshell`, state changes (variables, cwd, options, fds) are
-    /// rolled back afterwards and `exit`/`return` end only the stage.
-    async fn execute_pipeline_stage(
+    /// A stage that is one builtin call produces its whole output at once,
+    /// so running it before the next stage loses nothing. Anything that can
+    /// run shell code (loops, groups, functions, `eval`, nested shells)
+    /// streams instead.
+    fn is_single_command_stage(&self, command: &Command) -> bool {
+        let Command::Simple(simple) = command else {
+            return false;
+        };
+        let name = match simple.name.parts.as_slice() {
+            [] => return true,
+            [WordPart::Literal(name)] => name.as_str(),
+            _ => return false,
+        };
+        !matches!(name, "eval" | "source" | "." | "bash" | "sh")
+            && !self.scoped.functions.contains_key(name)
+            && !self.scoped.aliases.contains_key(name)
+    }
+
+    /// Run `commands` (the tail of a pipeline) concurrently: every stage but
+    /// the last on a forked shell writing into a bounded [`pipe::Pipe`], the
+    /// last one here (a subshell unless `lastpipe`) so its output streams.
+    /// A stage whose reader went away ends with 141 (SIGPIPE). Returns one
+    /// result per stage; stdout is set only on the last.
+    async fn execute_streaming_stages(
+        &mut self,
+        commands: &[Command],
+        stdin: Option<crate::StreamData>,
+        lastpipe: bool,
+    ) -> Result<Vec<ExecResult>> {
+        type StageFuture = std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<ExecResult>> + Send + 'static>,
+        >;
+        let (last, producers) = commands.split_last().expect("pipeline tail");
+        let mut input: Option<Arc<pipe::Pipe>> = None;
+        let mut stages: Vec<StageFuture> = Vec::with_capacity(producers.len());
+        for (k, command) in producers.iter().enumerate() {
+            let pipe = pipe::Pipe::new();
+            let mut child = self.fork_for_job();
+            if k == 0 {
+                // First stage reads what this shell would read.
+                child.pipeline_stdin = stdin.clone().or_else(|| self.pipeline_stdin.clone());
+                if stdin.is_none() {
+                    child.pipe_in = self.pipe_in.clone();
+                }
+            } else {
+                child.pipe_in = input.clone();
+            }
+            let sink = Arc::clone(&pipe);
+            child.output_callback = Some(Box::new(move |out, _err| {
+                sink.write(out.as_bytes());
+            }));
+            child.pipe_out = Some(Arc::clone(&pipe));
+            let write_end = pipe::WriteEnd(Arc::clone(&pipe));
+            let read_end = input.take().map(pipe::ReadEnd);
+            let command = command.clone();
+            stages.push(Box::pin(async move {
+                let _read_end = read_end;
+                let jobs = Arc::clone(&child.jobs);
+                let result = jobs::with_jobs(&jobs, child.execute_command(&command)).await;
+                jobs.finish_all().await;
+                let (out, err) = jobs.lock().take_finished_output();
+                let mut r = result?;
+                r.stdout.append(&out);
+                r.stderr.append(&err);
+                // Output not yet sent at a command boundary goes now.
+                let sent = child.output_stream_stdout_bytes;
+                if r.stdout.len() > sent {
+                    write_end.0.write(&r.stdout.as_bytes()[sent..]);
+                }
+                if write_end.0.is_broken() {
+                    r.exit_code = 141;
+                } else if let ControlFlow::Exit(code) | ControlFlow::Return(code) = r.control_flow {
+                    r.exit_code = code;
+                }
+                r.control_flow = ControlFlow::None;
+                r.stdout = crate::StreamData::new();
+                Ok(r)
+            }));
+            input = Some(pipe);
+        }
+
+        // The last stage reads the last pipe through `pipe_in`.
+        let last_pipe = input.expect("at least one producer");
+        let saved_pipe_in = self.pipe_in.replace(Arc::clone(&last_pipe));
+        let saved_stdin = self.pipeline_stdin.take();
+        let mut read_end = Some(pipe::ReadEnd(last_pipe));
+        let mut done: Vec<Option<Result<ExecResult>>> = (0..stages.len()).map(|_| None).collect();
+        let mut last_done: Option<Result<ExecResult>> = None;
+        {
+            let mut last_fut = Box::pin(async {
+                let (scope, stdin) = self.enter_pipeline_stage(last, None, !lastpipe)?;
+                let result = match last {
+                    Command::Simple(simple) => self.execute_simple_command(simple, stdin).await,
+                    _ => self.execute_command(last).await,
+                };
+                self.exit_pipeline_stage(scope, result)
+            });
+            // Readers first (last stage, then upstream), so each blocks on
+            // its pipe before the writer feeding it runs.
+            std::future::poll_fn(|cx| {
+                if last_done.is_none()
+                    && let std::task::Poll::Ready(r) = last_fut.as_mut().poll(cx)
+                {
+                    // Nobody reads any more: writers get SIGPIPE.
+                    read_end = None;
+                    last_done = Some(r);
+                    cx.waker().wake_by_ref();
+                }
+                for (stage, slot) in stages.iter_mut().zip(done.iter_mut()).rev() {
+                    if slot.is_none()
+                        && let std::task::Poll::Ready(r) = stage.as_mut().poll(cx)
+                    {
+                        *slot = Some(r);
+                    }
+                }
+                let failed = done.iter().any(|d| matches!(d, Some(Err(_))))
+                    || matches!(last_done, Some(Err(_)));
+                if failed || (last_done.is_some() && done.iter().all(Option::is_some)) {
+                    std::task::Poll::Ready(())
+                } else {
+                    std::task::Poll::Pending
+                }
+            })
+            .await;
+        }
+        drop(read_end);
+        drop(stages);
+        self.pipe_in = saved_pipe_in;
+        self.pipeline_stdin = saved_stdin;
+
+        let mut results = Vec::with_capacity(done.len() + 1);
+        for d in done {
+            results.push(d.unwrap_or_else(|| Ok(ExecResult::ok(String::new())))?);
+        }
+        results.push(last_done.unwrap_or_else(|| Ok(ExecResult::ok(String::new())))?);
+        Ok(results)
+    }
+
+    /// At a command boundary in a forked pipeline stage: wait while the
+    /// pipe is full; once a write found the reader gone, end the stage
+    /// with 141 like SIGPIPE.
+    async fn wait_for_pipe_room(&mut self) -> Option<ExecResult> {
+        let pipe = Arc::clone(self.pipe_out.as_ref()?);
+        if pipe.is_broken() {
+            return Some(ExecResult {
+                exit_code: 141,
+                control_flow: ControlFlow::Exit(141),
+                ..Default::default()
+            });
+        }
+        pipe.writable().await;
+        None
+    }
+
+    /// Before command `name` takes its stdin from a streaming pipe, pull what
+    /// it needs into `pipeline_stdin`: one line for `read`, the requested
+    /// lines/bytes for `head` (then close the pipe so the writer gets
+    /// SIGPIPE), nothing for commands that never read stdin, and everything
+    /// up to end of input otherwise.
+    async fn fill_stdin_from_pipe(&mut self, name: &str, args: &[String]) {
+        let Some(pipe) = self.pipe_in.clone() else {
+            return;
+        };
+        let want = stdin_demand(name, args);
+        if want == StdinDemand::Nothing {
+            return;
+        }
+        let mut buf = self.pipeline_stdin.take().unwrap_or_default().into_bytes();
+        let mut eof = false;
+        while !want.satisfied(&buf) {
+            let chunk = if matches!(want, StdinDemand::All | StdinDemand::Bytes(_)) {
+                pipe.read_some().await
+            } else {
+                pipe.read_line_chunk().await
+            };
+            if chunk.is_empty() {
+                eof = true;
+                break;
+            }
+            buf.extend_from_slice(&chunk);
+        }
+        if eof || matches!(want, StdinDemand::All) {
+            self.pipe_in = None;
+        } else if matches!(want, StdinDemand::Lines(_) | StdinDemand::Bytes(_)) {
+            // `head` exits after its input: the writer sees a closed pipe.
+            pipe.close_read();
+            self.pipe_in = None;
+        }
+        self.pipeline_stdin = Some(buf.into());
+    }
+
+    /// Start a pipeline stage: with `subshell`, snapshot state so changes
+    /// (variables, cwd, options, fds) roll back in `exit_pipeline_stage` and
+    /// `exit`/`return` end only the stage. The caller awaits the stage's
+    /// command itself (`execute_simple_command` / `execute_command`, both
+    /// boxed): recursive pipelines (`f() { f | f; }`) then add no extra poll
+    /// frame per level.
+    fn enter_pipeline_stage(
         &mut self,
         command: &Command,
         stdin: Option<crate::StreamData>,
         subshell: bool,
-    ) -> Result<ExecResult> {
+    ) -> Result<(PipelineStageScope, Option<crate::StreamData>)> {
+        if matches!(command, Command::Simple(_)) {
+            self.execution_budget.consume_work(1)?;
+            self.counters.tick_command(&self.limits)?;
+        }
         let saved = subshell.then(|| {
             (
                 self.snapshot_subshell_state(),
@@ -5488,27 +5901,28 @@ impl Interpreter {
                 self.coproc_buffers.clone(),
             )
         });
-        let result = match command {
-            Command::Simple(simple) => {
-                let ticked = self
-                    .execution_budget
-                    .consume_work(1)
-                    .and_then(|()| self.counters.tick_command(&self.limits));
-                match ticked {
-                    Ok(()) => self.execute_simple_command(simple, stdin).await,
-                    Err(e) => Err(e.into()),
-                }
-            }
-            _ => {
-                // Compound commands, lists, etc. in pipeline:
-                // set pipeline_stdin so inner commands (read, cat, etc.) can consume it
-                let prev_pipeline_stdin = std::mem::replace(&mut self.pipeline_stdin, stdin);
-                let result = self.execute_command(command).await;
-                self.pipeline_stdin = prev_pipeline_stdin;
-                result
-            }
+        let mut scope = PipelineStageScope {
+            saved,
+            prev_pipeline_stdin: None,
         };
-        let Some((snap, call_stack, coproc)) = saved else {
+        if matches!(command, Command::Simple(_)) {
+            return Ok((scope, stdin));
+        }
+        // Compound commands, lists, etc. in pipeline:
+        // set pipeline_stdin so inner commands (read, cat, etc.) can consume it
+        scope.prev_pipeline_stdin = Some(std::mem::replace(&mut self.pipeline_stdin, stdin));
+        Ok((scope, None))
+    }
+
+    fn exit_pipeline_stage(
+        &mut self,
+        scope: PipelineStageScope,
+        result: Result<ExecResult>,
+    ) -> Result<ExecResult> {
+        if let Some(prev) = scope.prev_pipeline_stdin {
+            self.pipeline_stdin = prev;
+        }
+        let Some((snap, call_stack, coproc)) = scope.saved else {
             return result;
         };
         self.restore_subshell_state(snap);
@@ -6452,6 +6866,10 @@ impl Interpreter {
             } else {
                 stdin
             };
+
+            if stdin.is_none() && self.pipe_in.is_some() {
+                Box::pin(self.fill_stdin_from_pipe(name, &args)).await;
+            }
 
             // If no explicit stdin, inherit from pipeline_stdin (for compound cmds in pipes).
             // For `read`, consume one line; for other commands, provide all remaining data.

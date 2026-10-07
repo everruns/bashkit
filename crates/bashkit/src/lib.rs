@@ -3398,6 +3398,11 @@ impl BashBuilder {
     /// deterministic (eval replay, snapshot tests). See
     /// `knowledge/foundations/parallel-execution.md` ("Background jobs").
     ///
+    /// The same switch makes pipeline stages that run shell code stream into
+    /// each other concurrently, so `while :; do echo x; done | head -1` ends
+    /// the loop with SIGPIPE (141); with `false` stages run one after another
+    /// ("Pipelines").
+    ///
     /// ```rust
     /// # use bashkit::Bash;
     /// # #[tokio::main]
