@@ -2194,7 +2194,7 @@ impl Interpreter {
             cancelled: Arc::clone(&self.cancelled),
             hooks: Arc::clone(&self.hooks),
             in_trap: false,
-            condition_sequence_depth: 0,
+            condition_sequence_depth: self.condition_sequence_depth,
             deferred_proc_subs: Vec::new(),
             proc_sub_paths: HashSet::new(),
             random_state: AtomicU32::new(random_seed),
@@ -2303,6 +2303,14 @@ impl Interpreter {
 
     fn is_errexit_enabled(&self) -> bool {
         self.flags.contains(BashFlags::ERREXIT)
+    }
+
+    /// `set -e` fires here: on, and not inside a context where bash ignores
+    /// it (an `if`/`while`/`until` condition, a non-final `&&`/`||` element,
+    /// a `!` pipeline). Those contexts reach into function bodies and
+    /// subshells run from them, so `if f; then` never stops inside `f`.
+    fn errexit_active(&self) -> bool {
+        self.is_errexit_enabled() && self.condition_sequence_depth == 0
     }
 
     /// Check if xtrace (set -x) is enabled.
@@ -3279,7 +3287,7 @@ impl Interpreter {
             // the status as suppressed (for example, a short-circuited AND-OR
             // list) or the command is an explicitly negated pipeline.
             // Lists are NOT suppressed here so set -e fires for failing lists.
-            if self.is_errexit_enabled() && exit_code != 0 {
+            if self.errexit_active() && exit_code != 0 {
                 let suppressed = matches!(command, Command::Pipeline(p) if p.negated)
                     || result.errexit_suppressed;
                 if !suppressed {
@@ -3458,6 +3466,16 @@ impl Interpreter {
                         self.set_simple_pipestatus(r.exit_code);
                     }
                     result
+                }
+                Command::Pipeline(pipeline) if pipeline.negated => {
+                    // `! cmd` is an errexit-ignored context, inside too.
+                    self.condition_sequence_depth += 1;
+                    let result = self.execute_pipeline(pipeline).await;
+                    self.condition_sequence_depth -= 1;
+                    result.map(|mut r| {
+                        r.errexit_suppressed = true;
+                        r
+                    })
                 }
                 Command::Pipeline(pipeline) => self.execute_pipeline(pipeline).await,
                 Command::List(list) => self.execute_list(list).await,
@@ -3726,7 +3744,7 @@ impl Interpreter {
                 let emit_before = self.output_emit_count;
                 let result = self.execute_command_sequence(&for_cmd.body).await?;
                 self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
-                let should_errexit = self.is_errexit_enabled()
+                let should_errexit = self.errexit_active()
                     && result.exit_code != 0
                     && result.control_flow == ControlFlow::None
                     && !result.errexit_suppressed;
@@ -4028,7 +4046,7 @@ impl Interpreter {
                 let emit_before = self.output_emit_count;
                 let result = self.execute_command_sequence(&arith_for.body).await?;
                 self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
-                let should_errexit = self.is_errexit_enabled()
+                let should_errexit = self.errexit_active()
                     && result.exit_code != 0
                     && result.control_flow == ControlFlow::None
                     && !result.errexit_suppressed;
@@ -4613,7 +4631,7 @@ impl Interpreter {
                 let emit_before = self.output_emit_count;
                 let result = self.execute_command_sequence(body).await?;
                 self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
-                let should_errexit = self.is_errexit_enabled()
+                let should_errexit = self.errexit_active()
                     && result.exit_code != 0
                     && result.control_flow == ControlFlow::None
                     && !result.errexit_suppressed;
@@ -5672,7 +5690,7 @@ impl Interpreter {
             // Suppression is decided by the callee and surfaced through
             // result.errexit_suppressed (e.g. AND-OR lists).
             let suppress = result.errexit_suppressed;
-            if check_errexit && self.is_errexit_enabled() && exit_code != 0 && !suppress {
+            if check_errexit && self.errexit_active() && exit_code != 0 && !suppress {
                 return Ok(ExecResult {
                     stdout,
                     stderr,
@@ -6259,7 +6277,15 @@ impl Interpreter {
             exit_code_from_conditional_context = false;
         } else {
             let emit_before = self.output_emit_count;
-            let result = self.execute_command(&list.first).await?;
+            // A non-final `&&`/`||` element runs with errexit ignored.
+            let conditional = list
+                .rest
+                .first()
+                .is_some_and(|(op, _)| matches!(op, ListOperator::And | ListOperator::Or));
+            self.condition_sequence_depth += usize::from(conditional);
+            let result = self.execute_command(&list.first).await;
+            self.condition_sequence_depth -= usize::from(conditional);
+            let result = result?;
             self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
             stdout.append(&result.stdout);
             stderr.append(&result.stderr);
@@ -6313,7 +6339,7 @@ impl Interpreter {
             // Check errexit before executing next semicolon-separated command:
             // if previous command failed outside conditional context, exit now.
             let should_check_errexit = matches!(op, ListOperator::Semicolon)
-                && self.is_errexit_enabled()
+                && self.errexit_active()
                 && exit_code != 0
                 && !exit_code_from_conditional_context;
 
@@ -6346,18 +6372,21 @@ impl Interpreter {
                     exit_code_from_conditional_context = false;
                 } else {
                     let emit_before = self.output_emit_count;
-                    let result = self.execute_command(cmd).await?;
+                    let followed_by_conditional_op =
+                        list.rest.get(i + 1).is_some_and(|(op, cmd)| {
+                            !Self::is_empty_sentinel(cmd)
+                                && matches!(op, ListOperator::And | ListOperator::Or)
+                        });
+                    self.condition_sequence_depth += usize::from(followed_by_conditional_op);
+                    let result = self.execute_command(cmd).await;
+                    self.condition_sequence_depth -= usize::from(followed_by_conditional_op);
+                    let result = result?;
                     self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
                     stdout.append(&result.stdout);
                     stderr.append(&result.stderr);
                     exit_code = result.exit_code;
                     self.last_exit_code = exit_code;
                     control_flow = result.control_flow;
-                    let followed_by_conditional_op =
-                        list.rest.get(i + 1).is_some_and(|(op, cmd)| {
-                            !Self::is_empty_sentinel(cmd)
-                                && matches!(op, ListOperator::And | ListOperator::Or)
-                        });
                     // Bash suppresses errexit for AND-OR list elements except the
                     // command following the final &&/|| operator.
                     exit_code_from_conditional_context =
@@ -6388,7 +6417,7 @@ impl Interpreter {
         // Final errexit check for the last command. A non-zero status only
         // remains suppressed when it was carried from a short-circuited or
         // non-final AND-OR list element; a failing final &&/|| command exits.
-        let should_final_errexit_check = self.is_errexit_enabled()
+        let should_final_errexit_check = self.errexit_active()
             && exit_code != 0
             && !exit_code_from_conditional_context
             && !self.is_in_condition_sequence();
@@ -10434,6 +10463,17 @@ impl Interpreter {
                 }
             }
             let commands: &[Command] = if file_read.is_some() { &[] } else { commands };
+            // bash clears `set -e` in a command substitution unless
+            // `shopt -s inherit_errexit`; the snapshot restores it.
+            let inherit_errexit = self.is_errexit_enabled()
+                && self
+                    .scoped
+                    .variables
+                    .get("SHOPT_inherit_errexit")
+                    .is_some_and(|v| v == "1");
+            if self.is_errexit_enabled() && !inherit_errexit {
+                self.insert_variable_checked("SHOPT_e".to_string(), "0".to_string());
+            }
             // Captured output must not reach the streaming callback: compound
             // commands (`case`, `{ }`, `if`) emit through it as they run.
             let saved_callback = self.output_callback.take();
@@ -10453,6 +10493,13 @@ impl Interpreter {
                 }
                 self.last_exit_code = cmd_result.exit_code;
                 if matches!(cmd_result.control_flow, ControlFlow::Exit(_)) {
+                    break;
+                }
+                if inherit_errexit
+                    && self.errexit_active()
+                    && cmd_result.exit_code != 0
+                    && !cmd_result.errexit_suppressed
+                {
                     break;
                 }
             }
