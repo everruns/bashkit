@@ -139,8 +139,10 @@ and untaken records are capped at 1 MiB in total, oldest first.
 | Arrow up/down/right/left | `\x1b[A` `\x1b[B` `\x1b[C` `\x1b[D` |
 
 At the prompt the terminal behaves like a normal line-mode terminal: typed
-characters echo, Backspace, Ctrl-U (kill line) and Ctrl-W (kill word) edit the
-line, Ctrl-C discards it, and an incomplete command (`for i in 1 2; do`) shows
+characters echo, Left/Right, Home/End (or Ctrl-A/Ctrl-E) move the cursor,
+Backspace, Delete, Ctrl-U (kill to start), Ctrl-K (kill to end) and Ctrl-W
+(kill word) edit the line, Up/Down recall earlier commands from this session,
+Ctrl-C discards the line, and an incomplete command (`for i in 1 2; do`) shows
 the `PS2` prompt and waits for more lines. Shell state persists between lines,
 as in any `Bash` session. `PS1` and `PS2` are honoured (`\u \h \w \W \$`); the
 default prompt is `$ `.
@@ -286,6 +288,15 @@ Outside a terminal session (`Bash::exec()`, `BashTool`, the CLI), `less` and
 tools are unaffected. Inside a session they page even when stdout is
 redirected (`less file > out`).
 
+## In the browser
+
+The npm package [`@everruns/bashkit-wasm`](start-browser.md) exposes the same
+session as a `Terminal` class with `send`, `runUntilIdle`, `takeOutput`,
+`screenText`, `resize` and `fs`. Wire `takeOutput()` into
+[xterm.js](https://xtermjs.org) and forward its `onData` keystrokes to `send`.
+The [playground](https://bashkit.sh/playground) on bashkit.sh is built exactly
+this way; its source is `site/src/playground/client.ts`.
+
 ## Limits and security
 
 Everything runs inside the normal sandbox: the same virtual filesystem, the
@@ -306,6 +317,7 @@ See TM-DOS-119 and TM-DOS-120 in the [threat model](../crates/bashkit/docs/threa
 
 ## See also
 
+- [Browser (WASM)](start-browser.md): the `Terminal` class in `@everruns/bashkit-wasm`
 - [CLI](cli.md): the `bashkit` binary's own interactive REPL on your real terminal
 - [Snapshotting](snapshotting.md): persist and restore a session's state
 - [Virtual filesystem](filesystem.md): where `vi` reads and writes files

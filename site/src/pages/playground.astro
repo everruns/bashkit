@@ -1,0 +1,193 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+
+// Decision: the page shell (copy, examples, terminal frame) is static HTML so
+// it paints instantly. xterm.js and the WebAssembly module load through one
+// dynamic import after first paint, and only on this route. See
+// src/playground/client.ts for the runtime and its fallback mode.
+
+const description =
+  "Try Bashkit in your browser: a sandboxed bash interpreter compiled to WebAssembly with a virtual filesystem, jq, vi and less. No server, no install, and nothing you type leaves the page.";
+
+const examples = [
+  { label: "cat README.md", cmd: "cat README.md" },
+  { label: "jq", cmd: "jq '.tools[] | select(.stars > 2) | .name' data.json" },
+  { label: "pipes", cmd: "seq 1 10 | paste -sd+ | bc" },
+  { label: "vi", cmd: "vi notes.txt", terminal: true },
+  { label: "less", cmd: "seq 1 200 | less", terminal: true },
+  { label: "loop", cmd: 'for f in *; do printf "%-12s %s bytes\\n" "$f" "$(wc -c < "$f")"; done' },
+];
+---
+
+<BaseLayout title="Playground — Bashkit in your browser" description={description}>
+  <section class="pg">
+    <div class="container">
+      <header class="pg__intro">
+        <h1>Playground</h1>
+        <p>
+          Real bash, running entirely in your browser. Bashkit is compiled to WebAssembly with a
+          virtual filesystem, so there is no server and nothing you type leaves this page.
+        </p>
+      </header>
+
+      <div class="pg__term" data-mode="loading">
+        <div class="pg__chrome" aria-hidden="true">
+          <span class="pg__dot"></span><span class="pg__dot"></span><span class="pg__dot"></span>
+          <span class="pg__label">user@bashkit: ~</span>
+        </div>
+        <div class="pg__screen">
+          <!-- xterm mounts in an unpadded box: FitAddon sizes rows from the
+               parent's height and ignores the parent's own padding. -->
+          <div class="pg__xterm" id="pg-screen" role="application" aria-label="Bash terminal">
+            <p class="pg__status">Loading WebAssembly…</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="pg__examples" aria-label="Example commands">
+        {
+          examples.map((ex) => (
+            <button
+              type="button"
+              class="pg__chip"
+              data-cmd={ex.cmd}
+              data-terminal-only={ex.terminal ? "" : undefined}
+              title={ex.cmd}
+            >
+              {ex.label}
+            </button>
+          ))
+        }
+      </div>
+
+      <p class="pg__note">
+        Files reset when you reload. Embed the same sandbox in your app with{" "}
+        <a href="/docs/start-browser/">@everruns/bashkit-wasm</a>, or drive a terminal session from
+        Rust with the{" "}
+        <a href="https://github.com/everruns/bashkit/blob/main/docs/terminal.md">terminal API</a>.
+      </p>
+    </div>
+  </section>
+</BaseLayout>
+
+<script>
+  const screen = document.getElementById("pg-screen")!;
+  const frame = screen.closest<HTMLElement>(".pg__term")!;
+  const chips = document.querySelectorAll<HTMLButtonElement>(".pg__chip");
+
+  import("../playground/client")
+    .then(({ startPlayground }) => startPlayground(screen))
+    .then((pg) => {
+      frame.dataset.mode = pg.mode;
+      chips.forEach((chip) => {
+        if (pg.mode !== "terminal" && chip.dataset.terminalOnly !== undefined) {
+          chip.hidden = true;
+          return;
+        }
+        chip.addEventListener("click", () => {
+          pg.run(chip.dataset.cmd ?? "");
+          pg.focus();
+        });
+      });
+    })
+    .catch((err) => {
+      frame.dataset.mode = "error";
+      const p = document.createElement("p");
+      p.className = "pg__status";
+      p.textContent = `Couldn't start the playground: ${String(err)}`;
+      screen.replaceChildren(p);
+    });
+</script>
+
+<style>
+  .pg {
+    padding: var(--space-xl, 3rem) 0 var(--space-2xl, 4rem);
+  }
+  .pg__intro h1 {
+    margin: 0 0 0.5rem;
+  }
+  .pg__intro p {
+    max-width: 46rem;
+    margin: 0 0 1.5rem;
+    color: var(--color-slate);
+    line-height: 1.6;
+  }
+  .pg__term {
+    border: 1px solid rgb(10 22 54 / 0.15);
+    border-radius: 10px;
+    overflow: hidden;
+    background: #0d1117;
+    box-shadow: 0 16px 40px rgb(10 22 54 / 0.16);
+  }
+  .pg__chrome {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.55rem 0.85rem;
+    background: #161b22;
+    border-bottom: 1px solid rgb(255 255 255 / 0.06);
+  }
+  .pg__dot {
+    width: 0.7rem;
+    height: 0.7rem;
+    border-radius: 50%;
+    background: #3a4150;
+  }
+  .pg__dot:nth-child(1) { background: #ff5f57; }
+  .pg__dot:nth-child(2) { background: #febc2e; }
+  .pg__dot:nth-child(3) { background: #28c840; }
+  .pg__label {
+    margin-left: 0.5rem;
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 0.75rem;
+    color: #8b949e;
+  }
+  .pg__screen {
+    height: min(32rem, 65vh);
+    padding: 0.6rem 0.4rem 0.6rem 0.8rem;
+  }
+  .pg__xterm {
+    height: 100%;
+    overflow: hidden;
+  }
+  .pg__status {
+    margin: 0.4rem;
+    color: #8b949e;
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 0.85rem;
+  }
+  .pg__examples {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin: 1rem 0 0;
+  }
+  .pg__chip {
+    appearance: none;
+    border: 1px solid rgb(10 22 54 / 0.18);
+    background: var(--color-white);
+    color: inherit;
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 0.8rem;
+    padding: 0.35rem 0.75rem;
+    border-radius: 999px;
+    cursor: pointer;
+  }
+  .pg__chip:hover {
+    border-color: #2f81f7;
+  }
+  .pg__term[data-mode="loading"] ~ .pg__examples .pg__chip {
+    opacity: 0.5;
+    pointer-events: none;
+  }
+  .pg__note {
+    margin: 1.25rem 0 0;
+    font-size: 0.9rem;
+    color: var(--color-slate);
+  }
+  @media (max-width: 640px) {
+    .pg__screen {
+      height: 60vh;
+    }
+  }
+</style>

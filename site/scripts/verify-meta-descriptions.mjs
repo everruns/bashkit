@@ -12,6 +12,7 @@ const distRoot = path.join(siteRoot, "dist");
 const checkedPages = [
   { route: "/benches/", file: "benches/index.html" },
   { route: "/builtins/", file: "builtins/index.html" },
+  { route: "/playground/", file: "playground/index.html" },
 ];
 
 const failures = [];

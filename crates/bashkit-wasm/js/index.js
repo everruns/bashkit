@@ -5,7 +5,15 @@
 // so it loads correctly whether served from a CDN, a bundler, or a plain
 // <script type="module">. No SharedArrayBuffer, no COOP/COEP headers required.
 
-import init, { Bash, ExecResult } from "./bashkit_wasm.js";
+import init, * as glue from "./bashkit_wasm.js";
+
+const { Bash, ExecResult } = glue;
+
+/**
+ * Interactive terminal session, or `undefined` when the bundle was built
+ * without the `terminal` cargo feature.
+ */
+export const Terminal = glue.Terminal;
 
 let initPromise;
 
