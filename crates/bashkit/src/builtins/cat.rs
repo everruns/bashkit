@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use std::ffi::OsString;
 use std::path::Path;
 
-use super::{Builtin, Context};
+use super::{Builtin, Context, STREAM_CHUNK_BYTES};
 use crate::error::Result;
 use crate::fs::vfs_join;
 use crate::interpreter::ExecResult;
@@ -120,9 +120,6 @@ impl Builtin for Cat {
         Ok(result)
     }
 }
-
-/// Bytes per write when streaming into a pipeline (one pipe's capacity).
-const STREAM_CHUNK_BYTES: usize = 4 * 1024;
 
 /// Plain `cat` as a pipeline stage: copy each operand into the stage pipe
 /// as it is read, stdin chunk by chunk, so `loop | cat | head -1` and
