@@ -128,18 +128,33 @@ cp "$HERE/_bashkit_boot.py" "$WORK/stdlib/"
     # Not usable or not useful in a sandboxed, single-threaded, headless guest.
     rm -rf test idlelib tkinter turtledemo ensurepip venv pydoc_data turtle.py \
         _pyrepl/__pycache__ curses dbm/gnu.py dbm/ndbm.py multiprocessing concurrent/futures/process.py
+    # No FFI, TLS, sockets or TTY in the guest: these can never work.
+    rm -rf ctypes ssl.py ftplib.py imaplib.py poplib.py smtplib.py socketserver.py \
+        http/server.py wsgiref xmlrpc webbrowser.py _pyrepl pdb.py bdb.py pydoc.py \
+        _aix_support.py _android_support.py _ios_support.py _osx_support.py
+    # Pure-Python twins of C modules the guest always has.
+    rm -f _pydecimal.py _pyio.py _pydatetime.py
     find . -name __pycache__ -prune -exec rm -rf {} +
     find . -type d -name tests -prune -exec rm -rf {} +
+    # Bytecode only (no .py): compiling source on Pulley costs seconds per
+    # import, and sources would push the crate past the crates.io size cap.
+    # Unchecked-hash pycs: the zip is immutable, so no mtime/source checks.
     # Deterministic zip: sorted entries, fixed timestamps.
     "$BUILD_PY" -I - "$ROOT/usr/local/lib/python314.zip" <<'PY'
-import os, sys, zipfile
+import os, sys, zipfile, py_compile
 out = sys.argv[1]
 files = []
 for dirpath, dirnames, filenames in os.walk("."):
     dirnames.sort()
     for name in sorted(filenames):
         if name.endswith(".py"):
-            files.append(os.path.join(dirpath, name)[2:])
+            rel = os.path.join(dirpath, name)[2:]
+            try:
+                py_compile.compile(rel, cfile=rel + "c", dfile="/usr/local/lib/python314.zip/" + rel, doraise=True,
+                    invalidation_mode=py_compile.PycInvalidationMode.UNCHECKED_HASH)
+            except py_compile.PyCompileError:
+                continue  # templates/fixtures that are not valid 3.14 source
+            files.append(rel + "c")
 with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
     for path in files:
         info = zipfile.ZipInfo(path, date_time=(1980, 1, 1, 0, 0, 0))

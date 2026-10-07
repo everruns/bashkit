@@ -130,6 +130,7 @@ Boundaries of the WebAssembly CPython guest; see
 | L-CPY-006 | Deep C-level recursion ends the call with `python3: fatal error: stack overflow` instead of `RecursionError` | The interpreter's wasm stack is bounded (4 MiB); the trap is contained | `deep_c_recursion_is_contained` |
 | L-CPY-007 | No interactive REPL; `python3` with no program reads one from stdin | No TTY inside the sandbox | stance |
 | L-CPY-008 | Guest memory per call is capped at 1 GiB even if `max_memory` is higher | Pooled instance slots have a fixed maximum size | [CPython WebAssembly Runtime](../runtimes/cpython-wasm.md) |
+| L-CPY-009 | Stdlib ships as bytecode only: tracebacks show no source line for stdlib frames, `inspect.getsource()` fails on stdlib objects. Modules that cannot work in the guest are not shipped: `ctypes`, `ssl`, `ftplib`, `imaplib`, `poplib`, `smtplib`, `socketserver`, `http.server`, `wsgiref`, `xmlrpc`, `webbrowser`, `pdb`, `bdb`, `pydoc` (so `help()`), `_pyrepl` | Compiling source on Pulley costs seconds per import; sources would push the crate past the crates.io 10 MiB cap. No FFI, TLS, sockets or TTY exist | `stdlib_is_bytecode_only` (cpython_integration_tests) |
 
 ## Text Processing
 

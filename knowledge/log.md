@@ -2,6 +2,7 @@
 
 ## 2026-10-07
 
+* **Decision**: CPython stdlib ships as bytecode only. Non-preloaded imports compiled source on Pulley every call (3-7 s each); unchecked-hash `.pyc` cut that ~10x. Unusable modules (`ctypes`, `ssl`, network clients/servers, `pdb`, `pydoc`, `_pyrepl`) and pure-Python C twins dropped so the crate stays under the 10 MiB cap. Dropping preloaded modules was rejected: ~1-2 ms first-call gain, seconds per import lost. See [CPython WebAssembly Runtime](runtimes/cpython-wasm.md), [Limitations](operations/limitations.md) L-CPY-009.
 * **Performance**: Profiled CPython start. A warm `python3 -c 'print(1)'` was ~4.5 ms of Pulley interpreting ~500K guest instructions plus ~1.5 ms in ~340 copy-on-write faults; the first call adds ~13 ms of one-time memory-image build (the 40 MB snapshot span copied into a memfd). Snapshot objects are now immortal (no refcount writes, faults -20%) and the per-call environment is installed from C; warm calls went from ~6.2 to ~5.1 ms. Native AOT instead of Pulley measured 2.3 ms per call but needs executable memory and a 41 MB copy on first load; not taken yet. See [CPython WebAssembly Runtime](runtimes/cpython-wasm.md).
 
 ## 2026-10-06

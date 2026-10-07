@@ -126,7 +126,12 @@ let bash = Bash::builder()
   `_hashlib` (OpenSSL), `tkinter`, `curses`, `readline`, `dbm.gnu` are not
   built. `hashlib` still provides md5, sha1, sha2, sha3 and blake2.
 - **No interactive mode**: `python3` with no program reads one from stdin;
-  there is no REPL.
+  there is no REPL, and `pdb` and `pydoc` (`help()`) are not shipped.
+- **Stdlib is bytecode only**: tracebacks through stdlib code show no source
+  line, and `inspect.getsource()` fails on stdlib objects. Your own code
+  keeps full tracebacks. Network clients and servers (`smtplib`, `ftplib`,
+  `http.server`, `xmlrpc`, ...) are not shipped since the guest has no
+  sockets.
 - **Symlinks are not followed**, like everywhere in the Bashkit VFS.
 - **`errno` numbers are WASI's** (`ENOENT` is 44, not 2). Exception types
   (`FileNotFoundError`, ...) and messages are correct; code comparing
@@ -148,7 +153,7 @@ let bash = Bash::builder()
 
 The `cpython` feature adds about 45 MB to a binary: the precompiled
 interpreter snapshot (~41 MB, mostly the pre-initialized 40 MB heap image so
-it can be mapped copy-on-write) and the zipped stdlib (~2.5 MB) are embedded,
+it can be mapped copy-on-write) and the zipped stdlib bytecode (~3.5 MB) are embedded,
 plus the Wasmtime runtime. Pages are mapped on demand, so resident memory per
 process is far smaller.
 
