@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 use base64::Engine;
 
-use super::arg_parser::ArgParser;
+use super::arg_parser::OptArg;
 use super::{Builtin, BuiltinHelper, Context};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
@@ -31,32 +31,43 @@ impl Builtin for Base64 {
         ) {
             return Ok(r);
         }
+        let (parsed, operands) = match super::arg_parser::gnu_getopt(
+            "base64",
+            ctx.args,
+            "diw:",
+            &[
+                ("decode", OptArg::No, 'd'),
+                ("ignore-garbage", OptArg::No, 'i'),
+                ("wrap", OptArg::Required, 'w'),
+            ],
+            true,
+            1,
+        ) {
+            Ok(v) => v,
+            Err(e) => return Ok(e),
+        };
         let mut decode = false;
+        let mut ignore_garbage = false;
         let mut wrap = 76usize;
-        let mut file: Option<String> = None;
-
-        let mut parser = ArgParser::new(ctx.args);
-        while !parser.is_done() {
-            if parser.flag_any(&["-d", "--decode"]) {
-                decode = true;
-            } else if let Some(val) = parser.current().and_then(|s| s.strip_prefix("--wrap=")) {
-                wrap = val.parse().unwrap_or(76);
-                parser.advance();
-            } else if let Some(val) = match parser.flag_value("-w", "base64") {
-                Ok(v) => v,
-                Err(e) => return Ok(ExecResult::err(format!("{e}\n"), 1)),
-            } {
-                wrap = val.parse().unwrap_or(76);
-            } else if parser.flag_any(&["-i", "--ignore-garbage"]) {
-                // silently accept
-            } else if parser.is_flag() {
-                if let Some(s) = parser.positional() {
-                    return Ok(Self::err(format!("invalid option -- '{}'", &s[1..]), 1));
+        for o in parsed {
+            match o.key {
+                'd' => decode = true,
+                'i' => ignore_garbage = true,
+                _ => {
+                    let val = o.value.unwrap_or_default();
+                    wrap = match val.parse() {
+                        Ok(w) => w,
+                        Err(_) => {
+                            return Ok(Self::err(format!("invalid wrap size: '{val}'"), 1));
+                        }
+                    };
                 }
-            } else if let Some(arg) = parser.positional() {
-                file = Some(arg.to_string());
             }
         }
+        if operands.len() > 1 {
+            return Ok(Self::err(format!("extra operand '{}'", operands[1]), 1));
+        }
+        let file = operands.into_iter().next();
 
         // Byte streams and files share the same exact representation.
         let input = if let Some(ref path) = file {
@@ -79,7 +90,13 @@ impl Builtin for Base64 {
             // Decode: strip ASCII whitespace, then decode.
             let cleaned: Vec<u8> = input
                 .into_iter()
-                .filter(|byte| !byte.is_ascii_whitespace())
+                .filter(|byte| {
+                    if ignore_garbage {
+                        byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/' | b'=')
+                    } else {
+                        !byte.is_ascii_whitespace()
+                    }
+                })
                 .collect();
             match base64::engine::general_purpose::STANDARD.decode(&cleaned) {
                 Ok(bytes) => Ok(ExecResult::ok_bytes(bytes)),
@@ -88,19 +105,22 @@ impl Builtin for Base64 {
         } else {
             // Encode exact input bytes, including trailing newlines.
             let encoded = base64::engine::general_purpose::STANDARD.encode(input);
+            // GNU: a newline after every WRAP columns and after a final
+            // partial line; `-w 0` never wraps and adds no newline.
             let output = if wrap > 0 {
-                // Wrap at specified column width
-                let mut wrapped = String::new();
+                let mut wrapped = String::with_capacity(encoded.len() + encoded.len() / wrap + 1);
                 for (i, ch) in encoded.chars().enumerate() {
                     if i > 0 && i % wrap == 0 {
                         wrapped.push('\n');
                     }
                     wrapped.push(ch);
                 }
-                wrapped.push('\n');
+                if !encoded.is_empty() {
+                    wrapped.push('\n');
+                }
                 wrapped
             } else {
-                format!("{encoded}\n")
+                encoded
             };
             Ok(ExecResult::ok(output))
         }
@@ -158,7 +178,7 @@ mod tests {
     #[tokio::test]
     async fn test_encode_preserves_trailing_newline() {
         let result = run_base64(&["-w", "0"], Some("hello\n")).await;
-        assert_eq!(result.stdout, "aGVsbG8K\n");
+        assert_eq!(result.stdout, "aGVsbG8K");
     }
 
     #[tokio::test]
@@ -175,7 +195,7 @@ mod tests {
 
         let result = Base64.execute(ctx).await.expect("base64 execute failed");
 
-        assert_eq!(result.stdout, "/woK\n");
+        assert_eq!(result.stdout, "/woK");
     }
 
     #[tokio::test]
