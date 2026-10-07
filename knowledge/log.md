@@ -1,5 +1,9 @@
 # Bashkit Knowledge Update Log
 
+## 2026-10-07
+
+* **Performance**: Profiled CPython start. A warm `python3 -c 'print(1)'` was ~4.5 ms of Pulley interpreting ~500K guest instructions plus ~1.5 ms in ~340 copy-on-write faults; the first call adds ~13 ms of one-time memory-image build (the 40 MB snapshot span copied into a memfd). Snapshot objects are now immortal (no refcount writes, faults -20%) and the per-call environment is installed from C; warm calls went from ~6.2 to ~5.1 ms. Native AOT instead of Pulley measured 2.3 ms per call but needs executable memory and a 41 MB copy on first load; not taken yet. See [CPython WebAssembly Runtime](runtimes/cpython-wasm.md).
+
 ## 2026-10-06
 
 * **Feature**: The browser package gained a `Terminal` class wrapping [In-Process Terminal](integrations/in-process-terminal.md), and bashkit.sh gained a `/playground` page that drives it through xterm.js. The `bashkit-wasm` cargo feature is off by default like the core one, but the npm build turns it on: it costs ~60 KB gzipped (about 2% of the bundle) and is inert until constructed, which beats shipping a second package. The playground falls back to a line editor over `Bash.execute` when the installed package predates `Terminal`, so the page works on today's npm release and upgrades itself when the site's dependency is bumped. See [WebAssembly Package](runtimes/browser-package.md).

@@ -59,11 +59,17 @@ call:
 5. **`gc.freeze()` in the snapshot**: without it every call's exit-time
    `gc.collect()` walked the whole snapshot heap, dirtying its pages; calls
    cost ~100 ms instead of ~5 ms.
+6. **Immortal snapshot objects**: every GC-tracked snapshot object and its
+   direct referents are made immortal (`_Py_SetImmortal`) before freezing,
+   so reference counting stops writing to snapshot pages. Copy-on-write
+   faults per call dropped ~20% (341 to 273 for `print(1)`).
+7. **Lean driver**: the per-call environment is installed from C
+   (`_bashkit.load_environ`) instead of per-key `os.environ` updates.
 
 Measured on a 4-vCPU x86-64 VM (see `criterion-python-*` results under
 `crates/bashkit/benches/results/`): first `python3` in a fresh process
-~22 ms (one-time engine/module load and first-touch page faults), then
-`python3 -c pass` ~5.5 ms per call warm; Monty ~15 µs (first call ~0.4 ms).
+~20 ms (one-time engine/module load and first-touch page faults), then
+`python3 -c 'print(1)'` ~5 ms per call warm; Monty ~15 µs (first call ~0.4 ms).
 CPU-bound Python is ~4-30x slower than Monty. 1024 concurrent tenants × 4
 calls: 0 failures, ~90 calls/s on 4 vCPUs, 4.7 GB peak RSS.
 
@@ -155,6 +161,14 @@ compile-affecting configuration that produced it. 49.x needs rustc 1.96.
 
 - Python cannot call back into the shell (subprocess bridge) or host
   functions (`ToolDef`). TODO: design a `bashkit` module over a host import.
+- Where a warm call goes (`print(1)`, 2026-10-07 profile): ~4 ms Pulley
+  interpreting ~500K guest instructions (two thirds driver: compile, env,
+  `random` reseed, exit `gc.collect`), ~1 ms in ~270 page faults. The
+  one-time first-call cost is ~13 ms building the copy-on-write memory image
+  (wasmtime copies the 40 MB snapshot span, 14 MB of real data, into a
+  memfd). Native AOT compiled in `build.rs` (no run-time compile) measured
+  2.3 ms per call, but native code cannot run from the binary's read-only
+  static, so the first load copies the 41 MB module (+35 ms) unless warmed.
 - ~650 page faults per call (host Pulley stack + guest CoW writes); kernel
   fault cost grows under concurrency, so 4 vCPUs reach ~2x, not 4x, single
   thread throughput. TODO: profile which pages fault; consider pooling the

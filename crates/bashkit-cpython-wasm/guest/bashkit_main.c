@@ -13,6 +13,9 @@
 //   leak into the next call because the host discards the instance.
 
 #include <Python.h>
+#define Py_BUILD_CORE 1
+#include "internal/pycore_object.h"
+#undef Py_BUILD_CORE
 #include <stdlib.h>
 #include <string.h>
 #include <wasi/api.h>
@@ -99,9 +102,87 @@ done:
     return list;
 }
 
+// _bashkit.load_environ() -> dict[bytes, bytes]: replace the C environment
+// with this call's WASI environment and return it in `os.environ._data` form.
+// Doing this in C instead of `os.environ.clear()` + per-key `__setitem__`
+// (each one a putenv) cuts most of the driver's per-call Python work.
+static PyObject *bk_load_environ(PyObject *self, PyObject *unused) {
+    (void)self;
+    (void)unused;
+    __wasi_size_t count = 0, buf_size = 0;
+    if (__wasi_environ_sizes_get(&count, &buf_size) != 0) {
+        return PyErr_Format(PyExc_OSError, "environ_sizes_get failed");
+    }
+    char **env = calloc(count + 1, sizeof(char *));
+    char *buf = malloc(buf_size + 1);
+    if (env == NULL || buf == NULL) {
+        free(env);
+        free(buf);
+        return PyErr_NoMemory();
+    }
+    PyObject *dict = NULL;
+    if (__wasi_environ_get((uint8_t **)env, (uint8_t *)buf) != 0) {
+        PyErr_Format(PyExc_OSError, "environ_get failed");
+        goto done;
+    }
+    clearenv();
+    dict = PyDict_New();
+    if (dict == NULL) {
+        goto done;
+    }
+    for (__wasi_size_t i = 0; i < count; i++) {
+        char *eq = strchr(env[i], '=');
+        if (eq == NULL || eq == env[i]) {
+            continue;
+        }
+        *eq = '\0';
+        if (setenv(env[i], eq + 1, 1) != 0) {
+            PyErr_NoMemory();
+            Py_CLEAR(dict);
+            goto done;
+        }
+        PyObject *k = PyBytes_FromString(env[i]);
+        PyObject *v = PyBytes_FromString(eq + 1);
+        if (k == NULL || v == NULL || PyDict_SetItem(dict, k, v) < 0) {
+            Py_XDECREF(k);
+            Py_XDECREF(v);
+            Py_CLEAR(dict);
+            goto done;
+        }
+        Py_DECREF(k);
+        Py_DECREF(v);
+    }
+done:
+    free(env);
+    free(buf);
+    return dict;
+}
+
+// _bashkit.immortalize(objects) -> None: snapshot-time only. Immortal
+// objects skip reference count writes, so a call that merely uses a
+// preloaded module no longer dirties (and copy-on-write faults) the pages
+// holding it. Immortal objects are never freed, which is the point: the
+// snapshot heap outlives every call.
+static PyObject *bk_immortalize(PyObject *self, PyObject *objects) {
+    (void)self;
+    PyObject *seq = PySequence_Fast(objects, "immortalize() expects a sequence");
+    if (seq == NULL) {
+        return NULL;
+    }
+    Py_ssize_t n = PySequence_Fast_GET_SIZE(seq);
+    PyObject **items = PySequence_Fast_ITEMS(seq);
+    for (Py_ssize_t i = 0; i < n; i++) {
+        _Py_SetImmortal(items[i]);
+    }
+    Py_DECREF(seq);
+    Py_RETURN_NONE;
+}
+
 static PyMethodDef bk_methods[] = {
     {"argv", bk_argv, METH_NOARGS, "WASI argv for this call."},
     {"environ", bk_environ, METH_NOARGS, "WASI environment for this call."},
+    {"load_environ", bk_load_environ, METH_NOARGS, "Install this call's environment."},
+    {"immortalize", bk_immortalize, METH_O, "Make snapshot objects immortal."},
     {NULL, NULL, 0, NULL},
 };
 
