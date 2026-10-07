@@ -99,6 +99,7 @@ it again.
 | `activity()` | `Prompt`, `ContinuationPrompt`, `Running { command }` (for example an open `vi`) or `Exited(code)` |
 | `cursor()` | Cursor `(row, col)`, zero-based |
 | `is_alternate_screen()` | `true` while a full-screen program such as `vi` is open |
+| `input_prompt()` | While `read` or `select` waits for a typed line, the question on the cursor line (`"Continue? [y/N] "`); otherwise `None` |
 | `take_output()` | Raw bytes (with escape sequences) produced since the last call, for a renderer like xterm.js |
 | `fs()` | The session's virtual filesystem, to read files commands or `vi` wrote |
 | `exit_code()` | The shell's exit code once it has exited |
@@ -183,8 +184,9 @@ let out = tool.call(json!({"input": "ihello<Esc>:wq<Enter>"})).await?;
 Anything else in angle brackets, such as `<foo>` or a heredoc's `<<`, is typed
 literally.
 
-The result has `screen`, `activity` (`prompt`, `continuation`, `running` or
-`exited`), `running_command` or `exit_code` when they apply, `full_screen`
+The result has `screen`, `activity` (`prompt`, `continuation`, `running`,
+`input` or `exited`; `input` means a command such as `read` asks a question,
+given in `input_prompt`), `running_command` or `exit_code` when they apply, `full_screen`
 (true while `vi` or `less` is open), `waiting_for_input`, and `commands` (the
 transcript records finished during the call). Each call waits up to `wait_ms`
 (default 5 s, at most 60 s) for the session to need input. A command still
@@ -324,8 +326,9 @@ same execution limits, no host processes. A few terminal-specific rules apply:
   buffer at 8 MiB.
 - **Ctrl-C** stops a running command right away, even inside `sleep`, and
   sets `$?` to 130.
-- **Command stdin is not the terminal.** `read` with no input gets end-of-file
-  instead of waiting for typed text. Only `vi` reads keystrokes directly.
+- **Typed input.** `read` and `select` wait for a line typed on the terminal
+  (`read -p`, `-s`, `-n N` and `-t SECS` work). Other commands with no input
+  file, such as `cat`, get end-of-file instead of waiting.
 
 See TM-DOS-119 and TM-DOS-120 in the [threat model](../crates/bashkit/docs/threat-model.md).
 

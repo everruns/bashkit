@@ -130,9 +130,22 @@ updates the baseline. Long agent sessions resend a 24-row screen otherwise.
   `clear_cancelled_execution_state` (L-TERM-003 lifted). The shell loop
   prints `^C` and `$?` becomes 130. An interactive session carries `$?`
   across lines (`Bash::carry_exit_code` seeds it after the per-exec reset).
-- Command stdin is still a value fixed before the command starts, so `read`
-  gets EOF (L-TERM-002). Wiring fd 0 to the device needs a reader-backed stdin
-  in the interpreter, shared with L-CLI-002.
+- Command stdin is still a value fixed before the command starts (L-TERM-002),
+  but `read` and `select` with no stdin read a typed line from the device
+  themselves (`terminal::read_input`: the cooked line editor, or a no-echo /
+  N-chars loop for `read -s` / `-n`). `read -p` writes its prompt to the
+  terminal, `-t` returns 142 on timeout, Ctrl-D on an empty line is EOF,
+  Ctrl-C interrupts the command. Piped or redirected stdin still wins.
+  Other commands (`cat`, `head`) still get EOF; a reader-backed fd 0 is not
+  built (shared with L-CLI-002).
+- While such a read waits, `Tty::reading_line` is set (drop guard) and
+  `Terminal::input_prompt()` returns the cursor-row text left of the cursor,
+  which covers `read -p`, `echo -n 'Q? '; read` and `select`'s `PS3`.
+  `TerminalTool` reports activity `input` with `input_prompt`, so agents can
+  tell a question from a busy command without screen heuristics.
+- A reader dropped mid-wait clears the idle flag (guard in `read_event`),
+  and `run_until_idle` polls an idle session once more before returning, so
+  an expired `read -t` deadline fires on the next host call.
 
 ## Decision: input wait excluded from the execution timeout
 
@@ -214,8 +227,8 @@ redirected (L-TERM-004).
   (`crates/bashkit-js/src/terminal.rs`, async `runUntilIdle`/`call` that
   drive the session in 20 ms slices so sync `send("\x03")` and `screenText()`
   interleave with a long command), and browser wasm `Terminal`.
-- Reader-backed stdin so `read` blocks on the terminal (lifts L-TERM-002 and
-  helps L-CLI-002).
+- Reader-backed stdin so `cat`/`head` block on the terminal too (lifts
+  L-TERM-002 and helps L-CLI-002).
 - Expose the device to custom builtins for host-defined TUIs; `stty`/`tput`.
 - Snapshot/restore of a terminal session (shell state already snapshots).
 

@@ -205,6 +205,13 @@ impl Terminal {
         self.with(|t| t.terminal().is_alternate_screen())
     }
 
+    /// While a command (`read`, `select`) waits for a typed line, the
+    /// question on the cursor line; otherwise null.
+    #[napi]
+    pub fn input_prompt(&self) -> Option<String> {
+        self.with(|t| t.terminal().input_prompt())
+    }
+
     /// Resize the terminal; a running `vi` redraws.
     #[napi]
     pub fn resize(&self, rows: u32, cols: u32) {

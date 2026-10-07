@@ -2022,7 +2022,10 @@ export interface TerminalCallResult {
   cursor?: { row: number; col: number };
   /** Whether `wait_for` matched (only when it was given). */
   matched?: boolean;
-  activity: "prompt" | "continuation" | "running" | "exited";
+  /** `input`: a running command waits for a typed line (see `input_prompt`). */
+  activity: "prompt" | "continuation" | "running" | "input" | "exited";
+  /** Question on the cursor line while activity is `input`. */
+  input_prompt?: string;
   /** Command line still running (activity `running`). */
   running_command?: string;
   /** Shell exit code (activity `exited`). */
@@ -2122,6 +2125,11 @@ export class Terminal {
   /** True while a full-screen program such as `vi` is open. */
   isAlternateScreen(): boolean {
     return this.native.isAlternateScreen();
+  }
+
+  /** While `read`/`select` waits for a typed line, the question on the cursor line; else null. */
+  inputPrompt(): string | null {
+    return this.native.inputPrompt() ?? null;
   }
 
   /** Resize the terminal; a running `vi` redraws. */

@@ -1,4 +1,9 @@
 //! read builtin - read a line of input
+//!
+//! With no stdin (no pipe or redirect) inside a terminal session, `read`
+//! waits for a line typed on the terminal: `-p` prints the prompt there,
+//! `-s` turns echo off, `-n N` returns after N characters, `-t SECS` gives
+//! up with status 142. Outside a terminal no stdin is EOF (status 1).
 
 use async_trait::async_trait;
 
@@ -13,7 +18,8 @@ pub struct Read;
 impl Builtin for Read {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
         // Get the input to read from stdin
-        let input = ctx.stdin.map(|s| s.to_string());
+        #[cfg_attr(not(feature = "terminal"), allow(unused_mut))]
+        let mut input = ctx.stdin.map(|s| s.to_string());
 
         // Parse flags
         let mut raw_mode = false; // -r: don't interpret backslashes
@@ -21,6 +27,8 @@ impl Builtin for Read {
         let mut delimiter = None::<char>; // -d: custom delimiter
         let mut nchars = None::<usize>; // -n: read N chars
         let mut prompt = None::<String>; // -p prompt
+        let mut silent = false; // -s: no echo (terminal input only)
+        let mut timeout = None::<f64>; // -t SECS (terminal input only)
         let mut var_args = Vec::new();
         let mut args_iter = ctx.args.iter();
         while let Some(arg) = args_iter.next() {
@@ -60,16 +68,26 @@ impl Builtin for Read {
                             });
                             break;
                         }
-                        't' | 's' | 'u' | 'e' | 'i' => {
-                            // -t timeout, -s silent, -u fd: accept and ignore
-                            if matches!(flag, 't' | 'u') {
-                                let rest: String = chars.collect();
-                                if rest.is_empty() {
-                                    args_iter.next();
-                                }
-                                break;
-                            }
+                        's' => silent = true,
+                        't' => {
+                            let rest: String = chars.collect();
+                            let t_str = if rest.is_empty() {
+                                args_iter.next().map(|s| s.as_str()).unwrap_or("")
+                            } else {
+                                &rest
+                            };
+                            timeout = t_str.parse().ok().filter(|t: &f64| t.is_finite());
+                            break;
                         }
+                        'u' => {
+                            // -u fd: accept and ignore
+                            let rest: String = chars.collect();
+                            if rest.is_empty() {
+                                args_iter.next();
+                            }
+                            break;
+                        }
+                        'e' | 'i' => {}
                         _ => {}
                     }
                 }
@@ -77,7 +95,36 @@ impl Builtin for Read {
                 var_args.push(arg.as_str());
             }
         }
-        let _ = prompt; // prompt is for interactive use, ignored in non-interactive
+        #[cfg(feature = "terminal")]
+        if input.is_none()
+            && let Some(tty) = ctx.execution_extension::<crate::terminal::Tty>()
+        {
+            let tty = tty
+                .try_with(Clone::clone)
+                .map_err(|_| crate::error::Error::Cancelled)?;
+            match read_from_terminal(&tty, prompt.as_deref(), silent, nchars, timeout).await? {
+                TerminalRead::Line(line) => input = Some(line),
+                TerminalRead::Eof => {}
+                TerminalRead::TimedOut => {
+                    let mut result = ExecResult::err("", 142);
+                    for var_name in if var_args.is_empty() {
+                        vec!["REPLY"]
+                    } else {
+                        var_args.clone()
+                    } {
+                        if !is_internal_variable(var_name) {
+                            result.side_effects.push(BuiltinSideEffect::SetVariable {
+                                name: var_name.to_string(),
+                                value: String::new(),
+                            });
+                        }
+                    }
+                    return Ok(result);
+                }
+            }
+        }
+        #[cfg(not(feature = "terminal"))]
+        let _ = (prompt, silent, timeout);
 
         // EOF with no data: clear all target variables to empty and return 1.
         // This prevents the common `while read line || [[ -n "$line" ]]`
@@ -323,6 +370,56 @@ impl Builtin for Read {
 
         Ok(result)
     }
+}
+
+#[cfg(feature = "terminal")]
+enum TerminalRead {
+    Line(String),
+    Eof,
+    TimedOut,
+}
+
+/// One line typed on the session terminal. The line comes back with a
+/// trailing `\n` so the stdin parsing below treats it like piped input.
+#[cfg(feature = "terminal")]
+async fn read_from_terminal(
+    tty: &crate::terminal::Tty,
+    prompt: Option<&str>,
+    silent: bool,
+    nchars: Option<usize>,
+    timeout: Option<f64>,
+) -> Result<TerminalRead> {
+    use crate::terminal::{InputOptions, LineRead, read_input};
+    if let Some(prompt) = prompt {
+        tty.write_cooked(prompt.as_bytes());
+    }
+    let opts = InputOptions { silent, nchars };
+    let read = read_input(tty, opts);
+    let outcome = match timeout {
+        Some(secs) => {
+            // THREAT[TM-DOS-120]: the wait is input time, excluded from the
+            // execution deadline; -t only bounds how long `read` itself waits.
+            let wait = std::time::Duration::from_secs_f64(secs.clamp(0.0, 86_400.0));
+            match crate::time_compat::timeout(wait, read).await {
+                Ok(r) => r,
+                Err(_) => return Ok(TerminalRead::TimedOut),
+            }
+        }
+        None => read.await,
+    };
+    Ok(match outcome {
+        LineRead::Line(mut line) => {
+            if silent {
+                // bash -s prints no newline; move to the next row so the
+                // following output does not overwrite the prompt line.
+                tty.write(b"\r\n");
+            }
+            line.push('\n');
+            TerminalRead::Line(line)
+        }
+        LineRead::Eof => TerminalRead::Eof,
+        LineRead::Interrupt => return Err(crate::error::Error::Cancelled),
+    })
 }
 
 #[cfg(test)]

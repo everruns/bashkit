@@ -3497,6 +3497,51 @@ impl Interpreter {
     /// menu selection. If the line is a valid number, the variable is set to
     /// the corresponding item; otherwise it is set to empty. REPLY is always
     /// set to the raw input. EOF ends the loop.
+    /// `select` with no stdin inside a terminal session: show the menu and
+    /// `PS3` now (they are buffered in `stderr`) and wait for a typed line.
+    /// `None` outside a terminal or on Ctrl-D.
+    #[cfg(feature = "terminal")]
+    async fn select_line_from_terminal(
+        &mut self,
+        menu: &crate::StreamData,
+    ) -> Result<Option<String>> {
+        let Some(tty) = self
+            .current_execution_extensions()
+            .get::<crate::terminal::Tty>()
+        else {
+            return Ok(None);
+        };
+        let tty = tty
+            .try_with(Clone::clone)
+            .map_err(|_| crate::Error::Cancelled)?;
+        tty.write_cooked(menu.as_bytes());
+        match crate::terminal::read_input(&tty, Default::default()).await {
+            crate::terminal::LineRead::Line(line) => Ok(Some(line)),
+            crate::terminal::LineRead::Eof => Ok(None),
+            crate::terminal::LineRead::Interrupt => Err(crate::Error::Cancelled),
+        }
+    }
+
+    #[cfg(not(feature = "terminal"))]
+    async fn select_line_from_terminal(
+        &mut self,
+        _menu: &crate::StreamData,
+    ) -> Result<Option<String>> {
+        Ok(None)
+    }
+
+    /// Whether this execution runs inside a terminal session.
+    fn has_terminal(&self) -> bool {
+        #[cfg(feature = "terminal")]
+        {
+            self.current_execution_extensions()
+                .get::<crate::terminal::Tty>()
+                .is_some()
+        }
+        #[cfg(not(feature = "terminal"))]
+        false
+    }
+
     async fn execute_select(&mut self, select_cmd: &SelectCommand) -> Result<ExecResult> {
         let mut stdout = crate::StreamData::new();
         let mut stderr = crate::StreamData::new();
@@ -3557,10 +3602,15 @@ impl Interpreter {
             loop {
                 self.counters.tick_loop(&self.limits)?;
 
-                // Output menu to stderr
-                stderr.push_str(&menu);
-                stderr.push_byte(b'\n');
-                stderr.push_str(&ps3);
+                let mut menu_text = crate::StreamData::new();
+                menu_text.push_str(&menu);
+                menu_text.push_byte(b'\n');
+                menu_text.push_str(&ps3);
+                // Output menu to stderr, or straight to the terminal when
+                // the choice is typed there.
+                if self.pipeline_stdin.is_some() || !self.has_terminal() {
+                    stderr.append(&menu_text);
+                }
 
                 // Read a line from pipeline_stdin
                 let line = if let Some(ref ps) = self.pipeline_stdin {
@@ -3583,10 +3633,15 @@ impl Interpreter {
                         data.text_lossy().into_owned()
                     }
                 } else {
-                    // No stdin: bash prints newline and exits with code 1
-                    stdout.push_byte(b'\n');
-                    exit_code = 1;
-                    break;
+                    match self.select_line_from_terminal(&menu_text).await? {
+                        Some(line) => line,
+                        None => {
+                            // No stdin: bash prints newline and exits with code 1
+                            stdout.push_byte(b'\n');
+                            exit_code = 1;
+                            break;
+                        }
+                    }
                 };
 
                 // Set REPLY to raw input
