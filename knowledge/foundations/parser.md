@@ -52,6 +52,17 @@ Handles bash's context-sensitivity:
 - Brace expansion: `{a,b,c}` and `{1..5}` vs brace groups `{ cmd; }`
 - Tilde expansion: `~` at start of word expands to `$HOME`
 
+**Quoted glob characters.** `"*"`, `'?'` and `\[` are literal; only
+unquoted `*?[` (and brace syntax) glob. Token kinds encode this: a word whose
+quoted text has glob characters but no unquoted glob is a `QuotedWord` (never
+globs). A word with both is a `QuotedGlobWord`: the lexer backslash-escapes
+the quoted glob characters in place and wraps quoted ranges in `\x1e`/`\x1f`
+markers (so `"$x"zz*` ends the variable name at the quote). Consumers:
+globbing uses the escaped text and drops the escapes when nothing matches;
+`expand_word` returns unescaped text for non-glob uses; assignments and
+script analysis unescape literal parts; `case` and `[[ == ]]` build patterns
+with `expand_pattern_word`, which escapes fully quoted words.
+
 **Metacharacters vs reserved words.** Only space, tab, newline, `|`, `&`, `;`,
 `(`, `)`, `<` and `>` delimit a word. `{` and `}` do not: they are reserved
 words, recognized as such only when they stand alone. So `echo a}b` prints

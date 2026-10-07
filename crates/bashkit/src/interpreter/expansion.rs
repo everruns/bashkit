@@ -112,7 +112,15 @@ impl Interpreter {
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String>> + Send + 'a>> {
         Box::pin(async move {
             let expanded = self.expand_word_inner(word).await?;
-            Ok(Self::strip_quote_markers(&expanded))
+            let expanded = Self::strip_quote_markers(&expanded);
+            // A `QuotedGlobWord` carries glob escapes for its quoted text;
+            // contexts that do not glob (command names, redirect targets,
+            // operands) want the text itself.
+            if word.quoted && word.has_unquoted_glob {
+                Ok(Self::glob_path_unescape(&expanded))
+            } else {
+                Ok(expanded)
+            }
         })
     }
 
@@ -161,6 +169,21 @@ impl Interpreter {
             result.push_str(&Self::quote_expansion_for_quoted_glob(value));
         } else {
             result.push_str(value);
+        }
+    }
+
+    /// Expand a word used as a pattern (`case` item, `[[ == ]]` operand).
+    /// Quoted text must match literally, so a fully quoted word has every
+    /// glob metacharacter escaped. A mixed word (`QuotedGlobWord`) already
+    /// carries escapes for its quoted literals from the lexer and for its
+    /// quoted expansions from `append_expansion_for_word`.
+    pub(super) async fn expand_pattern_word(&mut self, word: &Word) -> Result<String> {
+        let expanded = Box::pin(self.expand_word_inner(word)).await?;
+        let expanded = Self::strip_quote_markers(&expanded);
+        if word.quoted && !word.has_unquoted_glob {
+            Ok(Self::quote_expansion_for_quoted_glob(&expanded))
+        } else {
+            Ok(expanded)
         }
     }
 
