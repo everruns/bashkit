@@ -1255,7 +1255,15 @@ mod edge_cases {
         // Commands that are NOT implemented as builtins
         // Note: git is a builtin (returns exit 1 when not configured, not 127)
         // Note: ssh/scp/sftp are builtins when ssh feature is enabled
-        for cmd in &["apt", "yum", "docker", "vim", "nano", "rsync"] {
+        // Note: nano is a builtin when the terminal feature is enabled
+        let mut missing = vec!["apt", "yum", "docker", "vim", "rsync"];
+        if cfg!(feature = "terminal") {
+            let result = bash.exec("nano </dev/null").await.unwrap();
+            assert_ne!(result.exit_code, 127, "nano is a terminal builtin");
+        } else {
+            missing.push("nano");
+        }
+        for cmd in &missing {
             let result = bash.exec(cmd).await.unwrap();
             assert_eq!(
                 result.exit_code, 127,
