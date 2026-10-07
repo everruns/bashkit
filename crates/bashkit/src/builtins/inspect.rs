@@ -3,8 +3,8 @@
 use super::clap_cache::cached_command;
 use async_trait::async_trait;
 
-use super::{Builtin, Context, resolve_path};
 use super::ls::quoting::{QuotingStyle, quote_name};
+use super::{Builtin, Context, resolve_path};
 use crate::error::Result;
 use crate::fs::FileType;
 use crate::interpreter::ExecResult;
@@ -381,8 +381,7 @@ fn format_stat(
                         result.push_str(&quote_name(name, QuotingStyle::ShellEscapeAlways));
                         if let Some(target) = link_target {
                             result.push_str(" -> ");
-                            result
-                                .push_str(&quote_name(target, QuotingStyle::ShellEscapeAlways));
+                            result.push_str(&quote_name(target, QuotingStyle::ShellEscapeAlways));
                         }
                     }
                     's' => result.push_str(&metadata.size.to_string()),

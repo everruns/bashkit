@@ -235,7 +235,10 @@ impl Builtin for Du {
             grand_total += walk(&ctx, &path, operand, 0, &opts, &mut output).await?;
         }
         if opts.total {
-            output.push_str(&format!("{}\ttotal\n", format_size(grand_total, opts.scale)));
+            output.push_str(&format!(
+                "{}\ttotal\n",
+                format_size(grand_total, opts.scale)
+            ));
         }
 
         Ok(ExecResult {
