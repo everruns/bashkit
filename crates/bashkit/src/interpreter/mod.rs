@@ -1637,10 +1637,6 @@ impl Interpreter {
             // Text processing
             "grep" => Grep,
             "sed" => Sed,
-            "awk" => Awk,
-            "gawk" => Awk,
-            "mawk" => Awk,
-            "nawk" => Awk,
             "head" => Head,
             "tail" => Tail,
             "sort" => Sort,
@@ -1854,6 +1850,9 @@ impl Interpreter {
             Arc::new(builtins::Touch::with_clock(clock)),
         );
         builtins.insert("pr".to_string(), Arc::new(builtins::Pr::with_clock(clock)));
+        for name in ["awk", "gawk", "mawk", "nawk"] {
+            builtins.insert(name.to_string(), Arc::new(builtins::Awk::with_clock(clock)));
+        }
 
         // System info builtins (configurable virtual values)
         let hostname_val = hostname.unwrap_or_else(|| builtins::DEFAULT_HOSTNAME.to_string());

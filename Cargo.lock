@@ -400,6 +400,7 @@ dependencies = [
  "proptest",
  "rand 0.10.3",
  "regex",
+ "regex-automata",
  "reqwest",
  "russh",
  "rustls",

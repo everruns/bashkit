@@ -384,6 +384,38 @@ Deliberate gaps are L-MAKE-001..003 in
 [Known Limitations](../operations/limitations.md); amplification caps are
 TM-DOS-126 in the [Threat Model](../security/threat-model.md).
 
+### awk
+
+`awk` (also `gawk`, `mawk`, `nawk`) targets gawk 5.2, Debian's `awk`
+(`builtins/awk/`): its options (`-F`, `-v`, `-f`, `-e`, `--csv`, ignored gawk
+flags, usage on stderr with exit 1), its messages (`awk: cmd. line:1:` with a
+caret for syntax errors, located runtime `fatal:` errors), its number output
+and the extensions agents use (`gensub`, `asort`/`asorti`, `patsplit`,
+`strftime`/`mktime`/`systime`, `BEGINFILE`/`ENDFILE`, `switch`, arrays of
+arrays, `PROCINFO["sorted_in"]`, `FIELDWIDTHS`/`FPAT`, `IGNORECASE`, `RS` as a
+regex, `RT`). `rand()` reproduces gawk's random() sequence. Debian-oracle
+differential score: 94% of 260 awk cases (51% before the rewrite); the
+remaining gawk gap is unsorted `for (k in a)` order.
+
+Pipeline: `lexer` -> `parser` (names resolved to slots, AST in `ast`) ->
+`interp` (async evaluator) with `io` (records, `getline`, redirections,
+commands) and `funcs` (builtin functions). `regex` translates EREs to the
+`regex` crate and adds POSIX leftmost-longest matching with a hybrid DFA
+when an alternation or quantifier could prefer a shorter match. Arrays live
+in an arena referenced by id, which gives by-reference array arguments.
+Each expression or statement kind is its own boxed future, so one awk call
+level costs a few KiB of stack (the 64-level call cap fits a 2 MiB debug
+thread with room to spare).
+
+Commands (`system()`, `print | cmd`, `cmd | getline`) run as `sh -c` through
+an `ExecutionPlan::Driver`, used only when the arguments contain `|` or
+`system` or a `-f` program; awk output is streamed with `PlanStep::Emit`
+before each command so order is kept. Without a driver (direct `execute`),
+commands report 127. Gaps are L-AWK-001..004 in
+[Known Limitations](../operations/limitations.md); caps are TM-DOS-027,
+-028, -033, -109, -110, -116 and -128 in the
+[Threat Model](../security/threat-model.md).
+
 ### Network Builtins
 
 `curl`, `wget`, `http` require the `http_client` feature + URL allowlist.

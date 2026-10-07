@@ -144,7 +144,10 @@ pass in CI); only divergences and boundaries are recorded here.
 
 | ID | Tool | Limitation | Evidence |
 |----|------|------------|----------|
-| L-AWK-001 | awk | Some complex regex patterns unsupported (engine shared with sed/grep, size-limited) | stance |
+| L-AWK-001 | awk | `for (k in a)` without `PROCINFO["sorted_in"]` visits numeric keys ascending, then the rest by bytes; gawk uses its hash-table order, so unsorted loops can print in a different order than Debian awk | `awk_for_in_string_keys` spec |
+| L-AWK-002 | awk | `print \| cmd` collects the command's input and runs it at `close()` or exit (as if the pipe were read at once); `\|&` coprocesses, `@include`/`@load`/`@namespace`, MPFR (`-M`), `--profile` and the debugger are not supported | stance |
+| L-AWK-003 | awk | Commands (`system()`, pipes) need the shell: through `Bash::exec` they run as `sh -c` in the sandbox; a direct `Builtin::execute` call (embedders) has no shell, so they print a notice and report status 127 | `test_awk_print_redirect_pipe_needs_plan_driver` |
+| L-AWK-004 | awk | `mawk` and `nawk` run the gawk dialect: mawk's `-W` options, messages and its `substr`/division-by-zero behavior are not emulated | stance |
 | L-JQ-001 | jq | Alternative `//`: jaq errors on `.foo` applied to null instead of returning null (upstream jaq divergence) | 1 skipped spec test |
 | L-JQ-002 | jq | Regex natives compile the pattern per filter invocation; mapping `test`/`match`/`split` over many inputs can repeat compilation because jaq's native callback has no per-run cache state | `regex_compat.rs::re_native` |
 | L-JQ-003 | jq | User-defined recursion is bounded by a 64 live-evaluator-context ceiling for host stack safety: non-tail recursive defs (`def s: if length==0 then 0 else .[0] + (.[1:]|s) end`) fail past ~62 levels with `jq: error: recursion limit (64) exceeded` (exit 5). Tail-recursive defs are unaffected and run to thousands of levels; unbounded recursion stops at the execution timeout | `jq_non_tail_recursion_is_bounded_on_a_two_mib_stack`, `jq_recursive_filters_stop_without_host_abort_or_hang`, `finite_user_recursion_stays_available` |
