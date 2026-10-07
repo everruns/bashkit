@@ -9,16 +9,26 @@ use crate::interpreter::ExecResult;
 
 /// The xargs builtin - build and execute command lines from stdin.
 ///
-/// Usage: xargs [-I REPLACE] [-n MAX-ARGS] [-d DELIM] [-P N]
-///              [--process-slot-var=VAR] [COMMAND [ARGS...]]
+/// Usage: xargs [OPTION]... [COMMAND [ARGS...]]
 ///
-/// Options:
-///   -I REPLACE              Replace REPLACE with input (implies -n 1)
-///   -n MAX-ARGS             Use at most MAX-ARGS arguments per command
-///   -d DELIM                Use DELIM as delimiter instead of whitespace
-///   -0                      Use NUL as delimiter (same as -d '\0')
+/// Options (GNU findutils surface):
+///   -0, --null              Items are NUL-terminated (quotes not special)
+///   -a, --arg-file=FILE     Read items from FILE instead of stdin
+///   -d, --delimiter=DELIM   Items are DELIM-terminated (char or `\` escape)
+///   -E EOF, -e[EOF]         Stop reading at the logical end-of-file word
+///   -I REPLACE, -i[REPLACE] Run once per line, replacing REPLACE
+///   -L N, -l[N]             Use at most N input lines per command
+///   -n N                    Use at most N arguments per command
+///   -s N                    Limit command line length to N bytes
+///   -r                      Do not run COMMAND when input is empty
+///   -t, --verbose           Print each command to stderr before running it
+///   -x                      Exit if the size is exceeded
 ///   -P N, --max-procs=N     Allocate N parallel slots (see decision below)
 ///   --process-slot-var=VAR  Set VAR to this invocation's slot index (0..N-1)
+///
+/// Input parsing follows GNU `read_line`/`read_string`: blanks separate
+/// items, single/double quotes group, backslash escapes, a NUL truncates the
+/// item, and `-L` lines ending in a blank continue onto the next line.
 ///
 /// Important decision (parallelism): bashkit runs a single `Bash` interpreter
 /// sequentially — even background `&` jobs execute synchronously for
@@ -32,11 +42,19 @@ use crate::interpreter::ExecResult;
 /// case while staying faithful to bashkit's no-hidden-concurrency model.
 pub struct Xargs;
 
+/// Default `-s` limit (GNU caps the default at 128 KiB).
+const XARGS_DEFAULT_MAX_CHARS: usize = 128 * 1024;
+
 /// Parsed xargs options.
 struct XargsOptions {
     replace_str: Option<String>,
-    max_args: Option<usize>,
+    max_args: usize,
+    max_lines: usize,
+    max_chars: usize,
     delimiter: Option<char>,
+    eof_str: Option<String>,
+    arg_file: Option<String>,
+    verbose: bool,
     /// `-P N` / `--max-procs=N`: number of parallel slots. `Some(0)` means
     /// "as many as possible" (one slot per command). `None` means 1 slot.
     max_procs: Option<usize>,
@@ -48,173 +66,578 @@ struct XargsOptions {
     command: Vec<String>,
 }
 
+fn xargs_err(msg: impl std::fmt::Display) -> ExecResult {
+    ExecResult::err(format!("xargs: {msg}\n"), 1)
+}
+
+/// GNU `parse_num`: strtol-style (blanks, sign), then a lower bound.
+#[allow(clippy::result_large_err)]
+fn xargs_parse_num(s: &str, opt: char, min: i64) -> std::result::Result<usize, ExecResult> {
+    let t = s.trim_start();
+    let (neg, digits) = match t.as_bytes().first() {
+        Some(b'-') => (true, &t[1..]),
+        Some(b'+') => (false, &t[1..]),
+        _ => (false, t),
+    };
+    let val: i64 = match digits.parse::<i64>() {
+        Ok(v) if !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()) => {
+            if neg {
+                -v
+            } else {
+                v
+            }
+        }
+        _ => {
+            return Err(xargs_err(format!(
+                "invalid number \"{s}\" for -{opt} option"
+            )));
+        }
+    };
+    if val < min {
+        return Err(xargs_err(format!(
+            "value {s} for -{opt} option should be >= {min}"
+        )));
+    }
+    Ok(val as usize)
+}
+
+/// GNU `strtoul` prefix parse used for `-d '\xNN'` / `-d '\NNN'`.
+fn strtoul_prefix(s: &str, base: u32) -> (u64, &str) {
+    let t = s.trim_start();
+    let (neg, mut rest) = match t.as_bytes().first() {
+        Some(b'-') => (true, &t[1..]),
+        Some(b'+') => (false, &t[1..]),
+        _ => (false, t),
+    };
+    if base == 16
+        && (rest.starts_with("0x") || rest.starts_with("0X"))
+        && rest[2..].starts_with(|c: char| c.is_ascii_hexdigit())
+    {
+        rest = &rest[2..];
+    }
+    let n = rest.find(|c: char| !c.is_digit(base)).unwrap_or(rest.len());
+    if n == 0 {
+        // No conversion: strtoul leaves the end pointer at the start.
+        return (0, s);
+    }
+    let v = u64::from_str_radix(&rest[..n], base).unwrap_or(u64::MAX);
+    (if neg { v.wrapping_neg() } else { v }, &rest[n..])
+}
+
+/// GNU `get_input_delimiter`.
+#[allow(clippy::result_large_err)]
+fn xargs_delimiter(s: &str) -> std::result::Result<char, ExecResult> {
+    let mut chars = s.chars();
+    match (chars.next(), chars.next()) {
+        (Some(c), None) => return Ok(c),
+        (Some('\\'), Some(n)) => {
+            let simple = match n {
+                'a' => Some('\x07'),
+                'b' => Some('\x08'),
+                'f' => Some('\x0c'),
+                'n' => Some('\n'),
+                'r' => Some('\r'),
+                't' => Some('\t'),
+                'v' => Some('\x0b'),
+                '\\' => Some('\\'),
+                _ => None,
+            };
+            if let Some(c) = simple {
+                return Ok(c);
+            }
+            let (digits, base) = if n == 'x' {
+                (&s[2..], 16)
+            } else if n.is_ascii_digit() {
+                (&s[1..], 8)
+            } else {
+                return Err(xargs_err(format!(
+                    "Invalid escape sequence {s} in input delimiter specification."
+                )));
+            };
+            let (val, rest) = strtoul_prefix(digits, base);
+            if val > 0xff {
+                return Err(xargs_err(format!(
+                    "Invalid escape sequence {s} in input delimiter specification; character values must not exceed {}.",
+                    if base == 16 { "0xff" } else { "0377" }
+                )));
+            }
+            if !rest.is_empty() {
+                return Err(xargs_err(format!(
+                    "Invalid escape sequence {s} in input delimiter specification; trailing characters {rest} not recognised."
+                )));
+            }
+            Ok(char::from(val as u8))
+        }
+        _ => Err(xargs_err(format!(
+            "Invalid input delimiter specification {s}: the delimiter must be either a single character or an escape sequence starting with \\."
+        ))),
+    }
+}
+
 /// Parse xargs arguments, returning options or an error ExecResult.
 #[allow(clippy::result_large_err)]
 fn parse_xargs_args(args: &[String]) -> std::result::Result<XargsOptions, ExecResult> {
-    let mut replace_str: Option<String> = None;
-    let mut max_args: Option<usize> = None;
-    let mut delimiter: Option<char> = None;
-    let mut max_procs: Option<usize> = None;
-    let mut process_slot_var: Option<String> = None;
-    let mut no_run_if_empty = false;
-    let mut command: Vec<String> = Vec::new();
-    let mut p = super::arg_parser::ArgParser::new(args);
+    use super::arg_parser::OptArg;
+    let (opts, command) = super::arg_parser::gnu_getopt(
+        "xargs",
+        args,
+        "0a:E:e::i::I:l::L:n:oprs:txP:d:",
+        &[
+            ("arg-file", OptArg::Required, 'a'),
+            ("delimiter", OptArg::Required, 'd'),
+            ("eof", OptArg::Optional, 'e'),
+            ("exit", OptArg::No, 'x'),
+            ("interactive", OptArg::No, 'p'),
+            ("max-args", OptArg::Required, 'n'),
+            ("max-chars", OptArg::Required, 's'),
+            ("max-lines", OptArg::Optional, 'l'),
+            ("max-procs", OptArg::Required, 'P'),
+            ("no-run-if-empty", OptArg::No, 'r'),
+            ("null", OptArg::No, '0'),
+            ("open-tty", OptArg::No, 'o'),
+            ("process-slot-var", OptArg::Required, 'V'),
+            ("replace", OptArg::Optional, 'i'),
+            ("show-limits", OptArg::No, 'S'),
+            ("verbose", OptArg::No, 't'),
+        ],
+        false,
+        1,
+    )?;
 
-    while !p.is_done() {
-        if let Some(val) = p
-            .flag_value("-I", "xargs")
-            .map_err(|e| ExecResult::err(format!("{e}\n"), 1))?
-        {
-            replace_str = Some(val.to_string());
-            max_args = Some(1); // -I implies -n 1
-        } else if let Some(val) = p
-            .flag_value("-n", "xargs")
-            .map_err(|e| ExecResult::err(format!("{e}\n"), 1))?
-        {
-            match val.parse::<usize>() {
-                Ok(n) if n > 0 => max_args = Some(n),
-                _ => {
-                    return Err(ExecResult::err(
-                        format!("xargs: invalid number: '{}'\n", val),
-                        1,
-                    ));
+    let mut o = XargsOptions {
+        replace_str: None,
+        max_args: 0,
+        max_lines: 0,
+        max_chars: XARGS_DEFAULT_MAX_CHARS,
+        delimiter: None,
+        eof_str: None,
+        arg_file: None,
+        verbose: false,
+        max_procs: None,
+        process_slot_var: None,
+        no_run_if_empty: false,
+        command,
+    };
+    // Order matters: -I/-L/-n override each other as in GNU xargs.c.
+    for opt in opts {
+        let val = opt.value;
+        match opt.key {
+            '0' => o.delimiter = Some('\0'),
+            'a' => o.arg_file = val,
+            'd' => o.delimiter = Some(xargs_delimiter(&val.unwrap_or_default())?),
+            'E' | 'e' => o.eof_str = val.filter(|v| !v.is_empty()),
+            'I' | 'i' => {
+                o.replace_str = Some(val.unwrap_or_else(|| "{}".to_string()));
+                o.max_args = 0;
+                o.max_lines = 0;
+            }
+            'L' | 'l' => {
+                o.max_lines = match val {
+                    Some(v) => xargs_parse_num(&v, opt.key, 1)?,
+                    None => 1,
+                };
+                o.max_args = 0;
+                o.replace_str = None;
+            }
+            'n' => {
+                o.max_lines = 0;
+                o.max_args = xargs_parse_num(&val.unwrap_or_default(), 'n', 1)?;
+                // GNU ignores -n1 after -i (savannah bug 57390).
+                if o.max_args == 1 && o.replace_str.is_some() {
+                    o.max_args = 0;
+                } else {
+                    o.replace_str = None;
                 }
             }
-        } else if let Some(val) = p
-            .flag_value("-d", "xargs")
-            .map_err(|e| ExecResult::err(format!("{e}\n"), 1))?
-        {
-            delimiter = val.chars().next();
-        } else if p.flag("-0") {
-            delimiter = Some('\0');
-        } else if p.flag("-r") || p.flag("--no-run-if-empty") {
-            no_run_if_empty = true;
-        } else if let Some(val) = p
-            .flag_value("-P", "xargs")
-            .map_err(|e| ExecResult::err(format!("{e}\n"), 1))?
-            .or(p
-                .long_value("--max-procs", "xargs")
-                .map_err(|e| ExecResult::err(format!("{e}\n"), 1))?)
-        {
-            // -P 0 / --max-procs=0 means "as many as possible" (GNU).
-            match val.parse::<usize>() {
-                Ok(n) => max_procs = Some(n),
-                _ => {
-                    return Err(ExecResult::err(
-                        format!("xargs: invalid number for -P option: '{}'\n", val),
-                        1,
-                    ));
+            's' => o.max_chars = xargs_parse_num(&val.unwrap_or_default(), 's', 1)?,
+            'P' => o.max_procs = Some(xargs_parse_num(&val.unwrap_or_default(), 'P', 0)?),
+            'V' => {
+                let v = val.unwrap_or_default();
+                if v.is_empty() {
+                    return Err(xargs_err("--process-slot-var requires a variable name"));
                 }
+                o.process_slot_var = Some(v);
             }
-        } else if let Some(val) = p
-            .long_value("--process-slot-var", "xargs")
-            .map_err(|e| ExecResult::err(format!("{e}\n"), 1))?
-        {
-            if val.is_empty() {
-                return Err(ExecResult::err(
-                    "xargs: --process-slot-var requires a variable name\n".to_string(),
-                    1,
-                ));
-            }
-            process_slot_var = Some(val.to_string());
-        } else if p.is_flag() && p.current() != Some("-") {
-            let Some(s) = p.current() else {
-                p.advance();
-                continue;
-            };
-            return Err(ExecResult::err(
-                format!("xargs: invalid option -- '{}'\n", &s[1..]),
-                1,
-            ));
-        } else {
-            command.extend(p.rest().iter().cloned());
-            break;
+            'r' => o.no_run_if_empty = true,
+            't' => o.verbose = true,
+            'p' => return Err(xargs_err("failed to open /dev/tty for reading")),
+            // -x, -o, --show-limits: nothing to enforce or show here.
+            _ => {}
         }
     }
 
-    if command.is_empty() {
-        command.push("echo".to_string());
+    if o.command.is_empty() {
+        o.command.push("echo".to_string());
     }
-
-    Ok(XargsOptions {
-        replace_str,
-        max_args,
-        delimiter,
-        max_procs,
-        process_slot_var,
-        no_run_if_empty,
-        command,
-    })
+    Ok(o)
 }
 
-/// Build the list of sub-commands from parsed options and stdin input.
-fn build_xargs_commands(opts: &XargsOptions, input: &str) -> Vec<SubCommand> {
-    let items: Vec<&str> = if let Some(delim) = opts.delimiter {
-        input.split(delim).filter(|s| !s.is_empty()).collect()
-    } else {
-        input.split_whitespace().collect()
-    };
+/// Accumulates command lines the way GNU `buildcmd.c` does.
+struct XargsBuilder<'a> {
+    opts: &'a XargsOptions,
+    initial_chars: usize,
+    cur: Vec<String>,
+    cur_chars: usize,
+    commands: Vec<Vec<String>>,
+}
 
-    if items.is_empty() {
-        // GNU runs the command once with no input arguments unless -r;
-        // with -I there is nothing to substitute, so nothing runs.
-        if opts.no_run_if_empty || opts.replace_str.is_some() {
-            return Vec::new();
+impl<'a> XargsBuilder<'a> {
+    fn new(opts: &'a XargsOptions) -> Self {
+        let initial_chars = opts.command.iter().map(|a| a.len() + 1).sum();
+        Self {
+            opts,
+            initial_chars,
+            cur: Vec::new(),
+            cur_chars: initial_chars,
+            commands: Vec::new(),
         }
-        return vec![SubCommand {
-            name: opts.command[0].clone(),
-            args: opts.command[1..].to_vec(),
-            stdin: None,
-            assignments: match opts.process_slot_var {
-                Some(ref var) => vec![(var.clone(), "0".to_string())],
-                None => Vec::new(),
-            },
-        }];
     }
 
-    let chunk_size = opts.max_args.unwrap_or(items.len());
-    let chunks: Vec<Vec<&str>> = items.chunks(chunk_size).map(|c| c.to_vec()).collect();
+    fn exec(&mut self) {
+        let mut cmd = self.opts.command.clone();
+        cmd.append(&mut self.cur);
+        self.commands.push(cmd);
+        self.cur_chars = self.initial_chars;
+    }
 
-    // Number of parallel slots for --process-slot-var assignment. `-P 0`
-    // ("as many as possible") gives every command a distinct slot; absent
-    // `-P`, GNU uses a single slot so the index is always 0.
-    let slot_count = match opts.max_procs {
-        Some(0) => chunks.len().max(1),
-        Some(n) => n,
-        None => 1,
+    fn push(&mut self, arg: String) -> std::result::Result<(), String> {
+        let len = arg.len() + 1;
+        if self.cur_chars + len > self.opts.max_chars {
+            if self.cur.is_empty() {
+                return Err("argument line too long".to_string());
+            }
+            self.exec();
+            if self.cur_chars + len > self.opts.max_chars {
+                return Err("argument line too long".to_string());
+            }
+        }
+        self.cur.push(arg);
+        self.cur_chars += len;
+        if self.opts.max_args > 0 && self.cur.len() >= self.opts.max_args {
+            self.exec();
+        }
+        Ok(())
+    }
+
+    /// `-I`: one command per item with every REPLACE substituted.
+    fn insert(&mut self, item: &str) -> std::result::Result<(), String> {
+        let repl = self.opts.replace_str.as_deref().unwrap_or("{}");
+        let cmd: Vec<String> = self
+            .opts
+            .command
+            .iter()
+            .map(|a| a.replace(repl, item))
+            .collect();
+        let size: usize = cmd.iter().map(|a| a.len() + 1).sum();
+        if size > self.opts.max_chars {
+            return Err("argument line too long".to_string());
+        }
+        self.commands.push(cmd);
+        Ok(())
+    }
+}
+
+/// Command lines built from the input, plus a fatal error that stopped
+/// reading (GNU still runs what it collected before dying).
+struct XargsPlan {
+    commands: Vec<Vec<String>>,
+    error: Option<String>,
+}
+
+/// Build command lines from parsed options and input bytes.
+fn build_xargs_plan(opts: &XargsOptions, input: &str) -> XargsPlan {
+    let mut b = XargsBuilder::new(opts);
+    let mut error: Option<String> = None;
+    if b.initial_chars > opts.max_chars {
+        return XargsPlan {
+            commands: Vec::new(),
+            error: Some("argument list too long".to_string()),
+        };
+    }
+    let replace = opts.replace_str.is_some();
+    let mut lineno = 0usize;
+    // An item is complete: insert (-I) or append, then honour -L.
+    let take = |b: &mut XargsBuilder<'_>,
+                item: String,
+                push: bool,
+                lineno: &mut usize|
+     -> std::result::Result<(), String> {
+        if replace {
+            b.insert(&item)?;
+        } else if push {
+            b.push(item)?;
+        }
+        if opts.max_lines > 0 && *lineno >= opts.max_lines {
+            b.exec();
+            *lineno = 0;
+        }
+        Ok(())
     };
 
-    chunks
-        .into_iter()
-        .enumerate()
-        .map(|(idx, chunk)| {
-            let cmd_args: Vec<String> = if let Some(ref repl) = opts.replace_str {
-                let item = chunk.first().unwrap_or(&"");
-                opts.command
-                    .iter()
-                    .map(|arg| arg.replace(repl, item))
-                    .collect()
-            } else {
-                let mut full = opts.command.clone();
-                full.extend(chunk.iter().map(|s| s.to_string()));
-                full
-            };
-
-            let assignments = match opts.process_slot_var {
-                Some(ref var) => vec![(var.clone(), (idx % slot_count).to_string())],
-                None => Vec::new(),
-            };
-
-            let name = cmd_args[0].clone();
-            let args = cmd_args[1..].to_vec();
-            SubCommand {
-                name,
-                args,
-                stdin: None,
-                assignments,
+    let result: std::result::Result<(), String> = (|| {
+        if let Some(delim) = opts.delimiter {
+            // GNU `read_string`: every delimiter ends an item, even empty.
+            let body = input;
+            let mut parts: Vec<&str> = body.split(delim).collect();
+            let last = parts.pop().unwrap_or("");
+            for part in parts {
+                lineno += 1;
+                take(&mut b, part.to_string(), true, &mut lineno)?;
             }
-        })
-        .collect()
+            if !last.is_empty() {
+                take(&mut b, last.to_string(), true, &mut lineno)?;
+            }
+            return Ok(());
+        }
+
+        // GNU `read_line` state machine.
+        #[derive(PartialEq, Clone, Copy)]
+        enum St {
+            Space,
+            Norm,
+            Quote(char),
+            Backslash,
+        }
+        let is_eof = |w: &str| opts.eof_str.as_deref() == Some(w);
+        let is_blank = |c: char| c == ' ' || c == '\t';
+        let is_space = |c: char| is_blank(c) || matches!(c, '\n' | '\r' | '\x0c' | '\x0b');
+        // C strings end at the first NUL.
+        let cstr = |w: &str| w.split('\0').next().unwrap_or("").to_string();
+
+        let mut chars = input.chars().peekable();
+        let mut prev_c;
+        let mut c = '\0';
+        'calls: loop {
+            let mut state = St::Space;
+            let mut word = String::new();
+            let mut first = true;
+            loop {
+                prev_c = c;
+                let Some(next) = chars.next() else {
+                    // EOF
+                    if word.is_empty() {
+                        break 'calls;
+                    }
+                    if let St::Quote(q) = state {
+                        let kind = if q == '"' { "double" } else { "single" };
+                        return Err(format!(
+                            "unmatched {kind} quote; by default quotes are special to xargs unless you use the -0 option"
+                        ));
+                    }
+                    let w = cstr(&word);
+                    if first && is_eof(&w) {
+                        break 'calls;
+                    }
+                    take(&mut b, w, true, &mut lineno)?;
+                    break 'calls;
+                };
+                c = next;
+                if state == St::Space {
+                    if is_space(c) {
+                        continue;
+                    }
+                    state = St::Norm;
+                }
+                match state {
+                    St::Norm => {
+                        if c == '\n' {
+                            if !is_blank(prev_c) {
+                                lineno += 1;
+                            }
+                            if word.is_empty() {
+                                state = St::Space;
+                                continue;
+                            }
+                            let w = cstr(&word);
+                            if is_eof(&w) {
+                                break 'calls;
+                            }
+                            take(&mut b, w, true, &mut lineno)?;
+                            continue 'calls;
+                        }
+                        if !replace && is_space(c) {
+                            let w = cstr(&word);
+                            if is_eof(&w) {
+                                break 'calls;
+                            }
+                            // Pushed mid-line: no -L check until the line ends.
+                            b.push(w)?;
+                            word.clear();
+                            state = St::Space;
+                            first = false;
+                            continue;
+                        }
+                        match c {
+                            '\\' => {
+                                state = St::Backslash;
+                                continue;
+                            }
+                            '\'' | '"' => {
+                                state = St::Quote(c);
+                                continue;
+                            }
+                            _ => {}
+                        }
+                    }
+                    St::Quote(q) => {
+                        if c == '\n' {
+                            let kind = if q == '"' { "double" } else { "single" };
+                            return Err(format!(
+                                "unmatched {kind} quote; by default quotes are special to xargs unless you use the -0 option"
+                            ));
+                        }
+                        if c == q {
+                            state = St::Norm;
+                            continue;
+                        }
+                    }
+                    St::Backslash => state = St::Norm,
+                    St::Space => {}
+                }
+                word.push(c);
+            }
+        }
+        Ok(())
+    })();
+    if let Err(e) = result {
+        error = Some(e);
+    }
+
+    // GNU runs pending arguments, and runs once on empty input unless -r.
+    if !replace && (!b.cur.is_empty() || (b.commands.is_empty() && !opts.no_run_if_empty)) {
+        if error.is_none() || !b.cur.is_empty() {
+            b.exec();
+        }
+    }
+    XargsPlan {
+        commands: b.commands,
+        error,
+    }
+}
+
+impl XargsOptions {
+    fn subcommands(&self, commands: Vec<Vec<String>>) -> Vec<SubCommand> {
+        // Number of parallel slots for --process-slot-var assignment. `-P 0`
+        // ("as many as possible") gives every command a distinct slot; absent
+        // `-P`, GNU uses a single slot so the index is always 0.
+        let slot_count = match self.max_procs {
+            Some(0) => commands.len().max(1),
+            Some(n) => n,
+            None => 1,
+        };
+        commands
+            .into_iter()
+            .enumerate()
+            .map(|(idx, mut cmd)| {
+                let name = cmd.remove(0);
+                SubCommand {
+                    name,
+                    args: cmd,
+                    stdin: None,
+                    assignments: match self.process_slot_var {
+                        Some(ref var) => vec![(var.clone(), (idx % slot_count).to_string())],
+                        None => Vec::new(),
+                    },
+                }
+            })
+            .collect()
+    }
+}
+
+/// Read the item source: `-a FILE` (or `-a -` for stdin) or stdin.
+async fn xargs_input(ctx: &Context<'_>, opts: &XargsOptions) -> String {
+    match opts.arg_file.as_deref() {
+        None | Some("-") => ctx.stdin.map(|s| s.to_string()).unwrap_or_default(),
+        Some(file) => {
+            let path = resolve_path(ctx.cwd, file);
+            // A directory or unreadable file yields no items, as GNU's
+            // read error leaves the input empty.
+            match ctx.fs.read_file(&path).await {
+                Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+                Err(_) => String::new(),
+            }
+        }
+    }
+}
+
+/// Runs the planned commands in order, GNU-style: `-t` echoes each command
+/// to stderr first, exit status 123 when any command failed (1-125), and a
+/// command exiting 255 stops xargs with status 124.
+struct XargsRun {
+    commands: std::collections::VecDeque<SubCommand>,
+    verbose: bool,
+    announced: bool,
+    error: Option<String>,
+    stdout: crate::StreamData,
+    stderr: crate::StreamData,
+    status: i32,
+}
+
+#[async_trait]
+impl super::PlanDriver for XargsRun {
+    async fn next(&mut self, last: Option<ExecResult>) -> Result<super::PlanStep> {
+        if let Some(r) = last {
+            self.stdout.append(&r.stdout);
+            self.stderr.append(&r.stderr);
+            match r.exit_code {
+                0 => {}
+                255 => {
+                    let name = self
+                        .commands
+                        .pop_front()
+                        .map(|c| c.name)
+                        .unwrap_or_default();
+                    self.commands.clear();
+                    self.error = Some(format!("{name}: exited with status 255; aborting"));
+                    self.status = 124;
+                }
+                126 | 127 => self.status = r.exit_code,
+                _ => {
+                    if self.status == 0 {
+                        self.status = 123;
+                    }
+                }
+            }
+            if self.status != 124 {
+                self.commands.pop_front();
+            }
+            self.announced = false;
+        }
+        if let Some(cmd) = self.commands.front() {
+            if self.verbose && !self.announced {
+                self.announced = true;
+                let mut line = cmd.name.clone();
+                for a in &cmd.args {
+                    line.push(' ');
+                    line.push_str(a);
+                }
+                line.push('\n');
+                let err: crate::StreamData = line.into();
+                self.stderr.append(&err);
+                return Ok(super::PlanStep::Emit {
+                    stdout: crate::StreamData::new(),
+                    stderr: err,
+                });
+            }
+            return Ok(super::PlanStep::Run {
+                command: cmd.clone(),
+                cwd: None,
+            });
+        }
+        if let Some(e) = self.error.take() {
+            let err: crate::StreamData = format!("xargs: {e}\n").into();
+            self.stderr.append(&err);
+            if self.status == 0 {
+                self.status = 1;
+            }
+        }
+        Ok(super::PlanStep::Done(ExecResult {
+            stdout: std::mem::take(&mut self.stdout),
+            stderr: std::mem::take(&mut self.stderr),
+            exit_code: self.status,
+            ..Default::default()
+        }))
+    }
 }
 
 #[async_trait]
@@ -222,7 +645,7 @@ impl Builtin for Xargs {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
         if let Some(r) = super::check_help_version(
             ctx.args,
-            "Usage: xargs [OPTION]... [COMMAND [ARGS]...]\nBuild and execute command lines from standard input.\n\n  -I REPLACE\treplace REPLACE with input (implies -n 1)\n  -n MAX-ARGS\tuse at most MAX-ARGS arguments per command\n  -d DELIM\tuse DELIM as delimiter instead of whitespace\n  -0\tuse NUL as delimiter\n  -r, --no-run-if-empty\tdo not run COMMAND when input is empty\n  -P, --max-procs=N\tallocate N parallel slots (runs sequentially)\n  --process-slot-var=VAR\tset VAR to the slot index (0..N-1)\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            "Usage: xargs [OPTION]... [COMMAND [ARGS]...]\nBuild and execute command lines from standard input.\n\n  -0, --null\titems are separated by a null, not whitespace\n  -a, --arg-file=FILE\tread arguments from FILE, not standard input\n  -d, --delimiter=CHAR\titems are separated by CHAR\n  -E END\tset logical EOF string\n  -I R\treplace R in initial-arguments with names read from input\n  -L, --max-lines=MAX-LINES\tuse at most MAX-LINES non-blank input lines per command line\n  -n, --max-args=MAX-ARGS\tuse at most MAX-ARGS arguments per command line\n  -r, --no-run-if-empty\tif there are no arguments, then do not run COMMAND\n  -s, --max-chars=MAX-CHARS\tlimit length of command line to MAX-CHARS\n  -t, --verbose\tprint commands before executing them\n  -x, --exit\texit if the size (see -s) is exceeded\n  -P, --max-procs=N\tallocate N parallel slots (runs sequentially)\n  --process-slot-var=VAR\tset VAR to the slot index (0..N-1)\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
             Some("xargs (bashkit) 0.1"),
         ) {
             return Ok(r);
@@ -234,11 +657,9 @@ impl Builtin for Xargs {
             Err(e) => return Ok(e),
         };
 
-        let input = ctx.stdin.map(|stdin| &**stdin).unwrap_or("");
-        let commands = build_xargs_commands(&opts, input);
-        if commands.is_empty() {
-            return Ok(ExecResult::ok(String::new()));
-        }
+        let input = xargs_input(&ctx, &opts).await;
+        let plan = build_xargs_plan(&opts, &input);
+        let commands = opts.subcommands(plan.commands);
 
         // Fallback: output what would be run (for standalone builtin context).
         // Command-scoped assignments (e.g. the --process-slot-var index) are
@@ -258,6 +679,11 @@ impl Builtin for Xargs {
             }
             output.push('\n');
         }
+        if let Some(e) = plan.error {
+            let mut r = xargs_err(e);
+            r.stdout = output.into();
+            return Ok(r);
+        }
         Ok(ExecResult::ok(output))
     }
 
@@ -267,13 +693,24 @@ impl Builtin for Xargs {
             Err(_) => return Ok(None), // Let execute() handle the error
         };
 
-        let input = ctx.stdin.map(|stdin| &**stdin).unwrap_or("");
-        let commands = build_xargs_commands(&opts, input);
-        if commands.is_empty() {
-            return Ok(None);
+        let input = xargs_input(ctx, &opts).await;
+        let plan = build_xargs_plan(&opts, &input);
+        let commands = opts.subcommands(plan.commands);
+        if !opts.verbose && plan.error.is_none() {
+            if commands.is_empty() {
+                return Ok(None);
+            }
+            return Ok(Some(ExecutionPlan::Batch { commands }));
         }
-
-        Ok(Some(ExecutionPlan::Batch { commands }))
+        Ok(Some(ExecutionPlan::Driver(Box::new(XargsRun {
+            commands: commands.into(),
+            verbose: opts.verbose,
+            announced: false,
+            error: plan.error,
+            stdout: crate::StreamData::new(),
+            stderr: crate::StreamData::new(),
+            status: 0,
+        }))))
     }
 }
 
@@ -596,6 +1033,64 @@ mod tests {
     }
 
     // ==================== xargs tests ====================
+
+    fn xargs_plan(args: &[&str], input: &str) -> (Vec<Vec<String>>, Option<String>) {
+        let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+        let opts = parse_xargs_args(&args).unwrap_or_else(|e| panic!("{}", e.stderr));
+        let plan = build_xargs_plan(&opts, input);
+        (plan.commands, plan.error)
+    }
+
+    fn cmds(list: &[&[&str]]) -> Vec<Vec<String>> {
+        list.iter()
+            .map(|c| c.iter().map(|s| s.to_string()).collect())
+            .collect()
+    }
+
+    #[test]
+    fn test_xargs_quotes_backslashes_and_nul() {
+        let (c, _) = xargs_plan(&["-n1"], "\"a b\" 'c' d\\ e x\0y\n");
+        assert_eq!(
+            c,
+            cmds(&[
+                &["echo", "a b"],
+                &["echo", "c"],
+                &["echo", "d e"],
+                &["echo", "x"]
+            ])
+        );
+        // An unmatched quote stops reading after running what was read.
+        let (c, e) = xargs_plan(&[], "a 'b\nc\n");
+        assert_eq!(c, cmds(&[&["echo", "a"]]));
+        assert!(e.unwrap().contains("unmatched single quote"));
+    }
+
+    #[test]
+    fn test_xargs_lines_eof_and_replace() {
+        let (c, _) = xargs_plan(&["-L1"], "a b \nc\nd\n");
+        assert_eq!(c, cmds(&[&["echo", "a", "b", "c"], &["echo", "d"]]));
+        let (c, _) = xargs_plan(&["-E", "STOP"], "a STOP b\n");
+        assert_eq!(c, cmds(&[&["echo", "a"]]));
+        let (c, _) = xargs_plan(&["-I{}", "-n1", "x", "[{}]"], "  a b  \n\nc\n");
+        assert_eq!(c, cmds(&[&["x", "[a b  ]"], &["x", "[c]"]]));
+        // -n after -I (other than 1) turns replacement off.
+        let (c, _) = xargs_plan(&["-I{}", "-n2", "x", "{}"], "a\nb\n");
+        assert_eq!(c, cmds(&[&["x", "{}", "a", "b"]]));
+    }
+
+    #[test]
+    fn test_xargs_delimiters_and_size_limit() {
+        let (c, _) = xargs_plan(&["-d", "\\x2c"], "a,,b");
+        assert_eq!(c, cmds(&[&["echo", "a", "", "b"]]));
+        let (c, _) = xargs_plan(&["-0", "-n1"], "a b\0\0c\0");
+        assert_eq!(c, cmds(&[&["echo", "a b"], &["echo", ""], &["echo", "c"]]));
+        let (c, _) = xargs_plan(&["-s", "9"], "a b c\n");
+        assert_eq!(c, cmds(&[&["echo", "a", "b"], &["echo", "c"]]));
+        let (c, e) = xargs_plan(&["-I{}", "-s", "6", "echo", "x{}"], "abcde\n");
+        assert!(c.is_empty() && e.is_some());
+        assert!(xargs_delimiter("\\xg").is_err());
+        assert!(xargs_delimiter("ab").is_err());
+    }
 
     #[tokio::test]
     async fn test_xargs_basic() {
@@ -945,7 +1440,11 @@ mod tests {
 
         let result = Xargs.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 1);
-        assert!(result.stderr.contains("invalid number for -P"));
+        assert!(
+            result
+                .stderr
+                .contains("invalid number \"abc\" for -P option")
+        );
     }
 
     #[tokio::test]
