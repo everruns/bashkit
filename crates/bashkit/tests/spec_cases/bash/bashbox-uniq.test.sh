@@ -40,7 +40,6 @@ printf '' | uniq
 
 ### bashbox_uniq_second_operand_is_the_output_file
 # second operand is the output file
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf 'a\na\n' > in; uniq in out; cat out
 ### expect
 a
@@ -71,7 +70,6 @@ a  b
 
 ### bashbox_uniq_s_skips_bytes
 # -s skips bytes
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf 'xa\nya\nzb\n' | uniq --skip-chars=1
 ### expect
 xa
@@ -80,7 +78,6 @@ zb
 
 ### bashbox_uniq_w_compares_a_prefix
 # -w compares a prefix
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf 'ab1\nab2\nac\n' | uniq -w2
 ### expect
 ab1

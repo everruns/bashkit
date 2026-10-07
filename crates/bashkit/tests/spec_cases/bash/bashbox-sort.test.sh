@@ -38,7 +38,6 @@ a
 
 ### bashbox_sort_numeric_with_ties_broken_bytewise
 # numeric with ties broken bytewise
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf 'b\na\n10\n9\n-1\n+5\n.5\n' | sort -n
 ### expect
 -1
@@ -60,7 +59,6 @@ b
 
 ### bashbox_sort_numeric_unique_keeps_the_first_of_a_run
 # numeric unique keeps the first of a run
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf '1\n01\nb\na\n' | sort -nu
 ### expect
 b
@@ -87,7 +85,6 @@ b 1
 
 ### bashbox_sort_key_keeps_leading_blanks
 # key keeps leading blanks
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf 'x  b\ny a\n' | sort -k2
 ### expect
 x  b
@@ -113,7 +110,6 @@ b 10 a
 
 ### bashbox_sort_key_modifiers_override_global_r
 # key modifiers override global -r
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf 'a 2 z\nb 10 a\nc 2 b\n' | sort -r -k2n
 ### expect
 c 2 b
@@ -141,7 +137,6 @@ a:3
 
 ### bashbox_sort_unique_by_key
 # unique by key
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf 'a b c\nz b d\na c b\n' | sort -u -k2,2
 ### expect
 a b c
@@ -169,7 +164,6 @@ xb2
 
 ### bashbox_sort_character_position_past_the_field_end
 # character position past the field end
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf 'ab c\nab a\na b\n' | sort -k1.3
 ### expect
 ab a
@@ -215,7 +209,6 @@ b zz
 
 ### bashbox_sort_global_b_applies_to_keys_without_modifiers
 # global -b applies to keys without modifiers
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf 'x   b\ny a\nz  c\n' | sort -b -k2
 ### expect
 y a
@@ -225,7 +218,6 @@ z  c
 
 ### bashbox_sort_key_modifiers_stop_global_ones_being_inherited
 # key modifiers stop global ones being inherited
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf 'x   b\ny a\nz  c\n' | sort -b -k2r
 ### expect
 y a
@@ -260,7 +252,6 @@ k:xb
 
 ### bashbox_sort_t_nul_separator
 # -t NUL separator
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf 'b\000a\na\000b\n' | sort -t '\0' -k2 | tr '\0' '|'
 ### expect
 b|a
@@ -269,7 +260,6 @@ a|b
 
 ### bashbox_sort_d_dictionary_order
 # -d dictionary order
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf 'a-c\nab\na c\n' | sort -d
 ### expect
 a c
@@ -289,7 +279,6 @@ b
 
 ### bashbox_sort_fu_keeps_the_first_of_each_folded_run
 # -fu keeps the first of each folded run
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf 'b\nA\na\nB\n' | sort -fu
 ### expect
 A
@@ -308,7 +297,6 @@ b
 
 ### bashbox_sort_m_month_order
 # -M month order
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf 'mar x\n  feb\nJAN\nfoo\ndecember\n' | sort -M
 ### expect
 foo
@@ -320,7 +308,6 @@ december
 
 ### bashbox_sort_g_general_numeric
 # -g general numeric
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf '1e3\n-inf\nnan\nabc\n10\n0x10\n-5.5\ninf\n+2\n' | sort -g
 ### expect
 abc
@@ -336,7 +323,6 @@ inf
 
 ### bashbox_sort_h_human_numeric
 # -h human numeric
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf '0K\n1\n-1K\n2M\n500K\n0\n1.5K\n3k\n1m\n-2\n' | sort -h
 ### expect
 -1K
@@ -368,7 +354,6 @@ printf '007\n-0\n0.50\n.5\n-1.5\n-.5\n10\n1e5\n 3\n' | sort -n
 
 ### bashbox_sort_n_compares_long_numbers_exactly
 # -n compares long numbers exactly
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf '100000000000000000001\n100000000000000000000\n99999999999999999999\n' | sort -n
 ### expect
 99999999999999999999
@@ -378,7 +363,6 @@ printf '100000000000000000001\n100000000000000000000\n99999999999999999999\n' | 
 
 ### bashbox_sort_v_version_order
 # -V version order
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf 'a-1.10\na-1.9\na-1.9~rc\n.b\n..\n.\nfile.tar.gz\nfile2.tar.gz\nfile10\nfile\n\nfile~\n.a\n1.0a\n1.0\n' | sort -V
 ### expect
 
@@ -427,7 +411,6 @@ b
 
 ### bashbox_sort_u_with_n_treats_equal_numbers_as_duplicates
 # -u with -n treats equal numbers as duplicates
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf '1\n01\n1.0\n2\n' | sort -un
 ### expect
 1
@@ -488,7 +471,6 @@ c
 
 ### bashbox_sort_m_with_keys_and_reverse
 # -m with keys and reverse
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf '3 a\n1 b\n' > f1; printf '2 c\n' > f2; sort -m -k1,1nr f1 f2
 ### expect
 3 a
@@ -498,7 +480,6 @@ printf '3 a\n1 b\n' > f1; printf '2 c\n' > f2; sort -m -k1,1nr f1 f2
 
 ### bashbox_sort_long_options
 # long options
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf 'b:2\na:10\n' | sort --field-separator=: --key=2 --numeric-sort --reverse
 ### expect
 a:10
@@ -507,7 +488,6 @@ b:2
 
 ### bashbox_sort_sort_selects_the_comparison
 # --sort selects the comparison
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf '10\n9\n' | sort --sort=num
 ### expect
 9
@@ -516,7 +496,6 @@ printf '10\n9\n' | sort --sort=num
 
 ### bashbox_sort_ignored_performance_options
 # ignored performance options
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf 'b\na\n' | sort -S 1M -T /tmp --parallel=2 --compress-program=gzip
 ### expect
 a
@@ -525,7 +504,6 @@ b
 
 ### bashbox_sort_r_groups_equal_lines
 # -R groups equal lines
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf 'a\nb\na\nb\n' | sort -R | uniq | sort
 ### expect
 a
@@ -534,7 +512,6 @@ b
 
 ### bashbox_sort_d_is_compatible_with_v
 # -d is compatible with -V
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf 'a-2\na-10\n' | sort -dV
 ### expect
 a-2
@@ -543,7 +520,6 @@ a-10
 
 ### bashbox_sort_r_with_f
 # -R with -f
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf 'a\nA\nb\na\n' | sort -fR | tr A a | uniq | sort
 ### expect
 a
