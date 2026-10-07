@@ -3642,30 +3642,33 @@ impl Interpreter {
         // Get iteration values: expand fields, then apply brace/glob expansion
         let values: Vec<String> = if let Some(words) = &for_cmd.words {
             let mut vals = Vec::new();
-            for w in words {
-                let fields = self.expand_word_to_fields(w).await?;
+            for w0 in words {
+                // Brace expansion runs first, on the unexpanded word.
+                let braced = self.brace_expand_word(w0);
+                for w in braced.as_deref().unwrap_or(std::slice::from_ref(w0)) {
+                    let fields = self.expand_word_to_fields(w).await?;
 
-                // Quoted words skip brace/glob expansion — unless the
-                // word has unquoted glob chars (e.g. `"$var"*.ext`)
-                if w.quoted && !w.has_unquoted_glob {
-                    vals.extend(fields);
-                    continue;
-                }
+                    // Quoted words skip brace/glob expansion — unless the
+                    // word has unquoted glob chars (e.g. `"$var"*.ext`)
+                    if w.quoted && !w.has_unquoted_glob {
+                        vals.extend(fields);
+                        continue;
+                    }
 
-                for expanded in fields {
-                    let brace_expanded = self.expand_braces(&expanded);
-                    for item in brace_expanded {
-                        match self
-                            .expand_glob_item(&item, w.quoted && w.has_unquoted_glob)
-                            .await
-                        {
-                            Ok(items) => vals.extend(items),
-                            Err(pat) => {
-                                self.last_exit_code = 1;
-                                return Ok(ExecResult::err(
-                                    format!("-bash: no match: {}\n", pat),
-                                    1,
-                                ));
+                    for expanded in fields {
+                        for item in [expanded] {
+                            match self
+                                .expand_glob_item(&item, w.quoted && w.has_unquoted_glob)
+                                .await
+                            {
+                                Ok(items) => vals.extend(items),
+                                Err(pat) => {
+                                    self.last_exit_code = 1;
+                                    return Ok(ExecResult::err(
+                                        format!("-bash: no match: {}\n", pat),
+                                        1,
+                                    ));
+                                }
                             }
                         }
                     }
@@ -3776,25 +3779,28 @@ impl Interpreter {
 
         // Expand word list
         let mut values = Vec::new();
-        for w in &select_cmd.words {
-            let fields = self.expand_word_to_fields(w).await?;
-            if w.quoted && !w.has_unquoted_glob {
-                values.extend(fields);
-            } else {
-                for expanded in fields {
-                    let brace_expanded = self.expand_braces(&expanded);
-                    for item in brace_expanded {
-                        match self
-                            .expand_glob_item(&item, w.quoted && w.has_unquoted_glob)
-                            .await
-                        {
-                            Ok(items) => values.extend(items),
-                            Err(pat) => {
-                                self.last_exit_code = 1;
-                                return Ok(ExecResult::err(
-                                    format!("-bash: no match: {}\n", pat),
-                                    1,
-                                ));
+        for w0 in &select_cmd.words {
+            // Brace expansion runs first, on the unexpanded word.
+            let braced = self.brace_expand_word(w0);
+            for w in braced.as_deref().unwrap_or(std::slice::from_ref(w0)) {
+                let fields = self.expand_word_to_fields(w).await?;
+                if w.quoted && !w.has_unquoted_glob {
+                    values.extend(fields);
+                } else {
+                    for expanded in fields {
+                        for item in [expanded] {
+                            match self
+                                .expand_glob_item(&item, w.quoted && w.has_unquoted_glob)
+                                .await
+                            {
+                                Ok(items) => values.extend(items),
+                                Err(pat) => {
+                                    self.last_exit_code = 1;
+                                    return Ok(ExecResult::err(
+                                        format!("-bash: no match: {}\n", pat),
+                                        1,
+                                    ));
+                                }
                             }
                         }
                     }
@@ -6899,34 +6905,37 @@ impl Interpreter {
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<String>>> + Send + 'a>> {
         Box::pin(async move {
             let mut args: Vec<String> = Vec::new();
-            for word in &command.args {
-                // Use field expansion so "${arr[@]}" produces multiple args
-                let fields = self.expand_word_to_fields(word).await?;
+            for word0 in &command.args {
+                // Brace expansion runs first, on the unexpanded word.
+                let braced = self.brace_expand_word(word0);
+                for word in braced.as_deref().unwrap_or(std::slice::from_ref(word0)) {
+                    // Use field expansion so "${arr[@]}" produces multiple args
+                    let fields = self.expand_word_to_fields(word).await?;
 
-                // Skip brace and glob expansion for quoted words — unless the
-                // word has unquoted glob chars (e.g. `"$var"*.ext`) in which case
-                // the quoted expansion suppresses IFS splitting but the unquoted
-                // portion must still undergo glob expansion.
-                if word.quoted && !word.has_unquoted_glob {
-                    args.extend(fields);
-                    continue;
-                }
+                    // Skip brace and glob expansion for quoted words — unless the
+                    // word has unquoted glob chars (e.g. `"$var"*.ext`) in which case
+                    // the quoted expansion suppresses IFS splitting but the unquoted
+                    // portion must still undergo glob expansion.
+                    if word.quoted && !word.has_unquoted_glob {
+                        args.extend(fields);
+                        continue;
+                    }
 
-                // For each field, apply brace and glob expansion
-                for expanded in fields {
-                    // Step 1: Brace expansion (produces multiple strings)
-                    let brace_expanded = self.expand_braces(&expanded);
-
-                    // Step 2: For each brace-expanded item, do glob expansion
-                    for item in brace_expanded {
-                        match self
-                            .expand_glob_item(&item, word.quoted && word.has_unquoted_glob)
-                            .await
-                        {
-                            Ok(items) => args.extend(items),
-                            Err(pat) => {
-                                self.last_exit_code = 1;
-                                return Ok(vec![format!("\x00ERR\x00-bash: no match: {}\n", pat)]);
+                    // For each field, apply glob expansion
+                    for expanded in fields {
+                        for item in [expanded] {
+                            match self
+                                .expand_glob_item(&item, word.quoted && word.has_unquoted_glob)
+                                .await
+                            {
+                                Ok(items) => args.extend(items),
+                                Err(pat) => {
+                                    self.last_exit_code = 1;
+                                    return Ok(vec![format!(
+                                        "\x00ERR\x00-bash: no match: {}\n",
+                                        pat
+                                    )]);
+                                }
                             }
                         }
                     }

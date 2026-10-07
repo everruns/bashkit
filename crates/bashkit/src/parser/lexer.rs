@@ -217,14 +217,14 @@ impl<'a> Lexer<'a> {
                 // Look ahead to see if this is a brace expansion like {a,b,c} or {1..5}
                 // vs a brace group like { cmd; }
                 // Note: { must be followed by space/newline to be a brace group
-                if self.looks_like_brace_expansion() {
-                    self.read_brace_expansion_word()
-                } else if self.is_brace_group_start() {
+                if self.is_brace_group_start() {
                     self.advance();
                     Some(Token::LeftBrace)
                 } else {
-                    // {single} without comma/dot-dot is kept as literal word
-                    self.read_brace_literal_word()
+                    // Any other `{` starts an ordinary word: braces are plain
+                    // word characters to the lexer, and brace expansion runs
+                    // on the parsed word (quotes and `$` handled as usual).
+                    self.read_word()
                 }
             }
             '}' => {
@@ -884,19 +884,6 @@ impl<'a> Lexer<'a> {
                 has_unquoted_glob = true;
                 word.push(ch);
                 self.advance();
-                let mut depth = 1;
-                while let Some(c) = self.peek_char() {
-                    word.push(c);
-                    self.advance();
-                    if c == '{' {
-                        depth += 1;
-                    } else if c == '}' {
-                        depth -= 1;
-                        if depth == 0 {
-                            break;
-                        }
-                    }
-                }
             } else if ch == '`' {
                 // Backtick command substitution: convert `cmd` to $(cmd)
                 has_unquoted_expansion = true;
@@ -1036,8 +1023,7 @@ impl<'a> Lexer<'a> {
                 // An unmatched `}` inside a word is a literal. `}` is a
                 // reserved word, not a metacharacter, so it only terminates a
                 // word when it stands alone — bash prints `a}b`, not `a } b`.
-                // A balanced `{...}` never reaches here: the `'{'` arm above
-                // consumes it, so any `}` at this point has no opener.
+                // Brace expansion happens later, on the parsed word.
                 word.push(ch);
                 self.advance();
             } else if self.is_word_char(ch) {
@@ -1060,7 +1046,7 @@ impl<'a> Lexer<'a> {
         // classification: quoting it would suppress field splitting.
         let quoted_glob = quoted_ranges
             .iter()
-            .any(|&(start, end)| word[start..end].contains(['*', '?', '[', '{']));
+            .any(|&(start, end)| word[start..end].contains(['*', '?', '[', '{', '}', ',']));
         if quoted_glob && has_unquoted_glob {
             return Some(Token::QuotedGlobWord(
                 Self::escape_glob_metas_in_quoted_ranges(&word, &quoted_ranges),
@@ -1253,8 +1239,9 @@ impl<'a> Lexer<'a> {
                         None => content.push('\\'),
                     }
                 }
-                Some(ch) if self.is_word_char(ch) => {
-                    if matches!(ch, '*' | '?' | '[') {
+                Some(ch) if self.is_word_char(ch) || matches!(ch, '{' | '}') => {
+                    // `{` marks possible brace expansion, like a glob char.
+                    if matches!(ch, '*' | '?' | '[' | '{') {
                         flags.has_unquoted_glob = true;
                     }
                     content.push(ch);
@@ -1573,7 +1560,7 @@ impl<'a> Lexer<'a> {
     fn is_glob_escape_char(ch: char) -> bool {
         matches!(
             ch,
-            '\\' | '*' | '?' | '[' | ']' | '{' | '}' | '@' | '!' | '+' | '(' | ')' | '|'
+            '\\' | '*' | '?' | '[' | ']' | '{' | '}' | ',' | '@' | '!' | '+' | '(' | ')' | '|'
         )
     }
 
@@ -1700,7 +1687,7 @@ impl<'a> Lexer<'a> {
         // suppresses IFS splitting (the double-quoted segment) while still
         // performing glob expansion on the unquoted portion.
         if let Some(ch) = self.peek_char()
-            && (self.is_word_char(ch) || ch == '\'' || ch == '"' || ch == '$')
+            && (self.is_word_char(ch) || matches!(ch, '\'' | '"' | '$' | '{' | '}'))
         {
             let quoted_prefix_len = content.len();
             let flags = self.read_continuation_into(&mut content);
@@ -1822,6 +1809,7 @@ impl<'a> Lexer<'a> {
                             | ']'
                             | '{'
                             | '}'
+                            | ','
                             | '@'
                             | '!'
                             | '+'
@@ -1980,54 +1968,6 @@ impl<'a> Lexer<'a> {
         Ok(())
     }
 
-    /// Check if the content starting with { looks like a brace expansion
-    /// Brace expansion: {a,b,c} or {1..5} (contains , or ..)
-    /// Brace group: { cmd; } (contains spaces, semicolons, newlines)
-    /// THREAT[TM-DOS]: Caps lookahead to prevent O(n^2) scanning when input
-    /// contains many unmatched `{` characters (issue #997).
-    fn looks_like_brace_expansion(&self) -> bool {
-        const MAX_LOOKAHEAD: usize = 10_000;
-
-        // Clone the iterator to peek ahead without consuming
-        let mut chars = self.chars.clone();
-
-        // Skip the opening {
-        if chars.next() != Some('{') {
-            return false;
-        }
-
-        let mut depth = 1;
-        let mut has_comma = false;
-        let mut has_dot_dot = false;
-        let mut prev_char = None;
-        let mut scanned = 0usize;
-
-        for ch in chars {
-            scanned += 1;
-            if scanned > MAX_LOOKAHEAD {
-                return false;
-            }
-            match ch {
-                '{' => depth += 1,
-                '}' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        // Found matching }, check if we have brace expansion markers
-                        return has_comma || has_dot_dot;
-                    }
-                }
-                ',' if depth == 1 => has_comma = true,
-                '.' if prev_char == Some('.') && depth == 1 => has_dot_dot = true,
-                // Brace groups have whitespace/newlines/semicolons at depth 1
-                ' ' | '\t' | '\n' | ';' if depth == 1 => return false,
-                _ => {}
-            }
-            prev_char = Some(ch);
-        }
-
-        false
-    }
-
     /// Check if { is followed by whitespace (brace group start)
     fn is_brace_group_start(&self) -> bool {
         let mut chars = self.chars.clone();
@@ -2058,111 +1998,6 @@ impl<'a> Lexer<'a> {
                 ' ' | '\t' | '\n' | ';' | '|' | '&' | '(' | ')' | '<' | '>'
             ),
         }
-    }
-
-    /// Read a {literal} pattern without comma/dot-dot as a word
-    fn read_brace_literal_word(&mut self) -> Option<Token> {
-        let mut word = String::new();
-
-        // Read the opening {
-        if let Some('{') = self.peek_char() {
-            word.push('{');
-            self.advance();
-        } else {
-            return None;
-        }
-
-        // Read until matching }
-        let mut depth = 1;
-        while let Some(ch) = self.peek_char() {
-            word.push(ch);
-            self.advance();
-            match ch {
-                '{' => depth += 1,
-                '}' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        break;
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        // Continue reading any suffix
-        while let Some(ch) = self.peek_char() {
-            if self.is_word_char(ch) {
-                word.push(ch);
-                self.advance();
-            } else {
-                break;
-            }
-        }
-
-        Some(Token::Word(word))
-    }
-
-    /// Read a brace expansion pattern as a word
-    fn read_brace_expansion_word(&mut self) -> Option<Token> {
-        let mut word = String::new();
-
-        // Read the opening {
-        if let Some('{') = self.peek_char() {
-            word.push('{');
-            self.advance();
-        } else {
-            return None;
-        }
-
-        // Read until matching }
-        let mut depth = 1;
-        while let Some(ch) = self.peek_char() {
-            word.push(ch);
-            self.advance();
-            match ch {
-                '{' => depth += 1,
-                '}' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        break;
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        // Continue reading any suffix after the brace pattern
-        while let Some(ch) = self.peek_char() {
-            if self.is_word_char(ch) || ch == '{' {
-                if ch == '{' {
-                    // Another brace pattern - include it
-                    word.push(ch);
-                    self.advance();
-                    let mut inner_depth = 1;
-                    while let Some(c) = self.peek_char() {
-                        word.push(c);
-                        self.advance();
-                        match c {
-                            '{' => inner_depth += 1,
-                            '}' => {
-                                inner_depth -= 1;
-                                if inner_depth == 0 {
-                                    break;
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                } else {
-                    word.push(ch);
-                    self.advance();
-                }
-            } else {
-                break;
-            }
-        }
-
-        Some(Token::Word(word))
     }
 
     /// Read a word starting with [ (glob bracket expression like [abc] or [a-z])
@@ -2196,7 +2031,7 @@ impl<'a> Lexer<'a> {
     /// compound assignment like `([key]=val ...)`.  Returns true when the
     /// first non-whitespace char after `(` is `[`.
     fn looks_like_assoc_assign(&self) -> bool {
-        // Cap the lookahead like looks_like_brace_expansion: an uncapped scan
+        // Cap the lookahead: an uncapped scan
         // over leading whitespace made `x=(` followed by megabytes of spaces
         // O(n) per call (TM-DOS-024).
         const MAX_LOOKAHEAD: usize = 10_000;
