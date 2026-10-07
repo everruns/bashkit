@@ -295,6 +295,26 @@ Quarterly import process:
 4. CI runs the same feature-complete, network-free lane. Schema, provenance,
    unique IDs, classifications, and limitation references are test-enforced.
 
+## Imported BashBox Corpus
+
+`spec_cases/bash/bashbox-*.test.sh` holds bash-parity cases copied from the
+test suite of [BashBox](https://github.com/shipfastlabs/bashbox) (MIT, PHP port
+of just-bash; attribution in `NOTICE`). One file per BashBox test file.
+Imported 2026-10-07: 1,753 (script, stdout) pairs extracted, kept only those
+whose recorded stdout matched host bash 5.2 under `LANG=C.UTF-8`, and whose
+expectation is representable in the spec format (1,044 cases).
+
+- 624 pass in Bashkit and run in both the spec suite and the bash comparison gate.
+- 420 are `### skip: TODO bashbox corpus gap` — Bashkit's stdout or exit status
+  differs from real bash. These are bugs, not intentional divergences: fixing
+  one means deleting its `skip` line (the comparison gate then guards it).
+  Clusters: `declare`/`local`/attributes, `sort` and `xargs` flags, arithmetic on
+  arrays, `declare -f`/`type` printing, named fds, ERR trap, `printf`, `tr`.
+
+Do not re-import over existing files; fix cases in place. If an intentional
+divergence is found, switch the case to `### bash_diff` with a canonical `L-*`
+row in [Known Limitations](limitations.md).
+
 ## SQLite CLI Differential Tests
 
 CSV comparisons explicitly set the host CLI row separator to LF. SQLite

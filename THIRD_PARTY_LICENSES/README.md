@@ -27,7 +27,7 @@ Bashkit's design or whose test case formats have inspired our testing approach.
 | File | Projects | License Type |
 |------|----------|--------------|
 | `APACHE-2.0.txt` | just-bash, Oils | Apache License 2.0 |
-| `MIT.txt` | jq, jaq crates, uutils coreutils, most dependencies | MIT License |
+| `MIT.txt` | jq, jaq crates, uutils coreutils, BashBox spec cases, most dependencies | MIT License |
 | `LUCENT.txt` | One True AWK | Lucent Public License |
 
 ## Full Dependency Licenses

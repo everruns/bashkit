@@ -36,6 +36,16 @@ Public guide: `crates/bashkit/docs/cpython.md` (rustdoc `cpython_guide`).
 | WASI host | `crates/bashkit/src/builtins/cpython/wasi.rs` | All 42 `wasi_snapshot_preview1` imports over the bashkit `FileSystem` |
 | Builtin | `crates/bashkit/src/builtins/cpython/mod.rs` | Engine, pooled instances, limits, deadline/budget polling, exit mapping |
 
+### Workload priority
+
+The main workload is agents running `python3` for scripted logic: processing
+a file, transforming data, gluing commands (user, 2026-10-07). Stdlib and
+preload choices follow it: modules those scripts use (text, data formats,
+paths, archives, HTTP) ship and the common ones are preloaded; modules with
+a low chance of use in them (test runners, profilers, packaging and
+interactive tools, legacy or macOS formats) are not shipped, even when they
+would work. Adding one back needs a concrete agent use case.
+
 ### Startup is the product constraint
 
 Nothing is compiled at run time, and CPython initialization never runs per
@@ -71,8 +81,10 @@ call:
    (`import http.client` 7.2 s, now ~0.5 s); sources plus bytecode would
    exceed the crates.io 10 MiB crate cap. Modules that cannot work in the
    guest (FFI, TLS, sockets, TTY) and pure-Python twins of C modules are
-   not shipped (L-CPY-009). `pdb` is a stand-in (`guest/pdb.py`): doctest
-   imports it, `breakpoint()` prints a notice and continues.
+   not shipped (L-CPY-009), nor are low-use modules per the workload
+   priority above (`unittest`, `doctest`, profilers, `dbm`, `bz2`/`lzma`
+   shims, ...; stdlib zip 3.58 to 3.16 MB). `pdb` is a stand-in
+   (`guest/pdb.py`): `breakpoint()` prints a notice and continues.
 9. **xz snapshot artifact**: `artifacts/python.wasm.xz` (xz -9e) instead of
    gzip: 4.99 MB vs ~6.7 MB for the same snapshot. `build.rs` decodes it
    with `lzma-rs` (pure Rust build-dependency; ~2.5 s in a debug build
@@ -93,8 +105,8 @@ Measured on a 4-vCPU x86-64 VM (see `criterion-python-*` results under
 CPU-bound Python is ~4-30x slower than Monty. 1024 concurrent tenants × 4
 calls: 0 failures, ~165 calls/s on 4 vCPUs, 3.0 GB peak RSS (2026-10-07,
 after immortal objects; was ~90 calls/s, 4.7 GB). Importing a module outside
-the snapshot costs ~0.1-0.2 s (`unittest` 0.2 s, `zoneinfo` 0.11 s,
-`tarfile` 0.1 s); `email`, `http.client` and `urllib.request` are preloaded
+the snapshot costs ~0.1-0.2 s (`zoneinfo` 0.11 s, `tarfile` 0.1 s,
+`pickle` 0.08 s); `email`, `http.client` and `urllib.request` are preloaded
 (~0 per call, was 0.27-0.47 s).
 
 ### Native code (opt-in, `cpython-native`)

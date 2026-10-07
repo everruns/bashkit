@@ -56,7 +56,7 @@ return a value. Scripts written by people and agents expect a Python
 | | Monty (`python` feature) | CPython (`cpython` feature) |
 |---|---|---|
 | Language | Subset (no classes, limited stdlib) | Full Python 3.14 |
-| Stdlib | `math`, `pathlib`, `os.getenv`, `sys`, `typing`, ... | Full pure-Python stdlib plus `json`, `re`, `csv`, `sqlite3`, `zlib`, `hashlib`, `decimal`, `datetime`, `asyncio`, ... |
+| Stdlib | `math`, `pathlib`, `os.getenv`, `sys`, `typing`, ... | Pure-Python stdlib for scripts (see [Limitations](#limitations)) plus `json`, `re`, `csv`, `sqlite3`, `zlib`, `hashlib`, `decimal`, `datetime`, `asyncio`, ... |
 | CLI | `-c`, file, `-` | `-c`, `-m`, file, directory with `__main__.py`, `-`, stdin, `-x`, `-W`, `-V`, `-h` |
 | Errors | Monty-specific text | CPython tracebacks, exit codes, `sys.exit` semantics |
 | Isolation | In-process Rust interpreter | WebAssembly sandbox (memory-safe boundary), fresh instance per call |
@@ -210,6 +210,12 @@ with httpx.Client(base_url="https://api.example.com", headers={"X-Key": "..."}) 
   keeps full tracebacks. Non-HTTP network clients and servers (`smtplib`,
   `ftplib`, `http.server`, `xmlrpc`, ...) are not shipped since the guest has
   no sockets.
+- **Trimmed for scripts**: the stdlib targets agents running file-processing
+  and glue scripts. Test, profiling and packaging tools (`unittest`,
+  `doctest`, `cProfile`, `profile`, `trace`, `compileall`, `zipapp`, ...),
+  `dbm`/`shelve`, `plistlib`, `wave`, `netrc`, `cmd`, `tty`/`pty`, and
+  `bz2`/`lzma`/`compression.zstd` (no C codec in the guest) are not
+  shipped. `gzip`, `zipfile` (deflate) and `tarfile` (plain or gzip) work.
 - **Symlinks are not followed**, like everywhere in the Bashkit VFS.
 - **`errno` numbers are WASI's** (`ENOENT` is 44, not 2). Exception types
   (`FileNotFoundError`, ...) and messages are correct; code comparing
@@ -246,7 +252,7 @@ Nothing is compiled at run time with either option.
 
 The `cpython` feature adds about 45 MB to a binary: the precompiled
 interpreter snapshot (~41 MB, mostly the pre-initialized 40 MB heap image so
-it can be mapped copy-on-write) and the zipped stdlib bytecode (~3.5 MB) are embedded,
+it can be mapped copy-on-write) and the zipped stdlib bytecode (~3.2 MB) are embedded,
 plus the Wasmtime runtime. Pages are mapped on demand, so resident memory per
 process is far smaller.
 
