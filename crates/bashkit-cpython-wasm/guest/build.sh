@@ -122,7 +122,7 @@ rm -rf "$ROOT" "$WORK/stdlib"
 mkdir -p "$ROOT/usr/local/lib" "$WORK/stdlib"
 cp -r "$SRC/Lib/." "$WORK/stdlib/"
 cp "$HOST_BUILD"/build/lib.wasi-wasm32-3.14/_sysconfigdata_*.py "$WORK/stdlib/"
-cp "$HERE/_bashkit_boot.py" "$WORK/stdlib/"
+cp "$HERE/_bashkit_boot.py" "$HERE/_bashkit_http.py" "$WORK/stdlib/"
 (
     cd "$WORK/stdlib"
     # Not usable or not useful in a sandboxed, single-threaded, headless guest.
@@ -132,6 +132,9 @@ cp "$HERE/_bashkit_boot.py" "$WORK/stdlib/"
     rm -rf ctypes ssl.py ftplib.py imaplib.py poplib.py smtplib.py socketserver.py \
         http/server.py wsgiref xmlrpc webbrowser.py _pyrepl pdb.py bdb.py pydoc.py \
         _aix_support.py _android_support.py _ios_support.py _osx_support.py
+    # HTTP goes through the host's egress pipeline, not sockets
+    # (_bashkit_http.py); http.client patches itself when first imported.
+    printf '\n# bashkit: connections go through the host (see _bashkit_http).\nimport _bashkit_http\n_bashkit_http.patch_http_client(globals())\ndel _bashkit_http\n' >>http/client.py
     # Pure-Python twins of C modules the guest always has.
     rm -f _pydecimal.py _pyio.py _pydatetime.py
     find . -name __pycache__ -prune -exec rm -rf {} +
@@ -166,11 +169,12 @@ PY
 )
 
 # --- snapshot ----------------------------------------------------------------
-"$WASMTIME" wizer -S cli --dir "$ROOT::/" -o "$WORK/bashkit_wizer.wasm" "$WORK/bashkit_raw.wasm"
+# The `bashkit` host imports (HTTP) are never called during init.
+"$WASMTIME" wizer -S cli -W unknown-imports-trap=y --dir "$ROOT::/" -o "$WORK/bashkit_wizer.wasm" "$WORK/bashkit_raw.wasm"
 "$SDK/bin/llvm-strip" -o "$WORK/python.wasm" "$WORK/bashkit_wizer.wasm"
 
 # Smoke test the snapshot with the reference runtime before committing it.
-out="$("$WASMTIME" run -S cli --dir "$ROOT::/" --env PWD=/ --invoke bashkit_run \
+out="$("$WASMTIME" run -S cli -W unknown-imports-trap=y --dir "$ROOT::/" --env PWD=/ --invoke bashkit_run \
     "$WORK/python.wasm" -c 'import json, re, csv, sqlite3, zlib; print(json.dumps({"ok": 1}))' 2>/dev/null)"
 case "$out" in
 *'{"ok": 1}'*) ;;

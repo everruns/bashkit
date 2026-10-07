@@ -126,7 +126,7 @@ Boundaries of the WebAssembly CPython guest; see
 | ID | Limitation | Why | Evidence |
 |----|------------|-----|----------|
 | L-CPY-001 | No subprocesses from Python (`subprocess`, `os.system`, `os.fork`, `os.popen` fail); Python cannot call back into the shell | The guest has no process API; a shell bridge is a deliberate follow-up, not an accident | `processes_unavailable` (cpython_security_tests) |
-| L-CPY-002 | No network from Python (`socket`, `urllib.request` cannot connect) | No socket imports in the WASI host; egress stays with the allowlisted shell builtins | TM-PY-CPY-003, `network_unavailable` |
+| L-CPY-002 | No raw network from Python: `socket` cannot connect and `ssl` is not built. HTTP works only through `urllib.request`/`http.client` via the host's egress pipeline (needs `http_client` + an allowlist); responses are buffered up to the response cap; proxy, `ssl` context and client-certificate settings are ignored | No socket imports in the WASI host; HTTP goes through `HttpClient` like `curl`, TLS on the host | TM-PY-CPY-003, `network_unavailable`, `cpython_http_tests` |
 | L-CPY-003 | No threads, `multiprocessing`, `ctypes`, native extensions or third-party packages | Single-threaded wasm guest with only the bundled pure-Python stdlib | `threads_and_native_code_unavailable` |
 | L-CPY-004 | `errno` values are WASI's (`ENOENT` is 44); exception types and the `errno` module agree | wasi-libc numbering; rewriting it would desync the guest's `errno` module | `cpython_integration_tests::missing_script_exits_2`, stance |
 | L-CPY-005 | `hash()` of `str`/`bytes` uses one seed baked into the snapshot | The seed is chosen during snapshot initialization; per-call re-seeding would require re-hashing every interned object | stance |

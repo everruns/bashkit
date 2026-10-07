@@ -178,11 +178,234 @@ static PyObject *bk_immortalize(PyObject *self, PyObject *objects) {
     Py_RETURN_NONE;
 }
 
+// --- HTTP bridge ---------------------------------------------------------
+// The host import runs the request through bashkit's HttpClient (allowlist,
+// SSRF checks, credential injection, signing, transport, size caps). The
+// guest never opens a socket and never sees TLS. Records are u32
+// little-endian length-prefixed fields; see `cpython/http.rs` on the host.
+
+__attribute__((import_module("bashkit"), import_name("http_request")))
+int32_t bk_host_http_request(const uint8_t *req, int32_t len, int64_t timeout_ms,
+                             uint32_t *out_len);
+__attribute__((import_module("bashkit"), import_name("http_take")))
+int32_t bk_host_http_take(uint8_t *buf, int32_t len);
+
+enum { BK_HTTP_OK = 0, BK_HTTP_NETWORK = 1, BK_HTTP_TIMEOUT = 2, BK_HTTP_INVALID = 3 };
+
+typedef struct {
+    uint8_t *data;
+    size_t len, cap;
+} bk_buf;
+
+static int bk_buf_put(bk_buf *b, const void *src, size_t n) {
+    if (b->len + n > b->cap) {
+        size_t cap = b->cap ? b->cap * 2 : 256;
+        while (cap < b->len + n) {
+            cap *= 2;
+        }
+        uint8_t *data = realloc(b->data, cap);
+        if (data == NULL) {
+            return -1;
+        }
+        b->data = data;
+        b->cap = cap;
+    }
+    memcpy(b->data + b->len, src, n);
+    b->len += n;
+    return 0;
+}
+
+static int bk_buf_u32(bk_buf *b, uint32_t v) {
+    uint8_t le[4] = {v & 0xff, (v >> 8) & 0xff, (v >> 16) & 0xff, (v >> 24) & 0xff};
+    return bk_buf_put(b, le, 4);
+}
+
+static int bk_buf_field(bk_buf *b, const char *src, size_t n) {
+    if (n > UINT32_MAX) {
+        return -1;
+    }
+    return (bk_buf_u32(b, (uint32_t)n) < 0 || bk_buf_put(b, src, n) < 0) ? -1 : 0;
+}
+
+static int bk_buf_str(bk_buf *b, PyObject *s) {
+    Py_ssize_t n;
+    const char *utf8 = PyUnicode_AsUTF8AndSize(s, &n);
+    if (utf8 == NULL) {
+        return -1;
+    }
+    if (bk_buf_field(b, utf8, (size_t)n) < 0) {
+        PyErr_NoMemory();
+        return -1;
+    }
+    return 0;
+}
+
+typedef struct {
+    const uint8_t *p, *end;
+} bk_cursor;
+
+static int bk_take_u32(bk_cursor *c, uint32_t *v) {
+    if (c->end - c->p < 4) {
+        return -1;
+    }
+    *v = (uint32_t)c->p[0] | ((uint32_t)c->p[1] << 8) | ((uint32_t)c->p[2] << 16) |
+         ((uint32_t)c->p[3] << 24);
+    c->p += 4;
+    return 0;
+}
+
+static int bk_take_field(bk_cursor *c, const uint8_t **ptr, uint32_t *n) {
+    if (bk_take_u32(c, n) < 0 || (size_t)(c->end - c->p) < *n) {
+        return -1;
+    }
+    *ptr = c->p;
+    c->p += *n;
+    return 0;
+}
+
+// Decode `status, headers, body` into (int, list[tuple[str, str]], bytes).
+static PyObject *bk_decode_response(const uint8_t *data, size_t len) {
+    bk_cursor c = {data, data + len};
+    uint32_t status, count;
+    if (bk_take_u32(&c, &status) < 0 || bk_take_u32(&c, &count) < 0) {
+        goto malformed;
+    }
+    PyObject *headers = PyList_New(0);
+    if (headers == NULL) {
+        return NULL;
+    }
+    for (uint32_t i = 0; i < count; i++) {
+        const uint8_t *k, *v;
+        uint32_t kn, vn;
+        if (bk_take_field(&c, &k, &kn) < 0 || bk_take_field(&c, &v, &vn) < 0) {
+            Py_DECREF(headers);
+            goto malformed;
+        }
+        PyObject *pair = Py_BuildValue("(s#s#)", (const char *)k, (Py_ssize_t)kn,
+                                       (const char *)v, (Py_ssize_t)vn);
+        if (pair == NULL || PyList_Append(headers, pair) < 0) {
+            Py_XDECREF(pair);
+            Py_DECREF(headers);
+            return NULL;
+        }
+        Py_DECREF(pair);
+    }
+    const uint8_t *body;
+    uint32_t body_len;
+    if (bk_take_field(&c, &body, &body_len) < 0) {
+        Py_DECREF(headers);
+        goto malformed;
+    }
+    return Py_BuildValue("(INy#)", (unsigned int)status, headers, (const char *)body,
+                         (Py_ssize_t)body_len);
+malformed:
+    PyErr_SetString(PyExc_OSError, "malformed HTTP response from host");
+    return NULL;
+}
+
+// _bashkit.http(method, url, headers, body, timeout) -> (status, headers, body)
+// headers: iterable of (name, value) str pairs; body: bytes-like or None;
+// timeout: seconds (float) or None. Raises ConnectionError, TimeoutError or
+// ValueError (request rejected by the host).
+static PyObject *bk_http(PyObject *self, PyObject *args) {
+    (void)self;
+    PyObject *method, *url, *headers, *body_obj, *timeout_obj;
+    if (!PyArg_ParseTuple(args, "UUOOO:http", &method, &url, &headers, &body_obj,
+                          &timeout_obj)) {
+        return NULL;
+    }
+    int64_t timeout_ms = -1;
+    if (timeout_obj != Py_None) {
+        double t = PyFloat_AsDouble(timeout_obj);
+        if (t == -1.0 && PyErr_Occurred()) {
+            return NULL;
+        }
+        timeout_ms = t <= 0 ? 0 : (t > 9.0e15 ? INT64_MAX : (int64_t)(t * 1000.0));
+    }
+    Py_buffer body = {0};
+    if (body_obj != Py_None && PyObject_GetBuffer(body_obj, &body, PyBUF_SIMPLE) < 0) {
+        return NULL;
+    }
+    PyObject *result = NULL;
+    PyObject *seq = NULL;
+    uint8_t *resp = NULL;
+    bk_buf req = {0};
+    if (bk_buf_str(&req, method) < 0 || bk_buf_str(&req, url) < 0) {
+        goto done;
+    }
+    seq = PySequence_Fast(headers, "headers must be a sequence of (name, value) pairs");
+    if (seq == NULL) {
+        goto done;
+    }
+    Py_ssize_t n = PySequence_Fast_GET_SIZE(seq);
+    if (n > UINT32_MAX || bk_buf_u32(&req, (uint32_t)n) < 0) {
+        PyErr_NoMemory();
+        goto done;
+    }
+    for (Py_ssize_t i = 0; i < n; i++) {
+        PyObject *pair = PySequence_Fast_GET_ITEM(seq, i);
+        if (!PyTuple_Check(pair) || PyTuple_GET_SIZE(pair) != 2 ||
+            !PyUnicode_Check(PyTuple_GET_ITEM(pair, 0)) ||
+            !PyUnicode_Check(PyTuple_GET_ITEM(pair, 1))) {
+            PyErr_SetString(PyExc_TypeError, "headers must be (str, str) pairs");
+            goto done;
+        }
+        if (bk_buf_str(&req, PyTuple_GET_ITEM(pair, 0)) < 0 ||
+            bk_buf_str(&req, PyTuple_GET_ITEM(pair, 1)) < 0) {
+            goto done;
+        }
+    }
+    if (bk_buf_field(&req, body.buf ? body.buf : "", (size_t)body.len) < 0 ||
+        req.len > INT32_MAX) {
+        PyErr_SetString(PyExc_ValueError, "request too large");
+        goto done;
+    }
+    uint32_t resp_len = 0;
+    int32_t code;
+    code = bk_host_http_request(req.data, (int32_t)req.len, timeout_ms, &resp_len);
+    if (code > BK_HTTP_INVALID) {
+        PyErr_SetString(PyExc_OSError, "HTTP bridge fault");
+        goto done;
+    }
+    resp = malloc(resp_len ? resp_len : 1);
+    if (resp == NULL) {
+        // Drop the pending reply so the next request starts clean.
+        bk_host_http_take(NULL, -1);
+        PyErr_NoMemory();
+        goto done;
+    }
+    if (bk_host_http_take(resp, (int32_t)resp_len) != BK_HTTP_OK) {
+        PyErr_SetString(PyExc_OSError, "HTTP bridge fault");
+        goto done;
+    }
+    if (code == BK_HTTP_OK) {
+        result = bk_decode_response(resp, resp_len);
+    } else {
+        PyObject *kind = code == BK_HTTP_TIMEOUT   ? PyExc_TimeoutError
+                         : code == BK_HTTP_INVALID ? PyExc_ValueError
+                                                   : PyExc_ConnectionError;
+        PyObject *msg = PyUnicode_DecodeUTF8((const char *)resp, resp_len, "replace");
+        if (msg != NULL) {
+            PyErr_SetObject(kind, msg);
+            Py_DECREF(msg);
+        }
+    }
+done:
+    free(resp);
+    free(req.data);
+    Py_XDECREF(seq);
+    if (body.obj != NULL) {
+        PyBuffer_Release(&body);
+    }
+    return result;
+}
+
 static PyMethodDef bk_methods[] = {
     {"argv", bk_argv, METH_NOARGS, "WASI argv for this call."},
     {"environ", bk_environ, METH_NOARGS, "WASI environment for this call."},
     {"load_environ", bk_load_environ, METH_NOARGS, "Install this call's environment."},
     {"immortalize", bk_immortalize, METH_O, "Make snapshot objects immortal."},
+    {"http", bk_http, METH_VARARGS, "Send one HTTP request through the host."},
     {NULL, NULL, 0, NULL},
 };
 

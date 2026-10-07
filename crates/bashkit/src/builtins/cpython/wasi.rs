@@ -153,6 +153,7 @@ pub(crate) struct GuestConfig {
     pub(crate) stdlib_path: &'static str,
     pub(crate) stdlib: &'static [u8],
     pub(crate) deadline: crate::time_compat::Instant,
+    pub(crate) http: super::http::HttpState,
 }
 
 /// Everything one `python3` call's wasm instance can reach.
@@ -176,6 +177,8 @@ pub(crate) struct GuestState {
     max_file_size: usize,
     /// Errno of the first failed write-back at exit, if any.
     pub(crate) flush_error: Option<Errno>,
+    /// HTTP bridge state (`bashkit.http_request`).
+    pub(crate) http: super::http::HttpState,
 }
 
 /// Exit requested through `proc_exit`.
@@ -237,7 +240,14 @@ impl GuestState {
             buffer_cap: config.max_memory,
             max_file_size,
             flush_error: None,
+            http: config.http,
         }
+    }
+
+    /// Time left before the call deadline.
+    pub(crate) fn remaining(&self) -> Duration {
+        self.deadline
+            .saturating_duration_since(crate::time_compat::Instant::now())
     }
 
     fn is_stdlib(&self, path: &Path) -> bool {
@@ -423,14 +433,22 @@ fn range(ptr: i32, len: u32, mem_len: usize) -> Result<std::ops::Range<usize>, E
     Ok(start..end)
 }
 
-fn read_bytes(caller: &mut Caller<'_, GuestState>, ptr: i32, len: i32) -> Result<Vec<u8>, Errno> {
+pub(super) fn read_bytes(
+    caller: &mut Caller<'_, GuestState>,
+    ptr: i32,
+    len: i32,
+) -> Result<Vec<u8>, Errno> {
     let mem = memory(caller)?;
     let data = mem.data(&*caller);
     let r = range(ptr, len as u32, data.len())?;
     Ok(data[r].to_vec())
 }
 
-fn write_bytes(caller: &mut Caller<'_, GuestState>, ptr: i32, bytes: &[u8]) -> Result<(), Errno> {
+pub(super) fn write_bytes(
+    caller: &mut Caller<'_, GuestState>,
+    ptr: i32,
+    bytes: &[u8],
+) -> Result<(), Errno> {
     let mem = memory(caller)?;
     let data = mem.data_mut(&mut *caller);
     let r = range(
@@ -442,7 +460,11 @@ fn write_bytes(caller: &mut Caller<'_, GuestState>, ptr: i32, bytes: &[u8]) -> R
     Ok(())
 }
 
-fn write_u32(caller: &mut Caller<'_, GuestState>, ptr: i32, v: u32) -> Result<(), Errno> {
+pub(super) fn write_u32(
+    caller: &mut Caller<'_, GuestState>,
+    ptr: i32,
+    v: u32,
+) -> Result<(), Errno> {
     write_bytes(caller, ptr, &v.to_le_bytes())
 }
 

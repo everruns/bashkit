@@ -7360,7 +7360,7 @@ impl Interpreter {
                     fs,
                     stdin,
                     #[cfg(feature = "http_client")]
-                    http_client: self.http_client.as_deref(),
+                    http_client: self.http_client.as_ref(),
                     #[cfg(feature = "git")]
                     git_client: self.git_client.as_ref(),
                     #[cfg(feature = "ssh")]
@@ -7425,7 +7425,7 @@ impl Interpreter {
                 fs,
                 stdin,
                 #[cfg(feature = "http_client")]
-                http_client: self.http_client.as_deref(),
+                http_client: self.http_client.as_ref(),
                 #[cfg(feature = "git")]
                 git_client: self.git_client.as_ref(),
                 #[cfg(feature = "ssh")]
