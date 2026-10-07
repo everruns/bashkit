@@ -338,29 +338,79 @@ impl Builtin for Tr {
             return Ok(Self::err("missing operand", 1));
         }
 
-        let mut set1 = match expand_char_set(&non_flag_args[0]) {
-            Ok(set) => set,
-            Err(msg) => return Ok(Self::err(&msg, 1)),
-        };
+        if let Err(msg) = expand_char_set(&non_flag_args[0]) {
+            return Ok(Self::err(&msg, 1));
+        }
         if !delete && !squeeze && non_flag_args.len() < 2 {
             return Ok(Self::err("missing operand after SET1", 1));
         }
-        if truncate && !delete && !complement && non_flag_args.len() >= 2 {
-            // -t: truncate SET1 to the length of SET2 instead of extending SET2.
-            match expand_char_set(&non_flag_args[1]) {
-                Ok(set2) => set1.truncate(set2.len()),
-                Err(msg) => return Ok(Self::err(&msg, 1)),
+        let spec = TrSpec {
+            args: &non_flag_args,
+            delete,
+            squeeze,
+            complement,
+            truncate,
+            c_locale: ctx.env.get("LC_ALL").is_some_and(|locale| locale == "C"),
+        };
+
+        // A pipeline stage translates its input as it arrives, so
+        // `yes | tr y n | head -1` ends with SIGPIPE. Squeezing looks across
+        // piece boundaries, so `-s` reads everything first.
+        if !squeeze && let Some(out) = ctx.stdout_stream() {
+            let mut input = super::InputChunks::stdin(&ctx);
+            let cut = |data: &[u8]| {
+                if spec.c_locale {
+                    data.len()
+                } else {
+                    super::cut_utf8(data)
+                }
+            };
+            while let Some(piece) = input.next(cut).await {
+                ctx.consume_budget_work(1)?;
+                let output = match spec.apply(&piece.into()) {
+                    Ok(output) => output,
+                    Err(msg) => return Ok(Self::err(&msg, 1)),
+                };
+                if !output.is_empty() && !out.write(&output).await {
+                    return Ok(ExecResult::with_code(String::new(), 141));
+                }
             }
+            return Ok(ExecResult::ok(String::new()));
         }
-        let stdin = ctx.stdin.cloned().unwrap_or_default();
-        let byte_mode =
-            ctx.env.get("LC_ALL").is_some_and(|locale| locale == "C") || stdin.text().is_err();
+
+        let stdin = ctx.stdin_to_end().await.unwrap_or_default();
+        match spec.apply(&stdin) {
+            Ok(output) => Ok(ExecResult::ok_bytes(output)),
+            Err(msg) => Ok(Self::err(&msg, 1)),
+        }
+    }
+}
+
+/// Parsed `tr` operands and flags.
+struct TrSpec<'a> {
+    args: &'a [String],
+    delete: bool,
+    squeeze: bool,
+    complement: bool,
+    /// `-t`: truncate SET1 to the length of SET2 instead of extending SET2.
+    truncate: bool,
+    /// `LC_ALL=C`: work on bytes, not characters.
+    c_locale: bool,
+}
+
+impl TrSpec<'_> {
+    /// Translate one piece of input; `Err` is a SET diagnostic.
+    fn apply(&self, stdin: &crate::StreamData) -> std::result::Result<Vec<u8>, String> {
+        let (non_flag_args, delete, squeeze, complement) =
+            (self.args, self.delete, self.squeeze, self.complement);
+        let mut set1 = expand_char_set(&non_flag_args[0])?;
+        if self.truncate && !delete && !complement && non_flag_args.len() >= 2 {
+            set1.truncate(expand_char_set(&non_flag_args[1])?.len());
+        }
+        let byte_mode = self.c_locale || stdin.text().is_err();
         if byte_mode && set1.iter().all(|c| (*c as u32) <= u8::MAX as u32) {
             let set2 = if non_flag_args.len() >= 2 {
-                match expand_char_set(&non_flag_args[1]) {
-                    Ok(set) => Some(set),
-                    Err(msg) => return Ok(Self::err(&msg, 1)),
-                }
+                Some(expand_char_set(&non_flag_args[1])?)
             } else {
                 None
             };
@@ -368,15 +418,14 @@ impl Builtin for Tr {
                 .as_ref()
                 .is_none_or(|set| set.iter().all(|c| (*c as u32) <= u8::MAX as u32))
             {
-                let output = translate_bytes(
+                return Ok(translate_bytes(
                     stdin.as_bytes(),
                     &set1,
                     set2.as_deref(),
                     delete,
                     squeeze,
                     complement,
-                );
-                return Ok(ExecResult::ok_bytes(output));
+                ));
             }
         }
         if complement {
@@ -390,15 +439,12 @@ impl Builtin for Tr {
                 .collect();
         }
 
-        let stdin = &*stdin;
+        let stdin: &str = stdin;
 
         let result = if delete && squeeze {
             // -ds: delete SET1 chars, then squeeze SET2 chars
             let set2 = if non_flag_args.len() >= 2 {
-                match expand_char_set(&non_flag_args[1]) {
-                    Ok(set) => set,
-                    Err(msg) => return Ok(Self::err(&msg, 1)),
-                }
+                expand_char_set(&non_flag_args[1])?
             } else {
                 set1.clone()
             };
@@ -413,14 +459,7 @@ impl Builtin for Tr {
             // -s with only SET1: squeeze characters in SET1
             squeeze_chars(stdin, &set1)
         } else {
-            if non_flag_args.len() < 2 {
-                return Ok(Self::err("missing operand after SET1", 1));
-            }
-
-            let set2 = match expand_char_set(&non_flag_args[1]) {
-                Ok(set) => set,
-                Err(msg) => return Ok(Self::err(&msg, 1)),
-            };
+            let set2 = expand_char_set(&non_flag_args[1])?;
 
             let translated: String = stdin
                 .chars()
@@ -440,7 +479,7 @@ impl Builtin for Tr {
             }
         };
 
-        Ok(ExecResult::ok(result))
+        Ok(result.into_bytes())
     }
 }
 
