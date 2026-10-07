@@ -1771,6 +1771,8 @@ impl Interpreter {
         #[cfg(feature = "terminal")]
         builtins.insert("vi".to_string(), Arc::new(builtins::Vi));
         #[cfg(feature = "terminal")]
+        builtins.insert("nano".to_string(), Arc::new(builtins::Nano));
+        #[cfg(feature = "terminal")]
         builtins.insert("more".to_string(), Arc::new(builtins::More));
         #[cfg(feature = "jq")]
         builtins.insert("jq".to_string(), Arc::new(builtins::Jq));

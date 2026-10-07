@@ -83,6 +83,8 @@ mod ls;
 mod man;
 mod mapfile;
 mod mkfifo;
+#[cfg(feature = "terminal")]
+mod nano;
 mod navigation;
 mod nl;
 mod numfmt;
@@ -232,6 +234,8 @@ pub use shuf::Shuf;
 pub use tsort::Tsort;
 
 pub use jobctl::{Bg, Disown, Fg, Jobs, Kill, Pgrep, Ps};
+#[cfg(feature = "terminal")]
+pub use nano::Nano;
 #[cfg(feature = "terminal")]
 pub use pager::More;
 pub use sleep::Sleep;

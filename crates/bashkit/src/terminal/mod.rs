@@ -1003,6 +1003,27 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "git")]
+    #[tokio::test]
+    async fn git_commit_with_nano_editor() {
+        let mut term = git_repo_term().await;
+        run(&mut term, "EDITOR=nano git commit\r").await;
+        assert!(
+            term.screen_text().contains("bashkit nano"),
+            "{}",
+            term.screen_text()
+        );
+        // Message on the first (empty) line, then ^X, Y, Enter.
+        run(&mut term, "via nano\x18y\r").await;
+        assert!(!term.is_alternate_screen());
+        run(&mut term, "git log --oneline\r").await;
+        assert!(
+            term.screen_text().contains(" via nano"),
+            "{}",
+            term.screen_text()
+        );
+    }
+
     #[tokio::test]
     async fn vi_cq_exits_nonzero() {
         let mut term = Terminal::new(Bash::builder());

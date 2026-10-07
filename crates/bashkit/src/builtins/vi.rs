@@ -19,8 +19,8 @@
 //! - `:cq` quits with exit status 1, so callers that open `$EDITOR`
 //!   (`git commit`) can abort like with real vi.
 //! - [`edit_file`] is the `$EDITOR` entry point for other builtins. Only
-//!   `vi`/`vim` (any directory, any args after the name) are accepted as
-//!   `$VISUAL`/`$EDITOR`; anything else is reported, not run.
+//!   `vi`/`vim`/`nano` (any directory, any args after the name) are accepted
+//!   as `$VISUAL`/`$EDITOR`; anything else is reported, not run.
 
 use std::path::{Path, PathBuf};
 
@@ -96,9 +96,15 @@ pub(crate) async fn edit_file(
     if let Some(editor) = editor {
         let program = editor.split_whitespace().next().unwrap_or(editor);
         let name = program.rsplit('/').next().unwrap_or(program);
+        if name == "nano" {
+            let shown = path.display().to_string();
+            let result =
+                super::nano::run_on(&tty, ctx, Some(path.to_path_buf()), Some(shown)).await?;
+            return Ok(Some(Ok(result.exit_code)));
+        }
         if !matches!(name, "vi" | "vim") {
             return Ok(Some(Err(format!(
-                "editor '{editor}' is not available (supported: vi)"
+                "editor '{editor}' is not available (supported: vi, nano)"
             ))));
         }
     }

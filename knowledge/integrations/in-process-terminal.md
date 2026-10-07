@@ -178,12 +178,22 @@ Builtins that need an editor call `builtins::edit_file(ctx, path)`, which runs
 the vi editor on the session terminal from inside the calling builtin (no
 re-entry into the shell, no subprocess). It returns `None` outside a terminal
 so callers keep their non-interactive behavior. `$VISUAL` then `$EDITOR` are
-honored only to the extent of naming `vi`/`vim` (any path, args ignored);
+honored only to the extent of naming `vi`/`vim`/`nano` (any path, args ignored);
 any other editor is reported as unavailable instead of silently swapping in
 vi. A session sets `EDITOR=vi` when unset. Consumers: `git commit` without
 `-m` (edits `.git/COMMIT_EDITMSG` with git's template, `#` lines dropped,
 empty message or `:cq` aborts with exit 1). `git rebase -i` and `crontab -e`
 are not consumers because neither command exists in bashkit.
+
+## nano builtin
+
+`builtins/nano.rs`, `terminal` feature, subset editor (L-TERM-005): modeless
+typing, cursor keys and `^A ^E ^Y ^V`, `^O` (prompts for the file name,
+pre-filled), `^X` (asks `Save modified buffer?` when dirty), `^K` cut (repeat
+appends) and `^U` paste whole lines, `^W` search (wraps), `^G`, `^C`. Title
+bar, status line and two help rows like GNU nano. Same bounds and VFS rules as
+`vi`; control chars render in caret notation. `$EDITOR=nano` is accepted by
+`builtins::edit_file`, so `git commit` can use it.
 
 ## less / more
 
