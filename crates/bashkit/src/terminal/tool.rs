@@ -129,9 +129,10 @@ impl TerminalTool {
 Send keys in `input` using Vim notation: text is typed as-is, <Enter> runs a line, \
 <Esc>, <Tab>, <BS>, <Up>/<Down>/<Left>/<Right>, <PageUp>/<PageDown>, <C-c> interrupts, \
 <C-d> ends input, <lt> types a literal '<'. Each call returns the screen, the activity \
-(prompt, continuation, running, exited) and every command that finished with its exact \
+(prompt, continuation, running, input, exited) and every command that finished with its exact \
 output and exit code. vi and less work; quit vi with <Esc>:wq<Enter>, less with q. \
-If activity is running, call again (input may be empty) to keep waiting, or send <C-c>. \
+If activity is input, a command is asking a question (input_prompt holds it); type the answer \
+and <Enter>. If activity is running, call again (input may be empty) to keep waiting, or send <C-c>. \
 Set wait_for to a regex to return as soon as command output matches (for example a server's \
 'listening' line); matched tells whether it did. Set screen to \"changes\" to get only the rows \
 that changed since the last call, or \"none\" to skip the screen."
@@ -193,9 +194,10 @@ that changed since the last call, or \"none\" to skip the screen."
                 "matched": {"type": "boolean", "description": "Whether wait_for matched (only when wait_for was given)"},
                 "activity": {
                     "type": "string",
-                    "enum": ["prompt", "continuation", "running", "exited"],
-                    "description": "What the session is doing"
+                    "enum": ["prompt", "continuation", "running", "input", "exited"],
+                    "description": "What the session is doing. input: a running command (read, select, a y/n question) waits for a typed line"
                 },
+                "input_prompt": {"type": "string", "description": "The question on the cursor line while activity = input, such as 'Continue? [y/N] '"},
                 "running_command": {"type": "string", "description": "Command line still running (activity = running)"},
                 "exit_code": {"type": "integer", "description": "Shell exit code (activity = exited)"},
                 "waiting_for_input": {"type": "boolean", "description": "False when wait_ms ran out while a command was still working"},
@@ -337,7 +339,12 @@ that changed since the last call, or \"none\" to skip the screen."
             TerminalActivity::Starting | TerminalActivity::Prompt => ("prompt", None),
             TerminalActivity::ContinuationPrompt => ("continuation", None),
             TerminalActivity::Running { command } => {
-                ("running", Some(("running_command", json!(command))))
+                if let Some(prompt) = self.terminal.input_prompt() {
+                    out["input_prompt"] = json!(prompt);
+                    ("input", Some(("running_command", json!(command))))
+                } else {
+                    ("running", Some(("running_command", json!(command))))
+                }
             }
             TerminalActivity::Exited(code) => ("exited", Some(("exit_code", json!(code)))),
         };
@@ -674,6 +681,25 @@ mod tests {
         assert_eq!(out["screen_changes"], json!([]));
         assert!(tool.call(json!({"screen": "diff"})).await.is_err());
         assert!(tool.call(json!({"wait_for": 1})).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn question_is_reported_as_input() {
+        let mut tool = TerminalTool::new(Bash::builder());
+        let out = tool
+            .call(json!({"input": "read -p 'Overwrite? [y/N] ' a; echo a=$a<Enter>"}))
+            .await
+            .unwrap();
+        assert_eq!(out["activity"], "input");
+        assert_eq!(out["input_prompt"], "Overwrite? [y/N] ");
+        assert_eq!(out["waiting_for_input"], true);
+        let out = tool.call(json!({"input": "y<Enter>"})).await.unwrap();
+        assert_eq!(out["activity"], "prompt");
+        assert!(out.get("input_prompt").is_none());
+        assert_eq!(out["commands"][0]["output"], "a=y\n");
+        // vi is running, not asking a line question.
+        let out = tool.call(json!({"input": "vi<Enter>"})).await.unwrap();
+        assert_eq!(out["activity"], "running");
     }
 
     #[test]

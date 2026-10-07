@@ -43,6 +43,8 @@ struct TtyState {
     raw: bool,
     /// A shell command is running (Ctrl-C should cancel it).
     foreground: bool,
+    /// A command is reading a typed line (`read`, `select`).
+    reading_line: bool,
     resized: bool,
     closed: bool,
     screen: vt100::Parser,
@@ -80,6 +82,7 @@ impl Tty {
                 waiting: false,
                 raw: false,
                 foreground: false,
+                reading_line: false,
                 resized: false,
                 closed: false,
                 screen: vt100::Parser::new(size.rows, size.cols, SCROLLBACK_LINES),
@@ -216,6 +219,16 @@ impl Tty {
         self.lock().raw = raw;
     }
 
+    /// Mark that a command is reading a typed line until the guard drops.
+    pub(crate) fn reading_line(&self) -> ReadingGuard {
+        self.lock().reading_line = true;
+        ReadingGuard(self.clone())
+    }
+
+    pub(crate) fn is_reading_line(&self) -> bool {
+        self.lock().reading_line
+    }
+
     pub(crate) fn set_foreground(&self, foreground: bool) {
         self.lock().foreground = foreground;
     }
@@ -295,7 +308,28 @@ impl Tty {
             }
             self.0.idle.notify_one();
             let _wait = self.0.clock.pause();
+            // A reader dropped mid-wait (`read -t` deadline, Ctrl-C) must not
+            // leave the session looking idle while the command carries on.
+            let _waiting = WaitingGuard(self);
             self.0.input_ready.notified().await;
         }
+    }
+}
+
+/// Clears the reading-line mark on drop, including when Ctrl-C drops the
+/// running command mid-read.
+pub(crate) struct ReadingGuard(Tty);
+
+impl Drop for ReadingGuard {
+    fn drop(&mut self) {
+        self.0.lock().reading_line = false;
+    }
+}
+
+struct WaitingGuard<'a>(&'a Tty);
+
+impl Drop for WaitingGuard<'_> {
+    fn drop(&mut self) {
+        self.0.lock().waiting = false;
     }
 }

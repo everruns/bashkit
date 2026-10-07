@@ -290,7 +290,22 @@ impl Terminal {
         };
         loop {
             if self.tty.is_idle() {
-                return TerminalStatus::Idle;
+                // Poll once more so a reader with a deadline (`read -t`)
+                // whose time is up gets to finish instead of looking idle
+                // forever.
+                tokio::select! {
+                    biased;
+                    code = session.as_mut() => {
+                        self.session = None;
+                        self.exit_code = Some(code);
+                        return TerminalStatus::Exited(code);
+                    }
+                    () = std::future::ready(()) => {}
+                }
+                if self.tty.is_idle() {
+                    return TerminalStatus::Idle;
+                }
+                continue;
             }
             tokio::select! {
                 biased;
@@ -365,6 +380,23 @@ impl Terminal {
             .activity
             .clone()
             .unwrap_or(TerminalActivity::Starting)
+    }
+
+    /// While a command waits for a typed line (`read`, `select`), the text
+    /// left of the cursor on its row: the question being asked, such as
+    /// `Continue? [y/N] ` from `read -p` or an `echo -n`. `None` when no
+    /// command is waiting for a line (at the shell prompt, inside `vi`, or
+    /// while a command is still working).
+    pub fn input_prompt(&self) -> Option<String> {
+        if !self.tty.is_reading_line() || !self.tty.is_idle() {
+            return None;
+        }
+        Some(self.tty.with_screen(|s| {
+            let (row, col) = s.cursor_position();
+            let (_, cols) = s.size();
+            let text = s.rows(0, cols).nth(usize::from(row)).unwrap_or_default();
+            text.chars().take(usize::from(col)).collect::<String>()
+        }))
     }
 
     /// Cursor position as `(row, col)`, zero-based.
@@ -586,10 +618,74 @@ fn prompt(bash: &crate::Bash, var: &str, default: &str) -> String {
     out
 }
 
-enum LineRead {
+pub(crate) enum LineRead {
     Line(String),
     Interrupt,
     Eof,
+}
+
+/// How a command (`read`, `select`) wants one line of typed input.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct InputOptions {
+    /// Do not echo typed characters (`read -s`).
+    pub(crate) silent: bool,
+    /// Return after this many characters, without waiting for Enter
+    /// (`read -n N`).
+    pub(crate) nchars: Option<usize>,
+}
+
+/// Read one line typed on the terminal for a running command, like a
+/// program reading a cooked-mode tty. While it waits, the session reports the
+/// line as an input prompt ([`Terminal::input_prompt`]).
+pub(crate) async fn read_input(tty: &Tty, opts: InputOptions) -> LineRead {
+    let _reading = tty.reading_line();
+    if !opts.silent && opts.nchars.is_none() {
+        return read_line(tty, &History::default()).await;
+    }
+    let mut line = String::new();
+    let mut pending: Vec<u8> = Vec::new();
+    loop {
+        if opts.nchars.is_some_and(|n| line.chars().count() >= n) {
+            return LineRead::Line(line);
+        }
+        let b = match tty.read_event().await {
+            TtyEvent::Byte(b) => b,
+            TtyEvent::Resize => continue,
+            TtyEvent::Closed => return LineRead::Eof,
+        };
+        match b {
+            b'\r' | b'\n' => {
+                if !opts.silent {
+                    tty.write(b"\r\n");
+                }
+                return LineRead::Line(line);
+            }
+            0x03 => return LineRead::Interrupt,
+            0x04 if line.is_empty() => return LineRead::Eof,
+            0x7f | 0x08 => {
+                if line.pop().is_some() && !opts.silent {
+                    tty.write(b"\x08 \x08");
+                }
+            }
+            b if b < 0x20 && b != b'\t' => {}
+            b => {
+                pending.push(b);
+                match std::str::from_utf8(&pending) {
+                    Ok(s) => {
+                        if line.len() + s.len() <= MAX_LINE_BYTES {
+                            line.push_str(s);
+                            if !opts.silent {
+                                tty.write(s.as_bytes());
+                            }
+                        }
+                        pending.clear();
+                    }
+                    Err(e) if e.error_len().is_some() || pending.len() >= 4 => pending.clear(),
+                    Err(_) => {}
+                }
+            }
+        }
+    }
 }
 
 /// Most recent command lines kept for Up/Down recall.
@@ -914,6 +1010,97 @@ mod tests {
         run(&mut term, ":cq\r").await;
         assert!(
             term.screen_text().contains("st=1"),
+            "{}",
+            term.screen_text()
+        );
+    }
+
+    #[tokio::test]
+    async fn read_waits_for_a_typed_line() {
+        let mut term = Terminal::new(Bash::builder());
+        run(&mut term, "read -p 'Name? ' n; echo \"hi $n\"\r").await;
+        assert_eq!(term.input_prompt().as_deref(), Some("Name? "));
+        assert!(matches!(term.activity(), TerminalActivity::Running { .. }));
+        run(&mut term, "Ann Lee\r").await;
+        assert_eq!(term.input_prompt(), None);
+        let text = term.screen_text();
+        assert!(text.ends_with("Name? Ann Lee\nhi Ann Lee\n$"), "{text}");
+        // An echo -n question is the prompt too, and the answer is not
+        // treated as a shell command afterwards.
+        run(&mut term, "echo -n 'Continue? [y/N] '; read a; echo a=$a\r").await;
+        assert_eq!(term.input_prompt().as_deref(), Some("Continue? [y/N] "));
+        run(&mut term, "y\r").await;
+        assert!(
+            term.screen_text().ends_with("a=y\n$"),
+            "{}",
+            term.screen_text()
+        );
+    }
+
+    #[tokio::test]
+    async fn read_flags_on_terminal() {
+        let mut term = Terminal::new(Bash::builder());
+        run(&mut term, "read -s -p 'Password: ' pw; echo len=${#pw}\r").await;
+        run(&mut term, "hunter2\r").await;
+        let text = term.screen_text();
+        assert!(!text.contains("hunter2"), "{text}");
+        assert!(text.ends_with("Password:\nlen=7\n$"), "{text}");
+        run(&mut term, "read -n 1 k; echo; echo k=$k\r").await;
+        run(&mut term, "y").await;
+        assert!(
+            term.screen_text().ends_with("k=y\n$"),
+            "{}",
+            term.screen_text()
+        );
+        // The read is idle (waiting) until its -t deadline passes.
+        run(&mut term, "read -t 0.05 t; echo rc=$?\r").await;
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        term.run_until_idle().await;
+        assert!(
+            term.screen_text().ends_with("rc=142\n$"),
+            "{}",
+            term.screen_text()
+        );
+        // Ctrl-D on an empty line is EOF.
+        run(&mut term, "read e; echo rc=$?\r").await;
+        run(&mut term, "\x04").await;
+        assert!(
+            term.screen_text().ends_with("rc=1\n$"),
+            "{}",
+            term.screen_text()
+        );
+        // Ctrl-C while waiting interrupts the command.
+        run(&mut term, "read c; echo after\r").await;
+        run(&mut term, "\x03").await;
+        assert!(
+            term.screen_text().ends_with("^C\n$"),
+            "{}",
+            term.screen_text()
+        );
+        assert_eq!(term.input_prompt(), None);
+        // Piped stdin still wins over the terminal.
+        run(&mut term, "echo piped | { read p; echo p=$p; }\r").await;
+        assert!(
+            term.screen_text().ends_with("p=piped\n$"),
+            "{}",
+            term.screen_text()
+        );
+    }
+
+    #[tokio::test]
+    async fn select_reads_choice_from_terminal() {
+        let mut term = Terminal::new(Bash::builder());
+        run(
+            &mut term,
+            "select c in red blue; do echo picked=$c; break; done\r",
+        )
+        .await;
+        let text = term.screen_text();
+        assert!(text.ends_with("1) red\n2) blue\n#?"), "{text}");
+        assert_eq!(term.input_prompt().as_deref(), Some("#? "));
+        run(&mut term, "2\r").await;
+        assert!(
+            term.screen_text().ends_with("#? 2\npicked=blue\n$"),
             "{}",
             term.screen_text()
         );

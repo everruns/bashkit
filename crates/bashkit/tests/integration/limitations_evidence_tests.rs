@@ -152,14 +152,14 @@ async fn l_term_001_vi_is_a_subset() {
 /// the next typed line.
 #[cfg(feature = "terminal")]
 #[tokio::test]
-async fn l_term_002_read_does_not_wait_for_terminal_input() {
+async fn l_term_002_cat_does_not_wait_for_terminal_input() {
     use bashkit::terminal::Terminal;
     let mut term = Terminal::new(Bash::builder());
     term.run_until_idle().await;
-    term.send("read x; echo rc=$?\r");
+    term.send("cat; echo rc=$?\r");
     term.run_until_idle().await;
     assert!(
-        term.screen_text().ends_with("rc=1\n$"),
+        term.screen_text().ends_with("rc=0\n$"),
         "{}",
         term.screen_text()
     );

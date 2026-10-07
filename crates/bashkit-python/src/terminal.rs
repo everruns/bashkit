@@ -226,6 +226,12 @@ impl PyTerminal {
         self.with_tool(|t| t.terminal().is_alternate_screen())
     }
 
+    /// While a command (`read`, `select`) waits for a typed line, the
+    /// question on the cursor line; otherwise `None`.
+    fn input_prompt(&self) -> Option<String> {
+        self.with_tool(|t| t.terminal().input_prompt())
+    }
+
     /// Resize the terminal; a running `vi` redraws.
     fn resize(&self, rows: u16, cols: u16) {
         self.with_tool(|t| t.terminal().resize(TerminalSize::new(rows, cols)));
