@@ -206,6 +206,24 @@ Two optional arguments keep agent loops short:
   `screen_changes` (`[{row, text}]`, only rows that differ from the previous
   call) and `cursor`; `"none"` returns no screen.
 
+### Several sessions
+
+`TerminalTool::with_sessions(size, factory)` lets the agent open terminal tabs
+with the `session` argument (`"main"` by default, up to 8). A new name opens a
+new shell from `factory` that shares the main session's files; variables, the
+working directory and jobs stay per session. While a call waits on one session
+the others keep running, so a loop or `watch` in one tab progresses while the
+agent works in another. Results carry `session` and `sessions` (each tab and
+its activity) once more than one is open. `close: true` closes a tab, and a
+tab whose shell exited starts a fresh one the next time keys are sent to it.
+The Python and JavaScript `Terminal` classes always support sessions.
+
+```rust
+let mut tool = TerminalTool::with_sessions(TerminalSize::default(), Box::new(Bash::builder));
+tool.call(json!({"session": "logs", "input": "watch -n1 'tail -3 /tmp/app.log'<Enter>", "wait_ms": 0})).await?;
+tool.call(json!({"input": "./run.sh<Enter>"})).await?; // "logs" keeps refreshing meanwhile
+```
+
 It is not a `BashTool`: that tool runs each call in a fresh shell, while a
 terminal keeps the shell, open programs and the screen between calls.
 

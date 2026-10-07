@@ -73,7 +73,7 @@ use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 pub(crate) use keys::{Key, ScreenGuard, read_key};
-pub use tool::{TERMINAL_TOOL_NAME, TerminalTool, TerminalToolError};
+pub use tool::{MAIN_SESSION, SessionFactory, TERMINAL_TOOL_NAME, TerminalTool, TerminalToolError};
 pub(crate) use tty::{Tty, TtyEvent};
 
 use crate::fs::FileSystem;

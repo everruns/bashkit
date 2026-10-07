@@ -76,6 +76,19 @@ test("terminal: wait_for and screen changes", async (t) => {
   );
 });
 
+test("terminal: sessions share files", async (t) => {
+  const term = new Terminal();
+  await term.call("echo hi > /tmp/s<Enter>");
+  const out = await term.call({ session: "other", input: "cat /tmp/s<Enter>" });
+  t.is(out.session, "other");
+  t.is(out.commands[0].output, "hi\n");
+  t.deepEqual(
+    out.sessions!.map((s) => s.name),
+    ["main", "other"],
+  );
+  t.is((await term.call({ session: "other", close: true })).closed, true);
+});
+
 test("terminal: exit and exitCode", async (t) => {
   const term = new Terminal();
   const out = await term.call("exit 3<Enter>");

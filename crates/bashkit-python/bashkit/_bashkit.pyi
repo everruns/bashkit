@@ -1937,11 +1937,15 @@ class Terminal:
         wait_ms: int | None = None,
         wait_for: str | None = None,
         screen: Literal["full", "changes", "none"] | None = None,
+        session: str | None = None,
+        close: bool | None = None,
     ) -> dict[str, Any]:
         """Agent step: type ``input`` in Vim key notation, wait, report screen and commands.
 
         ``wait_for`` (regex) returns as soon as command output matches.
         ``screen="changes"`` returns only rows changed since the last call.
+        ``session`` names a terminal tab (created on first use, files shared);
+        ``close=True`` closes it.
         """
         ...
     def screen_text(self) -> str: ...
