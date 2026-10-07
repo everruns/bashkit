@@ -1,6 +1,5 @@
 ### read_basic
-### bash_diff
-echo "hello" | read var; echo "$var"
+shopt -s lastpipe; echo "hello" | read var; echo "$var"
 ### expect
 hello
 ### end

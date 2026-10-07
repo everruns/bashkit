@@ -45,6 +45,7 @@ execution model. Evidence is a threat-model ID, a test, or `stance`
 | L-PROC-001 | `exec` does not replace the process; `exec cmd` runs cmd then stops execution (fd redirects work) | True process replace would break sandbox containment | TM-ESC-005 |
 | L-PROC-002 | Background jobs run concurrently (`jobs`, `wait -n`, `kill`, `ps`, `pgrep`), but cannot be stopped or resumed: `kill -STOP/-CONT` are ignored, there is no `suspend`/Ctrl-Z, `bg` is a no-op and `fg` just waits; jobs end when `exec()` returns | No terminal process groups in a virtual shell; a job must not outlive the call that owns it (TM-DOS-122) | `l_proc_002_no_job_control` |
 | L-PROC-003 | No process spawning; external commands run as builtins | Core sandbox model: no fork/exec escape surface | `l_proc_003_no_process_spawning` |
+| L-PIPE-001 | Pipeline stages run one after another, not concurrently: a stage finishes before the next one reads its output. An endless producer piped into an early-exiting reader (`yes \| head -1`, `while :; do echo; done \| head`) runs until its own cap or a limit, and no stage gets SIGPIPE (exit 141) | Stages hand over complete output buffers; streaming stages over a bounded pipe are the next step of the fidelity roadmap | `l_pipe_001_stages_run_sequentially` |
 | L-RAND-001 | `uuidgen` makes random (v4) UUIDs only (no `-t`, `-m`, `-s`); `openssl` implements only `rand` | Time/MAC-based UUIDs would leak host identity; a full TLS/crypto toolkit is out of scope | `uuidgen_time_based_unsupported` |
 | L-FS-001 | Symlinks are followed, but `..` after a linked directory resolves lexically (`/link/..` is the link's parent, the `cd -L` view), and `ln` without `-s` makes a symlink, not a hard link | The interpreter normalizes paths before the VFS sees them; the VFS has no inodes to share | `symlink.test.sh`, `ln_default_symbolic` |
 | L-ROOTFS-001 | Default rootfs is static and read-only: `/proc` has no `self`, pid dirs, `uptime` or live counters; `/etc/passwd` has no root entry; `/dev/zero` yields 1 MiB per read; `/bin`, `/usr/bin` are stubs that dispatch builtins | Host state must not leak (TM-INF-003, TM-ISO-018); fixed values keep runs deterministic | `rootfs_layout`, `threat_etc_passwd_blocked` |
@@ -84,7 +85,7 @@ Target: IEEE 1003.1-2024 Shell Command Language.
 | Special built-in utilities | Substantial | 14/15; `exec` partial (L-PROC-001); `times` returns zeros; `trap` per L-SIG-001 |
 | Quoting, redirections, compound commands, functions | Full | |
 | Word expansions | Substantial | Most expansions supported |
-| Pipelines and lists | Full | `\|`, `&&`, `\|\|`, `;`, `&`+`wait`, `!` |
+| Pipelines and lists | Full | `\|`, `&&`, `\|\|`, `;`, `&`+`wait`, `!`; every stage is a subshell, `shopt -s lastpipe` keeps the last one in the shell (L-PIPE-001: stages are not concurrent) |
 
 ## Shell Features
 

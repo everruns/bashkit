@@ -164,3 +164,16 @@ async fn l_term_002_cat_does_not_wait_for_terminal_input() {
         term.screen_text()
     );
 }
+
+/// L-PIPE-001: stages run one after another, so the producer runs to its own
+/// cap before `head` reads, and never sees SIGPIPE.
+#[tokio::test]
+async fn l_pipe_001_stages_run_sequentially() {
+    let mut bash = Bash::new();
+    let result = bash
+        .exec("yes | head -1; echo \"${PIPESTATUS[*]}\"")
+        .await
+        .unwrap();
+    assert_eq!(result.stdout, "y\n1 0\n");
+    assert!(result.stderr.contains("output limit"), "{}", result.stderr);
+}

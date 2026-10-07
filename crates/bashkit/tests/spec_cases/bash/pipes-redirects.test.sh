@@ -285,3 +285,50 @@ test -f /tmp/nullcmd_assign && echo exists
 1
 exists
 ### end
+
+### pipeline_last_stage_is_subshell
+# Without lastpipe every pipeline stage runs in a subshell
+echo x | read v
+echo "${v-unset}"
+n=0
+printf 'a\nb\n' | while read -r l; do n=$((n+1)); done
+echo "n=$n"
+### expect
+unset
+n=0
+### end
+
+### pipeline_lastpipe_runs_last_stage_in_shell
+# shopt -s lastpipe keeps the last stage in the current shell
+shopt -s lastpipe
+echo x | read v
+echo "v=$v"
+n=0
+printf 'a\nb\n' | while read -r l; do n=$((n+1)); done
+echo "n=$n"
+### expect
+v=x
+n=2
+### end
+
+### pipeline_first_stage_state_does_not_leak
+# Assignments and cd in a non-last stage stay in that stage
+x=1
+x=2 | cat
+cd /
+cd /tmp | true
+echo "x=$x pwd=$PWD"
+### expect
+x=1 pwd=/
+### end
+
+### pipeline_stage_exit_only_ends_the_stage
+# exit inside a pipeline stage ends that stage, not the shell
+echo hi | exit 3
+echo "after $?"
+exit 4 | cat
+echo "still here"
+### expect
+after 3
+still here
+### end

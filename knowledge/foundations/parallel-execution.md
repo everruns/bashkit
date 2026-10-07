@@ -46,6 +46,19 @@ Implemented
   becomes 128+signal.
 - Limit: `max_background_jobs` (TM-DOS-122).
 
+## Pipelines
+
+- Every stage of a multi-command pipeline runs in a subshell: variables,
+  cwd, options and fds changed in a stage are rolled back after it, and
+  `exit`/`return` end only that stage. `shopt -s lastpipe` keeps the last
+  stage in the current shell (bash does this when job control is off, which
+  is always the case here). So `echo x | read v` leaves `v` unset, as in bash.
+- Stages reuse the cheap subshell snapshot (`execute_pipeline_stage`), not a
+  fork: they still run one after another (L-PIPE-001).
+- A non-last stage's stdout feeds the next stage only; the streaming output
+  callback is suspended while it runs, so `for ... | tac` streams the
+  reversed lines, not the loop's.
+
 ## Benchmark
 
 Run `cargo bench --bench parallel_execution` when changes touch:

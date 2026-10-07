@@ -156,9 +156,8 @@ b
 ### end
 
 ### mapfile_basic
-### bash_diff: pipes don't create subshells in bashkit (stateless model)
-# mapfile reads lines into array from pipe
-printf 'a\nb\nc\n' | mapfile -t lines; echo ${#lines[@]}; echo ${lines[0]}; echo ${lines[1]}; echo ${lines[2]}
+# mapfile reads lines into array from pipe (lastpipe keeps the array)
+shopt -s lastpipe; printf 'a\nb\nc\n' | mapfile -t lines; echo ${#lines[@]}; echo ${lines[0]}; echo ${lines[1]}; echo ${lines[2]}
 ### expect
 3
 a
@@ -167,17 +166,15 @@ c
 ### end
 
 ### readarray_alias
-### bash_diff: pipes don't create subshells in bashkit (stateless model)
 # readarray is an alias for mapfile
-printf 'x\ny\n' | readarray -t arr; echo ${arr[0]} ${arr[1]}
+shopt -s lastpipe; printf 'x\ny\n' | readarray -t arr; echo ${arr[0]} ${arr[1]}
 ### expect
 x y
 ### end
 
 ### mapfile_default_name
-### bash_diff: pipes don't create subshells in bashkit (stateless model)
 # mapfile default array name is MAPFILE
-printf 'hello\nworld\n' | mapfile -t; echo ${MAPFILE[0]}; echo ${MAPFILE[1]}
+shopt -s lastpipe; printf 'hello\nworld\n' | mapfile -t; echo ${MAPFILE[0]}; echo ${MAPFILE[1]}
 ### expect
 hello
 world
