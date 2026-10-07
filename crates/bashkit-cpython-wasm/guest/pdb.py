@@ -1,9 +1,9 @@
 """pdb stand-in for bashkit's CPython guest.
 
 There is no interactive terminal in the sandbox, so the real debugger is
-not shipped. This stub keeps modules that import pdb (doctest, unittest
-helpers) working: `breakpoint()` / `pdb.set_trace()` print a notice and
-continue; `pdb.run*` raise RuntimeError.
+not shipped. This stub keeps scripts that call it running: `breakpoint()`
+and `pdb.set_trace()` print a notice and continue; `pdb.run*` raise
+RuntimeError.
 """
 
 import sys
@@ -12,7 +12,7 @@ _MSG = "pdb: debugger not available in the bashkit sandbox; continuing"
 
 
 class Pdb:
-    """Constructible (doctest creates one per run); debugging is a no-op."""
+    """Constructible; debugging is a no-op."""
 
     def __init__(self, *args, **kwargs):
         pass
