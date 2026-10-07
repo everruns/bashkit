@@ -69,6 +69,16 @@ pub(crate) fn index(l: Val, r: Val) -> Error<Val> {
     Error::str(std::format!("Cannot index {} with {right}", type_name(&l)))
 }
 
+/// `.[]` over a value that is not an array or object.
+pub(crate) fn iter(v: Val) -> Error<Val> {
+    Error::str(std::format!("Cannot iterate over {}", described(&v)))
+}
+
+/// `{(k): v}` with a key that is not a string.
+pub(crate) fn object_key(k: &Val) -> Error<Val> {
+    Error::str(std::format!("Cannot use {} as object key", described(k)))
+}
+
 pub(crate) fn is_zero(v: &Val) -> bool {
     matches!(v, Val::Num(n) if n.as_f64() == 0.0)
 }
