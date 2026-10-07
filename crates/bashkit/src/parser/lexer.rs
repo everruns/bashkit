@@ -517,10 +517,16 @@ impl<'a> Lexer<'a> {
                 self.advance();
                 // Read variable/expansion following $
                 if let Some(nc) = self.peek_char() {
-                    if nc == '{' || nc == '(' {
+                    if nc == '{' {
                         word.push(nc);
                         self.advance();
-                        let (open, close) = if nc == '{' { ('{', '}') } else { ('(', ')') };
+                        if let Err(e) = self.read_unquoted_param_body(&mut word) {
+                            return Some(Token::Error(e));
+                        }
+                    } else if nc == '(' {
+                        word.push(nc);
+                        self.advance();
+                        let (open, close) = ('(', ')');
                         let mut depth = 1;
                         while let Some(bc) = self.peek_char() {
                             word.push(bc);
@@ -835,21 +841,8 @@ impl<'a> Lexer<'a> {
                     // doesn't stop at the inner }.
                     word.push('{');
                     self.advance();
-                    let mut brace_depth = 1i32;
-                    while let Some(c) = self.peek_char() {
-                        word.push(c);
-                        self.advance();
-                        if c == '$' && self.peek_char() == Some('{') {
-                            // Nested ${...}
-                            word.push('{');
-                            self.advance();
-                            brace_depth += 1;
-                        } else if c == '}' {
-                            brace_depth -= 1;
-                            if brace_depth == 0 {
-                                break;
-                            }
-                        }
+                    if let Err(e) = self.read_unquoted_param_body(&mut word) {
+                        return Some(Token::Error(e));
                     }
                 } else {
                     // Check for special single-character variables ($?, $#, $@, $*, $!, $$, $-, $0-$9)
@@ -1244,6 +1237,151 @@ impl<'a> Lexer<'a> {
 
     /// Read ANSI-C quoted content ($'...').
     /// Opening $' already consumed. Returns the resolved string.
+    /// Read the body of an unquoted `${...}` after the opening `${`, through
+    /// the closing `}`.
+    ///
+    /// Important decision: quoting inside an unquoted expansion is resolved
+    /// here, where the context is known. `'...'` and `$'...'` become a
+    /// double-quoted span whose every char is NUL-escaped, so it stays literal
+    /// and quoted through operand expansion (no `$`, no glob) and a `}` or `/`
+    /// inside it never ends the operand. Inside `"..."` spans and after `\`,
+    /// braces are NUL-escaped for the same reason. Bash keeps `'` literal in a
+    /// double-quoted `${x:-'d'}`, which `read_param_expansion_into` handles.
+    ///
+    /// TODO: quoted operand text is still IFS-split when the expansion is
+    /// unquoted (`${x:-'a  b'}` gives two fields, bash gives one). Fixing it
+    /// needs quote markers carried out of `expand_operand` into field splitting.
+    fn read_unquoted_param_body(&mut self, word: &mut String) -> Result<(), String> {
+        fn push_escaped(word: &mut String, content: &str) {
+            for ch in content.chars() {
+                word.push('\x00');
+                word.push(ch);
+            }
+        }
+        let mut depth = 1usize;
+        // Inside an array subscript (`${a['k']}`) quotes stay raw: subscript
+        // evaluation removes them itself.
+        let mut subscript = 0usize;
+        while let Some(c) = self.peek_char() {
+            self.advance();
+            match c {
+                '[' => {
+                    subscript += 1;
+                    word.push(c);
+                }
+                ']' => {
+                    subscript = subscript.saturating_sub(1);
+                    word.push(c);
+                }
+                '\'' if subscript > 0 => {
+                    word.push(c);
+                    while let Some(q) = self.peek_char() {
+                        self.advance();
+                        word.push(q);
+                        if q == '\'' {
+                            break;
+                        }
+                    }
+                }
+                '\\' => match self.peek_char() {
+                    Some(n @ ('{' | '}')) => {
+                        self.advance();
+                        word.push('\x00');
+                        word.push(n);
+                    }
+                    Some(n) => {
+                        self.advance();
+                        word.push('\\');
+                        word.push(n);
+                    }
+                    None => word.push('\\'),
+                },
+                '\'' => {
+                    let mut content = String::new();
+                    let mut closed = false;
+                    while let Some(q) = self.peek_char() {
+                        self.advance();
+                        if q == '\'' {
+                            closed = true;
+                            break;
+                        }
+                        content.push(q);
+                    }
+                    if !closed {
+                        return Err("unterminated single quote".to_string());
+                    }
+                    word.push('"');
+                    push_escaped(word, &content);
+                    word.push('"');
+                }
+                '"' => {
+                    word.push('"');
+                    // Nested `${` depth inside this span; bare braces are literal.
+                    let mut inner = 0usize;
+                    let mut closed = false;
+                    while let Some(q) = self.peek_char() {
+                        self.advance();
+                        match q {
+                            '"' => {
+                                closed = true;
+                                break;
+                            }
+                            '\\' => {
+                                word.push('\\');
+                                if let Some(n) = self.peek_char() {
+                                    self.advance();
+                                    word.push(n);
+                                }
+                                continue;
+                            }
+                            '$' if self.peek_char() == Some('{') => {
+                                self.advance();
+                                word.push_str("${");
+                                inner += 1;
+                                continue;
+                            }
+                            '}' if inner > 0 => inner -= 1,
+                            '{' | '}' => word.push('\x00'),
+                            _ => {}
+                        }
+                        word.push(q);
+                    }
+                    if !closed {
+                        return Err("unterminated double quote".to_string());
+                    }
+                    word.push('"');
+                }
+                '$' if self.peek_char() == Some('\'') => {
+                    self.advance();
+                    let (content, closed) = self.read_dollar_single_quoted_content();
+                    if !closed {
+                        return Err("unterminated single quote".to_string());
+                    }
+                    word.push('"');
+                    push_escaped(word, &content);
+                    word.push('"');
+                }
+                '$' if self.peek_char() == Some('{') => {
+                    self.advance();
+                    word.push_str("${");
+                    if depth >= self.max_subst_depth {
+                        return Err("parameter expansion nesting too deep".to_string());
+                    }
+                    depth += 1;
+                }
+                '}' => {
+                    word.push('}');
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                _ => word.push(c),
+            }
+        }
+        Ok(())
+    }
+
     fn read_dollar_single_quoted_content(&mut self) -> (String, bool) {
         let mut out = String::new();
         let mut closed = false;
@@ -1672,8 +1810,27 @@ impl<'a> Lexer<'a> {
                     self.advance();
                 }
                 '\'' => {
+                    // Bash keeps `'` literal in "${x:-'d'}" but still matches
+                    // braces past it: "${x:-'}'}" is `'}'`. NUL-escape braces in
+                    // the span so the parser does not close the operand early.
+                    let ansi_c = content.ends_with('$');
                     content.push('\'');
                     self.advance();
+                    while let Some(q) = self.peek_char() {
+                        self.advance();
+                        if matches!(q, '{' | '}') {
+                            content.push('\x00');
+                        }
+                        content.push(q);
+                        if ansi_c && q == '\\' {
+                            if let Some(n) = self.peek_char() {
+                                self.advance();
+                                content.push(n);
+                            }
+                        } else if q == '\'' {
+                            break;
+                        }
+                    }
                 }
                 '\\' => {
                     // Inside ${...} within double quotes, same escape rules apply:
