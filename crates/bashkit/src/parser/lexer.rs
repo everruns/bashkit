@@ -1074,12 +1074,9 @@ impl<'a> Lexer<'a> {
         // Single-quoted strings are literal - no variable expansion. Quote-boundary
         // markers are only for parsed mixed words; LiteralWord keeps contents raw.
         // Also decode any NUL escape sentinels from continued double-quoted segments.
-        content.retain(|ch| ch != '\u{1e}' && ch != '\u{1f}');
-        Some(Token::LiteralWord(if content.contains('\x00') {
-            Self::decode_nul_escape_sentinel(&content)
-        } else {
-            content
-        }))
+        Some(Token::LiteralWord(Self::strip_markers_decode_sentinels(
+            &content,
+        )))
     }
 
     /// After a closing quote, read any adjacent quoted or unquoted word chars
@@ -1496,30 +1493,32 @@ impl<'a> Lexer<'a> {
     /// Append a literal segment while protecting sentinel-sensitive bytes from parse_word expansion.
     fn push_literal_with_escaped_dollar(dst: &mut String, segment: &str) {
         for ch in segment.chars() {
-            if matches!(ch, '\x00' | '$') {
+            // `\x1e`/`\x1f` are this lexer's quote-boundary markers; a decoded
+            // `$'\x1f'` byte must stay data (`SEP=$'\x1f'` is a common idiom).
+            if matches!(ch, '\x00' | '$' | '\u{1e}' | '\u{1f}') {
                 dst.push('\x00');
             }
             dst.push(ch);
         }
     }
 
-    /// Decode NUL-based escape sentinels: each `\x00` followed by a char is
-    /// collapsed to that char. Used for literal-token paths that bypass `parse_word()`.
-    fn decode_nul_escape_sentinel(segment: &str) -> String {
-        let mut decoded = String::with_capacity(segment.len());
+    /// Drop quote-boundary markers and decode NUL escape sentinels in one
+    /// pass, so a NUL-escaped marker byte survives as data.
+    fn strip_markers_decode_sentinels(segment: &str) -> String {
+        let mut out = String::with_capacity(segment.len());
         let mut chars = segment.chars();
-
         while let Some(ch) = chars.next() {
-            if ch == '\x00' {
-                if let Some(literal_ch) = chars.next() {
-                    decoded.push(literal_ch);
+            match ch {
+                '\x00' => {
+                    if let Some(next) = chars.next() {
+                        out.push(next);
+                    }
                 }
-            } else {
-                decoded.push(ch);
+                '\u{1e}' | '\u{1f}' => {}
+                c => out.push(c),
             }
         }
-
-        decoded
+        out
     }
 
     fn read_double_quoted_string(&mut self) -> Option<Token> {
