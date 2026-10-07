@@ -138,7 +138,9 @@ option parsing (`-c`, `-m`, file, directory, `-`, `-x`, `-W`, `-V`/`-VV`,
 `-h`, ignored init-only flags), fresh `__main__` per call, `sys.argv` and
 `sys.path[0]` rules, tracebacks with driver frames stripped, `SystemExit`
 semantics, `atexit`, then clearing `__main__` + `gc.collect()` so unclosed
-files flush. `random` is re-seeded per call. asyncio's self-pipe is disabled
+files flush. `random` is re-seeded per call, lazily: the module instance
+seeds from `os.urandom` on first use in a call (~0.2 ms saved on calls that
+never use it). asyncio's self-pipe is disabled
 (no sockets, threads or signals exist to need it).
 
 ## Testing

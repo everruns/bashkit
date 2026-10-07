@@ -137,7 +137,7 @@ let bash = Bash::builder()
   (`FileNotFoundError`, ...) and messages are correct; code comparing
   `e.errno == errno.ENOENT` works because the `errno` module matches.
 - **Fixed hash seed**: `hash()` of `str`/`bytes` is the same in every call
-  (the seed is baked into the snapshot). `random` is re-seeded per call.
+  (the seed is baked into the snapshot). `random` is re-seeded per call (on first use).
 - **Deep C-level recursion** (for example `repr` of a list nested 100 000
   levels) ends the call with `python3: fatal error: stack overflow in the
   interpreter` instead of `RecursionError`.
