@@ -587,7 +587,14 @@ impl Builtin for Grep {
                     }
                 }
                 Err(e) => {
-                    return Err(Error::Execution(format!("grep: {}: {}", pattern_file, e)));
+                    return Ok(ExecResult::err(
+                        format!(
+                            "grep: {}: {}\n",
+                            pattern_file,
+                            crate::error::io_error_reason(&e)
+                        ),
+                        2,
+                    ));
                 }
             }
         }

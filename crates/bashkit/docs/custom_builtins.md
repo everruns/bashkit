@@ -352,6 +352,10 @@ ExecResult::ok("output\n".to_string());
 ExecResult::err("error message\n".to_string(), 1);
 ```
 
+Return `Ok(ExecResult::err(..))` for a failure the script should see as a
+non-zero exit. Returning `Err(..)` from a custom builtin aborts the whole
+`exec()` call; use it only for failures that must stop the script.
+
 ## Examples
 
 ### Database Query Builtin

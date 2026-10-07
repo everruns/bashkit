@@ -1361,6 +1361,10 @@ pub struct Interpreter {
     /// override baked-in commands. Survives `reset_transient_state` because
     /// it lives behind an `Arc<RwLock>` shared with the embedder.
     host_builtins: Option<crate::builtins::BuiltinRegistry>,
+    /// Names registered through `BashBuilder::builtin`. Their `Err` results
+    /// keep aborting execution (public contract); bundled builtins' usage
+    /// errors fail only the command (see `builtin_usage_error`).
+    custom_builtin_names: Arc<HashSet<String>>,
     /// Optional last-chance name resolver. Consulted only after every other
     /// dispatch route has missed, immediately before `command not found`, so
     /// it can never shadow a function, builtin, or `$PATH` script.
@@ -1904,6 +1908,8 @@ impl Interpreter {
             builtins.retain(|name, _| filter(name));
         }
 
+        let custom_builtin_names: Arc<HashSet<String>> =
+            Arc::new(custom_builtins.keys().cloned().collect());
         // Merge custom builtins (override defaults if same name).
         // `Arc::from(Box<dyn Builtin>)` reuses the existing allocation.
         for (name, builtin) in custom_builtins {
@@ -1951,6 +1957,7 @@ impl Interpreter {
             last_exit_code: 0,
             builtins,
             host_builtins,
+            custom_builtin_names,
             command_resolver: None,
             call_stack: Vec::new(),
             bash_source_stack: Vec::new(),
@@ -2108,6 +2115,7 @@ impl Interpreter {
             last_exit_code: self.last_exit_code,
             builtins: self.builtins.clone(),
             host_builtins: self.host_builtins.clone(),
+            custom_builtin_names: Arc::clone(&self.custom_builtin_names),
             command_resolver: self.command_resolver.clone(),
             call_stack: self.call_stack.clone(),
             bash_source_stack: self.bash_source_stack.clone(),
@@ -7260,6 +7268,13 @@ impl Interpreter {
         stdin: Option<&'a crate::StreamData>,
         redirects: &'a [Redirect],
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecResult>> + Send + 'a>> {
+        // Bundled = one of bashkit's own builtins (not host, resolver or
+        // `BashBuilder::builtin` entries, whose `Err` stays fatal).
+        let bundled = !self.custom_builtin_names.contains(name)
+            && self
+                .builtins
+                .get(name)
+                .is_some_and(|b| std::ptr::addr_eq(Arc::as_ptr(b), Arc::as_ptr(&builtin)));
         Box::pin(async move {
             // Fire before_tool hooks — may modify args or cancel the invocation
             let args = if !self.hooks.before_tool.is_empty() {
@@ -7402,6 +7417,16 @@ impl Interpreter {
 
             let mut result = match result {
                 Ok(Ok(exec_result)) => exec_result,
+                // A builtin's own usage error (bad regex, awk syntax error,
+                // missing operand) fails only that command, as in bash:
+                // exit 2 with the message on stderr, and the script goes on.
+                // Limits, cancellation and I/O errors still abort.
+                Ok(Err(crate::error::Error::Execution(msg))) if bundled => {
+                    builtin_usage_error(&msg)
+                }
+                Ok(Err(crate::error::Error::Regex(e))) if bundled => {
+                    builtin_usage_error(&format!("{name}: {e}"))
+                }
                 Ok(Err(e)) => return Err(e),
                 Err(_panic) => {
                     ExecResult::err(format!("bash: {}: builtin failed unexpectedly\n", name), 1)
@@ -11293,6 +11318,21 @@ impl Interpreter {
             frame.locals.insert(name.to_string(), value.to_string());
         }
     }
+}
+
+/// Turn a builtin's usage error into a failed command (exit 2) instead of
+/// aborting the script. THREAT[TM-INF-022]: the message is capped at 1 KB.
+fn builtin_usage_error(msg: &str) -> ExecResult {
+    let mut msg = msg.trim_end().to_string();
+    if msg.len() > 1024 {
+        let mut cut = 1024;
+        while !msg.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        msg.truncate(cut);
+    }
+    msg.push('\n');
+    ExecResult::err(msg, 2)
 }
 
 #[cfg(test)]
