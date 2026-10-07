@@ -45,12 +45,15 @@ pub(crate) fn translate(pattern: &str, extended: bool) -> String {
                         push_literal(&mut out, next);
                         branch_start = false;
                     }
-                    'n' => push_raw(&mut out, '\n', &mut branch_start),
-                    't' => push_raw(&mut out, '\t', &mut branch_start),
-                    'r' => push_raw(&mut out, '\r', &mut branch_start),
-                    'f' => push_raw(&mut out, '\x0c', &mut branch_start),
-                    'v' => push_raw(&mut out, '\x0b', &mut branch_start),
-                    'a' => push_raw(&mut out, '\x07', &mut branch_start),
+                    c if simple_escape(c).is_some() => {
+                        push_raw(&mut out, simple_escape(c).unwrap_or(c), &mut branch_start)
+                    }
+                    'd' | 'o' | 'x' | 'c' if numeric_escape(&chars, i - 1).is_some() => {
+                        if let Some((c, used)) = numeric_escape(&chars, i - 1) {
+                            push_raw(&mut out, c, &mut branch_start);
+                            i += used;
+                        }
+                    }
                     // GNU character-class and word-boundary escapes.
                     'w' | 'W' | 's' | 'S' | 'b' | 'B' => {
                         out.push('\\');
@@ -143,6 +146,48 @@ pub(crate) fn translate(pattern: &str, extended: bool) -> String {
     out
 }
 
+/// GNU's character-producing escapes `\dNNN`, `\oNNN`, `\xHH` and `\cX`,
+/// with `chars[i]` the letter after the backslash. Returns the character and
+/// how many characters after the letter it used. The character is always
+/// literal: `s/z/\x26/` inserts `&`, not the match (GNU bug 30794).
+pub(super) fn numeric_escape(chars: &[char], i: usize) -> Option<(char, usize)> {
+    let (radix, max) = match chars.get(i)? {
+        'd' => (10, 3),
+        'o' => (8, 3),
+        'x' => (16, 2),
+        'c' => {
+            let x = chars.get(i + 1)?.to_ascii_uppercase();
+            if !x.is_ascii() {
+                return None;
+            }
+            return Some((char::from((x as u8) ^ 0x40), 1));
+        }
+        _ => return None,
+    };
+    let digits: String = chars[i + 1..]
+        .iter()
+        .take(max)
+        .take_while(|c| c.is_digit(radix))
+        .collect();
+    let n = u32::from_str_radix(&digits, radix).ok()?;
+    let ch = char::from_u32(n).filter(|_| n <= 0xff)?;
+    Some((ch, digits.len()))
+}
+
+/// The plain one-letter escapes GNU sed converts everywhere in a regex,
+/// including inside bracket expressions.
+fn simple_escape(c: char) -> Option<char> {
+    Some(match c {
+        'n' => '\n',
+        't' => '\t',
+        'r' => '\r',
+        'f' => '\x0c',
+        'v' => '\x0b',
+        'a' => '\x07',
+        _ => return None,
+    })
+}
+
 fn push_raw(out: &mut String, ch: char, branch_start: &mut bool) {
     push_literal(out, ch);
     *branch_start = false;
@@ -204,6 +249,24 @@ fn copy_bracket(chars: &[char], start: usize, out: &mut String) -> usize {
             i = end + 2;
             seen += 1;
             continue;
+        }
+        // GNU sed converts `\t`, `\n`, `\xHH`... before compiling, so they
+        // work inside brackets too (`[ \t]`); any other `\` is a member.
+        if ch == '\\'
+            && let Some(&next) = chars.get(i + 1)
+        {
+            if let Some(c) = simple_escape(next) {
+                push_class_literal(&mut content, c);
+                i += 2;
+                seen += 1;
+                continue;
+            }
+            if let Some((c, used)) = numeric_escape(chars, i + 1) {
+                push_class_literal(&mut content, c);
+                i += 2 + used;
+                seen += 1;
+                continue;
+            }
         }
         push_class_literal(&mut content, ch);
         i += 1;
@@ -276,11 +339,13 @@ impl SedRegex {
         extended: bool,
         case_insensitive: bool,
         multi_line: bool,
+        line_term: u8,
     ) -> std::result::Result<Self, String> {
         let translated = translate(pattern, extended);
         match RegexBuilder::new(&translated)
             .case_insensitive(case_insensitive)
             .multi_line(multi_line)
+            .line_terminator(line_term)
             .size_limit(REGEX_SIZE_LIMIT)
             .dfa_size_limit(REGEX_DFA_SIZE_LIMIT)
             .build()

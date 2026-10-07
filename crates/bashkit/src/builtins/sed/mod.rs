@@ -318,7 +318,7 @@ impl Builtin for Sed {
             }
         }
 
-        let program = match script::parse(&script, opts.extended) {
+        let program = match script::parse_with(&script, opts.extended, opts.null_data) {
             Ok(p) => p,
             Err(e) => return Ok(ExecResult::err(format!("sed: {}\n", e.message), e.code)),
         };
@@ -352,6 +352,10 @@ impl Builtin for Sed {
         };
         let mut lines: Vec<InputLine> = Vec::new();
         let mut raw: Vec<String> = Vec::new();
+        // GNU reports an unreadable input file, goes on with the rest, and
+        // exits 2 at the end.
+        let mut read_errors = String::new();
+        let mut unreadable: Vec<usize> = Vec::new();
         for (index, name) in names.iter().enumerate() {
             let content = if name == "-" || opts.files.is_empty() {
                 ctx.stdin.map(ToString::to_string).unwrap_or_default()
@@ -372,13 +376,12 @@ impl Builtin for Sed {
                             String::from_utf8_lossy(e.as_bytes()).into_owned()
                         }
                     },
-                    // GNU exits 2 when an input file cannot be read.
                     Err(e) => {
                         let reason = crate::error::io_error_reason(&e);
-                        return Ok(ExecResult::err(
-                            format!("sed: can't read {name}: {reason}\n"),
-                            2,
-                        ));
+                        read_errors.push_str(&format!("sed: can't read {name}: {reason}\n"));
+                        unreadable.push(index);
+                        raw.push(String::new());
+                        continue;
                     }
                 }
             };
@@ -433,6 +436,10 @@ impl Builtin for Sed {
                 break;
             }
             let name = names.get(index).map(String::as_str).unwrap_or("-");
+            // Under -s/-i segments are per operand; skip the unreadable ones.
+            if opts.separate && unreadable.contains(&index) {
+                continue;
+            }
             let in_place = opts.separate && opts.in_place.is_some() && name != "-";
             let produced = match machine.run_segment(segment) {
                 Ok(produced) => produced,
@@ -445,8 +452,11 @@ impl Builtin for Sed {
             }
         }
 
-        let mut stderr = std::mem::take(&mut machine.stderr);
-        let exit_code = machine.exit_code.unwrap_or(0);
+        let mut stderr = read_errors;
+        stderr.push_str(&std::mem::take(&mut machine.stderr));
+        let exit_code = machine
+            .exit_code
+            .unwrap_or(if unreadable.is_empty() { 0 } else { 2 });
         let write_files = std::mem::take(&mut machine.write_files);
         drop(machine);
 

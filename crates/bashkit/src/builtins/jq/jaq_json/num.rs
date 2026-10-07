@@ -398,11 +398,75 @@ impl fmt::Display for Num {
         match self {
             Self::Int(i) => write!(f, "{i}"),
             Self::BigInt(i) => write!(f, "{i}"),
-            Self::Float(x) if x.is_nan() => write!(f, "NaN"),
-            Self::Float(f64::INFINITY) => write!(f, "Infinity"),
-            Self::Float(f64::NEG_INFINITY) => write!(f, "-Infinity"),
-            Self::Float(x) => ryu::Buffer::new().format_finite(*x).fmt(f),
+            // BASHKIT PATCH: print floats like jq 1.7 (`1024`, `1e+17`,
+            // `1e-05`, `-0`; NaN as null, infinities as the largest double).
+            Self::Float(x) => f.write_str(&jq_format_f64(*x)),
             Self::Dec(n) => write!(f, "{n}"),
         }
+    }
+}
+
+/// BASHKIT PATCH: jq's double formatting (`jvp_dtoa_fmt`): shortest
+/// round-trip digits, plain notation unless the decimal exponent is below
+/// -3 or more than 15 past the last digit, then `d.ddde±XX`.
+pub(crate) fn jq_format_f64(x: f64) -> String {
+    if x.is_nan() {
+        return "null".into();
+    }
+    let x = if x.is_infinite() { f64::MAX.copysign(x) } else { x };
+    let sign = if x.is_sign_negative() { "-" } else { "" };
+    if x == 0.0 {
+        return format!("{sign}0");
+    }
+    let sci = format!("{:e}", x.abs());
+    let (mant, exp) = sci.split_once('e').unwrap_or((&sci, "0"));
+    let digits: String = mant.chars().filter(|c| *c != '.').collect();
+    let nd = digits.len() as i64;
+    let decpt = exp.parse::<i64>().unwrap_or(0) + 1;
+    if decpt <= -4 || decpt > nd + 15 {
+        let e = decpt - 1;
+        let (head, tail) = digits.split_at(1);
+        let frac = if tail.is_empty() { String::new() } else { format!(".{tail}") };
+        let esign = if e < 0 { '-' } else { '+' };
+        format!("{sign}{head}{frac}e{esign}{:02}", e.abs())
+    } else if decpt <= 0 {
+        format!("{sign}0.{}{digits}", "0".repeat((-decpt) as usize))
+    } else if decpt >= nd {
+        format!("{sign}{digits}{}", "0".repeat((decpt - nd) as usize))
+    } else {
+        let (a, b) = digits.split_at(decpt as usize);
+        format!("{sign}{a}.{b}")
+    }
+}
+
+#[test]
+fn jq_format_f64_matches_jq() {
+    let cases: &[(f64, &str)] = &[
+        (1e17, "1e+17"),
+        (1e16, "1e+16"),
+        (1e15 + 1.0, "1000000000000001"),
+        (1e19, "1e+19"),
+        (123456789012345678.0, "123456789012345680"),
+        (0.0001, "0.0001"),
+        (0.00001, "1e-05"),
+        (3.0, "3"),
+        (1.0 / 3.0, "0.3333333333333333"),
+        (1e300, "1e+300"),
+        (1.5e300, "1.5e+300"),
+        (0.1 + 0.2, "0.30000000000000004"),
+        (1e20, "1e+20"),
+        (12345678901234567890123.0, "12345678901234568000000"),
+        (f64::MAX, "1.7976931348623157e+308"),
+        (5e-324, "5e-324"),
+        (1e15 + 0.5, "1000000000000000.5"),
+        (-2.5, "-2.5"),
+        (-0.0, "-0"),
+        (0.0, "0"),
+        (f64::INFINITY, "1.7976931348623157e+308"),
+        (f64::NEG_INFINITY, "-1.7976931348623157e+308"),
+        (f64::NAN, "null"),
+    ];
+    for (x, want) in cases {
+        assert_eq!(jq_format_f64(*x), *want, "{x}");
     }
 }

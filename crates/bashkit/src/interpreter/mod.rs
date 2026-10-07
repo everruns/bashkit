@@ -1487,8 +1487,14 @@ pub struct Interpreter {
     /// Next virtual FD to assign for coproc read ends (starts at 63, like bash).
     coproc_next_fd: i32,
     /// Persistent fd output table set by `exec N>/path` redirections.
-    /// Maps fd number to its output target. Used by `>&N` redirections.
+    /// Maps fd number to its output target. Used by `>&N` redirections;
+    /// entries for fd 1 and 2 (`exec >log 2>&1`) route the shell's own
+    /// output at each top-level command (`route_exec_output`).
     exec_fd_table: HashMap<i32, FdTarget>,
+    /// Output written to a saved copy of the original stdout/stderr
+    /// (`exec 3>&1 >log; echo hi >&3`) while fd 1/2 are redirected by
+    /// `exec`. It skips that routing and goes straight to the caller.
+    exec_passthrough: (crate::StreamData, crate::StreamData),
     /// Temporary buffer for fd3+ output during compound body execution.
     /// Populated by `1>&N` (N>=3) in apply_redirections, consumed by
     /// apply_redirections_fd_table for compound redirect routing.
@@ -2031,6 +2037,7 @@ impl Interpreter {
             coproc_buffers: HashMap::new(),
             coproc_next_fd: 63,
             exec_fd_table: HashMap::new(),
+            exec_passthrough: Default::default(),
             pending_fd_output: HashMap::new(),
             pending_fd_targets: Vec::new(),
             pending_fd_capture_depth: 0,
@@ -2188,6 +2195,7 @@ impl Interpreter {
             coproc_buffers: HashMap::new(),
             coproc_next_fd: self.coproc_next_fd,
             exec_fd_table: self.exec_fd_table.clone(),
+            exec_passthrough: Default::default(),
             pending_fd_output: HashMap::new(),
             pending_fd_targets: Vec::new(),
             pending_fd_capture_depth: 0,
@@ -3055,6 +3063,27 @@ impl Interpreter {
         if self.output_emit_count != emit_count_before {
             return false;
         }
+        // `exec >log` / `exec 2>/dev/null`: the shell's own output is routed
+        // at the top-level command (`route_exec_output`), not streamed. A
+        // pipeline stage's sink is a pipe, never the caller.
+        let (stdout, stderr) = if self.pipe_out.is_none() {
+            let empty = crate::StreamData::new();
+            (
+                if self.exec_fd_table.contains_key(&1) {
+                    empty.clone()
+                } else {
+                    stdout.clone()
+                },
+                if self.exec_fd_table.contains_key(&2) {
+                    empty
+                } else {
+                    stderr.clone()
+                },
+            )
+        } else {
+            (stdout.clone(), stderr.clone())
+        };
+        let (stdout, stderr) = (&stdout, &stderr);
 
         let stdout_remaining = self
             .limits
@@ -3199,6 +3228,10 @@ impl Interpreter {
         for command in &script.commands {
             self.check_cancelled()?;
             let emit_before = self.output_emit_count;
+            let emitted_before = (
+                self.output_stream_stdout_bytes,
+                self.output_stream_stderr_bytes,
+            );
             let mut result = self.execute_command(command).await?;
             if top_level {
                 // Background jobs that finished meanwhile report here, as
@@ -3208,7 +3241,13 @@ impl Interpreter {
                 result.stderr.append(&err);
             }
             self.check_cancelled()?;
+            if top_level {
+                self.route_exec_output(&mut result, emitted_before).await?;
+            }
             self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
+            if top_level {
+                self.flush_exec_passthrough(&mut result);
+            }
 
             // Accumulate stdout with truncation
             if !stdout_truncated {
@@ -6524,93 +6563,158 @@ impl Interpreter {
                     }
                 }
                 AssignmentValue::Array(words) => {
-                    // Expand directly into the replacement array so word-split expansions cannot
-                    // accumulate an unbounded temporary Vec before max_array_entries is enforced.
-                    let arr_name = self.resolve_nameref(&assignment.name).to_string();
-                    let old_entries = self.scoped.arrays.get(&arr_name).map_or(0, |arr| arr.len());
-                    let remaining_entries = self
-                        .memory_limits
-                        .max_array_entries
-                        .saturating_sub(self.memory_budget.array_entries);
-                    let max_new_entries = old_entries.saturating_add(remaining_entries);
-                    let mut next_arr = if assignment.append {
-                        self.scoped
-                            .arrays
-                            .get(&arr_name)
-                            .cloned()
-                            .unwrap_or_default()
-                    } else {
-                        HashMap::new()
-                    };
-                    let mut idx = if assignment.append {
-                        next_arr.keys().max().map(|k| k + 1).unwrap_or(0)
-                    } else {
-                        0
-                    };
-
-                    'array_words: for word in words.iter() {
-                        let is_unquoted_expansion = !word.quoted
-                            && word.parts.iter().any(|p| {
-                                matches!(
-                                    p,
-                                    WordPart::Variable(_)
-                                        | WordPart::CommandSubstitution(_)
-                                        | WordPart::ArithmeticExpansion(_)
-                                        | WordPart::ParameterExpansion { .. }
-                                        | WordPart::ArrayAccess { .. }
-                                )
-                            });
-                        // "${arr[@]}" or "$@" in array context should splat
-                        // individual elements, not join into a single string.
-                        let is_quoted_splat = word.quoted
-                            && word.parts.len() == 1
-                            && matches!(
-                                &word.parts[0],
-                                WordPart::ArrayAccess { index, .. } if index == "@"
-                            );
-                        let is_quoted_positional_splat = word.quoted
-                            && word.parts.len() == 1
-                            && matches!(
-                                &word.parts[0],
-                                WordPart::Variable(name) if name == "@"
-                            );
-
-                        if is_unquoted_expansion {
-                            let remaining = max_new_entries.saturating_sub(next_arr.len());
-                            if remaining == 0 {
-                                break;
-                            }
-                            let expanded = self.expand_word(word).await?;
-                            for field in self.ifs_split_limited(&expanded, remaining)? {
-                                next_arr.insert(idx, field);
-                                idx += 1;
-                            }
-                            if next_arr.len() >= max_new_entries {
-                                break 'array_words;
-                            }
-                        } else if is_quoted_splat || is_quoted_positional_splat {
-                            for field in self.expand_word_to_fields(word).await? {
-                                if next_arr.len() >= max_new_entries {
-                                    break 'array_words;
-                                }
-                                next_arr.insert(idx, field);
-                                idx += 1;
-                            }
-                        } else {
-                            let value = self.expand_word(word).await?;
-                            if next_arr.len() >= max_new_entries {
-                                break;
-                            }
-                            next_arr.insert(idx, value);
-                            idx += 1;
-                        }
-                    }
-
-                    let _ = self.insert_array_checked(arr_name, next_arr);
+                    self.assign_array_literal(assignment, words).await?;
                 }
             }
         }
         Ok(())
+    }
+
+    /// `name=(words...)` / `name+=(words...)`. Boxed so the per-word brace,
+    /// glob and `[i]=v` handling stays off the recursive poll stack of every
+    /// simple command (TM-DOS-020 two-MiB stack budget).
+    fn assign_array_literal<'a>(
+        &'a mut self,
+        assignment: &'a Assignment,
+        words: &'a [Word],
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>> {
+        Box::pin(async move {
+            // Expand directly into the replacement array so word-split expansions cannot
+            // accumulate an unbounded temporary Vec before max_array_entries is enforced.
+            let arr_name = self.resolve_nameref(&assignment.name).to_string();
+            let old_entries = self.scoped.arrays.get(&arr_name).map_or(0, |arr| arr.len());
+            let remaining_entries = self
+                .memory_limits
+                .max_array_entries
+                .saturating_sub(self.memory_budget.array_entries);
+            let max_new_entries = old_entries.saturating_add(remaining_entries);
+            let mut next_arr = if assignment.append {
+                self.scoped
+                    .arrays
+                    .get(&arr_name)
+                    .cloned()
+                    .unwrap_or_default()
+            } else {
+                HashMap::new()
+            };
+            let mut idx = if assignment.append {
+                next_arr.keys().max().map(|k| k + 1).unwrap_or(0)
+            } else {
+                0
+            };
+
+            // Brace expansion runs first, on the unexpanded word, as for
+            // command arguments; pathname expansion runs on the fields below.
+            let mut braced_words: Vec<Word> = Vec::with_capacity(words.len());
+            for w in words.iter() {
+                match self.brace_expand_word(w) {
+                    Some(ws) => braced_words.extend(ws),
+                    None => braced_words.push(w.clone()),
+                }
+            }
+
+            'array_words: for word in braced_words.iter() {
+                // `[i]=value` sets one element; the value gets no field
+                // splitting or pathname expansion.
+                if let Some((index, value_word)) = split_indexed_element(word) {
+                    let i = self.evaluate_arithmetic_with_assign(&index);
+                    let value = self.expand_word(&value_word).await?;
+                    if i < 0 {
+                        continue;
+                    }
+                    let i = i as usize;
+                    if !next_arr.contains_key(&i) && next_arr.len() >= max_new_entries {
+                        break 'array_words;
+                    }
+                    next_arr.insert(i, value);
+                    idx = i + 1;
+                    continue;
+                }
+                let globs = !word.quoted || word.has_unquoted_glob;
+                let is_unquoted_expansion = !word.quoted
+                    && word.parts.iter().any(|p| {
+                        matches!(
+                            p,
+                            WordPart::Variable(_)
+                                | WordPart::CommandSubstitution(_)
+                                | WordPart::ArithmeticExpansion(_)
+                                | WordPart::ParameterExpansion { .. }
+                                | WordPart::ArrayAccess { .. }
+                        )
+                    });
+                // "${arr[@]}" or "$@" in array context should splat
+                // individual elements, not join into a single string.
+                let is_quoted_splat = word.quoted
+                    && word.parts.len() == 1
+                    && matches!(
+                        &word.parts[0],
+                        WordPart::ArrayAccess { index, .. } if index == "@"
+                    );
+                let is_quoted_positional_splat = word.quoted
+                    && word.parts.len() == 1
+                    && matches!(
+                        &word.parts[0],
+                        WordPart::Variable(name) if name == "@"
+                    );
+
+                if is_unquoted_expansion {
+                    let remaining = max_new_entries.saturating_sub(next_arr.len());
+                    if remaining == 0 {
+                        break;
+                    }
+                    let expanded = self.expand_word(word).await?;
+                    for field in self.ifs_split_limited(&expanded, remaining)? {
+                        for item in self.glob_array_field(field, word, globs).await {
+                            if next_arr.len() >= max_new_entries {
+                                break 'array_words;
+                            }
+                            next_arr.insert(idx, item);
+                            idx += 1;
+                        }
+                    }
+                    if next_arr.len() >= max_new_entries {
+                        break 'array_words;
+                    }
+                } else if is_quoted_splat || is_quoted_positional_splat {
+                    for field in self.expand_word_to_fields(word).await? {
+                        if next_arr.len() >= max_new_entries {
+                            break 'array_words;
+                        }
+                        next_arr.insert(idx, field);
+                        idx += 1;
+                    }
+                } else {
+                    let value = self.expand_word(word).await?;
+                    for item in self.glob_array_field(value, word, globs).await {
+                        if next_arr.len() >= max_new_entries {
+                            break 'array_words;
+                        }
+                        next_arr.insert(idx, item);
+                        idx += 1;
+                    }
+                }
+            }
+
+            let _ = self.insert_array_checked(arr_name, next_arr);
+            Ok(())
+        })
+    }
+
+    /// Pathname expansion for one array-literal field. A failglob miss keeps the
+    /// literal field.
+    // WTF: bash aborts the assignment with "no match" under failglob; assignment
+    // expansion has no error channel here, so the pattern is stored as-is.
+    async fn glob_array_field(&mut self, field: String, word: &Word, globs: bool) -> Vec<String> {
+        if !globs {
+            return vec![field];
+        }
+        match self
+            .expand_glob_item(&field, word.quoted && word.has_unquoted_glob)
+            .await
+        {
+            Ok(items) => items,
+            Err(_) => vec![field],
+        }
     }
 
     /// Try alias expansion. Returns `Some(result)` if alias was expanded, `None` otherwise.
@@ -7251,7 +7355,15 @@ impl Interpreter {
                     }
                 }
                 RedirectKind::Output | RedirectKind::Clobber => {
-                    let fd = redirect.fd.or(resolved_fd_var).unwrap_or(1);
+                    // WTF: `exec {var}>file` (allocate a free fd into var) is not
+                    // implemented; an unset var must not fall back to fd 1.
+                    let Some(fd) = redirect
+                        .fd
+                        .or(resolved_fd_var)
+                        .or(redirect.fd_var.is_none().then_some(1))
+                    else {
+                        continue;
+                    };
                     let target_path = self.expand_word(&redirect.target).await?;
                     let path = self.resolve_path(&target_path);
                     self.ensure_persistent_fd_capacity(fd)?;
@@ -7261,14 +7373,31 @@ impl Interpreter {
                     } else if is_dev_null(&path) {
                         self.exec_fd_table.insert(fd, FdTarget::DevNull);
                     } else {
-                        // Truncate file on open (like real exec >file)
-                        let _ = self.fs.write_file(&path, b"").await;
+                        // Truncate file on open (like real exec >file); a
+                        // failed open leaves the fd as it was.
+                        if let Err(e) = self.fs.write_file(&path, b"").await {
+                            return Ok(ExecResult::err(
+                                format!(
+                                    "bash: {target_path}: {}\n",
+                                    crate::error::io_error_reason(&e)
+                                ),
+                                1,
+                            ));
+                        }
                         self.exec_fd_table
                             .insert(fd, FdTarget::WriteFile(path, target_path));
                     }
                 }
                 RedirectKind::Append => {
-                    let fd = redirect.fd.or(resolved_fd_var).unwrap_or(1);
+                    // WTF: `exec {var}>file` (allocate a free fd into var) is not
+                    // implemented; an unset var must not fall back to fd 1.
+                    let Some(fd) = redirect
+                        .fd
+                        .or(resolved_fd_var)
+                        .or(redirect.fd_var.is_none().then_some(1))
+                    else {
+                        continue;
+                    };
                     let target_path = self.expand_word(&redirect.target).await?;
                     let path = self.resolve_path(&target_path);
                     self.ensure_persistent_fd_capacity(fd)?;
@@ -7278,13 +7407,30 @@ impl Interpreter {
                     } else if is_dev_null(&path) {
                         self.exec_fd_table.insert(fd, FdTarget::DevNull);
                     } else {
+                        if let Err(e) = self.fs.append_file(&path, b"").await {
+                            return Ok(ExecResult::err(
+                                format!(
+                                    "bash: {target_path}: {}\n",
+                                    crate::error::io_error_reason(&e)
+                                ),
+                                1,
+                            ));
+                        }
                         self.exec_fd_table
                             .insert(fd, FdTarget::AppendFile(path, target_path));
                     }
                 }
                 RedirectKind::DupOutput => {
                     let target = self.expand_word(&redirect.target).await?;
-                    let fd = redirect.fd.or(resolved_fd_var).unwrap_or(1);
+                    // WTF: `exec {var}>file` (allocate a free fd into var) is not
+                    // implemented; an unset var must not fall back to fd 1.
+                    let Some(fd) = redirect
+                        .fd
+                        .or(resolved_fd_var)
+                        .or(redirect.fd_var.is_none().then_some(1))
+                    else {
+                        continue;
+                    };
                     if target == "-" || target == "&-" {
                         // exec N>&- closes the fd
                         self.exec_fd_table.remove(&fd);
@@ -7298,13 +7444,88 @@ impl Interpreter {
                 _ => {}
             }
         }
+        // fd 1/2 pointed back at the original streams (`exec 1>&3`) is no
+        // redirect at all.
+        if matches!(self.exec_fd_table.get(&1), Some(FdTarget::Stdout)) {
+            self.exec_fd_table.remove(&1);
+        }
+        if matches!(self.exec_fd_table.get(&2), Some(FdTarget::Stderr)) {
+            self.exec_fd_table.remove(&2);
+        }
         let result = ExecResult::default();
         self.apply_redirections(result, redirects).await
     }
 
     /// Target for `exec N>&M` / `exec N>/dev/fd/M`.
+    /// Send a top-level command's output where `exec` pointed fd 1 and 2
+    /// (`exec >log 2>&1`). Output a sub-call already streamed to the caller
+    /// (before the `exec` ran) stays; the rest goes to the target.
+    // WTF: output written in the same top-level command before `exec >log`
+    // ran, and not streamed, also goes to the log; routing happens per
+    // top-level command, not per write.
+    async fn route_exec_output(
+        &mut self,
+        result: &mut ExecResult,
+        emitted_before: (usize, usize),
+    ) -> Result<()> {
+        if !self.exec_fd_table.contains_key(&1) && !self.exec_fd_table.contains_key(&2) {
+            return Ok(());
+        }
+        let streamed_out = self.output_stream_stdout_bytes - emitted_before.0;
+        let streamed_err = self.output_stream_stderr_bytes - emitted_before.1;
+        let take = |data: &mut crate::StreamData, keep: usize| {
+            let keep = keep.min(data.len());
+            let rest = crate::StreamData::from(&data.as_bytes()[keep..]);
+            *data = data.prefix(keep);
+            rest
+        };
+        let mut moved = Vec::new();
+        if let Some(target) = self.exec_fd_table.get(&1).cloned() {
+            moved.push((take(&mut result.stdout, streamed_out), target));
+        }
+        if let Some(target) = self.exec_fd_table.get(&2).cloned() {
+            moved.push((take(&mut result.stderr, streamed_err), target));
+        }
+        for (data, target) in moved {
+            if data.is_empty() {
+                continue;
+            }
+            match target {
+                FdTarget::Stdout => result.stdout.append(&data),
+                FdTarget::Stderr => result.stderr.append(&data),
+                FdTarget::DevNull => {}
+                FdTarget::WriteFile(path, _) | FdTarget::AppendFile(path, _) => {
+                    self.fs.append_file(&path, data.as_bytes()).await?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Hand output written to a saved original stdout/stderr (`>&3` after
+    /// `exec 3>&1 >log`) to the caller, unrouted.
+    fn flush_exec_passthrough(&mut self, result: &mut ExecResult) {
+        let (out, err) = std::mem::take(&mut self.exec_passthrough);
+        if out.is_empty() && err.is_empty() {
+            return;
+        }
+        if let Some(cb) = self.output_callback.as_mut() {
+            cb(&out, &err);
+            self.output_emit_count += 1;
+            self.output_stream_stdout_bytes += out.len();
+            self.output_stream_stderr_bytes += err.len();
+        }
+        result.stdout.append(&out);
+        result.stderr.append(&err);
+    }
+
     fn exec_fd_alias_target(&self, target_fd: i32) -> FdTarget {
-        if target_fd == 1 {
+        // `exec 3>&1` copies where fd 1 points now (a file after `exec >log`).
+        if let Some(target) = self.exec_fd_table.get(&target_fd)
+            && matches!(target_fd, 1 | 2)
+        {
+            target.clone()
+        } else if target_fd == 1 {
             FdTarget::Stdout
         } else if target_fd == 2 {
             FdTarget::Stderr
@@ -9401,31 +9622,30 @@ impl Interpreter {
 
         match mode {
             'v' => {
-                // command -v: print name/path if it's a known command
-                let registered = self.builtins.contains_key(cmd_name.as_str())
-                    || is_dispatch_only_builtin(cmd_name)
-                    || self.has_host_builtin(cmd_name);
-                let output = if self.scoped.functions.contains_key(cmd_name.as_str())
-                    || is_keyword(cmd_name)
-                    || (registered && builtins::BASH_BUILTIN_NAMES.contains(&cmd_name.as_str()))
-                {
-                    Some(cmd_name.to_string())
-                } else if let Some(path) = self.resolve_command_path(cmd_name).await {
-                    Some(path)
-                } else {
-                    registered.then(|| cmd_name.to_string())
-                };
-                let mut result = if let Some(name) = output {
-                    ExecResult::ok(format!("{}\n", name))
-                } else {
-                    ExecResult {
-                        stdout: crate::StreamData::new(),
-                        stderr: crate::StreamData::new(),
-                        exit_code: 1,
-                        control_flow: crate::interpreter::ControlFlow::None,
-                        ..Default::default()
+                // command -v: print the name/path of each known command;
+                // status 0 when any was found (bash).
+                let mut out = String::new();
+                for cmd_name in &args[cmd_args_start..] {
+                    let registered = self.builtins.contains_key(cmd_name.as_str())
+                        || is_dispatch_only_builtin(cmd_name)
+                        || self.has_host_builtin(cmd_name);
+                    let found = if self.scoped.functions.contains_key(cmd_name.as_str())
+                        || is_keyword(cmd_name)
+                        || (registered && builtins::BASH_BUILTIN_NAMES.contains(&cmd_name.as_str()))
+                    {
+                        Some(cmd_name.to_string())
+                    } else if let Some(path) = self.resolve_command_path(cmd_name).await {
+                        Some(path)
+                    } else {
+                        registered.then(|| cmd_name.to_string())
+                    };
+                    if let Some(name) = found {
+                        out.push_str(&name);
+                        out.push('\n');
                     }
-                };
+                }
+                let code = if out.is_empty() { 1 } else { 0 };
+                let mut result = ExecResult::with_code(out, code);
                 result = self.apply_redirections(result, redirects).await?;
                 Ok(result)
             }
@@ -11562,6 +11782,40 @@ fn builtin_usage_error(msg: &str) -> ExecResult {
     }
     msg.push('\n');
     ExecResult::err(msg, 2)
+}
+
+/// Split an unquoted `[index]=value` array-literal element into its index text
+/// and a word for the value.
+fn split_indexed_element(word: &Word) -> Option<(String, Word)> {
+    let WordPart::Literal(first) = word.parts.first()? else {
+        return None;
+    };
+    let first_quoted = word.part_quoted.first().copied().unwrap_or(word.quoted);
+    if first_quoted || !first.starts_with('[') {
+        return None;
+    }
+    let close = first.find("]=")?;
+    let index = first[1..close].to_string();
+    let tail = &first[close + 2..];
+    let mut parts = Vec::with_capacity(word.parts.len());
+    let mut part_quoted = Vec::with_capacity(word.parts.len());
+    if !tail.is_empty() {
+        parts.push(WordPart::Literal(tail.to_string()));
+        part_quoted.push(false);
+    }
+    for (i, p) in word.parts.iter().enumerate().skip(1) {
+        parts.push(p.clone());
+        part_quoted.push(word.part_quoted.get(i).copied().unwrap_or(word.quoted));
+    }
+    Some((
+        index,
+        Word {
+            parts,
+            quoted: true,
+            has_unquoted_glob: false,
+            part_quoted,
+        },
+    ))
 }
 
 #[cfg(test)]
