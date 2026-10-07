@@ -3366,6 +3366,13 @@ impl Interpreter {
             // Update current line for $LINENO
             self.current_line = Self::command_line(command);
 
+            // `set -n`: read commands without running them for the rest of
+            // this exec (bash does the same in scripts; nothing can undo it,
+            // since `set +n` is not run either).
+            if self.flags.contains(BashFlags::NOEXEC) {
+                return Ok(ExecResult::ok(String::new()));
+            }
+
             // Fail point: inject failures during command execution
             #[cfg(feature = "failpoints")]
             fail_point!("interp::execute_command", |action| {
