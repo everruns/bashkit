@@ -295,6 +295,12 @@ Quarterly import process:
 4. CI runs the same feature-complete, network-free lane. Schema, provenance,
    unique IDs, classifications, and limitation references are test-enforced.
 
+## SQLite CLI Differential Tests
+
+CSV comparisons explicitly set the host CLI row separator to LF. SQLite
+shell releases differ in their default CSV row endings (LF versus CRLF);
+field contents, including embedded newlines, remain compared byte-for-byte.
+
 ## Differential Fuzzing
 
 Grammar-based property testing using proptest generates random valid bash

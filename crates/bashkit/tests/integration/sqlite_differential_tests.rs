@@ -58,8 +58,14 @@ macro_rules! require_sqlite3 {
 /// Run `sqlite3 :memory: <sql>` with the given flags. Returns stdout
 /// (errors go through `unwrap` since we control the inputs).
 fn run_real_sqlite3(flags: &[&str], sql: &str) -> String {
-    let mut child = Command::new("sqlite3")
-        .args(flags)
+    let mut command = Command::new("sqlite3");
+    command.args(flags);
+    // Newer host shells default CSV rows to CRLF. Pin our LF contract
+    // without normalizing embedded newlines inside quoted field values.
+    if flags.contains(&"-csv") {
+        command.args(["-cmd", r#".separator , "\n""#]);
+    }
+    let mut child = command
         .arg(":memory:")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
