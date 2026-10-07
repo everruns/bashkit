@@ -330,7 +330,7 @@ impl<'a> XargsBuilder<'a> {
             .collect();
         let size: usize = cmd.iter().map(|a| a.len() + 1).sum();
         if size > self.opts.max_chars {
-            return Err("argument line too long".to_string());
+            return Err("command too long".to_string());
         }
         self.commands.push(cmd);
         Ok(())
@@ -348,7 +348,9 @@ struct XargsPlan {
 fn build_xargs_plan(opts: &XargsOptions, input: &str) -> XargsPlan {
     let mut b = XargsBuilder::new(opts);
     let mut error: Option<String> = None;
-    if b.initial_chars > opts.max_chars {
+    // With -I GNU builds each command only once an item arrives, so an
+    // over-long template fails per item and empty input still succeeds.
+    if opts.replace_str.is_none() && b.initial_chars > opts.max_chars {
         return XargsPlan {
             commands: Vec::new(),
             error: Some("argument list too long".to_string()),
@@ -1089,6 +1091,9 @@ mod tests {
         assert_eq!(c, cmds(&[&["echo", "a", "b"], &["echo", "c"]]));
         let (c, e) = xargs_plan(&["-I{}", "-s", "6", "echo", "x{}"], "abcde\n");
         assert!(c.is_empty() && e.is_some());
+        // -I builds lazily: an over-long template is fine on empty input.
+        let (c, e) = xargs_plan(&["-I{}", "-s", "3", "echo", "{}"], "");
+        assert!(c.is_empty() && e.is_none());
         assert!(xargs_delimiter("\\xg").is_err());
         assert!(xargs_delimiter("ab").is_err());
     }
