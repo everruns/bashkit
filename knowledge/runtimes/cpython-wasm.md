@@ -151,9 +151,39 @@ process bridge, quoting on every request).
 - The guest is linked with the `bashkit` imports; `wasmtime wizer` and the
   build smoke test run with `-W unknown-imports-trap=y` since init never
   calls them.
-- Next: `requests`/`urllib3` and `httpx2` ship in a separate packages crate
-  behind the opt-in `cpython-http` feature (`import httpx` aliases
-  `httpx2`).
+
+### `requests` and `httpx` (bashkit's own modules)
+
+`requests`, `httpx` and `httpx2` in the guest are bashkit's own compact
+implementations of the common API (`guest/requests/`, `guest/httpx.py`,
+`guest/httpx2.py`), sharing `guest/_bashkit_webcore.py`, and call
+`_bashkit.http` directly. Upstream packages were rejected: vendored
+requests + urllib3 + idna + charset_normalizer imported 155 modules and
+cost ~3.1 s per call on Pulley (urllib3 1.3 s, mostly module-level regex
+compiles and class creation; http.client alone ~0.47 s), and since each
+call starts from the snapshot that cost repeats every call. Preloading the
+upstream stack instead would have grown the snapshot by far more and kept
+the dependency on stdlib http.client/email.
+
+- Only snapshot-preloaded stdlib is imported (json, urllib.parse, base64,
+  zlib, `http` for status phrases), and the modules are preloaded
+  themselves: `import requests, httpx` adds nothing to a call (criterion
+  `python_import/cpython/requests_httpx` ~= `python_call/cpython/print`).
+- Always available with `cpython` (no extra feature); without a network
+  allowlist every request fails like `curl`.
+- Redirects are followed in the guest, so each hop is a new host-checked
+  request; `Authorization` is dropped when a redirect changes host. Cookies
+  from responses are kept per host. Both are convenience, not the
+  boundary: the host allowlist and credential injection are.
+- The host does not decompress (TM-NET-013); gzip/deflate bodies are
+  decoded in the guest within its memory limit.
+- Scope: verbs, sessions/clients, params/data/json/files/headers/cookies/
+  basic auth/timeouts/redirects, response helpers, upstream exception
+  hierarchies, httpx `AsyncClient` (sequential) and `MockTransport`.
+  Out of scope: retries, proxies, client certs, HTTP/2, digest auth,
+  streaming uploads, OPTIONS (not in the host's method set). Versions
+  report `2.32.0+bashkit` / `0.28.1+bashkit`.
+- `httpx2` (pydantic/httpx2) is the `httpx` module under a second name.
 
 ### WASI host decisions
 
@@ -217,12 +247,15 @@ never use it). asyncio's self-pipe is disabled
 | Integration (CLI, stdio, env, VFS, isolation, bash interop) | `tests/integration/cpython_integration_tests.rs` |
 | Capability (~85 language/stdlib programs) | `tests/integration/cpython_capability_tests.rs`; the same table is diffed against the host `python3` when present |
 | Security (threats below, limits, crash containment, proptest fuzz) | `tests/integration/cpython_security_tests.rs` |
-| Fuzz | `crates/bashkit/fuzz/fuzz_targets/cpython_fuzz.rs` (`--features cpython`, nightly job) |
+| HTTP bridge, requests, httpx | `tests/integration/cpython_http_tests.rs` (fake transport: allowlist, redirects, cookies/auth scoping, caps, timeouts) |
+| requests/httpx API parity | `guest/tests/differential.py`: the same scenarios against upstream `requests`/`httpx` (patched transport, shared fake server), outputs must match |
+| Fuzz | `crates/bashkit/fuzz/fuzz_targets/cpython_fuzz.rs`, `cpython_http_fuzz.rs` (`--features cpython`, nightly job) |
 | Bench / load | `benches/python.rs`, `examples/python_startup.rs`, `examples/cpython_load.rs`, `just bench-python` |
 
-CI: the Test job runs `cargo test -p bashkit --features cpython --lib --test
-integration -- cpython`; the examples job runs `cpython_scripts`; fuzz-check
-builds `cpython_fuzz`.
+CI: the Test job runs `cargo test -p bashkit --features cpython,http_client
+--lib --test integration -- cpython` and the requests/httpx differential
+(pinned upstream versions in a venv); the examples job runs
+`cpython_scripts`; fuzz-check builds `cpython_fuzz` and `cpython_http_fuzz`.
 
 ## Rebuilding the guest
 

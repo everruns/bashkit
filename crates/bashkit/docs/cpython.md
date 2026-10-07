@@ -149,7 +149,44 @@ with urllib.request.urlopen("https://api.example.com/v1/items") as r:
 - `CPythonLimits::max_http_requests` caps requests per call (default
   100); a request's timeout never outlasts the call's deadline.
 
-`requests` and `httpx` are not bundled yet.
+### `requests` and `httpx`
+
+`import requests`, `import httpx` and `import httpx2` work out of the box.
+They are Bashkit's own compact implementations of the common API, written
+on top of the same host bridge (not the upstream packages, which take
+seconds to import in the sandbox). They are preloaded in the snapshot, so
+importing them costs nothing.
+
+```python
+import requests
+r = requests.get("https://api.example.com/v1/items", params={"page": 2}, timeout=5)
+r.raise_for_status()
+print(r.json())
+
+import httpx
+with httpx.Client(base_url="https://api.example.com", headers={"X-Key": "..."}) as c:
+    print(c.post("/v1/items", json={"name": "a"}).status_code)
+```
+
+- **requests**: `get`/`post`/`put`/`patch`/`delete`/`head`/`request`,
+  `Session` (headers, params, auth, cookies, hooks), `params`, `data`,
+  `json`, `files` (multipart), `headers`, `cookies`, basic `auth`,
+  `timeout`, `allow_redirects`; `Response` with `status_code`, `ok`,
+  `reason`, `headers`, `content`, `text`, `json()`, `url`, `history`,
+  `links`, `iter_content`/`iter_lines`, `raise_for_status()`; the upstream
+  exception classes (`ConnectionError`, `ReadTimeout`, `HTTPError`, ...).
+- **httpx** (and `httpx2`, the same module): the verb functions and
+  `stream()`, `Client` and `AsyncClient` (`base_url`, `headers`, `params`,
+  `cookies`, `auth`, `timeout`, `follow_redirects`, `event_hooks`,
+  `transport=httpx.MockTransport(...)`), `Response`, `URL`, `Headers`,
+  `QueryParams`, `Cookies`, `Timeout`, `BasicAuth`, `codes` and the
+  upstream exception classes. As in httpx, redirects are not followed
+  unless `follow_redirects=True`.
+- Not supported: retries (`HTTPAdapter(max_retries=...)` is accepted and
+  ignored), proxies, client certificates, HTTP/2, `OPTIONS` (not an allowed
+  method), digest auth, streaming uploads. Bodies are buffered, so
+  `stream=True` and `iter_*` walk a body that is already complete.
+  `AsyncClient` requests run one at a time.
 
 ## Limitations
 
@@ -160,8 +197,9 @@ with urllib.request.urlopen("https://api.example.com/v1/items") as r:
 - **No threads**: `threading.Thread.start()` raises `RuntimeError`;
   `multiprocessing` and `concurrent.futures.ProcessPoolExecutor` are absent.
   `asyncio` works.
-- **No native extensions or pip**: only the bundled stdlib. `ctypes`,
-  `numpy`, `requests` and other third-party packages are unavailable; `ssl`,
+- **No native extensions or pip**: only the bundled stdlib (plus Bashkit's
+  own `requests`/`httpx`, see [HTTP](#http)). `ctypes`, `numpy` and other
+  third-party packages are unavailable; `ssl`,
   `_hashlib` (OpenSSL), `tkinter`, `curses`, `readline`, `dbm.gnu` are not
   built. `hashlib` still provides md5, sha1, sha2, sha3 and blake2.
 - **No interactive mode**: `python3` with no program reads one from stdin;

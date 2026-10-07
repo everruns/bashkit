@@ -44,6 +44,9 @@ _PRELOAD = (
     "urllib.parse", "uuid", "warnings", "weakref", "zlib", "runpy",
     "_bashkit", "atexit", "builtins", "importlib", "sqlite3", "zipfile",
     "asyncio",
+    # bashkit's own HTTP clients over the host bridge: preloaded so
+    # `import requests` / `import httpx` cost nothing per call.
+    "requests", "requests.utils", "httpx", "httpx2",
 )
 
 _USAGE = """\
