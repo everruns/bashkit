@@ -1391,3 +1391,73 @@ async fn no_leak_undefined_function_call() {
         AWK_BANNED,
     );
 }
+
+/// A newline after `if (...)`, `for (...)`, `while (...)`, `else`, `do`,
+/// `&&`, `||` or `,` continues the statement (POSIX awk `opt_nls`).
+#[tokio::test]
+async fn newline_after_control_header_continues_statement() {
+    let prog = "BEGIN {
+    for (i = 1; i <= 3; i++)
+        for (j = i + 1; j <= 3; j++)
+            if (j > i) {
+                tmp = i; n++
+            }
+    if (n == 3)
+        print \"if\"
+    else
+        print \"else\"
+    for (k in a)
+        x = 1
+    while (w < 2)
+        w++
+    do
+        w--
+    while (w > 0)
+    if (n == 3 &&
+        w == 0 ||
+        0)
+        printf \"%s,%s\\n\",
+            \"a\", \"b\"
+}";
+    let result = run_awk(&[prog], None).await.unwrap();
+    assert_eq!(result.stderr, "");
+    assert_eq!(result.stdout, "if\na,b\n");
+}
+
+/// A regex pattern can be one operand of `&&`, `||` or `?:` in a rule pattern.
+#[tokio::test]
+async fn regex_pattern_combines_with_logical_operators() {
+    let input = Some("a\nb\n#c\nab\n");
+    let r = run_awk(&["/a/ && !/b/ { print \"x:\" $0 }"], input)
+        .await
+        .unwrap();
+    assert_eq!(r.stdout, "x:a\n");
+    let r = run_awk(&["/^#/ || /b$/ { next } { print }"], input)
+        .await
+        .unwrap();
+    assert_eq!(r.stdout, "a\n");
+    let r = run_awk(&["/a/,/c/ { print \"r:\" $0 }"], input)
+        .await
+        .unwrap();
+    assert_eq!(r.stdout, "r:a\nr:b\nr:#c\nr:ab\n");
+}
+
+/// A bare `/re/` in an expression is `$0 ~ /re/`, not the pattern text.
+#[tokio::test]
+async fn bare_regex_in_expression_matches_record() {
+    let input = Some("[s]\na=b\n");
+    let r = run_awk(&["{ if (/^\\[.*\\]$/) print \"sec:\" $0 }"], input)
+        .await
+        .unwrap();
+    assert_eq!(r.stdout, "sec:[s]\n");
+    let r = run_awk(&["{ x = /=/; print x }"], input).await.unwrap();
+    assert_eq!(r.stdout, "0\n1\n");
+    // Pattern positions still take the regex text.
+    let r = run_awk(
+        &["{ n = gsub(/[a-z]/, \"X\"); m = match($0, /=/); print n, m, ($0 ~ /=/) }"],
+        input,
+    )
+    .await
+    .unwrap();
+    assert_eq!(r.stdout, "1 0 0\n2 2 1\n");
+}

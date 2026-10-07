@@ -304,7 +304,19 @@ impl<'a> AwkParser<'a> {
         let c = self.current_char().unwrap();
 
         if c == '/' {
-            Ok(Some(self.parse_regex_pattern()?))
+            let start = self.pos;
+            let pattern = self.parse_regex_pattern()?;
+            let save = self.pos;
+            self.skip_whitespace();
+            // `/re/ && cond`, `/a/ || /b/`: the regex is the left operand
+            // of a larger pattern expression.
+            if matches!(self.current_char(), Some('&' | '|' | '?')) {
+                self.pos = start;
+                let expr = self.parse_expression()?;
+                return Ok(Some(AwkPattern::Expression(expr)));
+            }
+            self.pos = save;
+            Ok(Some(pattern))
         } else if c == '{' {
             Ok(None)
         } else {
@@ -751,6 +763,11 @@ impl<'a> AwkParser<'a> {
         };
 
         self.skip_whitespace();
+        // A simple body ends with a terminator before `while` (`do x--; while (x)`).
+        while self.pos < self.input.len() && self.current_char().unwrap() == ';' {
+            self.pos += 1;
+            self.skip_whitespace();
+        }
         if !self.matches_keyword("while") {
             return Err(Error::Execution(
                 "awk: expected 'while' after do body".to_string(),

@@ -480,12 +480,41 @@ impl AwkState {
 
 /// Preprocess awk program: replace newlines with semicolons inside action blocks.
 /// This makes newlines act as statement separators per POSIX awk spec.
-/// Respects string literals, regex literals, and nested braces.
+/// Respects string literals, regex literals, and nested braces. A newline
+/// that POSIX lets a statement continue across (`opt_nls`: after the `)` of
+/// an `if`/`for`/`while` header, after `else`/`do`, `&&`, `||` or `,`)
+/// becomes a space instead.
 fn normalize_awk_newlines(input: &str) -> String {
     let mut result = String::with_capacity(input.len());
     let chars: Vec<char> = input.chars().collect();
     let mut i = 0;
     let mut brace_depth = 0;
+    // One entry per open `(`: whether it opened an if/for/while header.
+    let mut parens: Vec<bool> = Vec::new();
+    // `result.len()` right after the `)` that closed a control header.
+    let mut header_end: Option<usize> = None;
+    let separator = |result: &str, header_end: Option<usize>| -> char {
+        let t = result.trim_end_matches([' ', '\t']);
+        let ends_with_word = |w: &str| {
+            t.strip_suffix(w).is_some_and(|rest| {
+                !rest
+                    .chars()
+                    .next_back()
+                    .is_some_and(|c| c.is_alphanumeric() || c == '_')
+            })
+        };
+        if header_end == Some(t.len())
+            || ends_with_word("else")
+            || ends_with_word("do")
+            || t.ends_with("&&")
+            || t.ends_with("||")
+            || t.ends_with(',')
+        {
+            ' '
+        } else {
+            ';'
+        }
+    };
 
     while i < chars.len() {
         match chars[i] {
@@ -499,6 +528,22 @@ fn normalize_awk_newlines(input: &str) -> String {
                     brace_depth -= 1;
                 }
                 result.push('}');
+                i += 1;
+            }
+            '(' => {
+                let t = result.trim_end_matches([' ', '\t']);
+                let word_start = t
+                    .rfind(|c: char| !(c.is_alphanumeric() || c == '_'))
+                    .map_or(0, |p| p + 1);
+                parens.push(matches!(&t[word_start..], "if" | "for" | "while"));
+                result.push('(');
+                i += 1;
+            }
+            ')' => {
+                result.push(')');
+                if parens.pop() == Some(true) {
+                    header_end = Some(result.len());
+                }
                 i += 1;
             }
             '"' => {
@@ -542,7 +587,7 @@ fn normalize_awk_newlines(input: &str) -> String {
                 }
                 if i < chars.len() {
                     if brace_depth > 0 {
-                        result.push(';');
+                        result.push(separator(&result, header_end));
                     } else {
                         result.push('\n');
                     }
@@ -555,7 +600,7 @@ fn normalize_awk_newlines(input: &str) -> String {
             }
             '\n' if brace_depth > 0 => {
                 // Inside action block: replace newline with semicolon
-                result.push(';');
+                result.push(separator(&result, header_end));
                 i += 1;
             }
             _ => {
