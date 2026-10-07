@@ -8905,6 +8905,13 @@ impl Interpreter {
         self.clear_live_binding(name);
     }
 
+    /// `getopts` unsets OPTARG for options without one. Locals use shallow
+    /// binding, so dropping the live value leaves a `local OPTARG`'s caller
+    /// value saved in the frame, untouched.
+    fn unset_optarg(&mut self) {
+        self.remove_scalar_value("OPTARG");
+    }
+
     /// Usage: `getopts optstring name [args...]`
     ///
     /// Parses options from positional params (or `args`).
@@ -8937,16 +8944,13 @@ impl Interpreter {
         };
 
         // Get current OPTIND (1-based index into args)
-        let optind: usize = self
-            .scoped
-            .variables
-            .get("OPTIND")
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(1);
+        // OPTIND and OPTARG follow dynamic scope (`local OPTIND` in a
+        // function); an empty or unset OPTIND starts over at 1.
+        let optind: usize = self.expand_variable("OPTIND").parse().unwrap_or(1);
 
         // Check if we're past the end
         if optind < 1 || optind > parse_args.len() {
-            self.insert_variable_checked(varname.clone(), "?".to_string());
+            self.set_variable(varname.clone(), "?".to_string());
             return Ok(ExecResult {
                 stdout: crate::StreamData::new(),
                 stderr: crate::StreamData::new(),
@@ -8960,10 +8964,9 @@ impl Interpreter {
 
         // Check if this is an option (starts with -)
         if !current_arg.starts_with('-') || current_arg == "-" || current_arg == "--" {
-            self.insert_variable_checked(varname.clone(), "?".to_string());
+            self.set_variable(varname.clone(), "?".to_string());
             if current_arg == "--" {
-                self.vars_mut()
-                    .insert("OPTIND".to_string(), (optind + 1).to_string());
+                self.set_variable("OPTIND".to_string(), (optind + 1).to_string());
             }
             return Ok(ExecResult {
                 stdout: crate::StreamData::new(),
@@ -8983,10 +8986,9 @@ impl Interpreter {
 
         if char_idx >= opt_chars.len() {
             // Should not happen, but advance
-            self.vars_mut()
-                .insert("OPTIND".to_string(), (optind + 1).to_string());
+            self.set_variable("OPTIND".to_string(), (optind + 1).to_string());
             self.getopts_char_idx = 0;
-            self.insert_variable_checked(varname.clone(), "?".to_string());
+            self.set_variable(varname.clone(), "?".to_string());
             return Ok(ExecResult {
                 stdout: crate::StreamData::new(),
                 stderr: crate::StreamData::new(),
@@ -9003,36 +9005,31 @@ impl Interpreter {
         // Check if this option is in the optstring
         if let Some(pos) = spec.find(opt_char) {
             let needs_arg = spec.get(pos + 1..pos + 2) == Some(":");
-            self.insert_variable_checked(varname.clone(), opt_char.to_string());
+            self.set_variable(varname.clone(), opt_char.to_string());
 
             if needs_arg {
                 // Option needs an argument
                 if char_idx + 1 < opt_chars.len() {
                     // Rest of current arg is the argument
                     let arg_val: String = opt_chars[char_idx + 1..].iter().collect();
-                    self.insert_variable_checked("OPTARG".to_string(), arg_val);
-                    self.vars_mut()
-                        .insert("OPTIND".to_string(), (optind + 1).to_string());
+                    self.set_variable("OPTARG".to_string(), arg_val);
+                    self.set_variable("OPTIND".to_string(), (optind + 1).to_string());
                     self.getopts_char_idx = 0;
                 } else if optind < parse_args.len() {
                     // Next arg is the argument
-                    self.vars_mut()
-                        .insert("OPTARG".to_string(), parse_args[optind].clone());
-                    self.vars_mut()
-                        .insert("OPTIND".to_string(), (optind + 2).to_string());
+                    self.set_variable("OPTARG".to_string(), parse_args[optind].clone());
+                    self.set_variable("OPTIND".to_string(), (optind + 2).to_string());
                     self.getopts_char_idx = 0;
                 } else {
                     // Missing argument
-                    self.vars_mut().remove("OPTARG");
-                    self.vars_mut()
-                        .insert("OPTIND".to_string(), (optind + 1).to_string());
+                    self.unset_optarg();
+                    self.set_variable("OPTIND".to_string(), (optind + 1).to_string());
                     self.getopts_char_idx = 0;
                     if silent {
-                        self.insert_variable_checked(varname.clone(), ":".to_string());
-                        self.vars_mut()
-                            .insert("OPTARG".to_string(), opt_char.to_string());
+                        self.set_variable(varname.clone(), ":".to_string());
+                        self.set_variable("OPTARG".to_string(), opt_char.to_string());
                     } else {
-                        self.insert_variable_checked(varname.clone(), "?".to_string());
+                        self.set_variable(varname.clone(), "?".to_string());
                         let mut result = ExecResult::ok(String::new());
                         result.stderr = format!(
                             "bash: getopts: option requires an argument -- '{}'\n",
@@ -9045,34 +9042,33 @@ impl Interpreter {
                 }
             } else {
                 // No argument needed
-                self.vars_mut().remove("OPTARG");
+                self.unset_optarg();
                 if char_idx + 1 < opt_chars.len() {
-                    // More chars in this arg
+                    // More chars in this arg: OPTIND stays on it, as in bash.
+                    self.set_variable("OPTIND".to_string(), optind.to_string());
                     self.getopts_char_idx = char_idx + 1;
                 } else {
                     // Move to next arg
-                    self.vars_mut()
-                        .insert("OPTIND".to_string(), (optind + 1).to_string());
+                    self.set_variable("OPTIND".to_string(), (optind + 1).to_string());
                     self.getopts_char_idx = 0;
                 }
             }
         } else {
             // Unknown option
-            self.vars_mut().remove("OPTARG");
+            self.unset_optarg();
             if char_idx + 1 < opt_chars.len() {
+                self.set_variable("OPTIND".to_string(), optind.to_string());
                 self.getopts_char_idx = char_idx + 1;
             } else {
-                self.vars_mut()
-                    .insert("OPTIND".to_string(), (optind + 1).to_string());
+                self.set_variable("OPTIND".to_string(), (optind + 1).to_string());
                 self.getopts_char_idx = 0;
             }
 
             if silent {
-                self.insert_variable_checked(varname.clone(), "?".to_string());
-                self.vars_mut()
-                    .insert("OPTARG".to_string(), opt_char.to_string());
+                self.set_variable(varname.clone(), "?".to_string());
+                self.set_variable("OPTARG".to_string(), opt_char.to_string());
             } else {
-                self.insert_variable_checked(varname.clone(), "?".to_string());
+                self.set_variable(varname.clone(), "?".to_string());
                 let mut result = ExecResult::ok(String::new());
                 result.stderr = format!("bash: getopts: illegal option -- '{}'\n", opt_char).into();
                 result = self.apply_redirections(result, redirects).await?;
@@ -10114,6 +10110,10 @@ impl Interpreter {
         // SRANDOM ignores assignment (bash 5.1).
         if resolved == "SRANDOM" {
             return;
+        }
+        // Assigning OPTIND restarts `getopts` within an option group.
+        if resolved == "OPTIND" {
+            self.getopts_char_idx = 0;
         }
         if resolved == "RANDOM" {
             self.random_state
