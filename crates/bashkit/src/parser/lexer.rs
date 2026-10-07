@@ -149,7 +149,12 @@ impl<'a> Lexer<'a> {
                     Some(Token::And)
                 } else if self.peek_char() == Some('>') {
                     self.advance();
-                    Some(Token::RedirectBoth)
+                    if self.peek_char() == Some('>') {
+                        self.advance();
+                        Some(Token::RedirectBothAppend)
+                    } else {
+                        Some(Token::RedirectBoth)
+                    }
                 } else {
                     Some(Token::Background)
                 }
@@ -347,7 +352,14 @@ impl<'a> Lexer<'a> {
         // 2-char redirect operator (e.g. ">>", "<&", "<<") matter, so bound the
         // lookahead — collecting all remaining input here made every
         // digit-initial word O(n) and the whole lex O(n^2) (TM-DOS-024).
-        let input_remaining: String = self.chars.clone().take(4).collect();
+        // Re-injected text (the rest of a heredoc line) comes first.
+        let input_remaining: String = self
+            .reinject_buf
+            .iter()
+            .copied()
+            .chain(self.chars.clone())
+            .take(4)
+            .collect();
 
         // Check patterns: "N>" "N>>" "N>&" "N<" "N<&"
         if fd_str.len() == 1
@@ -425,6 +437,17 @@ impl<'a> Lexer<'a> {
                 }
                 let target_fd: i32 = target_str.parse().unwrap_or(0);
                 return Some(Token::DupFdIn(fd, target_fd));
+            } else if rest.starts_with("<<") && !rest.starts_with("<<<") {
+                // N<<EOF / N<<-EOF - here document on fd N
+                let fd: i32 = first_digit.to_digit(10).unwrap() as i32;
+                self.advance(); // consume digit
+                self.advance(); // consume <
+                self.advance(); // consume <
+                let strip = self.peek_char() == Some('-');
+                if strip {
+                    self.advance();
+                }
+                return Some(Token::HereDocFd(fd, strip));
             } else if rest.starts_with('<') && !rest.starts_with("<<") {
                 // N< - input redirect with fd
                 let fd: i32 = first_digit.to_digit(10).unwrap() as i32;
@@ -2237,13 +2260,13 @@ impl<'a> Lexer<'a> {
 
         // Re-inject saved rest-of-line so subsequent tokens (pipes, commands, etc.)
         // are visible to the parser. Add a newline so the tokenizer sees the line break.
+        // The line break always comes back: it ends the command even when
+        // nothing followed the delimiter (`cat <<A <<B`).
         let rest_of_line_chars = rest_of_line.chars().count();
-        if !rest_of_line.is_empty() {
-            for ch in rest_of_line.chars() {
-                self.reinject_buf.push_back(ch);
-            }
-            self.reinject_buf.push_back('\n');
+        for ch in rest_of_line.chars() {
+            self.reinject_buf.push_back(ch);
         }
+        self.reinject_buf.push_back('\n');
 
         (content, rest_of_line_chars)
     }

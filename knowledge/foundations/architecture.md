@@ -123,6 +123,17 @@ compression paths use these builders because their expansion ratios and nested
 buffers make post-hoc leasing unsafe. Atomic compare/exchange admission keeps
 concurrent descendants from wrapping or temporarily exceeding the shared cap.
 
+### `set -e` contexts
+
+`errexit_active()` is `set -e` plus `condition_sequence_depth == 0`. The
+depth counts the contexts where bash ignores errexit: an `if`/`while`/`until`
+condition, a non-final `&&`/`||` element, and a `!` pipeline. It is a counter
+on the interpreter, not a flag on results, so it also covers function bodies
+and subshells run from those contexts (`if f; then`, `( false; x ) || y`).
+Forked pipeline stages copy it. A command substitution clears `-e` unless
+`shopt -s inherit_errexit` is set; with that option it stops at the first
+failure, as bash does.
+
 ### Design Principles
 
 1. **Async-first**: All filesystem and execution is async (tokio)

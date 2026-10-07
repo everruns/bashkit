@@ -959,6 +959,9 @@ struct CallFrame {
     local_assoc_arrays: HashMap<String, Option<HashMap<String, String>>>,
     /// Positional parameters ($1, $2, etc.)
     positional: Vec<String>,
+    /// A function or `source` frame: `$0` comes from the nearest frame below
+    /// it that is not (the script or shell), as in bash.
+    keeps_arg0: bool,
 }
 
 /// A snapshot of shell state (variables, env, cwd, options).
@@ -1293,7 +1296,6 @@ struct PipelineStageScope {
 }
 
 struct SubshellSnapshot {
-    bash_subshell: usize,
     scoped: ScopedState,
     env: Arc<HashMap<String, String>>,
     flags: BashFlags,
@@ -1304,6 +1306,7 @@ struct SubshellSnapshot {
     getopts_char_idx: usize,
     last_bg_pid: Option<String>,
     seconds_base: (crate::time_compat::Instant, i64),
+    bash_subshell: u32,
 }
 
 /// Interpreter state.
@@ -1396,6 +1399,8 @@ pub struct Interpreter {
     builtin_stdout_pipe: Option<Arc<pipe::Pipe>>,
     /// Input pipe handed to a streaming filter's `Context` (taken at dispatch).
     builtin_stdin_pipe: Option<Arc<pipe::Pipe>>,
+    /// `$BASH_SUBSHELL`: subshell nesting (`( )`, `$( )`, pipeline stages, jobs).
+    bash_subshell: u32,
     /// Position within the current argument while `getopts` walks a clustered
     /// short-option group (e.g. `-abc`). Interpreter-internal working state for
     /// `execute_getopts`; `0` means "at the start of the next option group".
@@ -1503,9 +1508,6 @@ pub struct Interpreter {
     script_depth: usize,
     /// Nested `bash`/`sh` child shells (TM-DOS-125).
     child_shell_depth: usize,
-    /// `$BASH_SUBSHELL`: subshell nesting, `(...)`, `$(...)`, `<(...)` and
-    /// forked pipeline stages each add one; saved in `SubshellSnapshot`.
-    bash_subshell: usize,
     /// First arithmetic error raised by a read-only evaluation site (array
     /// subscripts, `declare -i` values, substring offsets). The command
     /// boundary turns it into a line abort, as bash does.
@@ -1599,10 +1601,6 @@ impl Interpreter {
             // Text processing
             "grep" => Grep,
             "sed" => Sed,
-            "awk" => Awk,
-            "gawk" => Awk,
-            "mawk" => Awk,
-            "nawk" => Awk,
             "head" => Head,
             "tail" => Tail,
             "sort" => Sort,
@@ -1817,6 +1815,9 @@ impl Interpreter {
             Arc::new(builtins::Touch::with_clock(clock)),
         );
         builtins.insert("pr".to_string(), Arc::new(builtins::Pr::with_clock(clock)));
+        for name in ["awk", "gawk", "mawk", "nawk"] {
+            builtins.insert(name.to_string(), Arc::new(builtins::Awk::with_clock(clock)));
+        }
 
         // System info builtins (configurable virtual values)
         let hostname_val = hostname.unwrap_or_else(|| builtins::DEFAULT_HOSTNAME.to_string());
@@ -1952,6 +1953,7 @@ impl Interpreter {
             stream_stdout_command: None,
             builtin_stdout_pipe: None,
             builtin_stdin_pipe: None,
+            bash_subshell: 0,
             getopts_char_idx: 0,
             last_bg_pid: None,
             output_callback: None,
@@ -1991,7 +1993,6 @@ impl Interpreter {
             concurrent_jobs: true,
             script_depth: 0,
             child_shell_depth: 0,
-            bash_subshell: 0,
             arith_error: StdMutex::new(None),
             pending_compound_args: Vec::new(),
             assign_raw: false,
@@ -2114,6 +2115,7 @@ impl Interpreter {
             stream_stdout_command: None,
             builtin_stdout_pipe: None,
             builtin_stdin_pipe: None,
+            bash_subshell: self.bash_subshell + 1,
             getopts_char_idx: self.getopts_char_idx,
             last_bg_pid: self.last_bg_pid.clone(),
             output_callback: None,
@@ -2141,7 +2143,7 @@ impl Interpreter {
             cancelled: Arc::clone(&self.cancelled),
             hooks: Arc::clone(&self.hooks),
             in_trap: false,
-            condition_sequence_depth: 0,
+            condition_sequence_depth: self.condition_sequence_depth,
             deferred_proc_subs: Vec::new(),
             proc_sub_paths: HashSet::new(),
             random_state: AtomicU32::new(random_seed),
@@ -2152,7 +2154,6 @@ impl Interpreter {
             script_depth: 1,
             // Forks are polled on this task's stack, so they inherit its depth.
             child_shell_depth: self.child_shell_depth,
-            bash_subshell: self.bash_subshell,
             arith_error: StdMutex::new(None),
             pending_compound_args: Vec::new(),
             assign_raw: false,
@@ -2262,6 +2263,14 @@ impl Interpreter {
 
     fn is_errexit_enabled(&self) -> bool {
         self.flags.contains(BashFlags::ERREXIT)
+    }
+
+    /// `set -e` fires here: on, and not inside a context where bash ignores
+    /// it (an `if`/`while`/`until` condition, a non-final `&&`/`||` element,
+    /// a `!` pipeline). Those contexts reach into function bodies and
+    /// subshells run from them, so `if f; then` never stops inside `f`.
+    fn errexit_active(&self) -> bool {
+        self.is_errexit_enabled() && self.condition_sequence_depth == 0
     }
 
     /// Check if xtrace (set -x) is enabled.
@@ -2472,6 +2481,7 @@ impl Interpreter {
             local_arrays: HashMap::new(),
             local_assoc_arrays: HashMap::new(),
             positional,
+            keeps_arg0: false,
         });
     }
 
@@ -3250,7 +3260,7 @@ impl Interpreter {
             // the status as suppressed (for example, a short-circuited AND-OR
             // list) or the command is an explicitly negated pipeline.
             // Lists are NOT suppressed here so set -e fires for failing lists.
-            if self.is_errexit_enabled() && exit_code != 0 {
+            if self.errexit_active() && exit_code != 0 {
                 let suppressed = matches!(command, Command::Pipeline(p) if p.negated)
                     || result.errexit_suppressed;
                 if !suppressed {
@@ -3434,6 +3444,16 @@ impl Interpreter {
                     }
                     result
                 }
+                Command::Pipeline(pipeline) if pipeline.negated => {
+                    // `! cmd` is an errexit-ignored context, inside too.
+                    self.condition_sequence_depth += 1;
+                    let result = self.execute_pipeline(pipeline).await;
+                    self.condition_sequence_depth -= 1;
+                    result.map(|mut r| {
+                        r.errexit_suppressed = true;
+                        r
+                    })
+                }
                 Command::Pipeline(pipeline) => self.execute_pipeline(pipeline).await,
                 Command::List(list) => self.execute_list(list).await,
                 Command::Compound(compound, redirects) => {
@@ -3557,8 +3577,8 @@ impl Interpreter {
                 // The Arc-wrapped maps make each snapshot an O(1) refcount
                 // bump; only mutations inside the subshell pay a clone.
                 let snap = self.snapshot_subshell_state();
-                self.bash_subshell += 1;
                 let saved_call_stack = self.call_stack.clone();
+                self.bash_subshell += 1;
                 let saved_exit = self.last_exit_code;
                 let saved_coproc = self.coproc_buffers.clone();
 
@@ -3765,7 +3785,7 @@ impl Interpreter {
                 let emit_before = self.output_emit_count;
                 let result = self.execute_command_sequence(&for_cmd.body).await?;
                 self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
-                let should_errexit = self.is_errexit_enabled()
+                let should_errexit = self.errexit_active()
                     && result.exit_code != 0
                     && result.control_flow == ControlFlow::None
                     && !result.errexit_suppressed;
@@ -4076,7 +4096,7 @@ impl Interpreter {
                 let emit_before = self.output_emit_count;
                 let result = self.execute_command_sequence(&arith_for.body).await?;
                 self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
-                let should_errexit = self.is_errexit_enabled()
+                let should_errexit = self.errexit_active()
                     && result.exit_code != 0
                     && result.control_flow == ControlFlow::None
                     && !result.errexit_suppressed;
@@ -4549,7 +4569,7 @@ impl Interpreter {
                 let emit_before = self.output_emit_count;
                 let result = self.execute_command_sequence(body).await?;
                 self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
-                let should_errexit = self.is_errexit_enabled()
+                let should_errexit = self.errexit_active()
                     && result.exit_code != 0
                     && result.control_flow == ControlFlow::None
                     && !result.errexit_suppressed;
@@ -5302,6 +5322,8 @@ impl Interpreter {
         }
         self.child_shell_depth += 1;
         let child_snapshot = self.snapshot_subshell_state();
+        // A new shell starts at subshell level 0.
+        self.bash_subshell = 0;
         self.reset_state_for_child_shell();
 
         // Push call frame, apply options, execute, restore, pop
@@ -5312,6 +5334,7 @@ impl Interpreter {
             local_arrays: HashMap::new(),
             local_assoc_arrays: HashMap::new(),
             positional: positional_args,
+            keeps_arg0: false,
         });
 
         let mut saved_opt_names: HashSet<&'static str> = HashSet::new();
@@ -5367,8 +5390,6 @@ impl Interpreter {
     /// keep only exported scalars in `variables`. The caller is expected to
     /// have just taken a snapshot to undo this on return. See issue #1777.
     fn reset_state_for_child_shell(&mut self) {
-        // A new bash process starts at BASH_SUBSHELL=0.
-        self.bash_subshell = 0;
         let exported_names: Vec<String> = self
             .scoped
             .var_attrs
@@ -5608,7 +5629,7 @@ impl Interpreter {
             // Suppression is decided by the callee and surfaced through
             // result.errexit_suppressed (e.g. AND-OR lists).
             let suppress = result.errexit_suppressed;
-            if check_errexit && self.is_errexit_enabled() && exit_code != 0 && !suppress {
+            if check_errexit && self.errexit_active() && exit_code != 0 && !suppress {
                 return Ok(ExecResult {
                     stdout,
                     stderr,
@@ -5810,14 +5831,17 @@ impl Interpreter {
         simple.redirects.is_empty()
             && matches!(
                 simple.name.parts.as_slice(),
-                [WordPart::Literal(name)] if matches!(name.as_str(), "yes" | "seq" | "cat")
+                [WordPart::Literal(name)]
+                    if matches!(name.as_str(), "yes" | "seq" | "cat" | "grep" | "tr")
             )
     }
 
     /// Streaming stages that also read their stdin pipe incrementally
-    /// (`Context::stdin_stream`), so `loop | cat | head -1` stops early.
+    /// (`Context::stdin_stream`), so `loop | grep y | head -1` stops early.
+    /// They read the pipe to the end themselves when an option needs the
+    /// whole input (`grep -c`, `tr -s`).
     fn streams_stdin(name: &str) -> bool {
-        name == "cat"
+        matches!(name, "cat" | "grep" | "tr")
     }
 
     /// Run `commands` (the tail of a pipeline) concurrently: every stage but
@@ -5857,6 +5881,14 @@ impl Interpreter {
             let write_end = pipe::WriteEnd(Arc::clone(&pipe));
             let read_end = input.take().map(pipe::ReadEnd);
             let command = command.clone();
+            if matches!(
+                command,
+                Command::Simple(_) | Command::Compound(CompoundCommand::Subshell(_), _)
+            ) {
+                // Simple-command stages do not count as a subshell level; a
+                // `( )` stage counts itself once.
+                child.bash_subshell = self.bash_subshell;
+            }
             stages.push(Box::pin(async move {
                 let _read_end = read_end;
                 if let Command::Simple(simple) = &command
@@ -6021,7 +6053,15 @@ impl Interpreter {
                 self.coproc_buffers.clone(),
             )
         });
-        if subshell {
+        // bash counts compound stages, not simple commands (`echo
+        // $BASH_SUBSHELL | cat` prints 0, `{ echo $BASH_SUBSHELL; } | cat` 1).
+        // A `( )` stage reuses the stage fork, so it is counted once.
+        if subshell
+            && !matches!(
+                command,
+                Command::Simple(_) | Command::Compound(CompoundCommand::Subshell(_), _)
+            )
+        {
             self.bash_subshell += 1;
         }
         let mut scope = PipelineStageScope {
@@ -6182,7 +6222,15 @@ impl Interpreter {
             exit_code_from_conditional_context = false;
         } else {
             let emit_before = self.output_emit_count;
-            let result = self.execute_command(&list.first).await?;
+            // A non-final `&&`/`||` element runs with errexit ignored.
+            let conditional = list
+                .rest
+                .first()
+                .is_some_and(|(op, _)| matches!(op, ListOperator::And | ListOperator::Or));
+            self.condition_sequence_depth += usize::from(conditional);
+            let result = self.execute_command(&list.first).await;
+            self.condition_sequence_depth -= usize::from(conditional);
+            let result = result?;
             self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
             stdout.append(&result.stdout);
             stderr.append(&result.stderr);
@@ -6236,7 +6284,7 @@ impl Interpreter {
             // Check errexit before executing next semicolon-separated command:
             // if previous command failed outside conditional context, exit now.
             let should_check_errexit = matches!(op, ListOperator::Semicolon)
-                && self.is_errexit_enabled()
+                && self.errexit_active()
                 && exit_code != 0
                 && !exit_code_from_conditional_context;
 
@@ -6269,18 +6317,21 @@ impl Interpreter {
                     exit_code_from_conditional_context = false;
                 } else {
                     let emit_before = self.output_emit_count;
-                    let result = self.execute_command(cmd).await?;
+                    let followed_by_conditional_op =
+                        list.rest.get(i + 1).is_some_and(|(op, cmd)| {
+                            !Self::is_empty_sentinel(cmd)
+                                && matches!(op, ListOperator::And | ListOperator::Or)
+                        });
+                    self.condition_sequence_depth += usize::from(followed_by_conditional_op);
+                    let result = self.execute_command(cmd).await;
+                    self.condition_sequence_depth -= usize::from(followed_by_conditional_op);
+                    let result = result?;
                     self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
                     stdout.append(&result.stdout);
                     stderr.append(&result.stderr);
                     exit_code = result.exit_code;
                     self.last_exit_code = exit_code;
                     control_flow = result.control_flow;
-                    let followed_by_conditional_op =
-                        list.rest.get(i + 1).is_some_and(|(op, cmd)| {
-                            !Self::is_empty_sentinel(cmd)
-                                && matches!(op, ListOperator::And | ListOperator::Or)
-                        });
                     // Bash suppresses errexit for AND-OR list elements except the
                     // command following the final &&/|| operator.
                     exit_code_from_conditional_context =
@@ -6311,7 +6362,7 @@ impl Interpreter {
         // Final errexit check for the last command. A non-zero status only
         // remains suppressed when it was carried from a short-circuited or
         // non-final AND-OR list element; a failing final &&/|| command exits.
-        let should_final_errexit_check = self.is_errexit_enabled()
+        let should_final_errexit_check = self.errexit_active()
             && exit_code != 0
             && !exit_code_from_conditional_context
             && !self.is_in_condition_sequence();
@@ -8016,6 +8067,7 @@ impl Interpreter {
             local_arrays: HashMap::new(),
             local_assoc_arrays: HashMap::new(),
             positional: args.to_vec(),
+            keeps_arg0: false,
         }];
 
         // Set up BASH_SOURCE for the subprocess
@@ -8159,6 +8211,7 @@ impl Interpreter {
                     local_arrays: HashMap::new(),
                     local_assoc_arrays: HashMap::new(),
                     positional: source_args,
+                    keeps_arg0: true,
                 });
             } else if let Some(frame) = self.call_stack.last_mut() {
                 frame.positional = source_args;
@@ -8572,6 +8625,7 @@ impl Interpreter {
             local_arrays: HashMap::new(),
             local_assoc_arrays: HashMap::new(),
             positional: args,
+            keeps_arg0: true,
         });
 
         // Set FUNCNAME array from call stack (index 0 = current, 1 = caller, ...)
@@ -8610,8 +8664,25 @@ impl Interpreter {
             self.pending_fd_capture_depth += 1;
         }
 
+        // Output the call's redirects will route must not stream from the
+        // body first (`f > out` printed `out` too), as for compounds.
+        let has_output_redirect = redirects.iter().any(|r| {
+            !matches!(
+                r.kind,
+                RedirectKind::Input | RedirectKind::HereDoc | RedirectKind::HereString
+            )
+        });
+        let saved_callback = if has_output_redirect {
+            self.output_callback.take()
+        } else {
+            None
+        };
+
         // Execute function body. Always restore call state even on error.
         let result = self.execute_command(&func_def.body).await;
+        if let Some(cb) = saved_callback {
+            self.output_callback = Some(cb);
+        }
         if capture_pending_fd {
             self.pending_fd_capture_depth = self.pending_fd_capture_depth.saturating_sub(1);
             if result.is_err() {
@@ -9532,10 +9603,9 @@ impl Interpreter {
             match effect {
                 builtins::BuiltinSideEffect::SetArray { name, elements } => {
                     let mut arr = HashMap::new();
+                    // Empty fields are elements too (`IFS=, read -ra a <<< 'a,,b'`).
                     for (i, word) in elements.iter().enumerate() {
-                        if !word.is_empty() {
-                            arr.insert(i, word.clone());
-                        }
+                        arr.insert(i, word.clone());
                     }
                     self.insert_array_checked(name.clone(), arr);
                 }
@@ -9572,6 +9642,7 @@ impl Interpreter {
                             local_arrays: HashMap::new(),
                             local_assoc_arrays: HashMap::new(),
                             positional: new_positional.clone(),
+                            keeps_arg0: false,
                         });
                     }
                 }
@@ -9678,7 +9749,6 @@ impl Interpreter {
     /// for a real HashMap clone, and only the maps it actually touched.
     fn snapshot_subshell_state(&self) -> SubshellSnapshot {
         SubshellSnapshot {
-            bash_subshell: self.bash_subshell,
             scoped: self.scoped.clone(),
             env: self.env.clone(),
             flags: self.flags,
@@ -9689,11 +9759,11 @@ impl Interpreter {
             getopts_char_idx: self.getopts_char_idx,
             last_bg_pid: self.last_bg_pid.clone(),
             seconds_base: self.seconds_base,
+            bash_subshell: self.bash_subshell,
         }
     }
 
     fn restore_subshell_state(&mut self, snap: SubshellSnapshot) {
-        self.bash_subshell = snap.bash_subshell;
         self.scoped = snap.scoped;
         self.env = snap.env;
         self.flags = snap.flags;
@@ -9705,6 +9775,7 @@ impl Interpreter {
         self.getopts_char_idx = snap.getopts_char_idx;
         self.last_bg_pid = snap.last_bg_pid;
         self.seconds_base = snap.seconds_base;
+        self.bash_subshell = snap.bash_subshell;
     }
 
     /// Perform the redirections of a null command (no command word) and
@@ -9882,6 +9953,17 @@ impl Interpreter {
                 }
             }
             let commands: &[Command] = if file_read.is_some() { &[] } else { commands };
+            // bash clears `set -e` in a command substitution unless
+            // `shopt -s inherit_errexit`; the snapshot restores it.
+            let inherit_errexit = self.is_errexit_enabled()
+                && self
+                    .scoped
+                    .variables
+                    .get("SHOPT_inherit_errexit")
+                    .is_some_and(|v| v == "1");
+            if self.is_errexit_enabled() && !inherit_errexit {
+                self.insert_variable_checked("SHOPT_e".to_string(), "0".to_string());
+            }
             // Captured output must not reach the streaming callback: compound
             // commands (`case`, `{ }`, `if`) emit through it as they run.
             let saved_callback = self.output_callback.take();
@@ -9904,6 +9986,13 @@ impl Interpreter {
                     cmd_result.control_flow,
                     ControlFlow::Exit(_) | ControlFlow::Abort
                 ) {
+                    break;
+                }
+                if inherit_errexit
+                    && self.errexit_active()
+                    && cmd_result.exit_code != 0
+                    && !cmd_result.errexit_suppressed
+                {
                     break;
                 }
             }
@@ -10750,7 +10839,6 @@ impl Interpreter {
                 }
                 return u32::from_le_bytes(b).to_string();
             }
-            "BASH_SUBSHELL" => return self.bash_subshell.to_string(),
             "LINENO" if !self.is_local_anywhere("LINENO") => {
                 // $LINENO - current line number from command span. A
                 // `local LINENO` is an ordinary variable (bash).
@@ -10774,6 +10862,9 @@ impl Interpreter {
             "BASH_VERSION" => {
                 return COMPAT_BASH_VERSION.to_string();
             }
+            "BASH_SUBSHELL" => {
+                return self.bash_subshell.to_string();
+            }
             "SECONDS" => {
                 let (start, base) = self.seconds_base;
                 let elapsed = i64::try_from(start.elapsed().as_secs()).unwrap_or(i64::MAX);
@@ -10785,8 +10876,9 @@ impl Interpreter {
         // Check for numeric positional parameter ($1, $2, etc.)
         if let Ok(n) = name.parse::<usize>() {
             if n == 0 {
-                // $0 is the script/function name
-                if let Some(frame) = self.call_stack.last() {
+                // $0 is the script/shell name; functions and `source`
+                // do not change it.
+                if let Some(frame) = self.call_stack.iter().rev().find(|f| !f.keeps_arg0) {
                     return frame.name.clone();
                 }
                 return Self::DEFAULT_ARG0.to_string();
@@ -11014,6 +11106,7 @@ mod tests {
             local_arrays: HashMap::new(),
             local_assoc_arrays: HashMap::new(),
             positional: vec!["x".to_string(); 6000],
+            keeps_arg0: false,
         });
 
         let value = interp.resolve_param_expansion_name("@").1;
@@ -11132,6 +11225,7 @@ mod tests {
             local_arrays: HashMap::new(),
             local_assoc_arrays: HashMap::new(),
             positional: Vec::new(),
+            keeps_arg0: false,
         });
         let baseline_call_stack_len = interp.call_stack.len();
         let baseline_bash_source_len = interp.bash_source_stack.len();
@@ -11144,6 +11238,7 @@ mod tests {
             local_arrays: HashMap::new(),
             local_assoc_arrays: HashMap::new(),
             positional: Vec::new(),
+            keeps_arg0: false,
         });
         interp.bash_source_stack.push("script.sh".to_string());
 
@@ -11313,6 +11408,7 @@ mod tests {
             local_arrays: HashMap::new(),
             local_assoc_arrays: HashMap::new(),
             positional: Vec::new(),
+            keeps_arg0: false,
         });
         interp.set_variable("FILL".to_string(), "123456789012".to_string());
         assert!(interp.make_local("A"));

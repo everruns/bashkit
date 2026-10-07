@@ -1,270 +1,120 @@
-//! awk - Pattern scanning and processing builtin
-//!
-//! Implements basic AWK functionality.
+//! awk - pattern scanning and processing builtin (gawk-compatible)
 //!
 //! Usage:
 //!   awk '{print $1}' file
-//!   awk -F: '{print $1}' /etc/passwd
-//!   echo "a b c" | awk '{print $2}'
-//!   awk 'BEGIN{print "start"} {print} END{print "end"}' file
-//!   awk '/pattern/{print}' file
-//!   awk 'NR==2{print}' file
+//!   awk -F: -v OFS=- '{$1=$1; print}' /etc/passwd
+//!   awk -f prog.awk data.txt
+//!   awk 'BEGIN { while (("ls" | getline f) > 0) print f }'
+//!
+//! Decisions:
+//! - The target is gawk 5 (Debian's `awk`): its option set, its error
+//!   message shapes (`awk: cmd. line:1: ...` with a caret for syntax
+//!   errors), its output for numbers, and extensions agents use (`gensub`,
+//!   `asort`, `strftime`, `BEGINFILE`, `switch`, `--csv`, arrays of arrays).
+//! - Pipeline: `lexer` -> `parser` (resolves names to slots, `ast`) ->
+//!   `interp` (async evaluator) with `io` (records, getline, redirections,
+//!   commands) and `funcs` (builtin functions). `regex` translates EREs and
+//!   gives POSIX leftmost-longest matches.
+//! - Commands run in the sandbox shell through an execution-plan driver.
+//!   The driver is used only when the program can run commands (a `|` or
+//!   `system` in the arguments, or a `-f` program); otherwise `execute`
+//!   runs awk directly and a command attempt fails with a message.
+//! - Resource limits (TM-DOS-027/028/033/109/110/116) are enforced in the
+//!   parser and evaluator; see the THREAT notes there.
 
-// Parser invariant: `pos` is always a byte offset on a UTF-8 char boundary.
-// Move across user-controlled text with `advance()`/`consume_while()`, and use
-// raw `pos += N` only for known ASCII tokens and delimiters.
 #![allow(clippy::unwrap_used)]
 
-use async_trait::async_trait;
-use regex::Regex;
-use std::collections::HashMap;
+mod ast;
+mod format;
+mod funcs;
+mod interp;
+mod io;
+mod lexer;
+mod order;
+mod parser;
+mod regex;
+mod value;
 
-use super::limits::AWK_VARIABLE_OVERHEAD_BYTES;
-use super::{Builtin, Context, read_text_file};
-use crate::error::{Error, Result};
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::{Arc, Mutex};
+use std::task::Poll;
+
+use async_trait::async_trait;
+
+use self::ast::{Source, VarRef, special};
+use self::interp::{Interp, Limits};
+use self::io::{Bridge, BridgeState, Host, Io};
+use self::parser::{ParseError, ParseErrorKind, Parser};
+use self::value::Value;
+use super::{Builtin, Context, Date, ExecutionPlan, PlanDriver, PlanStep, SubCommand};
+use crate::StreamData;
+use crate::error::Result;
+use crate::fs::vfs_join;
 use crate::interpreter::ExecResult;
 use crate::limits::ExecutionLimits;
 
 /// awk command - pattern scanning and processing
-pub struct Awk;
-
-#[derive(Debug)]
-struct AwkProgram {
-    begin_actions: Vec<AwkAction>,
-    main_rules: Vec<AwkRule>,
-    end_actions: Vec<AwkAction>,
-    functions: HashMap<String, AwkFunctionDef>,
+#[derive(Clone, Copy, Default)]
+pub struct Awk {
+    clock: Date,
 }
 
-#[derive(Debug, Clone)]
-struct AwkFunctionDef {
-    params: Vec<String>,
-    body: Vec<AwkAction>,
-}
-
-#[derive(Debug)]
-struct AwkRule {
-    pattern: Option<AwkPattern>,
-    actions: Vec<AwkAction>,
-}
-
-#[derive(Debug)]
-enum AwkPattern {
-    Regex(Regex),
-    Expression(AwkExpr),
-    /// Range pattern: /start/,/end/ — matches from start to end inclusive.
-    /// Each sub-pattern can be a Regex or Expression.
-    Range(Box<AwkPattern>, Box<AwkPattern>),
-}
-
-#[derive(Debug, Clone)]
-enum AwkExpr {
-    Number(f64),
-    String(String),
-    Field(Box<AwkExpr>), // $n
-    Variable(String),    // var
-    BinOp(Box<AwkExpr>, String, Box<AwkExpr>),
-    UnaryOp(String, Box<AwkExpr>),
-    Assign(String, Box<AwkExpr>),
-    ArrayAssign(String, Box<AwkExpr>, Box<AwkExpr>), // arr[key] = val
-    CompoundArrayAssign(String, Box<AwkExpr>, String, Box<AwkExpr>), // arr[key] += val
-    Concat(Vec<AwkExpr>),
-    FuncCall(String, Vec<AwkExpr>),
-    Regex(String),
-    #[allow(dead_code)] // matched in eval but construction deferred to pattern expansion
-    Match(Box<AwkExpr>, String), // expr ~ /pattern/
-    PostIncrement(String),                   // var++
-    PostDecrement(String),                   // var--
-    PreIncrement(String),                    // ++var
-    PreDecrement(String),                    // --var
-    InArray(Box<AwkExpr>, String),           // key in arr
-    FieldAssign(Box<AwkExpr>, Box<AwkExpr>), // $n = val
-    /// getline [var] < file as expression — returns 1 on success, 0 on EOF, -1 on error
-    GetlineFile {
-        var: Option<String>,
-        file: Box<AwkExpr>,
-    },
-}
-
-/// Output target for print/printf redirection (e.g., `> file`, `>> file`).
-/// Pipe (`| cmd`) is not supported and returns a clear error.
-#[derive(Debug, Clone)]
-enum AwkOutputTarget {
-    /// Truncate/create file: `> file`
-    Truncate(AwkExpr),
-    /// Append to file: `>> file`
-    Append(AwkExpr),
-}
-
-#[derive(Debug, Clone)]
-enum AwkAction {
-    Print(Vec<AwkExpr>, Option<AwkOutputTarget>),
-    Printf(AwkExpr, Vec<AwkExpr>, Option<AwkOutputTarget>),
-    Assign(String, AwkExpr),
-    ArrayAssign(String, AwkExpr, AwkExpr), // arr[key] = val
-    If(AwkExpr, Vec<AwkAction>, Vec<AwkAction>),
-    While(AwkExpr, Vec<AwkAction>),
-    DoWhile(AwkExpr, Vec<AwkAction>),
-    For(Box<AwkAction>, AwkExpr, Box<AwkAction>, Vec<AwkAction>),
-    ForIn(String, String, Vec<AwkAction>), // for (key in arr) { body }
-    Next,
-    Break,
-    Continue,
-    Delete(String, AwkExpr), // delete arr[key]
-    Getline,                 // getline — read next input record into $0
-    /// getline [var] < file — read next line from file
-    GetlineFile {
-        var: Option<String>,
-        file: AwkExpr,
-    },
-    Exit(Option<AwkExpr>),
-    Return(Option<AwkExpr>),
-    Expression(AwkExpr),
-}
-
-struct AwkState {
-    variables: HashMap<String, AwkValue>,
-    fields: Vec<String>,
-    fs: String,
-    /// Compiled ERE for `fs` when it is used as a regex (see `FieldSep`).
-    fs_regex: Option<Regex>,
-    ofs: String,
-    ors: String,
-    nr: usize,
-    nf: usize,
-    fnr: usize,
-    /// When true, fields are split per RFC 4180 CSV rules (--csv flag)
-    csv_mode: bool,
-    /// Accounted bytes held by `variables` (keys, string values, and a fixed
-    /// per-entry overhead). THREAT[TM-DOS-110]: checked by the interpreter
-    /// against the live-bytes limit; mutate `variables` only through
-    /// `insert_var` / `remove_var` so this stays exact.
-    mem_bytes: usize,
-}
-
-fn var_cost(key: &str, value: &AwkValue) -> usize {
-    key.len() + value.heap_bytes() + AWK_VARIABLE_OVERHEAD_BYTES
-}
-
-#[derive(Debug, Clone, PartialEq)]
-enum AwkValue {
-    Number(f64),
-    String(String),
-    Uninitialized,
-}
-
-impl AwkValue {
-    fn heap_bytes(&self) -> usize {
-        match self {
-            AwkValue::String(s) => s.len(),
-            _ => 0,
-        }
+impl Awk {
+    /// awk whose `systime()`, `strftime()` and `mktime()` use `clock`.
+    pub fn with_clock(clock: Date) -> Self {
+        Self { clock }
     }
 }
 
-/// Format number using AWK's OFMT (%.6g): 6 significant digits, trim trailing zeros.
-fn format_awk_number(n: f64) -> String {
-    if n.is_nan() {
-        return "nan".to_string();
-    }
-    if n.is_infinite() {
-        return if n > 0.0 { "inf" } else { "-inf" }.to_string();
-    }
-    // Integers: no decimal point
-    if n.fract() == 0.0 && n.abs() < 1e16 {
-        return format!("{}", n as i64);
-    }
-    // %.6g: use 6 significant digits
-    let abs = n.abs();
-    let exp = abs.log10().floor() as i32;
-    if !(-4..6).contains(&exp) {
-        // Scientific notation: 5 decimal places = 6 sig digits
-        let mut s = format!("{:.*e}", 5, n);
-        // Trim trailing zeros in mantissa
-        if let Some(e_pos) = s.find('e') {
-            let (mantissa, exp_part) = s.split_at(e_pos);
-            let trimmed = mantissa.trim_end_matches('0').trim_end_matches('.');
-            s = format!("{}{}", trimmed, exp_part);
-        }
-        // Normalize exponent format: e1 -> e+01 etc. to match C printf
-        // Actually AWK uses e+06 style. Rust uses e6. Fix:
-        if let Some(e_pos) = s.find('e') {
-            let exp_str = &s[e_pos + 1..];
-            let exp_val: i32 = exp_str.parse().unwrap_or(0);
-            let mantissa = &s[..e_pos];
-            s = format!("{}e{:+03}", mantissa, exp_val);
-        }
-        s
-    } else {
-        // Fixed notation
-        let decimal_places = (5 - exp).max(0) as usize;
-        let mut s = format!("{:.*}", decimal_places, n);
-        if s.contains('.') {
-            s = s.trim_end_matches('0').trim_end_matches('.').to_string();
-        }
-        s
-    }
-}
+const USAGE: &str = "\
+Usage: awk [POSIX or GNU style options] -f progfile [--] file ...
+Usage: awk [POSIX or GNU style options] [--] 'program' file ...
+POSIX options:\t\tGNU long options: (standard)
+\t-f progfile\t\t--file=progfile
+\t-F fs\t\t\t--field-separator=fs
+\t-v var=val\t\t--assign=var=val
+Short options:\t\tGNU long options: (extensions)
+\t-e 'program-text'\t--source='program-text'
+\t-k\t\t\t--csv
+";
 
-impl AwkValue {
-    fn as_number(&self) -> f64 {
-        match self {
-            AwkValue::Number(n) => *n,
-            AwkValue::String(s) => s.parse().unwrap_or(0.0),
-            AwkValue::Uninitialized => 0.0,
-        }
-    }
+const VERSION: &str = "GNU Awk 5.2.1 (bashkit)";
 
-    fn as_string(&self) -> String {
-        match self {
-            AwkValue::Number(n) => format_awk_number(*n),
-            AwkValue::String(s) => s.clone(),
-            AwkValue::Uninitialized => String::new(),
-        }
-    }
+/// gawk options that change nothing here.
+const IGNORED_FLAGS: &[&str] = &[
+    "-b",
+    "--characters-as-bytes",
+    "-c",
+    "--traditional",
+    "-C",
+    "--copyright",
+    "-g",
+    "--gen-pot",
+    "-M",
+    "--bignum",
+    "-n",
+    "--non-decimal-data",
+    "-N",
+    "--use-lc-numeric",
+    "-O",
+    "--optimize",
+    "-P",
+    "--posix",
+    "-r",
+    "--re-interval",
+    "-s",
+    "--no-optimize",
+    "-S",
+    "--sandbox",
+    "-t",
+    "--lint-old",
+    "-L",
+    "--lint",
+];
 
-    fn as_bool(&self) -> bool {
-        match self {
-            AwkValue::Number(n) => *n != 0.0,
-            AwkValue::String(s) => {
-                if s.is_empty() {
-                    return false;
-                }
-                // In awk, numeric strings evaluate as numbers in boolean context
-                if let Ok(n) = s.parse::<f64>() {
-                    n != 0.0
-                } else {
-                    true
-                }
-            }
-            AwkValue::Uninitialized => false,
-        }
-    }
-}
-
-impl Default for AwkState {
-    fn default() -> Self {
-        let mut state = Self {
-            variables: HashMap::new(),
-            fields: Vec::new(),
-            fs: " ".to_string(),
-            fs_regex: None,
-            ofs: " ".to_string(),
-            ors: "\n".to_string(),
-            nr: 0,
-            nf: 0,
-            fnr: 0,
-            csv_mode: false,
-            mem_bytes: 0,
-        };
-        // POSIX SUBSEP: subscript separator for multi-dimensional arrays
-        state.insert_var("SUBSEP".to_string(), AwkValue::String("\x1c".to_string()));
-        state
-    }
-}
-
-/// Parse a CSV line per RFC 4180: handle quoted fields, embedded commas,
-/// and double-quote escaping.
+/// Parse a CSV record per RFC 4180: quoted fields, embedded commas and
+/// doubled quotes.
 fn csv_split_fields(line: &str) -> Vec<String> {
     let mut fields = Vec::new();
     let mut field = String::new();
@@ -275,7 +125,6 @@ fn csv_split_fields(line: &str) -> Vec<String> {
         if in_quotes {
             if c == '"' {
                 if chars.peek() == Some(&'"') {
-                    // Escaped quote
                     field.push('"');
                     chars.next();
                 } else {
@@ -296,612 +145,474 @@ fn csv_split_fields(line: &str) -> Vec<String> {
     fields
 }
 
-/// How a field separator string splits text (POSIX awk "Regular
-/// Expressions as Field Separators").
-///
-/// Decision (#2445): one classification drives record splitting (`FS`) and
-/// `split()`, so both follow the same rules:
-/// - `" "`: runs of blanks/newlines, leading and trailing ones ignored
-/// - `""`: every character is a field (gawk/mawk extension)
-/// - any other single character: that character, literally
-/// - anything longer: an ERE
-enum FieldSep<'a> {
-    Whitespace,
-    Chars,
-    Literal(&'a str),
-    Regex(&'a Regex),
+enum ProgSrc {
+    File(String),
+    Text(String),
 }
 
-impl<'a> FieldSep<'a> {
-    /// Returns `true` when `sep` must be matched as an ERE.
-    fn is_regex(sep: &str) -> bool {
-        sep != " " && sep.chars().nth(1).is_some()
-    }
-
-    /// Classify `sep`; `regex` is its compiled ERE when `is_regex(sep)`.
-    /// An ERE that failed to compile falls back to a literal match.
-    fn classify(sep: &'a str, regex: Option<&'a Regex>) -> Self {
-        match sep {
-            " " => Self::Whitespace,
-            "" => Self::Chars,
-            _ => match regex {
-                Some(re) => Self::Regex(re),
-                None => Self::Literal(sep),
-            },
-        }
-    }
-
-    fn split(&self, text: &str) -> Vec<String> {
-        if text.is_empty() {
-            // An empty record/string has no fields in every mode.
-            return Vec::new();
-        }
-        match self {
-            Self::Whitespace => text.split_whitespace().map(String::from).collect(),
-            Self::Chars => text.chars().map(String::from).collect(),
-            Self::Literal(sep) => text.split(sep).map(String::from).collect(),
-            Self::Regex(re) => split_regex_nonempty(re, text),
-        }
-    }
+struct Opts {
+    fs: Option<String>,
+    assigns: Vec<String>,
+    progs: Vec<ProgSrc>,
+    csv: bool,
+    operands: Vec<String>,
 }
 
-/// Split on non-empty ERE matches. An empty match separates nothing, as in
-/// gawk (`FS = "x*"` does not split between every character).
-fn split_regex_nonempty(re: &Regex, text: &str) -> Vec<String> {
-    let mut fields = Vec::new();
-    let mut last = 0;
-    for m in re.find_iter(text).filter(|m| !m.as_str().is_empty()) {
-        fields.push(text[last..m.start()].to_string());
-        last = m.end();
-    }
-    fields.push(text[last..].to_string());
-    fields
+fn usage_error(msg: Option<String>) -> Box<ExecResult> {
+    let mut err = msg.map(|m| format!("{m}\n")).unwrap_or_default();
+    err.push_str(USAGE);
+    Box::new(exec_err(err, 1))
 }
 
-impl AwkState {
-    /// Set `FS`, compiling it once when it is an ERE.
-    fn set_fs(&mut self, fs: String) {
-        // THREAT[TM-DOS-023]: `build_regex` enforces the shared regex size limits.
-        self.fs_regex = if FieldSep::is_regex(&fs) {
-            crate::builtins::search_common::build_regex(&fs).ok()
-        } else {
-            None
-        };
-        self.fs = fs;
-    }
-
-    /// Delete every element of array `name`.
-    fn clear_array(&mut self, name: &str) {
-        let prefix = format!("{name}[");
-        let mut released = 0;
-        self.variables.retain(|k, v| {
-            let keep = !k.starts_with(&prefix);
-            if !keep {
-                released += var_cost(k, v);
-            }
-            keep
-        });
-        self.mem_bytes -= released;
-    }
-
-    /// Split a line into fields based on current mode (CSV or FS)
-    fn split_fields(&self, line: &str) -> Vec<String> {
-        if self.csv_mode {
-            csv_split_fields(line)
-        } else {
-            FieldSep::classify(&self.fs, self.fs_regex.as_ref()).split(line)
-        }
-    }
-
-    fn set_line(&mut self, line: &str) {
-        self.nr += 1;
-        self.fnr += 1;
-
-        // Split by field separator
-        self.fields = self.split_fields(line);
-
-        self.nf = self.fields.len();
-
-        // Set built-in variables
-        self.insert_var("NR".to_string(), AwkValue::Number(self.nr as f64));
-        self.insert_var("NF".to_string(), AwkValue::Number(self.nf as f64));
-        self.insert_var("FNR".to_string(), AwkValue::Number(self.fnr as f64));
-        self.insert_var("$0".to_string(), AwkValue::String(line.to_string()));
-    }
-
-    fn insert_var(&mut self, key: String, value: AwkValue) {
-        let added = var_cost(&key, &value);
-        if let Some(old) = self.variables.get(&key) {
-            self.mem_bytes -= var_cost(&key, old);
-        }
-        self.mem_bytes += added;
-        self.variables.insert(key, value);
-    }
-
-    fn remove_var(&mut self, key: &str) -> Option<AwkValue> {
-        let old = self.variables.remove(key)?;
-        self.mem_bytes -= var_cost(key, &old);
-        Some(old)
-    }
-
-    fn get_field(&self, n: usize) -> AwkValue {
-        if n == 0 {
-            // $0 is the whole line
-            self.variables
-                .get("$0")
-                .cloned()
-                .unwrap_or(AwkValue::Uninitialized)
-        } else if n <= self.fields.len() {
-            AwkValue::String(self.fields[n - 1].clone())
-        } else {
-            AwkValue::Uninitialized
-        }
-    }
-
-    fn get_variable(&self, name: &str) -> AwkValue {
-        match name {
-            "NR" => AwkValue::Number(self.nr as f64),
-            "NF" => AwkValue::Number(self.nf as f64),
-            "FNR" => AwkValue::Number(self.fnr as f64),
-            "FS" => AwkValue::String(self.fs.clone()),
-            "OFS" => AwkValue::String(self.ofs.clone()),
-            "ORS" => AwkValue::String(self.ors.clone()),
-            _ => self
-                .variables
-                .get(name)
-                .cloned()
-                .unwrap_or(AwkValue::Uninitialized),
-        }
-    }
-
-    fn set_variable(&mut self, name: &str, value: AwkValue) {
-        match name {
-            "FS" => self.set_fs(value.as_string()),
-            "OFS" => self.ofs = value.as_string(),
-            "ORS" => self.ors = value.as_string(),
-            "$0" => {
-                let s = value.as_string();
-                // Re-split fields when $0 is modified
-                self.fields = self.split_fields(&s);
-                self.nf = self.fields.len();
-                self.insert_var("NF".to_string(), AwkValue::Number(self.nf as f64));
-                self.insert_var(name.to_string(), value);
-            }
-            _ => {
-                self.insert_var(name.to_string(), value);
-            }
-        }
-    }
-}
-
-// THREAT[TM-DOS-027]: parser-depth limit lives in
-// `super::limits::AWK_MAX_PARSER_DEPTH` (guards against deeply nested
-// expressions).
-
-/// Preprocess awk program: replace newlines with semicolons inside action blocks.
-/// This makes newlines act as statement separators per POSIX awk spec.
-/// Respects string literals, regex literals, and nested braces. A newline
-/// that POSIX lets a statement continue across (`opt_nls`: after the `)` of
-/// an `if`/`for`/`while` header, after `else`/`do`, `&&`, `||` or `,`)
-/// becomes a space instead.
-fn normalize_awk_newlines(input: &str) -> String {
-    let mut result = String::with_capacity(input.len());
-    let chars: Vec<char> = input.chars().collect();
-    let mut i = 0;
-    let mut brace_depth = 0;
-    // One entry per open `(`: whether it opened an if/for/while header.
-    let mut parens: Vec<bool> = Vec::new();
-    // `result.len()` right after the `)` that closed a control header.
-    let mut header_end: Option<usize> = None;
-    let separator = |result: &str, header_end: Option<usize>| -> char {
-        let t = result.trim_end_matches([' ', '\t']);
-        let ends_with_word = |w: &str| {
-            t.strip_suffix(w).is_some_and(|rest| {
-                !rest
-                    .chars()
-                    .next_back()
-                    .is_some_and(|c| c.is_alphanumeric() || c == '_')
-            })
-        };
-        if header_end == Some(t.len())
-            || ends_with_word("else")
-            || ends_with_word("do")
-            || t.ends_with("&&")
-            || t.ends_with("||")
-            || t.ends_with(',')
-        {
-            ' '
-        } else {
-            ';'
-        }
+fn parse_opts(args: &[String]) -> std::result::Result<Opts, Box<ExecResult>> {
+    let mut o = Opts {
+        fs: None,
+        assigns: Vec::new(),
+        progs: Vec::new(),
+        csv: false,
+        operands: Vec::new(),
     };
-
-    while i < chars.len() {
-        match chars[i] {
-            '{' => {
-                brace_depth += 1;
-                result.push('{');
-                i += 1;
+    let mut i = 0;
+    // Option value: attached (`-F:`, `--file=x`) or the next argument.
+    let value = |i: &mut usize, attached: Option<&str>, opt: &str| {
+        if let Some(v) = attached {
+            return Ok(v.to_string());
+        }
+        *i += 1;
+        args.get(*i).cloned().ok_or_else(|| {
+            usage_error(Some(format!(
+                "awk: option requires an argument -- '{}'",
+                opt.trim_start_matches('-')
+            )))
+        })
+    };
+    while i < args.len() {
+        let arg = args[i].as_str();
+        if arg == "--" {
+            i += 1;
+            break;
+        }
+        if arg == "-" || !arg.starts_with('-') {
+            break;
+        }
+        if IGNORED_FLAGS.contains(&arg) || arg.starts_with("--lint=") || arg.starts_with("-L") {
+            i += 1;
+            continue;
+        }
+        let (name, attached) = if let Some(long) = arg.strip_prefix("--") {
+            match long.split_once('=') {
+                Some((n, v)) => (format!("--{n}"), Some(v)),
+                None => (arg.to_string(), None),
             }
-            '}' => {
-                if brace_depth > 0 {
-                    brace_depth -= 1;
-                }
-                result.push('}');
-                i += 1;
+        } else {
+            let rest = &arg[2..];
+            (arg[..2].to_string(), (!rest.is_empty()).then_some(rest))
+        };
+        match name.as_str() {
+            "-F" | "--field-separator" => {
+                let v = value(&mut i, attached, "F")?;
+                o.fs = Some(if v == "t" { "\t".to_string() } else { v });
             }
-            '(' => {
-                let t = result.trim_end_matches([' ', '\t']);
-                let word_start = t
-                    .rfind(|c: char| !(c.is_alphanumeric() || c == '_'))
-                    .map_or(0, |p| p + 1);
-                parens.push(matches!(&t[word_start..], "if" | "for" | "while"));
-                result.push('(');
-                i += 1;
-            }
-            ')' => {
-                result.push(')');
-                if parens.pop() == Some(true) {
-                    header_end = Some(result.len());
-                }
-                i += 1;
-            }
-            '"' => {
-                // String literal — pass through unchanged
-                result.push('"');
-                i += 1;
-                while i < chars.len() && chars[i] != '"' {
-                    if chars[i] == '\\' && i + 1 < chars.len() {
-                        result.push(chars[i]);
-                        i += 1;
-                    }
-                    result.push(chars[i]);
-                    i += 1;
-                }
-                if i < chars.len() {
-                    result.push(chars[i]); // closing "
-                    i += 1;
-                }
-            }
-            '/' => {
-                // Regex literal — pass through unchanged (both pattern and expression context)
-                result.push('/');
-                i += 1;
-                while i < chars.len() && chars[i] != '/' {
-                    if chars[i] == '\\' && i + 1 < chars.len() {
-                        result.push(chars[i]);
-                        i += 1;
-                    }
-                    result.push(chars[i]);
-                    i += 1;
-                }
-                if i < chars.len() {
-                    result.push(chars[i]); // closing /
-                    i += 1;
-                }
-            }
-            '#' => {
-                // Comment — skip to end of line, replace with newline/semicolon
-                while i < chars.len() && chars[i] != '\n' {
-                    i += 1;
-                }
-                if i < chars.len() {
-                    if brace_depth > 0 {
-                        result.push(separator(&result, header_end));
-                    } else {
-                        result.push('\n');
-                    }
-                    i += 1;
-                }
-            }
-            '\\' if i + 1 < chars.len() && chars[i + 1] == '\n' => {
-                // Backslash-newline: line continuation — join lines
-                i += 2;
-            }
-            '\n' if brace_depth > 0 => {
-                // Inside action block: replace newline with semicolon
-                result.push(separator(&result, header_end));
-                i += 1;
+            "-v" | "--assign" => o.assigns.push(value(&mut i, attached, "v")?),
+            "-f" | "--file" => o.progs.push(ProgSrc::File(value(&mut i, attached, "f")?)),
+            "-e" | "--source" => o.progs.push(ProgSrc::Text(value(&mut i, attached, "e")?)),
+            "-k" | "--csv" if attached.is_none() => o.csv = true,
+            _ if name.starts_with("--") => {
+                return Err(usage_error(Some(format!(
+                    "awk: unrecognized option '{arg}'"
+                ))));
             }
             _ => {
-                result.push(chars[i]);
-                i += 1;
+                let c = arg.chars().nth(1).unwrap_or('-');
+                return Err(usage_error(Some(format!("awk: invalid option -- '{c}'"))));
             }
         }
+        i += 1;
     }
-    result
+    let mut rest = args[i..].iter().cloned();
+    if o.progs.is_empty() {
+        match rest.next() {
+            Some(p) => o.progs.push(ProgSrc::Text(p)),
+            None => return Err(usage_error(None)),
+        }
+    }
+    o.operands = rest.collect();
+    Ok(o)
 }
 
-mod interpreter;
-mod parser;
-use crate::fs::vfs_join;
-use interpreter::{AwkFlow, AwkInterpreter};
-use parser::AwkParser;
+/// gawk's message for a parse error, and the exit status.
+fn format_parse_error(src: &str, sources: &[Source], e: &ParseError) -> (String, i32) {
+    let pos = e.pos.min(src.len());
+    let si = sources.iter().rposition(|s| s.start <= pos).unwrap_or(0);
+    let (name, start) = sources
+        .get(si)
+        .map_or(("cmd. line", 0), |s| (s.name.as_str(), s.start));
+    let line_no = src[start..pos].bytes().filter(|&b| b == b'\n').count() + 1;
+    let loc = format!("{}:{line_no}", interp::truncate(name, 200));
+    match e.kind {
+        ParseErrorKind::Syntax => {
+            let line_start = src[..pos].rfind('\n').map_or(0, |p| p + 1).max(start);
+            let line_end = src[pos..].find('\n').map_or(src.len(), |p| pos + p);
+            let line = interp::truncate(&src[line_start..line_end], 400);
+            let col = src[line_start..pos]
+                .chars()
+                .count()
+                .min(line.chars().count());
+            (
+                format!(
+                    "awk: {loc}: {line}\nawk: {loc}: {}^ {}\n",
+                    " ".repeat(col),
+                    interp::truncate(&e.msg, 300)
+                ),
+                1,
+            )
+        }
+        ParseErrorKind::Error => (format!("awk: {loc}: error: {}\n", e.msg), 1),
+        ParseErrorKind::Fatal => (format!("awk: {loc}: fatal: {}\n", e.msg), 2),
+        ParseErrorKind::Limit => (format!("awk: fatal: {}\n", e.msg), 2),
+    }
+}
+
+fn exec_err(stderr: String, code: i32) -> ExecResult {
+    let mut r = ExecResult::with_code(String::new(), code);
+    r.stderr = stderr.into();
+    r
+}
+
+fn limits_from(ctx: &Context<'_>) -> Limits {
+    let (max_loop, max_total_loop, max_live) = ctx
+        .execution_extension::<ExecutionLimits>()
+        .and_then(|limits| {
+            limits
+                .try_with(|l| {
+                    (
+                        l.max_loop_iterations,
+                        l.max_total_loop_iterations,
+                        l.max_live_intermediate_bytes,
+                    )
+                })
+                .ok()
+        })
+        .unwrap_or_else(|| {
+            let d = ExecutionLimits::default();
+            (
+                d.max_loop_iterations,
+                d.max_total_loop_iterations,
+                d.max_live_intermediate_bytes,
+            )
+        });
+    Limits {
+        max_loop,
+        max_total_loop,
+        max_mem: usize::try_from(max_live).unwrap_or(usize::MAX),
+    }
+}
+
+enum Setup {
+    Done(Box<ExecResult>),
+    Run(Box<Interp>),
+}
 
 impl Awk {
-    /// Process C-style escape sequences in a string (e.g., \t → tab, \n → newline)
-    fn process_escape_sequences(s: &str) -> String {
-        let mut result = String::new();
-        let mut chars = s.chars();
-        while let Some(c) = chars.next() {
-            if c == '\\' {
-                match chars.next() {
-                    Some('t') => result.push('\t'),
-                    Some('n') => result.push('\n'),
-                    Some('r') => result.push('\r'),
-                    Some('\\') => result.push('\\'),
-                    Some('a') => result.push('\x07'),
-                    Some('b') => result.push('\x08'),
-                    Some('f') => result.push('\x0C'),
-                    Some(other) => {
-                        result.push('\\');
-                        result.push(other);
-                    }
-                    None => result.push('\\'),
-                }
-            } else {
-                result.push(c);
-            }
+    /// Parse arguments and the program and build a ready interpreter.
+    async fn setup(&self, ctx: &Context<'_>, bridge: Option<Bridge>) -> Result<Setup> {
+        if let Some(r) = super::check_help_version(ctx.args, USAGE, Some(VERSION)) {
+            return Ok(Setup::Done(Box::new(r)));
         }
-        result
+        let opts = match parse_opts(ctx.args) {
+            Ok(o) => o,
+            Err(r) => return Ok(Setup::Done(r)),
+        };
+
+        // Join all program sources; each keeps its name for messages.
+        let mut program = String::new();
+        let mut sources = Vec::new();
+        for p in &opts.progs {
+            if !program.is_empty() {
+                program.push('\n');
+            }
+            let (name, text) = match p {
+                ProgSrc::Text(t) => ("cmd. line".to_string(), t.clone()),
+                ProgSrc::File(f) => {
+                    let path = if f.starts_with('/') {
+                        std::path::PathBuf::from(f)
+                    } else {
+                        vfs_join(ctx.cwd, f)
+                    };
+                    match ctx.fs.read_file(&path).await {
+                        Ok(bytes) => {
+                            ctx.consume_budget_input(bytes.len())?;
+                            (f.clone(), String::from_utf8_lossy(&bytes).into_owned())
+                        }
+                        Err(e) => {
+                            return Ok(Setup::Done(Box::new(exec_err(
+                                format!(
+                                    "awk: fatal: can't open source file `{}' for reading: {}\n",
+                                    interp::truncate(f, 200),
+                                    crate::error::io_error_reason(&e)
+                                ),
+                                2,
+                            ))));
+                        }
+                    }
+                }
+            };
+            sources.push(Source {
+                name,
+                start: program.len(),
+            });
+            program.push_str(&text);
+        }
+
+        let prog = match Parser::new(&program, &sources).parse_program() {
+            Ok(p) => p,
+            Err(e) => {
+                let (msg, code) = format_parse_error(&program, &sources, &e);
+                return Ok(Setup::Done(Box::new(exec_err(msg, code))));
+            }
+        };
+
+        let mut env: Vec<(String, String)> = ctx
+            .env
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        env.sort();
+        let host = Host {
+            fs: ctx.fs.clone(),
+            cwd: ctx.cwd.clone(),
+            env,
+            stdin: ctx.stdin.map(|s| s.text_lossy().into_owned()),
+            budget: ctx
+                .execution_budget()
+                .and_then(|b| b.try_with(Clone::clone).ok()),
+            clock: self.clock,
+            bridge,
+        };
+        let mut interp = match Interp::new(Arc::new(prog), Io::new(host), limits_from(ctx)) {
+            Ok(i) => Box::new(i),
+            Err(msg) => {
+                return Ok(Setup::Done(Box::new(exec_err(
+                    format!("awk: fatal: {msg}\n"),
+                    2,
+                ))));
+            }
+        };
+
+        if let Err(code) = Self::init_globals(&mut interp, &opts) {
+            return Ok(Setup::Done(Box::new(Self::result(&mut interp, code)?)));
+        }
+        Ok(Setup::Run(interp))
+    }
+
+    /// ENVIRON, ARGV, ARGC, PROCINFO, `-F`, `--csv` and `-v` assignments.
+    fn init_globals(interp: &mut Interp, opts: &Opts) -> std::result::Result<(), i32> {
+        let fail = |interp: &mut Interp| if interp.fatal { 2 } else { 1 };
+        let env = interp.io.host.env.clone();
+        let Ok(arr) = interp.array_of_var(VarRef::Global(special::ENVIRON)) else {
+            return Err(fail(interp));
+        };
+        for (k, v) in env {
+            interp.elem_store(arr, k, interp::Elem::Val(Value::from_input(v)));
+        }
+        let Ok(arr) = interp.array_of_var(VarRef::Global(special::ARGV)) else {
+            return Err(fail(interp));
+        };
+        interp.elem_store(arr, "0".into(), interp::Elem::Val(Value::Str("awk".into())));
+        for (i, a) in opts.operands.iter().enumerate() {
+            interp.elem_store(
+                arr,
+                (i + 1).to_string(),
+                interp::Elem::Val(Value::from_input(a.clone())),
+            );
+        }
+        let argc = (opts.operands.len() + 1) as f64;
+        let Ok(arr) = interp.array_of_var(VarRef::Global(special::PROCINFO)) else {
+            return Err(fail(interp));
+        };
+        for (k, v) in [
+            ("version", "5.2.1"),
+            ("strftime", "%a %b %e %H:%M:%S %Z %Y"),
+            ("FS", "FS"),
+            ("platform", "posix"),
+        ] {
+            interp.elem_store(arr, k.into(), interp::Elem::Val(Value::Str(v.into())));
+        }
+        let set = |interp: &mut Interp, slot: u32, v: Value| {
+            interp
+                .set_var(VarRef::Global(slot), v)
+                .map_err(|_| fail(interp))
+        };
+        set(interp, special::ARGC, Value::Num(argc))?;
+        if opts.csv {
+            interp.csv = true;
+            set(interp, special::FS, Value::Str(",".into()))?;
+        }
+        if let Some(fs) = &opts.fs {
+            set(interp, special::FS, Value::Str(lexer::unescape(fs)))?;
+        }
+        for a in &opts.assigns {
+            let Some((name, val)) = io::cmdline_assignment(a) else {
+                let msg = format!(
+                    "`{}' argument to `-v' not in `var=value' form",
+                    interp::truncate(a, 200)
+                );
+                interp.fatal(&msg);
+                return Err(2);
+            };
+            let v = Value::from_input(lexer::unescape(val));
+            interp.assign_by_name(name, v).map_err(|_| fail(interp))?;
+        }
+        Ok(())
+    }
+
+    fn result(interp: &mut Interp, code: i32) -> Result<ExecResult> {
+        if let Some(e) = interp.budget_error.take() {
+            return Err(e.into());
+        }
+        let mut r = ExecResult::with_code(std::mem::take(&mut interp.io.stdout), code);
+        r.stderr = std::mem::take(&mut interp.io.stderr).into();
+        Ok(r)
+    }
+
+    /// Whether the program may run shell commands.
+    fn may_run_commands(args: &[String]) -> bool {
+        args.iter().any(|a| {
+            a == "-f"
+                || a.starts_with("--file")
+                || (a.starts_with("-f") && !a.starts_with("-F"))
+                || a.contains("system")
+                || a.replace("||", "").contains('|')
+        })
     }
 }
 
 #[async_trait]
 impl Builtin for Awk {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        if let Some(r) = super::check_help_version(
-            ctx.args,
-            "Usage: awk [OPTION]... 'program' [FILE]...\nPattern scanning and processing language.\n\n  -F SEP\t\tuse SEP as field separator\n  -v var=val\tassign variable before execution\n  -f progfile\tread program from file\n  --csv, -k\tCSV mode (set field separator to comma)\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
-            Some("awk (bashkit) 0.1"),
-        ) {
-            return Ok(r);
-        }
-        let mut program_str = String::new();
-        let mut files: Vec<String> = Vec::new();
-        let mut field_sep = " ".to_string();
-        let mut pre_vars: Vec<(String, String)> = Vec::new();
-        let mut csv_mode = false;
-        let mut i = 0;
-
-        while i < ctx.args.len() {
-            let arg = &ctx.args[i];
-            if arg == "--csv" || arg == "-k" {
-                csv_mode = true;
-                field_sep = ",".to_string();
-            } else if arg == "-F" {
-                i += 1;
-                if i < ctx.args.len() {
-                    field_sep = ctx.args[i].clone();
-                }
-            } else if let Some(sep) = arg.strip_prefix("-F") {
-                field_sep = sep.to_string();
-            } else if arg == "-v" {
-                // Variable assignment: -v var=value
-                i += 1;
-                if i < ctx.args.len()
-                    && let Some(eq_pos) = ctx.args[i].find('=')
-                {
-                    let name = ctx.args[i][..eq_pos].to_string();
-                    let mut value = ctx.args[i][eq_pos + 1..].to_string();
-                    // Strip surrounding quotes if present (shell may pass them)
-                    if (value.starts_with('"') && value.ends_with('"'))
-                        || (value.starts_with('\'') && value.ends_with('\''))
-                    {
-                        value = value[1..value.len() - 1].to_string();
-                    }
-                    pre_vars.push((name, value));
-                }
-            } else if arg == "-f" {
-                // Read program from file
-                i += 1;
-                if i < ctx.args.len() {
-                    let path = if ctx.args[i].starts_with('/') {
-                        std::path::PathBuf::from(&ctx.args[i])
-                    } else {
-                        vfs_join(ctx.cwd, &ctx.args[i])
-                    };
-                    program_str = match read_text_file(&*ctx.fs, &path, "awk").await {
-                        Ok(t) => t,
-                        Err(e) => return Ok(e),
-                    };
-                    ctx.consume_budget_input(program_str.len())?;
-                }
-            } else if arg.starts_with('-') {
-                // Unknown option - ignore
-            } else if program_str.is_empty() {
-                program_str = arg.clone();
-            } else {
-                files.push(arg.clone());
-            }
-            i += 1;
-        }
-
-        if program_str.is_empty() {
-            return Err(Error::Execution("awk: no program given".to_string()));
-        }
-
-        let program_str = normalize_awk_newlines(&program_str);
-        let mut parser = AwkParser::new(&program_str);
-        let program = parser.parse()?;
-
-        let mut interp = AwkInterpreter::new();
-        interp.execution_budget = ctx
-            .execution_budget()
-            .and_then(|budget| budget.try_with(Clone::clone).ok());
-        let (max_loop, max_total_loop, max_live) = ctx
-            .execution_extension::<ExecutionLimits>()
-            .and_then(|limits| {
-                limits
-                    .try_with(|l| {
-                        (
-                            l.max_loop_iterations,
-                            l.max_total_loop_iterations,
-                            l.max_live_intermediate_bytes,
-                        )
-                    })
-                    .ok()
-            })
-            .unwrap_or_else(|| {
-                let d = ExecutionLimits::default();
-                (
-                    d.max_loop_iterations,
-                    d.max_total_loop_iterations,
-                    d.max_live_intermediate_bytes,
-                )
-            });
-        interp.max_loop_iterations = max_loop;
-        interp.max_total_loop_iterations = max_total_loop;
-        interp.max_state_bytes = usize::try_from(max_live).unwrap_or(usize::MAX);
-        interp.functions = program.functions.clone();
-        interp
-            .state
-            .set_fs(Self::process_escape_sequences(&field_sep));
-        interp.fs = Some(ctx.fs.clone());
-        interp.cwd = ctx.cwd.clone();
-        if csv_mode {
-            interp.state.csv_mode = true;
-            interp.state.ofs = ",".to_string();
-        }
-
-        // Set pre-assigned variables (-v)
-        for (name, value) in &pre_vars {
-            let awk_val = if let Ok(n) = value.parse::<f64>() {
-                AwkValue::Number(n)
-            } else {
-                AwkValue::String(value.clone())
-            };
-            interp.state.set_variable(name, awk_val);
-        }
-
-        // Run BEGIN actions
-        let mut exit_code: Option<i32> = None;
-        for action in &program.begin_actions {
-            if let AwkFlow::Exit(code) = interp.exec_action(action) {
-                exit_code = code;
-                // Run END actions even after exit
-                for end_action in &program.end_actions {
-                    if let AwkFlow::Exit(_) = interp.exec_action(end_action) {
-                        break;
-                    }
-                }
-                Self::flush_file_outputs(&interp, &ctx).await?;
-                return Ok(Self::finish(interp, exit_code));
+        match self.setup(&ctx, None).await? {
+            Setup::Done(r) => Ok(*r),
+            Setup::Run(mut interp) => {
+                let code = interp.run().await;
+                Self::result(&mut interp, code)
             }
         }
-        if interp.is_fatal() {
-            // A limit hit mid-action in BEGIN: no input, no END.
-            return Ok(Self::finish(interp, exit_code));
+    }
+
+    async fn execution_plan(&self, ctx: &Context<'_>) -> Result<Option<ExecutionPlan>> {
+        if !Self::may_run_commands(ctx.args) {
+            return Ok(None);
         }
-
-        // Process input
-        let inputs: Vec<String> = if files.is_empty() {
-            vec![ctx.stdin.map(ToString::to_string).unwrap_or_default()]
-        } else {
-            let mut inputs = Vec::new();
-            for file in &files {
-                let path = if file.starts_with('/') {
-                    std::path::PathBuf::from(file)
-                } else {
-                    vfs_join(ctx.cwd, file)
-                };
-
-                let text = match read_text_file(&*ctx.fs, &path, "awk").await {
-                    Ok(t) => t,
-                    Err(e) => return Ok(e),
-                };
-                ctx.consume_budget_input(text.len())?;
-                inputs.push(text);
+        let bridge: Bridge = Arc::new(Mutex::new(BridgeState::default()));
+        let mut interp = match self.setup(ctx, Some(bridge.clone())).await? {
+            Setup::Done(r) => {
+                return Ok(Some(ExecutionPlan::Driver(Box::new(AwkRun::done(
+                    bridge, *r,
+                )))));
             }
-            inputs
+            Setup::Run(i) => i,
         };
-
-        'files: for (file_idx, input) in inputs.iter().enumerate() {
-            interp.state.fnr = 0;
-            // Set FILENAME to current file path, or empty for stdin
-            if !files.is_empty() {
-                interp.state.insert_var(
-                    "FILENAME".to_string(),
-                    AwkValue::String(files[file_idx].clone()),
-                );
-            } else {
-                interp
-                    .state
-                    .insert_var("FILENAME".to_string(), AwkValue::String(String::new()));
-            }
-            // Index-based iteration so getline can advance the index
-            interp.input_lines = input.lines().map(|l| l.to_string()).collect();
-            interp.line_index = 0;
-
-            while interp.line_index < interp.input_lines.len() {
-                ctx.consume_budget_work(1)?;
-                let line = interp.input_lines[interp.line_index].clone();
-                interp.state.set_line(&line);
-
-                for (rule_idx, rule) in program.main_rules.iter().enumerate() {
-                    // Check pattern (with range state tracking)
-                    let matches = match &rule.pattern {
-                        Some(pattern) => interp.matches_pattern_with_index(pattern, rule_idx),
-                        None => true,
-                    };
-
-                    if matches {
-                        let mut next_record = false;
-                        for action in &rule.actions {
-                            match interp.exec_action(action) {
-                                AwkFlow::Continue => {}
-                                AwkFlow::Next => {
-                                    next_record = true;
-                                    break;
-                                }
-                                AwkFlow::Exit(code) => {
-                                    exit_code = code;
-                                    break 'files;
-                                }
-                                _ => {}
-                            }
-                        }
-                        if next_record {
-                            break;
-                        }
-                    }
-                }
-                interp.line_index += 1;
-            }
-        }
-
-        // Run END actions (awk runs END even after exit in main body)
-        for action in &program.end_actions {
-            if let AwkFlow::Exit(code) = interp.exec_action(action) {
-                if exit_code.is_none() {
-                    exit_code = code;
-                }
-                break;
-            }
-        }
-
-        Self::flush_file_outputs(&interp, &ctx).await?;
-        Ok(Self::finish(interp, exit_code))
+        let fut = async move {
+            let code = interp.run().await;
+            let emitted = interp.io.emitted;
+            Self::result(&mut interp, code).map(|r| (r, emitted))
+        };
+        Ok(Some(ExecutionPlan::Driver(Box::new(AwkRun {
+            fut: Some(Box::pin(fut)),
+            bridge,
+            queued: None,
+        }))))
     }
 }
 
-impl Awk {
-    /// A fatal limit error exits 2 whatever `exit` code the program chose,
-    /// even when it fired inside an expression and the action ran on.
-    fn finish(interp: AwkInterpreter, exit_code: Option<i32>) -> ExecResult {
-        let code = if interp.is_fatal() {
-            2
-        } else {
-            exit_code.unwrap_or(0)
-        };
-        let mut result = ExecResult::with_code(interp.output, code);
-        result.stderr = interp.stderr_output.into();
-        result
-    }
+type RunFuture = Pin<Box<dyn Future<Output = Result<(ExecResult, (usize, usize))>> + Send>>;
 
-    /// AWK redirection streams through VFS as output is produced.
-    async fn flush_file_outputs(_interp: &AwkInterpreter, _ctx: &Context<'_>) -> Result<()> {
-        Ok(())
+/// Plan driver: runs the awk program and fulfils its command requests.
+struct AwkRun {
+    fut: Option<RunFuture>,
+    bridge: Bridge,
+    queued: Option<PlanStep>,
+}
+
+impl AwkRun {
+    fn done(bridge: Bridge, r: ExecResult) -> Self {
+        AwkRun {
+            fut: None,
+            bridge,
+            queued: Some(PlanStep::Done(r)),
+        }
+    }
+}
+
+#[async_trait]
+impl PlanDriver for AwkRun {
+    async fn next(&mut self, last: Option<ExecResult>) -> Result<PlanStep> {
+        if let Some(r) = last {
+            if let Ok(mut s) = self.bridge.lock() {
+                s.response = Some(r);
+            }
+        } else if let Some(step) = self.queued.take() {
+            return Ok(step);
+        }
+        let Some(fut) = self.fut.as_mut() else {
+            return Ok(PlanStep::Done(ExecResult::default()));
+        };
+        let bridge = self.bridge.clone();
+        // Ready(Some) when awk finished, Ready(None) when it waits on a
+        // command; real I/O pending inside awk keeps us pending.
+        let outcome = std::future::poll_fn(|cx| match fut.as_mut().poll(cx) {
+            Poll::Ready(r) => Poll::Ready(Some(r)),
+            Poll::Pending => {
+                if bridge.lock().is_ok_and(|s| s.request.is_some()) {
+                    Poll::Ready(None)
+                } else {
+                    Poll::Pending
+                }
+            }
+        })
+        .await;
+        match outcome {
+            Some(res) => {
+                self.fut = None;
+                let (r, emitted) = res?;
+                // Stream what awk printed since the last command.
+                let out = r.stdout.as_bytes().get(emitted.0..).unwrap_or_default();
+                let err = r.stderr.as_bytes().get(emitted.1..).unwrap_or_default();
+                if emitted == (0, 0) || (out.is_empty() && err.is_empty()) {
+                    return Ok(PlanStep::Done(r));
+                }
+                let step = PlanStep::Emit {
+                    stdout: StreamData::from(out.to_vec()),
+                    stderr: StreamData::from(err.to_vec()),
+                };
+                self.queued = Some(PlanStep::Done(r));
+                Ok(step)
+            }
+            None => {
+                let Some(req) = self.bridge.lock().ok().and_then(|mut s| s.request.take()) else {
+                    return Ok(PlanStep::Done(ExecResult::default()));
+                };
+                let command = SubCommand {
+                    name: "sh".to_string(),
+                    args: vec!["-c".to_string(), req.command],
+                    stdin: req.stdin.map(StreamData::from),
+                    assignments: Vec::new(),
+                };
+                let run = if req.capture {
+                    PlanStep::Capture { command, cwd: None }
+                } else {
+                    PlanStep::Run { command, cwd: None }
+                };
+                if req.emit_stdout.is_empty() && req.emit_stderr.is_empty() {
+                    return Ok(run);
+                }
+                self.queued = Some(run);
+                Ok(PlanStep::Emit {
+                    stdout: StreamData::from(req.emit_stdout),
+                    stderr: StreamData::from(req.emit_stderr),
+                })
+            }
+        }
     }
 }
 

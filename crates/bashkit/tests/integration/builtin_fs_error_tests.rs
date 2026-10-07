@@ -26,7 +26,7 @@ const READERS: &[(&str, &str, i32)] = &[
     ("uniq", "uniq /nope", 1),
     ("cut", "cut -c1 /nope", 1),
     ("nl", "nl /nope", 1),
-    ("awk", "awk '{print}' /nope", 1),
+    ("awk", "awk '{print}' /nope", 2),
     ("paste", "paste /nope", 1),
     ("rev", "rev /nope", 1),
     ("tac", "tac /nope", 1),

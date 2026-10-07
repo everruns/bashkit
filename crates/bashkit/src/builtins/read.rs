@@ -251,7 +251,6 @@ impl Builtin for Read {
                 let mut fields: Vec<ReadField<'_>> = Vec::new();
                 let mut field_start = 0usize;
                 let mut i = 0usize;
-                let mut last_delim_was_non_ws = false;
 
                 while i < line.len() {
                     let mut iter = line[i..].char_indices();
@@ -259,7 +258,6 @@ impl Builtin for Read {
                     let ch_len = ch.len_utf8();
                     if !ifs.contains(ch) {
                         i += ch_len;
-                        last_delim_was_non_ws = false;
                         continue;
                     }
 
@@ -279,7 +277,6 @@ impl Builtin for Read {
                             }
                         }
                         field_start = i;
-                        last_delim_was_non_ws = true;
                     } else {
                         let pushed_field = field_start != i;
                         if pushed_field {
@@ -319,11 +316,12 @@ impl Builtin for Read {
                         }
 
                         field_start = i;
-                        last_delim_was_non_ws = false;
                     }
                 }
 
-                if field_start < line.len() || last_delim_was_non_ws {
+                // A single trailing delimiter ends the last field; it does
+                // not start an empty one (`a,b,` is two fields).
+                if field_start < line.len() {
                     fields.push(ReadField {
                         text: &line[field_start..],
                         start: field_start,
@@ -374,7 +372,11 @@ impl Builtin for Read {
             if is_internal_variable(var_name) {
                 continue;
             }
-            let value = if i == var_names.len() - 1 {
+            let value = if i == var_names.len() - 1 && words.len() == i + 1 {
+                // Only one field left: it is the value, without the
+                // delimiter that ended it (`IFS=, read x y <<< a,b,` gives `b`).
+                unprotect(words[i].text)
+            } else if i == var_names.len() - 1 {
                 // Bash gives the final variable the unsplit remaining input,
                 // then strips trailing IFS whitespace. Preserve original
                 // separators without keeping whitespace Bash trims.

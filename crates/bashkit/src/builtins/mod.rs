@@ -969,6 +969,100 @@ impl StdinStream {
     }
 }
 
+/// Bytes a streaming filter handles per step (one pipe's capacity).
+pub(crate) const STREAM_CHUNK_BYTES: usize = 4 * 1024;
+
+/// Input of a streaming filter cut into pieces the filter can handle one at
+/// a time: the data buffered before the stage started, then the stdin pipe
+/// as it fills (or one file's bytes). Each piece ends where `cut` says (a
+/// record end, a UTF-8 boundary) and is at most about
+/// [`STREAM_CHUNK_BYTES`] unless one record is longer; the tail comes at
+/// end of input.
+pub(crate) struct InputChunks<'c> {
+    buf: Vec<u8>,
+    pos: usize,
+    buffered: Option<&'c [u8]>,
+    input: Option<StdinStream>,
+    eof: bool,
+}
+
+impl<'c> InputChunks<'c> {
+    /// Stdin of this builtin: `ctx.stdin`, then the streaming pipe if any.
+    pub(crate) fn stdin(ctx: &Context<'c>) -> Self {
+        Self {
+            buf: Vec::new(),
+            pos: 0,
+            buffered: ctx.stdin.map(|s| s.as_bytes()),
+            input: ctx.stdin_stream(),
+            eof: false,
+        }
+    }
+
+    /// Input that is already all in memory (a file's contents).
+    pub(crate) fn bytes(bytes: Vec<u8>) -> Self {
+        Self {
+            buf: bytes,
+            pos: 0,
+            buffered: None,
+            input: None,
+            eof: true,
+        }
+    }
+
+    /// Next piece, or `None` at end of input. `cut(data)` returns how many
+    /// leading bytes of `data` can be handled now (0 for "need more").
+    pub(crate) async fn next(&mut self, cut: impl Fn(&[u8]) -> usize) -> Option<Vec<u8>> {
+        loop {
+            let rest = &self.buf[self.pos..];
+            let window = rest.len().min(STREAM_CHUNK_BYTES);
+            let mut n = cut(&rest[..window]);
+            if n == 0 && rest.len() > window {
+                n = cut(rest);
+            }
+            if n == 0 && self.eof {
+                n = rest.len();
+            }
+            if n > 0 {
+                let piece = rest[..n].to_vec();
+                self.pos += n;
+                return Some(piece);
+            }
+            if self.eof {
+                return None;
+            }
+            self.buf.drain(..self.pos);
+            self.pos = 0;
+            if let Some(buffered) = self.buffered.take() {
+                self.buf.extend_from_slice(buffered);
+                continue;
+            }
+            let more = match &self.input {
+                Some(input) => input.read().await,
+                None => Vec::new(),
+            };
+            if more.is_empty() {
+                self.eof = true;
+            } else {
+                self.buf.extend_from_slice(&more);
+            }
+        }
+    }
+}
+
+/// [`InputChunks`] cut after the last `term`-terminated record.
+pub(crate) fn cut_records(term: u8) -> impl Fn(&[u8]) -> usize {
+    move |data| data.iter().rposition(|&b| b == term).map_or(0, |p| p + 1)
+}
+
+/// [`InputChunks`] cut at the last complete UTF-8 character; invalid bytes
+/// are passed through so the filter can treat them as bytes.
+pub(crate) fn cut_utf8(data: &[u8]) -> usize {
+    match std::str::from_utf8(data) {
+        Err(e) if e.error_len().is_none() => e.valid_up_to(),
+        _ => data.len(),
+    }
+}
+
 /// Stdout pipe of a streaming pipeline stage, see [`Context::stdout_stream`].
 pub(crate) struct StdoutStream(std::sync::Arc<crate::interpreter::pipe::Pipe>);
 
@@ -1081,6 +1175,20 @@ impl<'a> Context<'a> {
             .as_ref()
             .and_then(|shell| shell.stdin_pipe.clone())
             .map(StdinStream)
+    }
+
+    /// All of stdin, including what is still in a streaming stdin pipe, for
+    /// a filter stage that needs its whole input before it can write.
+    pub(crate) async fn stdin_to_end(&self) -> Option<crate::StreamData> {
+        let Some(input) = self.stdin_stream() else {
+            return self.stdin.cloned();
+        };
+        let mut all = self
+            .stdin
+            .map(|s| s.as_bytes().to_vec())
+            .unwrap_or_default();
+        all.extend_from_slice(&input.read_to_end().await);
+        Some(all.into())
     }
 
     /// Remaining wall-clock budget of the current `exec*` call, if limited.

@@ -528,7 +528,7 @@ printf 'a\n' | awk 'BEGIN {a[1]="x"; a[2]="y"} {for (k in a) print k, a[k]}'
 ### end
 
 ### awk_for_in_string_keys
-# for-in with string keys sorts lexically
+# for-in visits keys in gawk hash order (single bytes land in byte order)
 printf 'a\n' | awk 'BEGIN {a["b"]="2"; a["a"]="1"; a["c"]="3"} {for (k in a) print k, a[k]}'
 ### expect
 a 1
@@ -744,4 +744,54 @@ echo '5' | awk '{
 }'
 ### expect
 yes
+### end
+
+### awk_system_runs_in_shell
+# system() runs the command in the sandbox shell, output stays in order
+awk 'BEGIN { print "before"; r = system("echo inside; exit 3"); print "after", r }'
+### expect
+before
+inside
+after 3
+### end
+
+### awk_print_to_pipe
+# print | cmd feeds the command; close() runs it and returns its status
+printf 'b\na\nc\n' | awk '{ print | "sort" } END { r = close("sort"); print "done", r }'
+### expect
+a
+b
+c
+done 0
+### end
+
+### awk_cmd_getline_loop
+# cmd | getline reads the command's output line by line
+awk 'BEGIN { while (("printf \"1\\n2\\n3\\n\"" | getline n) > 0) s += n; close("x"); print s, NR }'
+### expect
+6 0
+### end
+
+### awk_gawk_syntax_error
+# Syntax errors use gawk's message with a caret, exit 1
+awk 'BEGIN { print ( }' 2>&1; echo "rc=$?"
+### expect
+awk: cmd. line:1: BEGIN { print ( }
+awk: cmd. line:1:                 ^ syntax error
+rc=1
+### end
+
+### awk_substr_gawk_edges
+# gawk: start below 1 keeps the length, fractions truncate
+awk 'BEGIN { s = "hello world"; print substr(s, 0, 3) "|" substr(s, -1, 3) "|" substr(s, 1.5, 2.3) }'
+### expect
+hel|hel|he
+### end
+
+### awk_missing_file_is_fatal
+# A missing input file is a gawk fatal error (exit 2)
+awk '{ print }' /nope 2>&1; echo "rc=$?"
+### expect
+awk: fatal: cannot open file `/nope' for reading: No such file or directory
+rc=2
 ### end

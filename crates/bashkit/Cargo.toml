@@ -34,6 +34,7 @@ serde_yaml_ng = { workspace = true, optional = true }
 
 # Regex
 regex = { workspace = true }
+regex-automata = { workspace = true }
 fancy-regex = { workspace = true }
 
 # Date/Time
