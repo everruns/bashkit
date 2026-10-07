@@ -1876,7 +1876,9 @@ impl<'a> Parser<'a> {
                     if !expr.is_empty() && !expr.ends_with(' ') && !expr.ends_with('(') {
                         expr.push(' ');
                     }
-                    expr.push_str(w);
+                    // Quotes are removed inside `((...))`; drop the lexer's
+                    // quote-boundary markers so `c["x y"]` keys stay clean.
+                    expr.extend(w.chars().filter(|&c| c != '\u{1e}' && c != '\u{1f}'));
                     self.advance();
                 }
                 Some(tokens::Token::Semicolon) => {

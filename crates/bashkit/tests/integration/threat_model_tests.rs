@@ -3894,6 +3894,27 @@ printf "%s %s\n" "${#arr[@]}" "${#extra[@]}"
         assert_eq!(result.stdout.trim(), "3 0");
     }
 
+    /// TM-DOS-060: arithmetic writes to array elements are charged to the budget.
+    #[tokio::test]
+    async fn tm_dos_060_arithmetic_array_writes_respect_budget() {
+        let mem = MemoryLimits::new().max_array_entries(3);
+        let mut bash = Bash::builder()
+            .memory_limits(mem)
+            .session_limits(SessionLimits::unlimited())
+            .build();
+
+        let script = r#"
+declare -A c
+for ((i = 0; i < 10; i++)); do ((c[k$i]+=1)); done
+for ((i = 0; i < 10; i++)); do ((a[i]++)); done
+printf "%s %s\n" "${#c[@]}" "${#a[@]}"
+"#;
+        let result = bash.exec(script).await.unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "3 0");
+    }
+
     /// TM-DOS-060: saved local array shadows must stay charged to array budget.
     #[tokio::test]
     async fn tm_dos_060_local_array_shadow_preserves_array_budget() {

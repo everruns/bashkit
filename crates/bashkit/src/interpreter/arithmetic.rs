@@ -37,26 +37,18 @@ impl Interpreter {
         // Handle pre-increment/pre-decrement: ++var, --var
         if let Some(var_name) = expr.strip_prefix("++") {
             let var_name = var_name.trim();
-            if is_valid_var_name(var_name) {
+            if is_arith_lvalue(var_name) {
                 // THREAT[TM-DOS-043]: Bash integer side effects wrap at i64 bounds.
-                let val = self
-                    .expand_variable(var_name)
-                    .parse::<i64>()
-                    .unwrap_or(0)
-                    .wrapping_add(1);
-                self.set_variable(var_name.to_string(), val.to_string());
+                let val = self.arith_lvalue_value(var_name).wrapping_add(1);
+                self.set_arith_lvalue(var_name, val.to_string());
                 return val;
             }
         }
         if let Some(var_name) = expr.strip_prefix("--") {
             let var_name = var_name.trim();
-            if is_valid_var_name(var_name) {
-                let val = self
-                    .expand_variable(var_name)
-                    .parse::<i64>()
-                    .unwrap_or(0)
-                    .wrapping_sub(1);
-                self.set_variable(var_name.to_string(), val.to_string());
+            if is_arith_lvalue(var_name) {
+                let val = self.arith_lvalue_value(var_name).wrapping_sub(1);
+                self.set_arith_lvalue(var_name, val.to_string());
                 return val;
             }
         }
@@ -64,17 +56,17 @@ impl Interpreter {
         // Handle post-increment/post-decrement: var++, var--
         if let Some(var_name) = expr.strip_suffix("++") {
             let var_name = var_name.trim();
-            if is_valid_var_name(var_name) {
-                let old_val = self.expand_variable(var_name).parse::<i64>().unwrap_or(0);
-                self.set_variable(var_name.to_string(), old_val.wrapping_add(1).to_string());
+            if is_arith_lvalue(var_name) {
+                let old_val = self.arith_lvalue_value(var_name);
+                self.set_arith_lvalue(var_name, old_val.wrapping_add(1).to_string());
                 return old_val;
             }
         }
         if let Some(var_name) = expr.strip_suffix("--") {
             let var_name = var_name.trim();
-            if is_valid_var_name(var_name) {
-                let old_val = self.expand_variable(var_name).parse::<i64>().unwrap_or(0);
-                self.set_variable(var_name.to_string(), old_val.wrapping_sub(1).to_string());
+            if is_arith_lvalue(var_name) {
+                let old_val = self.arith_lvalue_value(var_name);
+                self.set_arith_lvalue(var_name, old_val.wrapping_sub(1).to_string());
                 return old_val;
             }
         }
@@ -113,13 +105,13 @@ impl Interpreter {
                     ("", "")
                 };
 
-                if is_valid_var_name(var_name) {
+                if is_arith_lvalue(var_name) {
                     let rhs = &expr[eq_pos + 1..];
                     let rhs_val = self.evaluate_arithmetic(rhs);
                     let value = if op.is_empty() {
                         rhs_val
                     } else {
-                        let lhs_val = self.expand_variable(var_name).parse::<i64>().unwrap_or(0);
+                        let lhs_val = self.arith_lvalue_value(var_name);
                         // THREAT[TM-DOS-043]: wrapping to prevent overflow panic
                         match op {
                             "+" => lhs_val.wrapping_add(rhs_val),
@@ -147,13 +139,84 @@ impl Interpreter {
                             _ => rhs_val,
                         }
                     };
-                    self.set_variable(var_name.to_string(), value.to_string());
+                    self.set_arith_lvalue(var_name, value.to_string());
                     return value;
                 }
             }
         }
 
         self.evaluate_arithmetic(expr)
+    }
+
+    /// Current integer value of an arithmetic lvalue (`name` or `name[sub]`).
+    pub(super) fn arith_lvalue_value(&self, lvalue: &str) -> i64 {
+        let Some(bracket) = lvalue.find('[') else {
+            return self.evaluate_arithmetic(lvalue);
+        };
+        let resolved = self.resolve_nameref(&lvalue[..bracket]);
+        let value = match self.scoped.assoc_arrays.get(resolved) {
+            Some(arr) => {
+                let key = self.arith_assoc_key(&lvalue[bracket + 1..lvalue.len() - 1]);
+                arr.get(&key).cloned().unwrap_or_default()
+            }
+            None => self.expand_name_or_array_element(&unquote_arith_subscript(lvalue)),
+        };
+        let value = value.trim();
+        value
+            .parse::<i64>()
+            .unwrap_or_else(|_| self.evaluate_arithmetic(value))
+    }
+
+    /// Store an arithmetic result into `name` or `name[sub]`. Array elements
+    /// go through the same budgeted writer as `${a[i]:=v}`.
+    pub(super) fn set_arith_lvalue(&mut self, lvalue: &str, value: String) {
+        if let Some(bracket) = lvalue.find('[') {
+            let resolved = self.resolve_nameref(&lvalue[..bracket]).to_string();
+            if self.scoped.assoc_arrays.contains_key(&resolved) {
+                let key = self.arith_assoc_key(&lvalue[bracket + 1..lvalue.len() - 1]);
+                self.set_assoc_element_checked(resolved, key, value);
+            } else {
+                let target = unquote_arith_subscript(lvalue);
+                self.set_parameter_expansion_target(&target, value);
+            }
+        } else {
+            self.set_variable(lvalue.to_string(), value);
+        }
+    }
+
+    /// Associative key inside `((...))`: quotes dropped, `$name`/`${name}`
+    /// expanded once (`c[k$i]` -> `k0`), everything else literal.
+    fn arith_assoc_key(&self, raw: &str) -> String {
+        let raw = strip_subscript_quotes(raw);
+        if !raw.contains('$') {
+            return raw.to_string();
+        }
+        let mut out = String::new();
+        let mut rest = raw;
+        while let Some(pos) = rest.find('$') {
+            out.push_str(&rest[..pos]);
+            let after = &rest[pos + 1..];
+            let (name, consumed) = if let Some(inner) = after.strip_prefix('{') {
+                match inner.find('}') {
+                    Some(end) => (&inner[..end], end + 2),
+                    None => ("", 0),
+                }
+            } else {
+                let end = after
+                    .find(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+                    .unwrap_or(after.len());
+                (&after[..end], end)
+            };
+            if name.is_empty() {
+                out.push('$');
+                rest = after;
+            } else {
+                out.push_str(&self.expand_variable(name));
+                rest = &after[consumed..];
+            }
+        }
+        out.push_str(rest);
+        out
     }
 
     /// Evaluate a simple arithmetic expression
@@ -542,15 +605,14 @@ impl Interpreter {
         {
             let arr_name = &name[..bracket];
             let resolved = self.resolve_nameref(arr_name);
-            let idx_str = &name[bracket + 1..name.len() - 1];
+            let idx_str = strip_subscript_quotes(&name[bracket + 1..name.len() - 1]);
             if let Some(arr) = self.scoped.assoc_arrays.get(resolved) {
                 let key = self.expand_variable_or_literal(idx_str);
                 return arr.get(&key).cloned().unwrap_or_default();
             }
             if let Some(arr) = self.scoped.arrays.get(resolved) {
-                let idx_val = self.evaluate_arithmetic(idx_str);
-                let idx_usize: usize = idx_val.try_into().unwrap_or(0);
-                return arr.get(&idx_usize).cloned().unwrap_or_default();
+                let idx = self.resolve_indexed_array_subscript(resolved, idx_str);
+                return arr.get(&idx).cloned().unwrap_or_default();
             }
             return String::new();
         }
@@ -1001,4 +1063,65 @@ impl Interpreter {
         }
         result
     }
+}
+
+/// `name` or `name[subscript]` — a target `((...))`/`let` may assign to.
+pub(super) fn is_arith_lvalue(s: &str) -> bool {
+    match s.find('[') {
+        Some(bracket) if s.ends_with(']') => {
+            let sub = &s[bracket + 1..s.len() - 1];
+            is_valid_var_name(&s[..bracket])
+                && !sub.trim().is_empty()
+                && sub.matches('[').count() == sub.matches(']').count()
+        }
+        _ => is_valid_var_name(s),
+    }
+}
+
+/// Drop one layer of matching quotes around a subscript: `c["x y"]` -> key `x y`.
+fn strip_subscript_quotes(sub: &str) -> &str {
+    let t = sub.trim();
+    if t.len() >= 2
+        && ((t.starts_with('"') && t.ends_with('"')) || (t.starts_with('\'') && t.ends_with('\'')))
+    {
+        &t[1..t.len() - 1]
+    } else {
+        sub
+    }
+}
+
+/// Rebuild `name[sub]` with the subscript unquoted for the array writer.
+fn unquote_arith_subscript(lvalue: &str) -> String {
+    match lvalue.find('[') {
+        Some(bracket) => format!(
+            "{}[{}]",
+            &lvalue[..bracket],
+            strip_subscript_quotes(&lvalue[bracket + 1..lvalue.len() - 1])
+        ),
+        None => lvalue.to_string(),
+    }
+}
+
+/// Byte length of the leading `name` or `name[...]` in `s` (0 when none).
+pub(super) fn arith_lvalue_end(s: &str) -> usize {
+    let name_end = s
+        .find(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+        .unwrap_or(s.len());
+    if name_end == 0 || !s[name_end..].starts_with('[') {
+        return name_end;
+    }
+    let mut depth = 0usize;
+    for (i, c) in s[name_end..].char_indices() {
+        match c {
+            '[' => depth += 1,
+            ']' => {
+                depth -= 1;
+                if depth == 0 {
+                    return name_end + i + 1;
+                }
+            }
+            _ => {}
+        }
+    }
+    name_end
 }
