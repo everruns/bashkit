@@ -22,16 +22,26 @@ use url::Url;
 
 /// Check if an IP address is in a private/reserved range.
 ///
-/// Blocks: 127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16,
-/// 169.254.0.0/16, 100.64.0.0/10, 0.0.0.0, ::1, fd00::/8, fe80::/10, ::
+/// Blocks every range that is not globally reachable unicast:
+/// - v4: 0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16,
+///   172.16.0.0/12, 192.0.0.0/24, 192.168.0.0/16, 198.18.0.0/15,
+///   224.0.0.0/4 (multicast), 240.0.0.0/4 (reserved + broadcast)
+/// - v6: ::, ::1, 100::/64, 2001::/32 (Teredo), fc00::/7, fe80::/10,
+///   fec0::/10, ff00::/8, 64:ff9b:1::/48 (local-use NAT64)
 ///
-/// IPv4-mapped IPv6 addresses (`::ffff:0:0/96`) are normalized to their
-/// embedded IPv4 form and classified using the v4 rules. This is critical:
-/// without it, an attacker who controls DNS for an allowlisted hostname
-/// can return an AAAA record pointing at e.g. `::ffff:127.0.0.1` or
-/// `::ffff:169.254.169.254` and bypass the v4 private-range checks.
+/// Documentation ranges (192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24,
+/// 2001:db8::/32) are not blocked: they are unroutable, and tests use them
+/// as stand-in public addresses.
 ///
-/// # Security (TM-NET-002, TM-NET-004, TM-NET-008)
+/// v6 forms that carry a v4 address are classified by that v4 address:
+/// IPv4-mapped (`::ffff:0:0/96`), IPv4-compatible (`::a.b.c.d`), NAT64
+/// (`64:ff9b::/96`, RFC 6052) and 6to4 (`2002::/16`, RFC 3056). This is
+/// critical: without it, an attacker who controls DNS for an allowlisted
+/// hostname can return an AAAA record such as `::ffff:127.0.0.1`,
+/// `64:ff9b::a9fe:a9fe` or `2002:7f00:1::` and reach loopback or cloud
+/// metadata past the v4 checks.
+///
+/// # Security (TM-NET-002, TM-NET-004, TM-NET-008, TM-NET-029)
 ///
 /// Used to prevent SSRF attacks where an allowed hostname resolves
 /// to an internal/cloud metadata IP address.
@@ -47,27 +57,47 @@ pub fn is_private_ip(ip: &IpAddr) -> bool {
             if let Some(v4) = v6.to_ipv4_mapped() {
                 return is_private_ipv4(&v4);
             }
+            let seg = v6.segments();
             if let Some(v4) = v6.to_ipv4()
-                && v6.segments()[..6].iter().all(|s| *s == 0)
-                && v6.segments()[6] != 0
+                && seg[..6].iter().all(|s| *s == 0)
+                && seg[6] != 0
             {
                 // ::a.b.c.d (IPv4-compatible) — apply v4 rules.
                 return is_private_ipv4(&v4);
             }
+            // SECURITY (TM-NET-029): NAT64 and 6to4 gateways forward to the
+            // embedded v4 address, so classify by it.
+            if seg[..6] == [0x64, 0xff9b, 0, 0, 0, 0] {
+                let o = v6.octets();
+                return is_private_ipv4(&std::net::Ipv4Addr::new(o[12], o[13], o[14], o[15]));
+            }
+            if seg[0] == 0x2002 {
+                let o = v6.octets();
+                return is_private_ipv4(&std::net::Ipv4Addr::new(o[2], o[3], o[4], o[5]));
+            }
             v6.is_loopback()                    // ::1
                 || v6.is_unspecified()          // ::
-                || (v6.segments()[0] & 0xfe00) == 0xfc00 // fd00::/8 (unique local)
-                || (v6.segments()[0] & 0xffc0) == 0xfe80 // fe80::/10 (link-local)
+                || seg[..4] == [0x100, 0, 0, 0] // 100::/64 (discard-only)
+                || seg[..2] == [0x2001, 0]      // 2001::/32 (Teredo, embeds obfuscated v4)
+                || seg[..3] == [0x64, 0xff9b, 1] // 64:ff9b:1::/48 (local-use NAT64)
+                || (seg[0] & 0xfe00) == 0xfc00  // fc00::/7 (unique local)
+                || (seg[0] & 0xffc0) == 0xfe80  // fe80::/10 (link-local)
+                || (seg[0] & 0xffc0) == 0xfec0  // fec0::/10 (deprecated site-local)
+                || (seg[0] & 0xff00) == 0xff00 // ff00::/8 (multicast)
         }
     }
 }
 
 fn is_private_ipv4(v4: &std::net::Ipv4Addr) -> bool {
-    v4.is_loopback()                    // 127.0.0.0/8
+    let o = v4.octets();
+    o[0] == 0                           // 0.0.0.0/8 ("this network")
+        || v4.is_loopback()             // 127.0.0.0/8
         || v4.is_private()              // 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
         || v4.is_link_local()           // 169.254.0.0/16
-        || v4.is_unspecified()          // 0.0.0.0
-        || v4.octets()[0] == 100 && (v4.octets()[1] & 0xC0) == 64 // 100.64.0.0/10 (CGNAT)
+        || o[0] == 100 && (o[1] & 0xC0) == 64 // 100.64.0.0/10 (CGNAT)
+        || o[0] == 192 && o[1] == 0 && o[2] == 0 // 192.0.0.0/24 (IETF protocol assignments)
+        || o[0] == 198 && (o[1] & 0xFE) == 18 // 198.18.0.0/15 (benchmarking)
+        || o[0] >= 224 // 224.0.0.0/4 multicast, 240.0.0.0/4 reserved, broadcast
 }
 
 /// Redact credentials from a URL for safe inclusion in error messages.
@@ -577,6 +607,53 @@ mod tests {
         assert!(!is_private_ip(
             &"2001:db8::1".parse::<std::net::IpAddr>().unwrap()
         ));
+    }
+
+    #[test]
+    fn test_is_private_ip_nat64_embeds_v4() {
+        // NAT64 (RFC 6052 well-known prefix 64:ff9b::/96) routes to the
+        // embedded v4 address: 64:ff9b::7f00:1 reaches 127.0.0.1 on a
+        // NAT64 network. Classify by the embedded address.
+        assert!(is_private_ip(&"64:ff9b::7f00:1".parse().unwrap()));
+        assert!(is_private_ip(&"64:ff9b::a9fe:a9fe".parse().unwrap())); // 169.254.169.254
+        assert!(is_private_ip(&"64:ff9b::a00:1".parse().unwrap())); // 10.0.0.1
+        assert!(!is_private_ip(&"64:ff9b::808:808".parse().unwrap())); // 8.8.8.8
+        // RFC 8215 local-use NAT64 prefix: translator is site-specific.
+        assert!(is_private_ip(&"64:ff9b:1::808:808".parse().unwrap()));
+    }
+
+    #[test]
+    fn test_is_private_ip_6to4_embeds_v4() {
+        // 6to4 (2002::/16) carries a v4 address in bits 16..48.
+        assert!(is_private_ip(&"2002:7f00:1::1".parse().unwrap())); // 127.0.0.1
+        assert!(is_private_ip(&"2002:a9fe:a9fe::".parse().unwrap())); // 169.254.169.254
+        assert!(is_private_ip(&"2002:c0a8:101::1".parse().unwrap())); // 192.168.1.1
+        assert!(!is_private_ip(&"2002:808:808::1".parse().unwrap())); // 8.8.8.8
+    }
+
+    #[test]
+    fn test_is_private_ip_reserved_v4_ranges() {
+        assert!(is_private_ip(&"0.1.2.3".parse().unwrap())); // 0.0.0.0/8 "this network"
+        assert!(is_private_ip(&"192.0.0.8".parse().unwrap())); // 192.0.0.0/24 IETF assignments
+        assert!(is_private_ip(&"198.18.0.1".parse().unwrap())); // 198.18.0.0/15 benchmarking
+        assert!(is_private_ip(&"198.19.255.255".parse().unwrap()));
+        assert!(is_private_ip(&"224.0.0.1".parse().unwrap())); // multicast
+        assert!(is_private_ip(&"239.255.255.250".parse().unwrap()));
+        assert!(is_private_ip(&"240.0.0.1".parse().unwrap())); // reserved
+        assert!(is_private_ip(&"255.255.255.255".parse().unwrap())); // broadcast
+        assert!(!is_private_ip(&"198.20.0.1".parse().unwrap()));
+        assert!(!is_private_ip(&"223.255.255.255".parse().unwrap()));
+    }
+
+    #[test]
+    fn test_is_private_ip_reserved_v6_ranges() {
+        assert!(is_private_ip(&"ff02::1".parse().unwrap())); // multicast
+        assert!(is_private_ip(&"fec0::1".parse().unwrap())); // deprecated site-local
+        assert!(is_private_ip(&"fc00::1".parse().unwrap())); // ULA, fc00::/7 lower half
+        assert!(is_private_ip(&"100::1".parse().unwrap())); // discard-only 100::/64
+        assert!(is_private_ip(&"2001::1".parse().unwrap())); // Teredo 2001::/32
+        assert!(!is_private_ip(&"2001:4860:4860::8888".parse().unwrap()));
+        assert!(!is_private_ip(&"2606:4700:4700::1111".parse().unwrap()));
     }
 
     #[test]
