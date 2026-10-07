@@ -7392,10 +7392,10 @@ impl Interpreter {
         for redirect in redirects {
             // Resolve fd from either explicit fd or {var} fd-variable syntax
             let resolved_fd_var: Option<i32> = redirect.fd_var.as_ref().and_then(|var_name| {
-                self.scoped
-                    .variables
-                    .get(var_name)
-                    .and_then(|val| val.parse::<i32>().ok())
+                self.expand_name_or_array_element(var_name)
+                    .trim()
+                    .parse::<i32>()
+                    .ok()
             });
             match redirect.kind {
                 RedirectKind::Input => {

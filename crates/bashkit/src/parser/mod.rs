@@ -2749,9 +2749,12 @@ impl<'a> Parser<'a> {
             && s.starts_with('{')
             && s.ends_with('}')
             && s.len() > 2
+            // `{fd}` or `{arr[i]}` (a coproc hands its descriptors out as
+            // `${NAME[0]}` / `${NAME[1]}`, and `exec {NAME[1]}>&-` closes one).
             && s[1..s.len() - 1]
                 .chars()
-                .all(|c| c.is_alphanumeric() || c == '_')
+                .all(|c| c.is_alphanumeric() || matches!(c, '_' | '[' | ']'))
+            && s[1..s.len() - 1].starts_with(|c: char| c.is_alphabetic() || c == '_')
         {
             let var_name = s[1..s.len() - 1].to_string();
             words.pop();
