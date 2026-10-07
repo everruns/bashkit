@@ -2035,3 +2035,40 @@ async fn gamma_is_log_gamma() {
         .unwrap();
     assert_eq!(out, "[8.525161361065413,1,3]\n");
 }
+
+#[tokio::test]
+async fn update_through_null_creates_containers() {
+    let out = run_jq_with_args(
+        &[
+            "-nc",
+            "(.a.b.c = 1), (.[2] = 1), (.[1:3] = [\"x\"]), (.a |= empty), \
+             ([1] | .[3] = 9), ([1] | .[1.7] = 2), ([1] | .[5] |= empty)",
+        ],
+        "",
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        out,
+        "{\"a\":{\"b\":{\"c\":1}}}\n[null,null,1]\n[\"x\"]\nnull\n[1,null,null,9]\n[1,2]\n[1]\n"
+    );
+}
+
+#[tokio::test]
+async fn update_index_errors_follow_jq() {
+    let out = run_jq_with_args(
+        &[
+            "-nc",
+            "(try (.[-1] = 1) catch .), (try ({} | .[1] = 2) catch .), \
+             (try (.[1e9] = 1) catch .), (try (.[] = 1) catch .)",
+        ],
+        "",
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        out,
+        "\"Out of bounds negative array index\"\n\"Cannot index object with number\"\n\
+         \"Array index too large\"\n\"Cannot iterate over null (null)\"\n"
+    );
+}
