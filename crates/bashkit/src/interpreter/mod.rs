@@ -889,6 +889,18 @@ fn normalize_dev_path(path: &Path) -> PathBuf {
 /// THREAT[TM-INJ-009,TM-INJ-016]: Check if a variable name is an internal marker.
 /// Used by builtins and interpreter to block user assignment to internal prefixes.
 /// Note: `_TTY_` is intentionally excluded — it is user-configurable (bashkit extension).
+/// A name `unset -v` accepts: an identifier, optionally with a subscript.
+fn is_unset_target_name(name: &str) -> bool {
+    let base = match name.find('[') {
+        Some(i) if name.ends_with(']') => &name[..i],
+        Some(_) => return false,
+        None => name,
+    };
+    let mut chars = base.chars();
+    matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
 pub(crate) fn is_internal_variable(name: &str) -> bool {
     name.starts_with("SHOPT_")
         || name.starts_with("_NAMEREF_")
@@ -1438,6 +1450,10 @@ pub struct Interpreter {
     /// `unset LINENO` makes it an ordinary variable for the rest of the
     /// shell's life, like bash.
     lineno_unset: bool,
+    /// How many `source`d scripts are running. `return` is only legal inside
+    /// a function or a sourced script, so it needs to tell the two apart from
+    /// a plain top-level command.
+    source_depth: usize,
     /// HTTP client for network builtins (curl, wget)
     #[cfg(feature = "http_client")]
     http_client: Option<Arc<crate::network::HttpClient>>,
@@ -2046,6 +2062,7 @@ impl Interpreter {
             jobs: jobs::new_shared_job_table(),
             current_line: 1,
             lineno_unset: false,
+            source_depth: 0,
             #[cfg(feature = "http_client")]
             http_client: None,
             #[cfg(feature = "git")]
@@ -2189,6 +2206,7 @@ impl Interpreter {
             fs: Arc::clone(&self.fs),
             env: self.env.clone(),
             scoped: self.scoped.clone(),
+            source_depth: self.source_depth,
             flags: self.flags,
             cwd: self.cwd.clone(),
             last_exit_code: self.last_exit_code,
@@ -3354,6 +3372,13 @@ impl Interpreter {
                         break;
                     }
                 } else {
+                    // `return N` carries its status in the control flow, not
+                    // in `exit_code`, so a sourced script's `return 4` is
+                    // `source`'s status.
+                    if let ControlFlow::Return(code) = result.control_flow {
+                        exit_code = code;
+                        self.last_exit_code = code;
+                    }
                     stopped = true;
                     break;
                 }
@@ -7275,6 +7300,21 @@ impl Interpreter {
                 self.insert_variable_checked("_".to_string(), name.to_string());
             }
 
+            // `return` outside a function or a sourced script is a usage
+            // error in bash: it reports, exits 2 and the script carries on.
+            // `keeps_arg0` marks a function's frame; a frame that only carries
+            // top-level positional parameters (`bashkit script.sh a b`) does
+            // not make `return` legal.
+            let in_function = self.call_stack.iter().any(|f| f.keeps_arg0);
+            if name == "return" && !in_function && self.source_depth == 0 {
+                self.last_exit_code = 2;
+                return Ok(ExecResult::err(
+                    "bash: return: can only `return' from a function or sourced script\n"
+                        .to_string(),
+                    2,
+                ));
+            }
+
             // Check for nounset error from argument expansion
             if let Some(err_msg) = self.take_expansion_error() {
                 self.last_exit_code = 1;
@@ -8637,7 +8677,9 @@ impl Interpreter {
 
         // Execute the script commands in the current shell context.
         // Use execute_script_body (not execute) to preserve depth counters.
+        self.source_depth += 1;
         let exec_result = self.execute_script_body(&script, false, true).await;
+        self.source_depth -= 1;
 
         // Pop source depth and BASH_SOURCE (always, even on error)
         self.counters.pop_function();
@@ -8645,6 +8687,13 @@ impl Interpreter {
         self.update_bash_source();
 
         let mut result = exec_result?;
+
+        // `return N` inside a sourced script is the status of `source`, and
+        // stops the sourced file only, not the script that sourced it.
+        if let ControlFlow::Return(code) = result.control_flow {
+            result.exit_code = code;
+            result.control_flow = ControlFlow::None;
+        }
 
         // Restore positional parameters
         if has_source_args {
@@ -9382,6 +9431,7 @@ impl Interpreter {
     ) -> Result<ExecResult> {
         let mut unset_nameref = false;
         let mut unset_function = false;
+        let mut explicit_variable = false;
         let mut var_args: Vec<&String> = Vec::new();
         for arg in args {
             if arg == "-n" {
@@ -9389,9 +9439,28 @@ impl Interpreter {
             } else if arg == "-f" {
                 unset_function = true;
             } else if arg == "-v" {
-                // -v (variable, default) - explicit variable mode
+                explicit_variable = true;
             } else {
                 var_args.push(arg);
+            }
+        }
+
+        // With an explicit `-v` bash insists the name is one it could have
+        // assigned; without it, and under `-f`, any word is accepted and a
+        // name that does not exist is simply skipped.
+        if explicit_variable && !unset_function {
+            for arg in &var_args {
+                if !is_unset_target_name(arg) {
+                    return self
+                        .apply_redirections(
+                            ExecResult::err(
+                                format!("bash: unset: `{arg}': not a valid identifier\n"),
+                                1,
+                            ),
+                            redirects,
+                        )
+                        .await;
+                }
             }
         }
 

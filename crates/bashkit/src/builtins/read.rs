@@ -56,7 +56,17 @@ impl Builtin for Read {
                             } else {
                                 &rest
                             };
-                            nchars = n_str.parse().ok();
+                            // Bash rejects a non-numeric count rather than
+                            // reading an unbounded line.
+                            match n_str.parse() {
+                                Ok(n) => nchars = Some(n),
+                                Err(_) => {
+                                    return Ok(ExecResult::err(
+                                        format!("read: {n_str}: invalid number\n"),
+                                        1,
+                                    ));
+                                }
+                            }
                             break;
                         }
                         'p' => {
@@ -76,7 +86,15 @@ impl Builtin for Read {
                             } else {
                                 &rest
                             };
-                            timeout = t_str.parse().ok().filter(|t: &f64| t.is_finite());
+                            match t_str.parse::<f64>() {
+                                Ok(t) if t.is_finite() => timeout = Some(t),
+                                _ => {
+                                    return Ok(ExecResult::err(
+                                        format!("read: {t_str}: invalid timeout specification\n"),
+                                        1,
+                                    ));
+                                }
+                            }
                             break;
                         }
                         'u' => {
