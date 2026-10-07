@@ -384,6 +384,12 @@ fn human_compare(a: &[u8], b: &[u8]) -> Ordering {
 
 /// `strtod`-style prefix parse: `None` when no number could be converted.
 fn strtod_prefix(s: &[u8]) -> Option<f64> {
+    strtod(s).map(|(v, _)| v)
+}
+
+/// C `strtod` on a byte prefix: the value and how many bytes it consumed
+/// (leading blanks, sign, decimal or hex-float digits, `inf`/`infinity`/`nan`).
+pub(super) fn strtod(s: &[u8]) -> Option<(f64, usize)> {
     let mut i = s
         .iter()
         .take_while(|b| matches!(b, b' ' | b'\t' | b'\n' | b'\r' | 0x0b | 0x0c))
@@ -403,10 +409,11 @@ fn strtod_prefix(s: &[u8]) -> Option<f64> {
         .collect();
     let sign = if neg { -1.0 } else { 1.0 };
     if lower == b"inf" {
-        return Some(sign * f64::INFINITY);
+        let long = rest.len() >= 8 && rest[..8].eq_ignore_ascii_case(b"infinity");
+        return Some((sign * f64::INFINITY, i + if long { 8 } else { 3 }));
     }
     if lower == b"nan" {
-        return Some(f64::NAN);
+        return Some((f64::NAN, i + 3));
     }
     let hex_digit = |b: Option<&u8>| b.is_some_and(|b| b.is_ascii_hexdigit());
     if rest.len() > 2
@@ -445,9 +452,10 @@ fn strtod_prefix(s: &[u8]) -> Option<f64> {
                     .and_then(|t| t.parse().ok())
                     .unwrap_or(i32::MAX);
                 val *= 2f64.powi(if eneg { -e } else { e });
+                j = k + ds;
             }
         }
-        return Some(sign * val);
+        return Some((sign * val, i + j));
     }
     let mut j = rest.iter().take_while(|b| b.is_ascii_digit()).count();
     let mut digits = j;
@@ -479,7 +487,7 @@ fn strtod_prefix(s: &[u8]) -> Option<f64> {
     } else {
         text.to_string()
     };
-    text.parse::<f64>().ok().map(|v| sign * v)
+    text.parse::<f64>().ok().map(|v| (sign * v, i + j))
 }
 
 /// GNU `general_numcompare`: conversion errors < NaN < numbers.
