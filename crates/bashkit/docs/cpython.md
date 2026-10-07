@@ -42,7 +42,7 @@ No runtime opt-in variable is needed (unlike Monty's
 the guest never runs native code in your process.
 
 The interpreter loads on the first call of a process: the first `python3`
-takes about 22 ms on the reference machine, later calls about 6 ms. To move
+takes about 20 ms on the reference machine, later calls about 5 ms. To move
 that one-time cost out of the first request, call
 `bashkit::CPython::warm_up()` at startup.
 
@@ -60,7 +60,7 @@ return a value. Scripts written by people and agents expect a Python
 | CLI | `-c`, file, `-` | `-c`, `-m`, file, directory with `__main__.py`, `-`, stdin, `-x`, `-W`, `-V`, `-h` |
 | Errors | Monty-specific text | CPython tracebacks, exit codes, `sys.exit` semantics |
 | Isolation | In-process Rust interpreter | WebAssembly sandbox (memory-safe boundary), fresh instance per call |
-| Start per call | ~15 µs | ~5-6 ms (first call in a process ~22 ms) |
+| Start per call | ~15 µs | ~5 ms (first call in a process ~20 ms) |
 | CPU-bound speed | Native | ~4-30x slower than Monty (interpreted wasm) |
 | Host callbacks | Yes (external functions) | Not yet |
 
