@@ -485,6 +485,15 @@ impl AwkInterpreter {
         true
     }
 
+    /// A regex operand: a `/re/` constant gives its pattern text, anything
+    /// else is evaluated as a dynamic regex string.
+    fn eval_pattern_arg(&mut self, expr: &AwkExpr) -> String {
+        match expr {
+            AwkExpr::Regex(pattern) => pattern.clone(),
+            other => self.eval_expr(other).as_string(),
+        }
+    }
+
     /// Evaluate an expression as a boolean, with special handling for regex
     /// literals: `/regex/` is matched against $0 in boolean context (e.g. && / ||).
     fn eval_expr_as_bool(&mut self, expr: &AwkExpr) -> bool {
@@ -534,7 +543,11 @@ impl AwkInterpreter {
                 }
 
                 let l = self.eval_expr(left);
-                let r = self.eval_expr(right);
+                let r = if op == "~" || op == "!~" {
+                    AwkValue::String(self.eval_pattern_arg(right))
+                } else {
+                    self.eval_expr(right)
+                };
 
                 match op.as_str() {
                     "+" => AwkValue::Number(l.as_number() + r.as_number()),
@@ -722,10 +735,14 @@ impl AwkInterpreter {
             }
             AwkExpr::FuncCall(name, args) => self.call_function(name, args),
             AwkExpr::Regex(pattern) => {
-                // When used as a standalone expression, /regex/ matches against $0.
-                // When used as a function argument (gsub, sub, match, split),
-                // it's evaluated as a string pattern, so return the pattern string.
-                AwkValue::String(pattern.clone())
+                // A standalone /regex/ is `$0 ~ /regex/` (`x = /a/`, `if (/a/)`).
+                // Where it names a pattern (`~` operand, sub/gsub/match/split/
+                // gensub argument) callers read it via `eval_pattern_arg`.
+                let line = self.state.get_field(0).as_string();
+                let hit = self
+                    .runtime_regex(pattern)
+                    .is_some_and(|re| re.is_match(&line));
+                AwkValue::Number(if hit { 1.0 } else { 0.0 })
             }
             AwkExpr::Match(expr, pattern) => {
                 let s = self.eval_expr(expr).as_string();
@@ -884,7 +901,7 @@ impl AwkInterpreter {
                 if args.len() < 2 {
                     return AwkValue::Number(0.0);
                 }
-                let pattern = self.eval_expr(&args[0]).as_string();
+                let pattern = self.eval_pattern_arg(&args[0]);
                 let replacement = self.eval_expr(&args[1]).as_string();
 
                 let target_expr = if args.len() > 2 {
@@ -970,7 +987,7 @@ impl AwkInterpreter {
                     return AwkValue::Number(0.0);
                 }
                 let s = self.eval_expr(&args[0]).as_string();
-                let pattern = self.eval_expr(&args[1]).as_string();
+                let pattern = self.eval_pattern_arg(&args[1]);
                 // Extract capture array name from 3rd arg (gawk extension)
                 let arr_name = if args.len() >= 3 {
                     if let AwkExpr::Variable(name) = &args[2] {
@@ -1021,7 +1038,7 @@ impl AwkInterpreter {
                 if args.len() < 3 {
                     return AwkValue::Uninitialized;
                 }
-                let pattern = self.eval_expr(&args[0]).as_string();
+                let pattern = self.eval_pattern_arg(&args[0]);
                 let replacement = self.eval_expr(&args[1]).as_string();
                 let how = self.eval_expr(&args[2]).as_string();
                 let target = if args.len() > 3 {
