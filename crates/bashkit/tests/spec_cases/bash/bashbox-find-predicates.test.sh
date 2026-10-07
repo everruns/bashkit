@@ -34,7 +34,6 @@ find t -newermt '2020-01-02 03:04:05' -name f
 
 ### bashbox_find_predicates_fprint_creates_the_file_even_without_matches
 # -fprint creates the file even without matches
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 echo old > out; find t -name nomatch -fprint out; wc -c < out
 ### expect
 0
