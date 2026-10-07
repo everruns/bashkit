@@ -149,12 +149,28 @@ impl PyTerminal {
 
     /// Agent-style step: type `input` (Vim key notation such as
     /// `"ihello<Esc>:wq<Enter>"`), wait up to `wait_ms`, and return a dict
-    /// with `screen`, `activity`, `commands` and more. See `tool_definition()`.
-    #[pyo3(signature = (input="", wait_ms=None))]
-    fn call(&self, py: Python<'_>, input: &str, wait_ms: Option<u64>) -> PyResult<Py<PyAny>> {
+    /// with `screen`, `activity`, `commands` and more. `wait_for` (regex)
+    /// returns early once command output matches; `screen` is `"full"`,
+    /// `"changes"` or `"none"`. Argument names match `tool_definition()`, so
+    /// `call(**tool_args)` forwards a model's call.
+    #[pyo3(signature = (input="", wait_ms=None, wait_for=None, screen=None))]
+    fn call(
+        &self,
+        py: Python<'_>,
+        input: &str,
+        wait_ms: Option<u64>,
+        wait_for: Option<&str>,
+        screen: Option<&str>,
+    ) -> PyResult<Py<PyAny>> {
         let mut args = serde_json::json!({ "input": input });
         if let Some(ms) = wait_ms {
             args["wait_ms"] = ms.into();
+        }
+        if let Some(p) = wait_for {
+            args["wait_for"] = p.into();
+        }
+        if let Some(m) = screen {
+            args["screen"] = m.into();
         }
         let out = py.detach(|| self.with_tool(|tool| self.rt.block_on(tool.call(args))));
         let value = out.map_err(|e| PyValueError::new_err(e.to_string()))?;

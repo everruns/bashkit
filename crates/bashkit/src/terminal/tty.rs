@@ -20,6 +20,8 @@ pub(crate) const MAX_PENDING_INPUT: usize = 1024 * 1024;
 /// Cap on raw output retained for `take_output`. Oldest bytes drop first; the
 /// screen model still sees every byte.
 pub(crate) const MAX_PENDING_OUTPUT: usize = 4 * 1024 * 1024;
+/// Cap on recent command output kept for `TerminalTool`'s `wait_for` match.
+pub(crate) const MAX_OUTPUT_TAP: usize = 256 * 1024;
 /// Lines of primary-screen history kept for `history_text`.
 pub(crate) const SCROLLBACK_LINES: usize = 1000;
 
@@ -45,6 +47,10 @@ struct TtyState {
     closed: bool,
     screen: vt100::Parser,
     output: Vec<u8>,
+    /// Recent command stdout/stderr (no echo or prompts), for `wait_for`.
+    tap: Vec<u8>,
+    /// Total bytes ever appended to `tap`; marks index into it.
+    tap_total: u64,
 }
 
 pub(crate) struct TtyShared {
@@ -53,6 +59,8 @@ pub(crate) struct TtyShared {
     idle: Notify,
     clock: InputWaitClock,
     cancel: Arc<AtomicBool>,
+    /// Fired with `cancel` so `exec` drops the running command mid-way.
+    interrupt: Arc<Notify>,
 }
 
 /// Cloneable handle to the shared terminal device.
@@ -60,7 +68,12 @@ pub(crate) struct TtyShared {
 pub(crate) struct Tty(Arc<TtyShared>);
 
 impl Tty {
-    pub(crate) fn new(size: TerminalSize, clock: InputWaitClock, cancel: Arc<AtomicBool>) -> Self {
+    pub(crate) fn new(
+        size: TerminalSize,
+        clock: InputWaitClock,
+        cancel: Arc<AtomicBool>,
+        interrupt: Arc<Notify>,
+    ) -> Self {
         Self(Arc::new(TtyShared {
             state: Mutex::new(TtyState {
                 input: VecDeque::new(),
@@ -71,11 +84,14 @@ impl Tty {
                 closed: false,
                 screen: vt100::Parser::new(size.rows, size.cols, SCROLLBACK_LINES),
                 output: Vec::new(),
+                tap: Vec::new(),
+                tap_total: 0,
             }),
             input_ready: Notify::new(),
             idle: Notify::new(),
             clock,
             cancel,
+            interrupt,
         }))
     }
 
@@ -87,8 +103,8 @@ impl Tty {
 
     /// Queue input bytes. Returns how many were accepted.
     ///
-    /// In cooked mode while a command runs, Ctrl-C (0x03) cancels the command
-    /// instead of being queued, like a real line discipline's ISIG.
+    /// In cooked mode while a command runs, Ctrl-C (0x03) interrupts the
+    /// command instead of being queued, like a real line discipline's ISIG.
     pub(crate) fn send(&self, bytes: &[u8]) -> usize {
         let mut accepted = 0;
         {
@@ -96,6 +112,7 @@ impl Tty {
             for &b in bytes {
                 if b == 0x03 && st.foreground && !st.raw {
                     self.0.cancel.store(true, Ordering::Relaxed);
+                    self.0.interrupt.notify_one();
                     accepted += 1;
                     continue;
                 }
@@ -144,6 +161,20 @@ impl Tty {
 
     pub(crate) fn take_output(&self) -> Vec<u8> {
         std::mem::take(&mut self.lock().output)
+    }
+
+    /// Position in the command-output stream; pass to `output_since`.
+    pub(crate) fn output_mark(&self) -> u64 {
+        self.lock().tap_total
+    }
+
+    /// Command output written after `mark`, at most `MAX_OUTPUT_TAP` bytes
+    /// (the newest ones).
+    pub(crate) fn output_since(&self, mark: u64) -> Vec<u8> {
+        let st = self.lock();
+        let new = st.tap_total.saturating_sub(mark);
+        let keep = usize::try_from(new).unwrap_or(usize::MAX).min(st.tap.len());
+        st.tap[st.tap.len() - keep..].to_vec()
     }
 
     pub(crate) fn with_screen<R>(&self, f: impl FnOnce(&vt100::Screen) -> R) -> R {
@@ -197,6 +228,20 @@ impl Tty {
         let len = st.output.len();
         if len > MAX_PENDING_OUTPUT {
             st.output.drain(..len - MAX_PENDING_OUTPUT);
+        }
+    }
+
+    /// Record command stdout/stderr for `output_since`. Does not draw.
+    pub(crate) fn tap_output(&self, bytes: &[u8]) {
+        if bytes.is_empty() {
+            return;
+        }
+        let mut st = self.lock();
+        st.tap.extend_from_slice(bytes);
+        st.tap_total += bytes.len() as u64;
+        let len = st.tap.len();
+        if len > MAX_OUTPUT_TAP {
+            st.tap.drain(..len - MAX_OUTPUT_TAP);
         }
     }
 

@@ -255,7 +255,9 @@ impl Terminal {
             .build();
         let clock = InputWaitClock::default();
         bash.input_wait_clock = Some(clock.clone());
-        let tty = Tty::new(size, clock, bash.cancellation_token());
+        let interrupt = Arc::new(tokio::sync::Notify::new());
+        bash.interrupt = Some(Arc::clone(&interrupt));
+        let tty = Tty::new(size, clock, bash.cancellation_token(), interrupt);
         let fs = bash.fs();
         let log = SharedLog::default();
         let session: Session = Box::pin(shell_loop(bash, tty.clone(), exit, log.clone()));
@@ -313,6 +315,19 @@ impl Terminal {
             .join("\n");
         text.truncate(text.trim_end().len());
         text
+    }
+
+    /// The visible screen, one string per row (trailing blanks trimmed,
+    /// every row present). Row `i` is screen line `i`.
+    pub fn screen_rows(&self) -> Vec<String> {
+        self.tty.with_screen(|s| {
+            let (_, cols) = s.size();
+            s.rows(0, cols).map(|r| r.trim_end().to_string()).collect()
+        })
+    }
+
+    pub(crate) fn tty(&self) -> &Tty {
+        &self.tty
     }
 
     /// The screen plus up to 1000 lines of scrollback above it, as plain text:
@@ -443,6 +458,8 @@ async fn shell_loop(mut bash: crate::Bash, tty: Tty, exit: Arc<ExitState>, log: 
                 .streaming(Box::new(move |stdout, stderr| {
                     out_tty.write_cooked(stdout.as_bytes());
                     out_tty.write_cooked(stderr.as_bytes());
+                    out_tty.tap_output(stdout.as_bytes());
+                    out_tty.tap_output(stderr.as_bytes());
                     let mut cap = out_capture.lock().unwrap_or_else(PoisonError::into_inner);
                     cap.append(stdout);
                     cap.append(stderr);
@@ -483,6 +500,7 @@ async fn shell_loop(mut bash: crate::Bash, tty: Tty, exit: Arc<ExitState>, log: 
             }
         };
 
+        bash.carry_exit_code(last_exit);
         let exited = exit.requested.load(Ordering::SeqCst);
         let cap = std::mem::take(&mut *capture.lock().unwrap_or_else(PoisonError::into_inner));
         log.push(CommandRecord {
@@ -1007,16 +1025,66 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ctrl_c_cancels_at_next_command_boundary() {
+    async fn ctrl_c_interrupts_a_running_command() {
         let mut term = Terminal::new(Bash::builder());
-        term.send("sleep 0.3; echo after\r");
+        term.send("sleep 30; echo after\r");
         let pending =
             tokio::time::timeout(std::time::Duration::from_millis(50), term.run_until_idle()).await;
         assert!(pending.is_err(), "sleep should still be running");
+        let started = std::time::Instant::now();
         assert_eq!(run(&mut term, "\x03").await, TerminalStatus::Idle);
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "Ctrl-C must not wait for sleep to finish"
+        );
         let text = term.screen_text();
         assert!(!text.contains("\nafter"), "{text}");
         assert!(text.ends_with("^C\n$"), "{text}");
+        run(&mut term, "echo status=$?\r").await;
+        assert!(
+            term.screen_text().contains("\nstatus=130"),
+            "{}",
+            term.screen_text()
+        );
+        // The session keeps working after the interrupt.
+        run(&mut term, "f() { echo in-f; }; f\r").await;
+        assert!(
+            term.screen_text().contains("\nin-f"),
+            "{}",
+            term.screen_text()
+        );
+    }
+
+    #[tokio::test]
+    async fn exit_status_carries_across_lines() {
+        let mut term = Terminal::new(Bash::builder());
+        run(&mut term, "false\r").await;
+        run(&mut term, "echo st=$?\r").await;
+        assert!(
+            term.screen_text().contains("\nst=1"),
+            "{}",
+            term.screen_text()
+        );
+        run(&mut term, "echo st=$?\r").await;
+        assert!(
+            term.screen_text().contains("\nst=0"),
+            "{}",
+            term.screen_text()
+        );
+    }
+
+    #[tokio::test]
+    async fn ctrl_c_interrupts_a_busy_loop() {
+        let mut term = Terminal::new(Bash::builder());
+        term.send("while true; do sleep 0.01; done\r");
+        let _ =
+            tokio::time::timeout(std::time::Duration::from_millis(50), term.run_until_idle()).await;
+        assert_eq!(run(&mut term, "\x03").await, TerminalStatus::Idle);
+        assert!(
+            term.screen_text().ends_with("^C\n$"),
+            "{}",
+            term.screen_text()
+        );
     }
 
     #[tokio::test]

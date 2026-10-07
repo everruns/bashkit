@@ -1828,6 +1828,12 @@ impl Interpreter {
         }
     }
 
+    /// Set `$?` from outside a command (terminal carries it across lines).
+    #[cfg(feature = "terminal")]
+    pub(crate) fn set_last_exit_code(&mut self, code: i32) {
+        self.last_exit_code = code;
+    }
+
     /// Return a shared cancellation token. Set it to `true` from any thread
     /// to abort execution at the next command boundary.
     pub fn cancellation_token(&self) -> Arc<AtomicBool> {

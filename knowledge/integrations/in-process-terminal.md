@@ -102,6 +102,15 @@ Keys use Vim notation (`ihi<Esc>:wq<Enter>`, `<C-c>`, `<lt>`), unknown
 call waits up to `wait_ms` (default 5 s, max 60 s); an unfinished command is
 reported as `running`, never killed. Input per call is capped at 64 KiB.
 
+`wait_for` (regex, multi-line, 1 KiB pattern and 1 MiB compiled cap) returns
+early once command output printed during the call matches. It matches a tap of
+command stdout/stderr (newest 256 KiB), not the screen: the screen also holds
+the echoed keystrokes, so `echo ready<Enter>` would match itself. Text is
+ANSI-stripped first. The call polls `run_until_idle` in 50 ms slices; the
+reply carries `matched`. `screen: "changes"` returns only rows that differ
+from the previous call plus the cursor, `"none"` drops the screen; every call
+updates the baseline. Long agent sessions resend a 24-row screen otherwise.
+
 ## Decision: line discipline split
 
 - Cooked mode (prompt): the shell loop's own small line editor (echo, cursor
@@ -115,8 +124,12 @@ reported as `running`, never killed. Input per call is capped at 64 KiB.
 - Raw mode: set by `vi` through a drop guard (restored on cancel too); bytes go
   to the reader untouched and Ctrl-C is not an interrupt.
 - While a command runs in cooked mode, a sent `0x03` sets the interpreter's
-  cancellation token instead of being queued (ISIG). Cancellation is
-  cooperative, so it lands at the next command boundary (L-TERM-003).
+  cancellation token and fires an interrupt `Notify` instead of being queued
+  (ISIG). `exec` races the command future against that notify and drops it
+  mid-command, the same way the execution timeout does, then runs
+  `clear_cancelled_execution_state` (L-TERM-003 lifted). The shell loop
+  prints `^C` and `$?` becomes 130. An interactive session carries `$?`
+  across lines (`Bash::carry_exit_code` seeds it after the per-exec reset).
 - Command stdin is still a value fixed before the command starts, so `read`
   gets EOF (L-TERM-002). Wiring fd 0 to the device needs a reader-backed stdin
   in the interpreter, shared with L-CLI-002.
@@ -196,5 +209,5 @@ redirected (L-TERM-004).
 
 - [Interactive Shell](interactive-shell.md), the CLI REPL on a real terminal
 - [Builtin Commands](../foundations/builtins.md), builtin trait and execution extensions
-- [Limitations](../operations/limitations.md), L-TERM-001..003
+- [Limitations](../operations/limitations.md), L-TERM-001..004
 - [Threat Model](../security/threat-model.md), TM-DOS-119, TM-DOS-120

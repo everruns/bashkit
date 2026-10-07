@@ -47,13 +47,33 @@ test("terminal: timeout reports running command and Ctrl-C interrupts", async (t
   const activity = term.activity();
   t.is(activity.state, "running");
   t.is(activity.command, "sleep 0.5; echo done");
-  // Sync send lands while the command still runs; Ctrl-C cancels at the
-  // next command boundary, so `echo done` never runs.
+  // Sync send lands while the command still runs; Ctrl-C drops it at once,
+  // so `echo done` never runs.
   term.send("\x03");
   t.is(await term.runUntilIdle(5000), "idle");
   const [record] = term.takeTranscript();
   t.is(record.exitCode, 130);
   t.false(record.output.includes("done"));
+});
+
+test("terminal: wait_for and screen changes", async (t) => {
+  const term = new Terminal();
+  const out = await term.call({
+    input: "for i in 1 2 3; do echo tick$i; sleep 1; done<Enter>",
+    wait_ms: 10000,
+    wait_for: "tick2",
+    screen: "changes",
+  });
+  t.is(out.matched, true);
+  t.is(out.activity, "running");
+  t.is(out.screen, undefined);
+  t.true(out.screen_changes!.some((c) => c.text === "tick2"));
+  const after = await term.call({ input: "<C-c>", screen: "changes" });
+  t.is(after.activity, "prompt");
+  t.deepEqual(
+    after.screen_changes!.slice(-2).map((c) => c.text),
+    ["^C", "$"],
+  );
 });
 
 test("terminal: exit and exitCode", async (t) => {

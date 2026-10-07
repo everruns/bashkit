@@ -49,6 +49,23 @@ def test_timeout_reports_running_command():
     assert t.take_transcript()[0]["output"] == "done\n"
 
 
+def test_wait_for_and_screen_changes():
+    t = Terminal()
+    out = t.call(
+        "for i in 1 2 3; do echo tick$i; sleep 1; done<Enter>",
+        wait_ms=10000,
+        wait_for="tick2",
+        screen="changes",
+    )
+    assert out["matched"] is True
+    assert out["activity"] == "running"
+    assert "screen" not in out
+    assert any(c["text"] == "tick2" for c in out["screen_changes"])
+    out = t.call(**{"input": "<C-c>", "screen": "changes"})
+    assert out["activity"] == "prompt"
+    assert [c["text"] for c in out["screen_changes"]][-2:] == ["^C", "$"]
+
+
 def test_exit_and_exit_code():
     t = Terminal()
     out = t.call("exit 3<Enter>")
