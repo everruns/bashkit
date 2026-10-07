@@ -96,7 +96,7 @@ mod patch;
 mod path;
 mod pipeline;
 mod printf;
-mod random;
+pub(crate) mod random;
 mod read;
 mod retry;
 mod rg;

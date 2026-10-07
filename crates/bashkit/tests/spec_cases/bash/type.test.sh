@@ -154,3 +154,14 @@ env-exec
 denied
 conf
 ### end
+
+### rootfs_proc_random_uuid
+# /proc/sys/kernel/random/uuid yields a fresh random UUID per read
+a=$(cat /proc/sys/kernel/random/uuid)
+b=$(cat /proc/sys/kernel/random/uuid)
+[[ $a =~ ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]] && echo shape
+[ "$a" != "$b" ] && echo fresh
+### expect
+shape
+fresh
+### end

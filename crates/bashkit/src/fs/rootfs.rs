@@ -37,6 +37,9 @@ use super::{SearchCapable, normalize_path, vfs_join};
 use crate::error::Result;
 
 /// Directory trees served by the system layer.
+/// Fresh random UUID per read, as on Linux.
+const PROC_UUID: &str = "/proc/sys/kernel/random/uuid";
+
 const SYS_TREES: &[&str] = &["/etc", "/proc", "/bin", "/usr/bin", "/root", "/dev/zero"];
 /// Ancestors of system trees, listed with the system entries merged in.
 const SYS_ANCESTORS: &[&str] = &["/", "/usr", "/dev"];
@@ -168,7 +171,7 @@ impl RootFs {
         sys.add_dir("/root", 0o700);
         sys.add_dir("/etc/ssl/certs", 0o755);
         let version = env!("CARGO_PKG_VERSION");
-        let files: [(&str, String); 12] = [
+        let files: [(&str, String); 13] = [
             (
                 "/etc/os-release",
                 format!(
@@ -223,6 +226,8 @@ impl RootFs {
             ),
             ("/proc/loadavg", "0.00 0.00 0.00 1/1 1\n".to_string()),
             ("/proc/sys/kernel/hostname", format!("{hostname}\n")),
+            // Placeholder of the right size; reads return a fresh UUID.
+            (PROC_UUID, format!("{}\n", "0".repeat(36))),
         ];
         for (path, content) in files {
             sys.add_file(path, content, 0o644);
@@ -258,6 +263,12 @@ impl RootFs {
     }
 
     async fn sys_read(&self, p: &Path) -> Result<Vec<u8>> {
+        if p == Path::new(PROC_UUID) {
+            // Like Linux: every read is a new random (v4) UUID from the OS
+            // CSPRNG, the same source as `uuidgen`.
+            let uuid = crate::builtins::random::uuid_v4().map_err(std::io::Error::other)?;
+            return Ok(format!("{uuid}\n").into_bytes());
+        }
         match self.stub_name(p) {
             Some(name) => Ok(stub(&name).into_bytes()),
             None => self.sys.read_file(p).await,
