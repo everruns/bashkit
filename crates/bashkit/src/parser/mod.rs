@@ -3543,7 +3543,8 @@ impl<'a> Parser<'a> {
                                         operand,
                                         colon_variant: false,
                                     });
-                                } else if matches!(next_c, '#' | '%' | '/' | '^' | ',' | '@') {
+                                } else if matches!(next_c, '#' | '%' | '/' | '^' | ',' | '~' | '@')
+                                {
                                     var_name = format!("{}[{}]", var_name, index);
                                     subscript_op = true;
                                 } else {
@@ -3737,6 +3738,11 @@ impl<'a> Parser<'a> {
                                             } else if ch == '\\' {
                                                 repl.push(chars.next().unwrap());
                                                 if let Some(n) = chars.next() {
+                                                    // `\/` is a literal slash, as in the
+                                                    // pattern (bash removes the backslash).
+                                                    if n == '/' {
+                                                        repl.pop();
+                                                    }
                                                     repl.push(n);
                                                 }
                                                 continue;
@@ -3779,6 +3785,24 @@ impl<'a> Parser<'a> {
                                         ParameterOp::UpperFirst
                                     };
                                     // `${v^^pat}`: only characters matching `pat`.
+                                    let operand = self.read_brace_operand(&mut chars);
+                                    push_part!(WordPart::ParameterExpansion {
+                                        name: var_name,
+                                        operator: op,
+                                        operand,
+                                        colon_variant: false,
+                                    });
+                                }
+                                '~' => {
+                                    // `${v~}` / `${v~~}`: toggle case (undocumented
+                                    // in the bash manual, supported by bash 4+).
+                                    chars.next();
+                                    let op = if chars.peek() == Some(&'~') {
+                                        chars.next();
+                                        ParameterOp::ToggleAll
+                                    } else {
+                                        ParameterOp::ToggleFirst
+                                    };
                                     let operand = self.read_brace_operand(&mut chars);
                                     push_part!(WordPart::ParameterExpansion {
                                         name: var_name,

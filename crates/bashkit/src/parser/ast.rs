@@ -353,6 +353,8 @@ impl fmt::Display for Word {
                     ParameterOp::UpperAll => write!(f, "${{{}^^{}}}", name, operand)?,
                     ParameterOp::LowerFirst => write!(f, "${{{},{}}}", name, operand)?,
                     ParameterOp::LowerAll => write!(f, "${{{},,{}}}", name, operand)?,
+                    ParameterOp::ToggleFirst => write!(f, "${{{}~{}}}", name, operand)?,
+                    ParameterOp::ToggleAll => write!(f, "${{{}~~{}}}", name, operand)?,
                 },
                 WordPart::Length(name) => write!(f, "${{#{}}}", name)?,
                 WordPart::ArrayAccess { name, index } => write!(f, "${{{}[{}]}}", name, index)?,
@@ -538,6 +540,10 @@ pub enum ParameterOp {
     LowerFirst,
     /// ,, lowercase all chars
     LowerAll,
+    /// ~ toggle case of first char
+    ToggleFirst,
+    /// ~~ toggle case of all chars
+    ToggleAll,
 }
 
 /// I/O redirection.

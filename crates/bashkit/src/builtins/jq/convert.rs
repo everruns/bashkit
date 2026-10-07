@@ -326,6 +326,44 @@ pub(super) fn parse_json_stream_partial(input: &str) -> (Vec<JqJson>, Option<Str
     (vals, None)
 }
 
+/// `--stream`: the events jq emits for one input value, `[path, leaf]` for
+/// each scalar or empty container and `[path]` when a container closes
+/// (after its last child).
+pub(super) fn stream_events(v: &JqJson) -> Vec<JqJson> {
+    fn walk(v: &JqJson, path: &mut Vec<JqJson>, out: &mut Vec<JqJson>) {
+        let children: Vec<(JqJson, &JqJson)> = match v {
+            JqJson::Array(a) => a
+                .iter()
+                .enumerate()
+                .map(|(i, x)| (JqJson::Number(i.to_string()), x))
+                .collect(),
+            JqJson::Object(o) => o
+                .iter()
+                .map(|(k, x)| (JqJson::String(k.clone()), x))
+                .collect(),
+            _ => Vec::new(),
+        };
+        if children.is_empty() {
+            out.push(JqJson::Array(vec![JqJson::Array(path.clone()), v.clone()]));
+            return;
+        }
+        let mut last = None;
+        for (k, x) in children {
+            path.push(k);
+            walk(x, path, out);
+            last = path.pop();
+        }
+        if let Some(k) = last {
+            let mut closing = path.clone();
+            closing.push(k);
+            out.push(JqJson::Array(vec![JqJson::Array(closing)]));
+        }
+    }
+    let mut out = Vec::new();
+    walk(v, &mut Vec::new(), &mut out);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -29,12 +29,15 @@ use crate::error::Result;
 use crate::interpreter::ExecResult;
 use crate::limits::ExecutionLimits;
 
+mod altpat;
 mod args;
 mod compat;
 mod convert;
 mod errors;
 mod format;
 mod input;
+mod loc;
+mod messages;
 // Vendored jaq-json (MIT, Michael Färber, https://github.com/01mf02/jaq),
 // see jaq_json/UPSTREAM_VERSION and knowledge/runtimes/jaq-json-vendor.md.
 // Kept byte-close to upstream so `scripts/sync-jaq-json.sh` can merge new
@@ -64,7 +67,7 @@ use compat::{
     ARGS_VAR_NAME, ENV_VAR_NAME, FILENAME_VAR_NAME, LINENO_VAR_NAME, PUBLIC_ENV_VAR_NAME,
     build_compat_prefix,
 };
-use convert::{JqJson, jq_to_val, parse_json_stream, val_to_jq_capped};
+use convert::{JqJson, jq_to_val, parse_json_stream, stream_events, val_to_jq_capped};
 use errors::{format_compile_errors, format_load_errors, format_runtime_error_at};
 use format::{Indent, render, sort_keys as sort_jq_keys};
 
@@ -261,6 +264,8 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
         }
         None => std::borrow::Cow::Borrowed(parsed.filter),
     };
+    let filter_text = loc::expand_loc(&filter_text);
+    let filter_text = altpat::expand_alternatives(&filter_text);
     let compat_filter = format!("{prefix}\n{filter_text}");
     let filter_src = compat_filter.as_str();
 
@@ -321,30 +326,62 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
         .into_iter()
         .map(|(name, arity, run)| (name, arity, jaq_core::Native::<D>::new(run)))
         .collect();
-    // SECURITY (TM-INF-023, #1571): replace the upstream `halt` native.
-    // jaq-std's impl calls `std::process::exit(...)`, which would tear
-    // down the entire embedding process — a sandbox escape via DoS for
-    // any caller hosting bashkit. Strip it from the `funs` chain and add
-    // a safe stub so the wrapper defs in jaq-std's `defs.jq`
-    // (`def halt: halt(0);`, `def halt_error(...): ..., halt(...);`)
-    // still resolve, but produce a normal jq runtime error instead of
-    // killing the host.
-    let safe_halt_run: jaq_core::RunPtr<D> = |mut cv| {
-        let _ = cv.0.pop_var();
-        jaq_core::native::bome(Err(jaq_core::Error::str(
-            "halt is disabled in the bashkit sandbox",
-        )))
-    };
-    let safe_halt: jaq_core::native::Fun<D> = (
-        "halt",
-        jaq_core::native::v(1),
-        jaq_core::Native::<D>::new(safe_halt_run),
-    );
+    // SECURITY (TM-INF-023, #1571): jaq-std's `halt` native only raises
+    // `Exn::halt`; it is `jaq_core::unwrap_valr` that turns that into
+    // `std::process::exit`. The run loop below never calls `unwrap_valr`:
+    // it ends the jq command with the halt code instead, so `halt` and
+    // `halt_error` behave like jq without touching the host process.
+    //
+    // jaq-std's `stderr_empty`/`debug_empty` write to the host (`log`);
+    // ours buffer the text for this command's stderr (see `messages`).
+    let message_funs: Vec<jaq_core::native::Fun<D>> = vec![
+        (
+            "stderr_empty",
+            jaq_core::native::v(0),
+            jaq_core::Native::<D>::new(|cv| {
+                messages::stderr(&cv.1);
+                Box::new(std::iter::empty())
+            }),
+        ),
+        // jq accepts base64 with non-zero trailing bits ("YW" is "a").
+        (
+            "decode_base64",
+            jaq_core::native::v(0),
+            jaq_core::Native::<D>::new(|cv| {
+                use base64::Engine;
+                use base64::engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig};
+                use jaq_std::ValT;
+                const LENIENT: GeneralPurpose = GeneralPurpose::new(
+                    &base64::alphabet::STANDARD,
+                    GeneralPurposeConfig::new()
+                        .with_decode_allow_trailing_bits(true)
+                        .with_decode_padding_mode(DecodePaddingMode::Indifferent),
+                );
+                jaq_core::native::bome(cv.1.try_as_utf8_bytes().and_then(|s| {
+                    LENIENT
+                        .decode(s)
+                        .map_err(|e| jaq_core::Error::str(e.to_string()))
+                        .map(Val::from_utf8_bytes)
+                }))
+            }),
+        ),
+        (
+            "debug_empty",
+            jaq_core::native::v(0),
+            jaq_core::Native::<D>::new(|cv| {
+                messages::debug(&cv.1);
+                Box::new(std::iter::empty())
+            }),
+        ),
+    ];
     let native_funs = jaq_core::funs::<D>()
         .chain(jaq_std::funs::<D>().filter(|(name, _, _)| {
-            *name != "env" && *name != "halt" && !regex_compat::SHADOWED_NATIVE_NAMES.contains(name)
+            !matches!(
+                *name,
+                "env" | "stderr_empty" | "debug_empty" | "decode_base64"
+            ) && !regex_compat::SHADOWED_NATIVE_NAMES.contains(name)
         }))
-        .chain(std::iter::once(safe_halt))
+        .chain(message_funs)
         .chain(input_funs)
         .chain(regex_funs)
         .chain(self::jaq_json::funs::<D>());
@@ -396,16 +433,37 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
     } else {
         let mut slurped: Vec<JqJson> = Vec::new();
         for (name, text) in &sources {
-            let (vals, err) = parse_jq_json_stream_partial(&ctx, text)?;
-            if parsed.slurp {
-                slurped.extend(vals);
+            // `--seq`: RS (0x1e) separates values; read it as whitespace.
+            let seq_text;
+            let text = if parsed.seq {
+                seq_text = text.replace('\x1e', " ");
+                &seq_text
             } else {
-                let lines = input::value_lines(text);
-                for (i, v) in vals.iter().enumerate() {
+                text
+            };
+            let (vals, err) = parse_jq_json_stream_partial(&ctx, text)?;
+            let lines = input::value_lines(text);
+            // `--stream`: each value becomes its path events.
+            let vals: Vec<(JqJson, usize)> = vals
+                .into_iter()
+                .enumerate()
+                .flat_map(|(i, v)| {
+                    let line = lines.get(i).copied().unwrap_or(0);
+                    if parsed.stream {
+                        stream_events(&v).into_iter().map(|e| (e, line)).collect()
+                    } else {
+                        vec![(v, line)]
+                    }
+                })
+                .collect();
+            if parsed.slurp {
+                slurped.extend(vals.into_iter().map(|(v, _)| v));
+            } else {
+                for (v, line) in &vals {
                     items.push(FilterInput {
                         value: jq_to_val(v),
                         filename: name_val(name),
-                        lineno: lines.get(i).copied().unwrap_or(0),
+                        lineno: *line,
                     });
                 }
             }
@@ -509,12 +567,15 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
     // runtime error, else 0; with `-e`, 1 when the last output was null or
     // false and 4 when nothing was ever output.
     let mut status: Option<i32> = None;
+    // `halt`/`halt_error` end the whole command with this code.
+    let mut halted: Option<i32> = None;
+    messages::take();
 
     // THREAT[TM-DOS-110]: the meter aborts a run by unwinding where jaq
     // gives it no error channel (see jaq_json::meter::Abort).
     let run_filter = std::panic::AssertUnwindSafe(|| -> Result<Option<ExecResult>> {
         let mut first = true;
-        loop {
+        'inputs: loop {
             let jaq_input: Val = if null_input {
                 if !first {
                     break;
@@ -553,7 +614,19 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
                     // The value may have been cut short at the limit.
                     return size_error(&meter).map(Some);
                 }
-                match jaq_core::unwrap_valr(result) {
+                stderr_out.push_str(&messages::take());
+                // Never `jaq_core::unwrap_valr`: it exits the process on halt.
+                let result = match result {
+                    Ok(val) => Ok(val),
+                    Err(exn) => match exn.get_err() {
+                        Ok(e) => Err(e),
+                        Err(exn) => {
+                            halted = Some(exn.get_halt().unwrap_or(5));
+                            break 'inputs;
+                        }
+                    },
+                };
+                match result {
                     Ok(val) => {
                         let Some(mut jq) = val_to_jq_capped(&val, max_output_bytes) else {
                             return Ok(Some(ExecResult::err(
@@ -568,19 +641,38 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
                             input_status = Some(i32::from(jq.is_null() || jq.is_false()));
                         }
 
-                        let effective_raw = parsed.raw_output || parsed.join_output;
-                        let formatted = if effective_raw {
-                            if let JqJson::String(s) = &jq {
+                        // With -a, jq JSON-encodes strings even under -r.
+                        let effective_raw =
+                            (parsed.raw_output || parsed.join_output || parsed.raw_output0)
+                                && !parsed.ascii_output;
+                        let formatted = match &jq {
+                            JqJson::String(s) if effective_raw => {
+                                if parsed.raw_output0 && s.contains('\0') {
+                                    let loc = location(&current.borrow());
+                                    stderr_out.push_str(&format!(
+                                        "jq: error (at {loc}): Cannot dump a string \
+                                         containing NUL with --raw-output0 option\n"
+                                    ));
+                                    input_status = Some(5);
+                                    break;
+                                }
                                 s.clone()
-                            } else {
-                                render(&jq, indent)
                             }
+                            _ => render(&jq, indent),
+                        };
+                        let formatted = if parsed.ascii_output {
+                            ascii_escape(&formatted)
                         } else {
-                            render(&jq, indent)
+                            formatted
                         };
 
+                        if parsed.seq {
+                            output.push('\x1e');
+                        }
                         output.push_str(&formatted);
-                        if !parsed.join_output {
+                        if parsed.raw_output0 {
+                            output.push('\0');
+                        } else if !parsed.join_output {
                             output.push('\n');
                         }
 
@@ -640,14 +732,18 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
         },
     }
 
+    stderr_out.push_str(&messages::take());
     let mut code = status.unwrap_or(if parsed.exit_status { 4 } else { 0 });
-    if let Some(e) = parse_error {
+    if let Some(e) = parse_error.filter(|_| halted.is_none()) {
         stderr_out.push_str(&e);
         stderr_out.push('\n');
         code = 5;
     }
     if input_failed {
         code = 2;
+    }
+    if let Some(h) = halted {
+        code = h;
     }
     Ok(ExecResult {
         stdout: output.into(),
@@ -732,4 +828,25 @@ fn build_args_obj(positional: &[JqJson], named: &[(String, JqJson)]) -> JqJson {
         ("positional".to_string(), JqJson::Array(positional.to_vec())),
         ("named".to_string(), JqJson::Object(named_map)),
     ])
+}
+
+/// `-a`: escape every non-ASCII character as `\uXXXX` (UTF-16 surrogate
+/// pairs above the BMP). Rendered JSON has non-ASCII text only inside
+/// strings, so escaping the whole rendering is safe.
+fn ascii_escape(s: &str) -> String {
+    if s.is_ascii() {
+        return s.to_string();
+    }
+    let mut out = String::with_capacity(s.len() + 16);
+    for c in s.chars() {
+        if c.is_ascii() {
+            out.push(c);
+        } else {
+            let mut buf = [0u16; 2];
+            for unit in c.encode_utf16(&mut buf) {
+                out.push_str(&format!("\\u{unit:04x}"));
+            }
+        }
+    }
+    out
 }

@@ -8,6 +8,14 @@
 
 use super::*;
 
+/// Case change for `${v^}`, `${v,}` and `${v~}`.
+#[derive(Clone, Copy)]
+enum CaseChange {
+    Upper,
+    Lower,
+    Toggle,
+}
+
 impl Interpreter {
     /// Elements of `name` as `${name[@]}` sees them, as `(key, value)`:
     /// an associative array in bash's hash order, an indexed array by
@@ -715,14 +723,7 @@ impl Interpreter {
                     .unwrap_or_default();
                 for (idx, part) in word.parts.iter().enumerate() {
                     let part_is_quoted = word.part_quoted.get(idx).copied().unwrap_or(word.quoted);
-                    let part_has_expansion = matches!(
-                        part,
-                        WordPart::Variable(_)
-                            | WordPart::CommandSubstitution(_)
-                            | WordPart::ArithmeticExpansion(_)
-                            | WordPart::ParameterExpansion { .. }
-                            | WordPart::ArrayAccess { .. }
-                    );
+                    let part_has_expansion = Self::is_field_split_expansion(part);
                     let value = if idx > 0
                         && let WordPart::Literal(s) = part
                     {
@@ -809,16 +810,7 @@ impl Interpreter {
                 matches!(word.parts.first(), Some(WordPart::Literal(s)) if s.contains('='));
             let has_expansion = !word.quoted
                 && !is_assignment_word
-                && word.parts.iter().any(|p| {
-                    matches!(
-                        p,
-                        WordPart::Variable(_)
-                            | WordPart::CommandSubstitution(_)
-                            | WordPart::ArithmeticExpansion(_)
-                            | WordPart::ParameterExpansion { .. }
-                            | WordPart::ArrayAccess { .. }
-                    )
-                });
+                && word.parts.iter().any(Self::is_field_split_expansion);
 
             if has_expansion {
                 self.ifs_split(&expanded)
@@ -826,6 +818,23 @@ impl Interpreter {
                 Ok(vec![Self::strip_quote_markers(&expanded)])
             }
         })
+    }
+
+    /// Expansion parts whose unquoted result undergoes IFS field splitting.
+    fn is_field_split_expansion(part: &WordPart) -> bool {
+        matches!(
+            part,
+            WordPart::Variable(_)
+                | WordPart::CommandSubstitution(_)
+                | WordPart::ArithmeticExpansion(_)
+                | WordPart::ParameterExpansion { .. }
+                | WordPart::ArrayAccess { .. }
+                | WordPart::IndirectExpansion { .. }
+                | WordPart::PrefixMatch(_)
+                | WordPart::Substring { .. }
+                | WordPart::ArraySlice { .. }
+                | WordPart::Transformation { .. }
+        )
     }
 
     /// Resolve name for parameter expansion, handling array subscripts and special params.
@@ -1449,6 +1458,8 @@ impl Interpreter {
                 | ParameterOp::UpperAll
                 | ParameterOp::LowerFirst
                 | ParameterOp::LowerAll
+                | ParameterOp::ToggleFirst
+                | ParameterOp::ToggleAll
         )
     }
 
@@ -1588,17 +1599,19 @@ impl Interpreter {
                 let expanded_pat = self.expand_replace_pattern(pattern);
                 self.replace_pattern(value, &expanded_pat, &expanded_rep, true)
             }
-            ParameterOp::UpperFirst => self.change_case(value, operand, true, false),
-            ParameterOp::UpperAll => self.change_case(value, operand, true, true),
-            ParameterOp::LowerFirst => self.change_case(value, operand, false, false),
-            ParameterOp::LowerAll => self.change_case(value, operand, false, true),
+            ParameterOp::UpperFirst => self.change_case(value, operand, CaseChange::Upper, false),
+            ParameterOp::UpperAll => self.change_case(value, operand, CaseChange::Upper, true),
+            ParameterOp::LowerFirst => self.change_case(value, operand, CaseChange::Lower, false),
+            ParameterOp::LowerAll => self.change_case(value, operand, CaseChange::Lower, true),
+            ParameterOp::ToggleFirst => self.change_case(value, operand, CaseChange::Toggle, false),
+            ParameterOp::ToggleAll => self.change_case(value, operand, CaseChange::Toggle, true),
         }
     }
 
     /// `${v^pat}`, `${v^^pat}`, `${v,pat}`, `${v,,pat}`: change the case of
     /// the first (or every) character that matches `pat` on its own. An empty
     /// pattern matches any character, as in bash.
-    fn change_case(&mut self, value: &str, operand: &str, upper: bool, all: bool) -> String {
+    fn change_case(&mut self, value: &str, operand: &str, mode: CaseChange, all: bool) -> String {
         let pattern = if operand.is_empty() {
             String::new()
         } else {
@@ -1611,7 +1624,14 @@ impl Interpreter {
                 && (pattern.is_empty() || self.pattern_matches(ch.encode_utf8(&mut buf), &pattern));
             if !selected {
                 out.push(ch);
-            } else if upper {
+                continue;
+            }
+            let upper = match mode {
+                CaseChange::Upper => true,
+                CaseChange::Lower => false,
+                CaseChange::Toggle => !ch.is_uppercase(),
+            };
+            if upper {
                 out.extend(ch.to_uppercase());
             } else {
                 out.extend(ch.to_lowercase());
