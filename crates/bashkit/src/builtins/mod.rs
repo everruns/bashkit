@@ -953,6 +953,21 @@ pub struct Context<'a> {
     pub(crate) shell: Option<ShellRef<'a>>,
 }
 
+/// Stdin pipe of a streaming filter stage, see [`Context::stdin_stream`].
+pub(crate) struct StdinStream(std::sync::Arc<crate::interpreter::pipe::Pipe>);
+
+impl StdinStream {
+    /// Next chunk of input; empty at end of input.
+    pub(crate) async fn read(&self) -> Vec<u8> {
+        self.0.read_some().await
+    }
+
+    /// Everything left, for filters that need their whole input.
+    pub(crate) async fn read_to_end(&self) -> Vec<u8> {
+        self.0.read_to_end().await
+    }
+}
+
 /// Stdout pipe of a streaming pipeline stage, see [`Context::stdout_stream`].
 pub(crate) struct StdoutStream(std::sync::Arc<crate::interpreter::pipe::Pipe>);
 
@@ -1055,6 +1070,16 @@ impl<'a> Context<'a> {
             .as_ref()
             .and_then(|shell| shell.stdout_pipe.clone())
             .map(StdoutStream)
+    }
+
+    /// Streaming stdin when this builtin is a filter stage of a concurrent
+    /// pipeline (`loop | cat | head -1`). `ctx.stdin` then holds only data
+    /// already buffered before the stage started; read the rest here.
+    pub(crate) fn stdin_stream(&self) -> Option<StdinStream> {
+        self.shell
+            .as_ref()
+            .and_then(|shell| shell.stdin_pipe.clone())
+            .map(StdinStream)
     }
 
     /// Remaining wall-clock budget of the current `exec*` call, if limited.

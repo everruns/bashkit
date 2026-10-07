@@ -368,6 +368,8 @@ pub(crate) struct ShellRef<'a> {
     pub(crate) execution_extensions: Arc<builtins::ExecutionExtensions>,
     /// Stdout of a streaming pipeline stage (see `Context::stdout_stream`).
     pub(crate) stdout_pipe: Option<Arc<pipe::Pipe>>,
+    /// Stdin of a streaming filter stage (see `Context::stdin_stream`).
+    pub(crate) stdin_pipe: Option<Arc<pipe::Pipe>>,
 }
 
 // Interpreter-dispatched "special" builtins, listed here so the public
@@ -1421,6 +1423,8 @@ pub struct Interpreter {
     stream_stdout_command: Option<usize>,
     /// Pipe handed to the next builtin's `Context` (taken at dispatch).
     builtin_stdout_pipe: Option<Arc<pipe::Pipe>>,
+    /// Input pipe handed to a streaming filter's `Context` (taken at dispatch).
+    builtin_stdin_pipe: Option<Arc<pipe::Pipe>>,
     /// Position within the current argument while `getopts` walks a clustered
     /// short-option group (e.g. `-abc`). Interpreter-internal working state for
     /// `execute_getopts`; `0` means "at the start of the next option group".
@@ -1997,6 +2001,7 @@ impl Interpreter {
             pipe_out: None,
             stream_stdout_command: None,
             builtin_stdout_pipe: None,
+            builtin_stdin_pipe: None,
             getopts_char_idx: 0,
             last_bg_pid: None,
             output_callback: None,
@@ -2154,6 +2159,7 @@ impl Interpreter {
             pipe_out: None,
             stream_stdout_command: None,
             builtin_stdout_pipe: None,
+            builtin_stdin_pipe: None,
             getopts_char_idx: self.getopts_char_idx,
             last_bg_pid: self.last_bg_pid.clone(),
             output_callback: None,
@@ -5856,8 +5862,14 @@ impl Interpreter {
         simple.redirects.is_empty()
             && matches!(
                 simple.name.parts.as_slice(),
-                [WordPart::Literal(name)] if matches!(name.as_str(), "yes" | "seq")
+                [WordPart::Literal(name)] if matches!(name.as_str(), "yes" | "seq" | "cat")
             )
+    }
+
+    /// Streaming stages that also read their stdin pipe incrementally
+    /// (`Context::stdin_stream`), so `loop | cat | head -1` stops early.
+    fn streams_stdin(name: &str) -> bool {
+        name == "cat"
     }
 
     /// Run `commands` (the tail of a pipeline) concurrently: every stage but
@@ -7001,6 +7013,14 @@ impl Interpreter {
             } else {
                 None
             };
+            // A streaming filter (`cat`) reads its input pipe as it goes
+            // instead of having it collected up front.
+            self.builtin_stdin_pipe =
+                if self.builtin_stdout_pipe.is_some() && Self::streams_stdin(name) {
+                    self.pipe_in.take()
+                } else {
+                    None
+                };
             // Track $_ (last argument of previous command, from already-expanded args)
             if let Some(last) = args.last() {
                 self.insert_variable_checked("_".to_string(), last.clone());
@@ -7398,6 +7418,7 @@ impl Interpreter {
                     jobs: &self.jobs,
                     execution_extensions,
                     stdout_pipe: None,
+                    stdin_pipe: None,
                 };
                 let plan_ctx = builtins::Context {
                     args,
@@ -7464,6 +7485,7 @@ impl Interpreter {
                 jobs: &self.jobs,
                 execution_extensions,
                 stdout_pipe: self.builtin_stdout_pipe.take(),
+                stdin_pipe: self.builtin_stdin_pipe.take(),
             };
             let ctx = builtins::Context {
                 args,
