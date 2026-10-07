@@ -130,7 +130,9 @@ that ended on lines *before* the line where the failing command starts, plus
 the error; `Bash::exec` and child `bash`/`sh` run them and then report the
 error via `Script::trailing_error` (stderr + exit 2), unless `exit` or
 `set -e` stopped the script first. With nothing runnable before the error,
-`exec` still returns `Err(Parse)`. `bash -n` keeps whole-script rejection.
+`exec` still returns `Err(Parse)`; the `bashkit` CLI maps that to
+`bash: syntax error: ...` on stderr and exit 2, so both cases exit 2 like
+bash. `bash -n` keeps whole-script rejection.
 Deferred `$(...)` errors carry no reliable position, so they never run a
 prefix.
 

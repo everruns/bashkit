@@ -486,10 +486,20 @@ fn run_oneshot(args: Args, mode: CliMode) -> Result<i32> {
                 (None, None) => unreachable!("run_oneshot called for non-executable mode"),
             };
 
-            let result = bash
-                .exec_with_options(&script, options)
-                .await
-                .context(context)?;
+            // Boxed: the exec future is large, and `block_on` keeps this block on
+            // the main thread's stack, which the recursion limit is sized
+            // against (TM-DOS-020, two-MiB stack check in cli_oneshot).
+            let result = match Box::pin(bash.exec_with_options(&script, options)).await {
+                Ok(result) => result,
+                // Like bash: a syntax error with nothing runnable before it is
+                // reported on stderr and exits 2 (the partial-run case already
+                // returns exit 2 from the library).
+                Err(e @ bashkit::Error::Parse { .. }) => {
+                    eprintln!("bash: syntax error: {e}");
+                    return Ok(2);
+                }
+                Err(e) => return Err(anyhow::Error::new(e).context(context)),
+            };
 
             // Output already reached the terminal through the streaming
             // callback — printing `result.stdout` here would duplicate it.
