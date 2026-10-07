@@ -1184,7 +1184,11 @@ mod tests {
             !results.is_empty()
                 && results.iter().all(|r| {
                     let name = r.trim_start_matches("/proc/").trim_end_matches('/');
-                    ["cpuinfo", "loadavg", "meminfo", "sys", "version"].contains(&name)
+                    [
+                        "1", "cpuinfo", "loadavg", "meminfo", "mounts", "self", "sys", "uptime",
+                        "version",
+                    ]
+                    .contains(&name)
                 }),
             "must not expose host /proc: {results:?}"
         );
