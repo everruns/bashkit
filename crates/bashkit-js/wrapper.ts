@@ -2011,6 +2011,10 @@ export interface TerminalCallArgs {
   wait_for?: string;
   /** `full` (default), `changes` (only changed rows) or `none`. */
   screen?: "full" | "changes" | "none";
+  /** Terminal tab to use (default `main`); created on first use, files shared. */
+  session?: string;
+  /** Close the named session instead of typing into it. */
+  close?: boolean;
 }
 
 export interface TerminalCallResult {
@@ -2022,6 +2026,14 @@ export interface TerminalCallResult {
   cursor?: { row: number; col: number };
   /** Whether `wait_for` matched (only when it was given). */
   matched?: boolean;
+  /** Session this result is for, when more than one is open. */
+  session?: string;
+  /** Every open session and its activity, when more than one is open. */
+  sessions?: Array<{ name: string; activity: string }>;
+  /** The session had exited and a fresh shell started for this call. */
+  restarted?: boolean;
+  /** The session was closed (`close: true`). */
+  closed?: boolean;
   /** `input`: a running command waits for a typed line (see `input_prompt`). */
   activity: "prompt" | "continuation" | "running" | "input" | "exited";
   /** Question on the cursor line while activity is `input`. */

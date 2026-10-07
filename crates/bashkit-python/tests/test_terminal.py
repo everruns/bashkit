@@ -66,6 +66,16 @@ def test_wait_for_and_screen_changes():
     assert [c["text"] for c in out["screen_changes"]][-2:] == ["^C", "$"]
 
 
+def test_sessions_share_files():
+    t = Terminal()
+    t.call("echo hi > /tmp/s<Enter>")
+    out = t.call("cat /tmp/s<Enter>", session="other")
+    assert out["session"] == "other"
+    assert out["commands"][0]["output"] == "hi\n"
+    assert [s["name"] for s in out["sessions"]] == ["main", "other"]
+    assert t.call(session="other", close=True)["closed"] is True
+
+
 def test_exit_and_exit_code():
     t = Terminal()
     out = t.call("exit 3<Enter>")

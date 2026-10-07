@@ -22,6 +22,14 @@
 //!   Polls in 50 ms slices; the session keeps running between slices.
 //! - `screen: "changes"` returns only rows that differ from the previous
 //!   call (any mode updates the baseline), to keep long sessions cheap.
+//! - Multiple sessions (like terminal tabs) need [`TerminalTool::with_sessions`],
+//!   which takes a builder factory because `BashBuilder` is not `Clone`.
+//!   Extra sessions share the main session's filesystem, so a file written in
+//!   one is visible in the others; shell state (variables, cwd, jobs) is per
+//!   session. While a call waits on one session the others keep running, so a
+//!   `watch` or long loop in one tab progresses while the agent works in
+//!   another. At most 8 sessions; `close` drops one, and an exited session
+//!   restarts on the next call that types into it.
 
 use std::time::Duration;
 
@@ -43,6 +51,14 @@ const MAX_INPUT_BYTES: usize = 64 * 1024;
 const MAX_PATTERN_BYTES: usize = 1024;
 const MAX_REGEX_SIZE: usize = 1 << 20;
 const WAIT_SLICE: Duration = Duration::from_millis(50);
+/// Name of the session every tool starts with.
+pub const MAIN_SESSION: &str = "main";
+// THREAT[TM-DOS-119]: each session is a full interpreter; cap them.
+const MAX_SESSIONS: usize = 8;
+const MAX_SESSION_NAME: usize = 32;
+
+/// Builds a fresh [`BashBuilder`] for each session of a multi-session tool.
+pub type SessionFactory = Box<dyn Fn() -> BashBuilder + Send + Sync>;
 
 const DESCRIPTION: &str = "Interactive bash terminal in a sandbox. Type keys, get the screen back. \
 Use it for full-screen programs such as vi and less, or a shell session that persists between calls.";
@@ -74,9 +90,27 @@ pub struct TerminalToolError(String);
 /// # }
 /// ```
 pub struct TerminalTool {
+    /// Index 0 is the main session.
+    sessions: Vec<ToolSession>,
+    factory: Option<SessionFactory>,
+    size: TerminalSize,
+}
+
+struct ToolSession {
+    name: String,
     terminal: Terminal,
     /// Screen rows at the previous report, for `screen: "changes"`.
     last_rows: Option<Vec<String>>,
+}
+
+impl ToolSession {
+    fn new(name: &str, terminal: Terminal) -> Self {
+        Self {
+            name: name.to_string(),
+            terminal,
+            last_rows: None,
+        }
+    }
 }
 
 /// How much of the screen a call returns.
@@ -96,21 +130,73 @@ impl TerminalTool {
     /// Start a session on a terminal of the given size.
     pub fn with_size(builder: BashBuilder, size: TerminalSize) -> Self {
         Self {
-            terminal: Terminal::with_size(builder, size),
-            last_rows: None,
+            sessions: vec![ToolSession::new(
+                MAIN_SESSION,
+                Terminal::with_size(builder, size),
+            )],
+            factory: None,
+            size,
         }
     }
 
-    /// The underlying terminal, for example to read files with
-    /// [`Terminal::fs`] or render [`Terminal::take_output`].
-    pub fn terminal(&self) -> &Terminal {
-        &self.terminal
+    /// A tool that can open more sessions on demand (the `session`
+    /// argument). `factory` builds the shell for each one; sessions after
+    /// the first share its filesystem.
+    ///
+    /// ```rust
+    /// use bashkit::Bash;
+    /// use bashkit::terminal::{TerminalSize, TerminalTool};
+    /// use serde_json::json;
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let mut tool = TerminalTool::with_sessions(TerminalSize::default(), Box::new(Bash::builder));
+    /// tool.call(json!({"input": "echo hi > /tmp/f<Enter>"})).await.unwrap();
+    /// let out = tool
+    ///     .call(json!({"session": "logs", "input": "cat /tmp/f<Enter>"}))
+    ///     .await
+    ///     .unwrap();
+    /// assert_eq!(out["commands"][0]["output"], "hi\n");
+    /// # }
+    /// ```
+    pub fn with_sessions(size: TerminalSize, factory: SessionFactory) -> Self {
+        let main = Terminal::with_size(factory(), size);
+        Self {
+            sessions: vec![ToolSession::new(MAIN_SESSION, main)],
+            factory: Some(factory),
+            size,
+        }
     }
 
-    /// Mutable access to the underlying terminal, to drive it directly
+    /// The main session's terminal, for example to read files with
+    /// [`Terminal::fs`] or render [`Terminal::take_output`].
+    pub fn terminal(&self) -> &Terminal {
+        &self.sessions[0].terminal
+    }
+
+    /// Mutable access to the main session's terminal, to drive it directly
     /// between tool calls.
     pub fn terminal_mut(&mut self) -> &mut Terminal {
-        &mut self.terminal
+        &mut self.sessions[0].terminal
+    }
+
+    /// The terminal of a named session, if it is open.
+    pub fn session(&self, name: &str) -> Option<&Terminal> {
+        self.sessions
+            .iter()
+            .find(|s| s.name == name)
+            .map(|s| &s.terminal)
+    }
+
+    /// Names of the open sessions, main first.
+    pub fn session_names(&self) -> Vec<String> {
+        self.sessions.iter().map(|s| s.name.clone()).collect()
+    }
+
+    fn new_terminal(&self) -> Option<Terminal> {
+        let factory = self.factory.as_ref()?;
+        let fs = self.sessions[0].terminal.fs();
+        Some(Terminal::with_size(factory().fs(fs), self.size))
     }
 
     /// Tool name: `terminal`.
@@ -137,11 +223,17 @@ Set wait_for to a regex to return as soon as command output matches (for example
 'listening' line); matched tells whether it did. Set screen to \"changes\" to get only the rows \
 that changed since the last call, or \"none\" to skip the screen."
             .to_string()
+            + if self.factory.is_some() {
+                " Set session to a name to use another terminal tab (created on first use, files \
+shared, shell state separate; other tabs keep running); close: true closes it."
+            } else {
+                ""
+            }
     }
 
     /// JSON Schema for [`call`](Self::call) arguments.
     pub fn input_schema(&self) -> Value {
-        json!({
+        let mut schema = json!({
             "type": "object",
             "properties": {
                 "input": {
@@ -164,7 +256,19 @@ that changed since the last call, or \"none\" to skip the screen."
                     "description": "full (default): whole screen. changes: only rows that differ from the previous call, as screen_changes. none: no screen."
                 }
             }
-        })
+        });
+        if self.factory.is_some() {
+            schema["properties"]["session"] = json!({
+                "type": "string",
+                "maxLength": MAX_SESSION_NAME,
+                "description": "Terminal tab to use (default \"main\"). A new name opens a new tab sharing the same files; up to 8 tabs."
+            });
+            schema["properties"]["close"] = json!({
+                "type": "boolean",
+                "description": "Close the named session (not main) instead of typing into it."
+            });
+        }
+        schema
     }
 
     /// JSON Schema for the value [`call`](Self::call) returns.
@@ -192,6 +296,14 @@ that changed since the last call, or \"none\" to skip the screen."
                     "properties": {"row": {"type": "integer"}, "col": {"type": "integer"}}
                 },
                 "matched": {"type": "boolean", "description": "Whether wait_for matched (only when wait_for was given)"},
+                "session": {"type": "string", "description": "Session this result is for (multi-session tools)"},
+                "sessions": {
+                    "type": "array",
+                    "description": "Every open session and its activity (multi-session tools)",
+                    "items": {"type": "object", "properties": {"name": {"type": "string"}, "activity": {"type": "string"}}}
+                },
+                "restarted": {"type": "boolean", "description": "The session had exited and a fresh shell was started for this call"},
+                "closed": {"type": "boolean", "description": "The session was closed"},
                 "activity": {
                     "type": "string",
                     "enum": ["prompt", "continuation", "running", "input", "exited"],
@@ -272,74 +384,189 @@ that changed since the last call, or \"none\" to skip the screen."
             }
         };
 
+        let name = match args.get("session") {
+            None | Some(Value::Null) => MAIN_SESSION,
+            Some(Value::String(s)) => s.as_str(),
+            Some(_) => return Err(TerminalToolError("`session` must be a string".into())),
+        };
+        let close = match args.get("close") {
+            None | Some(Value::Null) => false,
+            Some(Value::Bool(b)) => *b,
+            Some(_) => return Err(TerminalToolError("`close` must be a boolean".into())),
+        };
+        let idx = self.open_session(name, close)?;
+        let Some(idx) = idx else {
+            let mut out = json!({"session": name, "closed": true});
+            out["sessions"] = self.sessions_json();
+            return Ok(out);
+        };
+        let mut restarted = false;
+        if !input.is_empty()
+            && matches!(
+                self.sessions[idx].terminal.activity(),
+                TerminalActivity::Exited(_)
+            )
+            && let Some(fresh) = self.new_terminal()
+        {
+            self.sessions[idx].terminal = fresh;
+            self.sessions[idx].last_rows = None;
+            restarted = true;
+        }
+
         let bytes = parse_keys(input);
-        let mark = self.terminal.tty().output_mark();
-        if self.terminal.send(&bytes) < bytes.len() {
+        let terminal = &self.sessions[idx].terminal;
+        let mark = terminal.tty().output_mark();
+        if terminal.send(&bytes) < bytes.len() {
             return Err(TerminalToolError(
                 "terminal input buffer is full; wait for the running command first".into(),
             ));
         }
         let wait = Duration::from_millis(wait_ms);
         let (waiting, matched) = match wait_for {
-            None => (self.wait_idle(wait).await, None),
+            None => (self.wait_idle(idx, wait).await, None),
             Some(re) => {
-                let (waiting, matched) = self.wait_match(wait, mark, &re).await;
+                let (waiting, matched) = self.wait_match(idx, wait, mark, &re).await;
                 (waiting, Some(matched))
             }
         };
-        let mut out = self.report(waiting, mode);
+        let mut out = self.report(idx, waiting, mode);
         if let Some(matched) = matched {
             out["matched"] = json!(matched);
+        }
+        if restarted {
+            out["restarted"] = json!(true);
         }
         Ok(out)
     }
 
-    async fn wait_idle(&mut self, wait: Duration) -> bool {
-        matches!(
-            crate::time_compat::timeout(wait, self.terminal.run_until_idle()).await,
-            Ok(TerminalStatus::Idle | TerminalStatus::Exited(_))
-        )
+    /// Index of session `name`, opening it if needed. `Ok(None)` when it was
+    /// closed (`close: true`).
+    fn open_session(
+        &mut self,
+        name: &str,
+        close: bool,
+    ) -> Result<Option<usize>, TerminalToolError> {
+        if name.is_empty()
+            || name.len() > MAX_SESSION_NAME
+            || !name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        {
+            return Err(TerminalToolError(format!(
+                "`session` must be 1-{MAX_SESSION_NAME} letters, digits, '-' or '_'"
+            )));
+        }
+        let found = self.sessions.iter().position(|s| s.name == name);
+        if close {
+            return match found {
+                Some(0) => Err(TerminalToolError(
+                    "the main session cannot be closed".into(),
+                )),
+                Some(i) => {
+                    self.sessions.remove(i);
+                    Ok(None)
+                }
+                None => Err(TerminalToolError(format!("no session named '{name}'"))),
+            };
+        }
+        if let Some(i) = found {
+            return Ok(Some(i));
+        }
+        if self.factory.is_none() {
+            return Err(TerminalToolError(format!(
+                "no session named '{name}'; this terminal has only the main session"
+            )));
+        }
+        if self.sessions.len() >= MAX_SESSIONS {
+            return Err(TerminalToolError(format!(
+                "at most {MAX_SESSIONS} sessions; close one first"
+            )));
+        }
+        let terminal = self.new_terminal().expect("factory checked above");
+        self.sessions.push(ToolSession::new(name, terminal));
+        Ok(Some(self.sessions.len() - 1))
+    }
+
+    /// Run session `idx` until it needs input or `wait` passes, while the
+    /// other sessions keep running in the background.
+    async fn wait_idle(&mut self, idx: usize, wait: Duration) -> bool {
+        let (before, rest) = self.sessions.split_at_mut(idx);
+        let (target, after) = rest.split_first_mut().expect("session index in range");
+        let others = futures_util::future::join_all(
+            before
+                .iter_mut()
+                .chain(after.iter_mut())
+                .map(|s| s.terminal.run_until_idle()),
+        );
+        let background = async {
+            others.await;
+            std::future::pending::<()>().await;
+        };
+        tokio::select! {
+            r = crate::time_compat::timeout(wait, target.terminal.run_until_idle()) => {
+                matches!(r, Ok(TerminalStatus::Idle | TerminalStatus::Exited(_)))
+            }
+            () = background => unreachable!("background never completes"),
+        }
     }
 
     /// Run until `re` matches output written since `mark`, the session needs
     /// input, or `wait` passes. Returns (waiting_for_input, matched).
-    async fn wait_match(&mut self, wait: Duration, mark: u64, re: &regex::Regex) -> (bool, bool) {
+    async fn wait_match(
+        &mut self,
+        idx: usize,
+        wait: Duration,
+        mark: u64,
+        re: &regex::Regex,
+    ) -> (bool, bool) {
         let deadline = crate::time_compat::Instant::now() + wait;
         loop {
-            if self.output_matches(mark, re) {
-                return (self.terminal.tty().is_idle(), true);
+            if self.output_matches(idx, mark, re) {
+                return (self.sessions[idx].terminal.tty().is_idle(), true);
             }
             let left = deadline.saturating_duration_since(crate::time_compat::Instant::now());
             if left.is_zero() {
                 return (false, false);
             }
-            if self.wait_idle(left.min(WAIT_SLICE)).await {
-                return (true, self.output_matches(mark, re));
+            if self.wait_idle(idx, left.min(WAIT_SLICE)).await {
+                return (true, self.output_matches(idx, mark, re));
             }
         }
     }
 
-    fn output_matches(&self, mark: u64, re: &regex::Regex) -> bool {
-        let raw = self.terminal.tty().output_since(mark);
+    fn output_matches(&self, idx: usize, mark: u64, re: &regex::Regex) -> bool {
+        let raw = self.sessions[idx].terminal.tty().output_since(mark);
         re.is_match(&strip_ansi(&String::from_utf8_lossy(&raw)))
     }
 
-    fn report(&mut self, waiting: bool, mode: ScreenMode) -> Value {
+    fn sessions_json(&self) -> Value {
+        json!(
+            self.sessions
+                .iter()
+                .map(|s| json!({"name": s.name, "activity": activity_name(&s.terminal)}))
+                .collect::<Vec<_>>()
+        )
+    }
+
+    fn report(&mut self, idx: usize, waiting: bool, mode: ScreenMode) -> Value {
+        let multi = self.sessions.len() > 1;
+        let sessions = multi.then(|| self.sessions_json());
+        let session = &mut self.sessions[idx];
+        let terminal = &session.terminal;
         let mut out = json!({
             "waiting_for_input": waiting,
-            "full_screen": self.terminal.is_alternate_screen(),
-            "commands": self
-                .terminal
+            "full_screen": terminal.is_alternate_screen(),
+            "commands": terminal
                 .take_transcript()
                 .into_iter()
                 .map(record_json)
                 .collect::<Vec<_>>(),
         });
-        let (activity, extra) = match self.terminal.activity() {
+        let (activity, extra) = match terminal.activity() {
             TerminalActivity::Starting | TerminalActivity::Prompt => ("prompt", None),
             TerminalActivity::ContinuationPrompt => ("continuation", None),
             TerminalActivity::Running { command } => {
-                if let Some(prompt) = self.terminal.input_prompt() {
+                if let Some(prompt) = terminal.input_prompt() {
                     out["input_prompt"] = json!(prompt);
                     ("input", Some(("running_command", json!(command))))
                 } else {
@@ -352,11 +579,11 @@ that changed since the last call, or \"none\" to skip the screen."
         if let Some((key, value)) = extra {
             out[key] = value;
         }
-        let rows = self.terminal.screen_rows();
+        let rows = terminal.screen_rows();
         match mode {
-            ScreenMode::Full => out["screen"] = json!(self.terminal.screen_text()),
+            ScreenMode::Full => out["screen"] = json!(terminal.screen_text()),
             ScreenMode::Changes => {
-                let prev = self.last_rows.as_deref().unwrap_or(&[]);
+                let prev = session.last_rows.as_deref().unwrap_or(&[]);
                 let resized = prev.len() != rows.len();
                 let changes: Vec<Value> = rows
                     .iter()
@@ -364,14 +591,29 @@ that changed since the last call, or \"none\" to skip the screen."
                     .filter(|(i, row)| resized || prev.get(*i) != Some(*row))
                     .map(|(i, row)| json!({"row": i, "text": row}))
                     .collect();
-                let (row, col) = self.terminal.cursor();
+                let (row, col) = terminal.cursor();
                 out["screen_changes"] = json!(changes);
                 out["cursor"] = json!({"row": row, "col": col});
             }
             ScreenMode::None => {}
         }
-        self.last_rows = Some(rows);
+        session.last_rows = Some(rows);
+        if let Some(sessions) = sessions {
+            out["session"] = json!(session.name);
+            out["sessions"] = sessions;
+        }
         out
+    }
+}
+
+/// The `activity` value reported for a terminal.
+fn activity_name(terminal: &Terminal) -> &'static str {
+    match terminal.activity() {
+        TerminalActivity::Starting | TerminalActivity::Prompt => "prompt",
+        TerminalActivity::ContinuationPrompt => "continuation",
+        TerminalActivity::Running { .. } if terminal.input_prompt().is_some() => "input",
+        TerminalActivity::Running { .. } => "running",
+        TerminalActivity::Exited(_) => "exited",
     }
 }
 
@@ -700,6 +942,115 @@ mod tests {
         // vi is running, not asking a line question.
         let out = tool.call(json!({"input": "vi<Enter>"})).await.unwrap();
         assert_eq!(out["activity"], "running");
+    }
+
+    fn multi() -> TerminalTool {
+        TerminalTool::with_sessions(TerminalSize::default(), Box::new(Bash::builder))
+    }
+
+    #[tokio::test]
+    async fn sessions_share_files_not_shell_state() {
+        let mut tool = multi();
+        tool.call(json!({"input": "cd /tmp; X=1; echo data > f<Enter>"}))
+            .await
+            .unwrap();
+        let out = tool
+            .call(json!({"session": "b", "input": "cat /tmp/f; echo x=$X; pwd<Enter>"}))
+            .await
+            .unwrap();
+        assert_eq!(out["session"], "b");
+        assert_eq!(out["commands"][0]["output"], "data\nx=\n/home/user\n");
+        let names: Vec<_> = out["sessions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, ["main", "b"]);
+        assert_eq!(tool.session_names(), ["main", "b"]);
+        // Back on main, its state is intact.
+        let out = tool
+            .call(json!({"input": "echo x=$X; pwd<Enter>"}))
+            .await
+            .unwrap();
+        assert_eq!(out["commands"][0]["output"], "x=1\n/tmp\n");
+    }
+
+    #[tokio::test]
+    async fn other_sessions_keep_running() {
+        let mut tool = multi();
+        // A slow writer in "bg"; return right away.
+        let out = tool
+            .call(json!({
+                "session": "bg",
+                "input": "for i in 1 2 3; do echo $i >> /tmp/log; sleep 0.1; done<Enter>",
+                "wait_ms": 0
+            }))
+            .await
+            .unwrap();
+        assert_eq!(out["activity"], "running");
+        // Waiting in main drives bg too.
+        let out = tool
+            .call(json!({"input": "sleep 0.6; cat /tmp/log<Enter>"}))
+            .await
+            .unwrap();
+        assert_eq!(out["commands"][0]["output"], "1\n2\n3\n");
+        let bg = &out["sessions"][1];
+        assert_eq!(bg["name"], "bg");
+        assert_eq!(bg["activity"], "prompt");
+    }
+
+    #[tokio::test]
+    async fn close_restart_and_limits() {
+        let mut tool = multi();
+        tool.call(json!({"session": "t", "input": "exit 3<Enter>"}))
+            .await
+            .unwrap();
+        let out = tool
+            .call(json!({"session": "t", "input": "echo back<Enter>"}))
+            .await
+            .unwrap();
+        assert_eq!(out["restarted"], true);
+        assert_eq!(out["commands"][0]["output"], "back\n");
+        let out = tool
+            .call(json!({"session": "t", "close": true}))
+            .await
+            .unwrap();
+        assert_eq!(out["closed"], true);
+        assert_eq!(tool.session_names(), ["main"]);
+        assert!(tool.call(json!({"close": true})).await.is_err());
+        assert!(tool.call(json!({"session": "a b"})).await.is_err());
+        assert!(
+            tool.call(json!({"session": "nope", "close": true}))
+                .await
+                .is_err()
+        );
+        for i in 1..MAX_SESSIONS {
+            tool.call(json!({"session": format!("s{i}"), "wait_ms": 0}))
+                .await
+                .unwrap();
+        }
+        let err = tool.call(json!({"session": "extra"})).await.unwrap_err();
+        assert!(err.to_string().contains("at most 8"));
+    }
+
+    #[tokio::test]
+    async fn single_session_tool_rejects_other_sessions() {
+        let mut tool = TerminalTool::new(Bash::builder());
+        assert!(tool.input_schema()["properties"].get("session").is_none());
+        let err = tool.call(json!({"session": "b"})).await.unwrap_err();
+        assert!(err.to_string().contains("only the main session"));
+        let out = tool
+            .call(json!({"session": "main", "input": "true<Enter>"}))
+            .await
+            .unwrap();
+        assert!(out.get("sessions").is_none());
+        assert!(
+            multi().input_schema()["properties"]
+                .get("session")
+                .is_some()
+        );
+        assert!(multi().system_prompt().contains("session"));
     }
 
     #[test]

@@ -69,25 +69,30 @@ impl PyTerminal {
         cwd: Option<String>,
         env: Option<HashMap<String, String>>,
     ) -> PyResult<Self> {
-        let mut builder = Bash::builder();
-        if let Some(u) = username {
-            builder = builder.username(u);
-        }
-        if let Some(h) = hostname {
-            builder = builder.hostname(h);
-        }
-        if let Some(c) = cwd {
-            builder = builder.cwd(c);
-        }
-        for (k, v) in env.unwrap_or_default() {
-            builder = builder.env(&k, &v);
-        }
+        let env = env.unwrap_or_default();
+        // Each `session` passed to `call` gets a shell built the same way.
+        let factory = move || {
+            let mut builder = Bash::builder();
+            if let Some(u) = &username {
+                builder = builder.username(u.clone());
+            }
+            if let Some(h) = &hostname {
+                builder = builder.hostname(h.clone());
+            }
+            if let Some(c) = &cwd {
+                builder = builder.cwd(c.clone());
+            }
+            for (k, v) in &env {
+                builder = builder.env(k, v);
+            }
+            builder
+        };
         let rt = make_runtime()?;
         // The session future is created inside the runtime so nothing in it
         // can observe a missing tokio context.
         let tool = {
             let _enter = rt.enter();
-            TerminalTool::with_size(builder, TerminalSize::new(rows, cols))
+            TerminalTool::with_sessions(TerminalSize::new(rows, cols), Box::new(factory))
         };
         Ok(Self {
             tool: Mutex::new(tool),
@@ -151,9 +156,12 @@ impl PyTerminal {
     /// `"ihello<Esc>:wq<Enter>"`), wait up to `wait_ms`, and return a dict
     /// with `screen`, `activity`, `commands` and more. `wait_for` (regex)
     /// returns early once command output matches; `screen` is `"full"`,
-    /// `"changes"` or `"none"`. Argument names match `tool_definition()`, so
-    /// `call(**tool_args)` forwards a model's call.
-    #[pyo3(signature = (input="", wait_ms=None, wait_for=None, screen=None))]
+    /// `"changes"` or `"none"`; `session` names a terminal tab (created on
+    /// first use, sharing files) and `close=True` closes it. Argument names
+    /// match `tool_definition()`, so `call(**tool_args)` forwards a model's
+    /// call.
+    #[pyo3(signature = (input="", wait_ms=None, wait_for=None, screen=None, session=None, close=None))]
+    #[allow(clippy::too_many_arguments)]
     fn call(
         &self,
         py: Python<'_>,
@@ -161,6 +169,8 @@ impl PyTerminal {
         wait_ms: Option<u64>,
         wait_for: Option<&str>,
         screen: Option<&str>,
+        session: Option<&str>,
+        close: Option<bool>,
     ) -> PyResult<Py<PyAny>> {
         let mut args = serde_json::json!({ "input": input });
         if let Some(ms) = wait_ms {
@@ -171,6 +181,12 @@ impl PyTerminal {
         }
         if let Some(m) = screen {
             args["screen"] = m.into();
+        }
+        if let Some(s) = session {
+            args["session"] = s.into();
+        }
+        if let Some(c) = close {
+            args["close"] = c.into();
         }
         let out = py.detach(|| self.with_tool(|tool| self.rt.block_on(tool.call(args))));
         let value = out.map_err(|e| PyValueError::new_err(e.to_string()))?;

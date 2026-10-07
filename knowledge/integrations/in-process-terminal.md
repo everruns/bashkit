@@ -111,6 +111,21 @@ reply carries `matched`. `screen: "changes"` returns only rows that differ
 from the previous call plus the cursor, `"none"` drops the screen; every call
 updates the baseline. Long agent sessions resend a 24-row screen otherwise.
 
+## Decision: sessions are tool-level tabs sharing one VFS
+
+`TerminalTool::with_sessions(size, factory)` holds up to 8 `Terminal`s
+(TM-DOS-119); the `session` argument picks one, creating it on first use from
+`factory().fs(main_fs)`. Why a factory: `BashBuilder` is not `Clone`, and
+each session needs its own interpreter (shell state is per tab, like real
+terminal tabs on one machine). Why shared files: tabs are only useful if a
+command in one sees what another wrote. While waiting on the target session
+the tool polls the others' `run_until_idle` in a `join_all` beside it, so
+background tabs progress only during tool calls (nothing runs between calls,
+same as a single session). `close` drops a tab (not `main`); an exited tab
+restarts on the next call with non-empty input (`restarted: true`).
+`TerminalTool::new` stays single-session and does not advertise `session` in
+its schema. Python/JS bindings always use `with_sessions`.
+
 ## Decision: line discipline split
 
 - Cooked mode (prompt): the shell loop's own small line editor (echo, cursor

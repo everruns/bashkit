@@ -82,22 +82,31 @@ impl Terminal {
             cwd: None,
             env: None,
         });
-        let mut builder = RustBash::builder();
-        if let Some(u) = opts.username {
-            builder = builder.username(u);
-        }
-        if let Some(h) = opts.hostname {
-            builder = builder.hostname(h);
-        }
-        if let Some(c) = opts.cwd {
-            builder = builder.cwd(c);
-        }
-        for (k, v) in opts.env.unwrap_or_default() {
-            builder = builder.env(&k, &v);
-        }
         let size = TerminalSize::new(clamp_dim(opts.rows, 24), clamp_dim(opts.cols, 80));
+        let (username, hostname, cwd) = (opts.username, opts.hostname, opts.cwd);
+        let env = opts.env.unwrap_or_default();
+        // Each `session` passed to `call` gets a shell built the same way.
+        let factory = move || {
+            let mut builder = RustBash::builder();
+            if let Some(u) = &username {
+                builder = builder.username(u.clone());
+            }
+            if let Some(h) = &hostname {
+                builder = builder.hostname(h.clone());
+            }
+            if let Some(c) = &cwd {
+                builder = builder.cwd(c.clone());
+            }
+            for (k, v) in &env {
+                builder = builder.env(k, v);
+            }
+            builder
+        };
         Self {
-            tool: Arc::new(Mutex::new(TerminalTool::with_size(builder, size))),
+            tool: Arc::new(Mutex::new(TerminalTool::with_sessions(
+                size,
+                Box::new(factory),
+            ))),
         }
     }
 
