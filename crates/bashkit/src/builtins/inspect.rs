@@ -4,6 +4,7 @@ use super::clap_cache::cached_command;
 use async_trait::async_trait;
 
 use super::{Builtin, Context, resolve_path};
+use super::ls::quoting::{QuotingStyle, quote_name};
 use crate::error::Result;
 use crate::fs::FileType;
 use crate::interpreter::ExecResult;
@@ -338,7 +339,17 @@ impl Builtin for Stat {
             };
 
             if let Some(fmt) = &format {
-                output.push_str(&format_stat(file, &metadata, fmt));
+                // %N shows a symlink's target; fetch it only when asked.
+                let target = if fmt.contains("%N") && metadata.file_type == FileType::Symlink {
+                    ctx.fs
+                        .read_link(&path)
+                        .await
+                        .ok()
+                        .map(|p| p.to_string_lossy().into_owned())
+                } else {
+                    None
+                };
+                output.push_str(&format_stat(file, &metadata, fmt, target.as_deref()));
                 output.push('\n');
             } else {
                 output.push_str(&default_stat_format(file, &metadata));
@@ -350,7 +361,12 @@ impl Builtin for Stat {
 }
 
 /// Format stat output using format string
-fn format_stat(name: &str, metadata: &crate::fs::Metadata, format: &str) -> String {
+fn format_stat(
+    name: &str,
+    metadata: &crate::fs::Metadata,
+    format: &str,
+    link_target: Option<&str>,
+) -> String {
     let mut result = String::new();
     let mut chars = format.chars().peekable();
 
@@ -360,6 +376,15 @@ fn format_stat(name: &str, metadata: &crate::fs::Metadata, format: &str) -> Stri
                 chars.next();
                 match next {
                     'n' => result.push_str(name),
+                    // GNU default quoting for %N is shell-escape-always.
+                    'N' => {
+                        result.push_str(&quote_name(name, QuotingStyle::ShellEscapeAlways));
+                        if let Some(target) = link_target {
+                            result.push_str(" -> ");
+                            result
+                                .push_str(&quote_name(target, QuotingStyle::ShellEscapeAlways));
+                        }
+                    }
                     's' => result.push_str(&metadata.size.to_string()),
                     'a' => result.push_str(&format!("{:o}", metadata.mode & 0o777)),
                     'A' => result.push_str(&format_permissions(metadata)),

@@ -2,7 +2,7 @@
 
 pub(crate) mod glob;
 mod list;
-mod quoting;
+pub(crate) mod quoting;
 mod rmdir;
 
 pub(crate) use glob::{fnmatch, glob_match};
