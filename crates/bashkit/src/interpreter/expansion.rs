@@ -199,20 +199,39 @@ impl Interpreter {
                 WordPart::Literal(s) => {
                     // Tilde expansion: ~ at start of word expands to $HOME
                     if is_first_part && s.starts_with('~') {
-                        let home = self
-                            .env
-                            .get("HOME")
-                            .or_else(|| self.scoped.variables.get("HOME"))
-                            .cloned()
-                            .unwrap_or_else(|| "/home/user".to_string());
-
-                        if s == "~" {
-                            result.push_str(&home);
-                        } else if s.starts_with("~/") {
-                            result.push_str(&home);
-                            result.push_str(&s[1..]);
-                        } else {
-                            result.push_str(s);
+                        // Tilde prefix runs to the first `/`: `~` is HOME,
+                        // `~+` PWD, `~-` OLDPWD (literal when unset).
+                        let (prefix, rest) = match s.find('/') {
+                            Some(i) => (&s[1..i], &s[i..]),
+                            None => (&s[1..], ""),
+                        };
+                        let lookup = |name: &str| {
+                            self.scoped
+                                .variables
+                                .get(name)
+                                .or_else(|| self.env.get(name))
+                                .cloned()
+                        };
+                        let dir = match prefix {
+                            "" => Some(
+                                self.env
+                                    .get("HOME")
+                                    .or_else(|| self.scoped.variables.get("HOME"))
+                                    .cloned()
+                                    .unwrap_or_else(|| "/home/user".to_string()),
+                            ),
+                            "+" => Some(
+                                lookup("PWD").unwrap_or_else(|| self.cwd.display().to_string()),
+                            ),
+                            "-" => lookup("OLDPWD"),
+                            _ => None,
+                        };
+                        match dir {
+                            Some(dir) => {
+                                result.push_str(&dir);
+                                result.push_str(rest);
+                            }
+                            None => result.push_str(s),
                         }
                     } else {
                         result.push_str(s);
