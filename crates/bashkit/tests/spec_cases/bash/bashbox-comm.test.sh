@@ -10,7 +10,6 @@ comm -123 a b
 
 ### bashbox_comm_zero_terminated
 # zero terminated
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf 'a\0b\0' > z1; printf 'b\0c\0' > z2; comm -z z1 z2 | od -c
 ### expect
 0000000   a  \0  \t  \t   b  \0  \t   c  \0

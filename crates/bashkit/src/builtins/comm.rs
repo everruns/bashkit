@@ -1,7 +1,12 @@
 //! comm builtin command - compare two sorted files line by line
+//!
+//! Decision: options follow GNU comm (`-123z`, `--output-delimiter`,
+//! `--total`, `--zero-terminated`); `--check-order`/`--nocheck-order` are
+//! accepted but order is never checked.
 
 use async_trait::async_trait;
 
+use super::arg_parser::{OptArg, gnu_getopt};
 use super::{Builtin, BuiltinHelper, Context, read_text_file};
 use crate::error::Result;
 use crate::fs::vfs_join;
@@ -9,12 +14,13 @@ use crate::interpreter::ExecResult;
 
 /// The comm builtin - compare two sorted files line by line.
 ///
-/// Usage: comm [-123] FILE1 FILE2
+/// Usage: comm [-123z] [--output-delimiter=STR] [--total] FILE1 FILE2
 ///
 /// Options:
 ///   -1   Suppress lines unique to FILE1
 ///   -2   Suppress lines unique to FILE2
 ///   -3   Suppress lines that appear in both files
+///   -z   Line delimiter is NUL, not newline
 pub struct Comm;
 
 impl BuiltinHelper for Comm {
@@ -22,39 +28,61 @@ impl BuiltinHelper for Comm {
 }
 
 struct CommOptions {
-    suppress_1: bool,
-    suppress_2: bool,
-    suppress_3: bool,
+    suppress: [bool; 3],
+    delimiter: String,
+    total: bool,
+    zero_terminated: bool,
 }
 
 #[allow(clippy::result_large_err)]
 fn parse_comm_args(args: &[String]) -> std::result::Result<(CommOptions, Vec<String>), ExecResult> {
+    let (parsed, files) = gnu_getopt(
+        "comm",
+        args,
+        "123z",
+        &[
+            ("check-order", OptArg::No, 'c'),
+            ("nocheck-order", OptArg::No, 'C'),
+            ("output-delimiter", OptArg::Required, 'o'),
+            ("total", OptArg::No, 't'),
+            ("zero-terminated", OptArg::No, 'z'),
+        ],
+        true,
+        1,
+    )?;
     let mut opts = CommOptions {
-        suppress_1: false,
-        suppress_2: false,
-        suppress_3: false,
+        suppress: [false; 3],
+        delimiter: "\t".to_string(),
+        total: false,
+        zero_terminated: false,
     };
-    let mut files = Vec::new();
-
-    for arg in args {
-        if arg.starts_with('-') && arg.len() > 1 && arg[1..].chars().all(|c| "123".contains(c)) {
-            for c in arg[1..].chars() {
-                match c {
-                    '1' => opts.suppress_1 = true,
-                    '2' => opts.suppress_2 = true,
-                    '3' => opts.suppress_3 = true,
-                    _ => {}
-                }
+    for o in parsed {
+        match o.key {
+            '1' => opts.suppress[0] = true,
+            '2' => opts.suppress[1] = true,
+            '3' => opts.suppress[2] = true,
+            'z' => opts.zero_terminated = true,
+            't' => opts.total = true,
+            'o' => {
+                let d = o.value.unwrap_or_default();
+                // GNU: an empty delimiter means a NUL byte.
+                opts.delimiter = if d.is_empty() { "\0".to_string() } else { d };
             }
-        } else if arg.starts_with('-') && arg.len() > 1 && arg != "--" {
-            // Option-shaped token that isn't a -1/-2/-3 combination → reject.
-            return Err(super::invalid_option("comm", arg, 1));
-        } else {
-            files.push(arg.clone());
+            _ => {}
         }
     }
-
     Ok((opts, files))
+}
+
+fn records(text: &str, sep: char) -> Vec<String> {
+    if text.is_empty() {
+        return Vec::new();
+    }
+    text.strip_suffix(sep)
+        .unwrap_or(text)
+        .split(sep)
+        .map(str::to_string)
+        .collect()
 }
 
 #[async_trait]
@@ -62,7 +90,7 @@ impl Builtin for Comm {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
         if let Some(r) = Self::check_help(
             ctx.args,
-            "Usage: comm [OPTION]... FILE1 FILE2\nCompare two sorted files line by line.\n\n  -1\t\tsuppress column 1 (lines unique to FILE1)\n  -2\t\tsuppress column 2 (lines unique to FILE2)\n  -3\t\tsuppress column 3 (lines that appear in both files)\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            "Usage: comm [OPTION]... FILE1 FILE2\nCompare two sorted files line by line.\n\n  -1\t\tsuppress column 1 (lines unique to FILE1)\n  -2\t\tsuppress column 2 (lines unique to FILE2)\n  -3\t\tsuppress column 3 (lines that appear in both files)\n  --output-delimiter=STR\tseparate columns with STR\n  --total\toutput a summary\n  -z, --zero-terminated\tline delimiter is NUL, not newline\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
             Some("comm (bashkit) 0.1"),
         ) {
             return Ok(r);
@@ -72,110 +100,89 @@ impl Builtin for Comm {
             Err(e) => return Ok(e),
         };
 
-        if files.len() < 2 {
-            return Ok(Self::err("missing operand", 1));
+        match files.len() {
+            0 => return Ok(Self::err("missing operand", 1)),
+            1 => {
+                return Ok(Self::err(
+                    &format!("missing operand after '{}'", files[0]),
+                    1,
+                ));
+            }
+            2 => {}
+            _ => return Ok(Self::err(&format!("extra operand '{}'", files[2]), 1)),
         }
+        let sep = if opts.zero_terminated { '\0' } else { '\n' };
 
-        // Read both files
-        let lines1 = if files[0] == "-" {
-            ctx.stdin
-                .map(|s| s.lines().map(|l| l.to_string()).collect())
-                .unwrap_or_default()
-        } else {
-            let path = if files[0].starts_with('/') {
-                std::path::PathBuf::from(&files[0])
+        let mut inputs: Vec<Vec<String>> = Vec::with_capacity(2);
+        for file in &files {
+            let text = if file == "-" {
+                ctx.stdin.map(ToString::to_string).unwrap_or_default()
             } else {
-                vfs_join(ctx.cwd, &files[0])
+                let path = if file.starts_with('/') {
+                    std::path::PathBuf::from(file)
+                } else {
+                    vfs_join(ctx.cwd, file)
+                };
+                match read_text_file(&*ctx.fs, &path, "comm").await {
+                    Ok(text) => text,
+                    Err(e) => return Ok(e),
+                }
             };
-            match read_text_file(&*ctx.fs, &path, "comm").await {
-                Ok(text) => text.lines().map(|l| l.to_string()).collect(),
-                Err(e) => return Ok(e),
-            }
-        };
+            inputs.push(records(&text, sep));
+        }
+        let (lines1, lines2) = (&inputs[0], &inputs[1]);
 
-        let lines2 = if files[1] == "-" {
-            ctx.stdin
-                .map(|s| s.lines().map(|l| l.to_string()).collect())
-                .unwrap_or_default()
-        } else {
-            let path = if files[1].starts_with('/') {
-                std::path::PathBuf::from(&files[1])
+        let d = &opts.delimiter;
+        let prefixes = [
+            String::new(),
+            if opts.suppress[0] {
+                String::new()
             } else {
-                vfs_join(ctx.cwd, &files[1])
-            };
-            match read_text_file(&*ctx.fs, &path, "comm").await {
-                Ok(text) => text.lines().map(|l| l.to_string()).collect(),
-                Err(e) => return Ok(e),
-            }
-        };
-
-        let lines1: Vec<String> = lines1;
-        let lines2: Vec<String> = lines2;
-
+                d.clone()
+            },
+            d.repeat(usize::from(!opts.suppress[0]) + usize::from(!opts.suppress[1])),
+        ];
+        let mut counts = [0u64; 3];
         let mut output = String::new();
-        let mut i = 0;
-        let mut j = 0;
-
-        // Determine column prefixes based on suppressed columns
-        let col1_prefix = "";
-        let col2_prefix = if opts.suppress_1 { "" } else { "\t" };
-        let col3_prefix = match (opts.suppress_1, opts.suppress_2) {
-            (false, false) => "\t\t",
-            (true, false) | (false, true) => "\t",
-            (true, true) => "",
+        let mut emit = |col: usize, line: &str, output: &mut String| {
+            counts[col] += 1;
+            if !opts.suppress[col] {
+                output.push_str(&prefixes[col]);
+                output.push_str(line);
+                output.push(sep);
+            }
         };
 
+        let (mut i, mut j) = (0, 0);
         while i < lines1.len() && j < lines2.len() {
             match lines1[i].cmp(&lines2[j]) {
                 std::cmp::Ordering::Less => {
-                    // Only in file1
-                    if !opts.suppress_1 {
-                        output.push_str(col1_prefix);
-                        output.push_str(&lines1[i]);
-                        output.push('\n');
-                    }
+                    emit(0, &lines1[i], &mut output);
                     i += 1;
                 }
                 std::cmp::Ordering::Greater => {
-                    // Only in file2
-                    if !opts.suppress_2 {
-                        output.push_str(col2_prefix);
-                        output.push_str(&lines2[j]);
-                        output.push('\n');
-                    }
+                    emit(1, &lines2[j], &mut output);
                     j += 1;
                 }
                 std::cmp::Ordering::Equal => {
-                    // In both
-                    if !opts.suppress_3 {
-                        output.push_str(col3_prefix);
-                        output.push_str(&lines1[i]);
-                        output.push('\n');
-                    }
+                    emit(2, &lines1[i], &mut output);
                     i += 1;
                     j += 1;
                 }
             }
         }
-
-        // Remaining lines from file1
-        while i < lines1.len() {
-            if !opts.suppress_1 {
-                output.push_str(col1_prefix);
-                output.push_str(&lines1[i]);
-                output.push('\n');
-            }
-            i += 1;
+        for line in &lines1[i..] {
+            emit(0, line, &mut output);
+        }
+        for line in &lines2[j..] {
+            emit(1, line, &mut output);
         }
 
-        // Remaining lines from file2
-        while j < lines2.len() {
-            if !opts.suppress_2 {
-                output.push_str(col2_prefix);
-                output.push_str(&lines2[j]);
-                output.push('\n');
-            }
-            j += 1;
+        if opts.total {
+            output.push_str(&format!(
+                "{}{d}{}{d}{}{d}total{sep}",
+                counts[0], counts[1], counts[2]
+            ));
         }
 
         Ok(ExecResult::ok(output))
@@ -369,5 +376,34 @@ mod tests {
         let result = run_comm(&["/a.txt", "/b.txt"], None, &[("/a.txt", b"a\n")]).await;
         assert_eq!(result.exit_code, 1);
         assert!(result.stderr.contains("comm:"));
+    }
+
+    #[tokio::test]
+    async fn test_comm_zero_terminated() {
+        let result = run_comm(
+            &["-z", "/a", "/b"],
+            None,
+            &[("/a", b"a\0b\0"), ("/b", b"b\0c\0")],
+        )
+        .await;
+        assert_eq!(result.stdout, "a\0\t\tb\0\tc\0");
+    }
+
+    #[tokio::test]
+    async fn test_comm_output_delimiter_and_total() {
+        let result = run_comm(
+            &["--output-delimiter=|", "--total", "/a", "/b"],
+            None,
+            &[("/a", b"a\nb\n"), ("/b", b"b\nc\n")],
+        )
+        .await;
+        assert_eq!(result.stdout, "a\n||b\n|c\n1|1|1|total\n");
+    }
+
+    #[tokio::test]
+    async fn test_comm_extra_operand() {
+        let result = run_comm(&["/a", "/b", "/c"], None, &[]).await;
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("extra operand '/c'"));
     }
 }
