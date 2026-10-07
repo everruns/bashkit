@@ -1430,46 +1430,61 @@ async fn double_dash_separator() {
 // Security: jq filters must not terminate the host process (#1571)
 // =========================================================================
 
+// The tests reaching their assertions at all proves the host wasn't killed:
+// `halt` ends the jq command with its code, never the process.
 #[tokio::test]
-async fn halt_does_not_terminate_host_process() {
-    // Regression for #1571: the upstream `halt` native calls
-    // `std::process::exit(...)`, which would tear down the embedding
-    // process. We strip it from the funs chain; calling `halt` therefore
-    // surfaces as an ordinary jq compile/runtime error rather than process
-    // termination.
-    //
-    // The test reaching the assertion at all proves the host wasn't killed.
-    let result = run_jq_result("halt", r#"{}"#).await.unwrap();
-    assert_ne!(
-        result.exit_code, 0,
-        "halt should fail safely; stdout=<{}> stderr=<{}>",
-        result.stdout, result.stderr
-    );
+async fn halt_ends_the_command_not_the_host() {
+    let result = run_jq_result_with_args(&["-n", "1, halt, 2"], "")
+        .await
+        .unwrap();
+    assert_eq!(result.stdout, "1\n");
+    assert_eq!(result.exit_code, 0);
+    let result = run_jq_result_with_args(&["-n", "halt(7)"], "")
+        .await
+        .unwrap();
+    assert_eq!(result.exit_code, 7);
 }
 
 #[tokio::test]
-async fn halt_with_arg_does_not_terminate_host_process() {
-    // Regression for #1571: the explicit-arity form `halt(N)` must also
-    // be neutered, not just the wrapper-def `halt`.
-    let result = run_jq_result("halt(7)", r#"{}"#).await.unwrap();
-    assert_ne!(
-        result.exit_code, 0,
-        "halt(7) should fail safely; stdout=<{}> stderr=<{}>",
-        result.stdout, result.stderr
-    );
+async fn halt_stops_remaining_inputs() {
+    let result = run_jq_result_with_args(&["-c", "if . == 2 then halt else . end"], "1 2 3")
+        .await
+        .unwrap();
+    assert_eq!(result.stdout, "1\n");
+    assert_eq!(result.exit_code, 0);
 }
 
 #[tokio::test]
-async fn halt_error_does_not_terminate_host_process() {
-    // Regression for #1571: `halt_error` is a jq-syntax def in jaq-std
-    // that ultimately calls `halt(...)`. Stripping the native makes the
-    // whole family fail closed.
-    let result = run_jq_result("halt_error", r#""boom""#).await.unwrap();
-    assert_ne!(
-        result.exit_code, 0,
-        "halt_error should fail safely; stdout=<{}> stderr=<{}>",
-        result.stdout, result.stderr
-    );
+async fn halt_error_prints_message_and_exits() {
+    let result = run_jq_result("halt_error", r#""boom\n""#).await.unwrap();
+    assert_eq!(result.stderr, "boom\n");
+    assert_eq!(result.exit_code, 5);
+    let result = run_jq_result("halt_error(3)", r#"{"a":1}"#).await.unwrap();
+    assert_eq!(result.stderr, "{\"a\":1}\n");
+    assert_eq!(result.exit_code, 3);
+    let result = run_jq_result("try halt_error catch 9", "null")
+        .await
+        .unwrap();
+    assert_eq!(result.stdout, "");
+    assert_eq!(result.exit_code, 5);
+}
+
+#[tokio::test]
+async fn debug_and_stderr_write_to_jq_stderr() {
+    let result = run_jq_result_with_args(&["-c", "debug, debug(\"m\"), stderr"], "[1]")
+        .await
+        .unwrap();
+    assert_eq!(result.stdout, "[1]\n[1]\n[1]\n");
+    assert_eq!(result.stderr, "[\"DEBUG:\",[1]]\n[\"DEBUG:\",\"m\"]\n[1]");
+}
+
+#[tokio::test]
+async fn debug_output_is_capped() {
+    let result = run_jq_result_with_args(&["-n", "[range(200000)] | debug | length"], "")
+        .await
+        .unwrap();
+    assert_eq!(result.stdout, "200000\n");
+    assert!(result.stderr.len() <= super::messages::MAX_MESSAGE_BYTES);
 }
 
 // =========================================================================
@@ -2139,5 +2154,123 @@ async fn tostream_round_trips() {
     assert_eq!(
         out,
         "[[[0],1],[[1,\"a\"],2],[[1,\"a\"]],[[2],[]],[[2]]]\n[1,{\"a\":2},[]]\n[[[0],2],[[0]]]\ntrue\n"
+    );
+}
+
+#[test]
+fn run_loop_never_calls_unwrap_valr() {
+    // THREAT[TM-INF-023]: `jaq_core::unwrap_valr` exits the process on halt.
+    assert!(!include_str!("mod.rs").contains("unwrap_valr("));
+}
+
+#[tokio::test]
+async fn ascii_output_escapes_non_ascii() {
+    let out = run_jq_with_args(&["-ac", "."], r#"{"s":"olá ☃ 😀"}"#)
+        .await
+        .unwrap();
+    assert_eq!(out, "{\"s\":\"ol\\u00e1 \\u2603 \\ud83d\\ude00\"}\n");
+    // -a keeps strings JSON-encoded even under -r, like jq.
+    let out = run_jq_with_args(&["-ra", "."], "\"é\"").await.unwrap();
+    assert_eq!(out, "\"\\u00e9\"\n");
+}
+
+#[tokio::test]
+async fn raw_output0_separates_with_nul() {
+    let out = run_jq_with_args(&["--raw-output0", ".[]"], r#"[1,"x",{}]"#)
+        .await
+        .unwrap();
+    assert_eq!(out, "1\0x\0{}\0");
+    let result = run_jq_result_with_args(&["--raw-output0", ".[]"], r#"["a\u0000b","c"]"#)
+        .await
+        .unwrap();
+    assert_eq!(result.stdout, "");
+    assert_eq!(
+        result.stderr,
+        "jq: error (at <stdin>:0): Cannot dump a string containing NUL with --raw-output0 option\n"
+    );
+    assert_eq!(result.exit_code, 5);
+}
+
+#[tokio::test]
+async fn stream_flag_feeds_path_events() {
+    let out = run_jq_with_args(&["-c", "--stream", "."], r#"{"a":[1,{"b":null}],"c":"d"}"#)
+        .await
+        .unwrap();
+    assert_eq!(
+        out,
+        "[[\"a\",0],1]\n[[\"a\",1,\"b\"],null]\n[[\"a\",1,\"b\"]]\n[[\"a\",1]]\n[[\"c\"],\"d\"]\n[[\"c\"]]\n"
+    );
+    let out = run_jq_with_args(&["-c", "--stream", "."], "1 [] {}")
+        .await
+        .unwrap();
+    assert_eq!(out, "[[],1]\n[[],[]]\n[[],{}]\n");
+    let out = run_jq_with_args(&["-nc", "--stream", "fromstream(inputs)"], r#"{"a":[1,2]}"#)
+        .await
+        .unwrap();
+    assert_eq!(out, "{\"a\":[1,2]}\n");
+}
+
+#[tokio::test]
+async fn seq_flag_uses_record_separators() {
+    let out = run_jq_with_args(&["--seq", "-c", "."], "\x1e[1]\n\x1e2\n")
+        .await
+        .unwrap();
+    assert_eq!(out, "\x1e[1]\n\x1e2\n");
+}
+
+#[tokio::test]
+async fn destructuring_alternatives_follow_jq() {
+    let out = run_jq_with_args(
+        &["-c", ".[] as [$x, $y] ?// $x | [$x, $y]"],
+        r#"[1, {"b": 2}, [4, 5]]"#,
+    )
+    .await
+    .unwrap();
+    assert_eq!(out, "[1,null]\n[{\"b\":2},null]\n[4,5]\n");
+    // An error in the body moves on to the next pattern; the last one's
+    // error propagates.
+    let result = run_jq_result_with_args(
+        &[
+            "-c",
+            ".[] as [$a] ?// $a | if $a == 1 then error(\"x\") else $a end",
+        ],
+        "[[1]]",
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.stdout, "[1]\n");
+    let result = run_jq_result_with_args(&["-c", ". as [$a] ?// $a | error(\"e\")"], "[1]")
+        .await
+        .unwrap();
+    assert_eq!(result.stderr, "jq: error (at <stdin>:0): e\n");
+    let result = run_jq_result_with_args(&["-c", ". as [$a] ?// {a: $a} | error(\"e\")"], "[1]")
+        .await
+        .unwrap();
+    assert_eq!(
+        result.stderr,
+        "jq: error (at <stdin>:0): Cannot index array with string \"a\"\n"
+    );
+}
+
+#[tokio::test]
+async fn decoding_builtins_follow_jq() {
+    let out = run_jq_with_args(
+        &[
+            "-nc",
+            "([55296, 65] | implode), (\"YW\" | @base64d), (\"YQ\" | @base64d), \
+             (try (\"!!\" | @base64d) catch .), (try (\"Y\" | @base64d) catch .), \
+             (try (\"x\" | strptime(\"%Y\")) catch .), (try (\"2026-01-15\" | fromdate) catch .), \
+             (\"2026-01-15T12:00:00Z\" | fromdate)",
+        ],
+        "",
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        out,
+        "\"\u{fffd}A\"\n\"a\"\n\"a\"\n\"string (\\\"!!\\\") is not valid base64 data\"\n\
+         \"string (\\\"Y\\\") trailing base64 byte found\"\n\
+         \"date \\\"x\\\" does not match format \\\"%Y\\\"\"\n\
+         \"date \\\"2026-01-15\\\" does not match format \\\"%Y-%m-%dT%H:%M:%SZ\\\"\"\n1768478400\n"
     );
 }

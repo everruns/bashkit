@@ -8812,6 +8812,8 @@ impl Interpreter {
                 ParameterOp::UpperAll => out.push_str(&format!("${{{}^^{}}}", name, operand)),
                 ParameterOp::LowerFirst => out.push_str(&format!("${{{},{}}}", name, operand)),
                 ParameterOp::LowerAll => out.push_str(&format!("${{{},,{}}}", name, operand)),
+                ParameterOp::ToggleFirst => out.push_str(&format!("${{{}~{}}}", name, operand)),
+                ParameterOp::ToggleAll => out.push_str(&format!("${{{}~~{}}}", name, operand)),
             },
             WordPart::Length(name) => out.push_str(&format!("${{#{}}}", name)),
             WordPart::ArrayAccess { name, index } => {
@@ -10400,9 +10402,10 @@ impl Interpreter {
                     self.insert_array_checked(name.clone(), arr);
                 }
                 builtins::BuiltinSideEffect::SetIndexedArray { name, entries } => {
-                    let arr: HashMap<usize, String> = entries.iter().cloned().collect();
-                    // Remove existing array first (mirrors mapfile behavior)
-                    self.arrays_mut().remove(name);
+                    // Merges into the existing array; mapfile sends RemoveArray
+                    // first unless `-O` asked to keep the other elements.
+                    let mut arr = self.arrays_mut().remove(name).unwrap_or_default();
+                    arr.extend(entries.iter().cloned());
                     if !arr.is_empty() {
                         self.insert_array_checked(name.clone(), arr);
                     }
