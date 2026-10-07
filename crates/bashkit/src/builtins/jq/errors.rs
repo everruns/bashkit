@@ -79,16 +79,33 @@ pub(super) fn format_load_errors<P>(errs: jaq_core::load::Errors<&str, P>) -> St
     format!("jq: error: {}\n", truncate_text(&body, MAX_JQ_DIAG_CHARS))
 }
 
-/// Format jaq runtime errors without dumping full input values into stderr.
+/// Format a jaq runtime error the way jq reports an error while filtering
+/// one input: `jq: error (at <file>:<line>): ...`. `error("msg")` prints the
+/// message as is, `error({...})` adds jq's `(not a string)` marker.
+///
 /// stderr is agent-facing API: value-bearing diagnostics summarize operand
 /// types and keep generic fallbacks bounded.
-pub(super) fn format_runtime_error(error: &jaq_core::Error<Val>) -> String {
+pub(super) fn format_runtime_error_at(error: &jaq_core::Error<Val>, location: &str) -> String {
     // THREAT[TM-DOS-110]: an error quoting a huge or deeply shared value
     // would render it in full; stop rendering past what the message keeps.
     let message = render_capped(error, 64 * 1024);
-    let body = humanize(&message)
-        .unwrap_or_else(|| capitalize_first(&truncate_text(&message, MAX_JQ_RUNTIME_ERROR_CHARS)));
-    format!("jq: error: {body}\n")
+    let thrown = super::convert::val_to_jq_capped(&error.clone().into_val(), 64 * 1024);
+    match thrown {
+        Some(super::convert::JqJson::String(s)) if message.starts_with('"') => format!(
+            "jq: error (at {location}): {}\n",
+            truncate_text(&s, MAX_JQ_RUNTIME_ERROR_CHARS)
+        ),
+        Some(super::convert::JqJson::String(_)) | None => {
+            let body = humanize(&message).unwrap_or_else(|| {
+                capitalize_first(&truncate_text(&message, MAX_JQ_RUNTIME_ERROR_CHARS))
+            });
+            format!("jq: error (at {location}): {body}\n")
+        }
+        Some(_) => format!(
+            "jq: error (at {location}) (not a string): {}\n",
+            truncate_text(&message, MAX_JQ_RUNTIME_ERROR_CHARS)
+        ),
+    }
 }
 
 /// `Display` into a string, stopping after `max` bytes.
