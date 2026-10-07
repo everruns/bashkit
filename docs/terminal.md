@@ -219,6 +219,31 @@ print(t.screen_text(), t.history_text(), t.take_transcript(), t.activity())
 `TerminalTool`. Calls are synchronous and release the GIL while the session
 runs; `timeout` bounds the wait.
 
+## From JavaScript
+
+The `@everruns/bashkit` package (Node, Bun, Deno) exports the same class:
+
+```typescript
+import { Terminal } from "@everruns/bashkit";
+
+const term = new Terminal({ rows: 24, cols: 80, cwd: "/tmp" });
+let out = await term.call("vi notes.txt<Enter>"); // Vim key notation
+out = await term.call("ihello<Esc>:wq<Enter>");
+console.log(out.commands[0].exit_code); // 0
+console.log((await term.readFile("/tmp/notes.txt")).toString()); // "hello\n"
+
+// Low level: raw keys, bounded waits, screen and transcript.
+term.send("sleep 10; echo done\r");
+await term.runUntilIdle(100); // "idle", "exited" or "timeout"
+term.send("\x03"); // Ctrl-C while the command runs
+await term.runUntilIdle();
+console.log(term.screenText(), term.takeTranscript(), term.activity());
+```
+
+`runUntilIdle` and `call` are async and yield between short slices, so
+`send`, `screenText` and the other sync methods work while a command runs.
+`toolDefinition()` and `systemPrompt()` return the `TerminalTool` metadata.
+
 ## vi
 
 `vi [FILE]` opens the editor on the alternate screen; quitting restores the

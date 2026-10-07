@@ -40,6 +40,7 @@ Fix root cause. Unsure: read more code; if stuck, ask w/ short options. Unrecogn
 | integrations/script-analysis | Static pre-execution script introspection for permission gating |
 | integrations/git-support | Sandboxed git operations on VFS |
 | runtimes/python-builtin | Embedded Python via Monty, security, resource limits |
+| runtimes/cpython-wasm | Real CPython 3.14 on WASI (Wizer snapshot, Pulley AOT), WASI-on-VFS host, limits |
 | operations/eval | LLM eval study on the mira framework, dataset format, scoring |
 | operations/maintenance | Pre-release maintenance requirements |
 | runtimes/python-package | Python package, PyPI wheels, platform matrix |

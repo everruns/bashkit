@@ -388,3 +388,20 @@ mod not_configured {
         assert!(result.stderr.contains("not configured"));
     }
 }
+
+#[tokio::test]
+async fn git_init_options_are_parsed_not_taken_as_directory() {
+    let mut bash = create_git_bash();
+    let r = bash
+        .exec("git init -q /repo; echo \"[$?]\"; ls /repo/.git/HEAD; git init -b main /r2 >/dev/null; cat /r2/.git/HEAD; git init --initial-branch=dev -q /r3; cat /r3/.git/HEAD; ls /home/user")
+        .await
+        .unwrap();
+    assert_eq!(
+        r.stdout,
+        "[0]\n/repo/.git/HEAD\nref: refs/heads/main\nref: refs/heads/dev\n"
+    );
+    let r = bash.exec("git init --bare /x").await.unwrap();
+    assert_eq!(r.exit_code, 129);
+    let r = bash.exec("git init -b 'a b' /y").await.unwrap();
+    assert_eq!(r.exit_code, 128);
+}

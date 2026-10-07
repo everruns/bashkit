@@ -15,6 +15,7 @@ const DOC_LINKS = new Map([
   ["cli.md", "/docs/cli/"],
   ["compatibility.md", "/docs/compatibility/"],
   ["configuration.md", "/docs/configuration/"],
+  ["cpython.md", "/docs/cpython/"],
   ["credential-injection.md", "/docs/credential-injection/"],
   ["custom_builtins.md", "/docs/custom-builtins/"],
   ["custom_builtins_js.md", "/docs/custom-builtins-js/"],

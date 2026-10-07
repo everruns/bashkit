@@ -130,17 +130,85 @@ async fn execute_git(ctx: Context<'_>, git_client: &super::GitClient) -> Result<
     }
 }
 
+/// `git check-ref-format --branch` rules, enough to keep HEAD well formed.
+#[cfg(feature = "git")]
+fn valid_branch_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.starts_with(['-', '/', '.'])
+        && !name.ends_with(['/', '.'])
+        && !name.ends_with(".lock")
+        && !name.contains("..")
+        && !name.contains("@{")
+        && !name.contains("//")
+        && name != "@"
+        && !name
+            .chars()
+            .any(|c| c.is_control() || c.is_whitespace() || "~^:?*[\\".contains(c))
+}
+
 #[cfg(feature = "git")]
 async fn git_init(
     ctx: Context<'_>,
     git_client: &super::GitClient,
     args: &[String],
 ) -> Result<ExecResult> {
-    // Parse path argument (default to cwd)
-    let path = if args.is_empty() {
-        ctx.cwd.clone()
-    } else {
-        resolve_path(ctx.cwd, &args[0])
+    let mut quiet = false;
+    let mut branch = "master".to_string();
+    let mut dir: Option<&str> = None;
+    let mut i = 0;
+    while i < args.len() {
+        let arg = args[i].as_str();
+        match arg {
+            "-q" | "--quiet" => quiet = true,
+            "-b" | "--initial-branch" => {
+                i += 1;
+                match args.get(i) {
+                    Some(name) => branch = name.clone(),
+                    None => {
+                        return Ok(ExecResult::err(
+                            format!("error: option `{arg}' requires a value\n"),
+                            129,
+                        ));
+                    }
+                }
+            }
+            _ if arg.starts_with("--initial-branch=") => {
+                branch = arg["--initial-branch=".len()..].to_string();
+            }
+            "--" => {
+                dir = args.get(i + 1).map(String::as_str);
+                break;
+            }
+            _ if arg.starts_with('-') => {
+                return Ok(ExecResult::err(
+                    format!("error: unknown option `{}'\n", arg.trim_start_matches('-')),
+                    129,
+                ));
+            }
+            _ => {
+                if dir.is_some() {
+                    return Ok(ExecResult::err(
+                        "usage: git init [-q | --quiet] [-b <branch-name>] [<directory>]\n"
+                            .to_string(),
+                        129,
+                    ));
+                }
+                dir = Some(arg);
+            }
+        }
+        i += 1;
+    }
+    if !valid_branch_name(&branch) {
+        return Ok(ExecResult::err(
+            format!("fatal: invalid initial branch name: '{branch}'\n"),
+            128,
+        ));
+    }
+
+    // Path argument defaults to cwd
+    let path = match dir {
+        Some(d) => resolve_path(ctx.cwd, d),
+        None => ctx.cwd.clone(),
     };
 
     // Create directory if it doesn't exist
@@ -148,7 +216,8 @@ async fn git_init(
         ctx.fs.mkdir(&path, true).await?;
     }
 
-    match git_client.init(&ctx.fs, &path).await {
+    match git_client.init_with_branch(&ctx.fs, &path, &branch).await {
+        Ok(_) if quiet => Ok(ExecResult::ok(String::new())),
         Ok(output) => Ok(ExecResult::ok(output)),
         Err(e) => git_err(e),
     }

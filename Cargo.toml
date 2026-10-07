@@ -17,6 +17,12 @@ keywords = ["bash", "virtual", "ai", "agent", "everruns"]
 categories = ["command-line-utilities", "parser-implementations"]
 
 [workspace.dependencies]
+# Embedded CPython runtime (`cpython` feature, crates/bashkit-cpython-wasm).
+# Important decision: pinned exactly. Precompiled `.cwasm` artifacts only load
+# into the identical wasmtime version. Runtime build: no Cranelift, Pulley
+# interpreter only; Cranelift is added as a build-dependency by the artifact
+# crate. 48.x is the newest line supporting the pinned rustc 1.95.
+wasmtime = { version = "=48.0.5", default-features = false, features = ["runtime", "std", "pulley", "async"] }
 # Async runtime
 # Base features are WASM-compatible; crates needing more (rt-multi-thread, fs, net, process)
 # add them in their own Cargo.toml or via [target.'cfg(...)'.dependencies].
@@ -178,6 +184,19 @@ napi-build = "2"
 # CI's feature-sliced test job run out of space.
 [profile.test]
 debug = "line-tables-only"
+
+# Important decision: the `cpython` feature runs CPython on wasmtime's Pulley
+# interpreter, and its build script compiles a ~30 MB wasm module with
+# Cranelift. Unoptimized, both are 10-50x slower, which makes debug test runs
+# and builds crawl. Optimize just those crates in every profile.
+[profile.dev.package.pulley-interpreter]
+opt-level = 3
+[profile.dev.package.cranelift-codegen]
+opt-level = 3
+[profile.dev.package.wasmtime-internal-cranelift]
+opt-level = 3
+[profile.dev.package.regalloc2]
+opt-level = 3
 
 [profile.release]
 lto = "thin"

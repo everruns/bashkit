@@ -25,6 +25,8 @@ doc = false  # Disable to avoid collision with bashkit library docs
 [features]
 default = ["python", "sqlite", "interactive"]
 python = ["bashkit/python"]
+# python/python3 via real CPython 3.14 in a wasm sandbox (replaces Monty)
+cpython = ["bashkit/cpython"]
 sqlite = ["bashkit/sqlite"]
 realfs = ["bashkit/realfs"]
 interactive = ["dep:rustyline", "dep:terminal_size", "dep:signal-hook"]

@@ -51,6 +51,13 @@ updates:
       - dependency-name: "monty"
       - dependency-name: "monty-types"
 
+      # wasmtime is pinned exactly (=48.0.5): the `cpython` feature embeds a
+      # module precompiled by build.rs, and a precompiled module loads only
+      # into the same wasmtime version. 49.x also needs a newer rustc than
+      # rust-toolchain.toml pins. Bump deliberately together with the
+      # toolchain; see knowledge/runtimes/cpython-wasm.md.
+      - dependency-name: "wasmtime"
+
       # idna_adapter is deliberately held at 1.0.0. It is not a normal
       # dependency: the crate exists so the top-level lockfile can choose
       # `idna`'s Unicode back end, and 1.0.x is the "no back end" stream that

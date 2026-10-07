@@ -14,12 +14,24 @@ use super::generated::format::{
     FormatArgument, FormatArguments, FormatError, FormatItem, parse_spec_and_escape,
 };
 use super::limits::PRINTF_MAX_DIAG_CHARS as MAX_PRINTF_DIAG_CHARS;
-use super::{Builtin, Context, MAX_FORMAT_WIDTH};
+use super::{Builtin, Context, Date, MAX_FORMAT_WIDTH};
 use crate::error::Result;
 use crate::interpreter::{ExecResult, is_internal_variable};
 
 /// printf builtin - formatted string output
-pub struct Printf;
+///
+/// Holds the sandbox clock so `%(fmt)T` reads the same virtual time as `date`.
+#[derive(Default)]
+pub struct Printf {
+    clock: Date,
+}
+
+impl Printf {
+    /// printf whose `%(fmt)T` uses `clock` (fixed epoch / offset aware).
+    pub fn with_clock(clock: Date) -> Self {
+        Self { clock }
+    }
+}
 
 #[async_trait]
 impl Builtin for Printf {
@@ -51,6 +63,12 @@ impl Builtin for Printf {
         };
 
         let args: Vec<String> = args_iter.cloned().collect();
+        let (format, args) = match expand_time_directives(&format, args, |seconds, fmt| {
+            self.clock.strftime(ctx.env.get("TZ"), seconds, fmt)
+        }) {
+            Ok(v) => v,
+            Err(err) => return Ok(ExecResult::err(format!("{err}\n"), 1)),
+        };
         let output = match render_printf(&format, &args) {
             Ok(output) => output,
             Err(err) => return Ok(ExecResult::err(err, 1)),
@@ -94,6 +112,118 @@ fn render_printf(format: &str, args: &[String]) -> std::result::Result<String, S
     }
 
     Ok(bytes_to_stdout_string(out))
+}
+
+/// One argument-consuming slot of a format pass.
+enum Slot {
+    Plain,
+    /// `%(fmt)T` with its strftime format.
+    Time(String),
+}
+
+/// Rewrite bash's `%(fmt)T` into `%s` and pre-format the matching arguments.
+///
+/// Decision: the generated uutils formatter has no `%(...)T`, and it is
+/// generated code we don't edit. So each `%[flags][width][.prec](fmt)T`
+/// becomes `%[flags][width][.prec]s`, and every argument that lands on such a
+/// directive (arg i -> slot i % slots, as the format repeats) is replaced by
+/// the formatted time. Argument `""` or `-1` means now. `-2` (bash: shell
+/// start time) also means now; the shell start instant isn't tracked.
+/// Missing arguments for a time slot also mean now.
+fn expand_time_directives(
+    format: &str,
+    mut args: Vec<String>,
+    mut strftime: impl FnMut(Option<i64>, &str) -> std::result::Result<String, String>,
+) -> std::result::Result<(String, Vec<String>), String> {
+    if !format.contains(")T") {
+        return Ok((format.to_string(), args));
+    }
+    let bytes = format.as_bytes();
+    let mut out = String::with_capacity(format.len());
+    let mut slots = Vec::new();
+    let mut i = 0;
+    let mut copied = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' => i += 2,
+            b'%' if bytes.get(i + 1) == Some(&b'%') => i += 2,
+            b'%' => {
+                i += 1;
+                while i < bytes.len() && b"-+ #0'".contains(&bytes[i]) {
+                    i += 1;
+                }
+                for part in 0..2 {
+                    if part == 1 {
+                        if bytes.get(i) != Some(&b'.') {
+                            break;
+                        }
+                        i += 1;
+                    }
+                    if bytes.get(i) == Some(&b'*') {
+                        slots.push(Slot::Plain);
+                        i += 1;
+                    } else {
+                        while i < bytes.len() && bytes[i].is_ascii_digit() {
+                            i += 1;
+                        }
+                    }
+                }
+                if bytes.get(i) == Some(&b'(')
+                    && let Some(close) = format[i..].find(")T")
+                {
+                    let fmt = &format[i + 1..i + close];
+                    out.push_str(&format[copied..i]);
+                    out.push('s');
+                    slots.push(Slot::Time(if fmt.is_empty() {
+                        "%X".to_string()
+                    } else {
+                        fmt.to_string()
+                    }));
+                    i += close + 2;
+                    copied = i;
+                } else if i < bytes.len() {
+                    slots.push(Slot::Plain);
+                    i += 1;
+                }
+            }
+            _ => i += 1,
+        }
+    }
+    out.push_str(&format[copied..]);
+    if !slots.iter().any(|s| matches!(s, Slot::Time(_))) {
+        return Ok((format.to_string(), args));
+    }
+
+    // Pad the last pass up to its final time slot so a missing time
+    // argument still prints "now" (bash treats it as -1).
+    let n = slots.len();
+    let last_time = slots
+        .iter()
+        .rposition(|s| matches!(s, Slot::Time(_)))
+        .unwrap_or(0);
+    let pass_start = if args.is_empty() {
+        0
+    } else {
+        (args.len() - 1) / n * n
+    };
+    let filled = args.len() - pass_start;
+    if args.is_empty() || filled < n {
+        let want = pass_start + last_time + 1;
+        while args.len() < want {
+            args.push(String::new());
+        }
+    }
+
+    for (idx, arg) in args.iter_mut().enumerate() {
+        if let Slot::Time(fmt) = &slots[idx % n] {
+            let seconds = match arg.trim() {
+                "" | "-1" | "-2" => None,
+                s => Some(parse_leading_i64(s)),
+            };
+            *arg = strftime(seconds, fmt)?;
+        }
+    }
+    Ok((out, args))
 }
 
 fn bytes_to_stdout_string(bytes: Vec<u8>) -> String {
@@ -517,6 +647,43 @@ fn parse_leading_i64(input: &str) -> i64 {
 mod tests {
     use super::*;
     use crate::interpreter::ExecResult;
+
+    fn fake_time(seconds: Option<i64>, fmt: &str) -> std::result::Result<String, String> {
+        Ok(format!(
+            "<{fmt}@{}>",
+            seconds.map_or("now".into(), |s| s.to_string())
+        ))
+    }
+
+    #[test]
+    fn time_directive_rewritten_to_string_slot() {
+        let (f, a) =
+            expand_time_directives("%-5(%H)T|%s\\n", vec!["7".into(), "x".into()], fake_time)
+                .unwrap();
+        assert_eq!(f, "%-5s|%s\\n");
+        assert_eq!(a, vec!["<%H@7>".to_string(), "x".to_string()]);
+    }
+
+    #[test]
+    fn time_directive_maps_args_across_passes_and_pads_missing() {
+        let (_, a) = expand_time_directives(
+            "%s %(%F)T",
+            vec!["a".into(), "1".into(), "b".into()],
+            fake_time,
+        )
+        .unwrap();
+        assert_eq!(a, vec!["a", "<%F@1>", "b", "<%F@now>"]);
+        let (_, a) = expand_time_directives("%()T", vec![], fake_time).unwrap();
+        assert_eq!(a, vec!["<%X@now>"]);
+    }
+
+    #[test]
+    fn time_directive_skips_literal_percent_and_plain_formats() {
+        let (f, a) = expand_time_directives("%% %s", vec!["x".into()], fake_time).unwrap();
+        assert_eq!((f.as_str(), a), ("%% %s", vec!["x".to_string()]));
+        let err = expand_time_directives("%(%F)T", vec![], |_, _| Err("bad".into()));
+        assert_eq!(err.unwrap_err(), "bad");
+    }
 
     #[test]
     fn generated_formatter_repeats_format_until_args_exhausted() {

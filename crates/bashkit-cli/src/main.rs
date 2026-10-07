@@ -76,9 +76,12 @@ struct Args {
     #[arg(long)]
     no_git: bool,
 
-    /// Disable python builtin (monty backend)
-    #[cfg_attr(not(feature = "python"), arg(long, hide = true))]
-    #[cfg_attr(feature = "python", arg(long))]
+    /// Disable python/python3 builtins (Monty, or CPython with `cpython`)
+    #[cfg_attr(
+        not(any(feature = "python", feature = "cpython")),
+        arg(long, hide = true)
+    )]
+    #[cfg_attr(any(feature = "python", feature = "cpython"), arg(long))]
     no_python: bool,
 
     /// Disable sqlite/sqlite3 builtin (turso backend, BETA)
@@ -186,6 +189,12 @@ fn configure_bash(args: &Args, mode: CliMode) -> bashkit::BashBuilder {
     if !args.no_python {
         builder = builder.python();
         builder = builder.env(PYTHON_INPROCESS_OPT_IN_ENV, "1");
+    }
+
+    // CPython (wasm) replaces Monty for python/python3 when compiled in.
+    #[cfg(feature = "cpython")]
+    if !args.no_python {
+        builder = builder.cpython();
     }
 
     #[cfg(feature = "sqlite")]

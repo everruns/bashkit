@@ -220,7 +220,9 @@ jobs:
       - name: Install cargo-vet
         uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2
         with:
-          tool: cargo-vet
+          # 0.10.2+ parses trusted-publisher entries in imports.lock (wasmtime
+          # crates publish via GitHub trusted publishing); 0.10.0 rejects them.
+          tool: cargo-vet@0.10.2
 
       - name: Supply chain audit (cargo-vet)
         run: cargo vet --locked
@@ -299,6 +301,12 @@ jobs:
 
       - name: Run doc tests
         run: cargo test --workspace --doc --features http_client,ssh,sqlite
+
+      # CPython (wasm) python3: unit, integration, capability (diffed against
+      # the runner's python3), security and load tests. Feature-gated, so the
+      # main test step above does not build it into bashkit.
+      - name: Run CPython tests
+        run: cargo test -p bashkit --features cpython --lib --test integration -- cpython
 
       - name: Run realfs tests
         run: cargo test --features realfs -p bashkit --test realfs_tests -p bashkit-cli
@@ -422,6 +430,7 @@ jobs:
           cargo run --example live_mounts
           cargo run --example git_workflow --features git
           cargo run --example python_external_functions --features python
+          cargo run --example cpython_scripts --features cpython
           cargo run --example typescript_external_functions --features typescript
           cargo run --example realfs_readonly --features realfs
           cargo run --example realfs_readwrite --features realfs
@@ -552,7 +561,9 @@ jobs:
 
       - name: Verify fuzz targets compile
         working-directory: crates/bashkit
-        run: cargo +nightly fuzz build
+        run: |
+          cargo +nightly fuzz build
+          cargo +nightly fuzz build --features cpython cpython_fuzz
 
   # Gate job for branch protection — name must stay "Check"
   check:

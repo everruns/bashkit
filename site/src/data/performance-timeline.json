@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-05T17:37:13.000Z",
+  "generatedAt": "2026-10-06T20:42:07.000Z",
   "sources": {
     "bench": "crates/bashkit-bench/results/*.json",
     "criterion": "crates/bashkit/benches/results/*.md",
@@ -7,7 +7,7 @@
   },
   "summary": {
     "benchRuns": 10,
-    "criterionRuns": 15,
+    "criterionRuns": 16,
     "evalRuns": 38,
     "latestBench": {
       "id": "bench-mykhailosmac-macos-aarch64-1788629833",
@@ -1829,6 +1829,27 @@
       "fastestCase": {
         "name": "sqlite_query/aggregate_in_memory/100",
         "us": 370.97
+      },
+      "bestImprovement": null
+    },
+    {
+      "id": "criterion-python-vm-linux-x86_64-1791319327",
+      "kind": "criterion",
+      "family": "python",
+      "label": "Python Runtimes Benchmark: CPython (wasm) vs Monty",
+      "date": "2026-10-06",
+      "timestamp": "2026-10-06T20:42:07.000Z",
+      "source": "crates/bashkit/benches/results/criterion-python-vm-linux-x86_64-1791319327.md",
+      "reportSource": "crates/bashkit/benches/results/criterion-python-vm-linux-x86_64-1791319327.md",
+      "cases": 22,
+      "medianUs": 6917.3,
+      "p95Us": 287803.5,
+      "medianChangePct": null,
+      "meanChangePct": null,
+      "bestChangePct": null,
+      "fastestCase": {
+        "name": "python_call/monty/print",
+        "us": 15.41
       },
       "bestImprovement": null
     }
@@ -5640,6 +5661,15 @@
       "detail": "96 parity/perf cases on mykhailosmac-macos-aarch64; output match 100%.",
       "metric": 49.9,
       "source": "crates/bashkit-bench/results/bench-mykhailosmac-macos-aarch64-1788629833.json"
+    },
+    {
+      "date": "2026-10-06",
+      "timestamp": "2026-10-06T20:42:07.000Z",
+      "kind": "Criterion",
+      "title": "python",
+      "detail": "python_call/monty/print at 15.41 us median",
+      "metric": 6917.3,
+      "source": "crates/bashkit/benches/results/criterion-python-vm-linux-x86_64-1791319327.md"
     }
   ]
 }

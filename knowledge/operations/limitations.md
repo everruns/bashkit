@@ -114,6 +114,22 @@ builtins are currently tracked; partial boundaries follow.
 |----|------|------------|----------|
 | L-DATE-001 | date | `TZ` accepts bundled IANA identifiers/aliases only. POSIX rule strings and `:zoneinfo` paths are unsupported and intentionally resolve to UTC because the sandbox has no trusted host zoneinfo filesystem. GNU nanosecond formatting supports the useful `%N`/`%3N`/`%6N`/`%9N` forms, not other widths | `date_timezone_tests` |
 
+### CPython runtime (`cpython` feature)
+
+Boundaries of the WebAssembly CPython guest; see
+[CPython WebAssembly Runtime](../runtimes/cpython-wasm.md).
+
+| ID | Limitation | Why | Evidence |
+|----|------------|-----|----------|
+| L-CPY-001 | No subprocesses from Python (`subprocess`, `os.system`, `os.fork`, `os.popen` fail); Python cannot call back into the shell | The guest has no process API; a shell bridge is a deliberate follow-up, not an accident | `processes_unavailable` (cpython_security_tests) |
+| L-CPY-002 | No network from Python (`socket`, `urllib.request` cannot connect) | No socket imports in the WASI host; egress stays with the allowlisted shell builtins | TM-PY-CPY-003, `network_unavailable` |
+| L-CPY-003 | No threads, `multiprocessing`, `ctypes`, native extensions or third-party packages | Single-threaded wasm guest with only the bundled pure-Python stdlib | `threads_and_native_code_unavailable` |
+| L-CPY-004 | `errno` values are WASI's (`ENOENT` is 44); exception types and the `errno` module agree | wasi-libc numbering; rewriting it would desync the guest's `errno` module | `cpython_integration_tests::missing_script_exits_2`, stance |
+| L-CPY-005 | `hash()` of `str`/`bytes` uses one seed baked into the snapshot | The seed is chosen during snapshot initialization; per-call re-seeding would require re-hashing every interned object | stance |
+| L-CPY-006 | Deep C-level recursion ends the call with `python3: fatal error: stack overflow` instead of `RecursionError` | The interpreter's wasm stack is bounded (4 MiB); the trap is contained | `deep_c_recursion_is_contained` |
+| L-CPY-007 | No interactive REPL; `python3` with no program reads one from stdin | No TTY inside the sandbox | stance |
+| L-CPY-008 | Guest memory per call is capped at 1 GiB even if `max_memory` is higher | Pooled instance slots have a fixed maximum size | [CPython WebAssembly Runtime](../runtimes/cpython-wasm.md) |
+
 ## Text Processing
 
 What each tool does is covered by its spec tests (all unskipped tests
@@ -137,6 +153,7 @@ pass in CI); only divergences and boundaries are recorded here.
 | L-SED-006 | sed | Scripts that carry the stream past a range's end with `n`, `N` or `D` can still diverge from GNU's range bookkeeping in rare shapes (e.g. `sed '$!D;1,2!x'`). A randomized differential sweep of 18,000 generated scripts against GNU sed 4.9 finds 3 such cases; all combine a multi-line pattern space with a range address, a shape absent from ordinary scripts | `ranges_that_the_stream_skipped_past` |
 | L-CURL-001 | curl | Spec-test coverage for methods/headers/auth/redirects not ported (needs `http_client` + allowlist in harness); payload behavior has integration and real-curl differential coverage | stance |
 | L-CURL-002 | curl/wget | Unknown options are ignored for compatibility, not rejected (real curl/wget error); deliberate leniency | `curl.rs` |
+| L-PRINTF-001 | printf | `%(fmt)T` argument `-2` (bash: shell start time) formats the current time; the shell start instant is not tracked. GNU-only `%N` in the time format is expanded to nanoseconds, bash prints it literally | `printf.rs::expand_time_directives` |
 | L-STR-001 | strings | Accepts dash-prefixed filenames (e.g. `-data.bin`), so only a lone unknown short option (`-Q`) is rejected as invalid; GNU rejects `-data.bin` too | `strings.rs` |
 
 Safety boundaries (enforced, not bugs): printf width/precision caps,

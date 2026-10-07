@@ -335,6 +335,10 @@
     },
     {
       "feature": null,
+      "name": "more"
+    },
+    {
+      "feature": null,
       "name": "mv"
     },
     {
@@ -627,6 +631,10 @@
     },
     {
       "feature": null,
+      "name": "vi"
+    },
+    {
+      "feature": null,
       "name": "wait"
     },
     {
@@ -670,5 +678,5 @@
       "name": "zip"
     }
   ],
-  "count": 167
+  "count": 169
 }

@@ -638,6 +638,11 @@ Bash::builder()
 **Current Risk**: NONE. Implementation: `builtins/system.rs`, `hostname` (default
 "bashkit-sandbox"), `uname` (hardcoded Linux 5.15.0), `whoami` (default "sandbox"),
 `id` (uid/gid 1000), all configurable via `Bash::builder().username(..).hostname(..)`.
+Shell identity variables are synthetic constants, never host values:
+`PATH=/usr/local/bin:/usr/bin:/bin` (`DEFAULT_PATH`), `SHELL=/bin/bash`,
+`SHLVL=1`, `OSTYPE=linux-gnu`, `HOSTTYPE=x86_64`,
+`MACHTYPE=x86_64-pc-linux-gnu`, `PPID=0`. Builder `env(..)` overrides them.
+Covered by `threat_env_vars_explicit_only`.
 
 #### 3.3 Network Exfiltration
 
@@ -1320,7 +1325,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | ~~TM-INJ-015~~ | ~~`export` bypasses `is_internal_variable()`~~ | ~~Internal prefix injection via export~~ | ~~Add `is_internal_variable()` check~~ (**FIXED**) |
 | ~~TM-INJ-016~~ | ~~`_ARRAY_READ_` prefix not in `is_internal_variable()`~~ | ~~Arbitrary array creation/overwrite via marker injection~~ | ~~Add `_ARRAY_READ_` prefix to `is_internal_variable()`~~ (**FIXED**) |
 | TM-INF-017 | `set` and `declare -p` leak internal markers | Internal state disclosure (_NAMEREF_, _READONLY_, _UPPER_, _LOWER_) | Filter `is_internal_variable()` names from output |
-| TM-INF-018 | `date` exposes host clock or timezone | Timezone fingerprinting, timing correlation | `date` consults only virtual `ctx.env["TZ"]`: unset, empty, invalid, POSIX-rule, and path-style values resolve to UTC; valid static IANA zones select parsing/display rules, and `-u` displays UTC. Timezone-naive `touch -t` stamps are UTC so `date -r` cannot reveal host-local conversion. `fixed_epoch(N)` freezes the instant; `epoch_offset(N)` shifts the real clock (mutually exclusive, last call wins). Without the `tzdata` feature there is no IANA database, so `date` reports that it cannot honour a named zone and exits 1 rather than silently formatting in UTC; the diagnostic omits the `TZ` value, which may itself be path-shaped. The fail-closed direction is unchanged in both builds: host timezone state is never consulted. Regression/security coverage: `date_timezone_tests`, `date_timezone_no_tzdata_tests`, GNU-date differentials, `fileops.test::touch_t_sets_file_mtime`, and `tm_inf_018_date`. | **MITIGATED** |
+| TM-INF-018 | `date` exposes host clock or timezone | Timezone fingerprinting, timing correlation | `date` consults only virtual `ctx.env["TZ"]`: unset, empty, invalid, POSIX-rule, and path-style values resolve to UTC; valid static IANA zones select parsing/display rules, and `-u` displays UTC. Timezone-naive `touch -t` stamps are UTC so `date -r` cannot reveal host-local conversion. printf `%(fmt)T` shares `date`'s clock and `TZ` policy (`Date::strftime`), so it cannot bypass either. `fixed_epoch(N)` freezes the instant; `epoch_offset(N)` shifts the real clock (mutually exclusive, last call wins). Without the `tzdata` feature there is no IANA database, so `date` reports that it cannot honour a named zone and exits 1 rather than silently formatting in UTC; the diagnostic omits the `TZ` value, which may itself be path-shaped. The fail-closed direction is unchanged in both builds: host timezone state is never consulted. Regression/security coverage: `date_timezone_tests`, `date_timezone_no_tzdata_tests`, GNU-date differentials, `fileops.test::touch_t_sets_file_mtime`, and `tm_inf_018_date`. | **MITIGATED** |
 | ~~TM-DOS-041~~ | ~~Brace expansion `{N..M}` unbounded range~~ | ~~OOM via `{1..999999999}`~~ | `MAX_STATIC_BRACE_RANGE = 100_000` parser-time check (`parser/budget.rs`, `BraceRangeTooLarge`); runtime fallback `MAX_BRACE_RANGE = 10_000` in `try_expand_range` treats oversized ranges as literals (**FIXED**) |
 | ~~TM-DOS-042~~ | ~~Brace expansion combinatorial explosion~~ | ~~OOM/stack overflow via `{1..100}{1..100}{1..100}` (1M strings) or `{a,b}{a,b}...` (deep recursion)~~ | `expand_braces` caps total emitted strings (`MAX_BRACE_EXPANSION_TOTAL = 100_000`). The count cap alone was insufficient for comma-lists: it is only charged on recursion *return*, so the first DFS path descended one frame per group with the count still zero and stack-overflowed. Now also bounds recursion depth and cumulative output bytes (`MAX_EXPANSION_RESULT_BYTES`) so it degrades to a bounded literal result (**FIXED**) |
 | ~~TM-DOS-043~~ | ~~Arithmetic overflow in side-effect evaluation~~ | ~~Panic (DoS) in debug mode via `((x+=1))` or boundary `++`/`--`~~ | ~~Use wrapping arithmetic for every side-effect operation~~ (**FIXED**) |
@@ -1784,6 +1789,37 @@ The following components are fuzz-tested for robustness:
 | Memory leaks | - | ✅ | - | - | ✅ |
 
 ---
+
+## CPython WebAssembly Security (TM-PY-CPY)
+
+The `cpython` feature runs real CPython 3.14 as a `wasm32-wasip1` guest on
+Wasmtime's Pulley interpreter ([CPython WebAssembly Runtime](../runtimes/cpython-wasm.md)).
+CPython itself is *not* trusted: a guest bug, a malicious script or a crafted
+input may corrupt the guest's own linear memory. The boundary is the wasm
+sandbox plus the WASI host in `builtins/cpython/wasi.rs`, which is the only
+code that touches bashkit state.
+
+```
+python code -> CPython (wasm guest) -> wasi_snapshot_preview1 imports -> WASI host -> bashkit VFS / captured stdio
+```
+
+| ID | Threat | Severity | Mitigation | Test |
+|----|--------|----------|------------|------|
+| TM-PY-CPY-001 | Host filesystem access (absolute paths, `..`, `/proc`, symlinks) | Critical | Only the VFS is reachable; paths clamp at `/`; symlinks are not followed | `host_files_are_not_reachable`, `parent_traversal_is_clamped_at_vfs_root`, `host_system_paths_absent`, `symlinks_are_not_followed` |
+| TM-PY-CPY-002 | Tampering with or shadowing the stdlib | High | Stdlib zip is a read-only host overlay; tenant files next to it are not on `sys.path`; preloaded modules come from the snapshot | `stdlib_zip_is_read_only`, `vfs_files_cannot_shadow_stdlib` |
+| TM-PY-CPY-003 | Network, process, thread or native-code escape | Critical | No socket or process imports; sockets return `ENOTSUP`; no threads, `ctypes` or dynamic loading in the guest | `network_unavailable`, `urllib_cannot_fetch`, `processes_unavailable`, `threads_and_native_code_unavailable` |
+| TM-PY-CPY-004 | CPU exhaustion (busy loops, swallowed exceptions, sleeps) | High | Fuel-driven async yields; every poll checks the call deadline and the request `ExecutionBudget`; sleeps never pass the deadline | `infinite_loop_times_out`, `sleep_is_bounded_by_deadline`, `swallowing_exceptions_cannot_escape_timeout`, `shell_timeout_tighter_than_python_limit_wins`, `cancellation_stops_busy_guest` |
+| TM-PY-CPY-005 | Memory exhaustion (guest heap, host-side file buffers) | High | Store limiter caps linear memory (MemoryError in Python); open-file buffers share the same budget; VFS limits apply | `huge_allocation_raises_memory_error`, `incremental_growth_raises_memory_error`, `file_buffers_share_the_memory_budget`, `vfs_file_size_limit_applies` |
+| TM-PY-CPY-006 | Output and descriptor floods | Medium | `max_output` cap with truncation note; 1024 fds per call | `output_is_capped_and_marked_truncated`, `output_flood_loop_is_bounded`, `descriptor_table_is_bounded` |
+| TM-PY-CPY-007 | Guest crash (abort, stack overflow, parser bombs) takes down the host | Critical | Traps end only that call (exit 1, Display-only message); instance discarded; shell continues | `deep_c_recursion_is_contained`, `parser_bomb_is_contained`, `abort_is_contained`, `shell_continues_after_guest_failures` |
+| TM-PY-CPY-008 | State leaking across calls or tenants | Critical | Fresh instance per call from a copy-on-write snapshot; per-`Bash` VFS; only exported variables reach `os.environ`; `random` re-seeded per call | `no_state_crosses_calls`, `concurrent_tenants_are_isolated`, `host_environment_not_visible`, `interpreter_state_does_not_persist_between_calls` |
+| TM-PY-CPY-009 | Internal shapes leaking through errors (TM-INF-022) | Medium | Trap and host errors formatted via Display, capped at 512 bytes; driver frames stripped from tracebacks | `error_paths_do_not_leak_internals`, `trap_messages_are_display_only`, `cpython_fuzz` |
+| TM-PY-CPY-010 | Predictable `hash()` within a call | Low | Accepted: hash flooding is bounded by the call's CPU and memory limits and affects only that call (L-CPY-005) | stance |
+
+Fuzzing: `cpython_security_tests` runs bounded proptest cases (arbitrary
+source, stitched os/sys/file fragments, arbitrary CLI arguments) through
+`assert_no_leak`; `fuzz/fuzz_targets/cpython_fuzz.rs` runs nightly under
+cargo-fuzz with the host-environment canary.
 
 ## Python / Monty Security (TM-PY)
 

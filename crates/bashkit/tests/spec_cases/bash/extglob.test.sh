@@ -125,3 +125,18 @@ v="é"
 ### expect
 no
 ### end
+
+### extglob_pathname_negation
+# !(pat) as a filename glob (no other glob chars in the word)
+shopt -s extglob
+mkdir -p /tmp/xg && cd /tmp/xg && touch a.c b.c a.h n.txt
+echo !(*.c)
+echo @(a|n).*
+echo +(a).c
+echo *.@(c|h)
+### expect
+a.h n.txt
+a.c a.h n.txt
+a.c
+a.c a.h b.c
+### end

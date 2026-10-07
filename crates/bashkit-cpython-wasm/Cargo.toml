@@ -1,0 +1,40 @@
+# CPython 3.14 for WebAssembly (wasm32-wasip1), pre-initialized and compiled
+# ahead of time to Wasmtime's Pulley bytecode. Consumed by bashkit's
+# `cpython` feature; see knowledge/runtimes/cpython-wasm.md.
+#
+# Decisions:
+# - Artifacts (snapshot + stdlib zip) are committed; `guest/build.sh` rebuilds
+#   them. No network access at build or run time.
+# - build.rs compiles the snapshot to Pulley once per build, so no wasm is ever
+#   compiled at run time and the output is identical on every 64-bit
+#   little-endian host. Cranelift is a build-dependency only.
+# - wasmtime is pinned exactly: a `.cwasm` only loads into the same version
+#   with the same compile-affecting configuration (`engine_config`).
+
+[package]
+name = "bashkit-cpython-wasm"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+license = "MIT AND Python-2.0 AND Zlib AND BSD-2-Clause"
+description = "CPython 3.14 compiled to WASI with a pre-initialized snapshot, for bashkit's sandboxed python3"
+keywords = ["python", "wasm", "sandbox", "bashkit"]
+categories = ["wasm", "development-tools"]
+readme = "README.md"
+include = [
+    "src/**",
+    "build.rs",
+    "artifacts/**",
+    "guest/**",
+    "README.md",
+    "THIRD_PARTY_LICENSES.md",
+]
+
+[dependencies]
+wasmtime = { workspace = true }
+
+[build-dependencies]
+wasmtime = { workspace = true, features = ["cranelift", "parallel-compilation"] }
+flate2 = { workspace = true }
+
