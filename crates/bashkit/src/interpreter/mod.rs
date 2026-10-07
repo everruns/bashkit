@@ -11177,8 +11177,10 @@ impl Interpreter {
                 }
                 return String::new();
             }
-            "$" => {
-                // THREAT[TM-INF-014]: Return sandboxed PID, not real host PID.
+            // THREAT[TM-INF-014]: Return sandboxed PID, not real host PID.
+            // `$BASHPID` is the same: subshells and jobs report the shell's
+            // pid too (they have no process of their own).
+            "$" | "BASHPID" => {
                 return "1".to_string();
             }
             "!" => {

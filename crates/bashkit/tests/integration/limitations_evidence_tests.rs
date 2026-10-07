@@ -40,7 +40,7 @@ async fn l_proc_003_no_process_spawning() {
     // `/bin/sh` is a root-filesystem stub for the in-process interpreter: it
     // sees the VFS, never the host.
     let result = bash
-        .exec("echo vfs > /tmp/f; /bin/sh -c 'cat /tmp/f; [ -e /proc/1/exe ] || echo no-host'")
+        .exec("echo vfs > /tmp/f; /bin/sh -c 'cat /tmp/f; [ \"$(readlink /proc/1/exe)\" = /bin/bash ] && echo no-host'")
         .await
         .unwrap();
     assert_eq!(result.stdout, "vfs\nno-host\n");
