@@ -11,6 +11,7 @@
 #![allow(clippy::unwrap_used)]
 
 mod arithmetic;
+use arithmetic::{arith_lvalue_end, is_arith_lvalue};
 mod brace_expansion;
 mod expansion;
 mod glob;
@@ -4398,7 +4399,7 @@ impl Interpreter {
 
                 let rhs_value = self.execute_arithmetic_with_side_effects(effective_rhs);
                 let final_value = if let Some(op) = op {
-                    let current = self.evaluate_arithmetic(var_name);
+                    let current = self.arith_lvalue_value(var_name);
                     // THREAT[TM-DOS-043]: wrapping to prevent overflow panic
                     match op {
                         '+' => current.wrapping_add(rhs_value),
@@ -4424,7 +4425,10 @@ impl Interpreter {
                     rhs_value
                 };
 
-                self.set_variable(var_name.to_string(), final_value.to_string());
+                if !is_arith_lvalue(var_name) {
+                    return self.evaluate_arithmetic(expr);
+                }
+                self.set_arith_lvalue(var_name, final_value.to_string());
                 return final_value;
             }
         }
@@ -4433,15 +4437,13 @@ impl Interpreter {
         if let Some(stripped) = expr.strip_prefix("++") {
             let trimmed = stripped.trim_start();
             // Extract the variable name (leading identifier chars)
-            let var_end = trimmed
-                .find(|c: char| !c.is_ascii_alphanumeric() && c != '_')
-                .unwrap_or(trimmed.len());
+            let var_end = arith_lvalue_end(trimmed);
             let var_name = &trimmed[..var_end];
-            if !var_name.is_empty() && is_valid_var_name(var_name) {
-                let current = self.evaluate_arithmetic(var_name);
+            if !var_name.is_empty() && is_arith_lvalue(var_name) {
+                let current = self.arith_lvalue_value(var_name);
                 // THREAT[TM-DOS-043]: Bash integer side effects wrap at i64 bounds.
                 let new_value = current.wrapping_add(1);
-                self.set_variable(var_name.to_string(), new_value.to_string());
+                self.set_arith_lvalue(var_name, new_value.to_string());
                 let rest = trimmed[var_end..].trim();
                 if rest.is_empty() {
                     return new_value;
@@ -4454,14 +4456,12 @@ impl Interpreter {
         }
         if let Some(stripped) = expr.strip_prefix("--") {
             let trimmed = stripped.trim_start();
-            let var_end = trimmed
-                .find(|c: char| !c.is_ascii_alphanumeric() && c != '_')
-                .unwrap_or(trimmed.len());
+            let var_end = arith_lvalue_end(trimmed);
             let var_name = &trimmed[..var_end];
-            if !var_name.is_empty() && is_valid_var_name(var_name) {
-                let current = self.evaluate_arithmetic(var_name);
+            if !var_name.is_empty() && is_arith_lvalue(var_name) {
+                let current = self.arith_lvalue_value(var_name);
                 let new_value = current.wrapping_sub(1);
-                self.set_variable(var_name.to_string(), new_value.to_string());
+                self.set_arith_lvalue(var_name, new_value.to_string());
                 let rest = trimmed[var_end..].trim();
                 if rest.is_empty() {
                     return new_value;
@@ -4474,19 +4474,19 @@ impl Interpreter {
         // Handle post-increment/decrement: var++ or var--
         if let Some(stripped) = expr.strip_suffix("++") {
             let var_name = stripped.trim();
-            if is_valid_var_name(var_name) {
-                let current = self.evaluate_arithmetic(var_name);
+            if is_arith_lvalue(var_name) {
+                let current = self.arith_lvalue_value(var_name);
                 let new_value = current.wrapping_add(1);
-                self.set_variable(var_name.to_string(), new_value.to_string());
+                self.set_arith_lvalue(var_name, new_value.to_string());
                 return current; // Return old value for post-increment
             }
         }
         if let Some(stripped) = expr.strip_suffix("--") {
             let var_name = stripped.trim();
-            if is_valid_var_name(var_name) {
-                let current = self.evaluate_arithmetic(var_name);
+            if is_arith_lvalue(var_name) {
+                let current = self.arith_lvalue_value(var_name);
                 let new_value = current.wrapping_sub(1);
-                self.set_variable(var_name.to_string(), new_value.to_string());
+                self.set_arith_lvalue(var_name, new_value.to_string());
                 return current; // Return old value for post-decrement
             }
         }
@@ -10492,6 +10492,29 @@ impl Interpreter {
         }
     }
 
+    /// Budgeted write of one associative-array element (key already expanded).
+    fn set_assoc_element_checked(&mut self, resolved_name: String, key: String, value: String) {
+        let old_len = self
+            .scoped
+            .assoc_arrays
+            .get(&resolved_name)
+            .and_then(|a| a.get(&key))
+            .map(String::len);
+        let is_new_entry = old_len.is_none();
+        let added = if is_new_entry {
+            key.len() + value.len()
+        } else {
+            value.len()
+        };
+        if !self.admit_array_write(usize::from(is_new_entry), added, old_len.unwrap_or(0)) {
+            return;
+        }
+        self.assoc_arrays_mut()
+            .entry(resolved_name)
+            .or_default()
+            .insert(key, value);
+    }
+
     /// Set a parameter expansion assignment target (`:=`), including array elements.
     fn set_parameter_expansion_target(&mut self, name: &str, value: String) {
         if let Some(bracket) = name.find('[')
@@ -10503,25 +10526,7 @@ impl Interpreter {
 
             if self.scoped.assoc_arrays.contains_key(&resolved_name) {
                 let expanded_key = self.expand_variable_or_literal(key);
-                let old_len = self
-                    .scoped
-                    .assoc_arrays
-                    .get(&resolved_name)
-                    .and_then(|a| a.get(&expanded_key))
-                    .map(String::len);
-                let is_new_entry = old_len.is_none();
-                let added = if is_new_entry {
-                    expanded_key.len() + value.len()
-                } else {
-                    value.len()
-                };
-                if !self.admit_array_write(usize::from(is_new_entry), added, old_len.unwrap_or(0)) {
-                    return;
-                }
-                self.assoc_arrays_mut()
-                    .entry(resolved_name)
-                    .or_default()
-                    .insert(expanded_key, value);
+                self.set_assoc_element_checked(resolved_name, expanded_key, value);
                 return;
             }
 
