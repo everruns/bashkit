@@ -270,3 +270,52 @@ not-created
 02/03 04:05:06
 rc=1
 ### end
+
+### cp_recursive_tree
+# cp -r copies a tree, refuses to copy into itself, and skips dirs without -r
+rm -rf /tmp/cpr && mkdir -p /tmp/cpr/a/b && cd /tmp/cpr
+echo x > a/b/f; ln -s f a/b/l
+cp -r a c; cat c/b/f; readlink c/b/l
+cp -R a c; ls c
+cp -r a/ a/z 2>&1; echo "exit=$?"
+mkdir q; cp q q2 2>&1; echo "exit=$?"
+### expect
+x
+f
+a
+b
+cp: cannot copy a directory, 'a/', into itself, 'a/z'
+exit=1
+cp: -r not specified; omitting directory 'q'
+exit=1
+### end
+
+### rmdir_verbose_parents
+# rmdir -v reports each removal; -p walks the operand's prefixes
+rm -rf /tmp/rmv && mkdir -p /tmp/rmv/a/b/c /tmp/rmv/x/y && cd /tmp/rmv
+rmdir -v a/b/c; ls a
+rmdir -pv x/y
+touch a/b/f; rmdir a/b 2>&1; rmdir --ignore-fail-on-non-empty a/b; echo "exit=$?"
+### expect
+rmdir: removing directory, 'a/b/c'
+b
+rmdir: removing directory, 'x/y'
+rmdir: removing directory, 'x'
+rmdir: failed to remove 'a/b': Directory not empty
+exit=0
+### end
+
+### mktemp_template_rules
+# mktemp replaces the trailing X run, keeps a relative template relative
+rm -rf /tmp/mkt && mkdir -p /tmp/mkt && cd /tmp/mkt
+mktemp fooXXXX | grep -c '^foo[A-Za-z0-9]\{4\}$'
+mktemp -u -p /tmp/mkt barXXX.txt | grep -c '^/tmp/mkt/bar...\.txt$'
+mktemp fooXX 2>&1; echo "exit=$?"
+mktemp -q -p /nonexist fooXXX; echo "exit=$?"
+### expect
+1
+1
+mktemp: too few X's in template 'fooXX'
+exit=1
+exit=1
+### end

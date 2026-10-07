@@ -62,7 +62,6 @@ b
 
 ### bashbox_options_tail_bytes
 # tail --bytes
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf 'a\nb\n' | tail --bytes=2
 ### expect
 b
@@ -70,7 +69,6 @@ b
 
 ### bashbox_options_base64_wrapping
 # base64 wrapping
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf hello | base64 -w0; echo; printf hello | base64 --wrap=4
 ### expect
 aGVsbG8=
@@ -80,7 +78,6 @@ bG8=
 
 ### bashbox_options_date_long_options
 # date long options
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 date --utc --date=@0 +%F; date --universal -d @86400 +%F
 ### expect
 1970-01-01
@@ -89,7 +86,6 @@ date --utc --date=@0 +%F; date --universal -d @86400 +%F
 
 ### bashbox_options_file_commands_long_options
 # file commands long options
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 mkdir --parents p/q; touch --no-create p/none; echo x | tee --append p/q/f >/dev/null; rm --recursive --force p/none; cp --recursive p r; ls r/q
 ### expect
 f
