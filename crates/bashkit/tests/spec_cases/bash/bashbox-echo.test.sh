@@ -26,7 +26,6 @@ a	b\c
 
 ### bashbox_echo_e_unknown_escape_and_trailing_backslash_stay
 # -e unknown escape and trailing backslash stay
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 echo -e '\z\xg\'
 ### expect
 \z\xg\
@@ -41,7 +40,6 @@ AJ2
 
 ### bashbox_echo_e_c_stops_output_and_the_newline
 # -e \c stops output and the newline
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 echo -e 'a\cb'; echo -e x
 ### expect
 ax
