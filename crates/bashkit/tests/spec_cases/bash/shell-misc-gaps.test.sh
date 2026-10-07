@@ -20,6 +20,12 @@ echo ~+ ~- ~+/x ~-/y
 / /tmp //x /tmp/y
 ### end
 
+### tilde_quoted_is_literal
+echo "~" '~' "~/x"
+### expect
+~ ~ ~/x
+### end
+
 ### tilde_minus_unset_is_literal
 unset OLDPWD
 echo ~- ~unknownuser_zz

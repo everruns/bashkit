@@ -198,7 +198,10 @@ impl Interpreter {
             match part {
                 WordPart::Literal(s) => {
                     // Tilde expansion: ~ at start of word expands to $HOME
-                    if is_first_part && s.starts_with('~') {
+                    // A fully quoted word (`"~"`, `'~'`) keeps its tilde.
+                    let tilde_ok = !word.quoted
+                        || (word.has_unquoted_glob && word.part_quoted.first() == Some(&false));
+                    if is_first_part && tilde_ok && s.starts_with('~') {
                         // Tilde prefix runs to the first `/`: `~` is HOME,
                         // `~+` PWD, `~-` OLDPWD (literal when unset).
                         let (prefix, rest) = match s.find('/') {
