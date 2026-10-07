@@ -1457,8 +1457,14 @@ pub struct Interpreter {
     /// Next virtual FD to assign for coproc read ends (starts at 63, like bash).
     coproc_next_fd: i32,
     /// Persistent fd output table set by `exec N>/path` redirections.
-    /// Maps fd number to its output target. Used by `>&N` redirections.
+    /// Maps fd number to its output target. Used by `>&N` redirections;
+    /// entries for fd 1 and 2 (`exec >log 2>&1`) route the shell's own
+    /// output at each top-level command (`route_exec_output`).
     exec_fd_table: HashMap<i32, FdTarget>,
+    /// Output written to a saved copy of the original stdout/stderr
+    /// (`exec 3>&1 >log; echo hi >&3`) while fd 1/2 are redirected by
+    /// `exec`. It skips that routing and goes straight to the caller.
+    exec_passthrough: (crate::StreamData, crate::StreamData),
     /// Temporary buffer for fd3+ output during compound body execution.
     /// Populated by `1>&N` (N>=3) in apply_redirections, consumed by
     /// apply_redirections_fd_table for compound redirect routing.
@@ -1977,6 +1983,7 @@ impl Interpreter {
             coproc_buffers: HashMap::new(),
             coproc_next_fd: 63,
             exec_fd_table: HashMap::new(),
+            exec_passthrough: Default::default(),
             pending_fd_output: HashMap::new(),
             pending_fd_targets: Vec::new(),
             pending_fd_capture_depth: 0,
@@ -2137,6 +2144,7 @@ impl Interpreter {
             coproc_buffers: HashMap::new(),
             coproc_next_fd: self.coproc_next_fd,
             exec_fd_table: self.exec_fd_table.clone(),
+            exec_passthrough: Default::default(),
             pending_fd_output: HashMap::new(),
             pending_fd_targets: Vec::new(),
             pending_fd_capture_depth: 0,
@@ -3009,6 +3017,27 @@ impl Interpreter {
         if self.output_emit_count != emit_count_before {
             return false;
         }
+        // `exec >log` / `exec 2>/dev/null`: the shell's own output is routed
+        // at the top-level command (`route_exec_output`), not streamed. A
+        // pipeline stage's sink is a pipe, never the caller.
+        let (stdout, stderr) = if self.pipe_out.is_none() {
+            let empty = crate::StreamData::new();
+            (
+                if self.exec_fd_table.contains_key(&1) {
+                    empty.clone()
+                } else {
+                    stdout.clone()
+                },
+                if self.exec_fd_table.contains_key(&2) {
+                    empty
+                } else {
+                    stderr.clone()
+                },
+            )
+        } else {
+            (stdout.clone(), stderr.clone())
+        };
+        let (stdout, stderr) = (&stdout, &stderr);
 
         let stdout_remaining = self
             .limits
@@ -3160,6 +3189,10 @@ impl Interpreter {
             }
             self.check_cancelled()?;
             let emit_before = self.output_emit_count;
+            let emitted_before = (
+                self.output_stream_stdout_bytes,
+                self.output_stream_stderr_bytes,
+            );
             let mut result = self.execute_command(command).await?;
             if top_level {
                 // Background jobs that finished meanwhile report here, as
@@ -3169,7 +3202,13 @@ impl Interpreter {
                 result.stderr.append(&err);
             }
             self.check_cancelled()?;
+            if top_level {
+                self.route_exec_output(&mut result, emitted_before).await?;
+            }
             self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
+            if top_level {
+                self.flush_exec_passthrough(&mut result);
+            }
 
             // Accumulate stdout with truncation
             if !stdout_truncated {
@@ -7175,7 +7214,15 @@ impl Interpreter {
                     }
                 }
                 RedirectKind::Output | RedirectKind::Clobber => {
-                    let fd = redirect.fd.or(resolved_fd_var).unwrap_or(1);
+                    // WTF: `exec {var}>file` (allocate a free fd into var) is not
+                    // implemented; an unset var must not fall back to fd 1.
+                    let Some(fd) = redirect
+                        .fd
+                        .or(resolved_fd_var)
+                        .or(redirect.fd_var.is_none().then_some(1))
+                    else {
+                        continue;
+                    };
                     let target_path = self.expand_word(&redirect.target).await?;
                     let path = self.resolve_path(&target_path);
                     self.ensure_persistent_fd_capacity(fd)?;
@@ -7185,14 +7232,31 @@ impl Interpreter {
                     } else if is_dev_null(&path) {
                         self.exec_fd_table.insert(fd, FdTarget::DevNull);
                     } else {
-                        // Truncate file on open (like real exec >file)
-                        let _ = self.fs.write_file(&path, b"").await;
+                        // Truncate file on open (like real exec >file); a
+                        // failed open leaves the fd as it was.
+                        if let Err(e) = self.fs.write_file(&path, b"").await {
+                            return Ok(ExecResult::err(
+                                format!(
+                                    "bash: {target_path}: {}\n",
+                                    crate::error::io_error_reason(&e)
+                                ),
+                                1,
+                            ));
+                        }
                         self.exec_fd_table
                             .insert(fd, FdTarget::WriteFile(path, target_path));
                     }
                 }
                 RedirectKind::Append => {
-                    let fd = redirect.fd.or(resolved_fd_var).unwrap_or(1);
+                    // WTF: `exec {var}>file` (allocate a free fd into var) is not
+                    // implemented; an unset var must not fall back to fd 1.
+                    let Some(fd) = redirect
+                        .fd
+                        .or(resolved_fd_var)
+                        .or(redirect.fd_var.is_none().then_some(1))
+                    else {
+                        continue;
+                    };
                     let target_path = self.expand_word(&redirect.target).await?;
                     let path = self.resolve_path(&target_path);
                     self.ensure_persistent_fd_capacity(fd)?;
@@ -7202,13 +7266,30 @@ impl Interpreter {
                     } else if is_dev_null(&path) {
                         self.exec_fd_table.insert(fd, FdTarget::DevNull);
                     } else {
+                        if let Err(e) = self.fs.append_file(&path, b"").await {
+                            return Ok(ExecResult::err(
+                                format!(
+                                    "bash: {target_path}: {}\n",
+                                    crate::error::io_error_reason(&e)
+                                ),
+                                1,
+                            ));
+                        }
                         self.exec_fd_table
                             .insert(fd, FdTarget::AppendFile(path, target_path));
                     }
                 }
                 RedirectKind::DupOutput => {
                     let target = self.expand_word(&redirect.target).await?;
-                    let fd = redirect.fd.or(resolved_fd_var).unwrap_or(1);
+                    // WTF: `exec {var}>file` (allocate a free fd into var) is not
+                    // implemented; an unset var must not fall back to fd 1.
+                    let Some(fd) = redirect
+                        .fd
+                        .or(resolved_fd_var)
+                        .or(redirect.fd_var.is_none().then_some(1))
+                    else {
+                        continue;
+                    };
                     if target == "-" || target == "&-" {
                         // exec N>&- closes the fd
                         self.exec_fd_table.remove(&fd);
@@ -7222,13 +7303,88 @@ impl Interpreter {
                 _ => {}
             }
         }
+        // fd 1/2 pointed back at the original streams (`exec 1>&3`) is no
+        // redirect at all.
+        if matches!(self.exec_fd_table.get(&1), Some(FdTarget::Stdout)) {
+            self.exec_fd_table.remove(&1);
+        }
+        if matches!(self.exec_fd_table.get(&2), Some(FdTarget::Stderr)) {
+            self.exec_fd_table.remove(&2);
+        }
         let result = ExecResult::default();
         self.apply_redirections(result, redirects).await
     }
 
     /// Target for `exec N>&M` / `exec N>/dev/fd/M`.
+    /// Send a top-level command's output where `exec` pointed fd 1 and 2
+    /// (`exec >log 2>&1`). Output a sub-call already streamed to the caller
+    /// (before the `exec` ran) stays; the rest goes to the target.
+    // WTF: output written in the same top-level command before `exec >log`
+    // ran, and not streamed, also goes to the log; routing happens per
+    // top-level command, not per write.
+    async fn route_exec_output(
+        &mut self,
+        result: &mut ExecResult,
+        emitted_before: (usize, usize),
+    ) -> Result<()> {
+        if !self.exec_fd_table.contains_key(&1) && !self.exec_fd_table.contains_key(&2) {
+            return Ok(());
+        }
+        let streamed_out = self.output_stream_stdout_bytes - emitted_before.0;
+        let streamed_err = self.output_stream_stderr_bytes - emitted_before.1;
+        let take = |data: &mut crate::StreamData, keep: usize| {
+            let keep = keep.min(data.len());
+            let rest = crate::StreamData::from(&data.as_bytes()[keep..]);
+            *data = data.prefix(keep);
+            rest
+        };
+        let mut moved = Vec::new();
+        if let Some(target) = self.exec_fd_table.get(&1).cloned() {
+            moved.push((take(&mut result.stdout, streamed_out), target));
+        }
+        if let Some(target) = self.exec_fd_table.get(&2).cloned() {
+            moved.push((take(&mut result.stderr, streamed_err), target));
+        }
+        for (data, target) in moved {
+            if data.is_empty() {
+                continue;
+            }
+            match target {
+                FdTarget::Stdout => result.stdout.append(&data),
+                FdTarget::Stderr => result.stderr.append(&data),
+                FdTarget::DevNull => {}
+                FdTarget::WriteFile(path, _) | FdTarget::AppendFile(path, _) => {
+                    self.fs.append_file(&path, data.as_bytes()).await?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Hand output written to a saved original stdout/stderr (`>&3` after
+    /// `exec 3>&1 >log`) to the caller, unrouted.
+    fn flush_exec_passthrough(&mut self, result: &mut ExecResult) {
+        let (out, err) = std::mem::take(&mut self.exec_passthrough);
+        if out.is_empty() && err.is_empty() {
+            return;
+        }
+        if let Some(cb) = self.output_callback.as_mut() {
+            cb(&out, &err);
+            self.output_emit_count += 1;
+            self.output_stream_stdout_bytes += out.len();
+            self.output_stream_stderr_bytes += err.len();
+        }
+        result.stdout.append(&out);
+        result.stderr.append(&err);
+    }
+
     fn exec_fd_alias_target(&self, target_fd: i32) -> FdTarget {
-        if target_fd == 1 {
+        // `exec 3>&1` copies where fd 1 points now (a file after `exec >log`).
+        if let Some(target) = self.exec_fd_table.get(&target_fd)
+            && matches!(target_fd, 1 | 2)
+        {
+            target.clone()
+        } else if target_fd == 1 {
             FdTarget::Stdout
         } else if target_fd == 2 {
             FdTarget::Stderr
