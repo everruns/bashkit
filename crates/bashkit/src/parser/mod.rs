@@ -577,6 +577,12 @@ impl<'a> Parser<'a> {
                         });
                     }
                 }
+                Some(tokens::Token::RedirectBothAppend) => {
+                    self.advance();
+                    if let Ok(target) = self.expect_word() {
+                        Self::push_append_both(&mut redirects, None, target);
+                    }
+                }
                 Some(tokens::Token::DupOutput) => {
                     self.advance();
                     if let Ok(target) = self.expect_word() {
@@ -688,55 +694,12 @@ impl<'a> Parser<'a> {
                         });
                     }
                 }
-                Some(tokens::Token::HereDoc) | Some(tokens::Token::HereDocStrip) => {
-                    let strip_tabs =
-                        matches!(self.current_token, Some(tokens::Token::HereDocStrip));
-                    self.advance();
-                    let (delimiter, quoted) = match &self.current_token {
-                        Some(tokens::Token::Word(w)) => (w.clone(), false),
-                        Some(tokens::Token::LiteralWord(w)) => (w.clone(), true),
-                        Some(tokens::Token::QuotedWord(w))
-                        | Some(tokens::Token::QuotedGlobWord(w)) => (w.clone(), true),
-                        _ => break,
-                    };
-                    let (content, rest_of_line_chars) = self
-                        .lexer
-                        .read_heredoc_with_strip_metered(&delimiter, strip_tabs);
-                    self.tick_units(rest_of_line_chars)?;
-                    let content = if strip_tabs {
-                        let had_trailing_newline = content.ends_with('\n');
-                        let mut stripped: String = content
-                            .lines()
-                            .map(|l| l.trim_start_matches('\t'))
-                            .collect::<Vec<_>>()
-                            .join("\n");
-                        if had_trailing_newline {
-                            stripped.push('\n');
-                        }
-                        stripped
-                    } else {
-                        content
-                    };
-                    self.advance();
-                    let target = if quoted {
-                        Word::quoted_literal(content)
-                    } else {
-                        self.parse_word(heredoc_body_escapes(&content))
-                    };
-                    let kind = if strip_tabs {
-                        RedirectKind::HereDocStrip
-                    } else {
-                        RedirectKind::HereDoc
-                    };
-                    redirects.push(Redirect {
-                        fd: None,
-                        fd_var: None,
-                        kind,
-                        target,
-                    });
-                    // Rest-of-line tokens re-injected by lexer; break so callers
-                    // can see pipes/semicolons.
-                    break;
+                Some(tokens::Token::HereDoc)
+                | Some(tokens::Token::HereDocStrip)
+                | Some(tokens::Token::HereDocFd(..)) => {
+                    // Rest-of-line tokens are re-injected by the lexer: more
+                    // redirects may follow (`done <<A 3<<B`, `} <<A >out`).
+                    self.parse_heredoc_redirect(&mut redirects)?;
                 }
                 _ => break,
             }
@@ -2481,11 +2444,15 @@ impl<'a> Parser<'a> {
     }
 
     /// Parse a heredoc redirect (`<<` or `<<-`) and any trailing redirects on the same line.
-    fn parse_heredoc_redirect(
-        &mut self,
-        strip_tabs: bool,
-        redirects: &mut Vec<Redirect>,
-    ) -> Result<()> {
+    // Out of line: its body-reading temporaries must not grow the frame
+    // of the recursive command parser.
+    #[inline(never)]
+    fn parse_heredoc_redirect(&mut self, redirects: &mut Vec<Redirect>) -> Result<()> {
+        let (fd, strip_tabs) = match self.current_token {
+            Some(tokens::Token::HereDocFd(fd, strip)) => (Some(fd), strip),
+            Some(tokens::Token::HereDocStrip) => (None, true),
+            _ => (None, false),
+        };
         self.advance();
         // Get the delimiter word and track if it was quoted
         let (delimiter, quoted) = match &self.current_token {
@@ -2531,7 +2498,7 @@ impl<'a> Parser<'a> {
         };
 
         redirects.push(Redirect {
-            fd: None,
+            fd,
             fd_var: None,
             kind,
             target,
@@ -2539,112 +2506,41 @@ impl<'a> Parser<'a> {
 
         // Advance so re-injected rest-of-line tokens are picked up
         self.advance();
-
-        // Consume any trailing redirects on the same line (e.g. `cat <<EOF > file`)
-        self.collect_trailing_redirects(redirects);
         Ok(())
     }
 
-    /// Consume redirect tokens that follow a heredoc on the same line.
-    fn collect_trailing_redirects(&mut self, redirects: &mut Vec<Redirect>) {
-        while let Some(tok) = &self.current_token {
-            match tok {
-                tokens::Token::RedirectOut | tokens::Token::Clobber => {
-                    let kind = if matches!(&self.current_token, Some(tokens::Token::Clobber)) {
-                        RedirectKind::Clobber
-                    } else {
-                        RedirectKind::Output
-                    };
-                    self.advance();
-                    if let Ok(target) = self.expect_word() {
-                        redirects.push(Redirect {
-                            fd: None,
-                            fd_var: None,
-                            kind,
-                            target,
-                        });
-                    }
-                }
-                tokens::Token::RedirectAppend => {
-                    self.advance();
-                    if let Ok(target) = self.expect_word() {
-                        redirects.push(Redirect {
-                            fd: None,
-                            fd_var: None,
-                            kind: RedirectKind::Append,
-                            target,
-                        });
-                    }
-                }
-                tokens::Token::RedirectFd(fd) => {
-                    let fd = *fd;
-                    self.advance();
-                    if let Ok(target) = self.expect_word() {
-                        redirects.push(Redirect {
-                            fd: Some(fd),
-                            fd_var: None,
-                            kind: RedirectKind::Output,
-                            target,
-                        });
-                    }
-                }
-                tokens::Token::DupFdCloseOut(fd) => {
-                    let fd = *fd;
-                    self.advance();
-                    redirects.push(Redirect {
-                        fd: Some(fd),
-                        fd_var: None,
-                        kind: RedirectKind::DupOutput,
-                        target: Word::literal("-"),
-                    });
-                }
-                tokens::Token::DupInput => {
-                    self.advance();
-                    if let Ok(target) = self.expect_word() {
-                        redirects.push(Redirect {
-                            fd: Some(0),
-                            fd_var: None,
-                            kind: RedirectKind::DupInput,
-                            target,
-                        });
-                    }
-                }
-                tokens::Token::DupFdIn(src_fd, dst_fd) => {
-                    let src_fd = *src_fd;
-                    let dst_fd = *dst_fd;
-                    self.advance();
-                    redirects.push(Redirect {
-                        fd: Some(src_fd),
-                        fd_var: None,
-                        kind: RedirectKind::DupInput,
-                        target: Word::literal(dst_fd.to_string()),
-                    });
-                }
-                tokens::Token::DupFdClose(fd) => {
-                    let fd = *fd;
-                    self.advance();
-                    redirects.push(Redirect {
-                        fd: Some(fd),
-                        fd_var: None,
-                        kind: RedirectKind::DupInput,
-                        target: Word::literal("-"),
-                    });
-                }
-                tokens::Token::RedirectFdIn(fd) => {
-                    let fd = *fd;
-                    self.advance();
-                    if let Ok(target) = self.expect_word() {
-                        redirects.push(Redirect {
-                            fd: Some(fd),
-                            fd_var: None,
-                            kind: RedirectKind::Input,
-                            target,
-                        });
-                    }
-                }
-                _ => break,
-            }
-        }
+    /// `{fd}&>> file` in a simple command. Out of line, like
+    /// [`Self::push_append_both`], to keep the recursive parser's frame small.
+    #[inline(never)]
+    fn parse_append_both(
+        &mut self,
+        words: &mut Vec<Word>,
+        redirects: &mut Vec<Redirect>,
+    ) -> Result<()> {
+        let fd_var = Self::pop_fd_var(words);
+        self.advance();
+        let target = self.expect_word()?;
+        Self::push_append_both(redirects, fd_var, target);
+        Ok(())
+    }
+
+    /// `&>> file` is `>> file 2>&1` (bash documents it as that). Out of
+    /// line so the two `Redirect` temporaries stay off the stack frame of
+    /// the recursive command parsers.
+    #[inline(never)]
+    fn push_append_both(redirects: &mut Vec<Redirect>, fd_var: Option<String>, target: Word) {
+        redirects.push(Redirect {
+            fd: None,
+            fd_var,
+            kind: RedirectKind::Append,
+            target,
+        });
+        redirects.push(Redirect {
+            fd: Some(2),
+            fd_var: None,
+            kind: RedirectKind::DupOutput,
+            target: Word::literal("1"),
+        });
     }
 
     /// Extract fd-variable name from `{varname}` pattern in the last word.
@@ -2812,11 +2708,12 @@ impl<'a> Parser<'a> {
                         target,
                     });
                 }
-                Some(tokens::Token::HereDoc) | Some(tokens::Token::HereDocStrip) => {
-                    let strip_tabs =
-                        matches!(self.current_token, Some(tokens::Token::HereDocStrip));
-                    self.parse_heredoc_redirect(strip_tabs, &mut redirects)?;
-                    break;
+                Some(tokens::Token::HereDoc)
+                | Some(tokens::Token::HereDocStrip)
+                | Some(tokens::Token::HereDocFd(..)) => {
+                    // Words and redirects may follow on the same line
+                    // (`cat <<A <<B`, `paste - <<A 3<<B`, `cat <<A file`).
+                    self.parse_heredoc_redirect(&mut redirects)?;
                 }
                 Some(tokens::Token::ProcessSubIn) | Some(tokens::Token::ProcessSubOut) => {
                     let word = self.expect_word()?;
@@ -2832,6 +2729,9 @@ impl<'a> Parser<'a> {
                         kind: RedirectKind::OutputBoth,
                         target,
                     });
+                }
+                Some(tokens::Token::RedirectBothAppend) => {
+                    self.parse_append_both(&mut words, &mut redirects)?;
                 }
                 Some(tokens::Token::DupOutput) => {
                     let fd_var = Self::pop_fd_var(&mut words);
@@ -3169,6 +3069,19 @@ impl<'a> Parser<'a> {
     }
 
     /// Parse a word string into a Word with proper parts (variables, literals)
+    /// Parser for a `$(...)` body, on the heap: one lives per nesting level
+    /// while the inner script parses, so keeping it out of `parse_word`'s
+    /// frame leaves room for deep nesting (TM-DOS-044).
+    // THREAT[TM-DOS-021]: Propagate parent parser limits to child parser
+    // to prevent depth limit bypass via nested command substitution.
+    #[inline(never)]
+    fn nested_parser<'b>(&self, src: &'b str) -> Box<Parser<'b>> {
+        let remaining_depth = self.max_depth.saturating_sub(self.current_depth);
+        let mut parser = Box::new(Parser::with_limits(src, remaining_depth, self.fuel));
+        parser.execution_budget = self.execution_budget.clone();
+        parser
+    }
+
     fn parse_word(&self, s: String) -> Word {
         let mut parts = Vec::new();
         let mut part_quoted = Vec::new();
@@ -3271,12 +3184,7 @@ impl<'a> Parser<'a> {
                             }
                             cmd_str.push(c);
                         }
-                        // THREAT[TM-DOS-021]: Propagate parent parser limits to child parser
-                        // to prevent depth limit bypass via nested command substitution.
-                        let remaining_depth = self.max_depth.saturating_sub(self.current_depth);
-                        let mut inner_parser =
-                            Parser::with_limits(&cmd_str, remaining_depth, self.fuel);
-                        inner_parser.execution_budget = self.execution_budget.clone();
+                        let inner_parser = self.nested_parser(&cmd_str);
                         // A failed inner parse must never make the part vanish:
                         // dropping it splices the literals on either side into a
                         // word that appears nowhere in the source (`a$(|)b` ->

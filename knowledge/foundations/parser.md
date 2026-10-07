@@ -129,6 +129,14 @@ pattern), so a pattern's `)` and an optional leading `(` do not change the
 paren depth. Keywords are recognised only as whole unquoted words in command
 position, so `echo case)` still closes.
 
+**Here documents.** The lexer reads a heredoc body when the parser reaches
+the delimiter, then re-injects the rest of the command line plus its line
+break, so words and further redirects after it parse normally:
+`cat <<A <<B` (the last one is stdin), `paste - <<A 3<<B` (`N<<` is
+`Token::HereDocFd`; a non-zero fd does not feed stdin) and
+`done <<A >out`. The fd-redirect lookahead reads re-injected text first.
+`&>> file` parses as `>> file 2>&1`.
+
 **`[[` lexing.** `[[` is the keyword only when followed by a word break
 (space, tab, newline, `;`, `&`, `|`, `(`, `)`, or end); `[[:digit:]]*` is a
 bracket-expression word.

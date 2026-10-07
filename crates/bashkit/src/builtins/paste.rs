@@ -415,6 +415,14 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_paste_dashes_share_stdin() {
+        let result = run_paste(&["-", "-"], Some("1\n2\n3\n")).await;
+        assert_eq!(result.stdout, "1\t2\n3\t\n");
+        let result = run_paste(&["-s", "-", "-"], Some("1\n2\n")).await;
+        assert_eq!(result.stdout, "1\t2\n\n");
+    }
+
+    #[tokio::test]
     async fn test_paste_stdin_dash() {
         let result =
             run_paste_with_fs(&["-", "/b.txt"], Some("1\n2\n"), &[("/b.txt", b"a\nb\n")]).await;

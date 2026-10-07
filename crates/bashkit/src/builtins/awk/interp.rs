@@ -7,10 +7,9 @@
 //! - Arrays live in an arena and are referenced by id, which gives awk's
 //!   by-reference array arguments for free. A function's untyped local that
 //!   becomes an array is owned by its call frame and freed on return.
-//! - `for (k in a)` visits numeric keys ascending, then the others by
-//!   bytes (gawk's order is a hash order). Arrays keep insertion order,
-//!   which `PROCINFO["sorted_in"] = "@unsorted"` exposes; the other gawk
-//!   `sorted_in` orders are supported.
+//! - `for (k in a)` (and `sorted_in` `@unsorted`) visits keys in gawk's
+//!   storage order, modelled in `order`; arrays themselves keep insertion
+//!   order. The other gawk `sorted_in` orders are supported.
 //! - Runtime errors that gawk reports (`division by zero attempted`, ...)
 //!   carry gawk's `awk: cmd. line:N: fatal:` prefix. Bashkit resource caps
 //!   keep the plain `awk: fatal: ...` form (TM-DOS-109).
@@ -1511,21 +1510,8 @@ impl Interp {
             Cell::Val(_) => String::new(),
         };
         let mut keys = arr.keys();
-        if order == "@unsorted" {
-            return keys;
-        }
-        if order.is_empty() {
-            // Default: numeric keys ascending, then the rest by bytes.
-            // Deterministic; gawk's own order follows its hash tables.
-            // TODO: reproduce gawk's str/int/cint array iteration order
-            // so unsorted `for (k in a)` output matches Debian awk.
-            keys.sort_by(|a, b| match (key_num(a), key_num(b)) {
-                (Some(x), Some(y)) => x.total_cmp(&y).then_with(|| a.cmp(b)),
-                (Some(_), None) => std::cmp::Ordering::Less,
-                (None, Some(_)) => std::cmp::Ordering::Greater,
-                (None, None) => a.cmp(b),
-            });
-            return keys;
+        if order.is_empty() || order == "@unsorted" {
+            return super::order::gawk_order(keys);
         }
         let val = |k: &String| match arr.get(k) {
             Some(Elem::Val(v)) => v.clone(),
@@ -1702,10 +1688,6 @@ fn elem_cost(key: &str, e: &Elem) -> usize {
             Elem::Val(v) => v.heap_bytes(),
             Elem::Arr(_) => 0,
         }
-}
-
-fn key_num(k: &str) -> Option<f64> {
-    k.parse::<f64>().ok().filter(|n| n.is_finite())
 }
 
 fn num_cmp(a: &str, b: &str) -> std::cmp::Ordering {
