@@ -15,6 +15,32 @@ const latestFullEvalRuns = data.evalRuns
   .filter((run) => run.tasks >= 10)
   .toSorted((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
   .slice(0, 6);
+const pythonRuns = (data.pythonStartup ?? []).toSorted(
+  (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
+);
+const latestPython = pythonRuns.at(0);
+const pythonRows = latestPython
+  ? [
+      {
+        measure: "First call",
+        detail: "fresh process, includes runtime load",
+        monty: latestPython.monty.firstCallMs,
+        cpython: latestPython.cpython.firstCallMs,
+      },
+      {
+        measure: "Next call",
+        detail: "same process, new interpreter state",
+        monty: latestPython.monty.secondCallMs,
+        cpython: latestPython.cpython.secondCallMs,
+      },
+      {
+        measure: "Warm print(1)",
+        detail: "median per call in a long-lived session",
+        monty: latestPython.monty.warmPrintMs,
+        cpython: latestPython.cpython.warmPrintMs,
+      },
+    ]
+  : [];
 const topBenchCategories = latestBench?.categories.slice(0, 8) ?? [];
 const evalCategories = latestEval?.categories.slice(0, 8) ?? [];
 
@@ -84,7 +110,7 @@ const evalResultsUrl =
   "https://github.com/everruns/bashkit/tree/main/crates/bashkit-eval/results";
 
 const pageDescription =
-  "Explore Bashkit benchmark, Criterion bench, and LLM eval results with latest runtime snapshots, category scores, raw reports, and historical artifact links over time.";
+  "Explore Bashkit benchmark, Python startup, Criterion bench, and LLM eval results with latest runtime snapshots, category scores, raw reports, and historical artifact links over time.";
 ---
 
 <BaseLayout title="Bashkit Benches" description={pageDescription}>
@@ -128,6 +154,78 @@ const pageDescription =
           }
         </div>
       </section>
+
+      {
+        latestPython && (
+          <section class="snapshot-columns">
+            <article class="snapshot-panel">
+              <div class="panel-head">
+                <span class="bench-eyebrow">Python startup</span>
+                <h2>python3: CPython (wasm) vs Monty</h2>
+                <a
+                  class="section-link"
+                  href={repoUrl(latestPython.source)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Open report ({latestPython.date})
+                </a>
+              </div>
+              <table>
+                <thead>
+                  <tr><th>Measure</th><th>CPython</th><th>Monty</th></tr>
+                </thead>
+                <tbody>
+                  {
+                    pythonRows.map((row) => (
+                      <tr>
+                        <td>
+                          <strong>{row.measure}</strong>
+                          <small>{row.detail}</small>
+                        </td>
+                        <td class="score">{formatMs(row.cpython)}</td>
+                        <td>{formatMs(row.monty)}</td>
+                      </tr>
+                    ))
+                  }
+                </tbody>
+              </table>
+            </article>
+
+            <article class="snapshot-panel">
+              <div class="panel-head">
+                <span class="bench-eyebrow">Python startup history</span>
+                <h2>CPython per run</h2>
+              </div>
+              <table>
+                <thead>
+                  <tr><th>Run</th><th>First call</th><th>Warm print(1)</th></tr>
+                </thead>
+                <tbody>
+                  {
+                    pythonRuns.map((run) => (
+                      <tr>
+                        <td>
+                          <a href={repoUrl(run.source)} target="_blank" rel="noopener noreferrer">
+                            {run.date}
+                          </a>
+                          <small>
+                            {run.cpython.importHttpClientMs != null
+                              ? `import http.client: ${formatMs(run.cpython.importHttpClientMs)}`
+                              : "import timing not recorded"}
+                          </small>
+                        </td>
+                        <td>{formatMs(run.cpython.firstCallMs)}</td>
+                        <td>{formatMs(run.cpython.warmPrintMs)}</td>
+                      </tr>
+                    ))
+                  }
+                </tbody>
+              </table>
+            </article>
+          </section>
+        )
+      }
 
       <section class="snapshot-columns">
         <article class="snapshot-panel">

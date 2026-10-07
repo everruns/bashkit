@@ -75,10 +75,12 @@ call:
 
 Measured on a 4-vCPU x86-64 VM (see `criterion-python-*` results under
 `crates/bashkit/benches/results/`): first `python3` in a fresh process
-~20 ms (one-time engine/module load and first-touch page faults), then
-`python3 -c 'print(1)'` ~5 ms per call warm; Monty ~15 µs (first call ~0.4 ms).
+~19 ms (one-time engine/module load and first-touch page faults), then
+`python3 -c 'print(1)'` ~4.4 ms per call warm; Monty ~15 µs (first call ~0.4 ms).
 CPU-bound Python is ~4-30x slower than Monty. 1024 concurrent tenants × 4
-calls: 0 failures, ~90 calls/s on 4 vCPUs, 4.7 GB peak RSS.
+calls: 0 failures, ~165 calls/s on 4 vCPUs, 3.0 GB peak RSS (2026-10-07,
+after immortal objects; was ~90 calls/s, 4.7 GB). Importing a module outside
+the snapshot costs ~0.27 s (`email.message`) to ~0.46 s (`http.client`).
 
 ### Guest contract (snapshot invariants)
 

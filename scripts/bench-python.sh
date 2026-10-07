@@ -105,6 +105,7 @@ HEADER
     section "Per session (new Bash per call)" '^python_session/'
     section "Compute (CPU-bound Python)" '^python_compute/'
     section "Parallel sessions (N concurrent, one call each)" '^python_parallel/'
+    section "Import outside the snapshot (CPython, bytecode stdlib)" '^python_import/'
     printf '\n## Load (CPython, concurrent tenants, 4 calls each, one process)\n\n%s\n' "$LOAD"
 } >"$MD_PATH"
 

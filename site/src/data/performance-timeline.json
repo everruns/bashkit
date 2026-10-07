@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-06T20:42:07.000Z",
+  "generatedAt": "2026-10-07T03:57:14.000Z",
   "sources": {
     "bench": "crates/bashkit-bench/results/*.json",
     "criterion": "crates/bashkit/benches/results/*.md",
@@ -7,7 +7,7 @@
   },
   "summary": {
     "benchRuns": 10,
-    "criterionRuns": 16,
+    "criterionRuns": 17,
     "evalRuns": 38,
     "latestBench": {
       "id": "bench-mykhailosmac-macos-aarch64-1788629833",
@@ -1850,6 +1850,27 @@
       "fastestCase": {
         "name": "python_call/monty/print",
         "us": 15.41
+      },
+      "bestImprovement": null
+    },
+    {
+      "id": "criterion-python-vm-linux-x86_64-1791345434",
+      "kind": "criterion",
+      "family": "python",
+      "label": "Python Runtimes Benchmark: CPython (wasm) vs Monty",
+      "date": "2026-10-07",
+      "timestamp": "2026-10-07T03:57:14.000Z",
+      "source": "crates/bashkit/benches/results/criterion-python-vm-linux-x86_64-1791345434.md",
+      "reportSource": "crates/bashkit/benches/results/criterion-python-vm-linux-x86_64-1791345434.md",
+      "cases": 24,
+      "medianUs": 5663.25,
+      "p95Us": 431783,
+      "medianChangePct": null,
+      "meanChangePct": null,
+      "bestChangePct": null,
+      "fastestCase": {
+        "name": "python_call/monty/pass",
+        "us": 16.35
       },
       "bestImprovement": null
     }
@@ -4848,6 +4869,42 @@
       ]
     }
   ],
+  "pythonStartup": [
+    {
+      "id": "criterion-python-vm-linux-x86_64-1791319327",
+      "date": "2026-10-06",
+      "timestamp": "2026-10-06T20:42:07.000Z",
+      "source": "crates/bashkit/benches/results/criterion-python-vm-linux-x86_64-1791319327.md",
+      "monty": {
+        "firstCallMs": 0.369,
+        "secondCallMs": 0.038,
+        "warmPrintMs": 0.015
+      },
+      "cpython": {
+        "firstCallMs": 21.896,
+        "secondCallMs": 6.239,
+        "warmPrintMs": 6.312,
+        "importHttpClientMs": null
+      }
+    },
+    {
+      "id": "criterion-python-vm-linux-x86_64-1791345434",
+      "date": "2026-10-07",
+      "timestamp": "2026-10-07T03:57:14.000Z",
+      "source": "crates/bashkit/benches/results/criterion-python-vm-linux-x86_64-1791345434.md",
+      "monty": {
+        "firstCallMs": 0.575,
+        "secondCallMs": 0.049,
+        "warmPrintMs": 0.018
+      },
+      "cpython": {
+        "firstCallMs": 18.85,
+        "secondCallMs": 4.412,
+        "warmPrintMs": 4.424,
+        "importHttpClientMs": 461.12
+      }
+    }
+  ],
   "modelTrends": [
     {
       "model": "anthropic/claude-haiku-4-5",
@@ -5670,6 +5727,15 @@
       "detail": "python_call/monty/print at 15.41 us median",
       "metric": 6917.3,
       "source": "crates/bashkit/benches/results/criterion-python-vm-linux-x86_64-1791319327.md"
+    },
+    {
+      "date": "2026-10-07",
+      "timestamp": "2026-10-07T03:57:14.000Z",
+      "kind": "Criterion",
+      "title": "python",
+      "detail": "python_call/monty/pass at 16.35 us median",
+      "metric": 5663.25,
+      "source": "crates/bashkit/benches/results/criterion-python-vm-linux-x86_64-1791345434.md"
     }
   ]
 }

@@ -41,7 +41,7 @@ are the aggregation input for benchmark and eval summaries.
 ## Run Commands
 
 Default benchmark recipes that represent a real run MUST save artifacts in the
-directories above: `just bench`, `just bench-parallel`, `just bench-sqlite`.
+directories above: `just bench`, `just bench-parallel`, `just bench-sqlite`, `just bench-python`.
 
 The comparison harness resolves `bash` from `PATH` and requires Bash 4 or newer
 (case conversion and associative arrays are benchmarked). A missing or older
@@ -72,6 +72,13 @@ the `/benches` page. It reads the result directories above and writes
 
 `site/package.json` MUST run that transformer in `prebuild`, so every
 `pnpm run build` refreshes `/benches` from the latest committed result artifacts.
+
+The transformer also emits `pythonStartup`, one point per
+`criterion-python-*.md` report: median first call and next call from the raw
+start table, warm `python_call/<runtime>/print`, and CPython
+`python_import/cpython/http_client` when present. `/benches` shows the latest
+point (CPython vs Monty) and the CPython history. `just bench-python` produces
+these reports.
 
 When changing result schemas, update the transformer and this spec in the same
 PR. Do not hand-edit `performance-timeline.json` except by running the script.

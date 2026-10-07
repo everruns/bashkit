@@ -14,6 +14,8 @@
 //! - **Compute** (`python_compute`): CPU-bound Python (interpreter speed).
 //! - **Parallel** (`python_parallel`): N concurrent sessions, each one
 //!   `python3` call, on a multi-thread runtime.
+//! - **Import** (`python_import`, CPython only): stdlib modules outside the
+//!   snapshot, loaded from the bytecode zip on every call.
 //!
 //! Run: `cargo bench --bench python --features python,cpython` or
 //! `just bench-python` (saves results).
@@ -95,6 +97,29 @@ fn bench_call(c: &mut Criterion) {
     group.finish();
 }
 
+/// Stdlib imports outside the CPython snapshot (Monty has no such modules).
+const IMPORTS: &[(&str, &str)] = &[
+    ("email_message", "python3 -c 'import email.message'"),
+    ("http_client", "python3 -c 'import http.client'"),
+];
+
+fn bench_import(c: &mut Criterion) {
+    let rt = Runtime::new().unwrap();
+    CPython::warm_up().unwrap();
+    let mut group = c.benchmark_group("python_import");
+    group.sample_size(10);
+    let bash = tokio::sync::Mutex::new(make_bash("cpython"));
+    for (name, script) in IMPORTS {
+        let r = rt.block_on(async { bash.lock().await.exec(script).await.unwrap() });
+        assert_eq!(r.exit_code, 0, "cpython/{name}: {}", r.stderr);
+        group.bench_with_input(BenchmarkId::new("cpython", name), script, |b, script| {
+            b.to_async(&rt)
+                .iter(|| async { bash.lock().await.exec(script).await.unwrap() });
+        });
+    }
+    group.finish();
+}
+
 fn bench_session(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     CPython::warm_up().unwrap();
@@ -166,6 +191,7 @@ criterion_group!(
     bench_call,
     bench_session,
     bench_compute,
-    bench_parallel
+    bench_parallel,
+    bench_import
 );
 criterion_main!(benches);
