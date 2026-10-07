@@ -18,3 +18,16 @@ tar -tzf /tmp/large.tar.gz
 ### expect
 /tmp/gzlarge/nums.txt
 ### end
+
+### gzip_stdout_roundtrip
+# gzip -c / gunzip -c stream through stdout and keep the input file
+printf 'hello gz\n' > /tmp/gzc.txt
+gzip -c /tmp/gzc.txt > /tmp/gzc.txt.gz
+test -f /tmp/gzc.txt && echo kept
+gunzip -c /tmp/gzc.txt.gz
+printf 'pipe data\n' | gzip -9 | gzip -dc
+### expect
+kept
+hello gz
+pipe data
+### end

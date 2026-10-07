@@ -42,6 +42,9 @@ struct XargsOptions {
     max_procs: Option<usize>,
     /// `--process-slot-var=VAR`: env var to expose the per-command slot index.
     process_slot_var: Option<String>,
+    /// `-r` / `--no-run-if-empty`: with no input items, run nothing. GNU
+    /// otherwise runs the command once without extra arguments.
+    no_run_if_empty: bool,
     command: Vec<String>,
 }
 
@@ -53,6 +56,7 @@ fn parse_xargs_args(args: &[String]) -> std::result::Result<XargsOptions, ExecRe
     let mut delimiter: Option<char> = None;
     let mut max_procs: Option<usize> = None;
     let mut process_slot_var: Option<String> = None;
+    let mut no_run_if_empty = false;
     let mut command: Vec<String> = Vec::new();
     let mut p = super::arg_parser::ArgParser::new(args);
 
@@ -83,6 +87,8 @@ fn parse_xargs_args(args: &[String]) -> std::result::Result<XargsOptions, ExecRe
             delimiter = val.chars().next();
         } else if p.flag("-0") {
             delimiter = Some('\0');
+        } else if p.flag("-r") || p.flag("--no-run-if-empty") {
+            no_run_if_empty = true;
         } else if let Some(val) = p
             .flag_value("-P", "xargs")
             .map_err(|e| ExecResult::err(format!("{e}\n"), 1))?
@@ -136,16 +142,13 @@ fn parse_xargs_args(args: &[String]) -> std::result::Result<XargsOptions, ExecRe
         delimiter,
         max_procs,
         process_slot_var,
+        no_run_if_empty,
         command,
     })
 }
 
 /// Build the list of sub-commands from parsed options and stdin input.
 fn build_xargs_commands(opts: &XargsOptions, input: &str) -> Vec<SubCommand> {
-    if input.is_empty() {
-        return Vec::new();
-    }
-
     let items: Vec<&str> = if let Some(delim) = opts.delimiter {
         input.split(delim).filter(|s| !s.is_empty()).collect()
     } else {
@@ -153,7 +156,20 @@ fn build_xargs_commands(opts: &XargsOptions, input: &str) -> Vec<SubCommand> {
     };
 
     if items.is_empty() {
-        return Vec::new();
+        // GNU runs the command once with no input arguments unless -r;
+        // with -I there is nothing to substitute, so nothing runs.
+        if opts.no_run_if_empty || opts.replace_str.is_some() {
+            return Vec::new();
+        }
+        return vec![SubCommand {
+            name: opts.command[0].clone(),
+            args: opts.command[1..].to_vec(),
+            stdin: None,
+            assignments: match opts.process_slot_var {
+                Some(ref var) => vec![(var.clone(), "0".to_string())],
+                None => Vec::new(),
+            },
+        }];
     }
 
     let chunk_size = opts.max_args.unwrap_or(items.len());
@@ -206,7 +222,7 @@ impl Builtin for Xargs {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
         if let Some(r) = super::check_help_version(
             ctx.args,
-            "Usage: xargs [OPTION]... [COMMAND [ARGS]...]\nBuild and execute command lines from standard input.\n\n  -I REPLACE\treplace REPLACE with input (implies -n 1)\n  -n MAX-ARGS\tuse at most MAX-ARGS arguments per command\n  -d DELIM\tuse DELIM as delimiter instead of whitespace\n  -0\tuse NUL as delimiter\n  -P, --max-procs=N\tallocate N parallel slots (runs sequentially)\n  --process-slot-var=VAR\tset VAR to the slot index (0..N-1)\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            "Usage: xargs [OPTION]... [COMMAND [ARGS]...]\nBuild and execute command lines from standard input.\n\n  -I REPLACE\treplace REPLACE with input (implies -n 1)\n  -n MAX-ARGS\tuse at most MAX-ARGS arguments per command\n  -d DELIM\tuse DELIM as delimiter instead of whitespace\n  -0\tuse NUL as delimiter\n  -r, --no-run-if-empty\tdo not run COMMAND when input is empty\n  -P, --max-procs=N\tallocate N parallel slots (runs sequentially)\n  --process-slot-var=VAR\tset VAR to the slot index (0..N-1)\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
             Some("xargs (bashkit) 0.1"),
         ) {
             return Ok(r);
@@ -219,10 +235,6 @@ impl Builtin for Xargs {
         };
 
         let input = ctx.stdin.map(|stdin| &**stdin).unwrap_or("");
-        if input.is_empty() {
-            return Ok(ExecResult::ok(String::new()));
-        }
-
         let commands = build_xargs_commands(&opts, input);
         if commands.is_empty() {
             return Ok(ExecResult::ok(String::new()));
@@ -256,10 +268,6 @@ impl Builtin for Xargs {
         };
 
         let input = ctx.stdin.map(|stdin| &**stdin).unwrap_or("");
-        if input.is_empty() {
-            return Ok(None); // Let execute() handle empty input
-        }
-
         let commands = build_xargs_commands(&opts, input);
         if commands.is_empty() {
             return Ok(None);
@@ -748,6 +756,34 @@ mod tests {
             cwd: &mut cwd,
             fs: fs.clone(),
             stdin: Some(crate::builtins::test_stream("")),
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
+            shell: None,
+        };
+
+        // GNU: empty input still runs the command once with no args.
+        let result = Xargs.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "echo\n");
+    }
+
+    #[tokio::test]
+    async fn test_xargs_no_run_if_empty() {
+        let (fs, mut cwd, mut variables) = create_test_ctx().await;
+        let env = HashMap::new();
+
+        let args = vec!["-r".to_string()];
+        let ctx = Context {
+            args: &args,
+            env: &env,
+            variables: &mut variables,
+            cwd: &mut cwd,
+            fs: fs.clone(),
+            stdin: Some(crate::builtins::test_stream("  \n")),
             #[cfg(feature = "http_client")]
             http_client: None,
             #[cfg(feature = "git")]

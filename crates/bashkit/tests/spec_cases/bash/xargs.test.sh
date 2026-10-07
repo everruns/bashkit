@@ -44,11 +44,11 @@ a b c
 ### end
 
 ### xargs_empty_input
-### bash_diff: VFS xargs echo -n behavior differs
-# xargs with empty input
-echo -n "" | xargs
+# xargs with empty input runs `echo` once, printing a blank line
+echo -n "" | xargs; echo "rc=$?"
 ### expect
 
+rc=0
 ### end
 
 ### xargs_max_procs_accepted
@@ -78,4 +78,20 @@ printf "x\ny\n" | xargs --process-slot-var=SLOT -I{} sh -c 'echo {} slot=$SLOT'
 ### expect
 x slot=0
 y slot=0
+### end
+
+### xargs_empty_input_runs_once
+# GNU xargs runs the command once with no args when input is empty
+printf "" | xargs echo none
+### expect
+none
+### end
+
+### xargs_no_run_if_empty
+# -r / --no-run-if-empty skips the command on empty input
+printf "" | xargs -r echo none
+printf "" | xargs --no-run-if-empty echo none
+printf "x\n" | xargs -r echo got
+### expect
+got x
 ### end

@@ -745,3 +745,16 @@ printf 'bar\n' > /tmp/grep_zl_a.txt && grep -LZ foo /tmp/grep_zl_a.txt | tr '\0'
 ### expect
 /tmp/grep_zl_a.txt
 ### end
+
+### grep_skip_binary_files
+# -I skips files containing NUL bytes; -L lists them as non-matching
+mkdir -p /tmp/gI && cd /tmp/gI
+printf 'needle\n' > text.txt
+printf 'needle\0bin\n' > data.bin
+grep -rI needle . | sort
+grep -c --binary-files=without-match needle data.bin; echo "rc=$?"
+### expect
+./text.txt:needle
+0
+rc=1
+### end
