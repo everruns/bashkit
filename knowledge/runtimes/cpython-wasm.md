@@ -65,6 +65,13 @@ call:
    faults per call dropped ~20% (341 to 273 for `print(1)`).
 7. **Lean driver**: the per-call environment is installed from C
    (`_bashkit.load_environ`) instead of per-key `os.environ` updates.
+8. **Bytecode-only stdlib**: `build.sh` compiles the stdlib zip to
+   unchecked-hash `.pyc` with the native build interpreter and ships no
+   `.py`. Compiling source on Pulley cost 3-7 s per non-preloaded import
+   (`import http.client` 7.2 s, now ~0.5 s); sources plus bytecode would
+   exceed the crates.io 10 MiB crate cap. Modules that cannot work in the
+   guest (FFI, TLS, sockets, TTY) and pure-Python twins of C modules are
+   not shipped (L-CPY-009).
 
 Measured on a 4-vCPU x86-64 VM (see `criterion-python-*` results under
 `crates/bashkit/benches/results/`): first `python3` in a fresh process
