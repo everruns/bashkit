@@ -16,6 +16,8 @@ use crate::fs::FileType;
 use crate::fs::vfs_join;
 use crate::interpreter::ExecResult;
 
+use super::quoting::{QuotingStyle, quote_name};
+
 /// Argument IDs from the generated `ls_command()` that bashkit currently
 /// implements. Anything else clap accepts is reported as "not yet
 /// implemented" so scripts get a deterministic error instead of silently
@@ -31,6 +33,10 @@ const LS_SUPPORTED_IDS: &[&str] = &[
     "classify",       // -F / --classify
     "C",              // -C
     "directory",      // -d / --directory
+    "quoting-style",  // --quoting-style (not locale/clocale)
+    "literal",        // -N
+    "escape",         // -b
+    "quote-name",     // -Q
     // Non-flag positional + always-supported infrastructure.
     "paths",
     "help",
@@ -47,6 +53,7 @@ pub(super) struct LsOptions {
     pub(super) classify: bool,
     pub(super) columns: bool,
     pub(super) directory: bool,
+    pub(super) quoting: QuotingStyle,
 }
 
 /// The ls builtin - list directory contents.
@@ -129,6 +136,26 @@ impl Builtin for Ls {
                 .map(|v| v != "never")
                 .unwrap_or(true);
 
+        // The four quoting flags override each other in clap, so at most
+        // one is present.
+        let quoting = if matches.get_flag("escape") {
+            QuotingStyle::Escape
+        } else if matches.get_flag("quote-name") {
+            QuotingStyle::C
+        } else if let Some(style) = matches.get_one::<String>("quoting-style") {
+            match QuotingStyle::from_name(style) {
+                Some(q) => q,
+                None => {
+                    return Ok(ExecResult::err(
+                        format!("ls: quoting style '{style}' not yet implemented in bashkit\n"),
+                        2,
+                    ));
+                }
+            }
+        } else {
+            QuotingStyle::Literal
+        };
+
         let opts = LsOptions {
             long: matches.get_flag("long"),
             all: matches.get_flag("all"),
@@ -139,6 +166,7 @@ impl Builtin for Ls {
             classify,
             columns: matches.get_flag("C"),
             directory: matches.get_flag("directory"),
+            quoting,
         };
 
         // PATHS holds OsString values; convert to owned strings for the
@@ -203,7 +231,8 @@ impl Builtin for Ls {
         // Output file arguments first (preserving path as given by user)
         if opts.long {
             for (path_str, path, metadata) in &file_args {
-                let mut entry = format_long_entry(path_str, metadata, opts.human);
+                let mut entry =
+                    format_long_entry(&quote_name(path_str, opts.quoting), metadata, opts.human);
                 push_link_target(&ctx, path, metadata, &mut entry).await;
                 if opts.classify {
                     // Insert suffix before the trailing newline
@@ -218,7 +247,7 @@ impl Builtin for Ls {
             let names: Vec<String> = file_args
                 .iter()
                 .map(|(path_str, _, metadata)| {
-                    let mut name = (*path_str).to_string();
+                    let mut name = quote_name(path_str, opts.quoting).into_owned();
                     if opts.classify {
                         name.push_str(classify_suffix(metadata));
                     }
@@ -270,7 +299,13 @@ async fn list_directory(
     }
 
     if show_header {
-        output.push_str(&format!("{}:\n", display_path));
+        // GNU quotes headers in every style except `escape`.
+        let header = if opts.quoting == QuotingStyle::Escape {
+            std::borrow::Cow::Borrowed(display_path)
+        } else {
+            quote_name(display_path, opts.quoting)
+        };
+        output.push_str(&format!("{}:\n", header));
     }
 
     let entries = ctx
@@ -300,7 +335,11 @@ async fn list_directory(
 
     if opts.long {
         for entry in &filtered {
-            let mut line = format_long_entry(&entry.name, &entry.metadata, opts.human);
+            let mut line = format_long_entry(
+                &quote_name(&entry.name, opts.quoting),
+                &entry.metadata,
+                opts.human,
+            );
             push_link_target(
                 ctx,
                 &vfs_join(path, &entry.name),
@@ -326,7 +365,7 @@ async fn list_directory(
         // Collect entry names for potential column formatting
         let mut names: Vec<String> = Vec::new();
         for entry in &filtered {
-            let mut name = entry.name.clone();
+            let mut name = quote_name(&entry.name, opts.quoting).into_owned();
             if opts.classify {
                 name.push_str(classify_suffix(&entry.metadata));
             }

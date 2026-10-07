@@ -232,6 +232,8 @@ impl Builtin for Tar {
         let mut change_dir: Option<String> = None;
         let mut strip_components = 0usize;
         let mut excludes: Vec<String> = Vec::new();
+        let mut absolute_names = false;
+        let mut files_from: Vec<String> = Vec::new();
         let mut files = budgeted_vec(&ctx)?;
 
         // GNU/bsdtar treat a bare first word as the historical option bundle.
@@ -254,6 +256,14 @@ impl Builtin for Tar {
         // Parse arguments
         let mut p = super::arg_parser::ArgParser::new(args);
         while !p.is_done() {
+            if p.current() == Some("--") {
+                // End of options: everything after is a member name.
+                p.advance();
+                while let Some(arg) = p.positional() {
+                    files.try_push(arg)?;
+                }
+                break;
+            }
             if let Some(long) = p.current().and_then(|a| a.strip_prefix("--"))
                 && !long.is_empty()
                 && !matches!(long, "bzip2" | "gzip")
@@ -266,7 +276,7 @@ impl Builtin for Tar {
                 p.advance();
                 let takes_value = matches!(
                     name.as_str(),
-                    "strip-components" | "exclude" | "file" | "directory"
+                    "strip-components" | "exclude" | "file" | "directory" | "files-from"
                 );
                 let value = if takes_value {
                     match inline.or_else(|| p.positional().map(str::to_string)) {
@@ -290,6 +300,8 @@ impl Builtin for Tar {
                     "file" => archive_file = Some(value),
                     "directory" => change_dir = Some(value),
                     "exclude" => excludes.push(value),
+                    "files-from" => files_from.push(value),
+                    "absolute-names" => absolute_names = true,
                     "strip-components" => match value.parse() {
                         Ok(n) => strip_components = n,
                         Err(_) => {
@@ -342,6 +354,16 @@ impl Builtin for Tar {
                         'O' => to_stdout = true,
                         // Permissions are not modelled by the VFS.
                         'p' => {}
+                        'P' => absolute_names = true,
+                        'T' => match p.positional() {
+                            Some(val) => files_from.push(val.to_string()),
+                            None => {
+                                return Ok(ExecResult::err(
+                                    "tar: option requires an argument -- 'T'\n".to_string(),
+                                    2,
+                                ));
+                            }
+                        },
                         'f' => match p.positional() {
                             Some(val) => archive_file = Some(val.to_string()),
                             None => {
@@ -373,6 +395,38 @@ impl Builtin for Tar {
             }
         }
 
+        // `-T FILE` / `--files-from=FILE`: one member name per line, blank
+        // lines skipped, `-` reads stdin.
+        let mut listed_names: Vec<String> = Vec::new();
+        for list in &files_from {
+            let content = if list == "-" {
+                String::from_utf8_lossy(ctx.stdin_bytes().unwrap_or_default()).into_owned()
+            } else {
+                let path = resolve_path(ctx.cwd, list);
+                match ctx.fs.read_file(&path).await {
+                    Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+                    Err(_) => {
+                        return Ok(ExecResult::err(
+                            format!(
+                                "tar: {list}: Cannot stat: No such file or directory\ntar: Error is not recoverable: exiting now\n"
+                            ),
+                            2,
+                        ));
+                    }
+                }
+            };
+            ctx.consume_budget_input(content.len())?;
+            listed_names.extend(
+                content
+                    .lines()
+                    .filter(|l| !l.is_empty())
+                    .map(str::to_string),
+            );
+        }
+        for name in &listed_names {
+            files.try_push(name.as_str())?;
+        }
+
         // Check for exactly one of -c, -x, -t
         let mode_count = [create, extract, list].iter().filter(|&&x| x).count();
         if mode_count == 0 {
@@ -401,7 +455,10 @@ impl Builtin for Tar {
                 &ctx,
                 &archive_name,
                 &files,
-                verbose,
+                TarNames {
+                    verbose,
+                    absolute_names,
+                },
                 compression,
                 change_dir.as_deref(),
                 &excludes,
@@ -428,6 +485,15 @@ impl Builtin for Tar {
     }
 }
 
+/// Per-archive member naming flags shared by the tar writers.
+#[derive(Clone, Copy)]
+struct TarNames {
+    /// `-v`: list each member as it is added.
+    verbose: bool,
+    /// `-P`: keep the leading `/` of absolute member names.
+    absolute_names: bool,
+}
+
 /// Simple tar header (512 bytes)
 const TAR_BLOCK_SIZE: usize = 512;
 
@@ -436,7 +502,7 @@ async fn create_tar(
     ctx: &Context<'_>,
     archive_name: &str,
     files: &[&str],
-    verbose: bool,
+    names: TarNames,
     compression: ArchiveCompression,
     change_dir: Option<&str>,
     excludes: &[String],
@@ -473,7 +539,7 @@ async fn create_tar(
                 file,
                 &mut output_data,
                 &mut verbose_output,
-                verbose,
+                names,
                 excludes,
             )
             .await?;
@@ -485,7 +551,7 @@ async fn create_tar(
                 file,
                 &mut output_data,
                 &mut verbose_output,
-                verbose,
+                names,
             )
             .await?;
         }
@@ -503,7 +569,7 @@ async fn create_tar(
     };
     let (final_data, _final_lease) = final_data.into_parts();
     let (verbose_output, _verbose_lease) = verbose_output.into_parts();
-    let notice = if files.iter().any(|f| f.starts_with('/')) {
+    let notice = if !names.absolute_names && files.iter().any(|f| f.starts_with('/')) {
         "tar: Removing leading `/' from member names\n"
     } else {
         ""
@@ -540,8 +606,12 @@ async fn add_file_to_tar(
     name: &str,
     output: &mut BudgetedBytes,
     verbose_output: &mut BudgetedString,
-    verbose: bool,
+    names: TarNames,
 ) -> Result<()> {
+    let TarNames {
+        verbose,
+        absolute_names,
+    } = names;
     let metadata = ctx.fs.stat(path).await?;
     let content = ctx.fs.read_file(path).await?;
     ctx.consume_budget_input(content.len())?;
@@ -555,8 +625,8 @@ async fn add_file_to_tar(
     // Create tar header
     let mut header = [0u8; TAR_BLOCK_SIZE];
 
-    // Name (100 bytes); GNU tar drops the leading `/` of absolute names.
-    let name_bytes = name.trim_start_matches('/').as_bytes();
+    // Name (100 bytes); GNU tar drops the leading `/` unless `-P`.
+    let name_bytes = tar_member_name(name, absolute_names).as_bytes();
     let name_len = name_bytes.len().min(100);
     header[..name_len].copy_from_slice(&name_bytes[..name_len]);
 
@@ -606,6 +676,15 @@ async fn add_file_to_tar(
     Ok(())
 }
 
+/// Header name for a member: leading `/` dropped unless `-P`/`--absolute-names`.
+fn tar_member_name(name: &str, absolute_names: bool) -> &str {
+    if absolute_names {
+        name
+    } else {
+        name.trim_start_matches('/')
+    }
+}
+
 /// Add a directory to tar archive recursively
 fn add_directory_to_tar<'a>(
     ctx: &'a Context<'_>,
@@ -613,10 +692,14 @@ fn add_directory_to_tar<'a>(
     name: &'a str,
     output: &'a mut BudgetedBytes,
     verbose_output: &'a mut BudgetedString,
-    verbose: bool,
+    names: TarNames,
     excludes: &'a [String],
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>> {
     Box::pin(async move {
+        let TarNames {
+            verbose,
+            absolute_names,
+        } = names;
         // Add directory entry
         if verbose {
             verbose_output.try_push_str(name)?;
@@ -629,7 +712,7 @@ fn add_directory_to_tar<'a>(
         let mut header = [0u8; TAR_BLOCK_SIZE];
 
         // Name with trailing slash
-        let dir_name = format!("{}/", name.trim_start_matches('/'));
+        let dir_name = format!("{}/", tar_member_name(name, absolute_names));
         let name_bytes = dir_name.as_bytes();
         let name_len = name_bytes.len().min(100);
         header[..name_len].copy_from_slice(&name_bytes[..name_len]);
@@ -684,20 +767,13 @@ fn add_directory_to_tar<'a>(
                     &child_name,
                     output,
                     verbose_output,
-                    verbose,
+                    names,
                     excludes,
                 )
                 .await?;
             } else {
-                add_file_to_tar(
-                    ctx,
-                    &child_path,
-                    &child_name,
-                    output,
-                    verbose_output,
-                    verbose,
-                )
-                .await?;
+                add_file_to_tar(ctx, &child_path, &child_name, output, verbose_output, names)
+                    .await?;
             }
         }
 

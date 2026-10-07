@@ -117,26 +117,33 @@ sub/
 ### end
 
 ### ls_quote_name_short_flag
-### bash_diff: bashkit accepts -Q via the uu_ls argument surface but does
-### bash_diff: not yet implement quoting; report not-yet-impl rather than
-### bash_diff: silently fall through to default rendering.
 mkdir -p /tmp/lsqn
 echo x > /tmp/lsqn/a.txt
 ls -Q /tmp/lsqn 2>&1
 echo "exit=$?"
 ### expect
-ls: option(s) not yet implemented in bashkit: quote-name
-exit=2
+"a.txt"
+exit=0
 ### end
 
 ### ls_quoting_style_long_flag
-### bash_diff: --quoting-style= parsed by clap but not implemented.
 mkdir -p /tmp/lsqs
 echo x > /tmp/lsqs/a.txt
 ls --quoting-style=shell /tmp/lsqs 2>&1
 echo "exit=$?"
 ### expect
-ls: option(s) not yet implemented in bashkit: quoting-style
+a.txt
+exit=0
+### end
+
+### ls_quoting_style_locale_unsupported
+### bash_diff: locale/clocale quoting (curly quotes) is not implemented.
+mkdir -p /tmp/lsql
+echo x > /tmp/lsql/a.txt
+ls --quoting-style=locale /tmp/lsql 2>&1
+echo "exit=$?"
+### expect
+ls: quoting style 'locale' not yet implemented in bashkit
 exit=2
 ### end
 
@@ -178,4 +185,50 @@ exit=2
 ls --version | sed -E 's/^(ls) [0-9]+\.[0-9]+\.[0-9]+.*/\1 X.Y.Z/'
 ### expect
 ls X.Y.Z
+### end
+
+### ls_escape_nongraphic
+# The VFS rejects control characters in names, so only spaces and
+# backslashes need escaping here; control-char escapes are unit-tested.
+mkdir -p /tmp/lse && cd /tmp/lse && touch 'a b' plain 'g\h'
+ls -b
+echo --
+ls --escape | head -1
+### expect
+a\ b
+g\\h
+plain
+--
+a\ b
+### end
+
+### ls_quoting_styles
+mkdir -p /tmp/lqs && cd /tmp/lqs && touch 'a b' "it's" x=1 '#a' a#b plain 'q"x'
+ls -Q | tr '\n' '|'; echo
+ls --quoting-style=c | head -1
+ls --quoting-style=shell | tr '\n' '|'; echo
+ls --quoting-style=shell-always | tr '\n' '|'; echo
+ls -N | head -1
+ls -Q -N | head -1
+### expect
+"#a"|"a b"|"a#b"|"it's"|"plain"|"q\"x"|"x=1"|
+"#a"
+'#a'|'a b'|a#b|"it's"|plain|'q"x'|'x=1'|
+'#a'|'a b'|'a#b'|"it's"|'plain'|'q"x'|'x=1'|
+#a
+#a
+### end
+
+### ls_quoted_recursive_header
+# GNU escapes entries but not headers under -b; other styles quote both.
+mkdir -p '/tmp/lqh/d d' && touch '/tmp/lqh/d d/f g'
+cd /tmp/lqh && ls -bR
+ls -QR | tr '\n' '|'; echo
+### expect
+.:
+d\ d
+
+./d d:
+f\ g
+".":|"d d"||"./d d":|"f g"|
 ### end

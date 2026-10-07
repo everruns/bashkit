@@ -104,7 +104,7 @@ for sandbox security reasons. See the compliance spec for details.
 | `wget` | `-q`, `-O`, `--spider`, `--header`, `-U`, `--post-data`, `-t` | Download files (requires http_client feature) |
 | `time` | `[-p] [-f FORMAT] [-o FILE] [-a] [-v] [--] PIPELINE` | Reserved-word timing; elapsed/status/Bashkit counters are truthful, host CPU/RSS fields say `unavailable` |
 | `timeout` | `DURATION COMMAND` | Run with time limit (stub) |
-| `ls` | `-l`, `-a`, `-h`, `-1`, `-R`, `-t`, `-F`, `-C`, `-d` | List directory contents |
+| `ls` | `-l`, `-a`, `-h`, `-1`, `-R`, `-t`, `-F`, `-C`, `-d`, `-b`, `-N`, `-Q`, `--quoting-style` (not `locale`/`clocale`) | List directory contents |
 | `find` | GNU expression grammar (`( )`, `!`, `-a`, `-o`, `,`), `-H`/`-L`/`-P`, `-name`/`-iname`, `-path`/`-ipath`, `-regex`/`-iregex`/`-regextype`, `-type`/`-xtype`, `-size`, `-empty`, `-mtime`/`-mmin`/`-newer`/`-newerXY`, `-perm`, `-user`/`-group`/`-uid`/`-gid`, `-maxdepth`/`-mindepth`/`-depth`, `-print`/`-print0`/`-printf`, `-exec`/`-execdir` (`;` and `+`), `-delete`, `-prune`, `-quit` | Search for files (gaps: L-FIND-001) |
 | `rmdir` | `-p` | Remove empty directories |
 | `xargs` | `-I`, `-n`, `-d` | Build commands from stdin |
@@ -113,7 +113,7 @@ for sandbox security reasons. See the compliance spec for details.
 | `file` | (none) | Detect file type via magic bytes |
 | `less` | (none) | View file (behaves like cat in virtual mode) |
 | `stat` | `-c FORMAT` | Display file metadata |
-| `tar` | `-c`, `-x`, `-t`, `-v`, `-f`, `-z`/`--gzip`, `-j`/`--bzip2` | Archive operations; auto-detects gzip/bzip2 while reading |
+| `tar` | `-c`, `-x`, `-t`, `-v`, `-f`, `-z`/`--gzip`, `-j`/`--bzip2`, `-C`, `-O`, `-P`/`--absolute-names`, `-T`/`--files-from`, `--strip-components`, `--exclude`, `--` | Archive operations; auto-detects gzip/bzip2 while reading |
 | `gzip` | `-d`, `-k`, `-f` | Compress files |
 | `gunzip` | `-k`, `-f` | Decompress files |
 | `bzip2` | `-c`, `-d`, `-z`, `-k`, `-f` | Compress or decompress bzip2 streams/files |
