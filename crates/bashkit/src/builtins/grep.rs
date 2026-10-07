@@ -83,6 +83,7 @@ struct GrepOptions {
     null_terminated: bool,             // -z: null-terminated lines
     recursive: bool,                   // -r: recursive search
     binary_as_text: bool,              // -a: treat binary as text
+    skip_binary: bool,                 // -I: binary files never match
     include_patterns: Vec<String>,     // --include=GLOB
     exclude_patterns: Vec<String>,     // --exclude=GLOB
     exclude_dir_patterns: Vec<String>, // --exclude-dir=GLOB
@@ -118,6 +119,7 @@ impl GrepOptions {
             null_terminated: false,
             recursive: false,
             binary_as_text: false,
+            skip_binary: false,
             include_patterns: Vec::new(),
             exclude_patterns: Vec::new(),
             exclude_dir_patterns: Vec::new(),
@@ -157,6 +159,7 @@ impl GrepOptions {
                         'h' => opts.no_filename = true,
                         'b' => opts.byte_offset = true,
                         'a' => opts.binary_as_text = true,
+                        'I' => opts.skip_binary = true,
                         'z' => opts.null_terminated = true,
                         'L' => opts.files_without_matches = true,
                         's' => opts.suppress_errors = true,
@@ -254,6 +257,18 @@ impl GrepOptions {
                     "quiet" | "silent" => opts.quiet = true,
                     "byte-offset" => opts.byte_offset = true,
                     "text" => opts.binary_as_text = true,
+                    "binary-files" => {
+                        match long_opt_value(&inline_val, name, &mut i, args)?.as_str() {
+                            "without-match" => opts.skip_binary = true,
+                            "text" => opts.binary_as_text = true,
+                            "binary" => {}
+                            other => {
+                                return Err(crate::error::Error::Execution(format!(
+                                    "grep: unknown binary-files type: '{other}'"
+                                )));
+                            }
+                        }
+                    }
                     "null-data" => opts.null_terminated = true,
                     "recursive" => opts.recursive = true,
                     "no-messages" => opts.suppress_errors = true,
@@ -545,7 +560,7 @@ impl Builtin for Grep {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
         if let Some(r) = super::check_help_version(
             ctx.args,
-            "Usage: grep [OPTION]... PATTERN [FILE]...\nSearch for PATTERN in each FILE.\n\n  -i, --ignore-case\t\tignore case distinctions\n  -v, --invert-match\t\tselect non-matching lines\n  -n, --line-number\t\tprint line number with output lines\n  -c, --count\t\t\tprint only a count of matching lines\n  -l, --files-with-matches\tprint only names of files with matches\n  -L, --files-without-match\tprint only names of files without matches\n  -o, --only-matching\t\tshow only the matching part of lines\n  -q, --quiet, --silent\t\tsuppress all normal output\n  -w, --word-regexp\t\tmatch whole words only\n  -x, --line-regexp\t\tmatch whole lines only\n  -m, --max-count=NUM\t\tstop after NUM matches\n  -E, --extended-regexp\t\textended regular expressions\n  -F, --fixed-strings\t\tfixed string matching\n  -G, --basic-regexp\t\tbasic regular expressions (default)\n  -P, --perl-regexp\t\tPerl-compatible regular expressions\n  -e, --regexp=PATTERN\t\tuse PATTERN for matching\n  -f, --file=FILE\t\tread patterns from FILE\n  -A, --after-context=NUM\tprint NUM lines of trailing context\n  -B, --before-context=NUM\tprint NUM lines of leading context\n  -C, --context=NUM\t\tprint NUM lines of output context\n  -H, --with-filename\t\talways print filename headers\n  -h, --no-filename\t\tsuppress filename headers\n  -b, --byte-offset\t\tprint byte offset of matches\n  -a, --text\t\t\ttreat binary files as text\n  -z, --null-data\t\tuse NUL as line separator\n  -r, -R, --recursive\t\trecursive search\n  -s, --no-messages\t\tsuppress error messages\n  -Z, --null\t\t\tprint NUL after filenames\n  --include=GLOB\t\tsearch only files matching GLOB\n  --exclude=GLOB\t\tskip files matching GLOB\n  --exclude-dir=GLOB\t\tskip directories matching GLOB\n  --color=WHEN\t\t\tcolor output (no-op)\n  --line-buffered\t\tline-buffered output (no-op)\n  --help\t\t\tdisplay this help and exit\n  --version\t\t\toutput version information and exit\n",
+            "Usage: grep [OPTION]... PATTERN [FILE]...\nSearch for PATTERN in each FILE.\n\n  -i, --ignore-case\t\tignore case distinctions\n  -v, --invert-match\t\tselect non-matching lines\n  -n, --line-number\t\tprint line number with output lines\n  -c, --count\t\t\tprint only a count of matching lines\n  -l, --files-with-matches\tprint only names of files with matches\n  -L, --files-without-match\tprint only names of files without matches\n  -o, --only-matching\t\tshow only the matching part of lines\n  -q, --quiet, --silent\t\tsuppress all normal output\n  -w, --word-regexp\t\tmatch whole words only\n  -x, --line-regexp\t\tmatch whole lines only\n  -m, --max-count=NUM\t\tstop after NUM matches\n  -E, --extended-regexp\t\textended regular expressions\n  -F, --fixed-strings\t\tfixed string matching\n  -G, --basic-regexp\t\tbasic regular expressions (default)\n  -P, --perl-regexp\t\tPerl-compatible regular expressions\n  -e, --regexp=PATTERN\t\tuse PATTERN for matching\n  -f, --file=FILE\t\tread patterns from FILE\n  -A, --after-context=NUM\tprint NUM lines of trailing context\n  -B, --before-context=NUM\tprint NUM lines of leading context\n  -C, --context=NUM\t\tprint NUM lines of output context\n  -H, --with-filename\t\talways print filename headers\n  -h, --no-filename\t\tsuppress filename headers\n  -b, --byte-offset\t\tprint byte offset of matches\n  -a, --text\t\t\ttreat binary files as text\n  -I\t\t\t\tbinary files never match (--binary-files=without-match)\n  -z, --null-data\t\tuse NUL as line separator\n  -r, -R, --recursive\t\trecursive search\n  -s, --no-messages\t\tsuppress error messages\n  -Z, --null\t\t\tprint NUL after filenames\n  --include=GLOB\t\tsearch only files matching GLOB\n  --exclude=GLOB\t\tskip files matching GLOB\n  --exclude-dir=GLOB\t\tskip directories matching GLOB\n  --color=WHEN\t\t\tcolor output (no-op)\n  --line-buffered\t\tline-buffered output (no-op)\n  --help\t\t\tdisplay this help and exit\n  --version\t\t\toutput version information and exit\n",
             Some("grep (bashkit) 0.1"),
         ) {
             return Ok(r);
@@ -619,6 +634,12 @@ impl Builtin for Grep {
             } else {
                 ""
             };
+        // GNU `grep -r PAT` with no operand searches the working directory and
+        // names matches relative to it (`a:x`, not `./a:x`).
+        let implicit_root = opts.recursive && opts.files.is_empty();
+        if implicit_root {
+            opts.files.push(".".to_string());
+        }
         let inputs: Vec<(String, String)> = if opts.files.is_empty() {
             // Read from stdin
             // No NUL filtering here either — see `process_content`.
@@ -631,7 +652,7 @@ impl Builtin for Grep {
             let search_result = if opts.perl_regex {
                 None
             } else {
-                try_indexed_search(&*ctx.fs, &opts, ctx.cwd).await
+                try_indexed_search(&*ctx.fs, &opts, ctx.cwd, implicit_root).await
             };
 
             if let Some(indexed_inputs) = search_result {
@@ -639,19 +660,30 @@ impl Builtin for Grep {
             } else {
                 // Fallback: linear directory traversal
                 let mut inputs = Vec::new();
-                let mut dirs_to_process: Vec<std::path::PathBuf> = Vec::new();
+                // (path, operand index) — the operand names the match path.
+                let mut dirs_to_process: Vec<(std::path::PathBuf, usize)> = Vec::new();
+                let mut roots = Vec::new();
 
-                for file in &opts.files {
-                    let path = if file.starts_with('/') {
+                for (idx, file) in opts.files.iter().enumerate().rev() {
+                    let path = crate::fs::normalize_path(&if file.starts_with('/') {
                         std::path::PathBuf::from(file)
                     } else {
                         vfs_join(ctx.cwd, file)
-                    };
-                    dirs_to_process.push(path);
+                    });
+                    dirs_to_process.push((path.clone(), idx));
+                    roots.push(path);
                 }
+                roots.reverse();
 
-                while let Some(path) = dirs_to_process.pop() {
-                    if let Ok(entries) = ctx.fs.read_dir(&path).await {
+                while let Some((path, idx)) = dirs_to_process.pop() {
+                    let operand = if implicit_root { "" } else { &opts.files[idx] };
+                    let shown = |p: &std::path::Path| recursive_display(operand, &roots[idx], p);
+                    if let Ok(mut entries) = ctx.fs.read_dir(&path).await {
+                        // Name order keeps output stable across VFS backends;
+                        // a directory's files come first, then its
+                        // subdirectories depth-first.
+                        entries.sort_by(|a, b| a.name.cmp(&b.name));
+                        let mut subdirs = Vec::new();
                         for entry in entries {
                             let entry_path = vfs_join(&path, &entry.name);
                             if entry.metadata.file_type.is_dir() {
@@ -663,7 +695,7 @@ impl Builtin for Grep {
                                 {
                                     continue;
                                 }
-                                dirs_to_process.push(entry_path);
+                                subdirs.push((entry_path, idx));
                             } else if entry.metadata.file_type.is_file()
                                 && should_include_file(
                                     &entry.name,
@@ -673,13 +705,14 @@ impl Builtin for Grep {
                                 && let Ok(content) = ctx.fs.read_file(&entry_path).await
                             {
                                 let text = process_content(content, opts.binary_as_text);
-                                inputs.push((entry_path.to_string_lossy().into_owned(), text));
+                                inputs.push((shown(&entry_path), text));
                             }
                         }
+                        dirs_to_process.extend(subdirs.into_iter().rev());
                     } else if let Ok(content) = ctx.fs.read_file(&path).await {
                         // It's a file, not a directory
                         let text = process_content(content, opts.binary_as_text);
-                        inputs.push((path.to_string_lossy().into_owned(), text));
+                        inputs.push((shown(&path), text));
                     }
                 }
                 inputs
@@ -715,8 +748,14 @@ impl Builtin for Grep {
         // -H forces filename display, -h suppresses it, otherwise show for multiple files/recursive
         let show_filename = if opts.no_filename {
             false
-        } else if opts.show_filename || opts.recursive {
+        } else if opts.show_filename {
             true
+        } else if opts.recursive {
+            // GNU: `grep -r PAT file` with one non-directory operand prints
+            // bare lines, like a plain search.
+            !(opts.files.len() == 1
+                && inputs.len() <= 1
+                && inputs.iter().all(|(n, _)| *n == opts.files[0]))
         } else {
             // Operands requested, not operands successfully read: GNU grep
             // prints `ok.txt:hello` for `grep hello ok.txt /nope`, because two
@@ -739,6 +778,21 @@ impl Builtin for Grep {
 
             // Binary detection: content with null bytes, -a and -z not set
             let is_binary = !opts.binary_as_text && !opts.null_terminated && content.contains('\0');
+            if is_binary && opts.skip_binary {
+                // -I: a binary file is a file without matches.
+                if opts.files_without_matches {
+                    output.push_str(filename);
+                    output.push(if opts.null_filename { '\0' } else { '\n' });
+                } else if opts.count_only && !opts.quiet {
+                    // GNU still reports a zero count for the skipped file.
+                    if show_filename {
+                        output.push_str(filename);
+                        output.push(if opts.null_filename { '\0' } else { ':' });
+                    }
+                    output.push_str("0\n");
+                }
+                continue 'file_loop;
+            }
 
             // Split on null bytes if -z flag is set, otherwise split on newlines
             let lines: Vec<&str> = if opts.null_terminated {
@@ -1014,6 +1068,30 @@ impl Builtin for Grep {
     }
 }
 
+/// Name a file found under a recursive-grep operand the way GNU grep does:
+/// the operand as typed, then the path below it (`d/` + `b` -> `d/b`,
+/// `.` + `b` -> `./b`). An empty operand is the implicit `-r` root and
+/// yields the bare relative path. Always `/`-separated.
+fn recursive_display(operand: &str, root: &std::path::Path, path: &std::path::Path) -> String {
+    let rel: Vec<String> = match path.strip_prefix(root) {
+        Ok(rel) => rel
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy().into_owned())
+            .collect(),
+        Err(_) => return path.to_string_lossy().replace('\\', "/"),
+    };
+    if rel.is_empty() {
+        return operand.to_string();
+    }
+    let rel = rel.join("/");
+    if operand.is_empty() {
+        return rel;
+    }
+    // `/` trims to empty and still yields `/rel`.
+    let base = operand.trim_end_matches('/');
+    format!("{base}/{rel}")
+}
+
 /// Try to use an indexed search provider for recursive grep.
 ///
 /// Returns `Some(inputs)` if a `SearchCapable` provider handled the search,
@@ -1022,6 +1100,7 @@ async fn try_indexed_search(
     fs: &dyn crate::fs::FileSystem,
     opts: &GrepOptions,
     cwd: &std::path::Path,
+    implicit_root: bool,
 ) -> Option<Vec<(String, String)>> {
     if opts.invert_match
         || opts.files_without_matches
@@ -1111,7 +1190,8 @@ async fn try_indexed_search(
 
             if let Ok(content) = fs.read_file(&candidate).await {
                 let text = process_content(content, opts.binary_as_text);
-                inputs.push((candidate.to_string_lossy().into_owned(), text));
+                let operand = if implicit_root { "" } else { file.as_str() };
+                inputs.push((recursive_display(operand, &root, &candidate), text));
             }
         }
     }
@@ -1535,7 +1615,7 @@ mod tests {
         let result = grep.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 0);
         assert!(
-            result.stdout.starts_with("/d/proj/src/main.rs:"),
+            result.stdout.starts_with("src/main.rs:"),
             "match path is not slash-separated:\n{}",
             result.stdout
         );
