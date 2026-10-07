@@ -791,6 +791,11 @@ impl Interpreter {
                 '*' if depth == 0 && i + 1 < chars.len() && chars[i + 1] == '*' => {
                     let left = self.parse_arithmetic_impl(&expr[..bo[i]], arith_depth + 1);
                     let right = self.parse_arithmetic_impl(&expr[bo[i] + 2..], arith_depth + 1);
+                    // Negative exponent: bash errors; this evaluator's
+                    // error value is 0 (TM-DOS-029), not `x ** 0`.
+                    if right < 0 {
+                        return Some(0);
+                    }
                     let exp = right.clamp(0, 63) as u32;
                     return Some(left.wrapping_pow(exp));
                 }
