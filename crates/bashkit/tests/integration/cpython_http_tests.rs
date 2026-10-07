@@ -743,7 +743,7 @@ except requests.ConnectionError as e:
 import sys
 before = set(sys.modules)
 import requests, httpx, httpx2
-heavy = {"http.client", "email", "urllib3", "ssl", "http.cookiejar"}
+heavy = {"urllib3", "ssl", "http.cookiejar", "charset_normalizer"}
 print(sorted(set(sys.modules) - before), sorted(heavy & set(sys.modules)))
 "#,
         )

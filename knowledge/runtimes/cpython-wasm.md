@@ -71,7 +71,20 @@ call:
    (`import http.client` 7.2 s, now ~0.5 s); sources plus bytecode would
    exceed the crates.io 10 MiB crate cap. Modules that cannot work in the
    guest (FFI, TLS, sockets, TTY) and pure-Python twins of C modules are
-   not shipped (L-CPY-009).
+   not shipped (L-CPY-009). `pdb` is a stand-in (`guest/pdb.py`): doctest
+   imports it, `breakpoint()` prints a notice and continues.
+9. **xz snapshot artifact**: `artifacts/python.wasm.xz` (xz -9e) instead of
+   gzip: 4.99 MB vs ~6.7 MB for the same snapshot. `build.rs` decodes it
+   with `lzma-rs` (pure Rust build-dependency; ~2.5 s in a debug build
+   script, nothing at run time). Rejected: zstd/brotli (C or no pure-Rust
+   encoder parity) and splitting the stdlib into a second crate (single
+   companion crate is a product decision).
+10. **Preload budget**: what the snapshot imports is chosen by per-call
+   import cost on Pulley against crate size. Preloaded beyond the core set:
+   bashkit's requests/httpx, `urllib.request` (with http.client and email,
+   0.47 s per call before), `tomllib`, `configparser`,
+   `xml.etree.ElementTree` (0.1-0.12 s each). Each costs snapshot bytes,
+   not per-call time (`print(1)` stayed ~4.1 ms). `mailbox` is not shipped.
 
 Measured on a 4-vCPU x86-64 VM (see `criterion-python-*` results under
 `crates/bashkit/benches/results/`): first `python3` in a fresh process
@@ -80,7 +93,9 @@ Measured on a 4-vCPU x86-64 VM (see `criterion-python-*` results under
 CPU-bound Python is ~4-30x slower than Monty. 1024 concurrent tenants × 4
 calls: 0 failures, ~165 calls/s on 4 vCPUs, 3.0 GB peak RSS (2026-10-07,
 after immortal objects; was ~90 calls/s, 4.7 GB). Importing a module outside
-the snapshot costs ~0.27 s (`email.message`) to ~0.46 s (`http.client`).
+the snapshot costs ~0.1-0.2 s (`unittest` 0.2 s, `zoneinfo` 0.11 s,
+`tarfile` 0.1 s); `email`, `http.client` and `urllib.request` are preloaded
+(~0 per call, was 0.27-0.47 s).
 
 ### Native code (opt-in, `cpython-native`)
 
@@ -262,7 +277,7 @@ CI: the Test job runs `cargo test -p bashkit --features cpython,http_client
 `crates/bashkit-cpython-wasm/guest/build.sh [WORK_DIR]` downloads pinned
 sources (CPython, WASI SDK, wasmtime CLI for `wizer`, zlib, sqlite), builds,
 snapshots, smoke-tests with the reference runtime and rewrites `artifacts/`
-(`python.wasm.gz`, `python314.zip`, `MANIFEST` with checksums). Commit all
+(`python.wasm.xz`, `python314.zip`, `MANIFEST` with checksums). Commit all
 three together. Changing `engine_config()` or the wasmtime version requires
 no guest rebuild; `build.rs` recompiles the `.cwasm`.
 

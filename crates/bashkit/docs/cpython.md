@@ -203,7 +203,8 @@ with httpx.Client(base_url="https://api.example.com", headers={"X-Key": "..."}) 
   `_hashlib` (OpenSSL), `tkinter`, `curses`, `readline`, `dbm.gnu` are not
   built. `hashlib` still provides md5, sha1, sha2, sha3 and blake2.
 - **No interactive mode**: `python3` with no program reads one from stdin;
-  there is no REPL, and `pdb` and `pydoc` (`help()`) are not shipped.
+  there is no REPL, `pydoc` (`help()`) is not shipped, and `breakpoint()`
+  prints a notice and continues (no debugger).
 - **Stdlib is bytecode only**: tracebacks through stdlib code show no source
   line, and `inspect.getsource()` fails on stdlib objects. Your own code
   keeps full tracebacks. Non-HTTP network clients and servers (`smtplib`,

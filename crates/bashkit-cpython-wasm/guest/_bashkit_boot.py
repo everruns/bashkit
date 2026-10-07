@@ -47,6 +47,8 @@ _PRELOAD = (
     # bashkit's own HTTP clients over the host bridge: preloaded so
     # `import requests` / `import httpx` cost nothing per call.
     "requests", "requests.utils", "httpx", "httpx2",
+    # Common in agent scripts and 0.1-0.5 s each to import on Pulley.
+    "urllib.request", "tomllib", "configparser", "xml.etree.ElementTree",
 )
 
 _USAGE = """\
