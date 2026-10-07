@@ -14,8 +14,11 @@ tags:
 ## Status
 
 Implemented behind the `terminal` cargo feature (off by default). Python
-exposes it as `bashkit.Terminal` and the NAPI package as `Terminal` (both
-packages enable the feature); browser wasm and C bindings are not wired yet.
+exposes it as `bashkit.Terminal`, the NAPI package as `Terminal` (both
+packages enable the feature), and the browser wasm package as `Terminal`
+(`crates/bashkit-wasm/src/terminal.rs`, see
+[WebAssembly Package](../runtimes/browser-package.md)), which powers the
+bashkit.sh `/playground`. C bindings are not wired yet.
 
 Code: `crates/bashkit/src/terminal/` (`Terminal`, the `Tty` device),
 `crates/bashkit/src/builtins/vi.rs`, `InputWaitClock` in
@@ -101,8 +104,12 @@ reported as `running`, never killed. Input per call is capped at 64 KiB.
 
 ## Decision: line discipline split
 
-- Cooked mode (prompt): the shell loop's own small line editor (echo, Backspace,
-  ^U, ^W, ^C discards line, ^D on empty line exits). Command output is
+- Cooked mode (prompt): the shell loop's own small line editor (echo, cursor
+  movement with Left/Right/Home/End/^A/^E, Backspace/Delete, ^U, ^K, ^W, Up/Down
+  history of the last 500 lines, ^C discards line, ^D on empty line exits).
+  Redraws assume one cell per char and step back with CSI D, which does not
+  cross a soft-wrapped row; editing a line longer than the terminal width can
+  misplace the cursor. Command output is
   post-processed `\n` to `\r\n` (ONLCR). Multiline detection reuses the CLI
   REPL's parse-error heuristics.
 - Raw mode: set by `vi` through a drop guard (restored on cancel too); bytes go
@@ -174,12 +181,12 @@ redirected (L-TERM-004).
 
 ## Follow-ups
 
-- Browser wasm and C bindings. Shipped: Python `bashkit.Terminal`
+- C bindings. Shipped: Python `bashkit.Terminal`
   (`crates/bashkit-python/src/terminal.rs`, sync API on a per-instance
-  current-thread runtime, wraps `TerminalTool`) and NAPI `Terminal`
+  current-thread runtime, wraps `TerminalTool`), NAPI `Terminal`
   (`crates/bashkit-js/src/terminal.rs`, async `runUntilIdle`/`call` that
   drive the session in 20 ms slices so sync `send("\x03")` and `screenText()`
-  interleave with a long command).
+  interleave with a long command), and browser wasm `Terminal`.
 - Reader-backed stdin so `read` blocks on the terminal (lifts L-TERM-002 and
   helps L-CLI-002).
 - Expose the device to custom builtins for host-defined TUIs; `stty`/`tput`.

@@ -56,6 +56,8 @@ const FILETYPE_UNKNOWN: u8 = 0;
 const FILETYPE_DIRECTORY: u8 = 3;
 const FILETYPE_REGULAR_FILE: u8 = 4;
 const FILETYPE_SYMBOLIC_LINK: u8 = 7;
+/// WASI `lookupflags`: follow a symlink in the final path component.
+const LOOKUPFLAGS_SYMLINK_FOLLOW: i32 = 1;
 
 const OFLAGS_CREAT: u16 = 1;
 const OFLAGS_DIRECTORY: u16 = 2;
@@ -533,7 +535,8 @@ fn encode_filestat(s: &Stat) -> [u8; 64] {
     b
 }
 
-async fn stat_path(state: &GuestState, path: &Path) -> Result<Stat, Errno> {
+/// `follow` = stat semantics; otherwise lstat (a final symlink reports itself).
+async fn stat_path(state: &GuestState, path: &Path, follow: bool) -> Result<Stat, Errno> {
     if state.is_stdlib(path) {
         return Ok(Stat {
             filetype: FILETYPE_REGULAR_FILE,
@@ -542,7 +545,12 @@ async fn stat_path(state: &GuestState, path: &Path) -> Result<Stat, Errno> {
             ino: inode(path),
         });
     }
-    match state.fs.stat(path).await {
+    let meta = if follow {
+        state.fs.stat(path).await
+    } else {
+        state.fs.lstat(path).await
+    };
+    match meta {
         Ok(m) => Ok(Stat {
             filetype: filetype_of(m.file_type),
             size: m.size,
@@ -787,7 +795,7 @@ pub(crate) fn add_to_linker(linker: &mut Linker<GuestState>) -> wasmtime::Result
                         },
                         Fd::Dir(d) => {
                             let path = d.path.clone();
-                            stat_path(c.data(), &path).await?
+                            stat_path(c.data(), &path, true).await?
                         }
                         Fd::Stdin | Fd::Stdout | Fd::Stderr => Stat {
                             filetype: FILETYPE_UNKNOWN,
@@ -998,12 +1006,13 @@ pub(crate) fn add_to_linker(linker: &mut Linker<GuestState>) -> wasmtime::Result
         MODULE,
         "path_filestat_get",
         |mut c: Caller<'_, GuestState>,
-         (dirfd, _flags, path, path_len, buf): (i32, i32, i32, i32, i32)| {
+         (dirfd, flags, path, path_len, buf): (i32, i32, i32, i32, i32)| {
             Box::new(async move {
                 let r = async {
                     let raw = read_bytes(&mut c, path, path_len)?;
                     let p = c.data().resolve(dirfd as u32, &raw)?;
-                    let stat = stat_path(c.data(), &p).await?;
+                    let follow = flags & LOOKUPFLAGS_SYMLINK_FOLLOW != 0;
+                    let stat = stat_path(c.data(), &p, follow).await?;
                     write_bytes(&mut c, buf, &encode_filestat(&stat))
                 }
                 .await;
@@ -1080,7 +1089,7 @@ pub(crate) fn add_to_linker(linker: &mut Linker<GuestState>) -> wasmtime::Result
                         return Err(EACCES);
                     }
                     let fs = c.data().fs.clone();
-                    let meta = fs.stat(&p).await.map_err(|e| map_fs_error(&e))?;
+                    let meta = fs.lstat(&p).await.map_err(|e| map_fs_error(&e))?;
                     if !meta.file_type.is_dir() {
                         return Err(ENOTDIR);
                     }
@@ -1107,7 +1116,7 @@ pub(crate) fn add_to_linker(linker: &mut Linker<GuestState>) -> wasmtime::Result
                         return Err(EROFS);
                     }
                     let fs = c.data().fs.clone();
-                    let meta = fs.stat(&p).await.map_err(|e| map_fs_error(&e))?;
+                    let meta = fs.lstat(&p).await.map_err(|e| map_fs_error(&e))?;
                     if meta.file_type.is_dir() {
                         return Err(EISDIR);
                     }

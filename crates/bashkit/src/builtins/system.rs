@@ -1,4 +1,4 @@
-//! System information builtins (hostname, uname, whoami, id)
+//! System information builtins (hostname, uname, whoami, id, nproc)
 //!
 //! These builtins return configurable virtual values to prevent
 //! information disclosure about the host system.
@@ -20,6 +20,16 @@ pub const DEFAULT_HOSTNAME: &str = "bashkit-sandbox";
 
 /// Default virtual username.
 pub const DEFAULT_USERNAME: &str = "sandbox";
+
+/// Virtual CPU count reported by `nproc` (and, later, `/proc/cpuinfo`).
+/// A constant so the host core count is never exposed (TM-INF-008).
+pub const VIRTUAL_NPROC: u64 = 4;
+
+/// Kernel release reported by `uname -r` and `/proc/version`.
+pub const VIRTUAL_KERNEL_RELEASE: &str = "5.15.0-sandbox";
+
+/// Kernel version reported by `uname -v` and `/proc/version`.
+pub const VIRTUAL_KERNEL_VERSION: &str = "#1 SMP PREEMPT sandbox";
 
 /// Hardcoded virtual user ID.
 pub const SANDBOX_UID: u32 = 1000;
@@ -186,10 +196,10 @@ impl Builtin for Uname {
             parts.push(self.hostname.clone());
         }
         if show_all || show_release {
-            parts.push("5.15.0-sandbox".to_string());
+            parts.push(VIRTUAL_KERNEL_RELEASE.to_string());
         }
         if show_all || show_version {
-            parts.push("#1 SMP PREEMPT sandbox".to_string());
+            parts.push(VIRTUAL_KERNEL_VERSION.to_string());
         }
         if show_all || show_machine {
             parts.push("x86_64".to_string());
@@ -329,6 +339,69 @@ impl Builtin for Id {
         Ok(ExecResult::ok(format!(
             "uid={}({}) gid={}({}) groups={}({})\n",
             SANDBOX_UID, self.username, SANDBOX_GID, self.username, SANDBOX_GID, self.username
+        )))
+    }
+}
+
+/// The nproc builtin - prints the virtual processor count.
+///
+/// Honors `OMP_NUM_THREADS` / `OMP_THREAD_LIMIT` and `--ignore=N` like GNU.
+pub struct Nproc;
+
+#[async_trait]
+impl Builtin for Nproc {
+    async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        if let Some(r) = super::check_help_version(
+            ctx.args,
+            "Usage: nproc [OPTION]...\nPrint the number of processing units available.\n\n  --all\tprint the number of installed processors\n  --ignore=N\tif possible, exclude N processing units\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            Some("nproc (bashkit) 0.1"),
+        ) {
+            return Ok(r);
+        }
+        let mut all = false;
+        let mut ignore = 0u64;
+        let mut args = ctx.args.iter();
+        while let Some(arg) = args.next() {
+            let value = match arg.as_str() {
+                "--all" => {
+                    all = true;
+                    continue;
+                }
+                "--ignore" => args.next().map(String::as_str),
+                a if a.starts_with("--ignore=") => Some(&a[9..]),
+                a if a.starts_with('-') => return Ok(super::invalid_option("nproc", a, 1)),
+                a => {
+                    return Ok(ExecResult::err(format!("nproc: extra operand '{a}'\n"), 1));
+                }
+            };
+            match value.and_then(|v| v.parse::<u64>().ok()) {
+                Some(n) => ignore = n,
+                None => {
+                    return Ok(ExecResult::err(
+                        format!("nproc: invalid number: '{}'\n", value.unwrap_or("")),
+                        1,
+                    ));
+                }
+            }
+        }
+        let mut n = VIRTUAL_NPROC;
+        if !all {
+            let env = |k: &str| {
+                ctx.env
+                    .get(k)
+                    .and_then(|v| v.split(',').next()?.trim().parse::<u64>().ok())
+                    .filter(|v| *v > 0)
+            };
+            if let Some(t) = env("OMP_NUM_THREADS") {
+                n = t;
+            }
+            if let Some(limit) = env("OMP_THREAD_LIMIT") {
+                n = n.min(limit);
+            }
+        }
+        Ok(ExecResult::ok(format!(
+            "{}\n",
+            n.saturating_sub(ignore).max(1)
         )))
     }
 }

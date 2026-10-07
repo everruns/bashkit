@@ -29,6 +29,7 @@ mod assert;
 mod atomic_write;
 mod awk;
 mod base64;
+mod basenc;
 mod bc;
 mod caller;
 mod cat;
@@ -36,6 +37,7 @@ mod checksum;
 mod clap_cache;
 mod clap_env;
 mod clear;
+mod cmp;
 mod column;
 mod comm;
 mod compgen;
@@ -43,6 +45,7 @@ mod csv;
 mod curl;
 mod cuttr;
 mod date;
+mod dd;
 mod diff;
 mod dirstack;
 mod disk;
@@ -53,8 +56,10 @@ mod envsubst;
 mod expand;
 mod export;
 mod expr;
+mod factor;
 mod fc;
 mod fileops;
+mod find;
 mod flow;
 mod fold;
 mod generated;
@@ -66,7 +71,9 @@ mod hextools;
 mod http;
 mod iconv;
 mod inspect;
+mod install;
 mod introspect;
+mod jobctl;
 mod join;
 #[cfg(feature = "jq")]
 mod jq;
@@ -93,6 +100,7 @@ pub(crate) mod search_common;
 mod sed;
 mod semver;
 mod seq;
+mod shellenv;
 mod shuf;
 mod sleep;
 mod sortuniq;
@@ -108,6 +116,7 @@ mod tomlq;
 mod trap;
 mod tree;
 mod truncate;
+mod tsort;
 mod vars;
 mod verify;
 #[cfg(feature = "terminal")]
@@ -149,11 +158,13 @@ pub use archive::{Bunzip2, Bzcat, Bzip2, Gunzip, Gzip, Tar};
 pub use assert::Assert;
 pub use awk::Awk;
 pub use base64::Base64;
+pub use basenc::{Base32, Basenc};
 pub use bc::Bc;
 pub use caller::Caller;
 pub use cat::Cat;
-pub use checksum::{Md5sum, Sha1sum, Sha256sum};
+pub use checksum::{B2sum, Cksum, Md5sum, Sha1sum, Sha224sum, Sha256sum, Sha384sum, Sha512sum};
 pub use clear::Clear;
+pub use cmp::Cmp;
 pub use column::Column;
 pub use comm::Comm;
 pub use compgen::Compgen;
@@ -161,6 +172,7 @@ pub use csv::Csv;
 pub use curl::{Curl, Wget};
 pub use cuttr::{Cut, Tr};
 pub use date::Date;
+pub use dd::Dd;
 pub use diff::Diff;
 pub use dirstack::{Dirs, Popd, Pushd};
 pub use disk::{Df, Du};
@@ -171,8 +183,10 @@ pub use envsubst::Envsubst;
 pub use expand::{Expand, Unexpand};
 pub use export::Export;
 pub use expr::Expr;
+pub use factor::Factor;
 pub use fc::Fc;
-pub use fileops::{Chmod, Chown, Cp, Kill, Ln, Mkdir, Mktemp, Mv, Rm, Touch};
+pub use fileops::{Chmod, Chown, Cp, Ln, Mkdir, Mktemp, Mv, Rm, Touch};
+pub use find::Find;
 pub use flow::{Break, Colon, Continue, Exit, False, Return, True};
 pub use fold::Fold;
 pub use glob_cmd::GlobCmd;
@@ -183,14 +197,15 @@ pub use hextools::{Hexdump, Od, Xxd};
 pub use http::Http;
 pub use iconv::Iconv;
 pub use inspect::{File, Less, Stat};
+pub use install::Install;
 pub use introspect::{Hash, Type, Which};
 pub use join::Join;
 #[cfg(feature = "jq")]
 pub use jq::Jq;
 pub use json::Json;
 pub use log::Log;
-pub(crate) use ls::glob_match;
-pub use ls::{Find, Ls, Rmdir};
+pub use ls::{Ls, Rmdir};
+pub(crate) use ls::{fnmatch, glob_match};
 pub use mapfile::Mapfile;
 pub use mkfifo::Mkfifo;
 pub use navigation::{Cd, Pwd};
@@ -208,8 +223,11 @@ pub use rg::Rg;
 pub use sed::Sed;
 pub use semver::Semver;
 pub use seq::Seq;
+pub use shellenv::{Enable, Locale, Ulimit, Umask};
 pub use shuf::Shuf;
+pub use tsort::Tsort;
 
+pub use jobctl::{Bg, Disown, Fg, Jobs, Kill, Pgrep, Ps};
 #[cfg(feature = "terminal")]
 pub use pager::More;
 pub use sleep::Sleep;
@@ -217,7 +235,8 @@ pub use sortuniq::{Sort, Uniq};
 pub use source::Source;
 pub use split::Split;
 pub use strings::Strings;
-pub use system::{DEFAULT_HOSTNAME, DEFAULT_USERNAME, Hostname, Id, Uname, Whoami};
+pub use system::{DEFAULT_HOSTNAME, DEFAULT_USERNAME, Hostname, Id, Nproc, Uname, Whoami};
+pub(crate) use system::{VIRTUAL_KERNEL_RELEASE, VIRTUAL_KERNEL_VERSION, VIRTUAL_NPROC};
 pub use template::Template;
 pub use test::{Bracket, Test};
 pub use textrev::{Rev, Tac};
@@ -571,6 +590,142 @@ pub struct SubCommand {
     pub assignments: Vec<(String, String)>,
 }
 
+/// Builtins of GNU bash 5.2 (`enable -a`). Every other registered command
+/// stands in for a program, so `type`/`which`/`command -v` report it at its
+/// `/usr/bin` path when the root filesystem provides one.
+pub(crate) const BASH_BUILTIN_NAMES: &[&str] = &[
+    ".",
+    ":",
+    "[",
+    "alias",
+    "bg",
+    "bind",
+    "break",
+    "builtin",
+    "caller",
+    "cd",
+    "command",
+    "compgen",
+    "complete",
+    "compopt",
+    "continue",
+    "declare",
+    "dirs",
+    "disown",
+    "echo",
+    "enable",
+    "eval",
+    "exec",
+    "exit",
+    "export",
+    "false",
+    "fc",
+    "fg",
+    "getopts",
+    "hash",
+    "help",
+    "history",
+    "jobs",
+    "kill",
+    "let",
+    "local",
+    "logout",
+    "mapfile",
+    "popd",
+    "printf",
+    "pushd",
+    "pwd",
+    "read",
+    "readarray",
+    "readonly",
+    "return",
+    "set",
+    "shift",
+    "shopt",
+    "source",
+    "suspend",
+    "test",
+    "times",
+    "trap",
+    "true",
+    "type",
+    "typeset",
+    "ulimit",
+    "umask",
+    "unalias",
+    "unset",
+    "wait",
+];
+
+/// Search `PATH` (shell variable, then environment) on the VFS for an
+/// executable regular file named `name`.
+pub(crate) async fn search_path(ctx: &Context<'_>, name: &str) -> Option<String> {
+    search_path_all(ctx, name, true).await.into_iter().next()
+}
+
+/// Every executable `name` along `PATH`, in order (`type -a`); stops at the
+/// first when `first_only`.
+pub(crate) async fn search_path_all(
+    ctx: &Context<'_>,
+    name: &str,
+    first_only: bool,
+) -> Vec<String> {
+    let mut found = Vec::new();
+    if name.is_empty() || name.contains('/') {
+        return found;
+    }
+    let path_var = ctx
+        .variables
+        .get("PATH")
+        .or_else(|| ctx.env.get("PATH"))
+        .cloned()
+        .unwrap_or_default();
+    for dir in path_var.split(':').filter(|d| !d.is_empty()) {
+        let candidate = format!("{}/{name}", dir.trim_end_matches('/'));
+        if let Ok(meta) = ctx.fs.stat(Path::new(&candidate)).await
+            && meta.file_type.is_file()
+            && meta.mode & 0o111 != 0
+            && !found.contains(&candidate)
+        {
+            found.push(candidate);
+            if first_only {
+                break;
+            }
+        }
+    }
+    found
+}
+
+/// One step requested by a [`PlanDriver`].
+pub enum PlanStep {
+    /// Run `command` (in `cwd` when set, restoring the shell cwd afterwards)
+    /// and pass its result to the next [`PlanDriver::next`] call.
+    Run {
+        /// The command to execute.
+        command: SubCommand,
+        /// Working directory for this command only.
+        cwd: Option<PathBuf>,
+    },
+    /// The plan is finished; this is the builtin's result.
+    Done(ExecResult),
+}
+
+/// Resumable sub-command driver for [`ExecutionPlan::Driver`].
+///
+/// The interpreter calls `next(None)` first, then `next(Some(result))` after
+/// each [`PlanStep::Run`], until the driver returns [`PlanStep::Done`].
+#[async_trait]
+pub trait PlanDriver: Send {
+    /// Advance the plan with the previous command's result.
+    async fn next(&mut self, last: Option<ExecResult>) -> Result<PlanStep>;
+}
+
+impl std::fmt::Debug for dyn PlanDriver {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("PlanDriver")
+    }
+}
+
 /// Execution plan returned by builtins that need to run sub-commands.
 ///
 /// Instead of executing commands directly (which would require interpreter
@@ -586,11 +741,28 @@ pub enum ExecutionPlan {
         /// The command to execute.
         command: SubCommand,
     },
+    /// Run one command in a modified copy of the environment (`env`).
+    /// Changes are scoped to the command, like a child process.
+    Env {
+        /// The command to execute.
+        command: SubCommand,
+        /// Start from an empty environment (`env -i`).
+        clear: bool,
+        /// Names to remove (`env -u NAME`).
+        unset: Vec<String>,
+        /// Assignments to apply (`env NAME=VALUE`).
+        set: Vec<(String, String)>,
+        /// Working directory for the command (`env -C DIR`).
+        chdir: Option<String>,
+    },
     /// Run a sequence of commands, collecting their output.
     Batch {
         /// Commands to execute in order.
         commands: Vec<SubCommand>,
     },
+    /// Step-wise driver: the builtin decides each next command from the
+    /// previous one's result (e.g. `find -exec ... \;` as a predicate).
+    Driver(Box<dyn PlanDriver>),
     /// Run a sequence of commands, then merge builtin-generated stderr/exit semantics.
     BatchWithStatus {
         /// Commands to execute in order.
@@ -1865,6 +2037,19 @@ mod tests {
             "md5sum",
             "sha1sum",
             "sha256sum",
+            "sha224sum",
+            "sha384sum",
+            "sha512sum",
+            "b2sum",
+            "cksum",
+            "base32",
+            "basenc",
+            "cmp",
+            "nproc",
+            "tsort",
+            "factor",
+            "install",
+            "locale",
             "tar",
             "gzip",
             "gunzip",

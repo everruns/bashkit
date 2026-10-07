@@ -11,6 +11,13 @@ Decisions:
   tenant the same sequence.
 - The snapshot heap is frozen (`gc.freeze`) so garbage collection only
   scans objects created by the current call.
+- Snapshot objects are made immortal before freezing: reference counting
+  then never writes to them, so a call that only uses preloaded modules
+  leaves their pages shared instead of copy-on-write faulting them in
+  (~20% fewer faults per call). They are never freed, which is fine: the
+  snapshot outlives every call.
+- The per-call environment is installed from C (`_bashkit.load_environ`);
+  per-key `os.environ` updates were measurable driver overhead on Pulley.
 - asyncio's selector loop normally wakes itself through a socketpair. WASI
   has no sockets and the guest has no threads or signals that could need a
   wakeup, so the self-pipe is disabled (patched once, in the snapshot).
@@ -73,7 +80,22 @@ def preload():
     import gc
 
     gc.collect()
+    _immortalize_snapshot()
     gc.freeze()
+
+
+def _immortalize_snapshot():
+    # Immortal objects skip reference count writes, so a call that only uses
+    # preloaded modules leaves their pages shared instead of copy-on-write
+    # faulting them in. Covers every GC-tracked object plus what they refer
+    # to directly (strings, ints, bytes are not tracked themselves).
+    import gc
+
+    import _bashkit
+
+    objects = gc.get_objects(generation=None)
+    _bashkit.immortalize(objects)
+    _bashkit.immortalize(gc.get_referents(*objects))
 
 
 def _patch_asyncio():
@@ -160,11 +182,9 @@ def _refresh_process_state():
 
     import _bashkit
 
-    os.environ.clear()
-    for item in _bashkit.environ():
-        key, sep, value = item.partition("=")
-        if sep and key:
-            os.environ[key] = value
+    # The C side replaces the process environment and hands back the
+    # encoded mapping; per-key os.environ updates cost ~1 ms on Pulley.
+    os.environ._data = _bashkit.load_environ()
     limit = os.environ.pop("__BASHKIT_RECURSION_LIMIT", None)
     if limit:
         try:
@@ -196,7 +216,8 @@ def _fresh_main(filename=None):
 
 
 def _strip_driver_frames(tb):
-    me = __file__
+    # The code's own filename, not __file__ (that names the .pyc).
+    me = _strip_driver_frames.__code__.co_filename
     while tb is not None and tb.tb_frame.f_code.co_filename in (me, "<frozen runpy>"):
         tb = tb.tb_next
     return tb

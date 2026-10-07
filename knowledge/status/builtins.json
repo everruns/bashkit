@@ -27,11 +27,23 @@
     },
     {
       "feature": null,
+      "name": "b2sum"
+    },
+    {
+      "feature": null,
+      "name": "base32"
+    },
+    {
+      "feature": null,
       "name": "base64"
     },
     {
       "feature": null,
       "name": "basename"
+    },
+    {
+      "feature": null,
+      "name": "basenc"
     },
     {
       "feature": null,
@@ -43,7 +55,15 @@
     },
     {
       "feature": null,
+      "name": "bg"
+    },
+    {
+      "feature": null,
       "name": "break"
+    },
+    {
+      "feature": null,
+      "name": "builtin"
     },
     {
       "feature": "typescript",
@@ -83,7 +103,15 @@
     },
     {
       "feature": null,
+      "name": "cksum"
+    },
+    {
+      "feature": null,
       "name": "clear"
+    },
+    {
+      "feature": null,
+      "name": "cmp"
     },
     {
       "feature": null,
@@ -127,6 +155,10 @@
     },
     {
       "feature": null,
+      "name": "dd"
+    },
+    {
+      "feature": null,
       "name": "declare"
     },
     {
@@ -151,6 +183,10 @@
     },
     {
       "feature": null,
+      "name": "disown"
+    },
+    {
+      "feature": null,
       "name": "dotenv"
     },
     {
@@ -160,6 +196,10 @@
     {
       "feature": null,
       "name": "echo"
+    },
+    {
+      "feature": null,
+      "name": "enable"
     },
     {
       "feature": null,
@@ -195,11 +235,19 @@
     },
     {
       "feature": null,
+      "name": "factor"
+    },
+    {
+      "feature": null,
       "name": "false"
     },
     {
       "feature": null,
       "name": "fc"
+    },
+    {
+      "feature": null,
+      "name": "fg"
     },
     {
       "feature": null,
@@ -275,6 +323,14 @@
     },
     {
       "feature": null,
+      "name": "install"
+    },
+    {
+      "feature": null,
+      "name": "jobs"
+    },
+    {
+      "feature": null,
       "name": "join"
     },
     {
@@ -304,6 +360,10 @@
     {
       "feature": null,
       "name": "local"
+    },
+    {
+      "feature": null,
+      "name": "locale"
     },
     {
       "feature": null,
@@ -351,6 +411,10 @@
     },
     {
       "feature": null,
+      "name": "nproc"
+    },
+    {
+      "feature": null,
       "name": "numfmt"
     },
     {
@@ -371,6 +435,14 @@
     },
     {
       "feature": null,
+      "name": "pgrep"
+    },
+    {
+      "feature": null,
+      "name": "pkill"
+    },
+    {
+      "feature": null,
       "name": "popd"
     },
     {
@@ -380,6 +452,10 @@
     {
       "feature": null,
       "name": "printf"
+    },
+    {
+      "feature": null,
+      "name": "ps"
     },
     {
       "feature": null,
@@ -475,7 +551,19 @@
     },
     {
       "feature": null,
+      "name": "sha224sum"
+    },
+    {
+      "feature": null,
       "name": "sha256sum"
+    },
+    {
+      "feature": null,
+      "name": "sha384sum"
+    },
+    {
+      "feature": null,
+      "name": "sha512sum"
     },
     {
       "feature": null,
@@ -591,6 +679,10 @@
     },
     {
       "feature": null,
+      "name": "tsort"
+    },
+    {
+      "feature": null,
       "name": "type"
     },
     {
@@ -600,6 +692,14 @@
     {
       "feature": null,
       "name": "typeset"
+    },
+    {
+      "feature": null,
+      "name": "ulimit"
+    },
+    {
+      "feature": null,
+      "name": "umask"
     },
     {
       "feature": null,
@@ -678,5 +778,5 @@
       "name": "zip"
     }
   ],
-  "count": 169
+  "count": 194
 }

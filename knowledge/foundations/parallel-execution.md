@@ -20,6 +20,32 @@ Implemented
 - Filesystem: thread-safe via `Arc<dyn FileSystem>` + `RwLock`
 - `Arc::clone(&fs)` shares one filesystem across instances; instances run in parallel sharing it
 
+## Background Jobs
+
+`cmd &` runs concurrently inside one `exec()`, on by default
+(`BashBuilder::concurrent_jobs(false)` restores sequential execution).
+
+- A job is a forked interpreter (`Interpreter::fork_for_job`): copied
+  variables, functions, cwd and options; shared filesystem, execution budget,
+  cancel token, hooks and extensions. Changes inside the job never reach the
+  parent, like a forked subshell.
+- Jobs are futures in a `FuturesUnordered` owned by `JobControl`
+  (`interpreter/jobs.rs`), polled by `with_jobs` alongside the foreground
+  future on the same task. No `tokio::spawn`: works on wasm and inside the
+  in-process `Terminal`, and needs no `Send + 'static` runtime handle.
+- At spawn the job is polled once. A job that never blocks finishes right
+  there, so `echo a & echo b` keeps bash's usual order.
+- Output of a job that finishes later is captured and delivered at `wait`, at
+  each top-level command boundary, and at the end of `exec()`. Streams are
+  not interleaved byte by byte.
+- `exec()` waits for every job (`finish_all`) before returning; nothing
+  outlives the call. Within an interactive session this means a job started
+  at one prompt finishes before the next prompt.
+- Jobs get virtual PIDs from 1001. `$$` is 1. `ps`, `pgrep`, `pkill`, `kill`
+  and `jobs` read the same table. `kill` aborts the job's future; its status
+  becomes 128+signal.
+- Limit: `max_background_jobs` (TM-DOS-122).
+
 ## Benchmark
 
 Run `cargo bench --bench parallel_execution` when changes touch:

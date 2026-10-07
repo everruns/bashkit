@@ -203,10 +203,11 @@ async fn glob_walk_stays_clamped_at_vfs_root() {
         .await
         .unwrap();
 
-    assert_ne!(result.exit_code, 0);
+    // `..` clamps at the VFS root: this is the synthetic /etc/passwd.
     assert!(
-        !result.stdout.contains("root:"),
-        "`..` past the VFS root must not reach the host filesystem"
+        result.stdout.contains("sandbox:x:1000:1000") && !result.stdout.contains("daemon:"),
+        "`..` past the VFS root must not reach the host filesystem: {}",
+        result.stdout
     );
 }
 

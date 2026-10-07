@@ -194,6 +194,25 @@ impl Date {
         Ok(timezone.format(&dt, &format))
     }
 
+    /// Parse a GNU `-d` date string (`@EPOCH`, ISO dates, relative forms)
+    /// against this clock and the sandbox `TZ`. Shared with `touch -d` and
+    /// `find -newermt`.
+    pub(super) fn parse_date(
+        &self,
+        tz: Option<&String>,
+        s: &str,
+    ) -> std::result::Result<DateTime<Utc>, String> {
+        let timezone = SandboxTimezone::from_env(tz)?;
+        parse_date_string(s, self.now(), timezone)
+    }
+
+    /// Current virtual time as (epoch seconds, nanoseconds). Shared with
+    /// `find`'s age tests so they see the same clock as `date`.
+    pub(super) fn now_epoch(&self) -> (i64, u32) {
+        let now = self.now();
+        (now.timestamp(), now.timestamp_subsec_nanos())
+    }
+
     fn now(&self) -> DateTime<Utc> {
         if let Some(t) = self.fixed_epoch {
             return t;

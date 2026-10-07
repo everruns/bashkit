@@ -861,7 +861,7 @@ async fn handle_os_call(
             Ok(meta) => ExtFunctionResult::Return(MontyObject::Bool(meta.file_type.is_dir())),
             Err(_) => ExtFunctionResult::Return(MontyObject::Bool(false)),
         },
-        "Path.is_symlink" => match fs.stat(&path).await {
+        "Path.is_symlink" => match fs.lstat(&path).await {
             Ok(meta) => ExtFunctionResult::Return(MontyObject::Bool(meta.file_type.is_symlink())),
             Err(_) => ExtFunctionResult::Return(MontyObject::Bool(false)),
         },

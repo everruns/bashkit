@@ -257,3 +257,213 @@ nested.txt
 /tmp/lsrec/a/b:
 deep.txt
 ### end
+
+### find_expr_or_grouping
+# ( A -o B ) groups; -a binds tighter than -o
+rm -rf /tmp/fx1 && mkdir -p /tmp/fx1/s && cd /tmp/fx1
+touch s/a.c s/b.h s/c.txt
+find . \( -name '*.c' -o -name '*.h' \) -print | LC_ALL=C sort
+echo --
+find . -type f -name '*.c' -o -name '*.h' | LC_ALL=C sort
+### expect
+./s/a.c
+./s/b.h
+--
+./s/a.c
+./s/b.h
+### end
+
+### find_prune_idiom
+rm -rf /tmp/fx2 && mkdir -p /tmp/fx2/.git/objects /tmp/fx2/src && cd /tmp/fx2
+touch .git/objects/ab src/main.rs
+find . -path ./.git -prune -o -type f -print
+### expect
+./src/main.rs
+### end
+
+### find_exec_as_predicate
+# -exec ... \; is a test: its exit status gates the rest of the expression
+rm -rf /tmp/fx3 && mkdir -p /tmp/fx3 && cd /tmp/fx3
+echo needle > a.txt; echo hay > b.txt
+find . -type f -exec grep -q needle {} \; -print
+find . -name '*.txt' -exec false \; ; echo rc=$?
+find . -name '*.txt' -exec false {} + ; echo rc=$?
+### expect
+./a.txt
+rc=0
+rc=1
+### end
+
+### find_exec_output_interleaves_with_print
+rm -rf /tmp/fx4 && mkdir -p /tmp/fx4 && cd /tmp/fx4
+touch one
+find . -name one -print -exec echo ran {} \; -printf 'after %f\n'
+### expect
+./one
+ran ./one
+after one
+### end
+
+### find_execdir_runs_in_parent
+rm -rf /tmp/fx5 && mkdir -p /tmp/fx5/d && cd /tmp/fx5
+touch d/f
+find . -name f -execdir echo {} \;
+find . -name f -execdir pwd \;
+### expect
+./f
+/tmp/fx5/d
+### end
+
+### find_size_empty_perm
+rm -rf /tmp/fx6 && mkdir -p /tmp/fx6/e && cd /tmp/fx6
+printf '%3000s' '' > big; : > zero; chmod 600 big; chmod 755 zero
+find . -type f -size +2k
+find . -empty | LC_ALL=C sort
+find . -perm 600
+find . -type f -perm -u+x
+find . -type f -perm /o+x
+### expect
+./big
+./e
+./zero
+./big
+./zero
+./zero
+### end
+
+### find_regex_types
+rm -rf /tmp/fx7 && mkdir -p /tmp/fx7 && cd /tmp/fx7
+touch x.c y.h z.txt
+find . -regex '.*\.\(c\|h\)' | LC_ALL=C sort
+find . -regextype posix-extended -regex '.*/[xz]\.(c|txt)' | LC_ALL=C sort
+find . -iregex '.*Z\.TXT'
+### expect
+./x.c
+./y.h
+./x.c
+./z.txt
+./z.txt
+### end
+
+### find_delete_depth_first
+rm -rf /tmp/fx8 && mkdir -p /tmp/fx8/a/b && cd /tmp/fx8
+touch a/b/c a/keep.o
+find a -name '*.o' -delete
+find a -depth | head -1
+find a -delete; echo rc=$?
+ls /tmp/fx8
+### expect
+a/b/c
+rc=0
+### end
+
+### find_delete_nonempty_dir_fails
+rm -rf /tmp/fx9 && mkdir -p /tmp/fx9/d && cd /tmp/fx9
+touch d/f
+find . -type d -name d -delete; echo rc=$?
+### expect
+rc=1
+### end
+
+### find_quit_and_comma
+rm -rf /tmp/fx10 && mkdir -p /tmp/fx10 && cd /tmp/fx10
+touch a b
+find . -type f -print -quit | wc -l
+find . -name a -printf 'A\n' , -name b -printf 'B\n' | LC_ALL=C sort
+### expect
+1
+A
+B
+### end
+
+### find_printf_directives
+rm -rf /tmp/fx11 && mkdir -p /tmp/fx11/d && cd /tmp/fx11
+printf 'hey' > d/f
+find d -printf '[%p|%P|%f|%h|%H|%d|%y]\n' | LC_ALL=C sort
+find d/f -printf '%-6f|%6s|%.1f|%m %M %k\n'
+find d/ -maxdepth 1 | LC_ALL=C sort
+### expect
+[d/f|f|f|d|d|1|f]
+[d||d|.|d|0|d]
+f     |     3|f|644 -rw-r--r-- 4
+d/
+d/f
+### end
+
+### find_symlink_types
+rm -rf /tmp/fx12 && mkdir -p /tmp/fx12 && cd /tmp/fx12
+touch real; ln -s real good; ln -s nowhere dangling
+find . -type l | LC_ALL=C sort
+find . -xtype l
+find -L . -type l
+find . -lname 'r*'
+### expect
+./dangling
+./good
+./dangling
+./dangling
+./good
+### end
+
+### find_time_tests
+rm -rf /tmp/fx13 && mkdir -p /tmp/fx13 && cd /tmp/fx13
+touch new; touch -d '2001-02-03 04:05:06' old
+find . -type f -mtime +30
+find . -type f -mmin -10
+find . -type f -newer old
+find . -type f -newermt '2010-01-01'
+find . -type f ! -newermt '2010-01-01'
+### expect
+./old
+./new
+./new
+./new
+./old
+### end
+
+### find_gnu_errors
+cd /tmp
+find . -bogus; echo rc=$?
+find . -name; echo rc=$?
+find . -name x extra; echo rc=$?
+find . \( -name x; echo rc=$?
+find . -type q; echo rc=$?
+find . -newer /nonexistent_ref; echo rc=$?
+### expect
+rc=1
+rc=1
+rc=1
+rc=1
+rc=1
+rc=1
+### end
+
+### find_gnu_error_texts
+cd /tmp
+find . -bogus 2>&1
+find . -name 2>&1
+find . -o -name x 2>&1
+find . -name x extra 2>&1
+find . -type q 2>&1
+find . -size 3q 2>&1
+### expect
+find: unknown predicate `-bogus'
+find: missing argument to `-name'
+find: invalid expression; you have used a binary operator '-o' with nothing before it.
+find: paths must precede expression: `extra'
+find: Unknown argument to -type: q
+find: invalid -size type `q'
+### end
+
+### find_follow_detects_loops
+### bash_diff: host locale picks ASCII vs curly quotes around names
+# THREAT[TM-DOS-121]: -L symlink loops are reported, never followed forever
+rm -rf /tmp/fx14 && mkdir -p /tmp/fx14/d && cd /tmp/fx14
+ln -s .. d/up; touch f
+find -L . -name zz 2>&1; echo rc=$?
+find -L . -name f 2>/dev/null
+### expect
+find: File system loop detected; './d/up' is part of the same file system loop as '.'.
+rc=1
+./f
+### end

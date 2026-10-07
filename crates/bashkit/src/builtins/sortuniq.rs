@@ -326,6 +326,16 @@ fn month_ordinal(s: &str) -> u32 {
     }
 }
 
+/// Split input into records: empty records are kept (they sort first), only
+/// the final terminator is dropped, and empty input has no records.
+fn split_records(text: &str, sep: char) -> impl Iterator<Item = &str> {
+    let body = text.strip_suffix(sep).unwrap_or(text);
+    (!text.is_empty())
+        .then(|| body.split(sep))
+        .into_iter()
+        .flatten()
+}
+
 #[async_trait]
 impl Builtin for Sort {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
@@ -399,11 +409,7 @@ impl Builtin for Sort {
 
         if files.is_empty() {
             if let Some(stdin) = ctx.stdin {
-                for line in stdin.split(line_sep) {
-                    if !line.is_empty() {
-                        all_lines.push(line.to_string());
-                    }
-                }
+                all_lines.extend(split_records(stdin, line_sep).map(str::to_string));
             }
         } else {
             for file in &files {
@@ -417,11 +423,7 @@ impl Builtin for Sort {
                     Ok(t) => t,
                     Err(e) => return Ok(e),
                 };
-                for line in text.split(line_sep) {
-                    if !line.is_empty() {
-                        all_lines.push(line.to_string());
-                    }
-                }
+                all_lines.extend(split_records(&text, line_sep).map(str::to_string));
             }
         }
 
@@ -438,9 +440,7 @@ impl Builtin for Sort {
                     Ok(t) => t,
                     Err(e) => return Ok(e),
                 };
-                let lines: Vec<String> = text
-                    .split(line_sep)
-                    .filter(|l| !l.is_empty())
+                let lines: Vec<String> = split_records(&text, line_sep)
                     .map(|l| l.to_string())
                     .collect();
                 streams.push(lines);

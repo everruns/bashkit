@@ -5,7 +5,7 @@
 
 use async_trait::async_trait;
 
-use super::{Builtin, Context};
+use super::{BASH_BUILTIN_NAMES, Builtin, Context, search_path, search_path_all};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
 
@@ -33,6 +33,7 @@ impl Builtin for Type {
 
         let mut type_only = false; // -t
         let mut path_only = false; // -p
+        let mut force_path = false; // -P
         let mut show_all = false; // -a
         let mut names: Vec<&str> = Vec::new();
 
@@ -44,7 +45,10 @@ impl Builtin for Type {
                         'p' => path_only = true,
                         'a' => show_all = true,
                         'f' => {} // -f: suppress function lookup (ignored for now)
-                        'P' => path_only = true,
+                        'P' => {
+                            path_only = true;
+                            force_path = true;
+                        }
                         _ => {
                             return Ok(ExecResult::err(
                                 format!(
@@ -66,8 +70,12 @@ impl Builtin for Type {
 
         for name in &names {
             let is_func = shell.has_function(name);
-            let is_builtin = shell.has_builtin(name);
             let is_kw = shell.is_keyword(name);
+            let registered = shell.has_builtin(name);
+            let path = search_path(&ctx, name).await;
+            // A registered command that real bash runs from PATH is a file
+            // when the root filesystem provides it.
+            let is_builtin = registered && (BASH_BUILTIN_NAMES.contains(name) || path.is_none());
 
             if type_only {
                 if is_func {
@@ -76,35 +84,47 @@ impl Builtin for Type {
                     output.push_str("keyword\n");
                 } else if is_builtin {
                     output.push_str("builtin\n");
+                } else if path.is_some() {
+                    output.push_str("file\n");
                 } else {
                     all_found = false;
                 }
             } else if path_only {
-                if !is_func && !is_builtin && !is_kw {
-                    all_found = false;
+                match &path {
+                    Some(p) if force_path || (!is_func && !is_builtin && !is_kw) => {
+                        output.push_str(&format!("{p}\n"));
+                    }
+                    Some(_) => {}
+                    None => {
+                        if force_path || (!is_func && !is_builtin && !is_kw) {
+                            all_found = false;
+                        }
+                    }
                 }
             } else {
                 let mut found_any = false;
                 if is_func {
                     output.push_str(&format!("{} is a function\n", name));
                     found_any = true;
-                    if !show_all {
-                        continue;
-                    }
                 }
-                if is_kw {
+                if is_kw && (show_all || !found_any) {
                     output.push_str(&format!("{} is a shell keyword\n", name));
                     found_any = true;
-                    if !show_all {
-                        continue;
-                    }
                 }
-                if is_builtin {
+                if is_builtin && (show_all || !found_any) {
                     output.push_str(&format!("{} is a shell builtin\n", name));
                     found_any = true;
-                    if !show_all {
-                        continue;
+                }
+                if show_all {
+                    for p in search_path_all(&ctx, name, false).await {
+                        output.push_str(&format!("{name} is {p}\n"));
+                        found_any = true;
                     }
+                } else if let Some(p) = &path
+                    && !found_any
+                {
+                    output.push_str(&format!("{name} is {p}\n"));
+                    found_any = true;
                 }
                 if !found_any {
                     output.push_str(&format!("bash: type: {}: not found\n", name));
@@ -124,8 +144,9 @@ impl Builtin for Type {
 
 /// `which` builtin — locate a command.
 ///
-/// In bashkit's sandboxed environment, builtins are the equivalent of
-/// executables on PATH. Reports the name if found.
+/// Searches `PATH` on the VFS (the root filesystem provides `/usr/bin/NAME`
+/// for registered commands). Without a root filesystem, a registered builtin
+/// reports its bare name.
 pub struct Which;
 
 #[async_trait]
@@ -143,7 +164,10 @@ impl Builtin for Which {
         let mut all_found = true;
 
         for name in ctx.args {
-            if shell.has_builtin(name) || shell.has_function(name) || shell.is_keyword(name) {
+            if let Some(path) = search_path(&ctx, name).await {
+                output.push_str(&format!("{path}\n"));
+            } else if shell.has_builtin(name) && !BASH_BUILTIN_NAMES.contains(&name.as_str()) {
+                // No root filesystem: the builtin is the only "executable".
                 output.push_str(&format!("{}\n", name));
             } else {
                 all_found = false;

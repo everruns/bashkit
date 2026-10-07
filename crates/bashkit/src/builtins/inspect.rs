@@ -118,15 +118,14 @@ impl Builtin for File {
         for file in files {
             let path = resolve_path(ctx.cwd, file);
 
-            if !ctx.fs.exists(&path).await.unwrap_or(false) {
+            // `file` describes a link itself.
+            let Ok(metadata) = ctx.fs.lstat(&path).await else {
                 output.push_str(&format!(
                     "{}: cannot open '{}' (No such file or directory)\n",
                     file, file
                 ));
                 continue;
-            }
-
-            let metadata = ctx.fs.stat(&path).await?;
+            };
             let file_type_str = match metadata.file_type {
                 FileType::Directory => "directory".to_string(),
                 FileType::Symlink => {
@@ -303,7 +302,7 @@ impl Builtin for Stat {
                 1,
             ));
         }
-        let _ = matches.get_flag("dereference");
+        let dereference = matches.get_flag("dereference");
         let _ = matches.get_flag("terse");
 
         let format = matches
@@ -325,14 +324,18 @@ impl Builtin for Stat {
         for file in &files {
             let path = resolve_path(ctx.cwd, file);
 
-            if !ctx.fs.exists(&path).await.unwrap_or(false) {
+            // GNU stat describes a link itself unless -L.
+            let metadata = if dereference {
+                ctx.fs.stat(&path).await
+            } else {
+                ctx.fs.lstat(&path).await
+            };
+            let Ok(metadata) = metadata else {
                 return Ok(ExecResult::err(
                     format!("stat: cannot stat '{}': No such file or directory\n", file),
                     1,
                 ));
-            }
-
-            let metadata = ctx.fs.stat(&path).await?;
+            };
 
             if let Some(fmt) = &format {
                 output.push_str(&format_stat(file, &metadata, fmt));

@@ -48,6 +48,7 @@ const DOC_LINKS = new Map([
   ["start-pyodide.md", "/docs/start-pyodide/"],
   ["structured-data.md", "/docs/structured-data/"],
   ["targets.md", "/docs/start/"],
+  ["terminal.md", "/docs/terminal/"],
   ["threat-model.md", "/docs/security/"],
   ["typescript.md", "/docs/builtin_typescript/"],
 ]);

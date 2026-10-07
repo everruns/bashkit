@@ -110,8 +110,10 @@ describe("VFS API", () => {
     bash.writeFile("/tmp/target.txt", "data");
     bash.symlink("/tmp/target.txt", "/tmp/link.txt");
     assert.equal(bash.readLink("/tmp/link.txt"), "/tmp/target.txt");
-    const meta = bash.stat("/tmp/link.txt");
-    assert.equal(meta.fileType, "symlink");
+    assert.equal(bash.lstat("/tmp/link.txt").fileType, "symlink");
+    // stat follows the link, like Node's fs.stat.
+    assert.equal(bash.stat("/tmp/link.txt").fileType, "file");
+    assert.equal(bash.fs().lstat("/tmp/link.txt").fileType, "symlink");
   });
 
   it("fs() accessor provides same operations", () => {

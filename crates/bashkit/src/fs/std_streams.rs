@@ -134,6 +134,12 @@ impl FileSystem for StdStreamsFs {
             None => self.inner.stat(path).await,
         }
     }
+    async fn lstat(&self, path: &Path) -> Result<Metadata> {
+        match std_stream_fd(path) {
+            Some(_) => Ok(self.stream_metadata()),
+            None => self.inner.lstat(path).await,
+        }
+    }
     async fn read_dir(&self, path: &Path) -> Result<Vec<DirEntry>> {
         self.inner.read_dir(path).await
     }
