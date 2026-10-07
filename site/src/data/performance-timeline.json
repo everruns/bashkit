@@ -4848,6 +4848,25 @@
       ]
     }
   ],
+  "pythonStartup": [
+    {
+      "id": "criterion-python-vm-linux-x86_64-1791319327",
+      "date": "2026-10-06",
+      "timestamp": "2026-10-06T20:42:07.000Z",
+      "source": "crates/bashkit/benches/results/criterion-python-vm-linux-x86_64-1791319327.md",
+      "monty": {
+        "firstCallMs": 0.369,
+        "secondCallMs": 0.038,
+        "warmPrintMs": 0.015
+      },
+      "cpython": {
+        "firstCallMs": 21.896,
+        "secondCallMs": 6.239,
+        "warmPrintMs": 6.312,
+        "importHttpClientMs": null
+      }
+    }
+  ],
   "modelTrends": [
     {
       "model": "anthropic/claude-haiku-4-5",

@@ -296,6 +296,48 @@ async function buildCriterionRuns() {
   return runs.toSorted((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 }
 
+// Python startup series: one point per `criterion-python-*` report. The raw
+// start table (fresh process) and warm per-call rows are what users feel.
+async function buildPythonStartup() {
+  const files = (await listFiles(criterionDir, ".md")).filter((file) => file.startsWith("criterion-python-"));
+  const runs = [];
+
+  for (const file of files) {
+    const content = await readFile(path.join(criterionDir, file), "utf8");
+    const rows = parseMarkdownTables(content);
+    const startMs = (runtime, measure) => {
+      const row = rows.find((r) => r.runtime === runtime && r.measure?.startsWith(measure));
+      const us = parseTimeToUs(row?.median);
+      return Number.isFinite(us) ? round(us / 1000, 3) : null;
+    };
+    const benchMs = (name) => {
+      const row = rows.find((r) => r.benchmark === name);
+      const us = parseTimeToUs(row?.time);
+      return Number.isFinite(us) ? round(us / 1000, 3) : null;
+    };
+    const runtime = (name) => ({
+      firstCallMs: startMs(name, "first call"),
+      secondCallMs: startMs(name, "second call"),
+      warmPrintMs: benchMs(`python_call/${name}/print`),
+    });
+    const timestamp = parseCriterionTimestamp(file, content);
+    const source = `crates/bashkit/benches/results/${file}`;
+    runs.push({
+      id: file.replace(/\.md$/, ""),
+      date: dateLabel(timestamp),
+      timestamp,
+      source,
+      monty: runtime("monty"),
+      cpython: {
+        ...runtime("cpython"),
+        importHttpClientMs: benchMs("python_import/cpython/http_client"),
+      },
+    });
+  }
+
+  return runs.toSorted((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+}
+
 async function buildEvalRuns() {
   const files = await listFiles(evalDir, ".json");
   const runs = [];
@@ -424,6 +466,7 @@ function buildModelTrends(evalRuns) {
 const benchRuns = await buildBenchRuns();
 const criterionRuns = await buildCriterionRuns();
 const evalRuns = await buildEvalRuns();
+const pythonStartup = await buildPythonStartup();
 const newestSourceTimestamp = latest([...benchRuns, ...criterionRuns, ...evalRuns])?.timestamp ?? null;
 
 const payload = {
@@ -449,6 +492,7 @@ const payload = {
   benchRuns,
   criterionRuns,
   evalRuns,
+  pythonStartup,
   modelTrends: buildModelTrends(evalRuns),
   milestones: buildMilestones({ benchRuns, criterionRuns, evalRuns }),
 };
