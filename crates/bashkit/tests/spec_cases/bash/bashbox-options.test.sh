@@ -19,7 +19,6 @@ x
 
 ### bashbox_options_tr_complements_set1
 # tr complements set1
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 echo abc | tr -c a X; echo aabbc | tr -cs a X; echo aabbc | tr --complement -s a
 ### expect
 aXXXaaXaabc
@@ -27,7 +26,6 @@ aXXXaaXaabc
 
 ### bashbox_options_tr_truncates_set1
 # tr truncates set1
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 echo abcd | tr -t abcd xy
 ### expect
 xycd
@@ -43,7 +41,6 @@ printf 'a b\n' | wc -m; printf 'a b\n' | wc --chars --lines
 
 ### bashbox_options_cut_long_options
 # cut long options
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 echo a:b | cut --delimiter=: --fields=2 --complement
 ### expect
 a
@@ -51,7 +48,6 @@ a
 
 ### bashbox_options_cut_s_drops_lines_without_a_delimiter
 # cut -s drops lines without a delimiter
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf 'a\tb\nc\n' | cut -sf1
 ### expect
 a
@@ -59,7 +55,6 @@ a
 
 ### bashbox_options_cut_takes_an_empty_delimiter_as_nul
 # cut takes an empty delimiter as NUL
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf 'a\0b\n' | cut -d '' -f2
 ### expect
 b

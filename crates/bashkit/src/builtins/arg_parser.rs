@@ -232,26 +232,156 @@ impl<'a> ArgParser<'a> {
             .map(|s| s.starts_with('-') && s.len() > 1)
             .unwrap_or(false)
     }
+}
 
-    /// Try to consume combined boolean short flags (e.g., `-rnuf`).
-    ///
-    /// If the current arg starts with `-` (not `--`), has length > 1, and
-    /// every character after `-` is in `allowed`, advances and returns the
-    /// matched chars. Otherwise returns an empty vec without advancing.
-    pub fn bool_flags(&mut self, allowed: &str) -> Vec<char> {
-        if let Some(arg) = self.current()
-            && arg.starts_with('-')
-            && !arg.starts_with("--")
-            && arg.len() > 1
-        {
-            let chars: Vec<char> = arg[1..].chars().collect();
-            if chars.iter().all(|c| allowed.contains(*c)) {
-                self.advance();
-                return chars;
+// Decision: `gnu_getopt` mirrors glibc `getopt_long` for builtins whose GNU
+// counterparts accept bundled short options (`-sf1`), attached or separate
+// values, `--long=VALUE`, unambiguous long prefixes, and (optionally)
+// options after operands. Long options map onto a key char so callers
+// handle `-d X` and `--delimiter=X` in one match arm.
+
+/// Whether an option takes an argument.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum OptArg {
+    No,
+    Required,
+    /// Only attached: `-xVAL` / `--long=VAL`.
+    Optional,
+}
+
+/// One parsed option occurrence.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ParsedOpt {
+    pub key: char,
+    pub value: Option<String>,
+}
+
+/// Parse `args` GNU-style.
+///
+/// `short` uses getopt syntax: a letter, `:` after it for a required
+/// value, `::` for an optional attached value. `longs` lists
+/// `(name, arg, key)`. With `permute`, operands and options may interleave
+/// (GNU default); without it, the first operand ends option parsing.
+/// Errors are GNU-shaped messages with `code` as the exit status.
+pub(crate) fn gnu_getopt(
+    cmd: &str,
+    args: &[String],
+    short: &str,
+    longs: &[(&str, OptArg, char)],
+    permute: bool,
+    code: i32,
+) -> std::result::Result<(Vec<ParsedOpt>, Vec<String>), crate::interpreter::ExecResult> {
+    use crate::interpreter::ExecResult;
+    let err = |msg: String| ExecResult::err(format!("{cmd}: {msg}\n"), code);
+    let short_arg = |c: char| -> Option<OptArg> {
+        let idx = short.find(c)?;
+        if c == ':' {
+            return None;
+        }
+        let rest = &short[idx + c.len_utf8()..];
+        Some(if rest.starts_with("::") {
+            OptArg::Optional
+        } else if rest.starts_with(':') {
+            OptArg::Required
+        } else {
+            OptArg::No
+        })
+    };
+
+    let mut opts = Vec::new();
+    let mut operands = Vec::new();
+    let mut i = 0;
+    while i < args.len() {
+        let arg = &args[i];
+        i += 1;
+        if arg == "--" {
+            operands.extend(args[i..].iter().cloned());
+            break;
+        }
+        if arg == "-" || !arg.starts_with('-') {
+            operands.push(arg.clone());
+            if !permute {
+                operands.extend(args[i..].iter().cloned());
+                break;
+            }
+            continue;
+        }
+        if let Some(long) = arg.strip_prefix("--") {
+            let (name, inline) = match long.split_once('=') {
+                Some((n, v)) => (n, Some(v.to_string())),
+                None => (long, None),
+            };
+            let hits: Vec<&(&str, OptArg, char)> = match longs.iter().find(|l| l.0 == name) {
+                Some(l) => vec![l],
+                None => longs.iter().filter(|l| l.0.starts_with(name)).collect(),
+            };
+            let &(lname, kind, key) = match hits.as_slice() {
+                [one] => *one,
+                [] => return Err(err(format!("unrecognized option '--{name}'"))),
+                many => {
+                    // Prefixes naming the same key are not ambiguous.
+                    if many.iter().all(|l| l.2 == many[0].2 && l.1 == many[0].1) {
+                        many[0]
+                    } else {
+                        return Err(err(format!("option '--{name}' is ambiguous")));
+                    }
+                }
+            };
+            let value = match (kind, inline) {
+                (OptArg::No, Some(_)) => {
+                    return Err(err(format!("option '--{lname}' doesn't allow an argument")));
+                }
+                (OptArg::No, None) | (OptArg::Optional, None) => None,
+                (_, Some(v)) => Some(v),
+                (OptArg::Required, None) => {
+                    if i < args.len() {
+                        i += 1;
+                        Some(args[i - 1].clone())
+                    } else {
+                        return Err(err(format!("option '--{lname}' requires an argument")));
+                    }
+                }
+            };
+            opts.push(ParsedOpt { key, value });
+            continue;
+        }
+        let body = &arg[1..];
+        for (pos, c) in body.char_indices() {
+            let Some(kind) = short_arg(c) else {
+                return Err(err(format!("invalid option -- '{c}'")));
+            };
+            let attached = &body[pos + c.len_utf8()..];
+            match kind {
+                OptArg::No => opts.push(ParsedOpt {
+                    key: c,
+                    value: None,
+                }),
+                OptArg::Optional => {
+                    opts.push(ParsedOpt {
+                        key: c,
+                        value: (!attached.is_empty()).then(|| attached.to_string()),
+                    });
+                    break;
+                }
+                OptArg::Required => {
+                    let value = if !attached.is_empty() {
+                        attached.to_string()
+                    } else if i < args.len() {
+                        i += 1;
+                        args[i - 1].clone()
+                    } else {
+                        return Err(err(format!("option requires an argument -- '{c}'")));
+                    };
+                    opts.push(ParsedOpt {
+                        key: c,
+                        value: Some(value),
+                    });
+                    break;
+                }
             }
         }
-        Vec::new()
     }
+    Ok((opts, operands))
 }
 
 #[cfg(test)]
@@ -433,48 +563,58 @@ mod tests {
         assert_eq!(p.rest().len(), 2);
     }
 
-    #[test]
-    fn test_bool_flags() {
-        let a = args(&["-rnuf", "file"]);
-        let mut p = ArgParser::new(&a);
-        let flags = p.bool_flags("rnufsz");
-        assert_eq!(flags, vec!['r', 'n', 'u', 'f']);
-        assert_eq!(p.current(), Some("file"));
+    fn getopt(a: &[&str], permute: bool) -> (Vec<(char, Option<String>)>, Vec<String>) {
+        let (opts, ops) = gnu_getopt(
+            "t",
+            &args(a),
+            "ab:c::",
+            &[
+                ("alpha", OptArg::No, 'a'),
+                ("bravo", OptArg::Required, 'b'),
+                ("charlie", OptArg::Optional, 'c'),
+            ],
+            permute,
+            1,
+        )
+        .unwrap();
+        (opts.into_iter().map(|o| (o.key, o.value)).collect(), ops)
     }
 
     #[test]
-    fn test_bool_flags_no_match_unknown_char() {
-        let a = args(&["-rxn", "file"]);
-        let mut p = ArgParser::new(&a);
-        let flags = p.bool_flags("rn"); // 'x' not allowed
-        assert!(flags.is_empty());
-        assert_eq!(p.current(), Some("-rxn")); // not advanced
+    fn test_gnu_getopt_bundles_and_values() {
+        let (o, ops) = getopt(&["-ab1", "-b", "2", "-cX", "-c", "f"], true);
+        assert_eq!(
+            o,
+            vec![
+                ('a', None),
+                ('b', Some("1".into())),
+                ('b', Some("2".into())),
+                ('c', Some("X".into())),
+                ('c', None)
+            ]
+        );
+        assert_eq!(ops, vec!["f".to_string()]);
     }
 
     #[test]
-    fn test_bool_flags_long_flag_ignored() {
-        let a = args(&["--verbose"]);
-        let mut p = ArgParser::new(&a);
-        let flags = p.bool_flags("verbose");
-        assert!(flags.is_empty());
+    fn test_gnu_getopt_long_prefix_and_permute() {
+        let (o, ops) = getopt(&["x", "--br=v", "--alp", "--", "-a"], true);
+        assert_eq!(o, vec![('b', Some("v".into())), ('a', None)]);
+        assert_eq!(ops, vec!["x".to_string(), "-a".to_string()]);
+        let (o, ops) = getopt(&["x", "-a"], false);
+        assert!(o.is_empty());
+        assert_eq!(ops, vec!["x".to_string(), "-a".to_string()]);
     }
 
     #[test]
-    fn test_bool_flags_single_dash_ignored() {
-        let a = args(&["-"]);
-        let mut p = ArgParser::new(&a);
-        let flags = p.bool_flags("abc");
-        assert!(flags.is_empty());
-        assert_eq!(p.current(), Some("-")); // not advanced
-    }
-
-    #[test]
-    fn test_bool_flags_single_char() {
-        let a = args(&["-v"]);
-        let mut p = ArgParser::new(&a);
-        let flags = p.bool_flags("v");
-        assert_eq!(flags, vec!['v']);
-        assert!(p.is_done());
+    fn test_gnu_getopt_errors() {
+        let e = gnu_getopt("t", &args(&["-z"]), "a", &[], true, 2).unwrap_err();
+        assert_eq!(e.stderr, "t: invalid option -- 'z'\n");
+        assert_eq!(e.exit_code, 2);
+        let e = gnu_getopt("t", &args(&["-b"]), "b:", &[], true, 1).unwrap_err();
+        assert!(e.stderr.contains("requires an argument"));
+        let e = gnu_getopt("t", &args(&["--nope"]), "", &[], true, 1).unwrap_err();
+        assert!(e.stderr.contains("unrecognized option '--nope'"));
     }
 
     #[test]

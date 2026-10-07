@@ -287,7 +287,6 @@ b
 
 ### bashbox_sort_i_ignores_nonprinting_characters
 # -i ignores nonprinting characters
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf 'b\na\001c\nac\n' | sort -i | tr '\001' '^'
 ### expect
 a^c
