@@ -1853,6 +1853,7 @@ impl Interpreter {
             "touch".to_string(),
             Arc::new(builtins::Touch::with_clock(clock)),
         );
+        builtins.insert("pr".to_string(), Arc::new(builtins::Pr::with_clock(clock)));
 
         // System info builtins (configurable virtual values)
         let hostname_val = hostname.unwrap_or_else(|| builtins::DEFAULT_HOSTNAME.to_string());

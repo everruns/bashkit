@@ -531,6 +531,10 @@
     },
     {
       "feature": null,
+      "name": "pr"
+    },
+    {
+      "feature": null,
       "name": "printenv"
     },
     {
@@ -902,5 +906,5 @@
       "name": "zip"
     }
   ],
-  "count": 225
+  "count": 226
 }

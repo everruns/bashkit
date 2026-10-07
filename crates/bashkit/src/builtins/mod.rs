@@ -97,6 +97,7 @@ mod paste;
 mod patch;
 mod path;
 mod pipeline;
+mod pr;
 mod printf;
 pub(crate) mod random;
 mod read;
@@ -225,6 +226,7 @@ pub use paste::Paste;
 pub use patch::Patch;
 pub use path::{Basename, Dirname, Readlink, Realpath};
 pub use pipeline::{Tee, Watch, Xargs};
+pub use pr::Pr;
 pub use printf::Printf;
 pub use random::{Openssl, Uuidgen};
 pub use read::Read;
@@ -2099,6 +2101,7 @@ mod tests {
             "bc",
             "numfmt",
             "test",
+            "pr",
             "printf",
             "echo",
             "env",
