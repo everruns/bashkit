@@ -1176,6 +1176,26 @@ impl<'a> Lexer<'a> {
                         self.advance();
                     }
                 }
+                Some('\\') => {
+                    // Backslash escape after a quoted segment: `'a'\''b'`.
+                    self.advance();
+                    match self.peek_char() {
+                        // Line continuation.
+                        Some('\n') => {
+                            self.advance();
+                        }
+                        Some(next) => {
+                            let start = content.len();
+                            if next == '$' {
+                                content.push('\x00');
+                            }
+                            content.push(next);
+                            self.advance();
+                            flags.quoted_ranges.push((start, content.len()));
+                        }
+                        None => content.push('\\'),
+                    }
+                }
                 Some(ch) if self.is_word_char(ch) => {
                     if matches!(ch, '*' | '?' | '[') {
                         flags.has_unquoted_glob = true;

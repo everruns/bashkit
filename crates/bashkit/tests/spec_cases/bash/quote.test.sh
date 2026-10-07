@@ -338,3 +338,36 @@ show "${x}"
 ### expect
 $'a\nb'
 ### end
+
+### quote_backslash_escape_after_quoted_segment
+# `'\''` (close, escaped quote, reopen) and other escapes right after a
+# quoted segment.
+echo 'a'\''b'
+echo 'it'\''s' "x"\'
+echo "a"\$HOME 'a'\$HOME
+echo "a"\ b 'c'\ d
+echo "g"\* 'h'\?
+echo 'p'\"q
+### expect
+a'b
+it's x'
+a$HOME a$HOME
+a b c d
+g* h?
+p"q
+### end
+
+### quote_nested_sh_c_quote_idiom
+sh -c 'sh -c '\''echo deep'\'''
+sh -c 'echo '\''one two'\'''
+### expect
+deep
+one two
+### end
+
+### quote_backslash_newline_after_quoted_segment
+echo 'a'\
+'b'
+### expect
+ab
+### end
