@@ -21,7 +21,8 @@ on the virtual filesystem only. Configure via
 
 ### Supported Commands
 
-- Phase 1 (local): `init`, `config`, `add`, `commit -m`, `status`, `log [-n N]`
+- Phase 1 (local): `init`, `config`, `add`, `commit -m` (no `-m` opens `$EDITOR` inside a
+  terminal session, see [In-Process Terminal](in-process-terminal.md)), `status`, `log [-n N]`
 - Phase 2 (remote, virtual mode): `remote [-v]`, `remote add/remove` (fully
   functional); `clone`/`push`/`pull`/`fetch` validate URL against allowlist
   then return virtual-mode messages (no network in VFS-only mode)

@@ -425,6 +425,11 @@ async fn shell_loop(mut bash: crate::Bash, tty: Tty, exit: Arc<ExitState>, log: 
     if !bash.shell_state_view().env.contains_key("TERM") {
         bash.set_env("TERM", "xterm-256color");
     }
+    // Programs that open an editor (`git commit`) read $EDITOR; vi is the
+    // one bashkit ships.
+    if !bash.shell_state_view().env.contains_key("EDITOR") {
+        bash.set_env("EDITOR", "vi");
+    }
     let mut history = History::default();
     loop {
         log.set_activity(TerminalActivity::Prompt);
@@ -837,6 +842,81 @@ mod tests {
     async fn run(term: &mut Terminal, input: &str) -> TerminalStatus {
         term.send(input);
         term.run_until_idle().await
+    }
+
+    #[cfg(feature = "git")]
+    async fn git_repo_term() -> Terminal {
+        let mut term = Terminal::new(Bash::builder().git(crate::GitConfig::new()));
+        run(
+            &mut term,
+            "mkdir /r && cd /r && git init -q && echo x > f && git add f\r",
+        )
+        .await;
+        term
+    }
+
+    #[cfg(feature = "git")]
+    #[tokio::test]
+    async fn git_commit_without_m_opens_editor() {
+        let mut term = git_repo_term().await;
+        run(&mut term, "git commit\r").await;
+        assert!(term.is_alternate_screen());
+        assert!(
+            term.screen_text()
+                .contains("# Please enter the commit message")
+        );
+        run(&mut term, "Ofirst line\x1b:wq\r").await;
+        assert!(!term.is_alternate_screen(), "{}", term.screen_text());
+        run(&mut term, "git log --oneline\r").await;
+        assert!(
+            term.screen_text().contains(" first line"),
+            "{}",
+            term.screen_text()
+        );
+    }
+
+    #[cfg(feature = "git")]
+    #[tokio::test]
+    async fn git_commit_editor_abort_paths() {
+        let mut term = git_repo_term().await;
+        // Template only: empty message aborts.
+        run(&mut term, "git commit; echo st=$?\r").await;
+        run(&mut term, ":wq\r").await;
+        let text = term.screen_text();
+        assert!(
+            text.contains("Aborting commit due to empty commit message."),
+            "{text}"
+        );
+        assert!(text.contains("st=1"), "{text}");
+        // :cq aborts even with text typed.
+        run(&mut term, "git commit; echo st=$?\r").await;
+        run(&mut term, "Omsg\x1b:cq\r").await;
+        assert!(term.screen_text().contains("problem with the editor"));
+        // An editor bashkit lacks is reported, not run.
+        run(&mut term, "EDITOR=emacs git commit; echo st=$?\r").await;
+        assert!(!term.is_alternate_screen());
+        assert!(
+            term.screen_text()
+                .contains("editor 'emacs' is not available")
+        );
+        run(&mut term, "echo $EDITOR\r").await;
+        assert!(
+            term.screen_text().ends_with("vi\n$"),
+            "{}",
+            term.screen_text()
+        );
+    }
+
+    #[tokio::test]
+    async fn vi_cq_exits_nonzero() {
+        let mut term = Terminal::new(Bash::builder());
+        run(&mut term, "vi /tmp/a; echo st=$?\r").await;
+        run(&mut term, ":cq\r").await;
+        assert!(
+            term.screen_text().contains("st=1"),
+            "{}",
+            term.screen_text()
+        );
     }
 
     #[tokio::test]

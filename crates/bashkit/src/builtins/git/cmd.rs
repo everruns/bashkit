@@ -321,17 +321,85 @@ async fn git_commit(
         i += 1;
     }
 
-    let Some(message) = message else {
-        return Ok(ExecResult::err(
-            "error: switch 'm' requires a value\n".to_string(),
-            128,
-        ));
+    let message = match message {
+        Some(m) => m,
+        None => match editor_message(&ctx).await? {
+            Some(Ok(m)) => m,
+            Some(Err(result)) => return Ok(result),
+            None => {
+                return Ok(ExecResult::err(
+                    "error: switch 'm' requires a value\n".to_string(),
+                    128,
+                ));
+            }
+        },
     };
 
     match git_client.commit(&ctx.fs, ctx.cwd, &message).await {
         Ok(output) => Ok(ExecResult::ok(output)),
         Err(e) => Ok(ExecResult::err(format!("{}\n", e), 1)),
     }
+}
+
+/// Commit message template shown in the editor, like git's.
+#[cfg(all(feature = "git", feature = "terminal"))]
+const COMMIT_TEMPLATE: &str = "\n# Please enter the commit message for your changes. Lines starting\n\
+# with '#' will be ignored, and an empty message aborts the commit.\n";
+
+/// `git commit` without `-m` inside a terminal session: open `$EDITOR` on
+/// `.git/COMMIT_EDITMSG`. `None` outside a terminal; `Some(Err)` is the
+/// result to return (abort or editor failure).
+#[cfg(all(feature = "git", feature = "terminal"))]
+async fn editor_message(
+    ctx: &Context<'_>,
+) -> Result<Option<std::result::Result<String, ExecResult>>> {
+    if ctx.execution_extension::<crate::terminal::Tty>().is_none() {
+        return Ok(None);
+    }
+    let git_dir = crate::fs::vfs_join(ctx.cwd, ".git");
+    if !ctx.fs.exists(&git_dir).await? {
+        return Ok(Some(Err(ExecResult::err(
+            format!("fatal: not a git repository: {}\n", ctx.cwd.display()),
+            128,
+        ))));
+    }
+    let path = crate::fs::vfs_join(&git_dir, "COMMIT_EDITMSG");
+    ctx.fs.write_file(&path, COMMIT_TEMPLATE.as_bytes()).await?;
+    match crate::builtins::edit_file(ctx, &path).await? {
+        None => Ok(None),
+        Some(Err(msg)) => Ok(Some(Err(ExecResult::err(
+            format!("error: {msg}\nPlease supply the message using the -m option.\n"),
+            1,
+        )))),
+        Some(Ok(code)) if code != 0 => Ok(Some(Err(ExecResult::err(
+            "error: There was a problem with the editor 'vi'.\nPlease supply the message using the -m option.\n".to_string(),
+            1,
+        )))),
+        Some(Ok(_)) => {
+            let raw = ctx.fs.read_file(&path).await?;
+            let text = String::from_utf8_lossy(&raw);
+            let message = text
+                .lines()
+                .filter(|l| !l.starts_with('#'))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let message = message.trim();
+            if message.is_empty() {
+                return Ok(Some(Err(ExecResult::err(
+                    "Aborting commit due to empty commit message.\n".to_string(),
+                    1,
+                ))));
+            }
+            Ok(Some(Ok(message.to_string())))
+        }
+    }
+}
+
+#[cfg(all(feature = "git", not(feature = "terminal")))]
+async fn editor_message(
+    _ctx: &Context<'_>,
+) -> Result<Option<std::result::Result<String, ExecResult>>> {
+    Ok(None)
 }
 
 #[cfg(feature = "git")]

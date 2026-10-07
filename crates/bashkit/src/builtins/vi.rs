@@ -16,8 +16,13 @@
 //!   it are dropped, and the undo history is capped by total bytes.
 //! - Writes go through the session VFS, so VFS limits and read-only mounts
 //!   apply to `:w` like any other write.
+//! - `:cq` quits with exit status 1, so callers that open `$EDITOR`
+//!   (`git commit`) can abort like with real vi.
+//! - [`edit_file`] is the `$EDITOR` entry point for other builtins. Only
+//!   `vi`/`vim` (any directory, any args after the name) are accepted as
+//!   `$VISUAL`/`$EDITOR`; anything else is reported, not run.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 
@@ -65,10 +70,51 @@ impl Builtin for Vi {
             ));
         };
         let tty = tty.try_with(Clone::clone).map_err(|_| Error::Cancelled)?;
-
         let path = file.map(|f| resolve_path(ctx.cwd, f));
+        run_on(&tty, &ctx, path, file.cloned()).await
+    }
+}
+
+/// Open `path` in the editor on the session terminal, like a program
+/// running `$EDITOR path`. Returns `None` outside a terminal session, else
+/// the editor's exit status (0 on `:wq`/`:q`, 1 on `:cq`), or an error
+/// message when `$VISUAL`/`$EDITOR` names an editor bashkit does not have.
+pub(crate) async fn edit_file(
+    ctx: &Context<'_>,
+    path: &Path,
+) -> Result<Option<std::result::Result<i32, String>>> {
+    let Some(tty) = ctx.execution_extension::<Tty>() else {
+        return Ok(None);
+    };
+    let tty = tty.try_with(Clone::clone).map_err(|_| Error::Cancelled)?;
+    let editor = ["VISUAL", "EDITOR"]
+        .iter()
+        .find_map(|k| ctx.env.get(*k).or_else(|| ctx.variables.get(*k)))
+        .map(|v| v.trim())
+        .filter(|v| !v.is_empty());
+    if let Some(editor) = editor {
+        let program = editor.split_whitespace().next().unwrap_or(editor);
+        let name = program.rsplit('/').next().unwrap_or(program);
+        if !matches!(name, "vi" | "vim") {
+            return Ok(Some(Err(format!(
+                "editor '{editor}' is not available (supported: vi)"
+            ))));
+        }
+    }
+    let shown = path.display().to_string();
+    let result = run_on(&tty, ctx, Some(path.to_path_buf()), Some(shown)).await?;
+    Ok(Some(Ok(result.exit_code)))
+}
+
+async fn run_on(
+    tty: &Tty,
+    ctx: &Context<'_>,
+    path: Option<PathBuf>,
+    display_name: Option<String>,
+) -> Result<ExecResult> {
+    {
         let mut editor = Editor::new(tty.size().rows, tty.size().cols);
-        editor.display_name = file.cloned();
+        editor.display_name = display_name;
         if let Some(path) = &path {
             match ctx.fs.stat(path).await {
                 Ok(meta) if meta.file_type.is_dir() => {
@@ -99,9 +145,11 @@ impl Builtin for Vi {
         editor.path = path;
         editor.saved_hash = editor.buffer_hash();
 
-        let _screen = ScreenGuard::enter(&tty, true);
-        editor.run(&tty, &ctx).await;
-        Ok(ExecResult::ok(""))
+        let _screen = ScreenGuard::enter(tty, true);
+        editor.run(tty, ctx).await;
+        let mut result = ExecResult::ok("");
+        result.exit_code = editor.exit_code;
+        Ok(result)
     }
 }
 
@@ -156,6 +204,8 @@ struct Editor {
     /// Ex command queued by a normal-mode key (`ZZ`), run by the async loop.
     pending_ex: Option<String>,
     quit: bool,
+    /// Exit status: 1 after `:cq`.
+    exit_code: i32,
 }
 
 impl Editor {
@@ -182,6 +232,7 @@ impl Editor {
             last_search: None,
             pending_ex: None,
             quit: false,
+            exit_code: 0,
         }
     }
 
@@ -1014,7 +1065,11 @@ impl Editor {
                     self.quit = true;
                 }
             }
-            "q!" | "quit!" | "cq" => self.quit = true,
+            "q!" | "quit!" => self.quit = true,
+            "cq" | "cq!" | "cquit" => {
+                self.exit_code = 1;
+                self.quit = true;
+            }
             "w" | "w!" | "write" => {
                 self.write(arg, ctx).await;
             }

@@ -320,7 +320,7 @@ jobs:
       # so the main "Run tests" step compiles them out entirely.
       - name: Run terminal tests
         run: |
-          cargo test -p bashkit --features terminal --lib -- terminal:: builtins::vi:: builtins::pager::
+          cargo test -p bashkit --features terminal,git --lib -- terminal:: builtins::vi:: builtins::pager::
           cargo test -p bashkit --features terminal --test integration -- terminal_tests l_term_
           cargo test -p bashkit --features terminal --doc terminal
 
