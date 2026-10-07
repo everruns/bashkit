@@ -308,6 +308,10 @@ jobs:
       - name: Run CPython tests
         run: cargo test -p bashkit --features cpython --lib --test integration -- cpython
 
+      # Same suites on the opt-in native-code build (`cpython-native`).
+      - name: Run CPython tests (native code)
+        run: cargo test -p bashkit --features cpython-native --lib --test integration -- cpython
+
       - name: Run realfs tests
         run: cargo test --features realfs -p bashkit --test realfs_tests -p bashkit-cli
 

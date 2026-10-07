@@ -47,8 +47,8 @@ call:
 2. **Pulley AOT**: `build.rs` precompiles the snapshot to Wasmtime's portable
    Pulley bytecode (`pulley64`) with Cranelift as a build-dependency only. One
    artifact serves every 64-bit little-endian host; no executable memory is
-   needed at run time. Native AOT (`.cwasm` per target) is the documented
-   fallback if guest CPU speed ever matters more than portability.
+   needed at run time. Native code is an opt-in instead (`cpython-native`,
+   below).
 3. **Zero-copy load**: the `.cwasm` is embedded 64 KiB-aligned and loaded with
    `Module::deserialize_raw`; wasmtime registers code by address, so only the
    first load in a process maps in place, later loads copy (`load_module`).
@@ -81,6 +81,28 @@ CPU-bound Python is ~4-30x slower than Monty. 1024 concurrent tenants × 4
 calls: 0 failures, ~165 calls/s on 4 vCPUs, 3.0 GB peak RSS (2026-10-07,
 after immortal objects; was ~90 calls/s, 4.7 GB). Importing a module outside
 the snapshot costs ~0.27 s (`email.message`) to ~0.46 s (`http.client`).
+
+### Native code (opt-in, `cpython-native`)
+
+`cpython-native` (bashkit) / `native` (companion crate) makes `build.rs`
+compile the snapshot to machine code for Cargo's `TARGET` instead of Pulley.
+Still nothing is compiled at run time and it is still one crate; the trade:
+
+- **Speed** (4-vCPU x86-64, warm calls, 2026-10-07): `print(1)` 0.95 ms vs
+  3.7 ms, `import http.client` 34 ms vs 461 ms, `fib(20)` 6.4 ms vs 69 ms.
+- **Executable memory** is required at run time; Pulley needs none.
+- **First load copies** the module into executable memory (native code
+  cannot run from the binary's read-only static): `CPython::warm_up()` takes
+  ~47 ms instead of ~15 ms. Call it at startup.
+- **Baseline ISA**: compiled for the target triple with no host CPU feature
+  detection, so a binary built on one machine runs on any CPU of that
+  architecture. A cross-compiled build gets the cross target's code.
+- **Same memory configuration** as Pulley (1 GiB reservation, 64 KiB guard,
+  explicit bounds checks), so pooled slots and limits are identical.
+- CI runs the full CPython suites on both builds (x86-64 Linux).
+
+Default stays Pulley: portable artifact, no executable memory, smallest
+attack surface (TM-PY-CPY-011).
 
 ### Guest contract (snapshot invariants)
 
@@ -179,9 +201,8 @@ compile-affecting configuration that produced it. 49.x needs rustc 1.96.
   `random` reseed, exit `gc.collect`), ~1 ms in ~270 page faults. The
   one-time first-call cost is ~13 ms building the copy-on-write memory image
   (wasmtime copies the 40 MB snapshot span, 14 MB of real data, into a
-  memfd). Native AOT compiled in `build.rs` (no run-time compile) measured
-  2.3 ms per call, but native code cannot run from the binary's read-only
-  static, so the first load copies the 41 MB module (+35 ms) unless warmed.
+  memfd). The `cpython-native` opt-in removes most of the interpretation
+  cost (below).
 - ~650 page faults per call (host Pulley stack + guest CoW writes); kernel
   fault cost grows under concurrency, so 4 vCPUs reach ~2x, not 4x, single
   thread throughput. TODO: profile which pages fault; consider pooling the

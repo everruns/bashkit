@@ -34,6 +34,11 @@ include = [
 [dependencies]
 wasmtime = { workspace = true }
 
+[features]
+# Compile the snapshot to native machine code for the build target instead of
+# Pulley bytecode: faster calls, needs executable memory at run time.
+native = []
+
 [build-dependencies]
 wasmtime = { workspace = true, features = ["cranelift", "parallel-compilation"] }
 flate2 = { workspace = true }

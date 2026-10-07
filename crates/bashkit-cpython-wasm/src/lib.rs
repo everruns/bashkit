@@ -38,7 +38,7 @@ struct Aligned<T: ?Sized>(T);
 
 static CWASM: &Aligned<[u8]> = &Aligned(*include_bytes!(concat!(env!("OUT_DIR"), "/python.cwasm")));
 
-/// Precompiled Pulley module bytes (for diagnostics and size reporting).
+/// Precompiled module bytes (Pulley, or native with the `native` feature) (for diagnostics and size reporting).
 pub fn cwasm_bytes() -> &'static [u8] {
     &CWASM.0
 }
@@ -60,7 +60,9 @@ pub fn engine() -> wasmtime::Result<wasmtime::Engine> {
 pub fn load_module(engine: &wasmtime::Engine) -> wasmtime::Result<wasmtime::Module> {
     static MAPPED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     let bytes: &'static [u8] = &CWASM.0;
-    if MAPPED.swap(true, std::sync::atomic::Ordering::AcqRel) {
+    // Native code must live in executable memory, never the read-only static,
+    // so it is always copied (the first load costs ~35 ms more than Pulley's).
+    if cfg!(feature = "native") || MAPPED.swap(true, std::sync::atomic::Ordering::AcqRel) {
         // SAFETY: same provenance as below; `deserialize` copies the bytes.
         return unsafe { wasmtime::Module::deserialize(engine, bytes) };
     }

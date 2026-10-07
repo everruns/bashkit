@@ -61,6 +61,7 @@ cargo binstall bashkit-cli
 | `interactive` | on | Interactive REPL (rustyline, signal-hook, terminal_size) |
 | `python` | on | `python`/`python3` builtin via Monty |
 | `cpython` | off | `python`/`python3` as real CPython 3.14 in a WebAssembly sandbox (replaces Monty when both are on) |
+| `cpython-native` | off | `cpython` compiled to native code at build time: ~4x faster calls, needs executable memory |
 | `sqlite` | on | `sqlite`/`sqlite3` builtin via Turso (BETA upstream) |
 | `realfs` | off | `--mount-ro` / `--mount-rw` host filesystem mounts |
 

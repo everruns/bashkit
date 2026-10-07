@@ -1818,6 +1818,7 @@ python code -> CPython (wasm guest) -> wasi_snapshot_preview1 imports -> WASI ho
 | TM-PY-CPY-008 | State leaking across calls or tenants | Critical | Fresh instance per call from a copy-on-write snapshot; per-`Bash` VFS; only exported variables reach `os.environ`; `random` re-seeded per call | `no_state_crosses_calls`, `concurrent_tenants_are_isolated`, `host_environment_not_visible`, `interpreter_state_does_not_persist_between_calls` |
 | TM-PY-CPY-009 | Internal shapes leaking through errors (TM-INF-022) | Medium | Trap and host errors formatted via Display, capped at 512 bytes; driver frames stripped from tracebacks | `error_paths_do_not_leak_internals`, `trap_messages_are_display_only`, `cpython_fuzz` |
 | TM-PY-CPY-010 | Predictable `hash()` within a call | Low | Accepted: hash flooding is bounded by the call's CPU and memory limits and affects only that call (L-CPY-005) | stance |
+| TM-PY-CPY-011 | Code-generation bug in the opt-in native build (`cpython-native`) breaks the wasm sandbox | Medium | Opt-in only; default Pulley runs no generated machine code. Native code is Cranelift output compiled at build time with explicit bounds checks (small reservation), loaded into wasmtime-managed W^X code memory; the same suites (security, fuzz-derived) run on both builds in CI | `cpython_security_tests` under `--features cpython-native` |
 
 Fuzzing: `cpython_security_tests` runs bounded proptest cases (arbitrary
 source, stitched os/sys/file fragments, arbitrary CLI arguments) through

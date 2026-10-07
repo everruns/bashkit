@@ -1,4 +1,5 @@
-//! Compile the committed CPython snapshot to Pulley bytecode ahead of time.
+//! Compile the committed CPython snapshot ahead of time: to Pulley bytecode,
+//! or to native code for the target with the `native` feature.
 //!
 //! Decision: compile at build time, never at run time (python3 startup is a
 //! product feature). Set `BASHKIT_CPYTHON_CWASM=/path/python.cwasm` to reuse a
@@ -26,9 +27,13 @@ fn main() {
     flate2::read::GzDecoder::new(std::fs::File::open(&snapshot).expect("open snapshot"))
         .read_to_end(&mut wasm)
         .expect("decompress snapshot");
-    let engine = wasmtime::Engine::new(&engine_config()).expect("engine");
+    // The build script's own cfg is the host's; read the crate feature and
+    // the cross-compilation target from Cargo instead.
+    let native = std::env::var_os("CARGO_FEATURE_NATIVE").is_some();
+    let target = std::env::var("TARGET").expect("TARGET");
+    let engine = wasmtime::Engine::new(&engine_config_for(native, Some(&target))).expect("engine");
     let cwasm = engine
         .precompile_module(&wasm)
-        .expect("precompile CPython snapshot to Pulley");
+        .expect("precompile CPython snapshot");
     std::fs::write(&out, cwasm).expect("write python.cwasm");
 }
