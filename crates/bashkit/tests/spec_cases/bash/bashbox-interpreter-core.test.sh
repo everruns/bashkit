@@ -874,7 +874,6 @@ printf "a\0b\0" | while read -r -d "" v; do echo "[$v]"; done
 
 ### bashbox_interpreter_core_mapfile_on_nul_delimiters
 # mapfile on NUL delimiters
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf "a\0b\0" | { mapfile -d "" arr; echo ${#arr[@]}; }
 ### expect
 2
