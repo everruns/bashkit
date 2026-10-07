@@ -163,3 +163,26 @@ async fn redirected_function_output_is_not_streamed() {
     assert_eq!(result.stdout, "out\nout\nerr\n");
     assert_eq!(*streamed.lock().unwrap(), "out\nout\nerr\n");
 }
+
+/// `exec >log 2>&1` redirects the shell's own output: nothing reaches the
+/// streaming callback until fd 1 is restored, and `>&3` to the saved
+/// original stdout still does.
+#[tokio::test]
+async fn exec_redirected_output_is_not_streamed() {
+    let streamed = Arc::new(Mutex::new(String::new()));
+    let sink = streamed.clone();
+    let mut bash = Bash::new();
+    let result = bash
+        .exec_streaming(
+            "exec 3>&1 >/tmp/x.log 2>&1\necho one\nfor i in 1 2; do echo $i; done\necho saved >&3\nexec 1>&3 3>&-\necho back\ncat /tmp/x.log",
+            Box::new(move |stdout, stderr| {
+                let mut s = sink.lock().unwrap();
+                s.push_str(&stdout.to_string());
+                s.push_str(&stderr.to_string());
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.stdout, "saved\nback\none\n1\n2\n");
+    assert_eq!(*streamed.lock().unwrap(), "saved\nback\none\n1\n2\n");
+}

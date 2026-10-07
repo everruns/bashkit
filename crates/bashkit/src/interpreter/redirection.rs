@@ -285,14 +285,27 @@ impl Interpreter {
         src_fd: i32,
         target_fd: i32,
     ) -> Result<()> {
-        // Check exec_fd_table for persistent fd targets
-        if let Some(fd_target) = self.exec_fd_table.get(&target_fd).cloned() {
+        // Check exec_fd_table for persistent fd targets. Fd 1 and 2 are the
+        // current streams here: `exec >log` is applied where the shell's
+        // own output leaves (top level), so `$(cmd 2>&1)` still captures.
+        if target_fd >= 3
+            && let Some(fd_target) = self.exec_fd_table.get(&target_fd).cloned()
+        {
             let data = if src_fd == 2 {
                 std::mem::take(&mut result.stderr)
             } else {
                 std::mem::take(&mut result.stdout)
             };
+            // A saved copy of the original stream (`exec 3>&1 >log`) skips
+            // the `exec` routing of fd 1/2.
+            let passthrough = match &fd_target {
+                FdTarget::Stdout => self.exec_fd_table.contains_key(&1),
+                FdTarget::Stderr => self.exec_fd_table.contains_key(&2),
+                _ => false,
+            };
             match &fd_target {
+                FdTarget::Stdout if passthrough => self.exec_passthrough.0.append(&data),
+                FdTarget::Stderr if passthrough => self.exec_passthrough.1.append(&data),
                 FdTarget::Stdout => result.stdout.append(&data),
                 FdTarget::Stderr => result.stderr.append(&data),
                 FdTarget::DevNull => {}
@@ -496,8 +509,11 @@ impl Interpreter {
         fd1: &mut FdTarget,
         fd2: &mut FdTarget,
     ) {
-        // Look up exec_fd_table for persistent fd targets
-        if let Some(exec_target) = self.exec_fd_table.get(&target_fd).cloned() {
+        // Look up exec_fd_table for persistent fd targets (fd 1/2: see
+        // `dup_output_fast`).
+        if target_fd >= 3
+            && let Some(exec_target) = self.exec_fd_table.get(&target_fd).cloned()
+        {
             match src_fd {
                 2 => *fd2 = exec_target,
                 _ => *fd1 = exec_target,
