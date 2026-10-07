@@ -1346,6 +1346,31 @@ struct SubshellSnapshot {
     bash_subshell: u32,
 }
 
+/// Pending arithmetic evaluation error: bash reports the first one, naming the
+/// whole expression, and the command exits 1 instead of using 0.
+#[derive(Default)]
+pub(crate) struct ArithError {
+    /// What failed and the offending token, once an error happened.
+    failure: Option<(String, String)>,
+    /// Expression text of the evaluation in progress.
+    expr: String,
+    /// Line the expression was on.
+    line: usize,
+}
+
+impl ArithError {
+    /// bash's wording. `prefix` names the builtin when one reports the error
+    /// itself (`((: `, `let: `); expansion errors carry no prefix.
+    fn message(&self, prefix: &str, expr: Option<&str>) -> Option<String> {
+        let (what, token) = self.failure.as_ref()?;
+        let expr = expr.unwrap_or(&self.expr);
+        Some(format!(
+            "bash: line {}: {prefix}{expr}: {what} (error token is \"{token}\")\n",
+            self.line
+        ))
+    }
+}
+
 /// Interpreter state.
 pub struct Interpreter {
     fs: Arc<dyn FileSystem>,
@@ -1470,6 +1495,12 @@ pub struct Interpreter {
     /// Outputs of the `$(...)` parts of a `${x:-...}`-family operand, run
     /// ahead (async) and consumed in order by the sync `expand_operand`.
     operand_substs: std::collections::VecDeque<String>,
+    /// Pending arithmetic error message, and the expression text it came from.
+    /// A `Mutex` because the evaluator runs behind `&self` and `Interpreter`
+    /// must stay `Sync`; the lock is only taken on the arithmetic path.
+    /// Reported and cleared where `nounset_error` is, so the command aborts
+    /// with status 1 instead of silently using 0, as bash does.
+    arith_error: std::sync::Mutex<ArithError>,
     /// PIPESTATUS: exit codes of the last pipeline's commands
     pipestatus: Vec<i32>,
     /// Aliases currently being expanded (prevents infinite recursion).
@@ -2039,6 +2070,7 @@ impl Interpreter {
             output_stream_stderr_bytes: 0,
             nounset_error: None,
             operand_substs: std::collections::VecDeque::new(),
+            arith_error: std::sync::Mutex::new(ArithError::default()),
             pipestatus: Vec::new(),
             expanding_aliases: HashSet::new(),
             regex_cache: RuntimeRegexCache::default(),
@@ -2199,6 +2231,7 @@ impl Interpreter {
             output_stream_stderr_bytes: 0,
             nounset_error: None,
             operand_substs: std::collections::VecDeque::new(),
+            arith_error: std::sync::Mutex::new(ArithError::default()),
             pipestatus: Vec::new(),
             expanding_aliases: HashSet::new(),
             regex_cache: RuntimeRegexCache::default(),
@@ -4141,7 +4174,7 @@ impl Interpreter {
         // the right side must NOT be expanded (to avoid set -u errors).
         let result = self.evaluate_conditional_words(words).await?;
         // If a nounset error occurred during evaluation, propagate it.
-        if let Some(err_msg) = self.nounset_error.take() {
+        if let Some(err_msg) = self.take_expansion_error() {
             self.last_exit_code = 1;
             return Ok(ExecResult {
                 stderr: err_msg.into(),
@@ -4488,6 +4521,11 @@ impl Interpreter {
 
     async fn execute_arithmetic_command(&mut self, expr: &str) -> Result<ExecResult> {
         let result = self.execute_arithmetic_with_side_effects(expr);
+        // `(( ))` reports the error itself and fails; it does not abort the
+        // script the way a failed `$(( ))` expansion does.
+        if let Some(msg) = self.take_arith_error("((: ") {
+            return Ok(ExecResult::err(msg, 1));
+        }
         let exit_code = if result != 0 { 0 } else { 1 };
 
         Ok(ExecResult {
@@ -6737,6 +6775,28 @@ impl Interpreter {
         }
     }
 
+    /// The pending expansion error, if any: an arithmetic failure first, then a
+    /// `set -u` failure. Clears both.
+    fn take_expansion_error(&mut self) -> Option<String> {
+        let arith = self.take_arith_error("");
+        let nounset = self.nounset_error.take();
+        arith.or(nounset)
+    }
+
+    /// Take the pending arithmetic error, formatted with `prefix`.
+    fn take_arith_error(&self, prefix: &str) -> Option<String> {
+        self.take_arith_error_for(prefix, None)
+    }
+
+    /// As [`Self::take_arith_error`], with the expression text the caller saw
+    /// (`let` reports its whole argument, assignment included).
+    fn take_arith_error_for(&self, prefix: &str, expr: Option<&str>) -> Option<String> {
+        let mut e = self.arith_error.lock().ok()?;
+        let msg = e.message(prefix, expr);
+        *e = ArithError::default();
+        msg
+    }
+
     /// Try alias expansion. Returns `Some(result)` if alias was expanded, `None` otherwise.
     async fn try_alias_expansion(
         &mut self,
@@ -6963,7 +7023,7 @@ impl Interpreter {
                 }
             };
 
-            if let Some(err_msg) = self.nounset_error.take() {
+            if let Some(err_msg) = self.take_expansion_error() {
                 self.last_exit_code = 1;
                 self.discard_deferred_proc_subs_from(deferred_proc_sub_start);
                 return Ok(ExecResult {
@@ -7216,7 +7276,7 @@ impl Interpreter {
             }
 
             // Check for nounset error from argument expansion
-            if let Some(err_msg) = self.nounset_error.take() {
+            if let Some(err_msg) = self.take_expansion_error() {
                 self.last_exit_code = 1;
                 return Ok(ExecResult {
                     stdout: crate::StreamData::new(),
@@ -8390,6 +8450,9 @@ impl Interpreter {
         self.coproc_buffers.clear();
         self.last_exit_code = 0;
         self.nounset_error = None;
+        if let Ok(mut e) = self.arith_error.lock() {
+            *e = ArithError::default();
+        }
 
         // Push call frame: $0 = script name, $1..N = args
         self.call_stack = vec![CallFrame {
@@ -9295,6 +9358,10 @@ impl Interpreter {
         let mut last_val = 0i64;
         for arg in args {
             last_val = self.evaluate_arithmetic_with_assign(arg);
+            if let Some(msg) = self.take_arith_error_for("let: ", Some(arg.trim())) {
+                let result = ExecResult::err(msg, 1);
+                return self.apply_redirections(result, redirects).await;
+            }
         }
         let exit_code = if last_val == 0 { 1 } else { 0 };
         let result = ExecResult {

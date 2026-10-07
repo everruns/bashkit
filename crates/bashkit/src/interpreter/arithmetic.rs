@@ -12,6 +12,7 @@ impl Interpreter {
     /// variable name is preserved.
     pub(super) fn evaluate_arithmetic_with_assign(&mut self, expr: &str) -> i64 {
         let expr = expr.trim();
+        self.note_arith_expr(expr);
 
         // Handle comma operator (lowest precedence): evaluate all, return last
         // But not inside parentheses
@@ -227,6 +228,7 @@ impl Interpreter {
     /// Evaluate arithmetic while carrying recursion depth from caller contexts.
     /// THREAT[TM-DOS-026]: Preserves the recursion guard across nested array index eval.
     pub(super) fn evaluate_arithmetic_depth(&self, expr: &str, depth: usize) -> i64 {
+        self.note_arith_expr(expr.trim());
         let mut state = ArithmeticExpansionState::new(Self::MAX_ARITHMETIC_EXPANSION_FUEL);
         self.evaluate_arithmetic_depth_state(expr, depth, &mut state)
     }
@@ -659,7 +661,7 @@ impl Interpreter {
             let value_str = &expr[hash_pos + 1..];
             if let Ok(base) = base_str.parse::<u32>() {
                 if (2..=36).contains(&base) {
-                    return i64::from_str_radix(value_str, base).unwrap_or(0);
+                    return self.radix_or_error(expr, value_str, base);
                 } else if (37..=64).contains(&base) {
                     return Self::parse_base_n(value_str, base);
                 }
@@ -668,10 +670,10 @@ impl Interpreter {
 
         // Hex (0x...), octal (0...) literals
         if expr.starts_with("0x") || expr.starts_with("0X") {
-            return i64::from_str_radix(&expr[2..], 16).unwrap_or(0);
+            return self.radix_or_error(expr, &expr[2..], 16);
         }
         if expr.starts_with('0') && expr.len() > 1 && expr.chars().all(|c| c.is_ascii_digit()) {
-            return i64::from_str_radix(&expr[1..], 8).unwrap_or(0);
+            return self.radix_or_error(expr, &expr[1..], 8);
         }
 
         // Parse as number or variable
@@ -771,11 +773,20 @@ impl Interpreter {
                 }
                 '/' | '%' if depth == 0 => {
                     let left = self.parse_arithmetic_impl(&expr[..bo[i]], arith_depth + 1);
-                    let right = self.parse_arithmetic_impl(&expr[bo[i] + 1..], arith_depth + 1);
+                    let rhs_text = &expr[bo[i] + 1..];
+                    let right = self.parse_arithmetic_impl(rhs_text, arith_depth + 1);
+                    if right == 0 {
+                        // An empty right side means this split was not the real
+                        // operator (the scan also splits inside signed
+                        // operands); only a written zero is an error.
+                        if !rhs_text.trim().is_empty() {
+                            self.set_arith_error("division by 0", rhs_text.trim());
+                        }
+                        return Some(0);
+                    }
                     return Some(match chars[i] {
-                        '/' if right != 0 => left.wrapping_div(right),
-                        '%' if right != 0 => left.wrapping_rem(right),
-                        _ => 0,
+                        '/' => left.wrapping_div(right),
+                        _ => left.wrapping_rem(right),
                     });
                 }
                 _ => {}
@@ -1079,6 +1090,45 @@ impl Interpreter {
 
         // Atom: unary operators and literals
         self.parse_arith_atom(expr, arith_depth)
+    }
+
+    /// Parse `digits` in `base`, or record bash's "value too great for base"
+    /// error (the error token is the whole literal, as bash prints it).
+    fn radix_or_error(&self, literal: &str, digits: &str, base: u32) -> i64 {
+        match i64::from_str_radix(digits, base) {
+            Ok(v) => v,
+            Err(_) => {
+                self.set_arith_error("value too great for base", literal.trim());
+                0
+            }
+        }
+    }
+
+    /// Remember the expression text for a later error message, while no error
+    /// is pending (the expression of the first error is the one bash prints).
+    fn note_arith_expr(&self, expr: &str) {
+        if let Ok(mut e) = self.arith_error.lock()
+            && e.failure.is_none()
+        {
+            e.expr = expr.to_string();
+            e.line = self.current_line;
+        }
+    }
+
+    /// Record an arithmetic error in bash's wording. The first error wins, as
+    /// bash stops evaluating at the first one.
+    pub(super) fn set_arith_error(&self, what: &str, token: &str) {
+        let Ok(mut e) = self.arith_error.lock() else {
+            return;
+        };
+        if e.failure.is_some() {
+            return;
+        }
+        if e.expr.is_empty() {
+            e.expr = token.to_string();
+            e.line = self.current_line;
+        }
+        e.failure = Some((what.to_string(), token.to_string()));
     }
 
     /// Parse a number in base 37-64 using bash's extended charset: 0-9, a-z, A-Z, @, _
