@@ -52,12 +52,15 @@ tac --no-such-flag 2>/dev/null; echo "exit=$?"
 exit=2
 ### end
 
-### tac_separator_unimplemented
-### bash_diff: bashkit explicitly errors on -s until the body lands; GNU tac applies the separator
-# bashkit accepts -s at the parser level but errors explicitly until the body lands
-tac -s X /tmp/tac_test 2>/dev/null; echo "exit=$?"
+### tac_separator
+# tac -s uses STRING as the record separator
+printf 'aXbXcX' | tac -s X; echo
+printf 'XaXb' | tac -b -s X; echo
+printf 'a1b22c' | tac -r -s '[0-9]'; echo
 ### expect
-exit=2
+cXbXaX
+XbXa
+c2b2a1
 ### end
 
 ### rev_basic

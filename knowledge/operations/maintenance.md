@@ -206,8 +206,8 @@ See [Coreutils Argument Port](../runtimes/coreutils-args-port.md).
   (weekly cron). The PR covers **both** ported argument surfaces (args
   mode) and vendored uucore modules (module mode):
   - **Args mode review**: confirm new flags are wired into the
-    consuming builtin or explicitly rejected (matching the existing
-    `tac -b/-r/-s` "not yet implemented" pattern, no silent no-ops).
+    consuming builtin or explicitly rejected with a "not yet
+    implemented" error (no silent no-ops).
     Confirm removed/renamed flags don't break downstream scripts;
     migrate or document.
   - **Module mode review**: for every entry in

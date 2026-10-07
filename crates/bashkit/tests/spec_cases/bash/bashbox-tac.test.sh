@@ -12,7 +12,6 @@ printf '1\n2\n' | tac
 
 ### bashbox_tac_empty_separator_is_nul
 # empty separator is NUL
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf 'a\0b\0' | tac -s '' | od -c
 ### expect
 0000000   b  \0   a  \0
