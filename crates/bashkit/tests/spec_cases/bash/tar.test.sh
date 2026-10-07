@@ -96,6 +96,8 @@ tar -cvf /tmp/tvs.tar tvs 2>/dev/null
 ### expect
 tvs/
 tvs/f
+### end
+
 ### tar_strip_components
 # --strip-components drops leading path components on extract
 mkdir -p /tmp/sc/proj/src; echo a > /tmp/sc/proj/src/a.txt; echo r > /tmp/sc/proj/README
@@ -142,4 +144,51 @@ tar --unknown-thing -tf /tmp/lm.tar 2>/dev/null || echo rejected
 ### expect
 lm/z
 rejected
+### end
+
+### tar_absolute_names_keeps_slash
+mkdir -p /tmp/tan && echo hi > /tmp/tan/f
+tar -cPf /tmp/tan.tar /tmp/tan/f 2>/tmp/tan.err; echo "rc=$?"
+wc -c < /tmp/tan.err
+tar -tPf /tmp/tan.tar 2>/dev/null | grep -c '^/tmp/tan/f$'
+### expect
+rc=0
+0
+1
+### end
+
+### tar_absolute_names_long_option
+mkdir -p /tmp/tal && echo hi > /tmp/tal/f
+tar --absolute-names -cf /tmp/tal.tar /tmp/tal/f 2>/dev/null
+tar -tPf /tmp/tal.tar 2>/dev/null | grep -c '^/tmp/tal/f$'
+### expect
+1
+### end
+
+### tar_files_from_list
+mkdir -p /tmp/tff && cd /tmp/tff && echo a > a && echo b > b && echo c > c
+printf 'a\n\nc\n' > list
+tar -cf x.tar -T list && tar -tf x.tar
+tar -cf y.tar --files-from=list && tar -tf y.tar | wc -l
+printf 'b\n' | tar -cf z.tar -T - && tar -tf z.tar
+### expect
+a
+c
+2
+b
+### end
+
+### tar_files_from_missing
+cd /tmp && tar -cf /tmp/tfm.tar -T /tmp/no-such-list 2>&1; echo "rc=$?"
+### expect
+tar: /tmp/no-such-list: Cannot stat: No such file or directory
+tar: Error is not recoverable: exiting now
+rc=2
+### end
+
+### tar_double_dash_ends_options
+mkdir -p /tmp/tdd && cd /tmp/tdd && echo a > ./-v
+tar -cf x.tar -- -v && tar -tf x.tar
+### expect
+-v
 ### end
