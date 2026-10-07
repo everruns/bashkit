@@ -8728,8 +8728,25 @@ impl Interpreter {
             self.pending_fd_capture_depth += 1;
         }
 
+        // Output the call's redirects will route must not stream from the
+        // body first (`f > out` printed `out` too), as for compounds.
+        let has_output_redirect = redirects.iter().any(|r| {
+            !matches!(
+                r.kind,
+                RedirectKind::Input | RedirectKind::HereDoc | RedirectKind::HereString
+            )
+        });
+        let saved_callback = if has_output_redirect {
+            self.output_callback.take()
+        } else {
+            None
+        };
+
         // Execute function body. Always restore call state even on error.
         let result = self.execute_command(&func_def.body).await;
+        if let Some(cb) = saved_callback {
+            self.output_callback = Some(cb);
+        }
         if capture_pending_fd {
             self.pending_fd_capture_depth = self.pending_fd_capture_depth.saturating_sub(1);
             if result.is_err() {

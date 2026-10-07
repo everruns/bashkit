@@ -141,3 +141,25 @@ async fn command_substitution_output_is_not_streamed() {
     assert_eq!(result.stdout, "cgi\n");
     assert_eq!(*streamed.lock().unwrap(), "cgi\n");
 }
+
+/// A function call's redirected output goes to the file only; the function
+/// body must not stream it to the caller first (`f > out` printed `out`).
+#[tokio::test]
+async fn redirected_function_output_is_not_streamed() {
+    let streamed = Arc::new(Mutex::new(String::new()));
+    let sink = streamed.clone();
+    let mut bash = Bash::new();
+    let result = bash
+        .exec_streaming(
+            "f() { echo out; echo err >&2; }\nf > /tmp/o1 2> /tmp/e1\nf 2>/dev/null\ncat /tmp/o1 /tmp/e1",
+            Box::new(move |stdout, stderr| {
+                let mut s = sink.lock().unwrap();
+                s.push_str(&stdout.to_string());
+                s.push_str(&stderr.to_string());
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.stdout, "out\nout\nerr\n");
+    assert_eq!(*streamed.lock().unwrap(), "out\nout\nerr\n");
+}
