@@ -33,7 +33,8 @@ pub enum BuiltinSideEffect {
     SetPositional(Vec<String>),
     /// Populate an indexed array variable (replaces `_ARRAY_READ_*`).
     SetArray { name: String, elements: Vec<String> },
-    /// Populate an indexed array with index->value pairs (for mapfile).
+    /// Set index->value pairs in an indexed array, keeping its other elements
+    /// (for mapfile, which sends `RemoveArray` first unless `-O` is given).
     SetIndexedArray {
         name: String,
         entries: Vec<(usize, String)>,
