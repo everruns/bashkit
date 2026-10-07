@@ -201,8 +201,13 @@ part of snapshots. Turn it off with `Bash::builder().rootfs(false)`.
 - **`/dev/null`** is handled at the interpreter level (not the filesystem), so a
   custom backend can't intercept it. **`/dev/urandom`** / **`/dev/random`**
   return bounded random data; **`/dev/zero`** returns 1 MiB of zeros per read.
-- **Symlinks** are stored but never followed, this closes symlink-escape
-  (TM-ESC-002) and symlink-loop DoS (TM-DOS-011).
+- **Symlinks** are followed like on Linux (`cat link`, `cd linkdir`,
+  `echo x > link`), but a target is always a VFS path: absolute targets start
+  at the VFS root and `..` stops there, so a link can't reach the host
+  (TM-ESC-002). A lookup gives up after 40 links with "Too many levels of
+  symbolic links" (TM-DOS-011). `rm`, `mv`, `readlink`, `[ -L ]` and `ls -l`
+  act on the link itself. `Bash::builder().follow_symlinks(false)` restores
+  store-only links.
 
 ## Binding parity
 

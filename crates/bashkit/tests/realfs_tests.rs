@@ -885,6 +885,24 @@ async fn realfs_symlink_relative_escape_blocked() {
     );
 }
 
+/// THREAT[TM-ESC-002]: links planted on the host inside a mount must not be
+/// followed out of it by the session's symlink-following layer.
+#[cfg(unix)]
+#[tokio::test]
+async fn realfs_host_planted_symlink_is_not_followed_out() {
+    let dir = setup_host_dir();
+    std::os::unix::fs::symlink("/etc/passwd", dir.path().join("abs")).unwrap();
+    std::os::unix::fs::symlink("../../../../../../etc/passwd", dir.path().join("rel")).unwrap();
+    let mut bash = builder_allowing_host_paths(&[dir.path()])
+        .mount_real_readonly_at(dir.path(), "/mnt/workspace")
+        .build();
+    for probe in ["cat /mnt/workspace/abs", "cat /mnt/workspace/rel"] {
+        let r = bash.exec(probe).await.unwrap();
+        assert!(!r.stdout.contains("root:x:0:0"), "{probe}: {}", r.stdout);
+        assert_ne!(r.exit_code, 0, "{probe} must fail: {}", r.stdout);
+    }
+}
+
 #[tokio::test]
 async fn realfs_symlink_within_mount_allowed() {
     let dir = setup_host_dir();

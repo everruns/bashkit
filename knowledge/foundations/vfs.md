@@ -134,6 +134,8 @@ the interpreter.
 
 ```text
 ┌──────────────────────────────────┐
+│  FollowFs (symlinks, default)    │  ← BashBuilder::follow_symlinks(false)
+├──────────────────────────────────┤
 │  MountableFs (live mounts)       │  ← Bash::mount() / unmount()
 ├──────────────────────────────────┤
 │  ReadOnlyFs (optional)           │  ← BashBuilder::readonly_filesystem()
@@ -331,9 +333,32 @@ runs. Pre-dates per-component expansion and affects trailing components too.
 
 ### Symlink Handling
 
-Symlinks are stored but intentionally not followed for security:
-- Prevents symlink escape attacks (TM-ESC-002)
-- Prevents symlink loop DoS (TM-DOS-011)
+Decision (2026-10-06): follow symlinks like Linux, on by default. Agents and
+build tools (`node_modules/.bin`, `current -> releases/v2`) expect it; the
+old store-only links made `cat link` fail with "No such file".
+
+`FollowFs` (`fs/follow.rs`) is the outermost layer, so resolution sees the
+whole composed namespace (mounts, overlays, rootfs). Inner layers never follow:
+their `stat` is an `lstat`, and they refuse to read or write through a link.
+
+- Opening a path (`read_file`, `write_file`, `read_dir`, `stat`, `exists`,
+  `copy`, `chmod`, `mkdir -p`) follows links in every component.
+  `lstat`, `read_link`, `remove`, `rename`, `symlink` and plain `mkdir`
+  follow only the parent components. `FileSystem::lstat` is a trait method
+  whose default forwards to `stat`; wrappers that sit above `FollowFs`
+  (`ExecutionFileSystem`, `StdStreamsFs`) forward it explicitly.
+- Builtins that describe a link use `lstat`: `test -L/-h`, `ls` operands
+  under `-l/-d/-F` (and `-> target` in long lines), `stat` (unless `-L`),
+  `file`, `rm`, `find` (`-P` default), Python `Path.is_symlink`.
+- Targets are VFS paths: absolute from the VFS root, relative to the link's
+  directory, `..` clamped at `/` (TM-ESC-002). Writes through a dangling link
+  create the target.
+- At most 40 links per lookup, then "Too many levels of symbolic links"
+  (TM-DOS-011). `exists` is false for dangling and looping links.
+- Fast path: ops run on the inner fs first and resolve only on a
+  link-related error (never on permission or limit errors, so real-mount
+  containment errors stay as they are) or when `stat` reports a link.
+  Writes cost one extra `lstat` on the final component.
 
 ## Host Mount Table (`HostMounts`)
 

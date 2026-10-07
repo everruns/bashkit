@@ -96,8 +96,10 @@ calls: 0 failures, ~90 calls/s on 4 vCPUs, 4.7 GB peak RSS.
   return `ENOTSUP`; there is no process API.
 - Files are whole in-memory buffers written back on close/sync/exit. Buffers
   are bounded by `max_file_size` and, in total, by the call's memory budget.
-- Paths normalize lexically and clamp at `/`. The VFS does not follow
-  symlinks (L-FS-001); neither does the host.
+- Paths normalize lexically and clamp at `/`. Symlinks resolve inside the
+  VFS only (TM-ESC-002); `path_filestat_get` honors WASI `SYMLINK_FOLLOW`, so
+  `lstat`/`os.path.islink` see the link itself, and unlink/rmdir act on the
+  link, never its target.
 - The stdlib zip is a read-only overlay at a fixed path. Writes, renames,
   truncation, unlink and directory changes there fail (`EROFS`/`ENOENT`/
   `EACCES`); tenant files placed next to it are not on `sys.path`.

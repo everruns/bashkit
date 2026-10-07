@@ -174,9 +174,9 @@ impl Builtin for Rm {
         for file in files {
             let path = resolve_path(ctx.cwd, file);
 
-            // Check if exists
-            let exists = ctx.fs.exists(&path).await.unwrap_or(false);
-            if !exists {
+            // lstat: rm acts on a link itself (dangling links included).
+            let metadata = ctx.fs.lstat(&path).await;
+            if metadata.is_err() {
                 if !force {
                     return Ok(ExecResult::err(
                         format!("rm: cannot remove '{}': No such file or directory\n", file),
@@ -187,7 +187,6 @@ impl Builtin for Rm {
             }
 
             // Check if it's a directory
-            let metadata = ctx.fs.stat(&path).await;
             if let Ok(meta) = metadata
                 && meta.file_type.is_dir()
                 && !recursive

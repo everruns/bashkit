@@ -87,16 +87,21 @@ print(open(\"/etc/passwd\").read(), end=\"\")
 }
 
 #[tokio::test]
-async fn symlinks_are_not_followed() {
-    // L-FS-001 / TM-ESC-002: the VFS stores symlinks but never follows them.
-    let r = run("echo secret > /target; ln -s /target /link; \
+async fn symlinks_resolve_inside_the_vfs_only() {
+    // TM-ESC-002: links are followed, but only within the VFS. lstat still
+    // reports the link itself, and a link aimed at a host path finds nothing.
+    let host = std::env::current_exe().unwrap();
+    let script = format!(
+        "echo secret > /target; ln -s /target /link; ln -s '{}' /hostlink; \
          python3 -c 'import os; print(os.path.islink(\"/link\"), os.readlink(\"/link\"))
-try:
-    open(\"/link\").read()
-except OSError:
-    print(\"blocked\")'")
-    .await;
-    assert_eq!(r.stdout, "True /target\nblocked\n");
+print(open(\"/link\").read().strip())
+print(os.path.islink(\"/hostlink\"), os.path.exists(\"/hostlink\"))
+os.unlink(\"/link\")
+print(os.path.exists(\"/target\"), os.path.lexists(\"/link\"))'",
+        host.display()
+    );
+    let r = run(&script).await;
+    assert_eq!(r.stdout, "True /target\nsecret\nTrue False\nTrue False\n");
 }
 
 #[tokio::test]

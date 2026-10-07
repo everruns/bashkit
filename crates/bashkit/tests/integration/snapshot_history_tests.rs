@@ -1243,12 +1243,20 @@ async fn a_forged_symlink_cannot_reach_outside_the_vfs() {
         "canary\n"
     );
 
-    for probe in [
-        "cat /escape/passwd",
-        "ls /escape/",
-        "cat /loop",
-        "ls -L /loop",
-    ] {
+    // `/../../../etc` clamps at the VFS root: the link reaches the
+    // synthetic /etc, never the host's.
+    let result = bash.exec("cat /escape/passwd").await.unwrap();
+    assert!(
+        result.stdout.starts_with("sandbox:x:1000:1000"),
+        "{:?}",
+        result.stdout
+    );
+    assert!(!result.stdout.contains("root:x:0:0"));
+    let result = bash.exec("ls /escape/").await.unwrap();
+    assert!(result.stdout.contains("os-release"), "{:?}", result.stdout);
+    assert!(!result.stdout.contains("shadow"));
+
+    for probe in ["cat /loop", "ls -L /loop"] {
         let result = bash.exec(probe).await.unwrap();
         assert!(
             result.stdout.is_empty(),
