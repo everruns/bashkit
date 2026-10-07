@@ -21,7 +21,7 @@ pub(super) const MAX_JQ_JSON_DEPTH: usize = 100;
 /// the original numeric representation through filter execution and
 /// output formatting. Real jq prints `1.0` as `1.0`; the stock
 /// `serde_json::Value` (without `arbitrary_precision`) cannot.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub(super) enum JqJson {
     Null,
     Bool(bool),
@@ -43,38 +43,132 @@ impl JqJson {
     }
 }
 
-/// Convert serde_json::Value to our JqJson, capturing original number tokens.
-/// THREAT[TM-DOS-027]: depth checked at the same time.
-pub(super) fn serde_to_jq(
-    v: &serde_json::Value,
+/// Depth-checking, order-preserving JSON reader for [`JqJson`].
+///
+/// Real jq keeps object keys in input order, so input never passes through
+/// `serde_json::Value` (whose map is sorted without `preserve_order`, a
+/// crate-wide feature we do not want to flip). THREAT[TM-DOS-027]: nesting
+/// is checked while reading; the first violation is parked in `too_deep` so
+/// callers report it verbatim instead of as a generic parse error.
+struct JqSeed<'a> {
     depth: usize,
     max: usize,
-) -> std::result::Result<JqJson, String> {
-    if depth > max {
-        return Err(format!(
-            "jq: JSON nesting too deep ({depth} levels, max {max})"
-        ));
+    too_deep: &'a std::cell::Cell<Option<String>>,
+}
+
+impl<'a> JqSeed<'a> {
+    fn child(&self) -> JqSeed<'a> {
+        JqSeed {
+            depth: self.depth + 1,
+            max: self.max,
+            too_deep: self.too_deep,
+        }
     }
-    Ok(match v {
-        serde_json::Value::Null => JqJson::Null,
-        serde_json::Value::Bool(b) => JqJson::Bool(*b),
-        serde_json::Value::Number(n) => JqJson::Number(n.to_string()),
-        serde_json::Value::String(s) => JqJson::String(s.clone()),
-        serde_json::Value::Array(arr) => {
-            let mut out = Vec::with_capacity(arr.len());
-            for item in arr {
-                out.push(serde_to_jq(item, depth + 1, max)?);
-            }
-            JqJson::Array(out)
+}
+
+impl<'de> serde::de::DeserializeSeed<'de> for JqSeed<'_> {
+    type Value = JqJson;
+
+    fn deserialize<D: serde::Deserializer<'de>>(self, d: D) -> Result<JqJson, D::Error> {
+        if self.depth > self.max {
+            let msg = format!(
+                "jq: JSON nesting too deep ({} levels, max {})",
+                self.depth, self.max
+            );
+            self.too_deep.set(Some(msg.clone()));
+            return Err(serde::de::Error::custom(msg));
         }
-        serde_json::Value::Object(map) => {
-            let mut out = Vec::with_capacity(map.len());
-            for (k, item) in map {
-                out.push((k.clone(), serde_to_jq(item, depth + 1, max)?));
-            }
-            JqJson::Object(out)
+        d.deserialize_any(self)
+    }
+}
+
+impl<'de> serde::de::Visitor<'de> for JqSeed<'_> {
+    type Value = JqJson;
+
+    fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("a JSON value")
+    }
+
+    fn visit_unit<E>(self) -> Result<JqJson, E> {
+        Ok(JqJson::Null)
+    }
+
+    fn visit_bool<E>(self, b: bool) -> Result<JqJson, E> {
+        Ok(JqJson::Bool(b))
+    }
+
+    fn visit_i64<E>(self, n: i64) -> Result<JqJson, E> {
+        Ok(JqJson::Number(n.to_string()))
+    }
+
+    fn visit_u64<E>(self, n: u64) -> Result<JqJson, E> {
+        Ok(JqJson::Number(n.to_string()))
+    }
+
+    fn visit_f64<E: serde::de::Error>(self, f: f64) -> Result<JqJson, E> {
+        // Same token serde_json::Number prints, so `1.0` stays `1.0`.
+        serde_json::Number::from_f64(f)
+            .map(|n| JqJson::Number(n.to_string()))
+            .ok_or_else(|| E::custom("non-finite number"))
+    }
+
+    fn visit_str<E>(self, s: &str) -> Result<JqJson, E> {
+        Ok(JqJson::String(s.to_owned()))
+    }
+
+    fn visit_string<E>(self, s: String) -> Result<JqJson, E> {
+        Ok(JqJson::String(s))
+    }
+
+    fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<JqJson, A::Error> {
+        let mut out = Vec::new();
+        while let Some(item) = seq.next_element_seed(self.child())? {
+            out.push(item);
         }
+        Ok(JqJson::Array(out))
+    }
+
+    fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<JqJson, A::Error> {
+        let mut out: Vec<(String, JqJson)> = Vec::new();
+        while let Some(key) = map.next_key::<String>()? {
+            let value = map.next_value_seed(self.child())?;
+            // Duplicate keys: last value wins in its first position, as in jq.
+            if let Some(slot) = out.iter_mut().find(|(k, _)| *k == key) {
+                slot.1 = value;
+            } else {
+                out.push((key, value));
+            }
+        }
+        Ok(JqJson::Object(out))
+    }
+}
+
+/// Parse exactly one JSON value (`--argjson`, `--jsonargs`), keeping key
+/// order. `Err` is the user-facing message; depth errors come back verbatim,
+/// syntax errors as serde's text (callers add their own prefix).
+pub(super) fn parse_json_value(input: &str) -> std::result::Result<JqJson, JsonParseError> {
+    use serde::de::DeserializeSeed;
+    let too_deep = std::cell::Cell::new(None);
+    let mut de = serde_json::Deserializer::from_str(input);
+    let seed = JqSeed {
+        depth: 0,
+        max: MAX_JQ_JSON_DEPTH,
+        too_deep: &too_deep,
+    };
+    let result = seed.deserialize(&mut de).and_then(|v| de.end().map(|()| v));
+    result.map_err(|e| match too_deep.take() {
+        Some(msg) => JsonParseError::TooDeep(msg),
+        None => JsonParseError::Invalid(e.to_string()),
     })
+}
+
+/// Why [`parse_json_value`] rejected its input.
+#[derive(Debug)]
+pub(super) enum JsonParseError {
+    /// Nesting past `MAX_JQ_JSON_DEPTH`; the message is complete.
+    TooDeep(String),
+    /// Malformed JSON; serde's description without a `jq:` prefix.
+    Invalid(String),
 }
 
 /// Convert our JqJson to a jaq Val for filter execution.
@@ -190,51 +284,37 @@ fn format_f64_canonical(f: f64) -> String {
     }
 }
 
-/// THREAT[TM-DOS-027]: Standalone depth check used by --argjson and other
-/// entry points where the value comes from outside the main parser.
-pub(super) fn check_json_depth(
-    value: &serde_json::Value,
-    max_depth: usize,
-) -> std::result::Result<(), String> {
-    fn measure(v: &serde_json::Value, cur: usize, max: usize) -> std::result::Result<(), String> {
-        if cur > max {
-            return Err(format!(
-                "jq: JSON nesting too deep ({cur} levels, max {max})"
-            ));
-        }
-        match v {
-            serde_json::Value::Array(arr) => {
-                for item in arr {
-                    measure(item, cur + 1, max)?;
-                }
-            }
-            serde_json::Value::Object(map) => {
-                for (_k, item) in map {
-                    measure(item, cur + 1, max)?;
-                }
-            }
-            _ => {}
-        }
-        Ok(())
-    }
-    measure(value, 0, max_depth)
-}
-
 /// Parse multiple JSON values from a stream (handles NDJSON, multi-line,
-/// concatenated). Each value is depth-checked.
+/// concatenated). Each value is depth-checked and keeps its key order.
 pub(super) fn parse_json_stream(input: &str) -> std::result::Result<Vec<JqJson>, String> {
-    use serde_json::Deserializer;
+    use serde::de::DeserializeSeed;
 
     let trimmed = input.trim();
     if trimmed.is_empty() {
         return Ok(Vec::new());
     }
 
+    let too_deep = std::cell::Cell::new(None);
+    let mut de = serde_json::Deserializer::from_str(trimmed);
     let mut vals = Vec::new();
-    let stream = Deserializer::from_str(trimmed).into_iter::<serde_json::Value>();
-    for result in stream {
-        let v = result.map_err(|e| format!("jq: invalid JSON: {e}"))?;
-        vals.push(serde_to_jq(&v, 0, MAX_JQ_JSON_DEPTH)?);
+    loop {
+        // Skip inter-value whitespace; stop at end of input.
+        if de.end().is_ok() {
+            break;
+        }
+        let seed = JqSeed {
+            depth: 0,
+            max: MAX_JQ_JSON_DEPTH,
+            too_deep: &too_deep,
+        };
+        match seed.deserialize(&mut de) {
+            Ok(v) => vals.push(v),
+            Err(e) => {
+                return Err(too_deep
+                    .take()
+                    .unwrap_or_else(|| format!("jq: invalid JSON: {e}")));
+            }
+        }
     }
     Ok(vals)
 }
@@ -243,12 +323,14 @@ pub(super) fn parse_json_stream(input: &str) -> std::result::Result<Vec<JqJson>,
 mod tests {
     use super::*;
 
+    fn one(s: &str) -> JqJson {
+        parse_json_value(s).unwrap()
+    }
+
     #[test]
     fn round_trip_preserves_float_zero_decimal() {
         // 1.0 must NOT collapse to 1 — real jq preserves it.
-        let v = serde_json::json!(1.0);
-        let jq = serde_to_jq(&v, 0, 100).unwrap();
-        match jq {
+        match one("1.0") {
             JqJson::Number(s) => assert_eq!(s, "1.0"),
             _ => panic!("expected Number"),
         }
@@ -256,30 +338,69 @@ mod tests {
 
     #[test]
     fn integer_stays_integer() {
-        let v = serde_json::json!(42);
-        let jq = serde_to_jq(&v, 0, 100).unwrap();
-        match jq {
+        match one("42") {
             JqJson::Number(s) => assert_eq!(s, "42"),
             _ => panic!("expected Number"),
         }
     }
 
     #[test]
-    fn check_json_depth_flat_ok() {
-        let v = serde_json::json!(42);
-        assert!(check_json_depth(&v, 100).is_ok());
+    fn object_keeps_input_key_order() {
+        let JqJson::Object(map) = one(r#"{"b":1,"a":2,"c":3}"#) else {
+            panic!("expected Object");
+        };
+        let keys: Vec<&str> = map.iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(keys, ["b", "a", "c"]);
     }
 
     #[test]
-    fn check_json_depth_nested_ok() {
-        let v = serde_json::json!([[[1]]]);
-        assert!(check_json_depth(&v, 5).is_ok());
+    fn duplicate_key_keeps_first_position_last_value() {
+        let JqJson::Object(map) = one(r#"{"a":1,"b":2,"a":3}"#) else {
+            panic!("expected Object");
+        };
+        assert_eq!(map.len(), 2);
+        assert_eq!(map[0].0, "a");
+        assert!(matches!(&map[0].1, JqJson::Number(n) if n == "3"));
     }
 
     #[test]
-    fn check_json_depth_too_deep() {
-        let v = serde_json::json!([[[1]]]);
-        assert!(check_json_depth(&v, 2).is_err());
+    fn value_depth_limit() {
+        let ok = format!("{}1{}", "[".repeat(5), "]".repeat(5));
+        assert!(parse_json_value(&ok).is_ok());
+        let deep = format!(
+            "{}1{}",
+            "[".repeat(MAX_JQ_JSON_DEPTH + 1),
+            "]".repeat(MAX_JQ_JSON_DEPTH + 1)
+        );
+        assert!(matches!(
+            parse_json_value(&deep),
+            Err(JsonParseError::TooDeep(_))
+        ));
+    }
+
+    #[test]
+    fn value_rejects_trailing_garbage() {
+        assert!(matches!(
+            parse_json_value("1 2"),
+            Err(JsonParseError::Invalid(_))
+        ));
+    }
+
+    #[test]
+    fn stream_depth_error_is_verbatim() {
+        let deep = format!(
+            "{}1{}",
+            "[".repeat(MAX_JQ_JSON_DEPTH + 1),
+            "]".repeat(MAX_JQ_JSON_DEPTH + 1)
+        );
+        let err = parse_json_stream(&deep).unwrap_err();
+        assert!(err.starts_with("jq: JSON nesting too deep"), "{err}");
+    }
+
+    #[test]
+    fn stream_reports_syntax_error() {
+        let err = parse_json_stream("1 {").unwrap_err();
+        assert!(err.starts_with("jq: invalid JSON:"), "{err}");
     }
 
     #[test]
