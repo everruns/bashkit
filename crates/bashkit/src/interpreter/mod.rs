@@ -3652,7 +3652,10 @@ impl Interpreter {
                 for expanded in fields {
                     let brace_expanded = self.expand_braces(&expanded);
                     for item in brace_expanded {
-                        match self.expand_glob_item(&item).await {
+                        match self
+                            .expand_glob_item(&item, w.quoted && w.has_unquoted_glob)
+                            .await
+                        {
                             Ok(items) => vals.extend(items),
                             Err(pat) => {
                                 self.last_exit_code = 1;
@@ -3778,7 +3781,10 @@ impl Interpreter {
                 for expanded in fields {
                     let brace_expanded = self.expand_braces(&expanded);
                     for item in brace_expanded {
-                        match self.expand_glob_item(&item).await {
+                        match self
+                            .expand_glob_item(&item, w.quoted && w.has_unquoted_glob)
+                            .await
+                        {
                             Ok(items) => values.extend(items),
                             Err(pat) => {
                                 self.last_exit_code = 1;
@@ -4171,10 +4177,22 @@ impl Interpreter {
                 return self.evaluate_conditional_words(&words[i + 1..]).await;
             }
 
-            // Leaf: expand words and evaluate as a simple condition
+            // Leaf: expand words and evaluate as a simple condition. The
+            // right side of `==`/`=`/`!=` is a pattern: its quoted parts
+            // match literally.
             let mut expanded = Vec::new();
-            for word in words {
-                expanded.push(self.expand_word(word).await?);
+            for (i, word) in words.iter().enumerate() {
+                let is_pattern = i > 0
+                    && !words[i - 1].quoted
+                    && matches!(
+                        words[i - 1].parts.as_slice(),
+                        [WordPart::Literal(op)] if matches!(op.as_str(), "==" | "=" | "!=")
+                    );
+                expanded.push(if is_pattern {
+                    self.expand_pattern_word(word).await?
+                } else {
+                    self.expand_word(word).await?
+                });
             }
             Ok(self.evaluate_conditional(&expanded).await)
         })
@@ -4597,7 +4615,7 @@ impl Interpreter {
             } else {
                 let mut m = false;
                 for pattern in &case_item.patterns {
-                    let pattern_str = self.expand_word(pattern).await?;
+                    let pattern_str = self.expand_pattern_word(pattern).await?;
                     if self.pattern_matches(&word_value, &pattern_str) {
                         m = true;
                         break;
@@ -6898,7 +6916,10 @@ impl Interpreter {
 
                     // Step 2: For each brace-expanded item, do glob expansion
                     for item in brace_expanded {
-                        match self.expand_glob_item(&item).await {
+                        match self
+                            .expand_glob_item(&item, word.quoted && word.has_unquoted_glob)
+                            .await
+                        {
                             Ok(items) => args.extend(items),
                             Err(pat) => {
                                 self.last_exit_code = 1;

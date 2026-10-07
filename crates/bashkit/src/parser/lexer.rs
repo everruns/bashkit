@@ -588,6 +588,11 @@ impl<'a> Lexer<'a> {
         // this flag are true, the word needs IFS-splitting suppression (quoted)
         // *and* glob expansion on the unquoted portion — e.g. `"$var"*.ext`.
         let mut has_unquoted_glob = false;
+        // Byte ranges of quoted or backslash-escaped text, and whether an
+        // unquoted `$`/backtick expansion appears. Together they decide how
+        // quoted glob characters stay literal (see the end of this function).
+        let mut quoted_ranges: Vec<(usize, usize)> = Vec::new();
+        let mut has_unquoted_expansion = false;
 
         while let Some(ch) = self.peek_char() {
             // Handle quoted strings within words (e.g., a="Hello" or VAR="value")
@@ -605,6 +610,7 @@ impl<'a> Lexer<'a> {
                 if quote_char == '"' {
                     word.push('\u{1e}');
                 }
+                let seg_start = word.len();
                 while let Some(c) = self.peek_char() {
                     if c == quote_char {
                         self.advance(); // consume closing quote
@@ -680,6 +686,7 @@ impl<'a> Lexer<'a> {
                         }
                     )));
                 }
+                quoted_ranges.push((seg_start, word.len()));
                 if quote_char == '"' {
                     word.push('\u{1f}');
                 }
@@ -696,7 +703,9 @@ impl<'a> Lexer<'a> {
                     if !closed {
                         return Some(Token::Error("unterminated single quote".to_string()));
                     }
+                    let seg_start = word.len();
                     Self::push_literal_with_escaped_dollar(&mut word, &content);
+                    quoted_ranges.push((seg_start, word.len()));
                     word.push('\u{1f}');
                     // ANSI-C quotes are single-quote semantics: quoted context.
                     has_quoted_expansion = true;
@@ -709,6 +718,7 @@ impl<'a> Lexer<'a> {
                     // Locale quotes are double-quote semantics: quoted context.
                     has_quoted_expansion = true;
                     word.push('\u{1e}');
+                    let seg_start = word.len();
                     let mut closed = false;
                     while let Some(c) = self.peek_char() {
                         if c == '"' {
@@ -797,10 +807,12 @@ impl<'a> Lexer<'a> {
                     if !closed {
                         return Some(Token::Error("unterminated double quote".to_string()));
                     }
+                    quoted_ranges.push((seg_start, word.len()));
                     word.push('\u{1f}');
                     continue;
                 }
 
+                has_unquoted_expansion = true;
                 word.push(ch); // push the '$'
 
                 // Check for $( - command substitution or arithmetic
@@ -866,7 +878,10 @@ impl<'a> Lexer<'a> {
                     }
                 }
             } else if ch == '{' {
-                // Brace expansion pattern - include entire {...} in word
+                // Brace expansion pattern - include entire {...} in word.
+                // Counts as unquoted glob syntax: a word mixing it with quoted
+                // text (`a{1,2}"*"`) must still reach brace expansion.
+                has_unquoted_glob = true;
                 word.push(ch);
                 self.advance();
                 let mut depth = 1;
@@ -884,6 +899,7 @@ impl<'a> Lexer<'a> {
                 }
             } else if ch == '`' {
                 // Backtick command substitution: convert `cmd` to $(cmd)
+                has_unquoted_expansion = true;
                 self.advance(); // consume opening `
                 word.push_str("$(");
                 let mut closed = false;
@@ -930,6 +946,9 @@ impl<'a> Lexer<'a> {
                         // they carry the NUL sentinel like quoted `\$` does.
                         if matches!(next, '$' | '`') {
                             word.push('\x00');
+                        }
+                        if Self::is_glob_escape_char(next) {
+                            quoted_ranges.push((word.len(), word.len() + next.len_utf8()));
                         }
                         word.push(next);
                         self.advance();
@@ -1033,6 +1052,24 @@ impl<'a> Lexer<'a> {
             }
         }
 
+        // Quoted or escaped glob characters are literal (`a"*"`, `a\*`,
+        // `a'?'`). With an unquoted glob in the same word they are escaped
+        // in place, the QuotedGlobWord convention also used for words that
+        // start with a quote. Without one the word never globs, so it is
+        // simply quoted. A word with an unquoted expansion keeps the old
+        // classification: quoting it would suppress field splitting.
+        let quoted_glob = quoted_ranges
+            .iter()
+            .any(|&(start, end)| word[start..end].contains(['*', '?', '[', '{']));
+        if quoted_glob && has_unquoted_glob {
+            return Some(Token::QuotedGlobWord(
+                Self::escape_glob_metas_in_quoted_ranges(&word, &quoted_ranges),
+            ));
+        }
+        if quoted_glob && !has_unquoted_expansion {
+            return Some(Token::QuotedWord(word));
+        }
+
         if word.is_empty() {
             None
         } else if has_quoted_expansion && has_unquoted_glob {
@@ -1070,10 +1107,32 @@ impl<'a> Lexer<'a> {
         }
 
         // If next char is another quote or word char, concatenate (e.g., 'EOF'"2" -> EOF2).
-        // Any quoting makes the whole token literal.
+        // An unquoted expansion or glob in the continuation keeps working
+        // (`'a'$x`, `'a'*`); otherwise the whole token is literal. The quoted
+        // prefix carries NUL sentinels so `parse_word` never expands its `$`.
+        let mut content = {
+            let mut escaped = String::with_capacity(content.len());
+            Self::push_literal_with_escaped_dollar(&mut escaped, &content);
+            escaped
+        };
+        let quoted_prefix_len = content.len();
         let flags = self.read_continuation_into(&mut content);
         if let Some(error) = flags.error {
             return Some(Token::Error(error));
+        }
+        if flags.has_unquoted_expansion {
+            let mut ranges = flags.quoted_ranges;
+            ranges.push((0, quoted_prefix_len));
+            Self::apply_quote_markers(&mut content, ranges);
+            return Some(Token::Word(content));
+        }
+        if flags.has_unquoted_glob {
+            let mut ranges = flags.quoted_ranges;
+            ranges.push((0, quoted_prefix_len));
+            ranges.sort_unstable_by_key(|&(s, _)| s);
+            return Some(Token::QuotedGlobWord(
+                Self::escape_glob_metas_in_quoted_ranges(&content, &ranges),
+            ));
         }
 
         // Single-quoted strings are literal - no variable expansion. Quote-boundary
@@ -1099,6 +1158,9 @@ impl<'a> Lexer<'a> {
                             self.advance(); // closing '
                             closed = true;
                             break;
+                        }
+                        if matches!(ch, '\x00' | '$') {
+                            content.push('\x00');
                         }
                         content.push(ch);
                         self.advance();
@@ -1507,6 +1569,14 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    /// Characters `escape_glob_metas_in_quoted_ranges` backslash-escapes.
+    fn is_glob_escape_char(ch: char) -> bool {
+        matches!(
+            ch,
+            '\\' | '*' | '?' | '[' | ']' | '{' | '}' | '@' | '!' | '+' | '(' | ')' | '|'
+        )
+    }
+
     /// Drop quote-boundary markers and decode NUL escape sentinels in one
     /// pass, so a NUL-escaped marker byte survives as data.
     fn strip_markers_decode_sentinels(segment: &str) -> String {
@@ -1666,6 +1736,9 @@ impl<'a> Lexer<'a> {
 
     /// Escape glob metacharacters within quoted byte ranges so that the glob
     /// expander treats them as literal characters rather than active patterns.
+    /// Each range is also wrapped in quote-segment markers: `parse_word` then
+    /// ends a variable name at the closing quote (`"$x"zz*` reads `$x`, not
+    /// `$xzz`) and records which parts were quoted for field splitting.
     /// Ranges must be sorted and non-overlapping.
     fn escape_glob_metas_in_quoted_ranges(s: &str, quoted_ranges: &[(usize, usize)]) -> String {
         if quoted_ranges.is_empty() {
@@ -1692,6 +1765,7 @@ impl<'a> Lexer<'a> {
         let mut expansion_stack: Vec<char> = Vec::new();
         let n = char_vec.len();
         let mut i = 0usize;
+        let mut marked_quoted = false;
 
         while i < n {
             let (byte_pos, ch) = char_vec[i];
@@ -1704,6 +1778,10 @@ impl<'a> Lexer<'a> {
             let in_quoted = range_idx < quoted_ranges.len()
                 && byte_pos >= quoted_ranges[range_idx].0
                 && ch_end <= quoted_ranges[range_idx].1;
+            if in_quoted != marked_quoted {
+                result.push(if in_quoted { '\u{1e}' } else { '\u{1f}' });
+                marked_quoted = in_quoted;
+            }
 
             if in_quoted {
                 if expansion_stack.is_empty() && ch == '$' {
@@ -1758,6 +1836,9 @@ impl<'a> Lexer<'a> {
 
             result.push(ch);
             i += 1;
+        }
+        if marked_quoted {
+            result.push('\u{1f}');
         }
         result
     }

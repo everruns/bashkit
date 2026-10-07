@@ -350,6 +350,11 @@ fn literal_word(word: &Word) -> Option<String> {
             _ => return None,
         }
     }
+    // A `QuotedGlobWord` stores its quoted glob characters backslash-escaped;
+    // report the text the command actually sees.
+    if word.quoted && word.has_unquoted_glob {
+        out = crate::parser::unescape_glob_literal(&out);
+    }
     Some(out)
 }
 

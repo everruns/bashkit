@@ -98,8 +98,22 @@ impl Interpreter {
         if self.contains_glob_chars(pattern) || self.contains_extglob(pattern) {
             self.glob_match(value, pattern)
         } else {
-            // Literal match
-            value == pattern
+            // Literal match; a backslash still escapes the next character
+            // (`\*` from quoted pattern text matches a literal `*`, and an
+            // unquoted `a\b` pattern matches `ab`, as in bash).
+            if pattern.contains('\\') {
+                let mut literal = String::with_capacity(pattern.len());
+                let mut chars = pattern.chars();
+                while let Some(ch) = chars.next() {
+                    match ch {
+                        '\\' => literal.push(chars.next().unwrap_or('\\')),
+                        _ => literal.push(ch),
+                    }
+                }
+                value == literal
+            } else {
+                value == pattern
+            }
         }
     }
 
@@ -703,17 +717,29 @@ impl Interpreter {
 
     /// Expand glob for a single item, applying noglob/failglob/nullglob.
     /// Returns Err(pattern) if failglob triggers, Ok(items) otherwise.
+    /// Glob-expand one field. `escaped` marks a field from a word whose
+    /// quoted glob characters the lexer backslash-escaped (quoted &&
+    /// has_unquoted_glob): when the field is not replaced by matches, those
+    /// escapes are removed so `"*"zz*` with no match prints `*zz*`.
     pub(crate) async fn expand_glob_item(
         &self,
         item: &str,
+        escaped: bool,
     ) -> std::result::Result<Vec<String>, String> {
+        let literal = |s: &str| {
+            if escaped {
+                Self::glob_path_unescape(s)
+            } else {
+                s.to_string()
+            }
+        };
         if !(self.contains_glob_chars(item) || self.contains_extglob(item)) || self.is_noglob() {
-            return Ok(vec![item.to_string()]);
+            return Ok(vec![literal(item)]);
         }
         let glob_matches = self.expand_glob(item).await.unwrap_or_default();
         if glob_matches.is_empty() {
             if self.is_failglob() {
-                return Err(item.to_string());
+                return Err(literal(item));
             }
             let nullglob = self
                 .scoped
@@ -724,7 +750,7 @@ impl Interpreter {
             if nullglob {
                 Ok(vec![])
             } else {
-                Ok(vec![item.to_string()])
+                Ok(vec![literal(item)])
             }
         } else {
             Ok(glob_matches)
@@ -743,7 +769,7 @@ impl Interpreter {
     /// The metacharacter set below must stay in sync with the escape set in
     /// `Interpreter::quote_expansion_for_quoted_glob` (interpreter/mod.rs); if
     /// one side adds or drops a character, lookups break or escapes leak.
-    fn glob_path_unescape(s: &str) -> String {
+    pub(super) fn glob_path_unescape(s: &str) -> String {
         let mut result = String::with_capacity(s.len());
         let mut chars = s.chars().peekable();
         while let Some(ch) = chars.next() {

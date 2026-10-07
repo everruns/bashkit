@@ -1352,7 +1352,20 @@ impl<'a> Parser<'a> {
                     },
                     Some(tokens::Token::Word(w))
                     | Some(tokens::Token::QuotedWord(w))
-                    | Some(tokens::Token::QuotedGlobWord(w)) => self.parse_word(w.clone()),
+                    | Some(tokens::Token::QuotedGlobWord(w)) => {
+                        // Keep the quoting flags: quoted pattern text matches
+                        // literally (`"$x")`, `a\*)`).
+                        let mut word = self.parse_word(w.clone());
+                        match &self.current_token {
+                            Some(tokens::Token::QuotedWord(_)) => word.quoted = true,
+                            Some(tokens::Token::QuotedGlobWord(_)) => {
+                                word.quoted = true;
+                                word.has_unquoted_glob = true;
+                            }
+                            _ => {}
+                        }
+                        word
+                    }
                     _ => unreachable!(),
                 };
                 patterns.push(pattern);
@@ -2332,7 +2345,10 @@ impl<'a> Parser<'a> {
     /// Parse the value side of an assignment (`VAR=value`).
     /// Returns `Some((Assignment, needs_advance))` if the current word is an assignment.
     /// The bool indicates whether the caller must call `self.advance()` afterward.
-    fn try_parse_assignment(&mut self, w: &str) -> Option<(Assignment, bool)> {
+    /// `glob_escaped` marks a `QuotedGlobWord` token: the lexer backslash-
+    /// escaped its quoted glob characters, which an assignment (no globbing)
+    /// must drop again so `x="a*"b*` stores `a*b*`.
+    fn try_parse_assignment(&mut self, w: &str, glob_escaped: bool) -> Option<(Assignment, bool)> {
         let (name, index, value, is_append) = Self::is_assignment(w)?;
         let name = name.to_string();
         let index = index.map(|s| s.to_string());
@@ -2407,7 +2423,15 @@ impl<'a> Parser<'a> {
                 part_quoted: Vec::new(),
             }
         } else {
-            self.parse_word(value_str)
+            let mut w = self.parse_word(value_str);
+            if glob_escaped {
+                for part in &mut w.parts {
+                    if let WordPart::Literal(s) = part {
+                        *s = unescape_glob_literal(s);
+                    }
+                }
+            }
+            w
         };
         Some((
             Assignment {
@@ -2679,7 +2703,8 @@ impl<'a> Parser<'a> {
                     // Check for assignment (only before the command name, not for literal words)
                     if words.is_empty()
                         && !is_literal
-                        && let Some((assignment, needs_advance)) = self.try_parse_assignment(&w)
+                        && let Some((assignment, needs_advance)) =
+                            self.try_parse_assignment(&w, is_glob_quoted)
                     {
                         if needs_advance {
                             self.advance();
@@ -4038,6 +4063,28 @@ fn cond_regex_literal(raw: &str) -> String {
             }
             _ => out.push(c),
         }
+    }
+    out
+}
+
+/// Undo the lexer's glob escaping of quoted text (`\*` -> `*`, `\\` -> `\`)
+/// for contexts that never glob.
+pub(crate) fn unescape_glob_literal(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\\'
+            && let Some(&next) = chars.peek()
+            && matches!(
+                next,
+                '\\' | '*' | '?' | '[' | ']' | '{' | '}' | '@' | '!' | '+' | '(' | ')' | '|'
+            )
+        {
+            out.push(next);
+            chars.next();
+            continue;
+        }
+        out.push(ch);
     }
     out
 }
