@@ -225,3 +225,61 @@ match
 ### expect
 match
 ### end
+
+### cond_regex_hash_in_group
+# `#` inside a regex group is part of the pattern, not a comment
+l="## Title"
+[[ $l =~ ^(#+)[[:space:]](.+)$ ]] && echo "${BASH_REMATCH[1]}|${BASH_REMATCH[2]}"
+### expect
+##|Title
+### end
+
+### cond_regex_hash_mid_word
+[[ "a#b" =~ a#b ]] && echo yes
+[[ "#" =~ ^#$ ]] && echo anchored
+[[ x == x#y ]] || echo nomatch
+### expect
+yes
+anchored
+nomatch
+### end
+
+### cond_regex_unquoted_space_in_group
+[[ "a b" =~ (a b) ]] && echo "${BASH_REMATCH[1]}"
+### expect
+a b
+### end
+
+### cond_regex_alternation
+[[ "y" =~ x|y ]] && echo alt
+### expect
+alt
+### end
+
+### cond_regex_var_in_group
+r="#"
+[[ "#" =~ ($r) ]] && echo "${BASH_REMATCH[1]}"
+### expect
+#
+### end
+
+### cond_regex_quoting_is_literal
+# Quoted text and backslash escapes match literally; a bare `$` is an anchor
+[[ "a.b" =~ "a.b" ]] && echo q1
+[[ "axb" =~ "a.b" ]] || echo q2
+[[ ab =~ a\b ]] && echo q3
+[[ axb =~ ^a\.b$ ]] || echo q4
+[[ "a b" =~ ^a" "b$ ]] && echo q5
+r=b; [[ ab =~ a$r$ ]] && echo q6
+[[ x =~ (x$|y$) ]] && echo q7
+[[ "x+" =~ x"+" ]] && echo q8
+### expect
+q1
+q2
+q3
+q4
+q5
+q6
+q7
+q8
+### end

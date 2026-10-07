@@ -1685,6 +1685,17 @@ impl<'a> Parser<'a> {
                         continue;
                     }
 
+                    if w_clone == "=~" && !is_quoted && !is_literal && self.peeked_token.is_none() {
+                        // Read the operand from source: bash lexes it as one
+                        // regex word, where `#`, `|` and spaces in groups are
+                        // pattern text, not comments or operators.
+                        words.push(Word::literal("=~"));
+                        if let Some(raw) = self.lexer.read_cond_regex() {
+                            words.push(self.cond_regex_word(raw));
+                        }
+                        self.advance();
+                        continue;
+                    }
                     if w_clone == "=~" {
                         saw_regex_op = true;
                     }
@@ -1746,6 +1757,41 @@ impl<'a> Parser<'a> {
         }
 
         Ok(CompoundCommand::Conditional(words))
+    }
+
+    /// Build the `=~` operand from its raw source (see
+    /// [`Lexer::read_cond_regex`]). Plain text stays a literal pattern;
+    /// unquoted `$` parts expand; quoted forms keep the token-by-token
+    /// concatenation used before raw reading.
+    fn cond_regex_word(&self, raw: String) -> Word {
+        if !cond_regex_expands(&raw) {
+            return Word::literal(cond_regex_literal(&raw));
+        }
+        if !raw.contains(['\'', '"']) {
+            return self.parse_word(raw);
+        }
+        // Quotes mixed with expansions: keep the token-by-token
+        // concatenation used before raw reading.
+        let mut lexer = Lexer::new(&raw);
+        let mut pattern = String::new();
+        let mut last_end = None;
+        while let Some(st) = lexer.next_spanned_token() {
+            if last_end.is_some_and(|end| st.span.start.offset > end) {
+                pattern.push(' ');
+            }
+            last_end = Some(st.span.end.offset);
+            match st.token {
+                tokens::Token::Word(w)
+                | tokens::Token::LiteralWord(w)
+                | tokens::Token::QuotedWord(w)
+                | tokens::Token::QuotedGlobWord(w) => pattern.push_str(&w),
+                tokens::Token::LeftParen => pattern.push('('),
+                tokens::Token::RightParen => pattern.push(')'),
+                tokens::Token::Pipe => pattern.push('|'),
+                _ => {}
+            }
+        }
+        Word::literal(&pattern)
     }
 
     /// Collect a regex pattern after =~ in [[ ]], handling parens and special chars.
@@ -3877,6 +3923,86 @@ fn empty_background(span: Span) -> (ListOperator, Command) {
             span,
         }),
     )
+}
+
+/// Whether a raw `=~` operand holds an expansion. A `$` that cannot start
+/// one (`^a$`, `(x$|y$)`) is the regex end anchor; single quotes hide both.
+fn cond_regex_expands(raw: &str) -> bool {
+    let mut chars = raw.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => {
+                chars.next();
+            }
+            '\'' => {
+                for q in chars.by_ref() {
+                    if q == '\'' {
+                        break;
+                    }
+                }
+            }
+            '`' => return true,
+            '$' if chars.peek().is_some_and(|n| {
+                n.is_alphanumeric()
+                    || matches!(n, '_' | '{' | '(' | '@' | '*' | '#' | '?' | '!' | '-')
+            }) =>
+            {
+                return true;
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Turn a `=~` operand without expansions into the regex bash compiles:
+/// quoted text and backslash-escaped characters match literally, the rest
+/// is regex syntax (`^a'.'\.b$` matches `a.` then `.b`).
+fn cond_regex_literal(raw: &str) -> String {
+    let mut out = String::new();
+    let mut chars = raw.chars();
+    let literal = |out: &mut String, c: char| {
+        if c.is_alphanumeric() || c == '_' || c == ' ' {
+            out.push(c);
+        } else {
+            out.push('\\');
+            out.push(c);
+        }
+    };
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => match chars.next() {
+                Some(n) => literal(&mut out, n),
+                None => out.push_str("\\\\"),
+            },
+            '\'' => {
+                for q in chars.by_ref() {
+                    if q == '\'' {
+                        break;
+                    }
+                    literal(&mut out, q);
+                }
+            }
+            '"' => {
+                while let Some(q) = chars.next() {
+                    match q {
+                        '"' => break,
+                        '\\' => match chars.next() {
+                            Some(n @ ('"' | '\\' | '$' | '`')) => literal(&mut out, n),
+                            Some(n) => {
+                                literal(&mut out, '\\');
+                                literal(&mut out, n);
+                            }
+                            None => literal(&mut out, '\\'),
+                        },
+                        _ => literal(&mut out, q),
+                    }
+                }
+            }
+            _ => out.push(c),
+        }
+    }
+    out
 }
 
 #[cfg(test)]

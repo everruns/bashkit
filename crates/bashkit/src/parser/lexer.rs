@@ -1974,24 +1974,83 @@ impl<'a> Lexer<'a> {
         false
     }
 
+    /// Read the raw source of a `[[ ... =~ REGEX ]]` operand, as bash does:
+    /// one word that ends at unquoted whitespace or `;&<>` outside
+    /// parentheses. Inside parentheses spaces belong to the regex; `|` and
+    /// `#` are ordinary characters (`^(#+) (.+)$`, `x|y`). Quotes and
+    /// backslashes are kept verbatim for the caller to interpret. Returns
+    /// `None` when no operand follows.
+    pub fn read_cond_regex(&mut self) -> Option<String> {
+        while matches!(self.peek_char(), Some(' ' | '\t')) {
+            self.advance();
+        }
+        let mut raw = String::new();
+        let mut depth = 0usize;
+        while let Some(ch) = self.peek_char() {
+            if depth == 0 {
+                if matches!(ch, ' ' | '\t' | '\n' | ';' | '&' | '<' | '>') {
+                    break;
+                }
+                if ch == ')' {
+                    break;
+                }
+                if ch == '|' {
+                    // `||` ends the operand; a lone `|` is alternation.
+                    let mut ahead = self.chars.clone();
+                    ahead.next();
+                    if self.reinject_buf.is_empty() && ahead.peek() == Some(&'|') {
+                        break;
+                    }
+                }
+            }
+            match ch {
+                '(' => depth += 1,
+                ')' => depth -= 1,
+                '\n' => {} // only reachable inside parentheses
+                _ => {}
+            }
+            raw.push(ch);
+            self.advance();
+            match ch {
+                '\\' => {
+                    if let Some(next) = self.peek_char() {
+                        raw.push(next);
+                        self.advance();
+                    }
+                }
+                '\'' => {
+                    while let Some(c) = self.advance() {
+                        raw.push(c);
+                        if c == '\'' {
+                            break;
+                        }
+                    }
+                }
+                '"' => {
+                    while let Some(c) = self.advance() {
+                        raw.push(c);
+                        if c == '\\' {
+                            if let Some(n) = self.advance() {
+                                raw.push(n);
+                            }
+                        } else if c == '"' {
+                            break;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        (!raw.is_empty()).then_some(raw)
+    }
+
     fn is_word_char(&self, ch: char) -> bool {
         !matches!(
             ch,
-            ' ' | '\t'
-                | '\n'
-                | ';'
-                | '|'
-                | '&'
-                | '>'
-                | '<'
-                | '('
-                | ')'
-                | '{'
-                | '}'
-                | '\''
-                | '"'
-                | '#'
+            ' ' | '\t' | '\n' | ';' | '|' | '&' | '>' | '<' | '(' | ')' | '{' | '}' | '\'' | '"'
         )
+        // `#` is a word char: it starts a comment only at the start of a
+        // word (`echo a#b` prints `a#b`), handled in `next_token_inner`.
     }
 
     /// Read here document content until the delimiter line is found.
