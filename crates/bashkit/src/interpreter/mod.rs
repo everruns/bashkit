@@ -8614,11 +8614,21 @@ impl Interpreter {
         let cmd = args.join(" ");
         let script = match self.parse_embedded_script(&cmd).await {
             Ok(script) => script,
-            Err(crate::error::Error::Parse { message, .. }) => {
-                return Ok(ExecResult::err(
-                    format!("eval: parse error: {}", message),
+            Err(crate::error::Error::Parse { message, line, .. }) => {
+                // Like bash: status 2, line counted from the eval's own line, then
+                // the offending source line. Redirects still apply (`2>&1`).
+                let at = self.current_line + line.max(1) - 1;
+                let src = cmd.lines().nth(line.max(1) - 1).unwrap_or("");
+                let message = if message.starts_with("syntax error") {
+                    message
+                } else {
+                    format!("syntax error: {message}")
+                };
+                let result = ExecResult::err(
+                    format!("bash: eval: line {at}: {message}\nbash: eval: line {at}: `{src}'\n"),
                     2,
-                ));
+                );
+                return self.apply_redirections(result, redirects).await;
             }
             Err(e) => return Err(e),
         };
@@ -8846,6 +8856,8 @@ impl Interpreter {
                 ParameterOp::UpperAll => out.push_str(&format!("${{{}^^{}}}", name, operand)),
                 ParameterOp::LowerFirst => out.push_str(&format!("${{{},{}}}", name, operand)),
                 ParameterOp::LowerAll => out.push_str(&format!("${{{},,{}}}", name, operand)),
+                ParameterOp::ToggleFirst => out.push_str(&format!("${{{}~{}}}", name, operand)),
+                ParameterOp::ToggleAll => out.push_str(&format!("${{{}~~{}}}", name, operand)),
             },
             WordPart::Length(name) => out.push_str(&format!("${{#{}}}", name)),
             WordPart::ArrayAccess { name, index } => {
@@ -10474,9 +10486,10 @@ impl Interpreter {
                     self.insert_array_checked(name.clone(), arr);
                 }
                 builtins::BuiltinSideEffect::SetIndexedArray { name, entries } => {
-                    let arr: HashMap<usize, String> = entries.iter().cloned().collect();
-                    // Remove existing array first (mirrors mapfile behavior)
-                    self.arrays_mut().remove(name);
+                    // Merges into the existing array; mapfile sends RemoveArray
+                    // first unless `-O` asked to keep the other elements.
+                    let mut arr = self.arrays_mut().remove(name).unwrap_or_default();
+                    arr.extend(entries.iter().cloned());
                     if !arr.is_empty() {
                         self.insert_array_checked(name.clone(), arr);
                     }
