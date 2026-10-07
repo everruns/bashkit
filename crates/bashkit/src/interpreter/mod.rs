@@ -1656,6 +1656,7 @@ impl Interpreter {
             "strings" => Strings,
             "tac" => Tac,
             "rev" => Rev,
+            "fmt" => Fmt,
             "fold" => Fold,
             "expand" => Expand,
             "unexpand" => Unexpand,
