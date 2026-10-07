@@ -200,6 +200,26 @@ short input directly. Key decoding and the raw/alternate-screen guard are
 shared with `vi` in `terminal/keys.rs`. Pagers cannot tell whether stdout is
 redirected (L-TERM-004).
 
+## man / watch
+
+`man` (`builtins/man.rs`, always registered) is a `PlanDriver`: it runs
+`CMD --help` for registered program builtins, `help CMD` for bash builtins
+(`exit --help` would exit the shell; functions never run), and shows the
+first non-empty successful text, in `less` via `pager::page_text` when a
+`Tty` is present. No page: `No manual entry for CMD`, status 16. Decision:
+no man page corpus; `--help` is the one source of truth per command.
+
+`watch` (`builtins/pipeline.rs`) stays a one-shot notice outside a terminal.
+With a `Tty` it returns a `PlanDriver` that enters the alternate screen
+(cooked mode, so Ctrl-C still interrupts), runs `bash -c CMD` (or argv with
+`-x`), redraws title + output clipped to the screen with control chars in
+caret notation, sleeps the interval (floor 0.1 s) and repeats. Ctrl-C drops
+the driver, whose `Drop` leaves the alternate screen. `-g` returns once the
+output differs from the first run, which gives agents a "wait until changed"
+primitive. Runs and sleeps count against the execution timeout (TM-DOS-120
+only exempts input waits). `top` is not provided: there is no process table
+worth showing (background jobs run synchronously).
+
 ## Tests
 
 - Unit: `terminal::tests` (line discipline, prompts, resize, exit, timeout

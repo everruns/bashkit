@@ -102,8 +102,18 @@ pub(crate) async fn page(ctx: &Context<'_>, tty: &Tty, kind: Pager) -> Result<Ex
         }
         title = files[0].to_string();
     }
+    page_text(tty, &text, title, kind, quit_if_one_screen).await
+}
 
-    let mut view = View::new(&text, title, tty.size().cols as usize);
+/// Page `text` on the terminal (used by `less`, `more` and `man`).
+pub(crate) async fn page_text(
+    tty: &Tty,
+    text: &str,
+    title: String,
+    kind: Pager,
+    quit_if_one_screen: bool,
+) -> Result<ExecResult> {
+    let mut view = View::new(text, title, tty.size().cols as usize);
     let page_rows = (tty.size().rows as usize).saturating_sub(1).max(1);
     if quit_if_one_screen && view.rows.len() <= page_rows {
         for row in &view.rows {

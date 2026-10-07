@@ -347,79 +347,225 @@ impl Builtin for Tee {
 
 /// The watch builtin - execute a program periodically.
 ///
-/// Usage: watch [-n SECONDS] COMMAND
+/// Usage: watch [-n SECONDS] [-t] [-g] [-x] COMMAND
 ///
 /// Options:
 ///   -n SECONDS   Specify update interval (default: 2)
+///   -t           No title line
+///   -g           Exit when the output changes (`--chgexit`)
+///   -x           Run COMMAND's words directly instead of `bash -c`
 ///
-/// Note: In Bashkit's virtual environment, watch runs the command once
-/// and returns, since continuous execution isn't supported.
+/// Inside a terminal session, watch reruns the command every interval on the
+/// alternate screen until Ctrl-C (or a change with `-g`); each run and the
+/// interval count against the execution timeout like `sleep`. Elsewhere it
+/// prints a one-line notice, since there is no screen to refresh.
 pub struct Watch;
+
+const WATCH_USAGE: &str = "Usage: watch [OPTION]... COMMAND\nExecute a program periodically, showing output.\n\n  -n SECONDS\tupdate interval (default: 2)\n  -t\t\tno title line\n  -g\t\texit when the output changes\n  -x\t\tpass COMMAND's words to exec instead of bash -c\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n";
+
+struct WatchArgs {
+    interval: f64,
+    title: bool,
+    chgexit: bool,
+    exec: bool,
+    command: Vec<String>,
+}
+
+fn parse_watch(args: &[String]) -> std::result::Result<WatchArgs, String> {
+    let mut parsed = WatchArgs {
+        interval: 2.0,
+        title: true,
+        chgexit: false,
+        exec: false,
+        command: Vec::new(),
+    };
+    let mut i = 0;
+    while i < args.len() {
+        let arg = &args[i];
+        if arg == "-n" || arg == "--interval" {
+            i += 1;
+            let Some(value) = args.get(i) else {
+                return Err("watch: option requires an argument -- 'n'\n".to_string());
+            };
+            match value.parse::<f64>() {
+                // THREAT[TM-DOS-119]: a floor keeps `-n 0` from spinning.
+                Ok(n) if n > 0.0 && n.is_finite() => parsed.interval = n.max(0.1),
+                _ => {
+                    return Err(format!("watch: invalid interval '{value}'\n"));
+                }
+            }
+        } else if arg == "-t" || arg == "--no-title" {
+            parsed.title = false;
+        } else if arg == "-g" || arg == "--chgexit" {
+            parsed.chgexit = true;
+        } else if arg == "-x" || arg == "--exec" {
+            parsed.exec = true;
+        } else if arg.starts_with('-') && arg != "-" {
+            // Skip other options for compatibility
+        } else {
+            parsed.command = args[i..].to_vec();
+            return Ok(parsed);
+        }
+        i += 1;
+    }
+    Err("watch: no command specified\n".to_string())
+}
 
 #[async_trait]
 impl Builtin for Watch {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        if let Some(r) = super::check_help_version(
-            ctx.args,
-            "Usage: watch [OPTION]... COMMAND\nExecute a program periodically, showing output.\n\n  -n SECONDS\tupdate interval (default: 2)\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
-            Some("watch (bashkit) 0.1"),
-        ) {
+        if let Some(r) =
+            super::check_help_version(ctx.args, WATCH_USAGE, Some("watch (bashkit) 0.1"))
+        {
             return Ok(r);
         }
-        let mut _interval: f64 = 2.0;
-        let mut command_start: Option<usize> = None;
-
-        let mut i = 0;
-        while i < ctx.args.len() {
-            let arg = &ctx.args[i];
-            if arg == "-n" {
-                i += 1;
-                if i >= ctx.args.len() {
-                    return Ok(ExecResult::err(
-                        "watch: option requires an argument -- 'n'\n".to_string(),
-                        1,
-                    ));
-                }
-                match ctx.args[i].parse::<f64>() {
-                    Ok(n) if n > 0.0 => _interval = n,
-                    _ => {
-                        return Ok(ExecResult::err(
-                            format!("watch: invalid interval '{}'\n", ctx.args[i]),
-                            1,
-                        ));
-                    }
-                }
-            } else if arg.starts_with('-') && arg != "-" {
-                // Skip other options for compatibility
-            } else {
-                command_start = Some(i);
-                break;
-            }
-            i += 1;
-        }
-
-        let start = match command_start {
-            Some(s) => s,
-            None => {
-                return Ok(ExecResult::err(
-                    "watch: no command specified\n".to_string(),
-                    1,
-                ));
-            }
+        let parsed = match parse_watch(ctx.args) {
+            Ok(p) => p,
+            Err(msg) => return Ok(ExecResult::err(msg, 1)),
         };
-
-        let command: Vec<_> = ctx.args[start..].iter().collect();
         let output = format!(
-            "Every {:.1}s: {}\n\n(watch: continuous execution not supported in virtual mode)\n",
-            _interval,
-            command
-                .iter()
-                .map(|s| s.as_str())
-                .collect::<Vec<_>>()
-                .join(" ")
+            "Every {:.1}s: {}\n\n(watch: continuous execution needs a terminal session)\n",
+            parsed.interval,
+            parsed.command.join(" ")
         );
 
         Ok(ExecResult::ok(output))
+    }
+
+    #[cfg(feature = "terminal")]
+    async fn execution_plan(&self, ctx: &Context<'_>) -> Result<Option<ExecutionPlan>> {
+        if ctx.args.iter().any(|a| a == "--help" || a == "--version") {
+            return Ok(None);
+        }
+        let Some(tty) = super::pager::terminal(ctx)? else {
+            return Ok(None);
+        };
+        let Ok(parsed) = parse_watch(ctx.args) else {
+            return Ok(None);
+        };
+        Ok(Some(ExecutionPlan::Driver(Box::new(WatchRun {
+            tty,
+            args: parsed,
+            first: None,
+            on_screen: false,
+        }))))
+    }
+}
+
+/// Reruns the command on the alternate screen. Dropped on Ctrl-C (the
+/// interpreter future is dropped), which restores the primary screen.
+#[cfg(feature = "terminal")]
+struct WatchRun {
+    tty: crate::terminal::Tty,
+    args: WatchArgs,
+    /// Output of the first run, for `-g`.
+    first: Option<String>,
+    on_screen: bool,
+}
+
+#[cfg(feature = "terminal")]
+impl WatchRun {
+    fn command(&self) -> super::PlanStep {
+        let (name, args) = if self.args.exec {
+            (
+                self.args.command[0].clone(),
+                self.args.command[1..].to_vec(),
+            )
+        } else {
+            (
+                "bash".to_string(),
+                vec!["-c".to_string(), self.args.command.join(" ")],
+            )
+        };
+        super::PlanStep::Run {
+            command: SubCommand {
+                name,
+                args,
+                stdin: None,
+                assignments: Vec::new(),
+            },
+            cwd: None,
+        }
+    }
+
+    fn render(&self, output: &str) {
+        let size = self.tty.size();
+        let cols = usize::from(size.cols);
+        let mut rows = usize::from(size.rows);
+        let mut screen = String::from("\x1b[H\x1b[2J");
+        if self.args.title {
+            let title = format!(
+                "Every {:.1}s: {}",
+                self.args.interval,
+                self.args.command.join(" ")
+            );
+            screen.extend(title.chars().take(cols));
+            screen.push_str("\r\n\r\n");
+            rows = rows.saturating_sub(2);
+        }
+        let lines: Vec<String> = output
+            .lines()
+            .take(rows)
+            .map(|l| caret_notation(l).chars().take(cols).collect())
+            .collect();
+        screen.push_str(&lines.join("\r\n"));
+        self.tty.write(screen.as_bytes());
+    }
+}
+
+/// Control characters as `^X` (tabs kept, `\r` dropped), so command output
+/// cannot move the cursor or inject escape sequences into the host terminal.
+#[cfg(feature = "terminal")]
+fn caret_notation(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    for c in line.chars() {
+        match c {
+            '\r' => {}
+            '\t' => out.push(' '),
+            c if (c as u32) < 0x20 || c == '\x7f' => {
+                out.push('^');
+                out.push(((c as u8) ^ 0x40) as char);
+            }
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+#[cfg(feature = "terminal")]
+impl Drop for WatchRun {
+    fn drop(&mut self) {
+        if self.on_screen {
+            self.tty.write(b"\x1b[?1049l");
+        }
+    }
+}
+
+#[cfg(feature = "terminal")]
+#[async_trait]
+impl super::PlanDriver for WatchRun {
+    async fn next(&mut self, last: Option<ExecResult>) -> Result<super::PlanStep> {
+        let Some(result) = last else {
+            self.tty.write(b"\x1b[?1049h");
+            self.on_screen = true;
+            return Ok(self.command());
+        };
+        let mut output = result.stdout.text_lossy().into_owned();
+        output.push_str(&result.stderr.text_lossy());
+        self.render(&output);
+        if self.args.chgexit {
+            match &self.first {
+                None => self.first = Some(output),
+                Some(first) if *first != output => {
+                    self.tty.write(b"\x1b[?1049l");
+                    self.on_screen = false;
+                    return Ok(super::PlanStep::Done(ExecResult::ok("")));
+                }
+                Some(_) => {}
+            }
+        }
+        crate::time_compat::sleep(std::time::Duration::from_secs_f64(self.args.interval)).await;
+        Ok(self.command())
     }
 }
 #[cfg(test)]
