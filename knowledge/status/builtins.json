@@ -79,6 +79,10 @@
     },
     {
       "feature": null,
+      "name": "busybox"
+    },
+    {
+      "feature": null,
       "name": "bzcat"
     },
     {
@@ -699,6 +703,10 @@
     },
     {
       "feature": null,
+      "name": "sudo"
+    },
+    {
+      "feature": null,
       "name": "sum"
     },
     {
@@ -894,5 +902,5 @@
       "name": "zip"
     }
   ],
-  "count": 223
+  "count": 225
 }
