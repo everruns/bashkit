@@ -23,11 +23,15 @@ after=2
 ### end
 
 ### awk_syntax_error_continues
-awk 'BEGIN{,}' 2>/dev/null; echo "after=$?"
-awk 'BEGIN{,}' 2>&1 | grep -c '^awk: '
+# Exit status (2 mawk, 1 gawk) and message layout vary by awk; only check
+# that the command fails, reports on stderr, and the script continues.
+awk 'BEGIN{,}' 2>/dev/null || echo failed
+awk 'BEGIN{,}' 2>&1 >/dev/null | grep -q 'awk' && echo reported
+echo after
 ### expect
-after=2
-1
+failed
+reported
+after
 ### end
 
 ### rg_invalid_regex_continues
