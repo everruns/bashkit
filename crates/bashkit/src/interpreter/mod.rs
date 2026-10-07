@@ -6563,127 +6563,141 @@ impl Interpreter {
                     }
                 }
                 AssignmentValue::Array(words) => {
-                    // Expand directly into the replacement array so word-split expansions cannot
-                    // accumulate an unbounded temporary Vec before max_array_entries is enforced.
-                    let arr_name = self.resolve_nameref(&assignment.name).to_string();
-                    let old_entries = self.scoped.arrays.get(&arr_name).map_or(0, |arr| arr.len());
-                    let remaining_entries = self
-                        .memory_limits
-                        .max_array_entries
-                        .saturating_sub(self.memory_budget.array_entries);
-                    let max_new_entries = old_entries.saturating_add(remaining_entries);
-                    let mut next_arr = if assignment.append {
-                        self.scoped
-                            .arrays
-                            .get(&arr_name)
-                            .cloned()
-                            .unwrap_or_default()
-                    } else {
-                        HashMap::new()
-                    };
-                    let mut idx = if assignment.append {
-                        next_arr.keys().max().map(|k| k + 1).unwrap_or(0)
-                    } else {
-                        0
-                    };
-
-                    // Brace expansion runs first, on the unexpanded word, as for
-                    // command arguments; pathname expansion runs on the fields below.
-                    let mut braced_words: Vec<Word> = Vec::with_capacity(words.len());
-                    for w in words.iter() {
-                        match self.brace_expand_word(w) {
-                            Some(ws) => braced_words.extend(ws),
-                            None => braced_words.push(w.clone()),
-                        }
-                    }
-
-                    'array_words: for word in braced_words.iter() {
-                        // `[i]=value` sets one element; the value gets no field
-                        // splitting or pathname expansion.
-                        if let Some((index, value_word)) = split_indexed_element(word) {
-                            let i = self.evaluate_arithmetic_with_assign(&index);
-                            let value = self.expand_word(&value_word).await?;
-                            if i < 0 {
-                                continue;
-                            }
-                            let i = i as usize;
-                            if !next_arr.contains_key(&i) && next_arr.len() >= max_new_entries {
-                                break 'array_words;
-                            }
-                            next_arr.insert(i, value);
-                            idx = i + 1;
-                            continue;
-                        }
-                        let globs = !word.quoted || word.has_unquoted_glob;
-                        let is_unquoted_expansion = !word.quoted
-                            && word.parts.iter().any(|p| {
-                                matches!(
-                                    p,
-                                    WordPart::Variable(_)
-                                        | WordPart::CommandSubstitution(_)
-                                        | WordPart::ArithmeticExpansion(_)
-                                        | WordPart::ParameterExpansion { .. }
-                                        | WordPart::ArrayAccess { .. }
-                                )
-                            });
-                        // "${arr[@]}" or "$@" in array context should splat
-                        // individual elements, not join into a single string.
-                        let is_quoted_splat = word.quoted
-                            && word.parts.len() == 1
-                            && matches!(
-                                &word.parts[0],
-                                WordPart::ArrayAccess { index, .. } if index == "@"
-                            );
-                        let is_quoted_positional_splat = word.quoted
-                            && word.parts.len() == 1
-                            && matches!(
-                                &word.parts[0],
-                                WordPart::Variable(name) if name == "@"
-                            );
-
-                        if is_unquoted_expansion {
-                            let remaining = max_new_entries.saturating_sub(next_arr.len());
-                            if remaining == 0 {
-                                break;
-                            }
-                            let expanded = self.expand_word(word).await?;
-                            for field in self.ifs_split_limited(&expanded, remaining)? {
-                                for item in self.glob_array_field(field, word, globs).await {
-                                    if next_arr.len() >= max_new_entries {
-                                        break 'array_words;
-                                    }
-                                    next_arr.insert(idx, item);
-                                    idx += 1;
-                                }
-                            }
-                            if next_arr.len() >= max_new_entries {
-                                break 'array_words;
-                            }
-                        } else if is_quoted_splat || is_quoted_positional_splat {
-                            for field in self.expand_word_to_fields(word).await? {
-                                if next_arr.len() >= max_new_entries {
-                                    break 'array_words;
-                                }
-                                next_arr.insert(idx, field);
-                                idx += 1;
-                            }
-                        } else {
-                            let value = self.expand_word(word).await?;
-                            for item in self.glob_array_field(value, word, globs).await {
-                                if next_arr.len() >= max_new_entries {
-                                    break 'array_words;
-                                }
-                                next_arr.insert(idx, item);
-                                idx += 1;
-                            }
-                        }
-                    }
-
-                    let _ = self.insert_array_checked(arr_name, next_arr);
+                    self.assign_array_literal(assignment, words).await?;
                 }
             }
         }
         Ok(())
+    }
+
+    /// `name=(words...)` / `name+=(words...)`. Boxed so the per-word brace,
+    /// glob and `[i]=v` handling stays off the recursive poll stack of every
+    /// simple command (TM-DOS-020 two-MiB stack budget).
+    fn assign_array_literal<'a>(
+        &'a mut self,
+        assignment: &'a Assignment,
+        words: &'a [Word],
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>> {
+        Box::pin(async move {
+            // Expand directly into the replacement array so word-split expansions cannot
+            // accumulate an unbounded temporary Vec before max_array_entries is enforced.
+            let arr_name = self.resolve_nameref(&assignment.name).to_string();
+            let old_entries = self.scoped.arrays.get(&arr_name).map_or(0, |arr| arr.len());
+            let remaining_entries = self
+                .memory_limits
+                .max_array_entries
+                .saturating_sub(self.memory_budget.array_entries);
+            let max_new_entries = old_entries.saturating_add(remaining_entries);
+            let mut next_arr = if assignment.append {
+                self.scoped
+                    .arrays
+                    .get(&arr_name)
+                    .cloned()
+                    .unwrap_or_default()
+            } else {
+                HashMap::new()
+            };
+            let mut idx = if assignment.append {
+                next_arr.keys().max().map(|k| k + 1).unwrap_or(0)
+            } else {
+                0
+            };
+
+            // Brace expansion runs first, on the unexpanded word, as for
+            // command arguments; pathname expansion runs on the fields below.
+            let mut braced_words: Vec<Word> = Vec::with_capacity(words.len());
+            for w in words.iter() {
+                match self.brace_expand_word(w) {
+                    Some(ws) => braced_words.extend(ws),
+                    None => braced_words.push(w.clone()),
+                }
+            }
+
+            'array_words: for word in braced_words.iter() {
+                // `[i]=value` sets one element; the value gets no field
+                // splitting or pathname expansion.
+                if let Some((index, value_word)) = split_indexed_element(word) {
+                    let i = self.evaluate_arithmetic_with_assign(&index);
+                    let value = self.expand_word(&value_word).await?;
+                    if i < 0 {
+                        continue;
+                    }
+                    let i = i as usize;
+                    if !next_arr.contains_key(&i) && next_arr.len() >= max_new_entries {
+                        break 'array_words;
+                    }
+                    next_arr.insert(i, value);
+                    idx = i + 1;
+                    continue;
+                }
+                let globs = !word.quoted || word.has_unquoted_glob;
+                let is_unquoted_expansion = !word.quoted
+                    && word.parts.iter().any(|p| {
+                        matches!(
+                            p,
+                            WordPart::Variable(_)
+                                | WordPart::CommandSubstitution(_)
+                                | WordPart::ArithmeticExpansion(_)
+                                | WordPart::ParameterExpansion { .. }
+                                | WordPart::ArrayAccess { .. }
+                        )
+                    });
+                // "${arr[@]}" or "$@" in array context should splat
+                // individual elements, not join into a single string.
+                let is_quoted_splat = word.quoted
+                    && word.parts.len() == 1
+                    && matches!(
+                        &word.parts[0],
+                        WordPart::ArrayAccess { index, .. } if index == "@"
+                    );
+                let is_quoted_positional_splat = word.quoted
+                    && word.parts.len() == 1
+                    && matches!(
+                        &word.parts[0],
+                        WordPart::Variable(name) if name == "@"
+                    );
+
+                if is_unquoted_expansion {
+                    let remaining = max_new_entries.saturating_sub(next_arr.len());
+                    if remaining == 0 {
+                        break;
+                    }
+                    let expanded = self.expand_word(word).await?;
+                    for field in self.ifs_split_limited(&expanded, remaining)? {
+                        for item in self.glob_array_field(field, word, globs).await {
+                            if next_arr.len() >= max_new_entries {
+                                break 'array_words;
+                            }
+                            next_arr.insert(idx, item);
+                            idx += 1;
+                        }
+                    }
+                    if next_arr.len() >= max_new_entries {
+                        break 'array_words;
+                    }
+                } else if is_quoted_splat || is_quoted_positional_splat {
+                    for field in self.expand_word_to_fields(word).await? {
+                        if next_arr.len() >= max_new_entries {
+                            break 'array_words;
+                        }
+                        next_arr.insert(idx, field);
+                        idx += 1;
+                    }
+                } else {
+                    let value = self.expand_word(word).await?;
+                    for item in self.glob_array_field(value, word, globs).await {
+                        if next_arr.len() >= max_new_entries {
+                            break 'array_words;
+                        }
+                        next_arr.insert(idx, item);
+                        idx += 1;
+                    }
+                }
+            }
+
+            let _ = self.insert_array_checked(arr_name, next_arr);
+            Ok(())
+        })
     }
 
     /// Pathname expansion for one array-literal field. A failglob miss keeps the
