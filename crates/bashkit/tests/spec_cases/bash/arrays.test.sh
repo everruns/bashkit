@@ -328,3 +328,79 @@ IFS=","; x="a,b,c"; arr=($x); echo "${#arr[@]}"
 ### expect
 3
 ### end
+
+### array_literal_brace_expansion
+# Unquoted array-literal words brace-expand, mixed quoting included
+arr=(x{1,2} "y"{a,b} v{x})
+declare -p arr
+### expect
+declare -a arr=([0]="x1" [1]="x2" [2]="ya" [3]="yb" [4]="v{x}")
+### end
+
+### array_literal_pathname_expansion
+# Unquoted array-literal words glob; no match keeps the pattern
+mkdir -p /tmp/arr_glob && cd /tmp/arr_glob && touch a.txt b.txt
+arr=(*.txt *.nope)
+declare -p arr
+### expect
+declare -a arr=([0]="a.txt" [1]="b.txt" [2]="*.nope")
+### end
+
+### array_literal_nullglob
+# With nullglob an unmatched array-literal glob vanishes
+mkdir -p /tmp/arr_nullglob && cd /tmp/arr_nullglob
+shopt -s nullglob
+arr=(*.nope)
+echo "${#arr[@]}"
+arr=(a *.nope b)
+declare -p arr
+### expect
+0
+declare -a arr=([0]="a" [1]="b")
+### end
+
+### array_literal_quoted_no_expansion
+# Quoted array-literal words neither brace- nor pathname-expand
+mkdir -p /tmp/arr_quoted && cd /tmp/arr_quoted && touch a.txt
+arr=("*.txt" '{a,b}' "x{1,2}")
+declare -p arr
+### expect
+declare -a arr=([0]="*.txt" [1]="{a,b}" [2]="x{1,2}")
+### end
+
+### declare_a_literal_expansion
+# declare -a compound values brace- and pathname-expand
+mkdir -p /tmp/arr_declare && cd /tmp/arr_declare && touch a.txt b.txt
+declare -a d=(*.txt x{1,2})
+declare -p d
+### expect
+declare -a d=([0]="a.txt" [1]="b.txt" [2]="x1" [3]="x2")
+### end
+
+### local_a_literal_expansion
+# local -a compound values brace- and pathname-expand
+mkdir -p /tmp/arr_local && cd /tmp/arr_local && touch a.txt b.txt
+f() { local -a l=(z{a,b} *.txt); declare -p l; }
+f
+### expect
+declare -a l=([0]="za" [1]="zb" [2]="a.txt" [3]="b.txt")
+### end
+
+### array_append_literal_expansion
+# arr+=(...) brace- and pathname-expands the new words
+mkdir -p /tmp/arr_append && cd /tmp/arr_append && touch a.txt b.txt
+arr=(p)
+arr+=(q{1,2} *.txt)
+declare -p arr
+### expect
+declare -a arr=([0]="p" [1]="q1" [2]="q2" [3]="a.txt" [4]="b.txt")
+### end
+
+### assoc_keyed_value_no_brace_expansion
+# Keyed assoc values stay literal: no brace or pathname expansion
+mkdir -p /tmp/arr_assoc && cd /tmp/arr_assoc && touch a.txt
+declare -A m=([k]=v{1,2} [g]=*.txt)
+echo "${m[k]} ${m[g]}"
+### expect
+v{1,2} *.txt
+### end

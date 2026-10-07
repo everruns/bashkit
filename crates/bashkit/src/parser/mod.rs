@@ -2299,8 +2299,13 @@ impl<'a> Parser<'a> {
                         &self.current_token,
                         Some(tokens::Token::QuotedWord(_)) | Some(tokens::Token::QuotedGlobWord(_))
                     ) {
+                        let glob_quoted =
+                            matches!(&self.current_token, Some(tokens::Token::QuotedGlobWord(_)));
                         let mut w = self.parse_word(elem_clone);
                         w.quoted = true;
+                        // Mixed words like `"x"{1,2}` or `"a"*` keep their unquoted
+                        // brace/glob text active, as for command arguments.
+                        w.has_unquoted_glob = glob_quoted;
                         w
                     } else {
                         self.parse_word(elem_clone)

@@ -1369,7 +1369,11 @@ impl Interpreter {
             );
             let mut next = map.keys().max().map_or(0, |k| k + 1);
             'words: for word in words {
-                if let Some((kw, vw, kappend)) = split_keyed_word(word) {
+                // Bash brace-expands indexed elements before spotting
+                // `[i]=`, so `([2]=v{1,2})` stores the plain words
+                // `[2]=v1 [2]=v2`; assoc elements never brace-expand.
+                let braces = self.brace_expand_word(word).is_some();
+                if let Some((kw, vw, kappend)) = split_keyed_word(word).filter(|_| !braces) {
                     let key_text = self.expand_word(&kw).await?;
                     let raw = match self.try_evaluate_arithmetic_with_assign(&key_text) {
                         Ok(v) => v,
@@ -1428,6 +1432,26 @@ impl Interpreter {
     /// unquoted expansions (bounded by `limit`), `"${a[@]}"` splats, brace
     /// expansion and globbing for unquoted literals.
     async fn expand_element_fields(&mut self, word: &Word, limit: usize) -> Result<Vec<String>> {
+        // Brace expansion runs first on the unexpanded word, as for command
+        // arguments: `a=("x"{1,2})` gives `x1 x2`, `a=('{a,b}')` stays literal.
+        let Some(braced) = self.brace_expand_word(word) else {
+            return self.expand_element_word(word, limit).await;
+        };
+        let mut fields = Vec::new();
+        for w in &braced {
+            let left = limit.saturating_sub(fields.len());
+            if left == 0 {
+                break;
+            }
+            fields.extend(self.expand_element_word(w, left).await?);
+        }
+        fields.truncate(limit);
+        Ok(fields)
+    }
+
+    /// One brace-expanded compound element: splitting, splats, then globbing
+    /// for words with unquoted literal text.
+    async fn expand_element_word(&mut self, word: &Word, limit: usize) -> Result<Vec<String>> {
         let is_unquoted_expansion = !word.quoted
             && word.parts.iter().any(|p| {
                 matches!(
@@ -1457,20 +1481,22 @@ impl Interpreter {
         }
         let value = self.expand_word(word).await?;
         let literal_only = word.parts.iter().all(|p| matches!(p, WordPart::Literal(_)));
-        if word.quoted || !literal_only {
+        let globbable = if word.quoted {
+            word.has_unquoted_glob
+        } else {
+            literal_only
+        };
+        if !globbable {
             return Ok(vec![value]);
         }
-        let mut fields = Vec::new();
-        for item in self.expand_braces(&value) {
-            match self.expand_glob_item(&item, false).await {
-                Ok(items) => fields.extend(items),
-                Err(_) => fields.push(item),
-            }
-            if fields.len() >= limit {
-                fields.truncate(limit);
-                break;
-            }
-        }
+        let mut fields = match self
+            .expand_glob_item(&value, word.quoted && word.has_unquoted_glob)
+            .await
+        {
+            Ok(items) => items,
+            Err(_) => vec![value],
+        };
+        fields.truncate(limit);
         Ok(fields)
     }
 }

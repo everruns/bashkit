@@ -631,10 +631,11 @@ impl<'a> Lexer<'a> {
                 if let Err(e) = self.read_backtick_into(&mut word) {
                     return Some(Token::Error(e));
                 }
-            } else if self.is_word_char(ch) || ch == ']' || ch == '}' {
+            } else if self.is_word_char(ch) || matches!(ch, ']' | '{' | '}') {
                 // `}` included for the same reason as in `read_word`: it is a
                 // reserved word, not a metacharacter, so it stays inside the
-                // word unless it stands alone (`echo }}` prints `}}`).
+                // word unless it stands alone (`echo }}` prints `}}`). `{`
+                // keeps a brace tail in the word (`[k]="v"{1,2}`).
                 word.push(ch);
                 self.advance();
             } else {
@@ -2013,7 +2014,8 @@ impl<'a> Lexer<'a> {
                 // `[k]="v w"` or `[k]=`cmd arg`` in a compound array is one
                 // element.
                 return self.read_word_starting_with(&word);
-            } else if self.is_word_char(ch) {
+            } else if self.is_word_char(ch) || matches!(ch, '{' | '}') {
+                // Braces are word text too (`[k]=v{1,2}`, `[ab]{x,y}`).
                 word.push(ch);
                 self.advance();
             } else {
