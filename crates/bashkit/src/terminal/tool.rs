@@ -580,7 +580,7 @@ mod tests {
     #[tokio::test]
     async fn wait_for_returns_on_match_while_running() {
         let mut tool = TerminalTool::new(Bash::builder());
-        let started = std::time::Instant::now();
+        let started = std::time::Instant::now(); // std-time-ok: native-only test
         let out = tool
             .call(json!({
                 "input": "for i in 1 2 3; do echo tick$i; sleep 1; done<Enter>",

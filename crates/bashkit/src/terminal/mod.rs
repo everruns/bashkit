@@ -1031,7 +1031,7 @@ mod tests {
         let pending =
             tokio::time::timeout(std::time::Duration::from_millis(50), term.run_until_idle()).await;
         assert!(pending.is_err(), "sleep should still be running");
-        let started = std::time::Instant::now();
+        let started = std::time::Instant::now(); // std-time-ok: native-only test
         assert_eq!(run(&mut term, "\x03").await, TerminalStatus::Idle);
         assert!(
             started.elapsed() < std::time::Duration::from_secs(5),
