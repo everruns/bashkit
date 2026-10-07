@@ -74,8 +74,12 @@ now. Exposing it to custom builtins is a deliberate later step.
 
 ## Decision: line discipline split
 
-- Cooked mode (prompt): the shell loop's own small line editor (echo, Backspace,
-  ^U, ^W, ^C discards line, ^D on empty line exits). Command output is
+- Cooked mode (prompt): the shell loop's own small line editor (echo, cursor
+  movement with Left/Right/Home/End/^A/^E, Backspace/Delete, ^U, ^K, ^W, Up/Down
+  history of the last 500 lines, ^C discards line, ^D on empty line exits).
+  Redraws assume one cell per char and step back with CSI D, which does not
+  cross a soft-wrapped row; editing a line longer than the terminal width can
+  misplace the cursor. Command output is
   post-processed `\n` to `\r\n` (ONLCR). Multiline detection reuses the CLI
   REPL's parse-error heuristics.
 - Raw mode: set by `vi` through a drop guard (restored on cancel too); bytes go

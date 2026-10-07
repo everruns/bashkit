@@ -35,8 +35,12 @@ const examples = [
           <span class="pg__dot"></span><span class="pg__dot"></span><span class="pg__dot"></span>
           <span class="pg__label">user@bashkit: ~</span>
         </div>
-        <div class="pg__screen" id="pg-screen" role="application" aria-label="Bash terminal">
-          <p class="pg__status">Loading WebAssembly…</p>
+        <div class="pg__screen">
+          <!-- xterm mounts in an unpadded box: FitAddon sizes rows from the
+               parent's height and ignores the parent's own padding. -->
+          <div class="pg__xterm" id="pg-screen" role="application" aria-label="Bash terminal">
+            <p class="pg__status">Loading WebAssembly…</p>
+          </div>
         </div>
       </div>
 
@@ -141,6 +145,10 @@ const examples = [
   .pg__screen {
     height: min(32rem, 65vh);
     padding: 0.6rem 0.4rem 0.6rem 0.8rem;
+  }
+  .pg__xterm {
+    height: 100%;
+    overflow: hidden;
   }
   .pg__status {
     margin: 0.4rem;

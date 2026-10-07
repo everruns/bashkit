@@ -114,8 +114,10 @@ shows what happened, and the filesystem holds what was saved.
 | Arrow up/down/right/left | `\x1b[A` `\x1b[B` `\x1b[C` `\x1b[D` |
 
 At the prompt the terminal behaves like a normal line-mode terminal: typed
-characters echo, Backspace, Ctrl-U (kill line) and Ctrl-W (kill word) edit the
-line, Ctrl-C discards it, and an incomplete command (`for i in 1 2; do`) shows
+characters echo, Left/Right, Home/End (or Ctrl-A/Ctrl-E) move the cursor,
+Backspace, Delete, Ctrl-U (kill to start), Ctrl-K (kill to end) and Ctrl-W
+(kill word) edit the line, Up/Down recall earlier commands from this session,
+Ctrl-C discards the line, and an incomplete command (`for i in 1 2; do`) shows
 the `PS2` prompt and waits for more lines. Shell state persists between lines,
 as in any `Bash` session. `PS1` and `PS2` are honoured (`\u \h \w \W \$`); the
 default prompt is `$ `.
