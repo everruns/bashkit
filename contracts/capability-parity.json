@@ -19,12 +19,13 @@
     "snapshots": "Snapshot and restore of interpreter state",
     "runtime_python": "Explicit embedded Python opt-in",
     "runtime_typescript": "Explicit embedded TypeScript opt-in",
-    "runtime_sqlite": "Explicit embedded SQLite opt-in"
+    "runtime_sqlite": "Explicit embedded SQLite opt-in",
+    "interactive_terminal": "In-process interactive terminal session (keystrokes in, screen text and per-command transcript out; vi, less)"
   },
   "surfaces": {
     "rust_bash": {
       "label": "Rust BashBuilder",
-      "supported": ["execution_limits", "cancellation", "deadlines", "output_caps", "cwd", "env", "runtime_env", "stdin", "custom_builtins", "host_call_suspension", "network_policy", "transport_hooks", "virtual_filesystem", "mounts", "snapshots", "runtime_python", "runtime_typescript", "runtime_sqlite"],
+      "supported": ["execution_limits", "cancellation", "deadlines", "output_caps", "cwd", "env", "runtime_env", "stdin", "custom_builtins", "host_call_suspension", "network_policy", "transport_hooks", "virtual_filesystem", "mounts", "snapshots", "runtime_python", "runtime_typescript", "runtime_sqlite", "interactive_terminal"],
       "evidence": {
         "execution_limits": ["crates/bashkit/tests/integration/blackbox_security_tests.rs#max_commands_resets_per_exec"],
         "cancellation": ["crates/bashkit/tests/integration/cancellation_tests.rs#cancel_aborts_execution"],
@@ -43,7 +44,8 @@
         "snapshots": ["crates/bashkit/tests/integration/snapshot_tests.rs#snapshot_to_bytes_and_restore"],
         "runtime_python": ["crates/bashkit/tests/integration/python_integration_tests.rs#print_hello"],
         "runtime_typescript": ["crates/bashkit/tests/integration/typescript_integration_tests.rs#bash_writes_file_ts_reads"],
-        "runtime_sqlite": ["crates/bashkit/tests/integration/sqlite_integration_tests.rs#inline_select_returns_value"]
+        "runtime_sqlite": ["crates/bashkit/tests/integration/sqlite_integration_tests.rs#inline_select_returns_value"],
+        "interactive_terminal": ["crates/bashkit/tests/integration/terminal_tests.rs#agent_edits_config_with_vi_and_reads_result"]
       },
       "unsupported": {
         "tool_callbacks": "Use ScriptedTool for named tool callbacks; BashBuilder exposes lower-level custom builtins."
@@ -73,19 +75,20 @@
         "stdin": "ToolRequest accepts commands and timeout_ms only; scripts can still create internal pipelines.",
         "host_call_suspension": "BashTool drives each fresh Bash execution to completion and exposes no event handle.",
         "tool_callbacks": "BashTool accepts shell builtins, not the named tool-callback contract.",
-        "snapshots": "Each BashTool execution creates an isolated fresh Bash instance and exposes no persistent snapshot state."
+        "snapshots": "Each BashTool execution creates an isolated fresh Bash instance and exposes no persistent snapshot state.",
+        "interactive_terminal": "BashTool runs each call in a fresh shell; use terminal::TerminalTool (feature `terminal`) for a persistent session."
       }
     },
     "rust_scripted_tool": {
       "label": "Rust ScriptedTool",
       "supported": ["execution_limits", "deadlines", "output_caps", "env", "stdin", "tool_callbacks"],
       "evidence": {
-        "execution_limits": ["crates/bashkit/src/scripted_tool/execute.rs#test_scripted_tool_forwards_limits_and_output_caps"],
-        "deadlines": ["crates/bashkit/src/scripted_tool/execute.rs#test_scripted_tool_execute_honors_timeout_ms"],
-        "output_caps": ["crates/bashkit/src/scripted_tool/execute.rs#test_scripted_tool_forwards_limits_and_output_caps"],
-        "env": ["crates/bashkit/src/scripted_tool/mod.rs#test_execute_with_env"],
-        "stdin": ["crates/bashkit/src/scripted_tool/mod.rs#test_execute_stdin_pipe"],
-        "tool_callbacks": ["crates/bashkit/src/scripted_tool/mod.rs#test_execute_single_tool"]
+        "execution_limits": ["crates/bashkit-scripted-tool/src/scripted_tool/execute.rs#test_scripted_tool_forwards_limits_and_output_caps"],
+        "deadlines": ["crates/bashkit-scripted-tool/src/scripted_tool/execute.rs#test_scripted_tool_execute_honors_timeout_ms"],
+        "output_caps": ["crates/bashkit-scripted-tool/src/scripted_tool/execute.rs#test_scripted_tool_forwards_limits_and_output_caps"],
+        "env": ["crates/bashkit-scripted-tool/src/scripted_tool/mod.rs#test_execute_with_env"],
+        "stdin": ["crates/bashkit-scripted-tool/src/scripted_tool/mod.rs#test_execute_stdin_pipe"],
+        "tool_callbacks": ["crates/bashkit-scripted-tool/src/scripted_tool/mod.rs#test_execute_single_tool"]
       },
       "unsupported": {
         "runtime_env": "Each execution uses a fresh logic-only shell; env is configured before the run.",
@@ -93,14 +96,15 @@
         "cwd": "ScriptedTool intentionally uses a logic-only shell without filesystem-backed cwd configuration.",
         "custom_builtins": "Only registered ToolDef callbacks become commands; arbitrary Bash builtins are not accepted.",
         "host_call_suspension": "ScriptedTool invokes registered callbacks directly and exposes no suspended execution handle.",
-        "network_policy": "The logic-only orchestration shell has no network builtins.",
-        "transport_hooks": "The logic-only orchestration shell has no HTTP transport.",
+        "network_policy": "The logic-only shell has no network builtins.",
+        "transport_hooks": "The logic-only shell has no HTTP transport.",
         "virtual_filesystem": "Filesystem commands and redirections are intentionally rejected.",
         "mounts": "Filesystem commands and redirections are intentionally rejected.",
         "snapshots": "Each execution uses a fresh logic-only shell.",
         "runtime_python": "Language runtimes are intentionally absent from the logic-only shell.",
         "runtime_typescript": "Language runtimes are intentionally absent from the logic-only shell.",
-        "runtime_sqlite": "Language runtimes are intentionally absent from the logic-only shell."
+        "runtime_sqlite": "Language runtimes are intentionally absent from the logic-only shell.",
+        "interactive_terminal": "ScriptedTool runs logic-only scripts per call and has no terminal device."
       }
     },
     "cli": {
@@ -127,12 +131,13 @@
         "tool_callbacks": "A standalone process cannot receive in-process host callbacks.",
         "transport_hooks": "The CLI exposes allow-all/default-deny policy, not a host transport callback.",
         "snapshots": "The CLI exposes no snapshot commands.",
-        "runtime_typescript": "The CLI build does not register the TypeScript runtime."
+        "runtime_typescript": "The CLI build does not register the TypeScript runtime.",
+        "interactive_terminal": "The CLI's interactive mode runs on the host's real terminal (rustyline), not the in-process Terminal."
       }
     },
     "python": {
       "label": "Python",
-      "supported": ["execution_limits", "cancellation", "deadlines", "output_caps", "cwd", "env", "runtime_env", "custom_builtins", "tool_callbacks", "network_policy", "virtual_filesystem", "mounts", "snapshots", "runtime_python", "runtime_sqlite"],
+      "supported": ["execution_limits", "cancellation", "deadlines", "output_caps", "cwd", "env", "runtime_env", "custom_builtins", "tool_callbacks", "network_policy", "virtual_filesystem", "mounts", "snapshots", "runtime_python", "runtime_sqlite", "interactive_terminal"],
       "evidence": {
         "execution_limits": ["crates/bashkit-python/tests/_bashkit_categories.py#test_max_commands_limits_execution"],
         "cancellation": ["crates/bashkit-python/tests/_bashkit_categories.py#test_bash_cancel_after_reset_still_works"],
@@ -148,7 +153,8 @@
         "mounts": ["crates/bashkit-python/tests/_bashkit_categories.py#test_bash_live_mount_preserves_state_and_unmounts"],
         "snapshots": ["crates/bashkit-python/tests/_bashkit_categories.py#test_bash_snapshot_roundtrip_from_snapshot_preserves_state_and_kwargs"],
         "runtime_python": ["crates/bashkit-python/tests/_bashkit_categories.py#test_bash_python_enabled"],
-        "runtime_sqlite": ["crates/bashkit-python/tests/test_sqlite.py#test_sqlite"]
+        "runtime_sqlite": ["crates/bashkit-python/tests/test_sqlite.py#test_sqlite"],
+        "interactive_terminal": ["crates/bashkit-python/tests/test_terminal.py#test_call_edits_file_in_vi"]
       },
       "unsupported": {
         "stdin": "execute() accepts a command string and optional output callback, not top-level host stdin.",
@@ -181,7 +187,8 @@
         "stdin": "execute() accepts a command string and output callback, not top-level host stdin.",
         "host_call_suspension": "NAPI custom builtins await callbacks directly; no request and resume handle is exposed.",
         "transport_hooks": "NAPI exposes network policy and credentials but no JavaScript HttpTransport hook.",
-        "runtime_typescript": "The NAPI package does not compile or expose the TypeScript runtime."
+        "runtime_typescript": "The NAPI package does not compile or expose the TypeScript runtime.",
+        "interactive_terminal": "Not exposed in the NAPI package yet."
       }
     },
     "browser_wasm": {
@@ -208,7 +215,8 @@
         "mounts": "Browser WASM exposes one in-memory VFS and no host filesystem mounts.",
         "runtime_python": "The slim browser build omits embedded language runtimes.",
         "runtime_typescript": "The slim browser build omits embedded language runtimes.",
-        "runtime_sqlite": "The slim browser build omits embedded language runtimes."
+        "runtime_sqlite": "The slim browser build omits embedded language runtimes.",
+        "interactive_terminal": "Not exposed in the slim browser package yet."
       }
     },
     "c_abi": {
@@ -235,7 +243,8 @@
         "snapshots": "ABI v1 has no snapshot functions.",
         "runtime_python": "ABI v1 omits embedded language runtimes.",
         "runtime_typescript": "ABI v1 omits embedded language runtimes.",
-        "runtime_sqlite": "ABI v1 omits embedded language runtimes."
+        "runtime_sqlite": "ABI v1 omits embedded language runtimes.",
+        "interactive_terminal": "Not exposed in the C ABI."
       }
     }
   }

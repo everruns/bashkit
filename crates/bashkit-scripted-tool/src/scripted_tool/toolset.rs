@@ -8,11 +8,11 @@
 use super::{
     CallbackKind, RegisteredTool, ScriptedExecutionTrace, ScriptedTool, ToolArgs, ToolDef, ToolImpl,
 };
-use crate::tool::{
+use async_trait::async_trait;
+use bashkit::tool::{
     Tool, ToolError, ToolRequest, ToolResponse, ToolStatus, VERSION, tool_response_schema,
 };
-use crate::{ExecutionLimits, ExecutionProfile};
-use async_trait::async_trait;
+use bashkit::{ExecutionLimits, ExecutionProfile};
 use std::sync::Arc;
 
 // ============================================================================
@@ -42,7 +42,8 @@ pub enum DiscoveryMode {
 /// scripts for the main tool.
 ///
 /// ```rust
-/// use bashkit::{ScriptingToolSet, ToolArgs, ToolDef, Tool};
+/// use bashkit::Tool;
+/// use bashkit_scripted_tool::{ScriptingToolSet, ToolArgs, ToolDef};
 ///
 /// # tokio_test::block_on(async {
 /// let toolset = ScriptingToolSet::builder("api")
@@ -217,7 +218,7 @@ impl Tool for DiscoverTool {
     fn execution(
         &self,
         args: serde_json::Value,
-    ) -> Result<crate::tool::ToolExecution, crate::tool::ToolError> {
+    ) -> Result<bashkit::tool::ToolExecution, bashkit::tool::ToolError> {
         let req = Self::resolve_request(&args).map_err(ToolError::UserFacing)?;
         if let Err(msg) = Self::validate_commands(&req.commands) {
             return Err(ToolError::UserFacing(msg));
@@ -252,7 +253,7 @@ impl Tool for DiscoverTool {
 /// Builder for [`ScriptingToolSet`].
 ///
 /// ```rust
-/// use bashkit::{ScriptingToolSet, ToolArgs, ToolDef};
+/// use bashkit_scripted_tool::{ScriptingToolSet, ToolArgs, ToolDef};
 ///
 /// let toolset = ScriptingToolSet::builder("api")
 ///     .short_description("Example API")
@@ -430,7 +431,8 @@ impl ScriptingToolSetBuilder {
 ///   via `discover` and `help` builtins.
 ///
 /// ```rust
-/// use bashkit::{ScriptingToolSet, ToolArgs, ToolDef, Tool, ToolRequest};
+/// use bashkit::{Tool, ToolRequest};
+/// use bashkit_scripted_tool::{ScriptingToolSet, ToolArgs, ToolDef};
 ///
 /// # tokio_test::block_on(async {
 /// // Exclusive mode (default): one tool with full schemas
@@ -458,7 +460,8 @@ impl ScriptingToolSetBuilder {
 /// ```
 ///
 /// ```rust
-/// use bashkit::{ScriptingToolSet, ToolArgs, ToolDef, Tool};
+/// use bashkit::Tool;
+/// use bashkit_scripted_tool::{ScriptingToolSet, ToolArgs, ToolDef};
 ///
 /// // Discovery mode: two tools
 /// let toolset = ScriptingToolSet::builder("api")
@@ -528,7 +531,7 @@ impl ScriptingToolSet {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tool::ToolRequest;
+    use bashkit::tool::ToolRequest;
 
     fn make_tools() -> ScriptingToolSetBuilder {
         ScriptingToolSet::builder("test_api")

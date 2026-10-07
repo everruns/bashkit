@@ -36,7 +36,7 @@ The entire tool layer (`tool` module: `Tool` trait, `BashTool*`,
 `--no-default-features` drops the module and its exclusive dependencies
 (`tower`, `futures-core`), leaving just the embeddable `Bash` interpreter.
 
-- `scripted_tool` builds on this layer and so enables `bash_tool`.
+- The `bashkit-scripted-tool` crate builds on this layer and depends on core with `bash_tool`.
 - Consumers that only drive `Bash` directly (e.g. `bashkit-cli`) set
   `default-features = false` to avoid pulling in the tool dependencies.
 
@@ -117,6 +117,11 @@ or `kind = "stderr"`; chunk data is JSON string content.
 ### Metadata
 
 `ToolOutput.metadata.extra` currently includes `{ "exit_code": 0 }`.
+
+Contract helpers are public so `Tool` implementations outside core share one
+request/response shape: `tool::{tool_request_schema, tool_response_schema,
+tool_request_from_value, tool_output_from_response, timeout_response,
+localized}` and `ToolExecution::new`.
 
 ## Scripted tool specifics
 

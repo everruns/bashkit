@@ -11,10 +11,10 @@ from bashkit import (
     BashError,
     BashTool,
     FileSystem,
-    ScriptedTool,
     ShellState,
     create_langchain_tool_spec,
 )
+from bashkit.scripted import ScriptedTool
 
 # ===========================================================================
 # Bash: Core interpreter

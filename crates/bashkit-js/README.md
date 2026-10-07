@@ -283,7 +283,7 @@ console.log(result.stdout);
 Use `ScriptedTool` to register JavaScript callbacks as bash-callable tools:
 
 ```typescript
-import { ScriptedTool } from "@everruns/bashkit";
+import { ScriptedTool } from "@everruns/bashkit/scripted";
 
 const tool = new ScriptedTool({ name: "api" });
 tool.addTool("get_user", "Fetch user by ID", (params) => {

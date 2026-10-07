@@ -22,14 +22,14 @@ use bashkit::{
     Credential, ExecResult as RustExecResult, ExecutionLimits, ExtFunctionResult,
     FileSystem as BashFileSystem, FileType, InMemoryFs, Metadata, MontyObject, NetworkAllowlist,
     OutputCallback, PosixFs, PythonExternalFnHandler, ReadOnlyFs, RealFs, RealFsMode,
-    ScriptedTool as RustScriptedTool, SnapshotOptions as RustSnapshotOptions, Tool, ToolArgs,
-    ToolDef, ToolRequest, async_trait,
+    SnapshotOptions as RustSnapshotOptions, Tool, ToolRequest, async_trait,
 };
 use bashkit::{
     CapabilityFingerprint as RustCapabilityFingerprint, CheckoutPolicy as RustCheckoutPolicy,
     CommitOptions as RustCommitOptions, ObjectId as RustObjectId,
     SnapshotGraph as RustSnapshotGraph,
 };
+use bashkit_scripted_tool::{ScriptedTool as RustScriptedTool, ToolArgs, ToolDef};
 use napi::bindgen_prelude::External;
 use napi::{Env, JsValue, Unknown, ValueType, sys};
 use napi_derive::napi;

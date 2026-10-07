@@ -23,7 +23,7 @@ Use with a LangChain agent::
 
 Wrap a ScriptedTool for multi-tool orchestration::
 
-    >>> from bashkit import ScriptedTool
+    >>> from bashkit.scripted import ScriptedTool
     >>> from bashkit.langchain import create_scripted_tool
     >>>
     >>> st = ScriptedTool("api")
@@ -57,7 +57,7 @@ except ImportError:
 
 
 from bashkit import BashTool as NativeBashTool
-from bashkit import ScriptedTool as NativeScriptedTool
+from bashkit.scripted import ScriptedTool as NativeScriptedTool
 
 
 class BashToolInput(BaseModel):
@@ -153,7 +153,7 @@ if LANGCHAIN_AVAILABLE:
         registered sub-tools in one call.
 
         Example:
-            >>> from bashkit import ScriptedTool
+            >>> from bashkit.scripted import ScriptedTool
             >>> st = ScriptedTool("k8s")
             >>> st.add_tool("get_pods", "List pods", callback=my_callback)
             >>> tool = ScriptedToolLangChain(st)
@@ -280,7 +280,7 @@ def create_scripted_tool(scripted_tool: NativeScriptedTool) -> ScriptedToolLangC
         ImportError: If langchain-core is not installed
 
     Example:
-        >>> from bashkit import ScriptedTool
+        >>> from bashkit.scripted import ScriptedTool
         >>> from bashkit.langchain import create_scripted_tool
         >>>
         >>> st = ScriptedTool("api")

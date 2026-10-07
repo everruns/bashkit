@@ -26,11 +26,12 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 const jsDir = path.join(repoRoot, "crates", "bashkit-js");
 const outPath = path.join(repoRoot, "site", "src", "content", "apidocs", "typescript.md");
 
-const ENTRY_POINTS = ["wrapper.ts", "langchain.ts", "anthropic.ts", "openai.ts", "ai.ts"];
+const ENTRY_POINTS = ["wrapper.ts", "scripted.ts", "langchain.ts", "anthropic.ts", "openai.ts", "ai.ts"];
 
 // Friendly module titles + import specifiers, in render order.
 const MODULES = {
   wrapper: { title: null, specifier: "@everruns/bashkit", core: true },
+  scripted: { title: "@everruns/bashkit/scripted", specifier: "@everruns/bashkit/scripted" },
   langchain: { title: "@everruns/bashkit/langchain", specifier: "@everruns/bashkit/langchain" },
   anthropic: { title: "@everruns/bashkit/anthropic", specifier: "@everruns/bashkit/anthropic" },
   openai: { title: "@everruns/bashkit/openai", specifier: "@everruns/bashkit/openai" },
@@ -52,7 +53,7 @@ const Kind = {
 };
 
 // Preferred ordering for the core module's classes.
-const CLASS_ORDER = ["Bash", "BashTool", "ScriptedTool", "FileSystem", "BashError"];
+const CLASS_ORDER = ["Bash", "BashTool", "FileSystem", "BashError"];
 
 function runTypedoc() {
   const tmp = mkdtempSync(path.join(tmpdir(), "bashkit-tsdoc-"));
@@ -309,7 +310,11 @@ function renderTypeAlias(refl) {
 }
 
 function renderModuleMembers(mod, out) {
-  const children = mod.children ?? [];
+  // Deprecated transition aliases (e.g. the root `ScriptedTool`) stay out of
+  // the reference; the canonical export is documented in its own module.
+  const isDeprecated = (c) =>
+    (c.comment?.blockTags ?? []).some((t) => t.tag === "@deprecated");
+  const children = (mod.children ?? []).filter((c) => !isDeprecated(c));
   const byKind = (k) => children.filter((c) => c.kind === k);
 
   const classes = byKind(Kind.Class).sort((a, b) => {
@@ -373,7 +378,7 @@ function main() {
     }
   }
   if (integ.length) {
-    out.push("---", "", "# Framework integrations", "", ...integ);
+    out.push("---", "", "# Subpath modules", "", ...integ);
   }
 
   mkdirSync(path.dirname(outPath), { recursive: true });

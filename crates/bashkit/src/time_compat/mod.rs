@@ -30,28 +30,28 @@ pub mod host_clock;
     target_os = "unknown",
     not(feature = "wasm_js")
 ))]
-pub(crate) use host_clock::{Instant, SystemTime, UNIX_EPOCH};
+pub use host_clock::{Instant, SystemTime, UNIX_EPOCH};
 
 #[cfg(all(target_arch = "wasm32", target_os = "unknown", feature = "wasm_js"))]
-pub(crate) use web_time::{Instant, SystemTime, UNIX_EPOCH};
+pub use web_time::{Instant, SystemTime, UNIX_EPOCH};
 
 // WASI targets (wasip1, wasip2, wasip1-threads) have real clocks in std, and
 // no tokio timer driver worth routing `Instant` through.
 #[cfg(all(target_arch = "wasm32", not(target_os = "unknown")))]
-pub(crate) use std::time::{Instant, SystemTime, UNIX_EPOCH};
+pub use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) use std::time::{SystemTime, UNIX_EPOCH};
+pub use std::time::{SystemTime, UNIX_EPOCH};
 
 // Tokio's instant follows the runtime's paused/advanced monotonic clock. This
 // makes shell deadlines and `time` deterministic under virtual-time runtimes.
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) use tokio::time::Instant;
+pub use tokio::time::Instant;
 
 /// Portable timer future. JS-host wasm uses `setTimeout`; native targets keep
 /// tokio's runtime timer. The wasm future is wrapped as `Send` because the
 /// target is deliberately single-threaded (the same invariant as JS builtins).
-pub(crate) async fn sleep(duration: Duration) {
+pub async fn sleep(duration: Duration) {
     #[cfg(all(
         target_arch = "wasm32",
         target_os = "unknown",
@@ -77,10 +77,11 @@ pub(crate) async fn sleep(duration: Duration) {
     tokio::time::sleep(duration).await;
 }
 
-pub(crate) struct TimeoutElapsed;
+#[derive(Debug)]
+pub struct TimeoutElapsed;
 
 /// Race a future against a host wall-clock deadline on every supported target.
-pub(crate) async fn timeout<F: Future>(
+pub async fn timeout<F: Future>(
     duration: Duration,
     future: F,
 ) -> Result<F::Output, TimeoutElapsed> {

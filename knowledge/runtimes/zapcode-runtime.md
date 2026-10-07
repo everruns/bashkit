@@ -111,6 +111,12 @@ Hosts can register custom external functions callable by name from TypeScript
 where `handler: TypeScriptExternalFnHandler` is an
 `Arc` async closure `(name, args) -> Result<serde_json::Value>`. See rustdoc.
 
+Inside the handler, `RuntimeCallContext::current()` returns the calling
+request's extensions, budget, execution lease, and remaining deadline (same
+contract as Python). `TypeScriptExtension::with_external_handler_and_prelude`
+(public) adds a source prelude and `(from, to)` call rewrites so hosts can
+expose namespaced APIs (`tools.orders.list(...)`) without core knowing them.
+
 ### Security
 
 See [Threat Model](../security/threat-model.md) section "TypeScript / ZapCode Security (TM-TS)"
@@ -138,7 +144,7 @@ for the full threat analysis.
 
 ### Tool registry access
 
-With `scripted_tool`, `BashBuilder::tool_registry` exposes dot-separated
+With the `bashkit-scripted-tool` crate (feature `typescript`), `ToolRegistry::install(builder)` exposes dot-separated
 `ToolDef` names as `await tools.orders.list({customer: "acme"})` and provides
 `tools.discover({...})`. Calls reuse the existing external-function
 suspend/resume bridge and the registry's one schema, policy, deadline, sanitizer,

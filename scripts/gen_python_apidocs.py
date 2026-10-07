@@ -27,12 +27,12 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 PKG_SEARCH_PATH = REPO_ROOT / "crates" / "bashkit-python"
 OUT_PATH = REPO_ROOT / "site" / "src" / "content" / "apidocs" / "python.md"
 
-# Curated public surface, in rendering order. Mirrors bashkit.__all__ plus the
-# framework integration modules that ship in the package.
+# Curated public surface, in rendering order. Mirrors bashkit.__all__,
+# bashkit.scripted, plus the framework integration modules that ship in the
+# package.
 CORE_ORDER = [
     "Bash",
     "BashTool",
-    "ScriptedTool",
     "FileSystem",
     "ExecResult",
     "ShellState",
@@ -42,6 +42,8 @@ CORE_ORDER = [
     "create_langchain_tool_spec",
     "get_version",
 ]
+
+SCRIPTED_ORDER = ["ScriptedTool"]
 
 INTEGRATIONS = [
     ("bashkit.langchain", "bashkit.langchain"),
@@ -268,6 +270,23 @@ def main() -> int:
             out += render_function(
                 name, member, heading=f"{name}()", level=2
             )
+
+    # bashkit.scripted re-exports the native ScriptedTool class.
+    out.append("---")
+    out.append("")
+    out.append("# `bashkit.scripted`")
+    out.append("")
+    out.append(
+        "Multi-tool orchestration. Import with "
+        "`from bashkit.scripted import ScriptedTool`."
+    )
+    out.append("")
+    for name in SCRIPTED_ORDER:
+        member = native.members.get(name)
+        if member is None:
+            print(f"warning: {name} not found in stubs", file=sys.stderr)
+            continue
+        out += render_class(name, member)
 
     # Framework integration modules (pure-Python).
     integ_lines: list[str] = []

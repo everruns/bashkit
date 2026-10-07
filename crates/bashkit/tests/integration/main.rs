@@ -39,6 +39,7 @@ pub mod command_resolver_tests;
 pub mod competitor_regression_tests;
 pub mod compgen_tests;
 pub mod coproc_tests;
+pub mod core_extension_point_tests;
 pub mod coreutils_differential_tests;
 pub mod credential_injection_tests;
 pub mod curl_data_compat_tests;
@@ -137,8 +138,6 @@ pub mod threat_model_doc_tests;
 pub mod threat_model_tests;
 pub mod time_command_tests;
 pub mod time_compat_scan_tests;
-#[cfg(all(feature = "scripted_tool", feature = "python", feature = "typescript"))]
-pub mod tool_registry_tests;
 pub mod tty_tests;
 pub mod typescript_integration_tests;
 pub mod typescript_security_tests;

@@ -11,7 +11,8 @@ import threading
 
 import pytest
 
-from bashkit import Bash, BashTool, ScriptedTool
+from bashkit import Bash, BashTool
+from bashkit.scripted import ScriptedTool
 
 # ===========================================================================
 # Multi-step workflows

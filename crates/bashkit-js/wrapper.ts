@@ -1,9 +1,7 @@
 import { AsyncResource } from "node:async_hooks";
-import { createRequire } from "node:module";
 import type {
   Bash as NativeBashType,
   BashTool as NativeBashToolType,
-  ScriptedTool as NativeScriptedToolType,
   ExecResult,
   BashOptions as NativeBashOptions,
   SnapshotOptions as NativeSnapshotOptions,
@@ -17,8 +15,16 @@ import type {
   AnalyzedRedirect,
   ExecutionProfileName as NativeExecutionProfileName,
 } from "./index.cjs";
+import {
+  BashError,
+  DEFAULT_MAX_INPUT_BYTES,
+  inputTooLargeExecResult,
+  native,
+  queueAsyncExecute,
+} from "./internal.js";
 
 export type { ScriptAnalysis, AnalyzedCommand, AnalyzedRedirect };
+export { BashError };
 
 /** Closed typed execution-policy selectors. */
 export const ExecutionProfile = Object.freeze({
@@ -29,11 +35,8 @@ export const ExecutionProfile = Object.freeze({
 export type ExecutionProfileName =
   (typeof ExecutionProfile)[keyof typeof ExecutionProfile];
 
-const require = createRequire(import.meta.url);
-const native = require("./index.cjs");
 const NativeBash: typeof NativeBashType = native.Bash;
 const NativeBashTool: typeof NativeBashToolType = native.BashTool;
-const NativeScriptedTool: typeof NativeScriptedToolType = native.ScriptedTool;
 const nativeGetVersion: () => string = native.getVersion;
 const nativeCreateFileSystem: () => any = native.__createFileSystem;
 const nativeRealFileSystem: (
@@ -125,8 +128,6 @@ export type {
  * Function values are resolved lazily on first read and cached.
  */
 export type FileValue = string | (() => string) | (() => Promise<string>);
-
-const MAX_JSON_NESTING_DEPTH = 64;
 
 /**
  * Execution context passed to a custom builtin registered via
@@ -379,15 +380,6 @@ export interface ExecuteOptions {
 type NativeOnOutput = (chunkPair: [string, string]) => string | undefined;
 const ASYNC_ON_OUTPUT_ERROR =
   "onOutput must be synchronous and must not return a Promise";
-const DEFAULT_MAX_INPUT_BYTES = 10_000_000;
-const MAX_PENDING_ASYNC_EXECUTIONS = 8;
-const ASYNC_EXECUTE_QUEUE_FULL_ERROR =
-  "too many pending async execute calls for this instance";
-interface AsyncExecuteQueueState {
-  tail: Promise<void>;
-  pending: number;
-}
-const asyncExecuteQueues = new WeakMap<object, AsyncExecuteQueueState>();
 
 function isAsyncFunction(fn: Function): boolean {
   return Object.prototype.toString.call(fn) === "[object AsyncFunction]";
@@ -399,21 +391,6 @@ function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
     (typeof value === "object" || typeof value === "function") &&
     typeof (value as { then?: unknown }).then === "function"
   );
-}
-
-function errorExecResult(error: string): ExecResult {
-  return {
-    stdout: "",
-    stdoutBytes: [],
-    stderr: error,
-    stderrBytes: Array.from(Buffer.from(error, "utf8")),
-    exitCode: 1,
-    error,
-    stdoutTruncated: false,
-    stderrTruncated: false,
-    finalEnv: undefined,
-    success: false,
-  };
 }
 
 function cancelledExecResult(): ExecResult {
@@ -430,53 +407,6 @@ function cancelledExecResult(): ExecResult {
     finalEnv: undefined,
     success: false,
   };
-}
-
-function inputTooLargeExecResult(
-  commands: string,
-  maxInputBytes: number,
-): ExecResult | undefined {
-  const inputBytes = Buffer.byteLength(commands, "utf8");
-  if (inputBytes <= maxInputBytes) {
-    return undefined;
-  }
-  return errorExecResult(
-    `input too large: ${inputBytes} bytes exceeds maxInputBytes ${maxInputBytes}`,
-  );
-}
-
-// Decision: serialize async execute() per instance in JS so queued AbortSignal
-// listeners only attach once a call reaches the front of the line. Also bound
-// the backlog before retaining large command strings in queued closures.
-function queueAsyncExecute<T>(
-  owner: object,
-  run: () => Promise<T>,
-): Promise<T> {
-  let state = asyncExecuteQueues.get(owner);
-  if (!state) {
-    state = { tail: Promise.resolve(), pending: 0 };
-    asyncExecuteQueues.set(owner, state);
-  }
-  if (state.pending >= MAX_PENDING_ASYNC_EXECUTIONS) {
-    return Promise.reject(new Error(ASYNC_EXECUTE_QUEUE_FULL_ERROR));
-  }
-  state.pending += 1;
-  const previous = state.tail;
-  const completion = previous.then(
-    () => run(),
-    () => run(),
-  );
-  state.tail = completion.then(
-    () => undefined,
-    () => undefined,
-  );
-  state.tail.finally(() => {
-    state.pending -= 1;
-    if (state.pending === 0 && asyncExecuteQueues.get(owner) === state) {
-      asyncExecuteQueues.delete(owner);
-    }
-  });
-  return completion;
 }
 
 function bindOnOutputToCurrentAsyncContext(onOutput: OnOutput): OnOutput {
@@ -540,27 +470,6 @@ async function resolveFiles(
     }
   }
   return resolved;
-}
-
-function validateJsonNestingDepth(value: unknown, depth = 0): void {
-  if (depth > MAX_JSON_NESTING_DEPTH) {
-    throw new RangeError(
-      `JSON nesting depth exceeds maximum of ${MAX_JSON_NESTING_DEPTH}`,
-    );
-  }
-
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      validateJsonNestingDepth(item, depth + 1);
-    }
-    return;
-  }
-
-  if (value && typeof value === "object") {
-    for (const item of Object.values(value as Record<string, unknown>)) {
-      validateJsonNestingDepth(item, depth + 1);
-    }
-  }
 }
 
 /**
@@ -641,27 +550,6 @@ function isFileSystemLike(value: unknown): value is { toExternal(): unknown } {
   return (
     typeof (value as { toExternal?: unknown } | null)?.toExternal === "function"
   );
-}
-
-/**
- * Error thrown when a bash command execution fails.
- */
-export class BashError extends Error {
-  readonly exitCode: number;
-  readonly stderr: string;
-
-  constructor(result: ExecResult) {
-    const message =
-      result.error ?? result.stderr ?? `Exit code ${result.exitCode}`;
-    super(message);
-    this.name = "BashError";
-    this.exitCode = result.exitCode;
-    this.stderr = result.stderr;
-  }
-
-  display(): string {
-    return `BashError(exit_code=${this.exitCode}): ${this.message}`;
-  }
 }
 
 /**
@@ -1918,200 +1806,23 @@ export class BashTool {
   }
 }
 
-/**
- * Options for creating a ScriptedTool instance.
- */
-export interface ScriptedToolOptions {
-  name: string;
-  shortDescription?: string;
-  maxCommands?: number;
-  maxLoopIterations?: number;
-}
+import {
+  ScriptedTool as ScriptedToolClass,
+  type ScriptedToolOptions as ScriptedToolOptionsType,
+  type ToolCallback as ToolCallbackType,
+} from "./scripted.js";
 
-/**
- * Callback type for ScriptedTool tool commands.
- *
- * Receives parsed `--key value` flags as `params` and optional piped input as `stdin`.
- * Must return a string.
- */
-export type ToolCallback = (
-  params: Record<string, unknown>,
-  stdin: string | null,
-) => string;
+// Transition aliases: ScriptedTool moved to `@everruns/bashkit/scripted`.
+// TODO: remove after one release cycle (see docs/migrating-scripted-tool.md).
 
-/**
- * Compose JS callbacks as bash builtins for multi-tool orchestration.
- *
- * Each registered tool becomes a bash builtin command. An LLM (or user) writes
- * a single bash script that pipes, loops, and branches across all tools.
- *
- * @example
- * ```typescript
- * import { ScriptedTool } from '@everruns/bashkit';
- *
- * const tool = new ScriptedTool({ name: "api" });
- * tool.addTool("greet", "Greet user",
- *   (params) => `hello ${params.name ?? "world"}\n`
- * );
- * const result = tool.executeSync("greet --name Alice");
- * console.log(result.stdout); // hello Alice\n
- * ```
- */
-export class ScriptedTool {
-  private native: NativeScriptedToolType;
-  // Keep strong JS refs while native TSFN callbacks are weak.
-  private callbackRefs: Array<(requestJson: string) => string> = [];
-
-  constructor(options: ScriptedToolOptions) {
-    this.native = new NativeScriptedTool({
-      name: options.name,
-      shortDescription: options.shortDescription,
-      maxCommands: options.maxCommands,
-      maxLoopIterations: options.maxLoopIterations,
-    });
-  }
-
-  /**
-   * Register a tool command.
-   *
-   * @param name - Command name (becomes a bash builtin)
-   * @param description - Human-readable description
-   * @param callback - JS function `(params, stdin) => string`
-   * @param schema - Optional JSON Schema for input parameters
-   */
-  addTool(
-    name: string,
-    description: string,
-    callback: ToolCallback,
-    schema?: Record<string, unknown>,
-  ): void {
-    if (schema) {
-      validateJsonNestingDepth(schema);
-    }
-    // Wrap the user callback to handle JSON serialization protocol
-    const wrappedCallback = (requestJson: string): string => {
-      const request = JSON.parse(requestJson) as {
-        params: Record<string, unknown>;
-        stdin: string | null;
-      };
-      return callback(request.params, request.stdin);
-    };
-    this.callbackRefs.push(wrappedCallback);
-    this.native.addTool(
-      name,
-      description,
-      wrappedCallback,
-      schema ? JSON.stringify(schema) : undefined,
-    );
-  }
-
-  /**
-   * Add an environment variable visible inside scripts.
-   */
-  env(key: string, value: string): void {
-    this.native.env(key, value);
-  }
-
-  /**
-   * Execute a bash script synchronously.
-   *
-   * Note: ScriptedTool callbacks run asynchronously via Node's event loop.
-   * If a registered tool is invoked, this method returns a non-zero result
-   * instead of queueing a callback that would deadlock. Use `execute()`
-   * (async) for scripts that call registered tools. Only use this for scripts
-   * that don't invoke any registered tools (e.g., pure bash).
-   */
-  executeSync(commands: string): ExecResult {
-    return this.native.executeSync(commands);
-  }
-
-  /**
-   * Execute a bash script asynchronously, returning a Promise.
-   *
-   * This is the recommended execution method for ScriptedTool since
-   * tool callbacks require the Node.js event loop to be running.
-   */
-  async execute(commands: string): Promise<ExecResult> {
-    const inputLimitResult = inputTooLargeExecResult(
-      commands,
-      DEFAULT_MAX_INPUT_BYTES,
-    );
-    if (inputLimitResult) {
-      return inputLimitResult;
-    }
-    return queueAsyncExecute(this, () => this.native.execute(commands));
-  }
-
-  /**
-   * Execute synchronously. Throws `BashError` on non-zero exit.
-   *
-   * Same caveats as `executeSync()` — throws when a registered tool would
-   * require the blocked Node event loop. Use `executeOrThrow()` instead.
-   */
-  executeSyncOrThrow(commands: string): ExecResult {
-    const result = this.native.executeSync(commands);
-    if (result.exitCode !== 0) {
-      throw new BashError(result);
-    }
-    return result;
-  }
-
-  /**
-   * Execute asynchronously. Throws `BashError` on non-zero exit.
-   */
-  async executeOrThrow(commands: string): Promise<ExecResult> {
-    const result = await this.execute(commands);
-    if (result.exitCode !== 0) {
-      throw new BashError(result);
-    }
-    return result;
-  }
-
-  /** Tool name. */
-  get name(): string {
-    return this.native.name;
-  }
-
-  /** Short description. */
-  get shortDescription(): string {
-    return this.native.shortDescription;
-  }
-
-  /** Number of registered tools. */
-  toolCount(): number {
-    return this.native.toolCount();
-  }
-
-  /** Token-efficient tool description. */
-  description(): string {
-    return this.native.description();
-  }
-
-  /** Markdown help document. */
-  help(): string {
-    return this.native.help();
-  }
-
-  /** Compact system prompt for orchestration. */
-  systemPrompt(): string {
-    return this.native.systemPrompt();
-  }
-
-  /** JSON input schema as string. */
-  inputSchema(): string {
-    return this.native.inputSchema();
-  }
-
-  /** JSON output schema as string. */
-  outputSchema(): string {
-    return this.native.outputSchema();
-  }
-
-  /** Tool version. */
-  get version(): string {
-    return this.native.version;
-  }
-}
+/** @deprecated Import `ScriptedTool` from `@everruns/bashkit/scripted`. */
+export const ScriptedTool = ScriptedToolClass;
+/** @deprecated Import `ScriptedTool` from `@everruns/bashkit/scripted`. */
+export type ScriptedTool = ScriptedToolClass;
+/** @deprecated Import `ScriptedToolOptions` from `@everruns/bashkit/scripted`. */
+export type ScriptedToolOptions = ScriptedToolOptionsType;
+/** @deprecated Import `ToolCallback` from `@everruns/bashkit/scripted`. */
+export type ToolCallback = ToolCallbackType;
 
 /**
  * How strictly a checkout enforces the capability fingerprint recorded in a

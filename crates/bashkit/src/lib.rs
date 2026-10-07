@@ -452,10 +452,8 @@ mod network;
 /// Parser module - exposed for fuzzing and testing
 pub mod parser;
 mod profile;
-/// Scripted tool: compose ToolDef+callback pairs into a single Tool via bash scripts.
-/// Requires the `scripted_tool` feature.
-#[cfg(feature = "scripted_tool")]
-pub mod scripted_tool;
+#[cfg(any(feature = "python", feature = "typescript"))]
+mod runtime_call;
 mod snapshot;
 mod stream;
 #[cfg(feature = "terminal")]
@@ -466,16 +464,21 @@ pub mod terminal;
 /// invariants enforced (TM-INF-013, TM-INF-016, TM-INF-022).
 #[doc(hidden)]
 pub mod testing;
+/// Clock and timer that match the interpreter's target.
+///
+/// Native targets use tokio's clock (it follows paused/advanced test time),
+/// JS-host wasm uses `Performance.now()`/`setTimeout`, and non-JS wasm uses the
+/// embedder-supplied host clock. Code that layers on bashkit (tool registries,
+/// custom builtins) should read time and race deadlines through these so it
+/// agrees with the interpreter's own deadlines on every target.
+pub mod time {
+    pub use crate::time_compat::{Instant, SystemTime, TimeoutElapsed, UNIX_EPOCH, sleep, timeout};
+}
 mod time_compat;
 /// Tool contract for LLM integration.
 /// Requires the `bash_tool` feature (enabled by default).
 #[cfg(feature = "bash_tool")]
 pub mod tool;
-/// Reusable tool primitives: ToolDef, ToolArgs, ToolImpl, exec types.
-#[cfg(feature = "scripted_tool")]
-pub(crate) mod tool_def;
-#[cfg(feature = "scripted_tool")]
-mod tool_registry;
 /// Structured execution trace events.
 pub mod trace;
 pub use stream::StreamData;
@@ -488,7 +491,7 @@ pub use builtins::git::GitConfig;
 pub use builtins::ssh::{SshAllowlist, SshConfig, TrustedHostKey};
 pub use builtins::{
     BashkitContext, Builtin, BuiltinRegistry, ClapBuiltin, CommandResolver,
-    Context as BuiltinContext, Extension,
+    Context as BuiltinContext, ExecutionPlan, Extension, SubCommand,
 };
 pub use clap;
 #[cfg(feature = "http_client")]
@@ -508,7 +511,8 @@ pub use fs::{
 pub use fs::{RealFs, RealFsMode};
 pub use host_call::{ExecutionEvent, ExecutionHandle, HostCallId, HostCallRequest};
 pub use interpreter::{
-    ControlFlow, ExecResult, HistoryEntry, OutputCallback, ShellState, ShellStateView,
+    ControlFlow, ExecResult, HistoryEntry, OutputCallback, ShellFeatures, ShellState,
+    ShellStateView,
 };
 pub use limits::{
     ExecutionBudget, ExecutionBudgetExceeded, ExecutionBudgetLease, ExecutionCounters,
@@ -537,20 +541,6 @@ pub use trace::{
     TraceCallback, TraceCollector, TraceEvent, TraceEventDetails, TraceEventKind, TraceMode,
 };
 
-#[cfg(feature = "scripted_tool")]
-pub use scripted_tool::{
-    AsyncToolCallback, CallbackKind, DiscoverTool, DiscoveryMode, ScriptedCommandInvocation,
-    ScriptedCommandKind, ScriptedExecutionTrace, ScriptedTool, ScriptedToolBuilder,
-    ScriptingToolSet, ScriptingToolSetBuilder, ToolArgs, ToolCallback, ToolDef, ToolDefExtension,
-    ToolDefExtensionBuilder, ToolDefInvocationTrace,
-};
-#[cfg(feature = "scripted_tool")]
-pub use tool_def::{AsyncToolExec, SyncToolExec, ToolImpl};
-#[cfg(feature = "scripted_tool")]
-pub use tool_registry::{
-    ToolCall, ToolCallDecision, ToolCallRequest, ToolCallSurface, ToolRegistry, ToolRegistryBuilder,
-};
-
 #[cfg(feature = "http_client")]
 pub use network::HttpClient;
 
@@ -575,11 +565,13 @@ pub use builtins::git::GitClient;
 pub use builtins::ssh::{SshClient, SshHandler, SshOutput, SshTarget};
 
 #[cfg(feature = "python")]
-pub use builtins::{PythonExternalFnHandler, PythonExternalFns, PythonLimits};
+pub use builtins::{Python, PythonExternalFnHandler, PythonExternalFns, PythonLimits};
 
 // Shared resource-limit core for embedded language VMs (Python, TypeScript).
 #[cfg(any(feature = "python", feature = "typescript"))]
 pub use builtins::RuntimeLimits;
+#[cfg(any(feature = "python", feature = "typescript"))]
+pub use runtime_call::RuntimeCallContext;
 
 #[cfg(feature = "sqlite")]
 pub use builtins::{Sqlite, SqliteBackend, SqliteLimits};
@@ -1883,7 +1875,8 @@ pub struct BashBuilder {
     fixed_epoch: Option<i64>,
     /// Constant seconds offset applied to real-clock for `date` (TM-INF-018)
     epoch_offset: Option<i64>,
-    shell_profile: interpreter::ShellProfile,
+    shell_features: ShellFeatures,
+    builtin_filter: Option<interpreter::BuiltinFilter>,
     custom_builtins: HashMap<String, Box<dyn Builtin>>,
     /// Optional host-owned mutable registry. Entries here are consulted at
     /// dispatch time, so embedders can register/remove builtins after build.
@@ -1976,54 +1969,12 @@ impl BashBuilder {
         self
     }
 
-    /// Install one ToolDef-backed registry across shell, embedded Python, and
-    /// embedded TypeScript. Runtime surfaces are included when their cargo
-    /// features are enabled and share the registry's callback and policy Arcs.
-    #[cfg(feature = "scripted_tool")]
-    pub fn tool_registry(mut self, registry: ToolRegistry) -> Self {
-        self = self.extension(scripted_tool::ToolDefExtension::from_registry(
-            registry.clone(),
-        ));
-        #[cfg(feature = "python")]
-        {
-            let limits = self.profile.python_limits().clone();
-            let names = vec!["__bashkit_tool_call".to_string()];
-            let handler = registry.python_handler();
-            let prelude = registry.python_prelude();
-            self = self
-                .builtin(
-                    "python",
-                    Box::new(
-                        builtins::Python::with_limits(limits.clone())
-                            .with_external_handler_and_prelude(
-                                names.clone(),
-                                handler.clone(),
-                                prelude.clone(),
-                            ),
-                    ),
-                )
-                .builtin(
-                    "python3",
-                    Box::new(
-                        builtins::Python::with_limits(limits)
-                            .with_external_handler_and_prelude(names, handler, prelude),
-                    ),
-                );
-        }
-        #[cfg(feature = "typescript")]
-        {
-            let limits = self.profile.typescript_limits().clone();
-            self = self.extension(
-                builtins::TypeScriptExtension::with_external_handler_and_prelude(
-                    limits,
-                    registry.typescript_external_names(),
-                    registry.typescript_handler(),
-                    registry.typescript_prelude(),
-                    registry.typescript_rewrites(),
-                ),
-            );
-        }
-        self
+    /// Execution profile this builder currently carries.
+    ///
+    /// Lets builder add-ons (for example a tool registry installing its
+    /// Python/TypeScript surfaces) reuse the configured runtime limits.
+    pub fn execution_profile(&self) -> &ExecutionProfile {
+        &self.profile
     }
 
     /// Set a custom filesystem.
@@ -2050,10 +2001,22 @@ impl BashBuilder {
         self
     }
 
-    /// Restrict this shell to logic/data-flow commands and custom builtins.
-    #[cfg(feature = "scripted_tool")]
-    pub(crate) fn logic_only(mut self) -> Self {
-        self.shell_profile = interpreter::ShellProfile::LogicOnly;
+    /// Enable or disable shell language features that reach beyond in-memory
+    /// computation (file redirects, process substitution, script execution).
+    ///
+    /// Combine with [`Self::builtin_filter`] and a rejecting [`Self::fs`] to
+    /// build a restricted shell. See [`ShellFeatures`].
+    pub fn shell_features(mut self, features: ShellFeatures) -> Self {
+        self.shell_features = features;
+        self
+    }
+
+    /// Keep only the default builtins for which `keep(name)` returns true.
+    ///
+    /// Applies to Bashkit's own builtins only: builtins added with
+    /// [`Self::builtin`] and extensions are always registered.
+    pub fn builtin_filter(mut self, keep: impl Fn(&str) -> bool + Send + Sync + 'static) -> Self {
+        self.builtin_filter = Some(Arc::new(keep));
         self
     }
 
@@ -3294,9 +3257,7 @@ impl BashBuilder {
     /// # }
     /// ```
     pub fn build(self) -> Bash {
-        let base_fs: Arc<dyn FileSystem> = if self.shell_profile.is_logic_only() {
-            Arc::new(fs::DisabledFs)
-        } else if let Some(fs) = self.fs {
+        let base_fs: Arc<dyn FileSystem> = if let Some(fs) = self.fs {
             fs
         } else {
             // No custom filesystem was supplied: provision the default
@@ -3358,7 +3319,8 @@ impl BashBuilder {
             self.fixed_epoch,
             self.epoch_offset,
             self.cwd,
-            self.shell_profile,
+            self.shell_features,
+            self.builtin_filter,
             self.profile.name() == ExecutionProfileName::Hardened,
             self.limits,
             self.session_limits,
@@ -3577,7 +3539,8 @@ impl BashBuilder {
         fixed_epoch: Option<i64>,
         epoch_offset: Option<i64>,
         cwd: Option<PathBuf>,
-        shell_profile: interpreter::ShellProfile,
+        shell_features: ShellFeatures,
+        builtin_filter: Option<interpreter::BuiltinFilter>,
         hardened_timing: bool,
         limits: ExecutionLimits,
         session_limits: SessionLimits,
@@ -3616,7 +3579,8 @@ impl BashBuilder {
             epoch_offset,
             custom_builtins,
             host_builtins,
-            shell_profile,
+            shell_features,
+            builtin_filter,
             hardened_timing,
         );
 

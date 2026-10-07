@@ -66,8 +66,8 @@ requirement into browser and edge bundles.
 
 ## Feature surface
 
-Mirrors the `wasm` CI job: `scripted_tool` + `jq` on top of the default
-interpreter. Present: full bash syntax, the text-tool builtins (`grep`, `sed`,
+Mirrors the `wasm` CI job: `jq` on top of the default
+interpreter (that job also checks `bashkit-scripted-tool` for wasm). Present: full bash syntax, the text-tool builtins (`grep`, `sed`,
 `awk`, `find`, `jq`, …), a binary-safe virtual filesystem, resource limits, JS
 custom builtins (sync + async), streaming output, cancellation, static script
 analysis, and content-addressed commit/checkout persistence.
@@ -260,7 +260,7 @@ an empty snapshot, so deleting the root still clears persisted files.
 
 The `bashkit-wasm` crate is JS-host-only (wasm-bindgen glue). The **library**
 itself, however, compiles for the WASI targets with the same reduced feature
-surface (`scripted_tool,jq`), which is what a WASI runtime (`wasmtime`,
+surface (`jq`, plus the `bashkit-scripted-tool` crate), which is what a WASI runtime (`wasmtime`,
 `wasmer`) needs. CI's `wasm` job checks `wasm32-wasip2` alongside
 `wasm32-unknown-unknown`.
 

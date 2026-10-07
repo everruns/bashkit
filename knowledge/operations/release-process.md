@@ -48,10 +48,11 @@ silently failed.
 1. **Determine version**: human-specified, or suggest from changes.
 2. **Update CHANGELOG.md** (format below).
 3. **Update version across all manifests** (must match the workspace version):
-   workspace `Cargo.toml`, `crates/bashkit-cli/Cargo.toml` path-dep pin on
-   `bashkit`, `crates/bashkit-js/package.json`,
+   workspace `Cargo.toml`, the `bashkit` path-dep pins in
+   `crates/bashkit-cli/Cargo.toml` and `crates/bashkit-scripted-tool/Cargo.toml`,
+   `crates/bashkit-js/package.json`,
    `crates/bashkit-wasm/package.json`, and `Cargo.lock`
-   (`cargo update -p bashkit -p bashkit-cli ...`).
+   (`cargo update -p bashkit -p bashkit-cli -p bashkit-scripted-tool ...`).
    - Refresh the **auxiliary lockfiles** too. `crates/bashkit/fuzz`,
      `examples/hyperlight`, and `examples/hyperlight/host` are separate
      workspaces whose lockfiles pin `bashkit` through a path dependency, so a
@@ -80,7 +81,7 @@ silently failed.
 5. **Verify publish-readiness** (catches what local tests don't, the
    `cargo publish` packaging step, missing files, version drift):
    - `cargo publish --dry-run -p bashkit` must succeed. Package
-     `bashkit-cli` in a disposable copy against the latest published
+     `bashkit-cli` and `bashkit-scripted-tool` in a disposable copy against the latest published
      registry core version (remove the local path in the copy) as a structural
      proxy; Cargo cannot resolve the CLI's new
      registry dependency until the core crate is live. The proxy may only ask
@@ -114,7 +115,7 @@ silently failed.
    `publish-wasm.yml`, `cli-binaries.yml`, and `c-api-binaries.yml` to
    completion, run the
    post-release verification commands, and only declare "shipped" when all
-   published artifacts (`bashkit` + `bashkit-cli` on crates.io, `bashkit`
+   published artifacts (`bashkit`, `bashkit-scripted-tool` + `bashkit-cli` on crates.io, `bashkit`
    on PyPI, both npm packages, Homebrew, and the C ABI archives) report the new
    version. If one fails, open a hotfix PR rather than leaving the release
    half-shipped.
@@ -177,7 +178,7 @@ a Windows runner.
 Confirm each target (workflow → check):
 
 - GitHub Release (`release.yml`): `gh release view vX.Y.Z`
-- crates.io (`publish.yml`): `cargo search bashkit` / `cargo search bashkit-cli`
+- crates.io (`publish.yml`): `cargo search bashkit` / `cargo search bashkit-scripted-tool` / `cargo search bashkit-cli`
 - PyPI (`publish-python.yml`): `pip index versions bashkit`
 - npm Node (`publish-js.yml`): `npm view @everruns/bashkit version`;
   `npm dist-tags ls @everruns/bashkit` ("latest" points at it)
@@ -214,6 +215,7 @@ Use the latest entries in `CHANGELOG.md` as the template. Rules:
 ## Package Names and Registries
 
 - `bashkit` on crates.io (core library)
+- `bashkit-scripted-tool` on crates.io (`ScriptedTool` / `ToolDef` / `ToolRegistry`)
 - `bashkit-cli` on crates.io (CLI tool)
 - `bashkit` on PyPI (pre-built wheels)
 - `@everruns/bashkit` on npm (native NAPI-RS bindings)
@@ -223,7 +225,7 @@ Use the latest entries in `CHANGELOG.md` as the template. Rules:
 ## Publishing Order
 
 Crates publish in dependency order: `bashkit` (no internal deps) then
-`bashkit-cli` (depends on bashkit). Python wheels (native matrix + the
+`bashkit-scripted-tool` and `bashkit-cli` (each depends only on bashkit). Python wheels (native matrix + the
 reduced-feature Pyodide/Emscripten wheel, see [Emscripten Wheels](../runtimes/emscripten-wheels.md))
 and both npm packages publish independently (no crates.io dependency). CI
 workflows handle ordering automatically on GitHub Release.
@@ -254,7 +256,7 @@ Trigger: Release published. Publishes to crates.io in dependency order, then
 verifies published versions. Each crate first passes `cargo publish --dry-run`
 without registry credentials. The following `cargo publish --no-verify` upload
 receives the step-scoped `CARGO_REGISTRY_TOKEN`, so dependency compilation never
-inherits that credential. The CLI verification runs after the core is published.
+inherits that credential. The CLI and `bashkit-scripted-tool` dry-runs run after the core is published.
 
 CLI and C ABI release validation resolve the fetched tag once, validate the
 manifest at that immutable commit, and pass its SHA to build checkouts. The tag
@@ -286,6 +288,12 @@ dispatch from `main`, publishes under `next`. So a failed npm publish cannot be
 recovered by re-dispatching from `main`: fix the cause and cut a patch release,
 whose tag then publishes `latest`. v0.17.0 landed on `next` this way, and
 v0.17.1 is what put the native package back on `latest`.
+
+The publish job never runs `tsc`; it ships whatever the `js-stubs` artifact
+carries. That artifact must list every `tsc` output (`.js` + `.d.ts` for each
+`tsconfig.json` include). It once listed only `wrapper.*`, so 0.18.2 shipped
+without `langchain.js`/`ai.js`/`anthropic.js`/`openai.js` while `package.json`
+exported them. Guarded by `scripts/tests/test_js_publish_files.py`.
 
 ### publish-wasm.yml
 

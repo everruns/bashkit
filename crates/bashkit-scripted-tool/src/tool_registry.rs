@@ -2,13 +2,11 @@
 // Surface adapters only translate arguments/results; policy, validation,
 // deadlines, sanitization, callback identity, and tracing stay here.
 
-use crate::builtins::Context;
-#[cfg(not(target_family = "wasm"))]
-use crate::builtins::ExecutionDeadline;
 use crate::scripted_tool::{
     CallbackKind, RegisteredTool, ScriptedCommandKind, ToolDefInvocationTrace,
 };
 use crate::{ToolArgs, ToolDef, ToolImpl};
+use bashkit::BuiltinContext as Context;
 use serde_json::Value;
 use std::future::Future;
 use std::sync::Arc;
@@ -56,7 +54,7 @@ impl ToolCall<'_> {
 
 type PolicyHook = Arc<dyn Fn(&ToolCall<'_>) -> ToolCallDecision + Send + Sync>;
 
-/// Per-`exec*` registry context carried through [`crate::ExecutionExtensions`].
+/// Per-`exec*` registry context carried through [`bashkit::ExecutionExtensions`].
 ///
 /// Each request owns a trace sink, preventing cross-tenant trace mixing even
 /// when tenants share one immutable registry and callback set.
@@ -84,45 +82,65 @@ impl ToolCallRequest {
     }
 }
 
+// Built only from public request accessors (`BuiltinContext` for shell
+// commands, `RuntimeCallContext` for embedded Python/TypeScript) so the
+// registry needs no interpreter internals.
 #[derive(Clone)]
-pub(crate) struct ToolCallScope {
-    request: Option<crate::ExecutionCapability<ToolCallRequest>>,
-    budget: Option<crate::limits::ExecutionBudget>,
-    lease: Option<crate::ExecutionCapability<()>>,
+struct ToolCallScope {
+    request: Option<bashkit::ExecutionCapability<ToolCallRequest>>,
+    budget: Option<bashkit::ExecutionBudget>,
+    lease: Option<bashkit::ExecutionCapability<()>>,
     #[cfg(not(target_family = "wasm"))]
-    deadline: Option<crate::time_compat::Instant>,
+    deadline: Option<bashkit::time::Instant>,
 }
 
 impl ToolCallScope {
-    pub(crate) fn from_context(ctx: &Context<'_>) -> Self {
+    fn from_context(ctx: &Context<'_>) -> Self {
+        Self::new(
+            ctx.execution_extension::<ToolCallRequest>(),
+            ctx.execution_budget(),
+            ctx.execution_capability(()),
+            ctx.remaining_deadline(),
+        )
+    }
+
+    #[cfg(any(feature = "python", feature = "typescript"))]
+    fn from_runtime() -> Self {
+        let ctx = bashkit::RuntimeCallContext::current();
+        Self::new(
+            ctx.execution_extension::<ToolCallRequest>(),
+            ctx.execution_budget(),
+            ctx.execution_capability(()),
+            ctx.remaining_deadline(),
+        )
+    }
+
+    fn new(
+        request: Option<bashkit::ExecutionCapability<ToolCallRequest>>,
+        budget: Option<bashkit::ExecutionCapability<bashkit::ExecutionBudget>>,
+        lease: Option<bashkit::ExecutionCapability<()>>,
+        #[cfg_attr(target_family = "wasm", allow(unused_variables))] remaining: Option<
+            std::time::Duration,
+        >,
+    ) -> Self {
         Self {
-            request: ctx.execution_extension::<ToolCallRequest>(),
-            budget: ctx
-                .execution_budget()
-                .and_then(|budget| budget.try_with(Clone::clone).ok()),
-            lease: ctx.execution_capability(()),
+            request,
+            budget: budget.and_then(|budget| budget.try_with(Clone::clone).ok()),
+            lease,
             #[cfg(not(target_family = "wasm"))]
-            deadline: ctx
-                .execution_extension::<ExecutionDeadline>()
-                .and_then(|deadline| {
-                    deadline
-                        .try_with(ExecutionDeadline::remaining)
-                        .ok()
-                        .and_then(|remaining| {
-                            crate::time_compat::Instant::now().checked_add(remaining)
-                        })
-                }),
+            deadline: remaining
+                .and_then(|remaining| bashkit::time::Instant::now().checked_add(remaining)),
         }
     }
 
-    fn tenant_id(&self) -> Result<Option<String>, crate::ExecutionCapabilityError> {
+    fn tenant_id(&self) -> Result<Option<String>, bashkit::ExecutionCapabilityError> {
         self.request
             .as_ref()
             .map(|request| request.try_with(|request| request.tenant_id().to_string()))
             .transpose()
     }
 
-    fn trace(&self) -> Result<Option<ToolDefInvocationTrace>, crate::ExecutionCapabilityError> {
+    fn trace(&self) -> Result<Option<ToolDefInvocationTrace>, bashkit::ExecutionCapabilityError> {
         self.request
             .as_ref()
             .map(|request| request.try_with(ToolCallRequest::trace))
@@ -133,33 +151,10 @@ impl ToolCallScope {
     fn remaining(&self) -> Option<std::time::Duration> {
         self.deadline.map(|deadline| {
             deadline
-                .checked_duration_since(crate::time_compat::Instant::now())
+                .checked_duration_since(bashkit::time::Instant::now())
                 .unwrap_or_default()
         })
     }
-}
-
-#[cfg(any(feature = "python", feature = "typescript"))]
-tokio::task_local! {
-    static RUNTIME_TOOL_SCOPE: ToolCallScope;
-}
-
-#[cfg(any(feature = "python", feature = "typescript"))]
-pub(crate) async fn scope_runtime_call<F: Future>(scope: ToolCallScope, future: F) -> F::Output {
-    RUNTIME_TOOL_SCOPE.scope(scope, future).await
-}
-
-#[cfg(any(feature = "python", feature = "typescript"))]
-fn runtime_scope() -> ToolCallScope {
-    RUNTIME_TOOL_SCOPE
-        .try_with(Clone::clone)
-        .unwrap_or(ToolCallScope {
-            request: None,
-            budget: None,
-            lease: None,
-            #[cfg(not(target_family = "wasm"))]
-            deadline: None,
-        })
 }
 
 #[derive(Clone)]
@@ -264,6 +259,60 @@ impl ToolRegistry {
         ToolRegistryBuilder::default()
     }
 
+    /// Install this registry across shell, embedded Python, and embedded
+    /// TypeScript on `builder`. Runtime surfaces are included when this
+    /// crate's `python` / `typescript` features are enabled and share the
+    /// registry's callback and policy `Arc`s. Python and TypeScript use the
+    /// limits of the builder's current [`ExecutionProfile`](bashkit::ExecutionProfile),
+    /// so set the profile first.
+    pub fn install(&self, builder: bashkit::BashBuilder) -> bashkit::BashBuilder {
+        #[cfg_attr(
+            not(any(feature = "python", feature = "typescript")),
+            allow(unused_mut)
+        )]
+        let mut builder = builder.extension(crate::ToolDefExtension::from_registry(self.clone()));
+        #[cfg(feature = "python")]
+        {
+            let limits = builder.execution_profile().python_limits().clone();
+            let names = vec!["__bashkit_tool_call".to_string()];
+            let handler = self.python_handler();
+            let prelude = self.python_prelude();
+            builder = builder
+                .builtin(
+                    "python",
+                    Box::new(
+                        bashkit::Python::with_limits(limits.clone())
+                            .with_external_handler_and_prelude(
+                                names.clone(),
+                                handler.clone(),
+                                prelude.clone(),
+                            ),
+                    ),
+                )
+                .builtin(
+                    "python3",
+                    Box::new(
+                        bashkit::Python::with_limits(limits)
+                            .with_external_handler_and_prelude(names, handler, prelude),
+                    ),
+                );
+        }
+        #[cfg(feature = "typescript")]
+        {
+            let limits = builder.execution_profile().typescript_limits().clone();
+            builder = builder.extension(
+                bashkit::TypeScriptExtension::with_external_handler_and_prelude(
+                    limits,
+                    self.typescript_external_names(),
+                    self.typescript_handler(),
+                    self.typescript_prelude(),
+                    self.typescript_rewrites(),
+                ),
+            );
+        }
+        builder
+    }
+
     pub(crate) fn from_registered(
         tools: Vec<RegisteredTool>,
         sanitize_errors: bool,
@@ -333,8 +382,15 @@ impl ToolRegistry {
         params: Value,
         surface: ToolCallSurface,
     ) -> RegistryOutput {
-        self.invoke(name, params, None, surface, runtime_scope(), Vec::new())
-            .await
+        self.invoke(
+            name,
+            params,
+            None,
+            surface,
+            ToolCallScope::from_runtime(),
+            Vec::new(),
+        )
+        .await
     }
 
     async fn invoke(
@@ -492,7 +548,7 @@ impl ToolRegistry {
 
     #[cfg(any(feature = "python", feature = "typescript"))]
     fn discover_runtime(&self, params: &Value) -> Value {
-        let scope = runtime_scope();
+        let scope = ToolCallScope::from_runtime();
         let trace = match scope.trace() {
             Ok(Some(trace)) => trace,
             Ok(None) => self.default_trace(),
@@ -503,13 +559,13 @@ impl ToolRegistry {
     }
 
     #[cfg(feature = "typescript")]
-    pub(crate) fn typescript_handler(&self) -> crate::TypeScriptExternalFnHandler {
+    pub(crate) fn typescript_handler(&self) -> bashkit::TypeScriptExternalFnHandler {
         let registry = self.clone();
         Arc::new(move |external_name, args| {
             let registry = registry.clone();
             Box::pin(async move {
                 let params = match args.first() {
-                    Some(zapcode_core::Value::String(json)) => serde_json::from_str(json)
+                    Some(bashkit::ZapcodeValue::String(json)) => serde_json::from_str(json)
                         .map_err(|_| "tool input must be valid JSON".to_string())?,
                     Some(value) => zapcode_to_json(value)?,
                     None => serde_json::json!({}),
@@ -539,8 +595,8 @@ impl ToolRegistry {
     }
 
     #[cfg(feature = "python")]
-    pub(crate) fn python_handler(&self) -> crate::PythonExternalFnHandler {
-        use monty_types::{ExcType, ExtFunctionResult, MontyException, MontyObject};
+    pub(crate) fn python_handler(&self) -> bashkit::PythonExternalFnHandler {
+        use bashkit::{ExcType, ExtFunctionResult, MontyException, MontyObject};
         let registry = self.clone();
         Arc::new(move |_external_name, args, _kwargs| {
             let registry = registry.clone();
@@ -835,22 +891,22 @@ fn python_tree(
 }
 
 #[cfg(feature = "typescript")]
-fn zapcode_to_json(value: &zapcode_core::Value) -> Result<Value, String> {
+fn zapcode_to_json(value: &bashkit::ZapcodeValue) -> Result<Value, String> {
     Ok(match value {
-        zapcode_core::Value::Undefined | zapcode_core::Value::Null => Value::Null,
-        zapcode_core::Value::Bool(value) => Value::Bool(*value),
-        zapcode_core::Value::Int(value) => Value::from(*value),
-        zapcode_core::Value::Float(value) => serde_json::Number::from_f64(*value)
+        bashkit::ZapcodeValue::Undefined | bashkit::ZapcodeValue::Null => Value::Null,
+        bashkit::ZapcodeValue::Bool(value) => Value::Bool(*value),
+        bashkit::ZapcodeValue::Int(value) => Value::from(*value),
+        bashkit::ZapcodeValue::Float(value) => serde_json::Number::from_f64(*value)
             .map(Value::Number)
             .ok_or_else(|| "non-finite number is not valid tool input".to_string())?,
-        zapcode_core::Value::String(value) => Value::String(value.to_string()),
-        zapcode_core::Value::Array(values) => Value::Array(
+        bashkit::ZapcodeValue::String(value) => Value::String(value.to_string()),
+        bashkit::ZapcodeValue::Array(values) => Value::Array(
             values
                 .iter()
                 .map(zapcode_to_json)
                 .collect::<Result<Vec<_>, _>>()?,
         ),
-        zapcode_core::Value::Object(values) => Value::Object(
+        bashkit::ZapcodeValue::Object(values) => Value::Object(
             values
                 .iter()
                 .map(|(key, value)| Ok((key.to_string(), zapcode_to_json(value)?)))
@@ -861,20 +917,20 @@ fn zapcode_to_json(value: &zapcode_core::Value) -> Result<Value, String> {
 }
 
 #[cfg(feature = "typescript")]
-fn json_to_zapcode(value: Value) -> zapcode_core::Value {
+fn json_to_zapcode(value: Value) -> bashkit::ZapcodeValue {
     match value {
-        Value::Null => zapcode_core::Value::Null,
-        Value::Bool(value) => zapcode_core::Value::Bool(value),
+        Value::Null => bashkit::ZapcodeValue::Null,
+        Value::Bool(value) => bashkit::ZapcodeValue::Bool(value),
         Value::Number(value) => value
             .as_i64()
-            .map(zapcode_core::Value::Int)
-            .or_else(|| value.as_f64().map(zapcode_core::Value::Float))
-            .unwrap_or(zapcode_core::Value::Null),
-        Value::String(value) => zapcode_core::Value::String(Arc::from(value)),
+            .map(bashkit::ZapcodeValue::Int)
+            .or_else(|| value.as_f64().map(bashkit::ZapcodeValue::Float))
+            .unwrap_or(bashkit::ZapcodeValue::Null),
+        Value::String(value) => bashkit::ZapcodeValue::String(Arc::from(value)),
         Value::Array(values) => {
-            zapcode_core::Value::Array(values.into_iter().map(json_to_zapcode).collect())
+            bashkit::ZapcodeValue::Array(values.into_iter().map(json_to_zapcode).collect())
         }
-        Value::Object(values) => zapcode_core::Value::Object(
+        Value::Object(values) => bashkit::ZapcodeValue::Object(
             values
                 .into_iter()
                 .map(|(key, value)| (Arc::from(key), json_to_zapcode(value)))
@@ -884,8 +940,8 @@ fn json_to_zapcode(value: Value) -> zapcode_core::Value {
 }
 
 #[cfg(feature = "python")]
-fn monty_to_json(value: &monty_types::MontyObject) -> Result<Value, String> {
-    use monty_types::MontyObject;
+fn monty_to_json(value: &bashkit::MontyObject) -> Result<Value, String> {
+    use bashkit::MontyObject;
     Ok(match value {
         MontyObject::None => Value::Null,
         MontyObject::Bool(value) => Value::Bool(*value),
@@ -916,8 +972,8 @@ fn monty_to_json(value: &monty_types::MontyObject) -> Result<Value, String> {
 }
 
 #[cfg(feature = "python")]
-fn json_to_monty(value: Value) -> monty_types::MontyObject {
-    use monty_types::MontyObject;
+fn json_to_monty(value: Value) -> bashkit::MontyObject {
+    use bashkit::MontyObject;
     match value {
         Value::Null => MontyObject::None,
         Value::Bool(value) => MontyObject::Bool(value),

@@ -20,11 +20,19 @@ bashkit.wasi-browser.js
 wasi-worker.mjs
 wasi-worker-browser.mjs
 
-# tsc output (source is wrapper.ts, langchain.ts, ai.ts, anthropic.ts, openai.ts)
+# tsc output (source is wrapper.ts, scripted.ts, internal.ts, langchain.ts, ai.ts, anthropic.ts, openai.ts)
 wrapper.js
 wrapper.d.ts
 wrapper.d.ts.map
 wrapper.js.map
+scripted.js
+scripted.d.ts
+scripted.d.ts.map
+scripted.js.map
+internal.js
+internal.d.ts
+internal.d.ts.map
+internal.js.map
 langchain.js
 langchain.d.ts
 langchain.d.ts.map

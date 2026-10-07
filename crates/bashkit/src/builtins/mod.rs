@@ -790,8 +790,10 @@ impl<'a> Context<'a> {
     }
 
     /// Run async boundary work under this request's cancellation/lifecycle gate.
-    #[cfg(any(feature = "http_client", feature = "scripted_tool"))]
-    pub(crate) async fn run_budgeted<F>(&self, future: F) -> Result<F::Output>
+    ///
+    /// Host callbacks invoked from a builtin should run through this so a
+    /// cancelled or over-budget request drops the callback future.
+    pub async fn run_budgeted<F>(&self, future: F) -> Result<F::Output>
     where
         F: std::future::Future,
     {
@@ -814,6 +816,20 @@ impl<'a> Context<'a> {
         self.shell
             .as_ref()
             .and_then(|shell| shell.execution_extensions.get::<T>())
+    }
+
+    /// Remaining wall-clock budget of the current `exec*` call, if limited.
+    pub fn remaining_deadline(&self) -> Option<std::time::Duration> {
+        self.execution_extension::<ExecutionDeadline>()?
+            .try_with(ExecutionDeadline::remaining)
+            .ok()
+    }
+
+    #[cfg(any(feature = "python", feature = "typescript"))]
+    pub(crate) fn execution_extensions(&self) -> Option<std::sync::Arc<ExecutionExtensions>> {
+        self.shell
+            .as_ref()
+            .map(|shell| shell.execution_extensions.clone())
     }
 
     /// Bind a host value to the current execution lease.

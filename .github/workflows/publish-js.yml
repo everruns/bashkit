@@ -145,6 +145,18 @@ jobs:
             crates/bashkit-js/index.d.cts
             crates/bashkit-js/wrapper.js
             crates/bashkit-js/wrapper.d.ts
+            crates/bashkit-js/scripted.js
+            crates/bashkit-js/scripted.d.ts
+            crates/bashkit-js/internal.js
+            crates/bashkit-js/internal.d.ts
+            crates/bashkit-js/langchain.js
+            crates/bashkit-js/langchain.d.ts
+            crates/bashkit-js/anthropic.js
+            crates/bashkit-js/anthropic.d.ts
+            crates/bashkit-js/openai.js
+            crates/bashkit-js/openai.d.ts
+            crates/bashkit-js/ai.js
+            crates/bashkit-js/ai.d.ts
             crates/bashkit-js/bashkit.wasi.cjs
             crates/bashkit-js/bashkit.wasi-browser.js
             crates/bashkit-js/wasi-worker.mjs

@@ -22,9 +22,15 @@ Compose tool definitions (`ToolDef`) + execution callbacks into a single `Script
 
 `ScriptedToolBuilder` and `ScriptingToolSetBuilder` also implement the shared toolkit-library contract from [the tool contract](tool-contract.md): locale-aware metadata, `build_service()`, `build_tool_definition()`, `build_input_schema()`, `build_output_schema()`, single-use `ToolExecution`.
 
-## Feature flag
+## Crate
 
-`scripted_tool`, entire module gated behind `#[cfg(feature = "scripted_tool")]`.
+Separate crate `bashkit-scripted-tool` (lib `bashkit_scripted_tool`), published to crates.io in lockstep with `bashkit` (was the `scripted_tool` feature of core until 0.18.x). Decision: core stays the sandboxed interpreter + `BashTool`; everything built on `ToolDef` (`ToolDef`/`ToolArgs`/`ToolImpl`, `ToolRegistry`, `ScriptedTool`, `ScriptingToolSet`, the logic-only shell profile) lives here, built only on core public APIs. Features: `python`, `typescript`, `jq` (forward to core), `tracing`. `ToolRegistry::install(builder)` replaces the old `BashBuilder::tool_registry`; it reads `BashBuilder::execution_profile()` for Python/TypeScript limits and registers `python`/`python3` + the TypeScript extension with the registry's external handler + prelude. Core extension points it depends on: `RuntimeCallContext`, `ShellFeatures` + `builtin_filter`, `Python::with_external_handler_and_prelude`, `TypeScriptExtension::with_external_handler_and_prelude`, `ExecutionCapability::derive`, `ExecutionBudget::run`, `bashkit::time` (wasm-safe `Instant`/`timeout`/`sleep`). Migration guide: `docs/migrating-scripted-tool.md`.
+
+## Bindings
+
+Python: `from bashkit.scripted import ScriptedTool` (`bashkit/scripted.py` re-exports the native class). `bashkit.ScriptedTool` resolves through a module `__getattr__` that emits `FutureWarning`; it is not in `bashkit.__all__`, so `from bashkit import *` stays silent.
+
+JS: `import { ScriptedTool } from "@everruns/bashkit/scripted"` (`scripted.ts`, `exports["./scripted"]`). The root keeps `@deprecated` aliases (`ScriptedTool`, `ScriptedToolOptions`, `ToolCallback`) bound to the same class. Helpers shared with `Bash`/`BashTool` (native loader, input-size guard, async queue, `BashError`) live in non-exported `internal.ts`, so neither entry imports the other and there is no ESM cycle. Generated API references render `bashkit.scripted` / `@everruns/bashkit/scripted` as their own sections and skip deprecated aliases. Both shims are transition-only, removal tracked by `TODO` in `bashkit/__init__.py` and `wrapper.ts`.
 
 ## Motivation
 
@@ -117,7 +123,13 @@ other output remains a string.
 
 `ToolCallRequest`, carried through `ExecOptions::extensions`, supplies tenant
 identity and a request-local `ToolDefInvocationTrace`. The request scope crosses
-Monty/ZapCode suspension with a Tokio task-local, never mutable registry state.
+Monty/ZapCode suspension through core's public `RuntimeCallContext` (a Tokio
+task-local the Python/TypeScript builtins set for every run), never mutable
+registry state. Shell commands read the same data from `BuiltinContext`
+(`execution_extension`, `execution_budget`, `execution_capability`,
+`remaining_deadline`). Decision: the registry uses only these public request
+accessors, so it can move out of core (planned `bashkit-scripted-tool` crate)
+without core knowing about tools.
 Policy sees name, parameters, tenant, and surface; callbacks read tenant/surface
 from `ToolArgs`. A shared registry therefore shares callbacks and policy while
 keeping request traces and tenant context isolated. Registry callback futures use
@@ -146,7 +158,7 @@ Enables framework patterns like LangGraph's `get_stream_writer()` and FastAPI re
 
 ### Flag parsing
 
-Implementation and per-syntax precedence: `parse_flags` in `crates/bashkit/src/tool_def.rs`. Rules:
+Implementation and per-syntax precedence: `parse_flags` in `crates/bashkit-scripted-tool/src/tool_def.rs`. Rules:
 
 - `--key value` and `--key=value` parse into a JSON object. Type coercion follows `input_schema` property types (`integer`, `number`, `boolean`, `string`, `array`, `object`); bare `--flag` is `true` when schema says boolean. Unknown flags (not in schema) stay strings, **unless** the schema sets `"additionalProperties": false`, in which case an unknown flag is an error naming the flags the schema does define. That is the same rule `ToolRegistry` applies to structured calls, so one schema describes one command on both surfaces. Decision: an open schema stays permissive because a `ToolDef` without `additionalProperties` is not asserting a closed argument set; a closed one means a typo (`--limti 10`) is a mistake, not an extra string property to pass through and silently drop.
 - Bounded before callback execution: parsed flag value bytes capped at 64 KiB per command invocation; array-typed flags capped at 4096 items after JSON parsing, comma splitting, and repeated-invocation appends. Oversized input fails before allocating the full `ToolArgs.params`.
@@ -159,11 +171,11 @@ Implementation and per-syntax precedence: `parse_flags` in `crates/bashkit/src/t
 
 ### ScriptedToolBuilder
 
-Two arguments per tool: definition + callback. `.tool_fn()` sync, `.async_tool_fn()` async; plus `.locale()`, `.short_description()`, `.env()`, `.limits()`, `.compact_prompt()`. Full example: `crates/bashkit/examples/scripted_tool.rs`.
+Two arguments per tool: definition + callback. `.tool_fn()` sync, `.async_tool_fn()` async; plus `.locale()`, `.short_description()`, `.env()`, `.limits()`, `.compact_prompt()`. Full example: `crates/bashkit-scripted-tool/examples/scripted_tool.rs`.
 
 `.builtin(name, Box<dyn Builtin>)` registers a raw-argv builtin alongside the `ToolDef` tools, mirroring `BashBuilder::builtin` and `BashToolBuilder::builtin`. Stored as `Arc<dyn Builtin>` so one instance is reused by the fresh shell each `execute()` builds.
 
-Why it exists: `parse_flags` is schema-driven and only understands `--key value`. Commands that need positionals, short flags, `--`, or parse-time required-argument checking cannot be expressed as a `ToolDef`, and before this the only workaround was to rebuild the shell on `Bash::builder()` downstream, which is not possible because `BashBuilder::logic_only` is `pub(crate)`. Registering the builtin gives it `ctx.args` unparsed, so it can use [`ClapBuiltin`](../foundations/builtins.md) — the house parser for `Bash` builtins — inside a `ScriptedTool`. Example: `crates/bashkit/examples/scripted_tool_clap_builtin.rs`.
+Why it exists: `parse_flags` is schema-driven and only understands `--key value`. Commands that need positionals, short flags, `--`, or parse-time required-argument checking cannot be expressed as a `ToolDef`, and before this the only workaround was to rebuild the shell on `Bash::builder()` downstream, which was not possible while the logic-only switch was `pub(crate)` (core now exposes the generic `BashBuilder::shell_features` / `builtin_filter` switches it is built from). Registering the builtin gives it `ctx.args` unparsed, so it can use [`ClapBuiltin`](../foundations/builtins.md) — the house parser for `Bash` builtins — inside a `ScriptedTool`. Example: `crates/bashkit-scripted-tool/examples/scripted_tool_clap_builtin.rs`.
 
 Security posture is unchanged. The builtin runs in the same logic-only shell and gets the same rejecting filesystem, so it cannot reach a real file; the logic-only decision stays enforced by the profile, not by the builtin allowlist. Registration order is custom builtins first, `ToolDefExtension` second: `BashBuilder` keys custom builtins by name and later registrations win, so a custom builtin can never shadow a registered tool command, `help`, or `discover`. A custom builtin is otherwise ordinary trusted host code — whatever it reaches, the script reaches. Its fatal `Err(Error)` diagnostics cross the same `sanitize_errors` boundary as `ToolDef` callback errors: generic by default, raw only after explicit opt-out. Cancellation and resource-limit errors are preserved because callers need their categories for control flow.
 
@@ -179,6 +191,14 @@ The logic-only shell keeps: variables, arrays, functions, arithmetic, command su
 
 Rejected filesystem surfaces: file commands (`cat`, `ls`, `find`, `mkdir`, `rm`, `cp`, `mv`, `touch`, `chmod`, `ln`, `stat`, `source`, `.`); path execution (`/tmp/script.sh`, `$PATH` lookup); file redirection (`<`, `>`, `>>`, `&>`) except `/dev/null`; process substitution; file operands to dual-use tools, the internal filesystem rejects all real operations with `filesystem access disabled`.
 
+Decision: core has no named restricted mode. The logic-only shell is assembled
+in `scripted_tool/logic_only.rs` from public switches:
+`ShellFeatures::none()` (file redirects except `/dev/null`, process
+substitution, and script execution — path, `$PATH`, `source`/`.`, `exec`,
+`bash`, `sh` — all off), `builtin_filter` with the default-builtin allowlist,
+and a filesystem that rejects every call. Any embedder can build its own
+restricted shell the same way; the interpreter only enforces the switches.
+
 ### Built-in `help` command
 
 `help --list` (names + descriptions), `help <tool>` (usage), `help <tool> --json` (machine-readable: `name`, `description`, `input_schema`), lets LLMs discover enum values, required fields, etc. at runtime without loading all schemas into context.
@@ -193,7 +213,7 @@ Rejected filesystem surfaces: file commands (`cat`, `ls`, `find`, `mkdir`, `rm`,
 
 ### LLM integration
 
-`system_prompt()` generates markdown with available tool commands, input schemas (when present), and usage tips, see the `Tool` impl in `crates/bashkit/src/scripted_tool/execute.rs`.
+`system_prompt()` generates markdown with available tool commands, input schemas (when present), and usage tips, see the `Tool` impl in `crates/bashkit-scripted-tool/src/scripted_tool/execute.rs`.
 
 ### Shared context across callbacks
 
@@ -220,15 +240,15 @@ Wraps `ScriptedTool`; `tools()` returns one or two tools by `DiscoveryMode`:
 
 ## Module location
 
-`crates/bashkit/src/tool_def.rs` (ToolDef, ToolArgs, ToolImpl, exec types, `parse_flags`), `crates/bashkit/src/tool_registry.rs` (cross-runtime registry), and `crates/bashkit/src/scripted_tool/` (builder, extension + builtins, `Tool` impl, toolset). Public exports are gated by the `scripted_tool` feature in `lib.rs`.
+`crates/bashkit-scripted-tool/src/tool_def.rs` (ToolDef, ToolArgs, ToolImpl, exec types, `parse_flags`), `crates/bashkit-scripted-tool/src/tool_registry.rs` (cross-runtime registry, `install`), and `crates/bashkit-scripted-tool/src/scripted_tool/` (builder, extension + builtins, logic-only profile, `Tool` impl, toolset). Re-exports in the crate's `lib.rs`.
 
 ## Example
 
-`crates/bashkit/examples/scripted_tool.rs`, e-commerce API demo using `ToolDef` + closures (no trait impls). Run: `cargo run --example scripted_tool --features scripted_tool`.
+`crates/bashkit-scripted-tool/examples/scripted_tool.rs`, e-commerce API demo using `ToolDef` + closures (no trait impls). Run: `cargo run -p bashkit-scripted-tool --example scripted_tool`.
 
 ## Test coverage
 
-Unit tests in the module cover builder configuration, help/discover introspection, flag parsing and coercion, pipelines, multi-step orchestration, error handling/fallback, stdin piping, loops, env vars, Arc reuse and fresh-interpreter isolation across `execute()` calls, and shared `Arc`/`Arc<Mutex<T>>` context. Cross-runtime integration tests cover registry success, schema rejection, policy denial, sanitized callback failure, timeout cancellation, discovery, callback identity, and tenant/trace isolation.
+Unit tests in the module cover builder configuration, help/discover introspection, flag parsing and coercion, pipelines, multi-step orchestration, error handling/fallback, stdin piping, loops, env vars, Arc reuse and fresh-interpreter isolation across `execute()` calls, and shared `Arc`/`Arc<Mutex<T>>` context. Cross-runtime integration tests (`crates/bashkit-scripted-tool/tests/`, CI: `cargo test -p bashkit-scripted-tool --features python,typescript,jq`) cover registry success, schema rejection, policy denial, sanitized callback failure, timeout cancellation, discovery, callback identity, and tenant/trace isolation.
 
 ## Security
 

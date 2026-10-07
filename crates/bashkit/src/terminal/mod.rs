@@ -13,7 +13,7 @@
 //!
 //! ```rust
 //! use bashkit::Bash;
-//! use bashkit::terminal::{Terminal, TerminalStatus};
+//! use bashkit::terminal::{Terminal, TerminalActivity, TerminalStatus};
 //!
 //! # #[tokio::main]
 //! # async fn main() {
@@ -25,6 +25,14 @@
 //!
 //! let saved = term.fs().read_file("/tmp/note.txt".as_ref()).await.unwrap();
 //! assert_eq!(saved, b"hello from vi\n");
+//!
+//! // Exact per-command results, without scraping the screen.
+//! term.send("ls /nope\r");
+//! term.run_until_idle().await;
+//! let record = term.take_transcript().pop().unwrap();
+//! assert_eq!(record.command, "ls /nope");
+//! assert_ne!(record.exit_code, 0);
+//! assert_eq!(term.activity(), TerminalActivity::Prompt);
 //!
 //! term.send("exit 3\r");
 //! assert_eq!(term.run_until_idle().await, TerminalStatus::Exited(3));
@@ -43,20 +51,29 @@
 //!   Zig/C toolchain, builds for every bashkit target.
 //! - Time blocked on terminal input is excluded from the execution timeout
 //!   (TM-DOS-057): typing speed is not sandbox work. All other limits apply.
+//! - Agents get three views of the session: the screen ([`Terminal::screen_text`]),
+//!   the screen plus scrollback ([`Terminal::history_text`]), and a structured
+//!   per-command log ([`Terminal::take_transcript`]) with exact output and exit
+//!   codes, so they do not have to scrape prompts out of screen text.
+//!   [`Terminal::activity`] says whether the shell is at a prompt or which
+//!   command line is running.
 //! - Cooked mode is a small built-in line editor (echo, cursor keys, Up/Down
-//!   history, backspace/delete, ^U, ^K, ^W, ^C, ^D). Command stdin is still a value fixed before the command starts
-//!   (L-CLI-002), so `read` does not block on the terminal; programs that need
+//!   history, backspace/delete, ^U, ^K, ^W, ^C, ^D). Command stdin is still a
+//!   value fixed before the command starts (L-CLI-002), so `read` does not block on the terminal; programs that need
 //!   keystrokes (`vi`) read the device directly in raw mode.
 
 mod keys;
+mod tool;
 mod tty;
 
+use std::collections::VecDeque;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 
 pub(crate) use keys::{Key, ScreenGuard, read_key};
+pub use tool::{TERMINAL_TOOL_NAME, TerminalTool, TerminalToolError};
 pub(crate) use tty::{Tty, TtyEvent};
 
 use crate::fs::FileSystem;
@@ -68,6 +85,12 @@ const DEFAULT_PS1: &str = "$ ";
 const DEFAULT_PS2: &str = "> ";
 /// Longest line the cooked-mode editor accepts; further input is dropped.
 const MAX_LINE_BYTES: usize = 64 * 1024;
+// THREAT[TM-DOS-119]: the transcript is bounded like every other buffer.
+/// Output kept per transcript record; the rest is dropped and flagged.
+const MAX_RECORD_OUTPUT: usize = 64 * 1024;
+/// Total bytes (commands + outputs) kept across untaken transcript records.
+/// Oldest records drop first.
+const MAX_TRANSCRIPT_BYTES: usize = 1024 * 1024;
 
 /// Terminal dimensions in character cells.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -103,6 +126,95 @@ pub enum TerminalStatus {
     Exited(i32),
 }
 
+/// What the session is doing, from [`Terminal::activity`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TerminalActivity {
+    /// Session not started yet (before the first `run_until_idle`).
+    Starting,
+    /// The shell prompt (`PS1`) is waiting for a command line.
+    Prompt,
+    /// A command is incomplete and the `PS2` prompt waits for more lines.
+    ContinuationPrompt,
+    /// A command line is running, for example `vi notes.txt` waiting for keys.
+    Running {
+        /// The full command line, including continuation lines.
+        command: String,
+    },
+    /// The shell exited with this code.
+    Exited(i32),
+}
+
+/// One finished command line, from [`Terminal::take_transcript`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandRecord {
+    /// The command line as entered (multi-line input joined with `\n`).
+    pub command: String,
+    /// Combined stdout and stderr, in the order it was written, with plain
+    /// `\n` line endings. Full-screen programs (`vi`, `less`) draw directly to
+    /// the terminal and are not captured here.
+    pub output: String,
+    /// Output past 64 KiB was dropped from `output`.
+    pub output_truncated: bool,
+    /// Exit status (`130` when interrupted with Ctrl-C, `2` for a syntax error).
+    pub exit_code: i32,
+}
+
+/// Session facts shared between the host handle and the shell loop.
+#[derive(Default)]
+struct SessionLog {
+    activity: Option<TerminalActivity>,
+    records: VecDeque<CommandRecord>,
+    record_bytes: usize,
+}
+
+#[derive(Clone, Default)]
+struct SharedLog(Arc<Mutex<SessionLog>>);
+
+impl SharedLog {
+    fn lock(&self) -> std::sync::MutexGuard<'_, SessionLog> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn set_activity(&self, activity: TerminalActivity) {
+        self.lock().activity = Some(activity);
+    }
+
+    fn push(&self, record: CommandRecord) {
+        let mut log = self.lock();
+        log.record_bytes += record.command.len() + record.output.len();
+        log.records.push_back(record);
+        while log.record_bytes > MAX_TRANSCRIPT_BYTES {
+            let Some(old) = log.records.pop_front() else {
+                break;
+            };
+            log.record_bytes -= old.command.len() + old.output.len();
+        }
+    }
+}
+
+/// Output being collected for the running command's transcript record.
+#[derive(Default)]
+struct OutputCapture {
+    text: String,
+    truncated: bool,
+}
+
+impl OutputCapture {
+    fn append(&mut self, chunk: &str) {
+        let room = MAX_RECORD_OUTPUT.saturating_sub(self.text.len());
+        if chunk.len() <= room {
+            self.text.push_str(chunk);
+            return;
+        }
+        let mut end = room;
+        while !chunk.is_char_boundary(end) {
+            end -= 1;
+        }
+        self.text.push_str(&chunk[..end]);
+        self.truncated = true;
+    }
+}
+
 type Session = Pin<Box<dyn Future<Output = i32> + Send>>;
 
 /// An interactive bash session attached to an in-memory terminal.
@@ -113,6 +225,7 @@ pub struct Terminal {
     fs: Arc<dyn FileSystem>,
     session: Option<Session>,
     exit_code: Option<i32>,
+    log: SharedLog,
 }
 
 impl Terminal {
@@ -144,12 +257,14 @@ impl Terminal {
         bash.input_wait_clock = Some(clock.clone());
         let tty = Tty::new(size, clock, bash.cancellation_token());
         let fs = bash.fs();
-        let session: Session = Box::pin(shell_loop(bash, tty.clone(), exit));
+        let log = SharedLog::default();
+        let session: Session = Box::pin(shell_loop(bash, tty.clone(), exit, log.clone()));
         Self {
             tty,
             fs,
             session: Some(session),
             exit_code: None,
+            log,
         }
     }
 
@@ -198,6 +313,43 @@ impl Terminal {
             .join("\n");
         text.truncate(text.trim_end().len());
         text
+    }
+
+    /// The screen plus up to 1000 lines of scrollback above it, as plain text:
+    /// one line per row, oldest first, trailing blanks and trailing empty rows
+    /// trimmed. While a full-screen program is open this covers its alternate
+    /// screen, which has no scrollback.
+    pub fn history_text(&self) -> String {
+        let rows = self.tty.history_rows();
+        let mut text = rows
+            .iter()
+            .map(|r| r.trim_end())
+            .collect::<Vec<_>>()
+            .join("\n");
+        text.truncate(text.trim_end().len());
+        text
+    }
+
+    /// Drain the commands that finished since the last call, oldest first,
+    /// with their exact output and exit codes. Keeps at most 1 MiB of
+    /// untaken records (oldest drop first).
+    pub fn take_transcript(&self) -> Vec<CommandRecord> {
+        let mut log = self.log.lock();
+        log.record_bytes = 0;
+        log.records.drain(..).collect()
+    }
+
+    /// What the session is doing right now: at a prompt, running a command
+    /// (such as an open `vi`), or exited.
+    pub fn activity(&self) -> TerminalActivity {
+        if let Some(code) = self.exit_code {
+            return TerminalActivity::Exited(code);
+        }
+        self.log
+            .lock()
+            .activity
+            .clone()
+            .unwrap_or(TerminalActivity::Starting)
     }
 
     /// Cursor position as `(row, col)`, zero-based.
@@ -252,7 +404,7 @@ struct ExitState {
     code: AtomicI32,
 }
 
-async fn shell_loop(mut bash: crate::Bash, tty: Tty, exit: Arc<ExitState>) -> i32 {
+async fn shell_loop(mut bash: crate::Bash, tty: Tty, exit: Arc<ExitState>, log: SharedLog) -> i32 {
     let cancel = bash.cancellation_token();
     let mut last_exit = 0;
     if !bash.shell_state_view().env.contains_key("TERM") {
@@ -260,6 +412,7 @@ async fn shell_loop(mut bash: crate::Bash, tty: Tty, exit: Arc<ExitState>) -> i3
     }
     let mut history = History::default();
     loop {
+        log.set_activity(TerminalActivity::Prompt);
         tty.write_cooked(prompt(&bash, "PS1", DEFAULT_PS1).as_bytes());
         let mut input = match read_line(&tty, &history).await {
             LineRead::Line(line) => line,
@@ -274,17 +427,25 @@ async fn shell_loop(mut bash: crate::Bash, tty: Tty, exit: Arc<ExitState>) -> i3
         }
         history.push(&input);
 
+        let capture = Arc::new(Mutex::new(OutputCapture::default()));
         last_exit = loop {
+            log.set_activity(TerminalActivity::Running {
+                command: input.clone(),
+            });
             let size = tty.size();
             bash.set_env("COLUMNS", &size.cols.to_string());
             bash.set_env("LINES", &size.rows.to_string());
             cancel.store(false, Ordering::Relaxed);
             tty.set_foreground(true);
             let out_tty = tty.clone();
+            let out_capture = Arc::clone(&capture);
             let options = ExecOptions::new()
                 .streaming(Box::new(move |stdout, stderr| {
                     out_tty.write_cooked(stdout.as_bytes());
                     out_tty.write_cooked(stderr.as_bytes());
+                    let mut cap = out_capture.lock().unwrap_or_else(PoisonError::into_inner);
+                    cap.append(stdout);
+                    cap.append(stderr);
                 }))
                 .extensions(ExecutionExtensions::new().with(tty.clone()));
             let result = bash.exec_with_options(&input, options).await;
@@ -300,9 +461,15 @@ async fn shell_loop(mut bash: crate::Bash, tty: Tty, exit: Arc<ExitState>) -> i3
                 Err(e) => {
                     let msg = e.to_string();
                     if !is_incomplete_input(&msg) {
-                        tty.write_cooked(format!("bash: {msg}\n").as_bytes());
+                        let line = format!("bash: {msg}\n");
+                        tty.write_cooked(line.as_bytes());
+                        capture
+                            .lock()
+                            .unwrap_or_else(PoisonError::into_inner)
+                            .append(&line);
                         break 2;
                     }
+                    log.set_activity(TerminalActivity::ContinuationPrompt);
                     tty.write_cooked(prompt(&bash, "PS2", DEFAULT_PS2).as_bytes());
                     match read_line(&tty, &history).await {
                         LineRead::Line(next) => {
@@ -316,7 +483,19 @@ async fn shell_loop(mut bash: crate::Bash, tty: Tty, exit: Arc<ExitState>) -> i3
             }
         };
 
-        if exit.requested.load(Ordering::SeqCst) {
+        let exited = exit.requested.load(Ordering::SeqCst);
+        let cap = std::mem::take(&mut *capture.lock().unwrap_or_else(PoisonError::into_inner));
+        log.push(CommandRecord {
+            command: input,
+            output: cap.text,
+            output_truncated: cap.truncated,
+            exit_code: if exited {
+                exit.code.load(Ordering::SeqCst)
+            } else {
+                last_exit
+            },
+        });
+        if exited {
             return exit.code.load(Ordering::SeqCst);
         }
     }
@@ -838,6 +1017,119 @@ mod tests {
         let text = term.screen_text();
         assert!(!text.contains("\nafter"), "{text}");
         assert!(text.ends_with("^C\n$"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn transcript_records_commands_output_and_exit_codes() {
+        let mut term = Terminal::new(Bash::builder());
+        run(&mut term, "echo hi; echo err >&2\r").await;
+        run(&mut term, "false\r").await;
+        run(&mut term, "for i in 1 2; do\r").await;
+        run(&mut term, "echo n$i; done\r").await;
+        run(&mut term, "echo )\r").await;
+        let records = term.take_transcript();
+        let summary: Vec<_> = records
+            .iter()
+            .map(|r| (r.command.as_str(), r.output.as_str(), r.exit_code))
+            .collect();
+        assert_eq!(summary[0], ("echo hi; echo err >&2", "hi\nerr\n", 0));
+        assert_eq!(summary[1], ("false", "", 1));
+        assert_eq!(
+            summary[2],
+            ("for i in 1 2; do\necho n$i; done", "n1\nn2\n", 0)
+        );
+        assert_eq!(summary[3].2, 2);
+        assert!(summary[3].1.starts_with("bash: "), "{:?}", summary[3]);
+        assert_eq!(records.len(), 4);
+        assert!(term.take_transcript().is_empty(), "drained");
+    }
+
+    #[tokio::test]
+    async fn transcript_marks_interrupt_and_exit() {
+        let mut term = Terminal::new(Bash::builder());
+        term.send("sleep 0.3; echo after\r");
+        let _ =
+            tokio::time::timeout(std::time::Duration::from_millis(50), term.run_until_idle()).await;
+        run(&mut term, "\x03").await;
+        run(&mut term, "exit 4\r").await;
+        let records = term.take_transcript();
+        assert_eq!(records[0].exit_code, 130);
+        assert_eq!(records[1].command, "exit 4");
+        assert_eq!(records[1].exit_code, 4);
+    }
+
+    #[tokio::test]
+    async fn transcript_output_is_capped_per_record() {
+        let mut term = Terminal::new(Bash::builder());
+        run(&mut term, "seq 1 30000\r").await;
+        let record = term.take_transcript().remove(0);
+        assert!(record.output_truncated);
+        assert_eq!(record.output.len(), MAX_RECORD_OUTPUT);
+        assert!(record.output.starts_with("1\n2\n"));
+    }
+
+    #[test]
+    fn transcript_total_size_is_bounded() {
+        let log = SharedLog::default();
+        for i in 0..40 {
+            log.push(CommandRecord {
+                command: format!("cmd{i}"),
+                output: "x".repeat(MAX_RECORD_OUTPUT),
+                output_truncated: false,
+                exit_code: 0,
+            });
+        }
+        let log = log.lock();
+        assert!(log.record_bytes <= MAX_TRANSCRIPT_BYTES);
+        assert_eq!(log.records.back().unwrap().command, "cmd39");
+        assert!(log.records.front().unwrap().command != "cmd0");
+    }
+
+    #[tokio::test]
+    async fn activity_tracks_prompt_program_and_exit() {
+        let mut term = Terminal::new(Bash::builder());
+        assert_eq!(term.activity(), TerminalActivity::Starting);
+        term.run_until_idle().await;
+        assert_eq!(term.activity(), TerminalActivity::Prompt);
+        run(&mut term, "vi /tmp/a.txt\r").await;
+        assert_eq!(
+            term.activity(),
+            TerminalActivity::Running {
+                command: "vi /tmp/a.txt".into()
+            }
+        );
+        run(&mut term, ":q\r").await;
+        assert_eq!(term.activity(), TerminalActivity::Prompt);
+        run(&mut term, "if true; then\r").await;
+        assert_eq!(term.activity(), TerminalActivity::ContinuationPrompt);
+        run(&mut term, "echo in; fi\r").await;
+        run(&mut term, "exit 3\r").await;
+        assert_eq!(term.activity(), TerminalActivity::Exited(3));
+    }
+
+    #[tokio::test]
+    async fn history_text_keeps_lines_scrolled_off_screen() {
+        let mut term = Terminal::with_size(Bash::builder(), TerminalSize::new(5, 40));
+        run(&mut term, "seq 1 50\r").await;
+        let screen = term.screen_text();
+        assert!(!screen.contains("\n10\n"), "{screen}");
+        let history = term.history_text();
+        assert!(history.starts_with("$ seq 1 50\n1\n2\n"), "{history}");
+        assert!(history.ends_with("49\n50\n$"), "{history}");
+        assert_eq!(history.lines().count(), 52);
+        // Reading history leaves the live view untouched.
+        assert_eq!(term.screen_text(), screen);
+        run(&mut term, "echo next\r").await;
+        assert!(term.screen_text().ends_with("next\n$"));
+    }
+
+    #[tokio::test]
+    async fn history_is_bounded() {
+        let mut term = Terminal::with_size(Bash::builder(), TerminalSize::new(5, 20));
+        run(&mut term, "seq 1 3000\r").await;
+        let history = term.history_text();
+        assert_eq!(history.lines().count(), tty::SCROLLBACK_LINES + 5);
+        assert!(history.ends_with("3000\n$"), "{history}");
     }
 
     #[test]

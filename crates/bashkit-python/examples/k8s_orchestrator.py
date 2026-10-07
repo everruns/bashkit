@@ -24,7 +24,7 @@ from __future__ import annotations
 import json
 import sys
 
-from bashkit import ScriptedTool
+from bashkit.scripted import ScriptedTool
 
 # =============================================================================
 # Fake k8s data

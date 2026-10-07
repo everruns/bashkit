@@ -7,7 +7,7 @@
 # unlike the wasm32-wasip1-threads example. That makes it drop-in for any web
 # app, including embedded/iframe contexts. See knowledge/runtimes/browser-package.md.
 #
-# Feature surface mirrors the `wasm` CI job (scripted_tool + jq). http_client,
+# Feature surface mirrors the `wasm` CI job (jq). http_client,
 # ssh, sqlite, python, realfs, and interop are intentionally excluded: they need
 # sockets, threads, or a host filesystem that the browser sandbox lacks.
 #
@@ -43,7 +43,6 @@ crate-type = ["cdylib", "rlib"]
 # a named `TZ=` zone here rather than silently formatting in UTC; see the
 # feature comment in ../bashkit/Cargo.toml.
 bashkit = { path = "../bashkit", default-features = false, features = [
-    "scripted_tool",
     "jq",
     # JS host: getrandom goes through crypto.getRandomValues.
     "wasm_js",
@@ -57,7 +56,7 @@ serde-wasm-bindgen = "0.6"
 futures-util = { workspace = true }
 send_wrapper = { version = "0.6", features = ["futures"] }
 # Same clock shim bashkit uses internally, so `Metadata` timestamps built here
-# unify with `bashkit::time_compat::SystemTime` on wasm32.
+# unify with `bashkit::time::SystemTime` on wasm32.
 web-time = { workspace = true }
 console_error_panic_hook = "0.1"
 # getrandom's browser backend (matches the workspace pin). `wasm_js` here and

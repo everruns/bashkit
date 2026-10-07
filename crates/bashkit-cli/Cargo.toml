@@ -27,7 +27,6 @@ default = ["python", "sqlite", "interactive"]
 python = ["bashkit/python"]
 sqlite = ["bashkit/sqlite"]
 realfs = ["bashkit/realfs"]
-scripted_tool = ["bashkit/scripted_tool"]
 interactive = ["dep:rustyline", "dep:terminal_size", "dep:signal-hook"]
 
 [dependencies]

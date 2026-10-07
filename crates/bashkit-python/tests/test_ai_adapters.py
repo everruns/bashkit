@@ -6,7 +6,7 @@ dependencies and keep their timeout and factory surfaces wired correctly.
 
 import pytest
 
-from bashkit import ScriptedTool
+from bashkit.scripted import ScriptedTool
 
 # ===========================================================================
 # langchain.py tests

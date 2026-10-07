@@ -196,6 +196,8 @@ let bash = Bash::builder()
 - Handler signature: `(function_name: String, positional_args: Vec<MontyObject>, keyword_args: Vec<(MontyObject, MontyObject)>) -> Pin<Box<dyn Future<Output = ExtFunctionResult> + Send>>`.
 - Returns `ExtFunctionResult::Return(MontyObject)` (value to Python) or `ExtFunctionResult::Error(MontyException)` (raises).
 - **Dispatch:** one handler receives all registered names; dispatch on `function_name` inside it.
+- **Request context:** inside the handler, `RuntimeCallContext::current()` exposes the calling `exec*` request: typed `ExecOptions` extensions, the aggregate `ExecutionBudget`, an execution lease (`execution_capability`), and the remaining wall-clock deadline. Outside a Python run every accessor returns `None`. Decision: handler signatures stay unchanged; the builtin wraps each run in a task-local scope instead.
+- **Prelude:** `Python::with_external_handler_and_prelude(names, handler, prelude)` (public) evaluates host-provided Python before user code, e.g. classes that route `tools.orders.list(...)` to one external function.
 - **Timeouts:** Each awaited handler call is wrapped in the remaining `PythonLimits::max_duration` wall-clock budget for the current Python invocation. If the budget expires while a handler is pending, Bashkit resumes Python with a `RuntimeError` instead of waiting for the handler indefinitely.
 - **Trust model:** same as `BashBuilder::builtin()` and `ScriptedTool` callbacks, host registers trusted Rust code, untrusted scripts invoke by name. Handlers are trusted host code and should still enforce independent limits for outbound I/O, remote services, and other resources they consume.
 - **Unstable re-exports:** `MontyObject`, `ExtFunctionResult`, `MontyException`, `ExcType` re-exported from the `monty` crate (pre-1.0, tracked at `0.0.x`); may break between bashkit releases.
@@ -232,7 +234,7 @@ catastrophic-backtracking DoS risk in untrusted code execution.
 provides *code*, not data, matches real python's no-arg behavior), command
 substitution, and conditionals.
 
-With the `scripted_tool` feature, `BashBuilder::tool_registry` generates an
+With the `bashkit-scripted-tool` crate (feature `python`), `ToolRegistry::install(builder)` generates an
 explicit `tools` namespace from dot-separated `ToolDef` names. Calls such as
 `tools.orders.list({"customer": "acme"})` use Monty's existing external-function
 suspend/resume bridge and dispatch through the registry's shared schema, policy,

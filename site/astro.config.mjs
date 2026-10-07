@@ -29,6 +29,7 @@ const DOC_LINKS = new Map([
   ["live-mounts.md", "/docs/live-mounts/"],
   ["llm-tools.md", "/docs/llm-tools/"],
   ["logging.md", "/docs/logging/"],
+  ["migrating-scripted-tool.md", "/docs/migrating-scripted-tool/"],
   ["networking.md", "/docs/networking/"],
   ["python.md", "/docs/python/"],
   ["request-signing.md", "/docs/request-signing/"],

@@ -14,6 +14,8 @@
 // wasm rather than scattering per-item cfgs through shared conversion helpers.
 #![cfg_attr(target_arch = "wasm32", allow(dead_code, unused_imports))]
 
+mod terminal;
+
 // interop (capsule FS handoff), realfs (host mounts) and the credential-injection
 // network config require threads / host FS / sockets that wasm32-unknown-emscripten
 // (Pyodide) does not provide — see knowledge/runtimes/emscripten-wheels.md. They are native-only.
@@ -26,10 +28,10 @@ use bashkit::{
     ExecutionLimits, ExtFunctionResult, FileSystem, FileSystemExt, FileType as FsFileType,
     FsLimits, InMemoryFs, Metadata as FsMetadata, MontyException, MontyObject, NetworkAllowlist,
     OutputCallback as RustOutputCallback, OverlayFs, PosixFs, PythonExternalFnHandler,
-    PythonLimits, ReadOnlyFs, ScriptedTool as RustScriptedTool,
-    ShellStateView as RustShellStateView, SnapshotOptions as RustSnapshotOptions, Tool, ToolArgs,
-    ToolDef, ToolRequest, async_trait,
+    PythonLimits, ReadOnlyFs, ShellStateView as RustShellStateView,
+    SnapshotOptions as RustSnapshotOptions, Tool, ToolRequest, async_trait,
 };
+use bashkit_scripted_tool::{ScriptedTool as RustScriptedTool, ToolArgs, ToolDef};
 
 /// Typed named execution-policy selector for Python constructors.
 #[pyclass(name = "ExecutionProfile", eq, eq_int, from_py_object)]
@@ -6907,6 +6909,7 @@ fn create_langchain_tool_spec() -> PyResult<pyo3::Py<PyDict>> {
 fn _bashkit(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyExecutionProfile>()?;
     m.add_class::<PyBash>()?;
+    m.add_class::<terminal::PyTerminal>()?;
     m.add_class::<BashTool>()?;
     m.add_class::<ScriptedTool>()?;
     m.add_class::<ShellState>()?;

@@ -11,7 +11,8 @@
  */
 
 import test from "ava";
-import { Bash, BashTool, BashError, ScriptedTool } from "../wrapper.js";
+import { Bash, BashTool, BashError } from "../wrapper.js";
+import { ScriptedTool } from "../scripted.js";
 
 function sleepMs(ms: number): void {
   const signal = new Int32Array(new SharedArrayBuffer(4));
