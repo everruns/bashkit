@@ -577,6 +577,12 @@ impl<'a> Parser<'a> {
                         });
                     }
                 }
+                Some(tokens::Token::RedirectBothAppend) => {
+                    self.advance();
+                    if let Ok(target) = self.expect_word() {
+                        redirects.extend(Self::append_both(None, target));
+                    }
+                }
                 Some(tokens::Token::DupOutput) => {
                     self.advance();
                     if let Ok(target) = self.expect_word() {
@@ -688,9 +694,14 @@ impl<'a> Parser<'a> {
                         });
                     }
                 }
-                Some(tokens::Token::HereDoc) | Some(tokens::Token::HereDocStrip) => {
-                    let strip_tabs =
-                        matches!(self.current_token, Some(tokens::Token::HereDocStrip));
+                Some(tokens::Token::HereDoc)
+                | Some(tokens::Token::HereDocStrip)
+                | Some(tokens::Token::HereDocFd(..)) => {
+                    let (fd, strip_tabs) = match self.current_token {
+                        Some(tokens::Token::HereDocFd(fd, strip)) => (Some(fd), strip),
+                        Some(tokens::Token::HereDocStrip) => (None, true),
+                        _ => (None, false),
+                    };
                     self.advance();
                     let (delimiter, quoted) = match &self.current_token {
                         Some(tokens::Token::Word(w)) => (w.clone(), false),
@@ -729,14 +740,13 @@ impl<'a> Parser<'a> {
                         RedirectKind::HereDoc
                     };
                     redirects.push(Redirect {
-                        fd: None,
+                        fd,
                         fd_var: None,
                         kind,
                         target,
                     });
-                    // Rest-of-line tokens re-injected by lexer; break so callers
-                    // can see pipes/semicolons.
-                    break;
+                    // Rest-of-line tokens were re-injected by the lexer: more
+                    // redirects may follow (`done <<A 3<<B`, `} <<A >out`).
                 }
                 _ => break,
             }
@@ -2483,6 +2493,7 @@ impl<'a> Parser<'a> {
     /// Parse a heredoc redirect (`<<` or `<<-`) and any trailing redirects on the same line.
     fn parse_heredoc_redirect(
         &mut self,
+        fd: Option<i32>,
         strip_tabs: bool,
         redirects: &mut Vec<Redirect>,
     ) -> Result<()> {
@@ -2531,7 +2542,7 @@ impl<'a> Parser<'a> {
         };
 
         redirects.push(Redirect {
-            fd: None,
+            fd,
             fd_var: None,
             kind,
             target,
@@ -2539,112 +2550,25 @@ impl<'a> Parser<'a> {
 
         // Advance so re-injected rest-of-line tokens are picked up
         self.advance();
-
-        // Consume any trailing redirects on the same line (e.g. `cat <<EOF > file`)
-        self.collect_trailing_redirects(redirects);
         Ok(())
     }
 
-    /// Consume redirect tokens that follow a heredoc on the same line.
-    fn collect_trailing_redirects(&mut self, redirects: &mut Vec<Redirect>) {
-        while let Some(tok) = &self.current_token {
-            match tok {
-                tokens::Token::RedirectOut | tokens::Token::Clobber => {
-                    let kind = if matches!(&self.current_token, Some(tokens::Token::Clobber)) {
-                        RedirectKind::Clobber
-                    } else {
-                        RedirectKind::Output
-                    };
-                    self.advance();
-                    if let Ok(target) = self.expect_word() {
-                        redirects.push(Redirect {
-                            fd: None,
-                            fd_var: None,
-                            kind,
-                            target,
-                        });
-                    }
-                }
-                tokens::Token::RedirectAppend => {
-                    self.advance();
-                    if let Ok(target) = self.expect_word() {
-                        redirects.push(Redirect {
-                            fd: None,
-                            fd_var: None,
-                            kind: RedirectKind::Append,
-                            target,
-                        });
-                    }
-                }
-                tokens::Token::RedirectFd(fd) => {
-                    let fd = *fd;
-                    self.advance();
-                    if let Ok(target) = self.expect_word() {
-                        redirects.push(Redirect {
-                            fd: Some(fd),
-                            fd_var: None,
-                            kind: RedirectKind::Output,
-                            target,
-                        });
-                    }
-                }
-                tokens::Token::DupFdCloseOut(fd) => {
-                    let fd = *fd;
-                    self.advance();
-                    redirects.push(Redirect {
-                        fd: Some(fd),
-                        fd_var: None,
-                        kind: RedirectKind::DupOutput,
-                        target: Word::literal("-"),
-                    });
-                }
-                tokens::Token::DupInput => {
-                    self.advance();
-                    if let Ok(target) = self.expect_word() {
-                        redirects.push(Redirect {
-                            fd: Some(0),
-                            fd_var: None,
-                            kind: RedirectKind::DupInput,
-                            target,
-                        });
-                    }
-                }
-                tokens::Token::DupFdIn(src_fd, dst_fd) => {
-                    let src_fd = *src_fd;
-                    let dst_fd = *dst_fd;
-                    self.advance();
-                    redirects.push(Redirect {
-                        fd: Some(src_fd),
-                        fd_var: None,
-                        kind: RedirectKind::DupInput,
-                        target: Word::literal(dst_fd.to_string()),
-                    });
-                }
-                tokens::Token::DupFdClose(fd) => {
-                    let fd = *fd;
-                    self.advance();
-                    redirects.push(Redirect {
-                        fd: Some(fd),
-                        fd_var: None,
-                        kind: RedirectKind::DupInput,
-                        target: Word::literal("-"),
-                    });
-                }
-                tokens::Token::RedirectFdIn(fd) => {
-                    let fd = *fd;
-                    self.advance();
-                    if let Ok(target) = self.expect_word() {
-                        redirects.push(Redirect {
-                            fd: Some(fd),
-                            fd_var: None,
-                            kind: RedirectKind::Input,
-                            target,
-                        });
-                    }
-                }
-                _ => break,
-            }
-        }
+    /// `&>> file` is `>> file 2>&1` (bash documents it as that).
+    fn append_both(fd_var: Option<String>, target: Word) -> [Redirect; 2] {
+        [
+            Redirect {
+                fd: None,
+                fd_var,
+                kind: RedirectKind::Append,
+                target,
+            },
+            Redirect {
+                fd: Some(2),
+                fd_var: None,
+                kind: RedirectKind::DupOutput,
+                target: Word::literal("1"),
+            },
+        ]
     }
 
     /// Extract fd-variable name from `{varname}` pattern in the last word.
@@ -2812,11 +2736,17 @@ impl<'a> Parser<'a> {
                         target,
                     });
                 }
-                Some(tokens::Token::HereDoc) | Some(tokens::Token::HereDocStrip) => {
-                    let strip_tabs =
-                        matches!(self.current_token, Some(tokens::Token::HereDocStrip));
-                    self.parse_heredoc_redirect(strip_tabs, &mut redirects)?;
-                    break;
+                Some(tokens::Token::HereDoc)
+                | Some(tokens::Token::HereDocStrip)
+                | Some(tokens::Token::HereDocFd(..)) => {
+                    let (fd, strip_tabs) = match self.current_token {
+                        Some(tokens::Token::HereDocFd(fd, strip)) => (Some(fd), strip),
+                        Some(tokens::Token::HereDocStrip) => (None, true),
+                        _ => (None, false),
+                    };
+                    // Words and redirects may follow on the same line
+                    // (`cat <<A <<B`, `paste - <<A 3<<B`, `cat <<A file`).
+                    self.parse_heredoc_redirect(fd, strip_tabs, &mut redirects)?;
                 }
                 Some(tokens::Token::ProcessSubIn) | Some(tokens::Token::ProcessSubOut) => {
                     let word = self.expect_word()?;
@@ -2832,6 +2762,12 @@ impl<'a> Parser<'a> {
                         kind: RedirectKind::OutputBoth,
                         target,
                     });
+                }
+                Some(tokens::Token::RedirectBothAppend) => {
+                    let fd_var = Self::pop_fd_var(&mut words);
+                    self.advance();
+                    let target = self.expect_word()?;
+                    redirects.extend(Self::append_both(fd_var, target));
                 }
                 Some(tokens::Token::DupOutput) => {
                     let fd_var = Self::pop_fd_var(&mut words);

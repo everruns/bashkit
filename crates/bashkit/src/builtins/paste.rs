@@ -160,12 +160,32 @@ impl Builtin for Paste {
                 sources.push(stdin.lines().map(|l| l.to_string()).collect());
             }
         } else {
+            // Every `-` reads the one stdin: in parallel mode each takes the
+            // next line in turn (`paste - -` joins pairs), with -s the first
+            // one takes it all.
+            let stdin_lines: Vec<String> = ctx
+                .stdin
+                .map(|s| s.lines().map(|l| l.to_string()).collect())
+                .unwrap_or_default();
+            let dashes = files.iter().filter(|f| *f == "-").count();
+            let mut dash_idx = 0;
             for file in &files {
                 if file == "-" {
-                    let lines = ctx
-                        .stdin
-                        .map(|s| s.lines().map(|l| l.to_string()).collect())
-                        .unwrap_or_default();
+                    let lines = if opts.serial {
+                        if dash_idx == 0 {
+                            stdin_lines.clone()
+                        } else {
+                            Vec::new()
+                        }
+                    } else {
+                        stdin_lines
+                            .iter()
+                            .skip(dash_idx)
+                            .step_by(dashes)
+                            .cloned()
+                            .collect()
+                    };
+                    dash_idx += 1;
                     sources.push(lines);
                 } else {
                     let path = if file.starts_with('/') {
@@ -420,6 +440,14 @@ mod tests {
         assert_eq!(result.exit_code, 1);
         assert_eq!(result.stdout, "");
         assert!(result.stderr.contains("paste: -d requires an argument"));
+    }
+
+    #[tokio::test]
+    async fn test_paste_dashes_share_stdin() {
+        let result = run_paste(&["-", "-"], Some("1\n2\n3\n")).await;
+        assert_eq!(result.stdout, "1\t2\n3\t\n");
+        let result = run_paste(&["-s", "-", "-"], Some("1\n2\n")).await;
+        assert_eq!(result.stdout, "1\t2\n\n");
     }
 
     #[tokio::test]
