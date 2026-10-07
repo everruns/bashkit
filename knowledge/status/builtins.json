@@ -287,6 +287,10 @@
     },
     {
       "feature": null,
+      "name": "gawk"
+    },
+    {
+      "feature": null,
       "name": "getconf"
     },
     {
@@ -431,6 +435,10 @@
     },
     {
       "feature": null,
+      "name": "mawk"
+    },
+    {
+      "feature": null,
       "name": "md5sum"
     },
     {
@@ -456,6 +464,10 @@
     {
       "feature": null,
       "name": "nano"
+    },
+    {
+      "feature": null,
+      "name": "nawk"
     },
     {
       "feature": null,
@@ -882,5 +894,5 @@
       "name": "zip"
     }
   ],
-  "count": 220
+  "count": 223
 }
