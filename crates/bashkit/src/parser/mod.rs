@@ -3188,10 +3188,15 @@ impl<'a> Parser<'a> {
                 if let Some(literal_ch) = chars.next() {
                     current.push(literal_ch);
                 }
-            } else if ch == '\u{1e}' {
-                in_quoted_segment = true;
-            } else if ch == '\u{1f}' {
-                in_quoted_segment = false;
+            } else if ch == '\u{1e}' || ch == '\u{1f}' {
+                // A quote boundary ends the literal run, so `part_quoted`
+                // records which literal text was quoted (brace expansion
+                // only sees unquoted literals).
+                let quoted = ch == '\u{1e}';
+                if quoted != in_quoted_segment && !current.is_empty() {
+                    push_part!(WordPart::Literal(std::mem::take(&mut current)));
+                }
+                in_quoted_segment = quoted;
             } else if ch == '$' {
                 // Flush current literal
                 if !current.is_empty() {

@@ -108,6 +108,7 @@ Target: IEEE 1003.1-2024 Shell Command Language.
 | `time` | Reserved-word pipelines; `-p`, `--`, GNU `-f/-o/-a/-v`; elapsed time, exit status, and Bashkit counters | Host user/system CPU, RSS, and other process metrics are reported as `unavailable`, never fabricated |
 | `timeout` | Basic usage | `-k` kill timeout |
 | `bash`/`sh` | `-c`, `-n`, `-e`, `-x`, `-u`, `-f`, `-o option`, script files, stdin, `--version`, `--help` | Login shell |
+| Brace expansion | Runs before other expansions on unquoted literal text; lists, nesting, ranges with step and zero padding, quoted/escaped braces and commas | Works on parsed words, not raw text: `$v{1,2}` expands `$v` then appends `1`/`2` (bash reads `$v1`, `$v2`); write `${v}` |
 
 ## Builtins
 
