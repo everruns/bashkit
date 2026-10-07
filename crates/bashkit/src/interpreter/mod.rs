@@ -992,6 +992,9 @@ struct CallFrame {
     local_assoc_arrays: HashMap<String, Option<HashMap<String, String>>>,
     /// Positional parameters ($1, $2, etc.)
     positional: Vec<String>,
+    /// A function or `source` frame: `$0` comes from the nearest frame below
+    /// it that is not (the script or shell), as in bash.
+    keeps_arg0: bool,
 }
 
 /// A snapshot of shell state (variables, env, cwd, options).
@@ -1333,6 +1336,7 @@ struct SubshellSnapshot {
     getopts_char_idx: usize,
     last_bg_pid: Option<String>,
     seconds_base: (crate::time_compat::Instant, i64),
+    bash_subshell: u32,
 }
 
 /// Interpreter state.
@@ -1425,6 +1429,8 @@ pub struct Interpreter {
     builtin_stdout_pipe: Option<Arc<pipe::Pipe>>,
     /// Input pipe handed to a streaming filter's `Context` (taken at dispatch).
     builtin_stdin_pipe: Option<Arc<pipe::Pipe>>,
+    /// `$BASH_SUBSHELL`: subshell nesting (`( )`, `$( )`, pipeline stages, jobs).
+    bash_subshell: u32,
     /// Position within the current argument while `getopts` walks a clustered
     /// short-option group (e.g. `-abc`). Interpreter-internal working state for
     /// `execute_getopts`; `0` means "at the start of the next option group".
@@ -1649,10 +1655,6 @@ impl Interpreter {
             // Text processing
             "grep" => Grep,
             "sed" => Sed,
-            "awk" => Awk,
-            "gawk" => Awk,
-            "mawk" => Awk,
-            "nawk" => Awk,
             "head" => Head,
             "tail" => Tail,
             "sort" => Sort,
@@ -1867,6 +1869,9 @@ impl Interpreter {
             Arc::new(builtins::Touch::with_clock(clock)),
         );
         builtins.insert("pr".to_string(), Arc::new(builtins::Pr::with_clock(clock)));
+        for name in ["awk", "gawk", "mawk", "nawk"] {
+            builtins.insert(name.to_string(), Arc::new(builtins::Awk::with_clock(clock)));
+        }
 
         // System info builtins (configurable virtual values)
         let hostname_val = hostname.unwrap_or_else(|| builtins::DEFAULT_HOSTNAME.to_string());
@@ -2002,6 +2007,7 @@ impl Interpreter {
             stream_stdout_command: None,
             builtin_stdout_pipe: None,
             builtin_stdin_pipe: None,
+            bash_subshell: 0,
             getopts_char_idx: 0,
             last_bg_pid: None,
             output_callback: None,
@@ -2160,6 +2166,7 @@ impl Interpreter {
             stream_stdout_command: None,
             builtin_stdout_pipe: None,
             builtin_stdin_pipe: None,
+            bash_subshell: self.bash_subshell + 1,
             getopts_char_idx: self.getopts_char_idx,
             last_bg_pid: self.last_bg_pid.clone(),
             output_callback: None,
@@ -2512,6 +2519,7 @@ impl Interpreter {
             local_arrays: HashMap::new(),
             local_assoc_arrays: HashMap::new(),
             positional,
+            keeps_arg0: false,
         });
     }
 
@@ -3525,6 +3533,7 @@ impl Interpreter {
                 // bump; only mutations inside the subshell pay a clone.
                 let snap = self.snapshot_subshell_state();
                 let saved_call_stack = self.call_stack.clone();
+                self.bash_subshell += 1;
                 let saved_exit = self.last_exit_code;
                 let saved_coproc = self.coproc_buffers.clone();
 
@@ -5357,6 +5366,8 @@ impl Interpreter {
         }
         self.child_shell_depth += 1;
         let child_snapshot = self.snapshot_subshell_state();
+        // A new shell starts at subshell level 0.
+        self.bash_subshell = 0;
         self.reset_state_for_child_shell();
 
         // Push call frame, apply options, execute, restore, pop
@@ -5366,6 +5377,7 @@ impl Interpreter {
             local_arrays: HashMap::new(),
             local_assoc_arrays: HashMap::new(),
             positional: positional_args,
+            keeps_arg0: false,
         });
 
         let mut saved_opt_names: HashSet<&'static str> = HashSet::new();
@@ -5909,6 +5921,14 @@ impl Interpreter {
             let write_end = pipe::WriteEnd(Arc::clone(&pipe));
             let read_end = input.take().map(pipe::ReadEnd);
             let command = command.clone();
+            if matches!(
+                command,
+                Command::Simple(_) | Command::Compound(CompoundCommand::Subshell(_), _)
+            ) {
+                // Simple-command stages do not count as a subshell level; a
+                // `( )` stage counts itself once.
+                child.bash_subshell = self.bash_subshell;
+            }
             stages.push(Box::pin(async move {
                 let _read_end = read_end;
                 if let Command::Simple(simple) = &command
@@ -6073,6 +6093,17 @@ impl Interpreter {
                 self.coproc_buffers.clone(),
             )
         });
+        // bash counts compound stages, not simple commands (`echo
+        // $BASH_SUBSHELL | cat` prints 0, `{ echo $BASH_SUBSHELL; } | cat` 1).
+        // A `( )` stage reuses the stage fork, so it is counted once.
+        if subshell
+            && !matches!(
+                command,
+                Command::Simple(_) | Command::Compound(CompoundCommand::Subshell(_), _)
+            )
+        {
+            self.bash_subshell += 1;
+        }
         let mut scope = PipelineStageScope {
             saved,
             prev_pipeline_stdin: None,
@@ -8079,6 +8110,7 @@ impl Interpreter {
             local_arrays: HashMap::new(),
             local_assoc_arrays: HashMap::new(),
             positional: args.to_vec(),
+            keeps_arg0: false,
         }];
 
         // Set up BASH_SOURCE for the subprocess
@@ -8221,6 +8253,7 @@ impl Interpreter {
                     local_arrays: HashMap::new(),
                     local_assoc_arrays: HashMap::new(),
                     positional: source_args,
+                    keeps_arg0: true,
                 });
             } else if let Some(frame) = self.call_stack.last_mut() {
                 frame.positional = source_args;
@@ -8624,6 +8657,7 @@ impl Interpreter {
             local_arrays: HashMap::new(),
             local_assoc_arrays: HashMap::new(),
             positional: args,
+            keeps_arg0: true,
         });
 
         // Set FUNCNAME array from call stack (index 0 = current, 1 = caller, ...)
@@ -10077,10 +10111,9 @@ impl Interpreter {
             match effect {
                 builtins::BuiltinSideEffect::SetArray { name, elements } => {
                     let mut arr = HashMap::new();
+                    // Empty fields are elements too (`IFS=, read -ra a <<< 'a,,b'`).
                     for (i, word) in elements.iter().enumerate() {
-                        if !word.is_empty() {
-                            arr.insert(i, word.clone());
-                        }
+                        arr.insert(i, word.clone());
                     }
                     self.insert_array_checked(name.clone(), arr);
                 }
@@ -10116,6 +10149,7 @@ impl Interpreter {
                             local_arrays: HashMap::new(),
                             local_assoc_arrays: HashMap::new(),
                             positional: new_positional.clone(),
+                            keeps_arg0: false,
                         });
                     }
                 }
@@ -10207,6 +10241,7 @@ impl Interpreter {
             getopts_char_idx: self.getopts_char_idx,
             last_bg_pid: self.last_bg_pid.clone(),
             seconds_base: self.seconds_base,
+            bash_subshell: self.bash_subshell,
         }
     }
 
@@ -10221,6 +10256,7 @@ impl Interpreter {
         self.getopts_char_idx = snap.getopts_char_idx;
         self.last_bg_pid = snap.last_bg_pid;
         self.seconds_base = snap.seconds_base;
+        self.bash_subshell = snap.bash_subshell;
     }
 
     /// Perform the redirections of a null command (no command word) and
@@ -10364,6 +10400,7 @@ impl Interpreter {
             // Command substitution runs in a subshell: snapshot all
             // mutable state so mutations don't leak to the parent.
             let snapshot = self.snapshot_subshell_state();
+            self.bash_subshell += 1;
             // THREAT[TM-DOS-111]: Expansion happens before top-level output caps,
             // so reserve every byte before growing the substitution buffer.
             let mut stdout = BudgetedString::new(Some(&self.execution_budget))?;
@@ -11214,16 +11251,17 @@ impl Interpreter {
             "-" => {
                 // $- - Current option flags as a string
                 // Build from SHOPT_* variables
+                // In bash's order; `h` (hashall) and `B` (braceexpand) are
+                // on by default and cannot be turned off here.
                 let mut flags = String::new();
-                for opt in ['e', 'x', 'u', 'f', 'n', 'v', 'a', 'b', 'h', 'm'] {
-                    let opt_name = format!("SHOPT_{}", opt);
-                    if self
-                        .scoped
-                        .variables
-                        .get(&opt_name)
-                        .map(|v| v == "1")
-                        .unwrap_or(false)
-                    {
+                for opt in ['a', 'b', 'e', 'f', 'h', 'm', 'n', 'u', 'v', 'x', 'B', 'C'] {
+                    let on = matches!(opt, 'h' | 'B')
+                        || self
+                            .scoped
+                            .variables
+                            .get(&format!("SHOPT_{opt}"))
+                            .is_some_and(|v| v == "1");
+                    if on {
                         flags.push(opt);
                     }
                 }
@@ -11267,6 +11305,9 @@ impl Interpreter {
             "BASH_VERSION" => {
                 return COMPAT_BASH_VERSION.to_string();
             }
+            "BASH_SUBSHELL" => {
+                return self.bash_subshell.to_string();
+            }
             "SECONDS" => {
                 let (start, base) = self.seconds_base;
                 let elapsed = i64::try_from(start.elapsed().as_secs()).unwrap_or(i64::MAX);
@@ -11278,8 +11319,9 @@ impl Interpreter {
         // Check for numeric positional parameter ($1, $2, etc.)
         if let Ok(n) = name.parse::<usize>() {
             if n == 0 {
-                // $0 is the script/function name
-                if let Some(frame) = self.call_stack.last() {
+                // $0 is the script/shell name; functions and `source`
+                // do not change it.
+                if let Some(frame) = self.call_stack.iter().rev().find(|f| !f.keeps_arg0) {
                     return frame.name.clone();
                 }
                 return Self::DEFAULT_ARG0.to_string();
@@ -11519,6 +11561,7 @@ mod tests {
             local_arrays: HashMap::new(),
             local_assoc_arrays: HashMap::new(),
             positional: vec!["x".to_string(); 6000],
+            keeps_arg0: false,
         });
 
         let value = interp.resolve_param_expansion_name("@").1;
@@ -11636,6 +11679,7 @@ mod tests {
             local_arrays: HashMap::new(),
             local_assoc_arrays: HashMap::new(),
             positional: Vec::new(),
+            keeps_arg0: false,
         });
         let baseline_call_stack_len = interp.call_stack.len();
         let baseline_bash_source_len = interp.bash_source_stack.len();
@@ -11647,6 +11691,7 @@ mod tests {
             local_arrays: HashMap::new(),
             local_assoc_arrays: HashMap::new(),
             positional: Vec::new(),
+            keeps_arg0: false,
         });
         interp.bash_source_stack.push("script.sh".to_string());
 
@@ -11815,6 +11860,7 @@ mod tests {
             local_arrays: HashMap::new(),
             local_assoc_arrays: HashMap::new(),
             positional: Vec::new(),
+            keeps_arg0: false,
         });
         interp
             .memory_budget

@@ -75,6 +75,7 @@ through configurable limits.
 | Long computation (TM-DOS-023) | Complex awk/sed regex, including repeated awk and `[[ =~ ]]` operands | Linear-time engine; bounded runtime regex caches; timeout (30s) | MITIGATED |
 | Regex backtrack (TM-DOS-025) | `grep "a](*b)*c" file` | Regex crate limits | PARTIAL |
 | AWK unbounded loops (TM-DOS-033) | `BEGIN { while(1){} }`, nested loops, deep recursion | Per-loop and whole-program loop caps from `ExecutionLimits`, call-depth cap; all fatal (exit 2) | MITIGATED |
+| awk commands (TM-DOS-128) | `system()`, `print \| cmd` or `cmd \| getline` in a loop | Each command runs as `sh -c` in the sandbox shell under the session's command budget and timeout; awk's loop, output and getline caps still apply | MITIGATED |
 
 **Stack Overflow / Recursion:**
 

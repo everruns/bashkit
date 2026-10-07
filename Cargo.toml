@@ -60,6 +60,7 @@ rustls = { version = "0.23", default-features = false, features = ["std", "tls12
 
 # Regex
 regex = "1"
+regex-automata = { version = "0.4", default-features = false, features = ["std", "syntax", "hybrid", "unicode", "perf"] }
 fancy-regex = "0.19"
 
 # Date/Time

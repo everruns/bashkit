@@ -256,7 +256,7 @@ runaway scripts without permanently breaking the session.
 | TM-DOS-023 | Long computation | Complex awk/sed regex, including repeated evaluation of dynamic awk and `[[ =~ ]]` operands | Linear-time regex engine; runtime regex compilation cached per evaluator (64 entries / 1 MB retained pattern text, including invalid patterns); timeout (30s) | **MITIGATED** |
 | TM-DOS-024 | Parser hang | Malformed input | `parser_timeout` (5s) + `max_parser_operations` | **MITIGATED** |
 | TM-DOS-025 | Regex backtrack | `grep "a](*b)*c" file`; `grep -P '(a+)+$' file` | Default `regex` engine is linear-time; `grep -P`/`sed` fancy-regex paths capped by `FANCY_BACKTRACK_LIMIT` (1M steps), exceeding it yields "no match", not a hang | **MITIGATED** |
-| TM-DOS-027 | Builtin parser recursion | Deeply nested awk/jq expressions | `MAX_AWK_PARSER_DEPTH` (100) + `MAX_JQ_JSON_DEPTH` (100) | **MITIGATED** |
+| TM-DOS-027 | Builtin parser recursion | Deeply nested awk/jq expressions | awk: `AWK_MAX_PARSER_DEPTH` (100 nested groupings/statements) plus 1,000 operators per expression tree (`builtins/awk/parser.rs`), so the evaluator's recursion is bounded too; jq: `MAX_JQ_JSON_DEPTH` (100) | **MITIGATED** |
 | TM-DOS-028 | Diff algorithm DoS | `diff` on two large unrelated files | LCS matrix capped at 10M cells; falls back to simple line-by-line output | **MITIGATED** |
 | TM-DOS-029 | Arithmetic overflow/panic | `$(( 2 ** -1 ))`, `$(( 1 << 64 ))`, `i64::MIN / -1` | `wrapping_*` / saturating ops; `wrapping_neg` for `i64::MIN / -1` and unary negate; `<<`/`>>` clamp shift amount | **MITIGATED** |
 | TM-DOS-043 | Arithmetic side-effect overflow/panic | `((x+=1))` or `$((x++))` at the `i64` boundaries | Compound assignment and prefix/postfix increment/decrement use wrapping arithmetic in both evaluator paths | **MITIGATED** |
@@ -295,6 +295,7 @@ runaway scripts without permanently breaking the session.
 | TM-DOS-125 | Child-shell recursion stack overflow | A script that runs itself via `sh`/`bash` (`echo 'sh s.sh' > s.sh; sh s.sh`) nested interpreters until the process stack overflowed, aborting every tenant in the process | Each child shell counts against `max_function_depth` and a separate cap of `MAX_CHILD_SHELL_DEPTH` (8) nested shells, sized so the deepest mix fits a 2 MiB debug stack; over the cap the shell fails `maximum nesting depth exceeded` (exit 2). Forked jobs inherit the depth because they are polled on the caller's stack. Regression: `recursive_child_shell_is_bounded` | **MITIGATED** |
 | TM-DOS-126 | make amplification | Recursive variables (`X = $(X)$(X)`), self-including makefiles, `$(MAKE)` recursion, huge dependency graphs or `$(wildcard **)` fan-out turning one `make` call into unbounded CPU, memory or stack | Expansion depth 200 and 4 MiB per expansion, recursive self-reference is fatal as in GNU; include depth 16; at most 100,000 targets, 10,000 `$(shell)`/`$(wildcard)`/`include` answers and 100,000 paths per `$(wildcard)` per run; `$(MAKE)` stops at MAKELEVEL 4, sized so the deepest recursion fits a 2 MiB debug thread stack (each level is roughly 200 KiB of make, `sh -c` and interpreter frames). Recipes run as ordinary `sh -c` commands under the session's budget, timeout and cancel token. Regressions: `builtins::make::expand::tests`, `l_make_003_sequential_sandbox_shell` | **MITIGATED** |
 | TM-DOS-127 | Pattern substitution amplification | `${x//pattern/rep}` with a glob pattern over a long value, or a huge pattern, turning one expansion into quadratic matching | Glob patterns compile to a size-capped (1 MiB) linear-time regex; extglob patterns fall back to at most 10,000 `glob_match` attempts and leave the value unchanged past the budget; results stay under `MAX_EXPANSION_RESULT_BYTES`. Regressions: `param-operand-quotes.test.sh`, `replace_pattern_extglob_budget` | **MITIGATED** |
+| TM-DOS-128 | awk command amplification | `system()`, `print \| cmd` and `cmd \| getline` in a loop, or a command whose output floods awk | Commands run as ordinary `sh -c` commands through the awk execution-plan driver, under the session's command budget, timeout and cancel token; loops around them hit the awk loop caps (TM-DOS-033); `print \| cmd` input and `cmd \| getline` output count toward the awk output cap (TM-DOS-028 caps) and the getline open-file and retained-byte caps (TM-DOS-116), charged to the request budget. Per awk call level the evaluator keeps one small boxed future per expression or statement, so the 64-level call cap fits in about 512 KiB of debug-build stack. Regressions: `test_awk_print_redirect_pipe_needs_plan_driver`, `test_awk_recursive_function_depth_limit` | **MITIGATED** |
 | TM-DOS-101 | yq structured-data amplification | YAML aliases can expand exponentially during deserialization; deep YAML/JSON, document floods, jaq generators, and YAML re-serialization can consume stack, CPU, or memory beyond the source size | Reject YAML alias tokens with a bounded lexical pass before deserialization; VFS/stdin and aggregate input budgets; serde_yaml_ng recursion cap 128 plus Bashkit depth 100; 4096-document cap; shared jaq work/deadline/output limits; post-serialization stdout cap; YAML+JSON depth/document/input/output regressions plus `yq_fuzz` and arbitrary-input proptest | **MITIGATED** |
 | TM-DOS-107 | Static-analysis command validation amplification | A large comment before thousands of commands makes a whole-script ordered-subsequence scan per command | Build one source-character position index, then validate each analyzed command-name character with a logarithmic position lookup instead of rescanning source | **MITIGATED** |
 **TM-DOS-051** is historical. The custom parser was deleted with the `yaml`
@@ -320,7 +321,7 @@ panicked. Resolved with `wrapping_*` ops, masked shift amounts, clamped exponent
 **TM-DOS-031** (mitigated): see table, linear backtracking for plain `*`, plus a recursion-depth cap for extglob nesting in `glob_match_impl`
 (`interpreter/glob.rs`).
 
-**Implementation**: `timeout` 30s + `parser_timeout` 5s + `max_parser_operations` 100K in `limits.rs` (TM-DOS-023/024); `MAX_AWK_PARSER_DEPTH` 100 (`builtins/awk.rs`) and `MAX_JQ_JSON_DEPTH` 100 (`builtins/jq/`) for TM-DOS-027; `MAX_LCS_CELLS` 10M (`builtins/diff.rs`) for TM-DOS-028.
+**Implementation**: `timeout` 30s + `parser_timeout` 5s + `max_parser_operations` 100K in `limits.rs` (TM-DOS-023/024); `AWK_MAX_PARSER_DEPTH` 100 (`builtins/awk/parser.rs`) and `MAX_JQ_JSON_DEPTH` 100 (`builtins/jq/`) for TM-DOS-027; `MAX_LCS_CELLS` 10M (`builtins/diff.rs`) for TM-DOS-028.
 
 ---
 
@@ -1412,7 +1413,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | AST depth limit (100) | TM-DOS-022 | `limits.rs` | Yes |
 | Child parser limit propagation | TM-DOS-021 | `parser/mod.rs` | Yes |
 | Arithmetic depth limit (50) | TM-DOS-026 | `interpreter/mod.rs` | Yes |
-| Builtin parser depth limit (100) | TM-DOS-027 | `builtins/awk.rs`, `builtins/jq/` | Yes |
+| Builtin parser depth limit (100) | TM-DOS-027 | `builtins/awk/parser.rs`, `builtins/jq/` | Yes |
 | Execution timeout (30s) | TM-DOS-023 | `limits.rs` | Yes |
 | Builtin output pre-allocation caps | TM-DOS-058, TM-DOS-090 | `limits.rs`, `builtins/shuf.rs` | Yes |
 | Shared request execution budget | TM-DOS-096 | `limits.rs`, `parser/mod.rs`, `interpreter/mod.rs`, high-risk builtins/runtimes | Yes |
@@ -1523,7 +1524,7 @@ ExecutionLimits::new()
     .max_history_bytes(1_048_576)      // TM-DOS-094
     .max_history_output_bytes(1_048_576) // TM-DOS-094
 // Note: MAX_ARITHMETIC_DEPTH (50) is a compile-time constant in interpreter (TM-DOS-026)
-// Note: MAX_AWK_PARSER_DEPTH (100) is a compile-time constant in builtins/awk.rs (TM-DOS-027)
+// Note: AWK_MAX_PARSER_DEPTH (100) is a compile-time constant in builtins/limits.rs (TM-DOS-027)
 // Note: MAX_JQ_JSON_DEPTH (100) is a compile-time constant in builtins/jq/ (TM-DOS-027)
 // Note: MAX_FILE_VAR_REQUESTS (128) and MAX_FILE_VAR_BYTES (16MiB) cap jq file bindings (TM-DOS-062)
 

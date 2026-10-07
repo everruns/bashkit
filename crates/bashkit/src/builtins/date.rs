@@ -208,6 +208,24 @@ impl Date {
         parse_date_string(s, self.now(), timezone)
     }
 
+    /// C `mktime`: local broken-down time `[year, month, day, hour, min,
+    /// sec]` in the sandbox `TZ` to epoch seconds. Out-of-range fields
+    /// carry over (month 13 is January of the next year). Used by awk.
+    pub(super) fn mktime(&self, tz: Option<&String>, t: [i64; 6]) -> Option<i64> {
+        let timezone = SandboxTimezone::from_env(tz).ok()?;
+        let months = t[0].checked_mul(12)?.checked_add(t[1] - 1)?;
+        let year = i32::try_from(months.div_euclid(12)).ok()?;
+        let month = u32::try_from(months.rem_euclid(12) + 1).ok()?;
+        let base = NaiveDate::from_ymd_opt(year, month, 1)?.and_hms_opt(0, 0, 0)?;
+        let secs = (t[2] - 1)
+            .checked_mul(86_400)?
+            .checked_add(t[3].checked_mul(3_600)?)?
+            .checked_add(t[4].checked_mul(60)?)?
+            .checked_add(t[5])?;
+        let dt = base.checked_add_signed(Duration::try_seconds(secs)?)?;
+        timezone.local_to_utc(dt, "").ok().map(|d| d.timestamp())
+    }
+
     /// Current virtual time as (epoch seconds, nanoseconds). Shared with
     /// `find`'s age tests so they see the same clock as `date`.
     pub(super) fn now_epoch(&self) -> (i64, u32) {
