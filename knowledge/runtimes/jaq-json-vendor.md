@@ -114,6 +114,8 @@ Besides the meter, a few `BASHKIT PATCH` hunks make values behave like jq
   nothing, an index past the end pads with null (capped like jq: `Array
   index too large`), a negative index before the start fails, and `.[]` on a
   scalar says `Cannot iterate over number (1)`.
+- `mod.rs` `from_map`: object keys must be strings
+  (`Cannot use null (null) as object key`).
 - `defs.jq`: `nan`/`infinite` without dividing by zero (and the jaq-std
   filters built on them), `gamma` as log-gamma.
 

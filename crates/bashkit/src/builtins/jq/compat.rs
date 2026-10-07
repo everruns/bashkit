@@ -10,6 +10,11 @@
 //!    For `scan`, real jq's `scan(re; flags)` with empty flags is global by
 //!    default — we explicitly add `g` if not already present in `flags` to
 //!    avoid a double-`g` regex compile error from `"g" + "g"`.
+//!  - `scan` / `capture` / `join` / `ltrimstr` / `rtrimstr` /
+//!    `from_entries` / `IN` / `tostream` / `fromstream` /
+//!    `truncate_stream`: jq 1.7's definitions (capture groups in `scan`,
+//!    null for an unmatched group, null joins as "", non-strings pass
+//!    through the trim filters).
 //!  - `@tsv` / `@csv`: jaq-std doesn't define them. Strict variants reject
 //!    non-scalars with a runtime error matching real jq's wording.
 //!  - `input_filename` / `input_line_number`: bashkit threads these as
@@ -59,13 +64,53 @@ def match(re; flags):
   matches(re; flags)[] |
   .[0] as $m |
   { offset: $m.offset, length: $m.length, string: $m.string,
-    captures: [.[1:][] | { offset: .offset, length: .length, string: .string,
-    name: (if has("name") then .name else null end) }] };
+    captures: [.[1:][] |
+      (if has("name") then .name else null end) as $name |
+      if .offset < 0 then { offset: .offset, string: null, length: .length, name: $name }
+      else { offset: .offset, length: .length, string: .string, name: $name } end] };
 def match(re): match(re; "");
 def scan(re; flags):
-  matches(re; if (flags | test("g")) then flags else "g" + flags end)[]
-  | .[0].string;
+  match(re; if (flags | test("g")) then flags else "g" + flags end)
+  | if (.captures | length) > 0 then [.captures[].string] else .string end;
 def scan(re): scan(re; "");
+def capture(re; flags):
+  match(re; flags)
+  | reduce (.captures[] | select(.name != null)) as $c ({}; . + {($c.name): $c.string});
+def capture(re): capture(re; "");
+def join($x):
+  reduce .[] as $i (null;
+    (if . == null then "" else . + $x end)
+    + ($i | if . == null then ""
+            elif type == "boolean" or type == "number" then tojson
+            else . end)) // "";
+def _bk_ltrimstr($x): ltrimstr($x);
+def _bk_rtrimstr($x): rtrimstr($x);
+def ltrimstr($x):
+  if type == "string" and ($x | type) == "string" then _bk_ltrimstr($x) else . end;
+def rtrimstr($x):
+  if type == "string" and ($x | type) == "string" then _bk_rtrimstr($x) else . end;
+def from_entries:
+  reduce .[] as $x ({};
+    . + { ($x | .key // .Key // .name // .Name):
+          ($x | if has("value") then .value else .Value end) });
+def IN(s): any(s == .; .);
+def IN(src; s): any(src == s; .);
+def _bk_postorder: (.[]? | _bk_postorder), .;
+def tostream:
+  path(_bk_postorder) as $p
+  | getpath($p)
+  | reduce path(.[]?) as $q ([$p, .]; [$p + $q]);
+def fromstream(f):
+  { x: null, e: false } as $init
+  | foreach f as $i ($init;
+      if .e then $init else . end
+      | if $i | length == 2
+        then setpath(["e"]; $i[0] | length == 0) | setpath(["x"] + $i[0]; $i[1])
+        else setpath(["e"]; $i[0] | length == 1) end;
+      if .e then .x else empty end);
+def truncate_stream(stream):
+  . as $n | null | stream
+  | if (.[0] | length) > $n then setpath([0]; .[0][$n:]) else empty end;
 def @tsv:
   [.[] |
     if type == "string" then

@@ -151,7 +151,8 @@ fn write_json_string(s: &str, out: &mut String) {
             '\t' => out.push_str("\\t"),
             '\x08' => out.push_str("\\b"),
             '\x0c' => out.push_str("\\f"),
-            c if (c as u32) < 0x20 => {
+            // jq also escapes DEL.
+            c if (c as u32) < 0x20 || c == '\x7f' => {
                 out.push_str(&format!("\\u{:04x}", c as u32));
             }
             c => out.push(c),

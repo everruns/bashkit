@@ -148,7 +148,15 @@ impl jaq_core::ValT for Val {
     }
 
     fn from_map<I: IntoIterator<Item = (Self, Self)>>(iter: I) -> ValR {
-        Ok(Self::obj(iter.into_iter().collect()))
+        // BASHKIT PATCH: jq object keys are strings only.
+        let mut m = Map::default();
+        for (k, v) in iter {
+            if !matches!(k, Val::TStr(_) | Val::BStr(_)) {
+                return Err(jqmsg::object_key(&k));
+            }
+            m.insert(k, v);
+        }
+        Ok(Self::obj(m))
     }
 
     fn key_values(self) -> Box<dyn Iterator<Item = Result<(Val, Val), Error>>> {
