@@ -925,7 +925,12 @@ impl<'a> Lexer<'a> {
                         self.advance();
                     } else {
                         // Escaped character: backslash quotes the next char
-                        // (quote removal — only the literal char survives)
+                        // (quote removal — only the literal char survives).
+                        // `\$` and `\`` must stay literal through parse_word, so
+                        // they carry the NUL sentinel like quoted `\$` does.
+                        if matches!(next, '$' | '`') {
+                            word.push('\x00');
+                        }
                         word.push(next);
                         self.advance();
                     }
