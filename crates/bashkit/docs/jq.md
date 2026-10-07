@@ -55,15 +55,22 @@ shim adds or overrides:
 | `leaf_paths` | Defined as `paths(scalars)` since jaq's stdlib lacks it. |
 | `match(re; flags)` / `match(re)` | Overridden to add `"name": null` to unnamed captures, matching jq output. |
 | `scan(re; flags)` / `scan(re)` | Overridden so `scan` defaults to global ("g") matching, matching jq. |
-| `input_filename` | Stub returning `null` (#1486). Bashkit reads inputs as a single concatenated stream via shell redirection, so per-input filenames are not tracked. |
-| `input_line_number` | Stub returning `0` (#1486). Per-line input tracking is not implemented. |
-| `input` / `inputs` | Real jaq implementations, pull from the shared input iterator. |
+| `input_filename` | Name of the file the current value came from (`null` for stdin). |
+| `input_line_number` | Lines read so far, as jq counts them (jq reads a line at a time). |
+| `input` / `inputs` | Pull from the same stream as the main loop; with `-n` the whole stream is theirs. `input` fails with `No more inputs` at the end. |
 | Most other 1.7/1.8 stdlib filters | Forwarded from `jaq-std` (`getpath`, `paths`, `to_entries`, `group_by`, `ltrimstr`/`rtrimstr`, `splits`, `test`, `now`, `debug`, `limit`, etc.). |
 
 ## Errors
 
-Filter parse failures and runtime errors return exit code `3` and `5`
-respectively, matching jq. Long error operands are summarised so failures
+Filter compile failures exit `3`. A runtime error is reported as
+`jq: error (at FILE:LINE): ...` (`<stdin>`, or `<unknown>` under `-n`) and jq
+moves on to the next input; the exit status follows the last input (`5` if
+it failed). `error("msg")` prints `msg` unquoted, other values get jq's
+`(not a string)` marker. Values before a JSON syntax error are processed,
+then the error exits `5`. A file that cannot be opened prints
+`Could not open file F: reason`, is skipped, and makes the exit status `2`.
+With `-e` the last output decides: `1` for `null`/`false`, `4` when nothing
+was output. Long error operands are summarised so failures
 do not blow up an LLM context window, see
 [#1485](https://github.com/everruns/bashkit/issues/1485).
 
@@ -86,8 +93,6 @@ need a larger `max_live_intermediate_bytes`.
 Bashkit's jq is intentionally minimal in places where the host model differs
 from upstream jq:
 
-- File inputs are concatenated into a single stream by the shell, so
-  per-file metadata (`input_filename`, `input_line_number`) is stubbed.
 - Exotic numeric formatting modes (`@base32`, `@base64d`, etc.) follow
   whatever `jaq-json` ships.
 
