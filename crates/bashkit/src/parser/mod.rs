@@ -16,6 +16,8 @@
 mod ast;
 pub mod budget;
 mod lexer;
+mod print_cmd;
+mod raw;
 mod span;
 mod subst_scan;
 mod tokens;
@@ -23,11 +25,13 @@ mod tokens;
 pub use ast::*;
 pub use budget::{BudgetError, validate as validate_budget};
 pub use lexer::{Lexer, SpannedToken};
+pub use print_cmd::function_string;
 pub use span::{Position, Span};
 
 use crate::error::{Error, Result};
 use crate::limits::LimitExceeded;
 use crate::time_compat::Instant;
+use raw::{heredoc_eof_from_raw, single_quote, split_raw_words};
 use std::cell::Cell;
 use std::time::Duration;
 
@@ -57,6 +61,11 @@ pub struct Parser<'a> {
     current_span: Span,
     /// Lookahead token for function parsing
     peeked_token: Option<SpannedToken>,
+    /// Source text of the current word token (only inside function bodies).
+    current_raw: Option<String>,
+    /// Nesting depth of function definitions being parsed; word source text
+    /// is captured while it is non-zero.
+    function_depth: usize,
     /// Maximum allowed AST nesting depth
     max_depth: usize,
     /// Current nesting depth
@@ -128,6 +137,8 @@ impl<'a> Parser<'a> {
             current_token,
             current_span,
             peeked_token: None,
+            current_raw: None,
+            function_depth: 0,
             max_depth: max_depth.min(HARD_MAX_AST_DEPTH),
             current_depth: 0,
             fuel: max_fuel,
@@ -183,6 +194,27 @@ impl<'a> Parser<'a> {
             // use that token end so skipped trailing comments are not retained in
             // persistent function source snapshots.
             self.current_span.end.offset
+        }
+    }
+
+    /// Attach the current token's source text to a word built from it.
+    fn with_raw(&self, mut word: Word) -> Word {
+        if word.raw.is_none() {
+            word.raw = self.current_raw.clone();
+        }
+        word
+    }
+
+    /// Start capturing word source text for a function body.
+    fn enter_function_body(&mut self) {
+        self.function_depth += 1;
+        self.lexer.set_capture_raw(true);
+    }
+
+    fn leave_function_body(&mut self) {
+        self.function_depth = self.function_depth.saturating_sub(1);
+        if self.function_depth == 0 {
+            self.lexer.set_capture_raw(false);
         }
     }
 
@@ -356,14 +388,17 @@ impl<'a> Parser<'a> {
         if let Some(peeked) = self.peeked_token.take() {
             self.current_token = Some(peeked.token);
             self.current_span = peeked.span;
+            self.current_raw = peeked.raw;
         } else {
             match self.lexer.next_spanned_token() {
                 Some(st) => {
                     self.current_token = Some(st.token);
                     self.current_span = st.span;
+                    self.current_raw = st.raw;
                 }
                 None => {
                     self.current_token = None;
+                    self.current_raw = None;
                     // Keep the last span for error reporting
                 }
             }
@@ -501,7 +536,15 @@ impl<'a> Parser<'a> {
 
         let mut commands = vec![first];
 
-        while matches!(self.current_token, Some(tokens::Token::Pipe)) {
+        while matches!(
+            self.current_token,
+            Some(tokens::Token::Pipe | tokens::Token::PipeBoth)
+        ) {
+            if matches!(self.current_token, Some(tokens::Token::PipeBoth))
+                && let Some(prev) = commands.last_mut()
+            {
+                add_stderr_to_pipe(prev);
+            }
             self.advance();
             self.skip_newlines()?;
 
@@ -541,6 +584,7 @@ impl<'a> Parser<'a> {
                             fd_var: None,
                             kind,
                             target,
+                            heredoc_delim: None,
                         });
                     }
                 }
@@ -552,6 +596,7 @@ impl<'a> Parser<'a> {
                             fd_var: None,
                             kind: RedirectKind::Append,
                             target,
+                            heredoc_delim: None,
                         });
                     }
                 }
@@ -563,6 +608,7 @@ impl<'a> Parser<'a> {
                             fd_var: None,
                             kind: RedirectKind::Input,
                             target,
+                            heredoc_delim: None,
                         });
                     }
                 }
@@ -574,6 +620,7 @@ impl<'a> Parser<'a> {
                             fd_var: None,
                             kind: RedirectKind::OutputBoth,
                             target,
+                            heredoc_delim: None,
                         });
                     }
                 }
@@ -585,6 +632,7 @@ impl<'a> Parser<'a> {
                             fd_var: None,
                             kind: RedirectKind::DupOutput,
                             target,
+                            heredoc_delim: None,
                         });
                     }
                 }
@@ -597,6 +645,7 @@ impl<'a> Parser<'a> {
                             fd_var: None,
                             kind: RedirectKind::Output,
                             target,
+                            heredoc_delim: None,
                         });
                     }
                 }
@@ -609,6 +658,7 @@ impl<'a> Parser<'a> {
                             fd_var: None,
                             kind: RedirectKind::Append,
                             target,
+                            heredoc_delim: None,
                         });
                     }
                 }
@@ -621,6 +671,7 @@ impl<'a> Parser<'a> {
                         fd_var: None,
                         kind: RedirectKind::DupOutput,
                         target: Word::literal(dst_fd.to_string()),
+                        heredoc_delim: None,
                     });
                 }
                 Some(tokens::Token::DupFdCloseOut(fd)) => {
@@ -631,6 +682,7 @@ impl<'a> Parser<'a> {
                         fd_var: None,
                         kind: RedirectKind::DupOutput,
                         target: Word::literal("-"),
+                        heredoc_delim: None,
                     });
                 }
                 Some(tokens::Token::DupInput) => {
@@ -641,6 +693,7 @@ impl<'a> Parser<'a> {
                             fd_var: None,
                             kind: RedirectKind::DupInput,
                             target,
+                            heredoc_delim: None,
                         });
                     }
                 }
@@ -653,6 +706,7 @@ impl<'a> Parser<'a> {
                         fd_var: None,
                         kind: RedirectKind::DupInput,
                         target: Word::literal(dst_fd.to_string()),
+                        heredoc_delim: None,
                     });
                 }
                 Some(tokens::Token::DupFdClose(fd)) => {
@@ -663,6 +717,7 @@ impl<'a> Parser<'a> {
                         fd_var: None,
                         kind: RedirectKind::DupInput,
                         target: Word::literal("-"),
+                        heredoc_delim: None,
                     });
                 }
                 Some(tokens::Token::RedirectFdIn(fd)) => {
@@ -674,6 +729,7 @@ impl<'a> Parser<'a> {
                             fd_var: None,
                             kind: RedirectKind::Input,
                             target,
+                            heredoc_delim: None,
                         });
                     }
                 }
@@ -685,55 +741,14 @@ impl<'a> Parser<'a> {
                             fd_var: None,
                             kind: RedirectKind::HereString,
                             target,
+                            heredoc_delim: None,
                         });
                     }
                 }
                 Some(tokens::Token::HereDoc) | Some(tokens::Token::HereDocStrip) => {
                     let strip_tabs =
                         matches!(self.current_token, Some(tokens::Token::HereDocStrip));
-                    self.advance();
-                    let (delimiter, quoted) = match &self.current_token {
-                        Some(tokens::Token::Word(w)) => (w.clone(), false),
-                        Some(tokens::Token::LiteralWord(w)) => (w.clone(), true),
-                        Some(tokens::Token::QuotedWord(w))
-                        | Some(tokens::Token::QuotedGlobWord(w)) => (w.clone(), true),
-                        _ => break,
-                    };
-                    let (content, rest_of_line_chars) = self
-                        .lexer
-                        .read_heredoc_with_strip_metered(&delimiter, strip_tabs);
-                    self.tick_units(rest_of_line_chars)?;
-                    let content = if strip_tabs {
-                        let had_trailing_newline = content.ends_with('\n');
-                        let mut stripped: String = content
-                            .lines()
-                            .map(|l| l.trim_start_matches('\t'))
-                            .collect::<Vec<_>>()
-                            .join("\n");
-                        if had_trailing_newline {
-                            stripped.push('\n');
-                        }
-                        stripped
-                    } else {
-                        content
-                    };
-                    self.advance();
-                    let target = if quoted {
-                        Word::quoted_literal(content)
-                    } else {
-                        self.parse_word(content)
-                    };
-                    let kind = if strip_tabs {
-                        RedirectKind::HereDocStrip
-                    } else {
-                        RedirectKind::HereDoc
-                    };
-                    redirects.push(Redirect {
-                        fd: None,
-                        fd_var: None,
-                        kind,
-                        target,
-                    });
+                    self.parse_heredoc_redirect(strip_tabs, &mut redirects)?;
                     // Rest-of-line tokens re-injected by lexer; break so callers
                     // can see pipes/semicolons.
                     break;
@@ -946,7 +961,7 @@ impl<'a> Parser<'a> {
                         if matches!(&self.current_token, Some(tokens::Token::QuotedGlobWord(_))) {
                             word.has_unquoted_glob = true;
                         }
-                        words.push(word);
+                        words.push(self.with_raw(word));
                         self.advance();
                     }
                     Some(tokens::Token::LiteralWord(w)) => {
@@ -955,6 +970,7 @@ impl<'a> Parser<'a> {
                             quoted: true,
                             has_unquoted_glob: false,
                             part_quoted: Vec::new(),
+                            raw: self.current_raw.clone(),
                         });
                         self.advance();
                     }
@@ -1050,7 +1066,7 @@ impl<'a> Parser<'a> {
                     if matches!(&self.current_token, Some(tokens::Token::QuotedGlobWord(_))) {
                         word.has_unquoted_glob = true;
                     }
-                    words.push(word);
+                    words.push(self.with_raw(word));
                     self.advance();
                 }
                 Some(tokens::Token::LiteralWord(w)) => {
@@ -1059,6 +1075,7 @@ impl<'a> Parser<'a> {
                         quoted: true,
                         has_unquoted_glob: false,
                         part_quoted: Vec::new(),
+                        raw: self.current_raw.clone(),
                     });
                     self.advance();
                 }
@@ -1100,14 +1117,31 @@ impl<'a> Parser<'a> {
     /// Parse C-style arithmetic for loop inner: for ((init; cond; step)); do body; done
     /// Note: depth tracking is done by parse_for which calls this
     fn parse_arithmetic_for_inner(&mut self, start_span: Span) -> Result<CompoundCommand> {
-        self.advance(); // consume '(('
-
         // Read the three expressions separated by semicolons
         let mut parts: Vec<String> = Vec::new();
+        let mut raw_parts: Option<Vec<String>> = None;
         let mut current_expr = String::new();
         let mut paren_depth = 0;
 
-        loop {
+        if self.peeked_token.is_none() {
+            // Read `((init; cond; step))` as written (see read_dparen_body).
+            let Some(body) = self.lexer.read_dparen_body() else {
+                return Err(Error::parse(
+                    "unexpected end of input in for loop".to_string(),
+                ));
+            };
+            let raws = split_arith_for_parts(&body);
+            if raws.len() != 3 {
+                return Err(self.error("syntax error: arithmetic expression required"));
+            }
+            parts = raws.iter().map(|p| arith_exec_text(p)).collect();
+            raw_parts = Some(raws);
+            self.advance();
+        } else {
+            self.advance(); // consume '(('
+        }
+
+        while raw_parts.is_none() {
             match &self.current_token {
                 Some(tokens::Token::DoubleRightParen) => {
                     // End of the (( )) section
@@ -1231,6 +1265,7 @@ impl<'a> Parser<'a> {
             init,
             condition,
             step,
+            raw: raw_parts,
             body,
             span: start_span.merge(self.current_span),
         }))
@@ -1349,6 +1384,7 @@ impl<'a> Parser<'a> {
                         quoted: true,
                         has_unquoted_glob: false,
                         part_quoted: Vec::new(),
+                        raw: self.current_raw.clone(),
                     },
                     Some(tokens::Token::Word(w))
                     | Some(tokens::Token::QuotedWord(w))
@@ -1368,7 +1404,7 @@ impl<'a> Parser<'a> {
                     }
                     _ => unreachable!(),
                 };
-                patterns.push(pattern);
+                patterns.push(self.with_raw(pattern));
                 self.advance();
 
                 // Check for | between patterns
@@ -1688,7 +1724,7 @@ impl<'a> Parser<'a> {
                         if w_clone.contains('$') && !is_quoted && !is_literal {
                             // Variable reference — parse normally for expansion
                             let parsed = self.parse_word(w_clone);
-                            words.push(parsed);
+                            words.push(self.with_raw(parsed));
                             self.advance();
                         } else {
                             let pattern = self.collect_conditional_regex_pattern(&w_clone);
@@ -1704,7 +1740,9 @@ impl<'a> Parser<'a> {
                         // pattern text, not comments or operators.
                         words.push(Word::literal("=~"));
                         if let Some(raw) = self.lexer.read_cond_regex() {
-                            words.push(self.cond_regex_word(raw));
+                            let mut word = self.cond_regex_word(raw.clone());
+                            word.raw = Some(raw.trim().to_string());
+                            words.push(word);
                         }
                         self.advance();
                         continue;
@@ -1719,6 +1757,7 @@ impl<'a> Parser<'a> {
                             quoted: true,
                             has_unquoted_glob: false,
                             part_quoted: Vec::new(),
+                            raw: self.current_raw.clone(),
                         }
                     } else {
                         let mut parsed = self.parse_word(w_clone);
@@ -1730,7 +1769,7 @@ impl<'a> Parser<'a> {
                         }
                         parsed
                     };
-                    words.push(word);
+                    words.push(self.with_raw(word));
                     self.advance();
                 }
                 // Operators that the lexer tokenizes separately
@@ -1852,6 +1891,17 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_arithmetic_command(&mut self) -> Result<CompoundCommand> {
+        if self.peeked_token.is_none() {
+            // Read `(( expr ))` as written (see read_dparen_body); the
+            // command keeps that text, so `type` prints it unchanged.
+            let Some(body) = self.lexer.read_dparen_body() else {
+                return Err(Error::parse(
+                    "unexpected end of input in arithmetic command".to_string(),
+                ));
+            };
+            self.advance();
+            return Ok(CompoundCommand::Arithmetic(body));
+        }
         self.advance(); // consume '(('
 
         // Read expression until we find ))
@@ -2012,33 +2062,15 @@ impl<'a> Parser<'a> {
             Some(tokens::Token::Word(w)) => w.clone(),
             _ => return Err(self.error("expected function name")),
         };
-        self.advance();
-        self.skip_newlines()?;
-
-        // Optional () after name
-        if matches!(self.current_token, Some(tokens::Token::LeftParen)) {
-            self.advance(); // consume '('
-            if !matches!(self.current_token, Some(tokens::Token::RightParen)) {
-                return Err(Error::parse(
-                    "expected ')' in function definition".to_string(),
-                ));
-            }
-            self.advance(); // consume ')'
-            self.skip_newlines()?;
-        }
-
-        // Expect { for body
-        if !matches!(self.current_token, Some(tokens::Token::LeftBrace)) {
-            return Err(Error::parse("expected '{' for function body".to_string()));
-        }
-
-        // Parse body as brace group
-        let body = self.parse_brace_group()?;
+        self.enter_function_body();
+        let body = self.parse_function_keyword_rest();
+        self.leave_function_body();
+        let body = body?;
         let end_offset = self.current_command_end_offset();
 
         Ok(Command::Function(FunctionDef {
             name,
-            body: Box::new(Command::Compound(body, Vec::new())),
+            body: Box::new(body),
             source: self.source_slice(start_span.start.offset, end_offset),
             span: start_span.merge(self.current_span),
         }))
@@ -2063,24 +2095,69 @@ impl<'a> Parser<'a> {
         if !matches!(self.current_token, Some(tokens::Token::RightParen)) {
             return Err(self.error("expected ')' in function definition"));
         }
-        self.advance(); // consume ')'
-        self.skip_newlines()?;
-
-        // Expect { for body
-        if !matches!(self.current_token, Some(tokens::Token::LeftBrace)) {
-            return Err(self.error("expected '{' for function body"));
-        }
-
-        // Parse body as brace group
-        let body = self.parse_brace_group()?;
+        self.enter_function_body();
+        let body = self.parse_function_posix_rest();
+        self.leave_function_body();
+        let body = body?;
         let end_offset = self.current_command_end_offset();
 
         Ok(Command::Function(FunctionDef {
             name,
-            body: Box::new(Command::Compound(body, Vec::new())),
+            body: Box::new(body),
             source: self.source_slice(start_span.start.offset, end_offset),
             span: start_span.merge(self.current_span),
         }))
+    }
+
+    /// `function name [()] body`, after the name.
+    fn parse_function_keyword_rest(&mut self) -> Result<Command> {
+        self.advance();
+        self.skip_newlines()?;
+
+        // Optional () after name
+        if matches!(self.current_token, Some(tokens::Token::LeftParen)) {
+            self.advance(); // consume '('
+            if !matches!(self.current_token, Some(tokens::Token::RightParen)) {
+                return Err(Error::parse(
+                    "expected ')' in function definition".to_string(),
+                ));
+            }
+            self.advance(); // consume ')'
+            self.skip_newlines()?;
+        }
+        self.parse_function_body()
+    }
+
+    /// `name () body`, from the `)`.
+    fn parse_function_posix_rest(&mut self) -> Result<Command> {
+        self.advance(); // consume ')'
+        self.skip_newlines()?;
+        self.parse_function_body()
+    }
+
+    /// A function body: any compound command with its redirections
+    /// (`f() ( sub )`, `f() if ...; fi`, `f() { ...; } >log`), like bash.
+    fn parse_function_body(&mut self) -> Result<Command> {
+        let compound_start = match &self.current_token {
+            Some(
+                tokens::Token::LeftBrace
+                | tokens::Token::LeftParen
+                | tokens::Token::DoubleLeftParen
+                | tokens::Token::DoubleLeftBracket,
+            ) => true,
+            Some(tokens::Token::Word(w)) => matches!(
+                w.as_str(),
+                "if" | "for" | "while" | "until" | "case" | "select"
+            ),
+            _ => false,
+        };
+        if !compound_start {
+            return Err(self.error("expected '{' for function body"));
+        }
+        match self.parse_command()? {
+            Some(cmd @ Command::Compound(..)) => Ok(cmd),
+            _ => Err(self.error("expected '{' for function body")),
+        }
     }
 
     /// Parse commands until a terminating keyword
@@ -2319,6 +2396,7 @@ impl<'a> Parser<'a> {
                             quoted: true,
                             has_unquoted_glob: false,
                             part_quoted: Vec::new(),
+                            raw: self.current_raw.clone(),
                         }
                     } else if matches!(
                         &self.current_token,
@@ -2330,7 +2408,7 @@ impl<'a> Parser<'a> {
                     } else {
                         self.parse_word(elem_clone)
                     };
-                    elements.push(word);
+                    elements.push(self.with_raw(word));
                     self.advance();
                 }
                 None => break,
@@ -2350,6 +2428,19 @@ impl<'a> Parser<'a> {
     /// must drop again so `x="a*"b*` stores `a*b*`.
     fn try_parse_assignment(&mut self, w: &str, glob_escaped: bool) -> Option<(Assignment, bool)> {
         let (name, index, value, is_append) = Self::is_assignment(w)?;
+        // Source text of the value (after `=`), for function printing.
+        let value_raw = self.current_raw.as_deref().map(|raw| {
+            let start = match index {
+                Some(_) => raw.find("]=").or_else(|| raw.find("]+=")).map(|i| i + 1),
+                None => raw.find(['=', '+']),
+            }
+            .unwrap_or(0);
+            let rest = &raw[start..];
+            rest.strip_prefix("+=")
+                .or_else(|| rest.strip_prefix('='))
+                .unwrap_or(rest)
+                .to_string()
+        });
         let name = name.to_string();
         let index = index.map(|s| s.to_string());
         let value_str = value.to_string();
@@ -2357,7 +2448,7 @@ impl<'a> Parser<'a> {
         // Array literal in the token itself: arr=(a b c)
         if value_str.starts_with('(') && value_str.ends_with(')') {
             let inner = &value_str[1..value_str.len() - 1];
-            let elements: Vec<Word> = Self::split_array_elements(inner)
+            let mut elements: Vec<Word> = Self::split_array_elements(inner)
                 .into_iter()
                 .map(|(s, quoted)| {
                     if quoted {
@@ -2369,6 +2460,18 @@ impl<'a> Parser<'a> {
                     }
                 })
                 .collect();
+            if let Some(raw) = value_raw.as_deref() {
+                let raw_inner = raw
+                    .strip_prefix('(')
+                    .and_then(|r| r.strip_suffix(')'))
+                    .unwrap_or(raw);
+                let raws = split_raw_words(raw_inner);
+                if raws.len() == elements.len() {
+                    for (elem, r) in elements.iter_mut().zip(raws) {
+                        elem.raw = Some(r);
+                    }
+                }
+            }
             return Some((
                 Assignment {
                     name,
@@ -2397,11 +2500,13 @@ impl<'a> Parser<'a> {
                 ));
             }
             // Empty assignment: VAR=
+            let mut empty = Word::literal("");
+            empty.raw = value_raw;
             return Some((
                 Assignment {
                     name,
                     index,
-                    value: AssignmentValue::Scalar(Word::literal("")),
+                    value: AssignmentValue::Scalar(empty),
                     append: is_append,
                 },
                 false,
@@ -2409,7 +2514,7 @@ impl<'a> Parser<'a> {
         }
 
         // Quoted or plain scalar value
-        let value_word = if value_str.starts_with('"') && value_str.ends_with('"') {
+        let mut value_word = if value_str.starts_with('"') && value_str.ends_with('"') {
             let inner = Self::strip_quotes(&value_str);
             let mut w = self.parse_word(inner.to_string());
             w.quoted = true;
@@ -2421,6 +2526,7 @@ impl<'a> Parser<'a> {
                 quoted: true,
                 has_unquoted_glob: false,
                 part_quoted: Vec::new(),
+                raw: None,
             }
         } else {
             let mut w = self.parse_word(value_str);
@@ -2433,6 +2539,7 @@ impl<'a> Parser<'a> {
             }
             w
         };
+        value_word.raw = value_raw;
         Some((
             Assignment {
                 name,
@@ -2447,13 +2554,18 @@ impl<'a> Parser<'a> {
     /// Parse a compound array argument in arg position (e.g. `declare -a arr=(x y z)`).
     /// Called when the current word ends with `=` and the next token is `(`.
     /// Returns the compound word if successful, or `None` if not a compound assignment.
-    fn try_parse_compound_array_arg(&mut self, saved_w: String) -> Option<Word> {
+    fn try_parse_compound_array_arg(
+        &mut self,
+        saved_w: String,
+        saved_raw: Option<String>,
+    ) -> Option<Word> {
         if !matches!(self.current_token, Some(tokens::Token::LeftParen)) {
             return None;
         }
         self.advance(); // consume '('
         let mut compound = saved_w;
         compound.push('(');
+        let mut raw_elems: Vec<String> = Vec::new();
         loop {
             match &self.current_token {
                 Some(tokens::Token::RightParen) => {
@@ -2469,6 +2581,7 @@ impl<'a> Parser<'a> {
                         compound.push(' ');
                     }
                     compound.push_str(elem);
+                    raw_elems.push(self.current_raw.clone().unwrap_or_default());
                     self.advance();
                 }
                 None => break,
@@ -2477,7 +2590,9 @@ impl<'a> Parser<'a> {
                 }
             }
         }
-        Some(self.parse_word(compound))
+        let mut word = self.parse_word(compound);
+        word.raw = saved_raw.map(|r| format!("{r}({})", raw_elems.join(" ")));
+        Some(word)
     }
 
     /// Parse a heredoc redirect (`<<` or `<<-`) and any trailing redirects on the same line.
@@ -2486,7 +2601,13 @@ impl<'a> Parser<'a> {
         strip_tabs: bool,
         redirects: &mut Vec<Redirect>,
     ) -> Result<()> {
+        // Capture the delimiter's source text: bash quote-removes it and
+        // treats the body as literal when any part of it was quoted
+        // (`<<'E'`, `<<\E`, `<<E"OF"`).
+        let was_capturing = self.lexer.capture_raw();
+        self.lexer.set_capture_raw(true);
         self.advance();
+        self.lexer.set_capture_raw(was_capturing);
         // Get the delimiter word and track if it was quoted
         let (delimiter, quoted) = match &self.current_token {
             Some(tokens::Token::Word(w)) => (w.clone(), false),
@@ -2495,6 +2616,25 @@ impl<'a> Parser<'a> {
                 (w.clone(), true)
             }
             _ => return Err(Error::parse("expected delimiter after <<".to_string())),
+        };
+        let (delimiter, quoted, printed) = match self.current_raw.as_deref() {
+            Some(raw) => {
+                let (eof, quoted) = heredoc_eof_from_raw(raw);
+                let printed = if quoted {
+                    single_quote(&eof)
+                } else {
+                    raw.to_string()
+                };
+                (eof, quoted, printed)
+            }
+            None => {
+                let printed = if quoted {
+                    single_quote(&delimiter)
+                } else {
+                    delimiter.clone()
+                };
+                (delimiter, quoted, printed)
+            }
         };
 
         let (content, rest_of_line_chars) = self
@@ -2518,11 +2658,12 @@ impl<'a> Parser<'a> {
             content
         };
 
-        let target = if quoted {
-            Word::quoted_literal(content)
+        let mut target = if quoted {
+            Word::quoted_literal(content.clone())
         } else {
-            self.parse_word(content)
+            self.parse_word(content.clone())
         };
+        target.raw = Some(content);
 
         let kind = if strip_tabs {
             RedirectKind::HereDocStrip
@@ -2535,20 +2676,25 @@ impl<'a> Parser<'a> {
             fd_var: None,
             kind,
             target,
+            heredoc_delim: Some(printed),
         });
 
         // Advance so re-injected rest-of-line tokens are picked up
         self.advance();
 
         // Consume any trailing redirects on the same line (e.g. `cat <<EOF > file`)
-        self.collect_trailing_redirects(redirects);
-        Ok(())
+        self.collect_trailing_redirects(redirects)
     }
 
     /// Consume redirect tokens that follow a heredoc on the same line.
-    fn collect_trailing_redirects(&mut self, redirects: &mut Vec<Redirect>) {
+    fn collect_trailing_redirects(&mut self, redirects: &mut Vec<Redirect>) -> Result<()> {
         while let Some(tok) = &self.current_token {
             match tok {
+                // `cat <<A <<'B'`: bodies follow in order on later lines.
+                tokens::Token::HereDoc | tokens::Token::HereDocStrip => {
+                    let strip_tabs = matches!(tok, tokens::Token::HereDocStrip);
+                    return self.parse_heredoc_redirect(strip_tabs, redirects);
+                }
                 tokens::Token::RedirectOut | tokens::Token::Clobber => {
                     let kind = if matches!(&self.current_token, Some(tokens::Token::Clobber)) {
                         RedirectKind::Clobber
@@ -2562,6 +2708,7 @@ impl<'a> Parser<'a> {
                             fd_var: None,
                             kind,
                             target,
+                            heredoc_delim: None,
                         });
                     }
                 }
@@ -2573,6 +2720,7 @@ impl<'a> Parser<'a> {
                             fd_var: None,
                             kind: RedirectKind::Append,
                             target,
+                            heredoc_delim: None,
                         });
                     }
                 }
@@ -2585,6 +2733,7 @@ impl<'a> Parser<'a> {
                             fd_var: None,
                             kind: RedirectKind::Output,
                             target,
+                            heredoc_delim: None,
                         });
                     }
                 }
@@ -2596,6 +2745,7 @@ impl<'a> Parser<'a> {
                         fd_var: None,
                         kind: RedirectKind::DupOutput,
                         target: Word::literal("-"),
+                        heredoc_delim: None,
                     });
                 }
                 tokens::Token::DupInput => {
@@ -2606,6 +2756,7 @@ impl<'a> Parser<'a> {
                             fd_var: None,
                             kind: RedirectKind::DupInput,
                             target,
+                            heredoc_delim: None,
                         });
                     }
                 }
@@ -2618,6 +2769,7 @@ impl<'a> Parser<'a> {
                         fd_var: None,
                         kind: RedirectKind::DupInput,
                         target: Word::literal(dst_fd.to_string()),
+                        heredoc_delim: None,
                     });
                 }
                 tokens::Token::DupFdClose(fd) => {
@@ -2628,6 +2780,7 @@ impl<'a> Parser<'a> {
                         fd_var: None,
                         kind: RedirectKind::DupInput,
                         target: Word::literal("-"),
+                        heredoc_delim: None,
                     });
                 }
                 tokens::Token::RedirectFdIn(fd) => {
@@ -2639,12 +2792,14 @@ impl<'a> Parser<'a> {
                             fd_var: None,
                             kind: RedirectKind::Input,
                             target,
+                            heredoc_delim: None,
                         });
                     }
                 }
                 _ => break,
             }
         }
+        Ok(())
     }
 
     /// Extract fd-variable name from `{varname}` pattern in the last word.
@@ -2680,137 +2835,15 @@ impl<'a> Parser<'a> {
 
         loop {
             match &self.current_token {
-                Some(tokens::Token::Word(w))
-                | Some(tokens::Token::LiteralWord(w))
-                | Some(tokens::Token::QuotedWord(w))
-                | Some(tokens::Token::QuotedGlobWord(w)) => {
-                    let is_literal =
-                        matches!(&self.current_token, Some(tokens::Token::LiteralWord(_)));
-                    let is_quoted = matches!(
-                        &self.current_token,
-                        Some(tokens::Token::QuotedWord(_)) | Some(tokens::Token::QuotedGlobWord(_))
-                    );
-                    let is_glob_quoted =
-                        matches!(&self.current_token, Some(tokens::Token::QuotedGlobWord(_)));
-                    // Clone early to release borrow on self.current_token
-                    let w = w.clone();
-
-                    // Stop if this word cannot start a command (like 'then', 'fi', etc.)
-                    if words.is_empty() && Self::is_non_command_word(&w) {
+                Some(
+                    tokens::Token::Word(_)
+                    | tokens::Token::LiteralWord(_)
+                    | tokens::Token::QuotedWord(_)
+                    | tokens::Token::QuotedGlobWord(_),
+                ) => {
+                    if !self.parse_simple_word(&mut words, &mut assignments) {
                         break;
                     }
-
-                    // Check for assignment (only before the command name, not for literal words)
-                    if words.is_empty()
-                        && !is_literal
-                        && let Some((assignment, needs_advance)) =
-                            self.try_parse_assignment(&w, is_glob_quoted)
-                    {
-                        if needs_advance {
-                            self.advance();
-                        }
-                        assignments.push(assignment);
-                        continue;
-                    }
-
-                    // Handle compound array assignment in arg position:
-                    // declare -a arr=(x y z) → arr=(x y z) as single arg
-                    if w.ends_with('=') && !words.is_empty() {
-                        self.advance();
-                        if let Some(word) = self.try_parse_compound_array_arg(w.clone()) {
-                            words.push(word);
-                            continue;
-                        }
-                        // Not a compound assignment — treat as regular word
-                        let word = if is_literal {
-                            Word {
-                                parts: vec![WordPart::Literal(w)],
-                                quoted: true,
-                                has_unquoted_glob: false,
-                                part_quoted: Vec::new(),
-                            }
-                        } else {
-                            let mut word = self.parse_word(w);
-                            if is_quoted {
-                                word.quoted = true;
-                            }
-                            if is_glob_quoted {
-                                word.has_unquoted_glob = true;
-                            }
-                            word
-                        };
-                        words.push(word);
-                        continue;
-                    }
-
-                    let word = if is_literal {
-                        Word {
-                            parts: vec![WordPart::Literal(w)],
-                            quoted: true,
-                            has_unquoted_glob: false,
-                            part_quoted: Vec::new(),
-                        }
-                    } else {
-                        let mut word = self.parse_word(w);
-                        if is_quoted {
-                            word.quoted = true;
-                        }
-                        if is_glob_quoted {
-                            word.has_unquoted_glob = true;
-                        }
-                        word
-                    };
-                    words.push(word);
-                    self.advance();
-                }
-                Some(tokens::Token::RedirectOut) | Some(tokens::Token::Clobber) => {
-                    let kind = if matches!(&self.current_token, Some(tokens::Token::Clobber)) {
-                        RedirectKind::Clobber
-                    } else {
-                        RedirectKind::Output
-                    };
-                    let fd_var = Self::pop_fd_var(&mut words);
-                    self.advance();
-                    let target = self.expect_word()?;
-                    redirects.push(Redirect {
-                        fd: None,
-                        fd_var,
-                        kind,
-                        target,
-                    });
-                }
-                Some(tokens::Token::RedirectAppend) => {
-                    let fd_var = Self::pop_fd_var(&mut words);
-                    self.advance();
-                    let target = self.expect_word()?;
-                    redirects.push(Redirect {
-                        fd: None,
-                        fd_var,
-                        kind: RedirectKind::Append,
-                        target,
-                    });
-                }
-                Some(tokens::Token::RedirectIn) => {
-                    let fd_var = Self::pop_fd_var(&mut words);
-                    self.advance();
-                    let target = self.expect_word()?;
-                    redirects.push(Redirect {
-                        fd: None,
-                        fd_var,
-                        kind: RedirectKind::Input,
-                        target,
-                    });
-                }
-                Some(tokens::Token::HereString) => {
-                    let fd_var = Self::pop_fd_var(&mut words);
-                    self.advance();
-                    let target = self.expect_word()?;
-                    redirects.push(Redirect {
-                        fd: None,
-                        fd_var,
-                        kind: RedirectKind::HereString,
-                        target,
-                    });
                 }
                 Some(tokens::Token::HereDoc) | Some(tokens::Token::HereDocStrip) => {
                     let strip_tabs =
@@ -2822,122 +2855,35 @@ impl<'a> Parser<'a> {
                     let word = self.expect_word()?;
                     words.push(word);
                 }
-                Some(tokens::Token::RedirectBoth) => {
-                    let fd_var = Self::pop_fd_var(&mut words);
-                    self.advance();
-                    let target = self.expect_word()?;
-                    redirects.push(Redirect {
-                        fd: None,
-                        fd_var,
-                        kind: RedirectKind::OutputBoth,
-                        target,
-                    });
+                Some(
+                    tokens::Token::RedirectOut
+                    | tokens::Token::Clobber
+                    | tokens::Token::RedirectAppend
+                    | tokens::Token::RedirectIn
+                    | tokens::Token::HereString
+                    | tokens::Token::RedirectBoth
+                    | tokens::Token::DupOutput
+                    | tokens::Token::RedirectFd(_)
+                    | tokens::Token::RedirectFdAppend(_)
+                    | tokens::Token::DupFd(..)
+                    | tokens::Token::DupFdCloseOut(_)
+                    | tokens::Token::DupInput
+                    | tokens::Token::DupFdIn(..)
+                    | tokens::Token::DupFdClose(_)
+                    | tokens::Token::RedirectFdIn(_),
+                ) => {
+                    self.parse_simple_redirect(&mut words, &mut redirects)?;
                 }
-                Some(tokens::Token::DupOutput) => {
-                    let fd_var = Self::pop_fd_var(&mut words);
-                    self.advance();
-                    let target = self.expect_word()?;
-                    redirects.push(Redirect {
-                        fd: if fd_var.is_some() { None } else { Some(1) },
-                        fd_var,
-                        kind: RedirectKind::DupOutput,
-                        target,
-                    });
-                }
-                Some(tokens::Token::RedirectFd(fd)) => {
-                    let fd = *fd;
-                    self.advance();
-                    let target = self.expect_word()?;
-                    redirects.push(Redirect {
-                        fd: Some(fd),
-                        fd_var: None,
-                        kind: RedirectKind::Output,
-                        target,
-                    });
-                }
-                Some(tokens::Token::RedirectFdAppend(fd)) => {
-                    let fd = *fd;
-                    self.advance();
-                    let target = self.expect_word()?;
-                    redirects.push(Redirect {
-                        fd: Some(fd),
-                        fd_var: None,
-                        kind: RedirectKind::Append,
-                        target,
-                    });
-                }
-                Some(tokens::Token::DupFd(src_fd, dst_fd)) => {
-                    let src_fd = *src_fd;
-                    let dst_fd = *dst_fd;
-                    self.advance();
-                    redirects.push(Redirect {
-                        fd: Some(src_fd),
-                        fd_var: None,
-                        kind: RedirectKind::DupOutput,
-                        target: Word::literal(dst_fd.to_string()),
-                    });
-                }
-                Some(tokens::Token::DupFdCloseOut(fd)) => {
-                    let fd = *fd;
-                    self.advance();
-                    redirects.push(Redirect {
-                        fd: Some(fd),
-                        fd_var: None,
-                        kind: RedirectKind::DupOutput,
-                        target: Word::literal("-"),
-                    });
-                }
-                Some(tokens::Token::DupInput) => {
-                    let fd_var = Self::pop_fd_var(&mut words);
-                    self.advance();
-                    let target = self.expect_word()?;
-                    redirects.push(Redirect {
-                        fd: if fd_var.is_some() { None } else { Some(0) },
-                        fd_var,
-                        kind: RedirectKind::DupInput,
-                        target,
-                    });
-                }
-                Some(tokens::Token::DupFdIn(src_fd, dst_fd)) => {
-                    let src_fd = *src_fd;
-                    let dst_fd = *dst_fd;
-                    self.advance();
-                    redirects.push(Redirect {
-                        fd: Some(src_fd),
-                        fd_var: None,
-                        kind: RedirectKind::DupInput,
-                        target: Word::literal(dst_fd.to_string()),
-                    });
-                }
-                Some(tokens::Token::DupFdClose(fd)) => {
-                    let fd = *fd;
-                    self.advance();
-                    redirects.push(Redirect {
-                        fd: Some(fd),
-                        fd_var: None,
-                        kind: RedirectKind::DupInput,
-                        target: Word::literal("-"),
-                    });
-                }
-                Some(tokens::Token::RedirectFdIn(fd)) => {
-                    let fd = *fd;
-                    self.advance();
-                    let target = self.expect_word()?;
-                    redirects.push(Redirect {
-                        fd: Some(fd),
-                        fd_var: None,
-                        kind: RedirectKind::Input,
-                        target,
-                    });
-                }
-                // { and } as arguments (not in command position) are literal words
-                Some(tokens::Token::LeftBrace) | Some(tokens::Token::RightBrace)
-                    if !words.is_empty() =>
-                {
-                    let sym = if matches!(self.current_token, Some(tokens::Token::LeftBrace)) {
-                        "{"
-                    } else {
-                        "}"
+                // {, } and ]] as arguments (not in command position) are literal words
+                Some(
+                    tokens::Token::LeftBrace
+                    | tokens::Token::RightBrace
+                    | tokens::Token::DoubleRightBracket,
+                ) if !words.is_empty() => {
+                    let sym = match self.current_token {
+                        Some(tokens::Token::LeftBrace) => "{",
+                        Some(tokens::Token::RightBrace) => "}",
+                        _ => "]]",
                     };
                     words.push(Word::literal(sym));
                     self.advance();
@@ -2981,11 +2927,285 @@ impl<'a> Parser<'a> {
         }))
     }
 
+    /// One word of a simple command (outlined to keep the recursive
+    /// `parse_simple_command` frame small; `$( )` nesting recurses through it).
+    /// Returns false when the word ends the command.
+    #[inline(never)]
+    fn parse_simple_word(
+        &mut self,
+        words: &mut Vec<Word>,
+        assignments: &mut Vec<Assignment>,
+    ) -> bool {
+        let (w, is_literal, is_quoted, is_glob_quoted) = match &self.current_token {
+            Some(tokens::Token::Word(w)) => (w.clone(), false, false, false),
+            Some(tokens::Token::LiteralWord(w)) => (w.clone(), true, false, false),
+            Some(tokens::Token::QuotedWord(w)) => (w.clone(), false, true, false),
+            Some(tokens::Token::QuotedGlobWord(w)) => (w.clone(), false, true, true),
+            _ => return false,
+        };
+        // Stop if this word cannot start a command (like 'then', 'fi', etc.)
+        if words.is_empty() && Self::is_non_command_word(&w) {
+            return false;
+        }
+
+        // Check for assignment (only before the command name, not for literal words)
+        if words.is_empty()
+            && !is_literal
+            && let Some((assignment, needs_advance)) = self.try_parse_assignment(&w, is_glob_quoted)
+        {
+            if needs_advance {
+                self.advance();
+            }
+            assignments.push(assignment);
+            return true;
+        }
+
+        // Handle compound array assignment in arg position:
+        // declare -a arr=(x y z) → arr=(x y z) as single arg
+        if w.ends_with('=') && !words.is_empty() {
+            let saved_raw = self.current_raw.clone();
+            self.advance();
+            if let Some(word) = self.try_parse_compound_array_arg(w.clone(), saved_raw.clone()) {
+                words.push(word);
+                return true;
+            }
+            // Not a compound assignment — treat as regular word
+            let word = if is_literal {
+                Word {
+                    parts: vec![WordPart::Literal(w)],
+                    quoted: true,
+                    has_unquoted_glob: false,
+                    part_quoted: Vec::new(),
+                    raw: saved_raw.clone(),
+                }
+            } else {
+                let mut word = self.parse_word(w);
+                if is_quoted {
+                    word.quoted = true;
+                }
+                if is_glob_quoted {
+                    word.has_unquoted_glob = true;
+                }
+                word
+            };
+            let mut word = word;
+            word.raw = saved_raw;
+            words.push(word);
+            return true;
+        }
+
+        let word = if is_literal {
+            Word {
+                parts: vec![WordPart::Literal(w)],
+                quoted: true,
+                has_unquoted_glob: false,
+                part_quoted: Vec::new(),
+                raw: self.current_raw.clone(),
+            }
+        } else {
+            let mut word = self.parse_word(w);
+            if is_quoted {
+                word.quoted = true;
+            }
+            if is_glob_quoted {
+                word.has_unquoted_glob = true;
+            }
+            word
+        };
+        words.push(self.with_raw(word));
+        self.advance();
+        true
+    }
+
+    /// One redirection of a simple command (outlined, see `parse_simple_word`).
+    #[inline(never)]
+    fn parse_simple_redirect(
+        &mut self,
+        words: &mut Vec<Word>,
+        redirects: &mut Vec<Redirect>,
+    ) -> Result<()> {
+        match &self.current_token {
+            Some(tokens::Token::RedirectOut) | Some(tokens::Token::Clobber) => {
+                let kind = if matches!(&self.current_token, Some(tokens::Token::Clobber)) {
+                    RedirectKind::Clobber
+                } else {
+                    RedirectKind::Output
+                };
+                let fd_var = Self::pop_fd_var(words);
+                self.advance();
+                let target = self.expect_word()?;
+                redirects.push(Redirect {
+                    fd: None,
+                    fd_var,
+                    kind,
+                    target,
+                    heredoc_delim: None,
+                });
+            }
+            Some(tokens::Token::RedirectAppend) => {
+                let fd_var = Self::pop_fd_var(words);
+                self.advance();
+                let target = self.expect_word()?;
+                redirects.push(Redirect {
+                    fd: None,
+                    fd_var,
+                    kind: RedirectKind::Append,
+                    target,
+                    heredoc_delim: None,
+                });
+            }
+            Some(tokens::Token::RedirectIn) => {
+                let fd_var = Self::pop_fd_var(words);
+                self.advance();
+                let target = self.expect_word()?;
+                redirects.push(Redirect {
+                    fd: None,
+                    fd_var,
+                    kind: RedirectKind::Input,
+                    target,
+                    heredoc_delim: None,
+                });
+            }
+            Some(tokens::Token::HereString) => {
+                let fd_var = Self::pop_fd_var(words);
+                self.advance();
+                let target = self.expect_word()?;
+                redirects.push(Redirect {
+                    fd: None,
+                    fd_var,
+                    kind: RedirectKind::HereString,
+                    target,
+                    heredoc_delim: None,
+                });
+            }
+            Some(tokens::Token::RedirectBoth) => {
+                let fd_var = Self::pop_fd_var(words);
+                self.advance();
+                let target = self.expect_word()?;
+                redirects.push(Redirect {
+                    fd: None,
+                    fd_var,
+                    kind: RedirectKind::OutputBoth,
+                    target,
+                    heredoc_delim: None,
+                });
+            }
+            Some(tokens::Token::DupOutput) => {
+                let fd_var = Self::pop_fd_var(words);
+                self.advance();
+                let target = self.expect_word()?;
+                redirects.push(Redirect {
+                    fd: if fd_var.is_some() { None } else { Some(1) },
+                    fd_var,
+                    kind: RedirectKind::DupOutput,
+                    target,
+                    heredoc_delim: None,
+                });
+            }
+            Some(tokens::Token::RedirectFd(fd)) => {
+                let fd = *fd;
+                self.advance();
+                let target = self.expect_word()?;
+                redirects.push(Redirect {
+                    fd: Some(fd),
+                    fd_var: None,
+                    kind: RedirectKind::Output,
+                    target,
+                    heredoc_delim: None,
+                });
+            }
+            Some(tokens::Token::RedirectFdAppend(fd)) => {
+                let fd = *fd;
+                self.advance();
+                let target = self.expect_word()?;
+                redirects.push(Redirect {
+                    fd: Some(fd),
+                    fd_var: None,
+                    kind: RedirectKind::Append,
+                    target,
+                    heredoc_delim: None,
+                });
+            }
+            Some(tokens::Token::DupFd(src_fd, dst_fd)) => {
+                let src_fd = *src_fd;
+                let dst_fd = *dst_fd;
+                self.advance();
+                redirects.push(Redirect {
+                    fd: Some(src_fd),
+                    fd_var: None,
+                    kind: RedirectKind::DupOutput,
+                    target: Word::literal(dst_fd.to_string()),
+                    heredoc_delim: None,
+                });
+            }
+            Some(tokens::Token::DupFdCloseOut(fd)) => {
+                let fd = *fd;
+                self.advance();
+                redirects.push(Redirect {
+                    fd: Some(fd),
+                    fd_var: None,
+                    kind: RedirectKind::DupOutput,
+                    target: Word::literal("-"),
+                    heredoc_delim: None,
+                });
+            }
+            Some(tokens::Token::DupInput) => {
+                let fd_var = Self::pop_fd_var(words);
+                self.advance();
+                let target = self.expect_word()?;
+                redirects.push(Redirect {
+                    fd: if fd_var.is_some() { None } else { Some(0) },
+                    fd_var,
+                    kind: RedirectKind::DupInput,
+                    target,
+                    heredoc_delim: None,
+                });
+            }
+            Some(tokens::Token::DupFdIn(src_fd, dst_fd)) => {
+                let src_fd = *src_fd;
+                let dst_fd = *dst_fd;
+                self.advance();
+                redirects.push(Redirect {
+                    fd: Some(src_fd),
+                    fd_var: None,
+                    kind: RedirectKind::DupInput,
+                    target: Word::literal(dst_fd.to_string()),
+                    heredoc_delim: None,
+                });
+            }
+            Some(tokens::Token::DupFdClose(fd)) => {
+                let fd = *fd;
+                self.advance();
+                redirects.push(Redirect {
+                    fd: Some(fd),
+                    fd_var: None,
+                    kind: RedirectKind::DupInput,
+                    target: Word::literal("-"),
+                    heredoc_delim: None,
+                });
+            }
+            Some(tokens::Token::RedirectFdIn(fd)) => {
+                let fd = *fd;
+                self.advance();
+                let target = self.expect_word()?;
+                redirects.push(Redirect {
+                    fd: Some(fd),
+                    fd_var: None,
+                    kind: RedirectKind::Input,
+                    target,
+                    heredoc_delim: None,
+                });
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
     /// Expect a word token and return it as a Word
     fn expect_word(&mut self) -> Result<Word> {
         match &self.current_token {
             Some(tokens::Token::Word(w)) => {
-                let word = self.parse_word(w.clone());
+                let word = self.with_raw(self.parse_word(w.clone()));
                 self.advance();
                 Ok(word)
             }
@@ -2996,13 +3216,14 @@ impl<'a> Parser<'a> {
                     quoted: true,
                     has_unquoted_glob: false,
                     part_quoted: Vec::new(),
+                    raw: self.current_raw.clone(),
                 };
                 self.advance();
                 Ok(word)
             }
             Some(tokens::Token::QuotedWord(w)) | Some(tokens::Token::QuotedGlobWord(w)) => {
                 // Double-quoted: parse for variable expansion
-                let word = self.parse_word(w.clone());
+                let word = self.with_raw(self.parse_word(w.clone()));
                 self.advance();
                 Ok(word)
             }
@@ -3017,11 +3238,20 @@ impl<'a> Parser<'a> {
                 let is_input = matches!(self.current_token, Some(tokens::Token::ProcessSubIn));
                 // Span end of the `<(` / `>(` token is exactly the start of the body.
                 let body_start_offset = self.current_span.end.offset;
+                let mut depth = 1;
+                let mut body_end_offset = 0;
+                // Find the end the way `$(...)` does (quote/case/heredoc
+                // aware, see subst_scan), so `<(case a in a) ...;; esac)`
+                // does not stop at the pattern's `)`.
+                let scanned = self.peeked_token.is_none() && self.lexer.skip_subst_body();
+                if scanned {
+                    // The closing `)` is one byte, just consumed.
+                    body_end_offset = self.lexer.position().offset.saturating_sub(1);
+                    depth = 0;
+                }
                 self.advance();
 
-                let mut depth = 1;
-                let body_end_offset;
-                loop {
+                while depth > 0 {
                     match &self.current_token {
                         Some(tokens::Token::LeftParen) => {
                             depth += 1;
@@ -3094,9 +3324,11 @@ impl<'a> Parser<'a> {
                     let result = inner_parser
                         .parse_script_into(&mut commands)
                         .map(|()| commands.into_iter().map(|(cmd, _)| cmd).collect::<Vec<_>>());
-                    (result, inner_parser.fuel)
+                    let raw = (self.function_depth > 0)
+                        .then(|| format!("{}({cmd_src})", if is_input { '<' } else { '>' }));
+                    (result, inner_parser.fuel, raw)
                 };
-                let (parse_result, remaining_fuel) = inner_result;
+                let (parse_result, remaining_fuel, raw) = inner_result;
                 self.fuel = remaining_fuel;
                 let commands = match parse_result {
                     Ok(commands) => commands,
@@ -3109,6 +3341,7 @@ impl<'a> Parser<'a> {
                     quoted: false,
                     has_unquoted_glob: false,
                     part_quoted: Vec::new(),
+                    raw,
                 })
             }
             _ => Err(self.error("expected word")),
@@ -3139,6 +3372,7 @@ impl<'a> Parser<'a> {
                 quoted: true,
                 has_unquoted_glob: false,
                 part_quoted: Vec::new(),
+                raw: None,
             }),
             _ => None,
         }
@@ -3795,6 +4029,17 @@ impl<'a> Parser<'a> {
                                             }
                                             if ch == '"' {
                                                 in_dq = !in_dq;
+                                            } else if ch == '\'' && !in_dq {
+                                                // `"${y/b/'}'}"`: a single-quoted span
+                                                // hides `}`; the expansion quote-removes it.
+                                                repl.push(chars.next().unwrap());
+                                                for q in chars.by_ref() {
+                                                    repl.push(q);
+                                                    if q == '\'' {
+                                                        break;
+                                                    }
+                                                }
+                                                continue;
                                             } else if ch == '\\' {
                                                 repl.push(chars.next().unwrap());
                                                 if let Some(n) = chars.next() {
@@ -3951,6 +4196,7 @@ impl<'a> Parser<'a> {
             quoted: false,
             has_unquoted_glob: false,
             part_quoted,
+            raw: None,
         }
     }
 
@@ -3964,6 +4210,19 @@ impl<'a> Parser<'a> {
                 operand.push(chars.next().unwrap());
                 if let Some(n) = chars.next() {
                     operand.push(n);
+                }
+            } else if c == '$' {
+                operand.push(chars.next().unwrap());
+                if chars.peek() == Some(&'(') {
+                    // `${x:-$(echo })}`: the substitution owns its braces.
+                    operand.push(chars.next().unwrap());
+                    let mut scanner = subst_scan::SubstScanner::new();
+                    for n in chars.by_ref() {
+                        operand.push(n);
+                        if scanner.feed(n) == subst_scan::Step::Close {
+                            break;
+                        }
+                    }
                 }
             } else if c == '{' {
                 depth += 1;
@@ -3980,6 +4239,24 @@ impl<'a> Parser<'a> {
             }
         }
         operand
+    }
+}
+
+/// `a |& b` is `a 2>&1 | b`: append the dup to `a`. Out of line to keep
+/// the recursive `parse_pipeline` frame small (TM-DOS-044).
+#[inline(never)]
+fn add_stderr_to_pipe(cmd: &mut Command) {
+    let dup = Redirect {
+        fd: Some(2),
+        fd_var: None,
+        kind: RedirectKind::DupOutput,
+        target: Word::literal("1"),
+        heredoc_delim: None,
+    };
+    match cmd {
+        Command::Simple(sc) => sc.redirects.push(dup),
+        Command::Compound(_, redirects) => redirects.push(dup),
+        _ => {}
     }
 }
 
@@ -4100,6 +4377,34 @@ pub(crate) fn unescape_glob_literal(s: &str) -> String {
         out.push(ch);
     }
     out
+}
+
+/// Split the text of `for ((init; cond; step))` at top-level `;`.
+fn split_arith_for_parts(body: &str) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut cur = String::new();
+    let mut depth = 0usize;
+    for c in body.chars() {
+        match c {
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            ';' if depth == 0 => {
+                parts.push(std::mem::take(&mut cur));
+                continue;
+            }
+            _ => {}
+        }
+        cur.push(c);
+    }
+    parts.push(cur);
+    parts
+}
+
+/// Expression text an arithmetic command evaluates: its source with
+/// surrounding blanks trimmed and double quotes removed (bash treats
+/// `(( ... ))` like `let "..."`).
+pub(crate) fn arith_exec_text(raw: &str) -> String {
+    raw.trim().chars().filter(|&c| c != '"').collect()
 }
 
 #[cfg(test)]

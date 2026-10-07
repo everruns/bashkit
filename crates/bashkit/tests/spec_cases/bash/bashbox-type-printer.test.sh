@@ -4,7 +4,6 @@
 
 ### bashbox_type_printer_a_one_line_body
 # a one-line body
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 f() { echo hi; }
 type f
 ### expect
@@ -17,7 +16,6 @@ f ()
 
 ### bashbox_type_printer_assignments_words_and_redirections
 # assignments, words and redirections
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 g() { a=1 b=2 cmd x 'y z' "q $v" >out 2>&1 <in; x=1 y= z+=2; }
 type g
 ### expect
@@ -31,7 +29,6 @@ g ()
 
 ### bashbox_type_printer_pipelines_and_or_lists_and_background_jobs
 # pipelines, |&, !, and-or lists and background jobs
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 g() { echo a | grep b |& cat; ! true && false || echo x; sleep 1 & echo bg; }
 type g
 ### expect
@@ -46,7 +43,6 @@ g ()
 
 ### bashbox_type_printer_a_trailing_and_a_list_of_background_jobs
 # a trailing & and a list of background jobs
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 d() { a & }
 e() { a &
 b & }
@@ -66,7 +62,6 @@ e ()
 
 ### bashbox_type_printer_if_elif_and_else_nest_like_bash_stores_them
 # if, elif and else nest like bash stores them
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 h() { if a; then b; elif c; then d; else e; fi; }
 type h
 ### expect
@@ -87,7 +82,6 @@ h ()
 
 ### bashbox_type_printer_for_a_bare_for_while_and_until
 # for, a bare for, while and until
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 h() { for i in 1 2; do echo $i; done; for j; do :; done; while x; do y; done; until x; do y; done; }
 type h
 ### expect
@@ -113,7 +107,6 @@ h ()
 
 ### bashbox_type_printer_case_with_alternatives_fallthrough_and_an_empty_body
 # case with alternatives, fallthrough and an empty body
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 k() { case $1 in a|b) echo ab;; c) echo c;& d) ;;& *) echo def; esac; case x in (a) ;; esac; case w in esac; }
 type k
 ### expect
@@ -146,7 +139,6 @@ k ()
 
 ### bashbox_type_printer_subshells_groups_arithmetic_and_conditionals
 # subshells, groups, arithmetic and conditionals
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 k() { ( sub; shell ); { grp; }; (( x++ )); ((y=1)); [[ -n $a && ( $b == c* || ! -f x ) ]]; [[ x ]]; [[ ! ( a == b ) ]]; [[ (a) ]]; }
 type k
 ### expect
@@ -169,7 +161,6 @@ k ()
 
 ### bashbox_type_printer_c_style_for_keeps_each_part_as_written_empty_parts_read_1
 # C-style for keeps each part as written, empty parts read 1
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 a() { for ((i=0;i<3;i++)); do echo; done; for (( i = 0 ; i < 3 ; i++ )); do :; done; for ((;;)); do break; done; }
 type a
 ### expect
@@ -193,7 +184,6 @@ a ()
 
 ### bashbox_type_printer_a_subshell_body
 # a subshell body
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 m() ( echo subshell-body )
 type m
 ### expect
@@ -206,7 +196,6 @@ m ()
 
 ### bashbox_type_printer_a_compound_body_that_is_not_a_group
 # a compound body that is not a group
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 f() if true; then :; fi
 g() for i in a; do :; done 2>/dev/null
 type f g
@@ -230,7 +219,6 @@ g ()
 
 ### bashbox_type_printer_here_documents_follow_the_line_that_opens_them
 # here-documents follow the line that opens them
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 n() { cat <<EOF
 hello $x
 EOF
@@ -257,7 +245,6 @@ Q
 
 ### bashbox_type_printer_a_here_document_ending_the_body
 # a here-document ending the body
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 c() { cat <<EOF
 x
 EOF
@@ -276,7 +263,6 @@ EOF
 
 ### bashbox_type_printer_a_here_document_in_a_pipeline
 # a here-document in a pipeline
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 b() { cat <<EOF | grep x
 body
 EOF
@@ -296,7 +282,6 @@ EOF
 
 ### bashbox_type_printer_here_documents_in_an_and_or_list
 # here-documents in an and-or list
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 b() { cat <<"E1" && echo x || cat <<\E2
 q
 E1
@@ -320,7 +305,6 @@ E2
 
 ### bashbox_type_printer_two_here_documents_on_one_command_and_the_missing_that_follo
 # two here-documents on one command, and the missing ; that follows
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 z() { cat <<A <<'B' >f; echo hi
 one
 A
@@ -358,7 +342,6 @@ EOF
 
 ### bashbox_type_printer_arrays_declarations_and_appends
 # arrays, declarations and appends
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 function o { local x=(1 2 3) y; declare -A z=([a]=1); x+=(4); echo "${x[@]}"; x=( 1   2
  3 ); }
 type o
@@ -376,7 +359,6 @@ o ()
 
 ### bashbox_type_printer_time_substitutions_and_a_nested_function
 # time, substitutions and a nested function
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 p() { time ls; time -p ls; echo $(date) `date` $((1+2)) ${a:-b}; i() { inner; }; }
 type p
 ### expect
@@ -395,7 +377,6 @@ p ()
 
 ### bashbox_type_printer_redirections_of_the_function_itself
 # redirections of the function itself
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 q() { echo a; } > /dev/null 2>&1
 type q
 ### expect
@@ -408,7 +389,6 @@ q ()
 
 ### bashbox_type_printer_comments_and_continuations_disappear
 # comments and continuations disappear
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 t() { echo # comment
 }
 v() {
@@ -436,7 +416,6 @@ line" cont
 
 ### bashbox_type_printer_quoting_is_kept_as_written
 # quoting is kept as written
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 j() { echo a\ b "c\"d" 'e' \$x x=1; }
 type j
 ### expect
@@ -449,7 +428,6 @@ j ()
 
 ### bashbox_type_printer_declare_f_prints_every_function_sorted
 # declare -f prints every function, sorted
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 b() { :; }
 a() { echo; }
 declare -f
@@ -466,7 +444,6 @@ b ()
 
 ### bashbox_type_printer_declare_f_with_names_failing_quietly_for_a_missing_one
 # declare -f with names, failing quietly for a missing one
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 b() { :; }
 declare -f b nope; echo "s=$?"
 ### expect
@@ -479,7 +456,6 @@ s=1
 
 ### bashbox_type_printer_declare_f_lists_names
 # declare -F lists names
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 b() { :; }
 a() { :; }
 declare -F; declare -F b nope a; echo "s=$?"
@@ -493,7 +469,6 @@ s=1
 
 ### bashbox_type_printer_type_reports_each_name
 # type reports each name
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 b() { :; }
 type b nope; echo "s=$?"; type -t b
 ### expect

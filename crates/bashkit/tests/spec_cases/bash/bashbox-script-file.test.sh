@@ -33,7 +33,6 @@ X=2; export Y=3; printf 'echo "$0 $# $1 [$X][$Y][$FOO]"; exit 3' > s; chmod +x s
 
 ### bashbox_script_file_the_script_s_changes_stay_in_the_child
 # the script's changes stay in the child
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf 'f(){ :; }; x=1; cd /; exit 4' > s; chmod 755 s; ./s; echo $? "[$x]"; type -t f; [ "$PWD" != / ] && echo kept
 ### expect
 4 []
@@ -42,7 +41,6 @@ kept
 
 ### bashbox_script_file_the_script_reads_the_caller_s_stdin
 # the script reads the caller's stdin
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf 'read l; echo got $l' > s; chmod +x s; printf 'a\nb\n' | { ./s; read m; echo m=$m; }
 ### expect
 got a
@@ -58,7 +56,6 @@ printf 'if then' > s; chmod +x s; ./s; echo $?
 
 ### bashbox_script_file_command_runs_a_script_file_too
 # command runs a script file too
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf 'echo in' > s; chmod +x s; command ./s
 ### expect
 in
@@ -66,7 +63,6 @@ in
 
 ### bashbox_script_file_sourcing_dev_null_does_nothing
 # sourcing /dev/null does nothing
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 source /dev/null; echo $?
 ### expect
 0

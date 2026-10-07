@@ -66,6 +66,7 @@ impl Builtin for Type {
         }
 
         let mut output = String::new();
+        let mut errors = String::new();
         let mut all_found = true;
 
         for name in &names {
@@ -105,6 +106,10 @@ impl Builtin for Type {
                 let mut found_any = false;
                 if is_func {
                     output.push_str(&format!("{} is a function\n", name));
+                    if let Some(text) = shell.function_text(name) {
+                        output.push_str(&text);
+                        output.push('\n');
+                    }
                     found_any = true;
                 }
                 if is_kw && (show_all || !found_any) {
@@ -127,7 +132,7 @@ impl Builtin for Type {
                     found_any = true;
                 }
                 if !found_any {
-                    output.push_str(&format!("bash: type: {}: not found\n", name));
+                    errors.push_str(&format!("bash: type: {}: not found\n", name));
                     all_found = false;
                 }
             }
@@ -136,6 +141,7 @@ impl Builtin for Type {
         let exit_code = if all_found { 0 } else { 1 };
         Ok(ExecResult {
             stdout: output.into(),
+            stderr: errors.into(),
             exit_code,
             ..Default::default()
         })

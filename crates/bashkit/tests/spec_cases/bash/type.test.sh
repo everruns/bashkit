@@ -13,21 +13,22 @@ if is a shell keyword
 ### end
 
 ### type_function
-### bash_diff: real bash also prints function body
-# type reports functions
+# type reports functions with their body
 myfunc() { echo hi; }
 type myfunc
 ### expect
 myfunc is a function
+myfunc () 
+{ 
+    echo hi
+}
 ### end
 
 ### type_not_found
 ### exit_code:1
-### bash_diff: real bash writes error to stderr not stdout
-# type exits 1 for unknown command
+# type exits 1 for unknown command; the error goes to stderr
 type nonexistent_cmd_xyz
 ### expect
-bash: type: nonexistent_cmd_xyz: not found
 ### end
 
 ### type_t_builtin

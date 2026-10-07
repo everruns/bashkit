@@ -112,7 +112,8 @@ pub enum CompoundCommand {
     Subshell(Vec<Command>),
     /// Brace group
     BraceGroup(Vec<Command>),
-    /// Arithmetic command ((expression))
+    /// Arithmetic command ((expression)), text as written between the
+    /// parentheses; evaluate `parser::arith_exec_text` of it.
     Arithmetic(String),
     /// Time command - measure execution time
     // Keep the recursive command enum small: time's GNU option payload is
@@ -200,6 +201,9 @@ pub struct ArithmeticForCommand {
     pub condition: String,
     /// Step/update expression
     pub step: String,
+    /// The three clauses as written (for `type`), when read from source.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw: Option<Vec<String>>,
     /// Loop body
     pub body: Vec<Command>,
     /// Source span of this command
@@ -283,6 +287,10 @@ pub struct Word {
     /// fall back to `quoted` for every part.
     #[serde(default)]
     pub part_quoted: Vec<bool>,
+    /// Source text as written. Only recorded inside function definitions,
+    /// where `type`/`declare -f` print words the way bash does (as written).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw: Option<String>,
 }
 
 impl Word {
@@ -293,6 +301,7 @@ impl Word {
             quoted: false,
             has_unquoted_glob: false,
             part_quoted: Vec::new(),
+            raw: None,
         }
     }
 
@@ -303,6 +312,7 @@ impl Word {
             quoted: true,
             has_unquoted_glob: false,
             part_quoted: Vec::new(),
+            raw: None,
         }
     }
 }
@@ -524,6 +534,10 @@ pub struct Redirect {
     pub kind: RedirectKind,
     /// Target (file, fd, or heredoc content)
     pub target: Word,
+    /// Here-document delimiter as bash prints it (`EOF`, or `'EOF'` when the
+    /// delimiter was quoted). Only set for `<<`/`<<-`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub heredoc_delim: Option<String>,
 }
 
 /// Types of redirections.
@@ -613,6 +627,7 @@ mod tests {
             quoted: false,
             has_unquoted_glob: false,
             part_quoted: Vec::new(),
+            raw: None,
         };
         assert_eq!(format!("{w}"), "$HOME");
     }
@@ -624,6 +639,7 @@ mod tests {
             quoted: false,
             has_unquoted_glob: false,
             part_quoted: Vec::new(),
+            raw: None,
         };
         assert_eq!(format!("{w}"), "$((1+2))");
     }
@@ -635,6 +651,7 @@ mod tests {
             quoted: false,
             has_unquoted_glob: false,
             part_quoted: Vec::new(),
+            raw: None,
         };
         assert_eq!(format!("{w}"), "${#var}");
     }
@@ -649,6 +666,7 @@ mod tests {
             quoted: false,
             has_unquoted_glob: false,
             part_quoted: Vec::new(),
+            raw: None,
         };
         assert_eq!(format!("{w}"), "${arr[0]}");
     }
@@ -660,6 +678,7 @@ mod tests {
             quoted: false,
             has_unquoted_glob: false,
             part_quoted: Vec::new(),
+            raw: None,
         };
         assert_eq!(format!("{w}"), "${#arr[@]}");
     }
@@ -671,6 +690,7 @@ mod tests {
             quoted: false,
             has_unquoted_glob: false,
             part_quoted: Vec::new(),
+            raw: None,
         };
         assert_eq!(format!("{w}"), "${!arr[@]}");
     }
@@ -686,6 +706,7 @@ mod tests {
             quoted: false,
             has_unquoted_glob: false,
             part_quoted: Vec::new(),
+            raw: None,
         };
         assert_eq!(format!("{w}"), "${var:2:3}");
     }
@@ -701,6 +722,7 @@ mod tests {
             quoted: false,
             has_unquoted_glob: false,
             part_quoted: Vec::new(),
+            raw: None,
         };
         assert_eq!(format!("{w}"), "${var:2}");
     }
@@ -716,6 +738,7 @@ mod tests {
             quoted: false,
             has_unquoted_glob: false,
             part_quoted: Vec::new(),
+            raw: None,
         };
         assert_eq!(format!("{w}"), "${arr[@]:1:2}");
     }
@@ -731,6 +754,7 @@ mod tests {
             quoted: false,
             has_unquoted_glob: false,
             part_quoted: Vec::new(),
+            raw: None,
         };
         assert_eq!(format!("{w}"), "${arr[@]:1}");
     }
@@ -747,6 +771,7 @@ mod tests {
             quoted: false,
             has_unquoted_glob: false,
             part_quoted: Vec::new(),
+            raw: None,
         };
         assert_eq!(format!("{w}"), "${!ref}");
     }
@@ -758,6 +783,7 @@ mod tests {
             quoted: false,
             has_unquoted_glob: false,
             part_quoted: Vec::new(),
+            raw: None,
         };
         assert_eq!(format!("{w}"), "${!MY_*}");
     }
@@ -772,6 +798,7 @@ mod tests {
             quoted: false,
             has_unquoted_glob: false,
             part_quoted: Vec::new(),
+            raw: None,
         };
         assert_eq!(format!("{w}"), "${var@Q}");
     }
@@ -786,6 +813,7 @@ mod tests {
             quoted: false,
             has_unquoted_glob: false,
             part_quoted: Vec::new(),
+            raw: None,
         };
         assert_eq!(format!("{w}"), "hello $USER");
     }
@@ -802,6 +830,7 @@ mod tests {
             quoted: false,
             has_unquoted_glob: false,
             part_quoted: Vec::new(),
+            raw: None,
         };
         assert_eq!(format!("{w}"), "${var:-fallback}");
     }
@@ -818,6 +847,7 @@ mod tests {
             quoted: false,
             has_unquoted_glob: false,
             part_quoted: Vec::new(),
+            raw: None,
         };
         assert_eq!(format!("{w}"), "${var-fallback}");
     }
@@ -834,6 +864,7 @@ mod tests {
             quoted: false,
             has_unquoted_glob: false,
             part_quoted: Vec::new(),
+            raw: None,
         };
         assert_eq!(format!("{w}"), "${var:=val}");
     }
@@ -850,6 +881,7 @@ mod tests {
             quoted: false,
             has_unquoted_glob: false,
             part_quoted: Vec::new(),
+            raw: None,
         };
         assert_eq!(format!("{w}"), "${var:+alt}");
     }
@@ -866,6 +898,7 @@ mod tests {
             quoted: false,
             has_unquoted_glob: false,
             part_quoted: Vec::new(),
+            raw: None,
         };
         assert_eq!(format!("{w}"), "${var:?msg}");
     }
@@ -883,6 +916,7 @@ mod tests {
             quoted: false,
             has_unquoted_glob: false,
             part_quoted: Vec::new(),
+            raw: None,
         };
         assert_eq!(format!("{w}"), "${var#pat}");
 
@@ -897,6 +931,7 @@ mod tests {
             quoted: false,
             has_unquoted_glob: false,
             part_quoted: Vec::new(),
+            raw: None,
         };
         assert_eq!(format!("{w}"), "${var##pat}");
 
@@ -911,6 +946,7 @@ mod tests {
             quoted: false,
             has_unquoted_glob: false,
             part_quoted: Vec::new(),
+            raw: None,
         };
         assert_eq!(format!("{w}"), "${var%pat}");
 
@@ -925,6 +961,7 @@ mod tests {
             quoted: false,
             has_unquoted_glob: false,
             part_quoted: Vec::new(),
+            raw: None,
         };
         assert_eq!(format!("{w}"), "${var%%pat}");
     }
@@ -944,6 +981,7 @@ mod tests {
             quoted: false,
             has_unquoted_glob: false,
             part_quoted: Vec::new(),
+            raw: None,
         };
         assert_eq!(format!("{w}"), "${var/old/new}");
 
@@ -960,6 +998,7 @@ mod tests {
             quoted: false,
             has_unquoted_glob: false,
             part_quoted: Vec::new(),
+            raw: None,
         };
         assert_eq!(format!("{w}"), "${var///old/new}");
     }
@@ -977,6 +1016,7 @@ mod tests {
                 quoted: false,
                 has_unquoted_glob: false,
                 part_quoted: Vec::new(),
+                raw: None,
             };
             assert_eq!(format!("{w}"), expected);
         };
@@ -1012,6 +1052,7 @@ mod tests {
                 fd_var: None,
                 kind: RedirectKind::Output,
                 target: Word::literal("out.txt"),
+                heredoc_delim: None,
             }],
             assignments: vec![],
             span: Span::new(),
@@ -1141,6 +1182,7 @@ mod tests {
             fd_var: None,
             kind: RedirectKind::Input,
             target: Word::literal("input.txt"),
+            heredoc_delim: None,
         };
         assert!(r.fd.is_none());
         assert_eq!(r.kind, RedirectKind::Input);
@@ -1256,6 +1298,7 @@ mod tests {
             init: "i=0".into(),
             condition: "i<10".into(),
             step: "i++".into(),
+            raw: None,
             body: vec![],
             span: Span::new(),
         };
