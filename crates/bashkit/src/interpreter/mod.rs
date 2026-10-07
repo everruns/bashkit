@@ -6587,7 +6587,34 @@ impl Interpreter {
                         0
                     };
 
-                    'array_words: for word in words.iter() {
+                    // Brace expansion runs first, on the unexpanded word, as for
+                    // command arguments; pathname expansion runs on the fields below.
+                    let mut braced_words: Vec<Word> = Vec::with_capacity(words.len());
+                    for w in words.iter() {
+                        match self.brace_expand_word(w) {
+                            Some(ws) => braced_words.extend(ws),
+                            None => braced_words.push(w.clone()),
+                        }
+                    }
+
+                    'array_words: for word in braced_words.iter() {
+                        // `[i]=value` sets one element; the value gets no field
+                        // splitting or pathname expansion.
+                        if let Some((index, value_word)) = split_indexed_element(word) {
+                            let i = self.evaluate_arithmetic_with_assign(&index);
+                            let value = self.expand_word(&value_word).await?;
+                            if i < 0 {
+                                continue;
+                            }
+                            let i = i as usize;
+                            if !next_arr.contains_key(&i) && next_arr.len() >= max_new_entries {
+                                break 'array_words;
+                            }
+                            next_arr.insert(i, value);
+                            idx = i + 1;
+                            continue;
+                        }
+                        let globs = !word.quoted || word.has_unquoted_glob;
                         let is_unquoted_expansion = !word.quoted
                             && word.parts.iter().any(|p| {
                                 matches!(
@@ -6621,8 +6648,13 @@ impl Interpreter {
                             }
                             let expanded = self.expand_word(word).await?;
                             for field in self.ifs_split_limited(&expanded, remaining)? {
-                                next_arr.insert(idx, field);
-                                idx += 1;
+                                for item in self.glob_array_field(field, word, globs).await {
+                                    if next_arr.len() >= max_new_entries {
+                                        break 'array_words;
+                                    }
+                                    next_arr.insert(idx, item);
+                                    idx += 1;
+                                }
                             }
                             if next_arr.len() >= max_new_entries {
                                 break 'array_words;
@@ -6637,11 +6669,13 @@ impl Interpreter {
                             }
                         } else {
                             let value = self.expand_word(word).await?;
-                            if next_arr.len() >= max_new_entries {
-                                break;
+                            for item in self.glob_array_field(value, word, globs).await {
+                                if next_arr.len() >= max_new_entries {
+                                    break 'array_words;
+                                }
+                                next_arr.insert(idx, item);
+                                idx += 1;
                             }
-                            next_arr.insert(idx, value);
-                            idx += 1;
                         }
                     }
 
@@ -6650,6 +6684,23 @@ impl Interpreter {
             }
         }
         Ok(())
+    }
+
+    /// Pathname expansion for one array-literal field. A failglob miss keeps the
+    /// literal field.
+    // WTF: bash aborts the assignment with "no match" under failglob; assignment
+    // expansion has no error channel here, so the pattern is stored as-is.
+    async fn glob_array_field(&mut self, field: String, word: &Word, globs: bool) -> Vec<String> {
+        if !globs {
+            return vec![field];
+        }
+        match self
+            .expand_glob_item(&field, word.quoted && word.has_unquoted_glob)
+            .await
+        {
+            Ok(items) => items,
+            Err(_) => vec![field],
+        }
     }
 
     /// Try alias expansion. Returns `Some(result)` if alias was expanded, `None` otherwise.
@@ -9557,31 +9608,30 @@ impl Interpreter {
 
         match mode {
             'v' => {
-                // command -v: print name/path if it's a known command
-                let registered = self.builtins.contains_key(cmd_name.as_str())
-                    || is_dispatch_only_builtin(cmd_name)
-                    || self.has_host_builtin(cmd_name);
-                let output = if self.scoped.functions.contains_key(cmd_name.as_str())
-                    || is_keyword(cmd_name)
-                    || (registered && builtins::BASH_BUILTIN_NAMES.contains(&cmd_name.as_str()))
-                {
-                    Some(cmd_name.to_string())
-                } else if let Some(path) = self.resolve_command_path(cmd_name).await {
-                    Some(path)
-                } else {
-                    registered.then(|| cmd_name.to_string())
-                };
-                let mut result = if let Some(name) = output {
-                    ExecResult::ok(format!("{}\n", name))
-                } else {
-                    ExecResult {
-                        stdout: crate::StreamData::new(),
-                        stderr: crate::StreamData::new(),
-                        exit_code: 1,
-                        control_flow: crate::interpreter::ControlFlow::None,
-                        ..Default::default()
+                // command -v: print the name/path of each known command;
+                // status 0 when any was found (bash).
+                let mut out = String::new();
+                for cmd_name in &args[cmd_args_start..] {
+                    let registered = self.builtins.contains_key(cmd_name.as_str())
+                        || is_dispatch_only_builtin(cmd_name)
+                        || self.has_host_builtin(cmd_name);
+                    let found = if self.scoped.functions.contains_key(cmd_name.as_str())
+                        || is_keyword(cmd_name)
+                        || (registered && builtins::BASH_BUILTIN_NAMES.contains(&cmd_name.as_str()))
+                    {
+                        Some(cmd_name.to_string())
+                    } else if let Some(path) = self.resolve_command_path(cmd_name).await {
+                        Some(path)
+                    } else {
+                        registered.then(|| cmd_name.to_string())
+                    };
+                    if let Some(name) = found {
+                        out.push_str(&name);
+                        out.push('\n');
                     }
-                };
+                }
+                let code = if out.is_empty() { 1 } else { 0 };
+                let mut result = ExecResult::with_code(out, code);
                 result = self.apply_redirections(result, redirects).await?;
                 Ok(result)
             }
@@ -11718,6 +11768,40 @@ fn builtin_usage_error(msg: &str) -> ExecResult {
     }
     msg.push('\n');
     ExecResult::err(msg, 2)
+}
+
+/// Split an unquoted `[index]=value` array-literal element into its index text
+/// and a word for the value.
+fn split_indexed_element(word: &Word) -> Option<(String, Word)> {
+    let WordPart::Literal(first) = word.parts.first()? else {
+        return None;
+    };
+    let first_quoted = word.part_quoted.first().copied().unwrap_or(word.quoted);
+    if first_quoted || !first.starts_with('[') {
+        return None;
+    }
+    let close = first.find("]=")?;
+    let index = first[1..close].to_string();
+    let tail = &first[close + 2..];
+    let mut parts = Vec::with_capacity(word.parts.len());
+    let mut part_quoted = Vec::with_capacity(word.parts.len());
+    if !tail.is_empty() {
+        parts.push(WordPart::Literal(tail.to_string()));
+        part_quoted.push(false);
+    }
+    for (i, p) in word.parts.iter().enumerate().skip(1) {
+        parts.push(p.clone());
+        part_quoted.push(word.part_quoted.get(i).copied().unwrap_or(word.quoted));
+    }
+    Some((
+        index,
+        Word {
+            parts,
+            quoted: true,
+            has_unquoted_glob: false,
+            part_quoted,
+        },
+    ))
 }
 
 #[cfg(test)]
