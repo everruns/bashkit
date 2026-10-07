@@ -318,6 +318,21 @@ continuation frames for shell control flow, pipelines, substitutions,
 redirects, accumulated output, and budgets; see
 [Snapshot History](snapshot-history.md).
 
+### Errors: Failed Command vs Aborted Execution
+
+A builtin reports an ordinary failure as `Ok(ExecResult::err(msg, code))`.
+For bashkit's own (bundled) builtins, an `Err(Error::Execution(_))` or
+`Err(Error::Regex(_))` is treated the same way: the dispatcher turns it into
+exit 2 with the message on stderr (capped at 1 KB, TM-INF-022), and the
+script keeps running. That matches bash, where `grep -E '('` or an awk syntax
+error fails one command, not the script. Before this, such errors aborted the
+whole `exec()`.
+
+`Err` from a custom builtin (`BashBuilder::builtin`, a `BuiltinRegistry`
+entry or a `CommandResolver`) still aborts execution: that is the public
+contract custom builtins rely on. Resource limits, cancellation and I/O
+errors abort for every builtin.
+
 ### Adding Internal Builtins
 
 Simple builtins (zero-arg unit structs) are registered via the `register_builtins!`

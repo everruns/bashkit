@@ -4424,10 +4424,25 @@ mod trace_events {
 
     #[tokio::test]
     async fn trace_failed_exec_does_not_leak_events_to_next_exec() {
-        let mut bash = Bash::builder().trace_mode(TraceMode::Full).build();
+        // A custom builtin's `Err` aborts the exec (bundled builtins' usage
+        // errors no longer do), which is the failure path under test.
+        struct Fatal;
+        #[async_trait::async_trait]
+        impl bashkit::Builtin for Fatal {
+            async fn execute(
+                &self,
+                _ctx: bashkit::BuiltinContext<'_>,
+            ) -> bashkit::Result<bashkit::ExecResult> {
+                Err(bashkit::Error::Execution("fatal".to_string()))
+            }
+        }
+        let mut bash = Bash::builder()
+            .trace_mode(TraceMode::Full)
+            .builtin("fatal", Box::new(Fatal))
+            .build();
 
-        let failed = bash.exec(r#"grep -E "(" tenant-a-private-arg"#).await;
-        assert!(failed.is_err(), "invalid regex should fail execution");
+        let failed = bash.exec("fatal tenant-a-private-arg").await;
+        assert!(failed.is_err(), "fatal builtin should fail execution");
 
         let r = bash.exec("echo tenant-b").await.unwrap();
         assert_eq!(r.exit_code, 0);
@@ -4435,7 +4450,7 @@ mod trace_events {
         for event in &r.events {
             if let TraceEventDetails::CommandStart { command, argv, .. } = &event.details {
                 assert_ne!(
-                    command, "grep",
+                    command, "fatal",
                     "stale failed command leaked into next exec"
                 );
                 assert!(
