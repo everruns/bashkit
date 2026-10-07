@@ -49,11 +49,13 @@ class TestSandboxEscapeCreative:
         assert "\x7fELF" not in r.stdout
 
     def test_dev_random_not_real(self):
-        """/dev/random should not expose host entropy source."""
+        """/dev/random is the VFS device (bounded CSPRNG bytes), not a host file."""
         bash = Bash()
-        r = bash.execute_sync("dd if=/dev/random bs=1 count=4 2>/dev/null | od -x")
-        # Should fail or return empty
-        assert r.exit_code != 0 or r.stdout.strip() == ""
+        r = bash.execute_sync("dd if=/dev/random bs=1 count=4 2>/dev/null | wc -c")
+        assert r.exit_code == 0
+        assert r.stdout.strip() == "4"
+        r = bash.execute_sync("wc -c < /dev/random")
+        assert r.stdout.strip() == "8192"
 
     def test_symlink_escape_attempt(self):
         """Symlinks within VFS must not escape to host filesystem."""
