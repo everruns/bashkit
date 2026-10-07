@@ -423,6 +423,10 @@
     },
     {
       "feature": null,
+      "name": "openssl"
+    },
+    {
+      "feature": null,
       "name": "parallel"
     },
     {
@@ -727,6 +731,10 @@
     },
     {
       "feature": null,
+      "name": "uuidgen"
+    },
+    {
+      "feature": null,
       "name": "verify"
     },
     {
@@ -778,5 +786,5 @@
       "name": "zip"
     }
   ],
-  "count": 194
+  "count": 196
 }
