@@ -3910,6 +3910,27 @@ printf "%s %s\n" "${#arr[@]}" "${#extra[@]}"
         assert_eq!(result.stdout.trim(), "3 0");
     }
 
+    /// TM-DOS-060: brace/glob expansion inside array literals stays capped.
+    #[tokio::test]
+    async fn tm_dos_060_array_literal_brace_expansion_respects_budget() {
+        let mem = MemoryLimits::new().max_array_entries(3);
+        let mut bash = Bash::builder()
+            .memory_limits(mem)
+            .session_limits(SessionLimits::unlimited())
+            .build();
+
+        let script = r#"
+arr=(x{1..1000})
+echo "${#arr[@]}"
+unset arr
+declare -a d=("y"{1..1000} z{a,b})
+echo "${#d[@]}"
+"#;
+        let result = bash.exec(script).await.unwrap();
+
+        assert_eq!(result.stdout.trim(), "3\n3");
+    }
+
     /// TM-DOS-060: arithmetic writes to array elements are charged to the budget.
     #[tokio::test]
     async fn tm_dos_060_arithmetic_array_writes_respect_budget() {
