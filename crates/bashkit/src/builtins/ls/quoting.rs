@@ -7,7 +7,7 @@
 use std::borrow::Cow;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(super) enum QuotingStyle {
+pub(crate) enum QuotingStyle {
     #[default]
     Literal,
     Escape,
@@ -19,7 +19,7 @@ pub(super) enum QuotingStyle {
 }
 
 impl QuotingStyle {
-    pub(super) fn from_name(name: &str) -> Option<Self> {
+    pub(crate) fn from_name(name: &str) -> Option<Self> {
         Some(match name {
             "literal" => Self::Literal,
             "escape" => Self::Escape,
@@ -34,7 +34,7 @@ impl QuotingStyle {
 }
 
 /// Render `name` in `style`.
-pub(super) fn quote_name(name: &str, style: QuotingStyle) -> Cow<'_, str> {
+pub(crate) fn quote_name(name: &str, style: QuotingStyle) -> Cow<'_, str> {
     match style {
         QuotingStyle::Literal => Cow::Borrowed(name),
         QuotingStyle::Escape => Cow::Owned(c_escape(name, true, false)),

@@ -1,7 +1,14 @@
 //! expand/unexpand builtin commands - convert between tabs and spaces
+//!
+//! Decision: tab-stop parsing and column tracking follow GNU
+//! `expand-common.c` / `unexpand.c`: `-t` lists accumulate across options,
+//! a trailing `/N` repeats every N columns, `+N` repeats N after the last
+//! stop, past the last explicit stop expand emits one space and unexpand
+//! stops converting, and backspace moves the column back.
 
 use async_trait::async_trait;
 
+use super::arg_parser::{OptArg, gnu_getopt};
 use super::limits::{
     EXPAND_MAX_OUTPUT_BYTES as MAX_OUTPUT_BYTES, EXPAND_MAX_TAB_STOP as MAX_TAB_STOP,
 };
@@ -9,9 +16,162 @@ use super::{Builtin, BuiltinHelper, Context, read_text_file, resolve_path};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
 
+/// Parsed tab stops (GNU `tab_list` + `extend_size` + `increment_size`).
+#[derive(Default, Debug)]
+struct TabStops {
+    list: Vec<usize>,
+    extend: usize,
+    increment: usize,
+    /// Uniform tab size, or 0 when `list`/extend/increment apply.
+    size: usize,
+}
+
+impl TabStops {
+    /// Add the stops in one `-t` argument (commas or blanks separate).
+    fn parse_into(&mut self, s: &str) -> std::result::Result<(), String> {
+        let bad = || format!("invalid tab size: '{s}'");
+        let mut extend = false;
+        let mut increment = false;
+        let mut val: Option<usize> = None;
+        let flush = |val: &mut Option<usize>,
+                     extend: bool,
+                     increment: bool,
+                     this: &mut Self|
+         -> std::result::Result<(), String> {
+            if let Some(v) = val.take() {
+                if v == 0 || v > MAX_TAB_STOP {
+                    return Err(bad());
+                }
+                if extend {
+                    this.extend = v;
+                } else if increment {
+                    this.increment = v;
+                } else {
+                    this.list.push(v);
+                }
+            }
+            Ok(())
+        };
+        for c in s.chars() {
+            match c {
+                ',' | ' ' | '\t' => flush(&mut val, extend, increment, self)?,
+                '/' | '+' => {
+                    if val.is_some() {
+                        return Err(bad());
+                    }
+                    extend = c == '/';
+                    increment = c == '+';
+                }
+                '0'..='9' => {
+                    let d = c as usize - '0' as usize;
+                    let v = val.unwrap_or(0).saturating_mul(10).saturating_add(d);
+                    val = Some(v.min(MAX_TAB_STOP + 1));
+                }
+                _ => return Err(bad()),
+            }
+        }
+        flush(&mut val, extend, increment, self)
+    }
+
+    /// GNU `finalize_tab_stops`: validate and pick the uniform size.
+    fn finalize(&mut self) -> std::result::Result<(), String> {
+        let mut prev = 0;
+        for &t in &self.list {
+            if t <= prev {
+                return Err("tab sizes must be ascending".to_string());
+            }
+            prev = t;
+        }
+        self.size = if self.list.is_empty() {
+            if self.extend != 0 {
+                self.extend
+            } else if self.increment != 0 {
+                self.increment
+            } else {
+                8
+            }
+        } else if self.list.len() == 1 && self.extend == 0 && self.increment == 0 {
+            self.list[0]
+        } else {
+            0
+        };
+        Ok(())
+    }
+
+    /// GNU `get_next_tab_column`; `None` means past the last tab stop.
+    fn next(&self, col: usize, idx: &mut usize) -> Option<usize> {
+        if self.size != 0 {
+            return Some(col + (self.size - col % self.size));
+        }
+        while *idx < self.list.len() {
+            let tab = self.list[*idx];
+            if col < tab {
+                return Some(tab);
+            }
+            *idx += 1;
+        }
+        if self.extend != 0 {
+            return Some(col + (self.extend - col % self.extend));
+        }
+        if self.increment != 0 {
+            let end = self.list.last().copied().unwrap_or(0);
+            return Some(col + (self.increment - (col - end) % self.increment));
+        }
+        None
+    }
+}
+
+/// Split obsolete `-N[,N...]` tab-list arguments out of `args`.
+fn split_obsolete_tabs(args: &[String]) -> (Vec<String>, Vec<String>) {
+    let mut rest = Vec::new();
+    let mut lists = Vec::new();
+    let mut done = false;
+    for a in args {
+        if done {
+            rest.push(a.clone());
+            continue;
+        }
+        if a == "--" {
+            done = true;
+            rest.push(a.clone());
+        } else if a.len() > 1
+            && a.starts_with('-')
+            && a[1..].starts_with(|c: char| c.is_ascii_digit())
+            && a[1..].chars().all(|c| c.is_ascii_digit() || c == ',')
+        {
+            lists.push(a[1..].to_string());
+        } else {
+            rest.push(a.clone());
+        }
+    }
+    (rest, lists)
+}
+
+async fn read_inputs<H: BuiltinHelper>(
+    ctx: &Context<'_>,
+    files: &[String],
+) -> std::result::Result<String, ExecResult> {
+    if files.is_empty() {
+        return Ok(ctx.stdin.map(ToString::to_string).unwrap_or_default());
+    }
+    let mut buf = String::new();
+    for file in files {
+        if file == "-" {
+            buf.push_str(ctx.stdin.map(|s| &**s).unwrap_or_default());
+            continue;
+        }
+        let path = resolve_path(ctx.cwd, file);
+        match read_text_file(ctx.fs.as_ref(), &path, H::NAME).await {
+            Ok(text) => buf.push_str(&text),
+            Err(_) => return Err(H::err_path(file, "No such file or directory", 1)),
+        }
+    }
+    Ok(buf)
+}
+
 /// The expand builtin command.
 ///
-/// Usage: expand [-t N] [FILE...]
+/// Usage: expand [-i] [-t LIST] [FILE...]
 ///
 /// Converts tabs to spaces. Default tab stop is 8.
 pub struct Expand;
@@ -25,106 +185,89 @@ impl Builtin for Expand {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
         if let Some(r) = Self::check_help(
             ctx.args,
-            "Usage: expand [OPTION]... [FILE]...\nConvert tabs to spaces.\n\n  -t N\tuse N characters as tab size (default 8)\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            "Usage: expand [OPTION]... [FILE]...\nConvert tabs to spaces.\n\n  -i, --initial\tdo not convert tabs after non blanks\n  -t, --tabs=LIST\tuse comma separated list of tab positions\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
             Some("expand (bashkit) 0.1"),
         ) {
             return Ok(r);
         }
-        let mut tab_stops: Vec<usize> = vec![8];
-        let mut files: Vec<&str> = Vec::new();
-
-        let mut i = 0;
-        while i < ctx.args.len() {
-            match ctx.args[i].as_str() {
-                "-t" => {
-                    i += 1;
-                    if i >= ctx.args.len() {
-                        return Ok(Self::err("option requires an argument -- 't'", 1));
-                    }
-                    tab_stops = match parse_tab_stops(&ctx.args[i]) {
-                        Ok(stops) => stops,
-                        Err(e) => return Ok(Self::err(e, 1)),
-                    };
-                }
-                s if s.starts_with("-t") && s.len() > 2 => {
-                    tab_stops = match parse_tab_stops(&s[2..]) {
-                        Ok(stops) => stops,
-                        Err(e) => return Ok(Self::err(e, 1)),
-                    };
-                }
-                // Reject unknown options. `-N` (all-digit) is the obsolete
-                // tab-size form expand still accepts, so leave it to fall
-                // through; `--`/`-` and operands also fall through.
-                s if s.starts_with('-')
-                    && s.len() > 1
-                    && s != "--"
-                    && !s[1..].chars().all(|c| c.is_ascii_digit()) =>
-                {
-                    return Ok(super::invalid_option("expand", s, 1));
-                }
-                _ => files.push(&ctx.args[i]),
+        let (args, obsolete) = split_obsolete_tabs(ctx.args);
+        let (opts, files) = match gnu_getopt(
+            "expand",
+            &args,
+            "it:",
+            &[
+                ("initial", OptArg::No, 'i'),
+                ("tabs", OptArg::Required, 't'),
+            ],
+            true,
+            1,
+        ) {
+            Ok(v) => v,
+            Err(e) => return Ok(e),
+        };
+        let mut stops = TabStops::default();
+        let mut initial = false;
+        for spec in &obsolete {
+            if let Err(e) = stops.parse_into(spec) {
+                return Ok(Self::err(e, 1));
             }
-            i += 1;
+        }
+        for o in opts {
+            match o.key {
+                'i' => initial = true,
+                _ => {
+                    let spec = o.value.unwrap_or_default();
+                    if let Err(e) = stops.parse_into(&spec) {
+                        return Ok(Self::err(e, 1));
+                    }
+                }
+            }
+        }
+        if let Err(e) = stops.finalize() {
+            return Ok(Self::err(e, 1));
         }
 
-        let input = if files.is_empty() {
-            ctx.stdin.map(ToString::to_string).unwrap_or_default()
-        } else {
-            let mut buf = String::new();
-            for file in &files {
-                let path = resolve_path(ctx.cwd, file);
-                match read_text_file(ctx.fs.as_ref(), &path, "expand").await {
-                    Ok(text) => buf.push_str(&text),
-                    Err(_) => {
-                        return Ok(Self::err_path(file, "No such file or directory", 1));
-                    }
-                }
-            }
-            buf
+        let input = match read_inputs::<Self>(&ctx, &files).await {
+            Ok(t) => t,
+            Err(e) => return Ok(e),
         };
 
+        let too_big = || Self::err(format!("output exceeds byte limit ({MAX_OUTPUT_BYTES})"), 1);
         let mut output = String::new();
-        // Use split_terminator to avoid an extra empty segment (and trailing newline) when
-        // input ends with '\n'.
-        for line in input.split_terminator('\n') {
-            let mut col = 0;
-            for ch in line.chars() {
-                if ch == '\t' {
-                    let next_stop = next_tab_stop(col, &tab_stops);
-                    let spaces = next_stop - col;
-                    if output.len().saturating_add(spaces) > MAX_OUTPUT_BYTES {
-                        return Ok(Self::err(
-                            format!("output exceeds byte limit ({MAX_OUTPUT_BYTES})"),
-                            1,
-                        ));
-                    }
-                    output.extend(std::iter::repeat_n(' ', spaces));
-                    col = next_stop;
-                } else {
-                    if output.len() >= MAX_OUTPUT_BYTES {
-                        return Ok(Self::err(
-                            format!("output exceeds byte limit ({MAX_OUTPUT_BYTES})"),
-                            1,
-                        ));
-                    }
-                    output.push(ch);
-                    col += 1;
+        let mut col = 0usize;
+        let mut idx = 0usize;
+        let mut convert = true;
+        for ch in input.chars() {
+            if convert && ch == '\t' {
+                let next = stops.next(col, &mut idx).unwrap_or(col + 1);
+                let spaces = next - col;
+                if output.len().saturating_add(spaces) > MAX_OUTPUT_BYTES {
+                    return Ok(too_big());
                 }
+                output.extend(std::iter::repeat_n(' ', spaces));
+                col = next;
+                continue;
             }
             if output.len() >= MAX_OUTPUT_BYTES {
-                return Ok(Self::err(
-                    format!("output exceeds byte limit ({MAX_OUTPUT_BYTES})"),
-                    1,
-                ));
+                return Ok(too_big());
             }
-            output.push('\n');
-        }
-
-        // Preserve trailing-newline behavior: split_terminator omits the final empty segment
-        // so we only have newlines after actual lines. If the input did NOT end with '\n',
-        // remove the last newline we added.
-        if !input.ends_with('\n') && output.ends_with('\n') {
-            output.pop();
+            match ch {
+                '\n' => {
+                    col = 0;
+                    idx = 0;
+                    convert = true;
+                }
+                '\x08' if convert => {
+                    col = col.saturating_sub(1);
+                    idx = idx.saturating_sub(1);
+                }
+                _ if convert => {
+                    col += 1;
+                    convert = !(initial && ch != ' ' && ch != '\t');
+                }
+                _ => {}
+            }
+            output.push(ch);
         }
 
         Ok(ExecResult::ok(output))
@@ -133,7 +276,7 @@ impl Builtin for Expand {
 
 /// The unexpand builtin command.
 ///
-/// Usage: unexpand [-a] [-t N] [FILE...]
+/// Usage: unexpand [-a] [--first-only] [-t LIST] [FILE...]
 ///
 /// Converts spaces to tabs. By default, only converts leading spaces.
 pub struct Unexpand;
@@ -147,176 +290,130 @@ impl Builtin for Unexpand {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
         if let Some(r) = Self::check_help(
             ctx.args,
-            "Usage: unexpand [OPTION]... [FILE]...\nConvert spaces to tabs.\n\n  -a, --all\tconvert all blanks, instead of just initial blanks\n  -t N\t\tuse N characters as tab size (default 8)\n  --help\t\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            "Usage: unexpand [OPTION]... [FILE]...\nConvert spaces to tabs.\n\n  -a, --all\tconvert all blanks, instead of just initial blanks\n  --first-only\tconvert only leading sequences of blanks\n  -t, --tabs=LIST\tuse comma separated list of tab positions (implies -a)\n  --help\t\tdisplay this help and exit\n  --version\toutput version information and exit\n",
             Some("unexpand (bashkit) 0.1"),
         ) {
             return Ok(r);
         }
-        let mut tab_stops: Vec<usize> = vec![8];
+        let (args, obsolete) = split_obsolete_tabs(ctx.args);
+        let (opts, files) = match gnu_getopt(
+            "unexpand",
+            &args,
+            "at:",
+            &[
+                ("all", OptArg::No, 'a'),
+                ("first-only", OptArg::No, 'F'),
+                ("tabs", OptArg::Required, 't'),
+            ],
+            true,
+            1,
+        ) {
+            Ok(v) => v,
+            Err(e) => return Ok(e),
+        };
+        let mut stops = TabStops::default();
         let mut all = false;
-        let mut files: Vec<&str> = Vec::new();
-
-        let mut i = 0;
-        while i < ctx.args.len() {
-            match ctx.args[i].as_str() {
-                "-a" | "--all" => all = true,
-                "-t" => {
-                    i += 1;
-                    if i >= ctx.args.len() {
-                        return Ok(Self::err("option requires an argument -- 't'", 1));
-                    }
-                    let parsed_tab_stops = match parse_tab_stops(&ctx.args[i]) {
-                        Ok(stops) => stops,
-                        Err(_) => {
-                            return Ok(Self::err(
-                                format!("invalid tab size: '{}'", ctx.args[i]),
-                                1,
-                            ));
-                        }
-                    };
-                    tab_stops = parsed_tab_stops;
-                    all = true; // -t implies -a
-                }
-                s if s.starts_with("-t") && s.len() > 2 => {
-                    // Attached form `-tN`; known option, not an unknown token.
-                    tab_stops = match parse_tab_stops(&s[2..]) {
-                        Ok(stops) => stops,
-                        Err(_) => {
-                            return Ok(Self::err(format!("invalid tab size: '{}'", &s[2..]), 1));
-                        }
-                    };
-                    all = true; // -t implies -a
-                }
-                // Reject unknown options. unexpand takes no numeric operand,
-                // so `-N` is also unknown; `--`/`-` and operands fall through.
-                s if s.starts_with('-') && s.len() > 1 && s != "--" => {
-                    return Ok(super::invalid_option("unexpand", s, 1));
-                }
-                _ => files.push(&ctx.args[i]),
+        let mut first_only = false;
+        for spec in &obsolete {
+            if let Err(e) = stops.parse_into(spec) {
+                return Ok(Self::err(e, 1));
             }
-            i += 1;
+        }
+        for o in opts {
+            match o.key {
+                'a' => all = true,
+                'F' => first_only = true,
+                _ => {
+                    let spec = o.value.unwrap_or_default();
+                    if let Err(e) = stops.parse_into(&spec) {
+                        return Ok(Self::err(e, 1));
+                    }
+                    all = true; // -t implies -a
+                }
+            }
+        }
+        if first_only {
+            all = false;
+        }
+        if let Err(e) = stops.finalize() {
+            return Ok(Self::err(e, 1));
         }
 
-        let input = if files.is_empty() {
-            ctx.stdin.map(ToString::to_string).unwrap_or_default()
-        } else {
-            let mut buf = String::new();
-            for file in &files {
-                let path = resolve_path(ctx.cwd, file);
-                match read_text_file(ctx.fs.as_ref(), &path, "unexpand").await {
-                    Ok(text) => buf.push_str(&text),
-                    Err(_) => {
-                        return Ok(Self::err_path(file, "No such file or directory", 1));
-                    }
-                }
-            }
-            buf
+        let input = match read_inputs::<Self>(&ctx, &files).await {
+            Ok(t) => t,
+            Err(e) => return Ok(e),
         };
 
-        let tab_size = tab_stops[0];
-        let mut output = String::new();
-
-        for line in input.split('\n') {
-            if all {
-                // Convert all sequences of spaces at tab stops
-                let mut col = 0;
-                let mut space_count = 0;
-                let mut result = String::new();
-
-                for ch in line.chars() {
-                    if ch == ' ' {
-                        space_count += 1;
-                        col += 1;
-                        if col % tab_size == 0 && space_count > 1 {
-                            result.push('\t');
-                            space_count = 0;
-                        }
-                    } else {
-                        for _ in 0..space_count {
-                            result.push(' ');
-                        }
-                        space_count = 0;
-                        result.push(ch);
-                        col += 1;
-                    }
-                }
-                for _ in 0..space_count {
-                    result.push(' ');
-                }
-                output.push_str(&result);
-            } else {
-                // Only convert leading spaces
-                let mut col = 0;
-                let chars: Vec<char> = line.chars().collect();
-                let mut pos = 0;
-                let mut result = String::new();
-
-                // Process leading spaces
-                while pos < chars.len() && chars[pos] == ' ' {
-                    col += 1;
-                    pos += 1;
-                    if col % tab_size == 0 {
-                        result.push('\t');
-                    }
-                }
-                // Add remaining leading spaces that didn't fill a tab
-                let remainder = col % tab_size;
-                if remainder > 0 && pos < chars.len() {
-                    // We consumed some spaces but not enough for a tab
-                    let tabs_written = col / tab_size;
-                    let spaces_accounted = tabs_written * tab_size;
-                    for _ in 0..(col - spaces_accounted) {
-                        // These are already handled by the tab pushes above
-                    }
-                }
-                // Append rest of line unchanged
-                for ch in &chars[pos..] {
-                    result.push(*ch);
-                }
-                output.push_str(&result);
-            }
-            output.push('\n');
+        let mut output = String::with_capacity(input.len());
+        for line in input.split_inclusive('\n') {
+            unexpand_line(line, &stops, all, &mut output);
         }
-
-        if !input.ends_with('\n') && output.ends_with('\n') {
-            output.pop();
-        }
-
         Ok(ExecResult::ok(output))
     }
 }
 
-fn parse_tab_stops(s: &str) -> std::result::Result<Vec<usize>, String> {
-    let mut stops = Vec::new();
-    for part in s.split(',') {
-        let trimmed = part.trim();
-        let Ok(stop) = trimmed.parse::<usize>() else {
-            return Err(format!("invalid tab size: '{s}'"));
-        };
-        if stop == 0 || stop > MAX_TAB_STOP {
-            return Err(format!("invalid tab size: '{s}'"));
-        }
-        stops.push(stop);
-    }
-    if stops.is_empty() {
-        return Err(format!("invalid tab size: '{s}'"));
-    }
-    Ok(stops)
-}
+/// GNU `unexpand` state machine for one line (including its newline).
+fn unexpand_line(line: &str, stops: &TabStops, all: bool, out: &mut String) {
+    let mut convert = true;
+    let mut column = 0usize;
+    let mut idx = 0usize;
+    let mut pending: Vec<char> = Vec::new();
+    let mut one_blank_before_stop = false;
+    let mut prev_blank = true;
 
-fn next_tab_stop(col: usize, tab_stops: &[usize]) -> usize {
-    if tab_stops.len() == 1 {
-        let ts = tab_stops[0];
-        ((col / ts) + 1) * ts
-    } else {
-        // Find the first tab stop > col
-        for &ts in tab_stops {
-            if ts > col {
-                return ts;
+    // `None` stands for end of input so pending blanks get flushed.
+    for c in line.chars().map(Some).chain(std::iter::once(None)) {
+        let mut ch = c;
+        if convert {
+            let blank = matches!(c, Some(' ') | Some('\t'));
+            if blank {
+                match stops.next(column, &mut idx) {
+                    None => convert = false,
+                    Some(next) => {
+                        if c == Some('\t') {
+                            column = next;
+                            if let Some(p) = pending.first_mut() {
+                                *p = '\t';
+                            }
+                        } else {
+                            column += 1;
+                            if !(prev_blank && column == next) {
+                                if column == next {
+                                    one_blank_before_stop = true;
+                                }
+                                pending.push(' ');
+                                prev_blank = true;
+                                continue;
+                            }
+                            ch = Some('\t');
+                            if let Some(p) = pending.first_mut() {
+                                *p = '\t';
+                            }
+                        }
+                        // Keep only a single blank just before the previous stop.
+                        pending.truncate(usize::from(one_blank_before_stop));
+                    }
+                }
+            } else if c == Some('\x08') {
+                column = column.saturating_sub(1);
+                idx = idx.saturating_sub(1);
+            } else {
+                column += 1;
             }
+
+            if !pending.is_empty() {
+                if pending.len() > 1 && one_blank_before_stop {
+                    pending[0] = '\t';
+                }
+                out.extend(pending.drain(..));
+                one_blank_before_stop = false;
+            }
+            prev_blank = blank;
+            convert &= all || blank;
         }
-        // Past all tab stops, use last interval
-        col + 1
+        if let Some(ch) = ch {
+            out.push(ch);
+        }
     }
 }
 
@@ -477,5 +574,30 @@ mod tests {
         let result = run_unexpand(&["-t", "foo"], Some("        hello")).await;
         assert_eq!(result.exit_code, 1);
         assert_eq!(result.stderr, "unexpand: invalid tab size: 'foo'\n");
+    }
+
+    #[tokio::test]
+    async fn test_expand_tab_list_extensions() {
+        let r = run_expand(&["-t", "2,5,/3"], Some("a\tb\tc\td\te\n")).await;
+        assert_eq!(r.stdout, "a b  c   d  e\n");
+        let r = run_expand(&["-t", "2,5,+3"], Some("a\tb\tc\td\te\n")).await;
+        assert_eq!(r.stdout, "a b  c  d  e\n");
+        // Repeated -t accumulate; past the last stop a tab is one space.
+        let r = run_expand(&["-t", "2", "-t", "6"], Some("a\tb\tc\td\n")).await;
+        assert_eq!(r.stdout, "a b   c d\n");
+        let r = run_expand(&["-t", "4,2"], Some("a\n")).await;
+        assert_eq!(r.exit_code, 1);
+    }
+
+    #[tokio::test]
+    async fn test_unexpand_gnu_blank_rules() {
+        let r = run_unexpand(&["-a"], Some("abcdefg h\n")).await;
+        assert_eq!(r.stdout, "abcdefg h\n");
+        let r = run_unexpand(&["-a"], Some("abcdefg \tx\n")).await;
+        assert_eq!(r.stdout, "abcdefg\t\tx\n");
+        let r = run_unexpand(&["-2,6"], Some("  a   b      c\n")).await;
+        assert_eq!(r.stdout, "\ta   b      c\n");
+        let r = run_unexpand(&[], Some("x       y")).await;
+        assert_eq!(r.stdout, "x       y");
     }
 }

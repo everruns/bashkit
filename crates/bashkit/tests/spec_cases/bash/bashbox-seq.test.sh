@@ -28,7 +28,6 @@ seq 3 1; seq -s, 3 1
 
 ### bashbox_seq_decimals_follow_first_and_increment
 # decimals follow FIRST and INCREMENT
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 seq 1 0.5 2; seq 1 2.50; seq 1.0 2
 ### expect
 1.0
@@ -42,7 +41,6 @@ seq 1 0.5 2; seq 1 2.50; seq 1.0 2
 
 ### bashbox_seq_custom_formats
 # custom formats
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 seq -f '%03g' 9 10; seq -f '%.2f' 1 0.25 1.5; seq -f '%e' 1
 ### expect
 009
@@ -55,7 +53,6 @@ seq -f '%03g' 9 10; seq -f '%.2f' 1 0.25 1.5; seq -f '%e' 1
 
 ### bashbox_seq_separator
 # separator
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 seq -s, 1 3; seq --separator=-1 1 2
 ### expect
 1,2,3
@@ -64,7 +61,6 @@ seq -s, 1 3; seq --separator=-1 1 2
 
 ### bashbox_seq_equal_width_pads_after_the_sign
 # equal width pads after the sign
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 seq -w 1 -0.5 -1; seq -w 1 50 100; seq --equal-width 9 10
 ### expect
 01.0

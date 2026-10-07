@@ -18,7 +18,6 @@ CCCCC
 
 ### bashbox_tr_octal_escape
 # octal escape
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 echo ABC | tr '\101' x
 ### expect
 xBC
@@ -26,7 +25,6 @@ xBC
 
 ### bashbox_tr_octal_escape_stops_after_three_digits
 # octal escape stops after three digits
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 echo A8 | tr '\1018' xy
 ### expect
 xy

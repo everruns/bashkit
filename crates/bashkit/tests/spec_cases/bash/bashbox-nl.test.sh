@@ -4,7 +4,6 @@
 
 ### bashbox_nl_one_char_delimiter
 # one-char delimiter
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf '@:@:\nh\n@:\nb\n' | nl -d @ -ha
 ### expect
 
@@ -15,7 +14,6 @@ printf '@:@:\nh\n@:\nb\n' | nl -d @ -ha
 
 ### bashbox_nl_three_char_delimiter
 # three-char delimiter
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf 'abcabc\nh\nabc\nf\n' | nl -d abc -ha -fa
 ### expect
 
@@ -33,7 +31,6 @@ printf '\\:x\n' | nl
 
 ### bashbox_nl_join_counts_across_sections
 # join counts across sections
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf 'a\n\n\\:\:\n\nb\n' | nl -ba -l2
 ### expect
      1	a

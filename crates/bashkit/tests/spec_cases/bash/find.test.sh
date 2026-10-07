@@ -477,3 +477,16 @@ find d -type f -ls | awk '{print $7}'
 11 -rw-r--r-- d/f
 3
 ### end
+
+### find_fprint_family
+# -fprint/-fprintf write to a file, truncated even when nothing matches
+rm -rf /tmp/fpr && mkdir -p /tmp/fpr/d && touch /tmp/fpr/d/a && cd /tmp/fpr
+echo old > out.txt
+find d -type f -fprint out.txt; cat out.txt
+find d -type f -fprintf out2.txt '%f|'; cat out2.txt; echo
+find d -name nomatch -fprint out.txt; wc -c < out.txt
+### expect
+d/a
+a|
+0
+### end

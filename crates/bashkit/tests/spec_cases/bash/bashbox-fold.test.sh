@@ -22,7 +22,6 @@ p qr
 
 ### bashbox_fold_backspace_at_column_0
 # backspace at column 0
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf '\x08abcde\n' | fold -w 3
 ### expect
 abc
@@ -31,7 +30,6 @@ de
 
 ### bashbox_fold_tab_wider_than_width
 # tab wider than width
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf '\tab\n' | fold -w 4
 ### expect
 	
@@ -59,7 +57,6 @@ ij
 
 ### bashbox_fold_tab_after_break_with_s
 # tab after break with -s
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf 'ab\tcdefghij\n' | fold -s -w 6
 ### expect
 ab

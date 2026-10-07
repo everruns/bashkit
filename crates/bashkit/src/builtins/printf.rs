@@ -57,12 +57,22 @@ impl Builtin for Printf {
                         var_name = Some(vname.clone());
                     }
                 }
+                // `--` ends options; the next word is the format.
+                Some(arg) if arg == "--" => match args_iter.next() {
+                    Some(f) => break f.clone(),
+                    None => return Ok(ExecResult::ok(String::new())),
+                },
                 Some(arg) => break arg.clone(),
                 None => return Ok(ExecResult::ok(String::new())),
             }
         };
 
         let args: Vec<String> = args_iter.cloned().collect();
+        let format = escape_format_backslash_c(&format).into_owned();
+        let (format, args) = match expand_quote_directives(&format, args) {
+            Ok(v) => v,
+            Err(err) => return Ok(ExecResult::err(err, 1)),
+        };
         let (format, args) = match expand_time_directives(&format, args, |seconds, fmt| {
             self.clock.strftime(ctx.env.get("TZ"), seconds, fmt)
         }) {
@@ -95,7 +105,10 @@ fn render_printf(format: &str, args: &[String]) -> std::result::Result<String, S
 }
 
 /// Bytes are canonical: `\xff` must reach stdout as one 0xff byte.
-fn render_printf_bytes(format: &str, args: &[String]) -> std::result::Result<Vec<u8>, String> {
+pub(super) fn render_printf_bytes(
+    format: &str,
+    args: &[String],
+) -> std::result::Result<Vec<u8>, String> {
     let format = strip_zero_hex_escapes(format);
     let format = format.as_ref();
     let values = format_arguments(args);
@@ -120,6 +133,136 @@ fn render_printf_bytes(format: &str, args: &[String]) -> std::result::Result<Vec
     }
 
     Ok(out)
+}
+
+/// In a printf FORMAT (unlike a `%b` argument) bash prints `\c` literally;
+/// the uutils formatter would stop output there, so escape the backslash.
+fn escape_format_backslash_c(format: &str) -> Cow<'_, str> {
+    if !format.contains("\\c") {
+        return Cow::Borrowed(format);
+    }
+    let mut out = String::with_capacity(format.len() + 4);
+    let mut chars = format.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('c') => out.push_str("\\\\c"),
+            Some(n) => {
+                out.push('\\');
+                out.push(n);
+            }
+            None => out.push('\\'),
+        }
+    }
+    Cow::Owned(out)
+}
+
+/// One `%b` / `%q` / `%Q` directive the uutils formatter cannot handle.
+struct QuoteSlot {
+    conv: u8,
+    precision: Option<usize>,
+}
+
+/// Rewrite `%[flags][width][.prec]{b,q,Q}` that the uutils formatter rejects
+/// (any flag/width/precision, and every `%Q`) into `%[flags][width]s`,
+/// pre-rendering the matching arguments.
+///
+/// Decision: bash pads `%b`/`%q` itself and never with zeros, applies the
+/// precision to the expanded/quoted text, while `%Q` applies it to the
+/// argument before quoting. Directives using `*` are left to the formatter.
+fn expand_quote_directives(
+    format: &str,
+    mut args: Vec<String>,
+) -> std::result::Result<(String, Vec<String>), String> {
+    let bytes = format.as_bytes();
+    let mut out = String::with_capacity(format.len());
+    let mut slots: Vec<Option<QuoteSlot>> = Vec::new();
+    let mut i = 0;
+    let mut copied = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' => i += 2,
+            b'%' if bytes.get(i + 1) == Some(&b'%') => i += 2,
+            b'%' => {
+                let start = i;
+                i += 1;
+                let flags_start = i;
+                while i < bytes.len() && b"-+ #0'".contains(&bytes[i]) {
+                    i += 1;
+                }
+                let flags = &format[flags_start..i];
+                let width_start = i;
+                let mut star = false;
+                if bytes.get(i) == Some(&b'*') {
+                    slots.push(None);
+                    star = true;
+                    i += 1;
+                } else {
+                    while i < bytes.len() && bytes[i].is_ascii_digit() {
+                        i += 1;
+                    }
+                }
+                let width = &format[width_start..i];
+                let mut precision = None;
+                if bytes.get(i) == Some(&b'.') {
+                    i += 1;
+                    if bytes.get(i) == Some(&b'*') {
+                        slots.push(None);
+                        star = true;
+                        i += 1;
+                    } else {
+                        let p = i;
+                        while i < bytes.len() && bytes[i].is_ascii_digit() {
+                            i += 1;
+                        }
+                        precision = Some(format[p..i].parse().unwrap_or(0));
+                    }
+                }
+                let Some(&conv) = bytes.get(i) else { break };
+                i += 1;
+                let decorated = i - start > 2;
+                if !star && (conv == b'Q' || (matches!(conv, b'b' | b'q') && decorated)) {
+                    out.push_str(&format[copied..start]);
+                    out.push('%');
+                    out.push_str(&flags.replace('0', ""));
+                    out.push_str(width);
+                    out.push('s');
+                    copied = i;
+                    slots.push(Some(QuoteSlot { conv, precision }));
+                } else {
+                    slots.push(None);
+                }
+            }
+            _ => i += 1,
+        }
+    }
+    if !slots.iter().any(Option::is_some) {
+        return Ok((format.to_string(), args));
+    }
+    out.push_str(&format[copied..]);
+
+    let n = slots.len();
+    let truncate = |s: String, p: Option<usize>| match p {
+        Some(p) => s.chars().take(p).collect(),
+        None => s,
+    };
+    let render = |spec: &str, arg: &str| -> std::result::Result<String, String> {
+        render_printf_bytes(spec, &[arg.to_string()])
+            .map(|b| String::from_utf8_lossy(&b).into_owned())
+    };
+    for (idx, arg) in args.iter_mut().enumerate() {
+        if let Some(slot) = &slots[idx % n] {
+            *arg = match slot.conv {
+                b'b' => truncate(render("%b", arg)?, slot.precision),
+                b'q' => truncate(render("%q", arg)?, slot.precision),
+                _ => render("%q", &truncate(arg.clone(), slot.precision))?,
+            };
+        }
+    }
+    Ok((out, args))
 }
 
 /// One argument-consuming slot of a format pass.
@@ -789,5 +932,22 @@ mod tests {
             let result = ExecResult::err(render_printf_error(&err), 1);
             crate::testing::assert_no_leak(&result, "printf_format_error_variant", &[]);
         }
+    }
+
+    #[test]
+    fn format_backslash_c_is_literal() {
+        let f = escape_format_backslash_c("a\\cb\\\\c");
+        assert_eq!(render_printf(&f, &[]).unwrap(), "a\\cb\\c");
+    }
+
+    #[test]
+    fn padded_b_q_and_upper_q_directives() {
+        let args = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let (f, a) =
+            expand_quote_directives("[%05b|%05q|%05Q]", args(&["a\\tb", "c d", "e"])).unwrap();
+        assert_eq!(render_printf(&f, &a).unwrap(), "[  a\tb| c\\ d|    e]");
+        let (f, a) =
+            expand_quote_directives("[%.2q|%.2Q|%-6q]", args(&["abc", "a bc", "x"])).unwrap();
+        assert_eq!(render_printf(&f, &a).unwrap(), "[ab|a\\ |x     ]");
     }
 }

@@ -36,25 +36,34 @@ impl Builtin for Sleep {
         ) {
             return Ok(r);
         }
-        let seconds = match ctx.args.first() {
-            Some(arg) => match arg.parse::<f64>() {
-                Ok(s) if s < 0.0 => {
+        // GNU sleep: only `--` ends options; every operand is a C strtod
+        // number (blanks, hex floats, `inf` allowed) plus an optional single
+        // s/m/h/d suffix, and the durations are summed.
+        // getopt permutes, so any `-X` before `--` (even `-1`) is an option.
+        let mut operands: Vec<&String> = Vec::new();
+        let mut args = ctx.args.iter();
+        while let Some(arg) = args.next() {
+            if arg == "--" {
+                operands.extend(args.by_ref());
+            } else if arg.len() > 1 && arg.starts_with('-') {
+                return Ok(super::invalid_option("sleep", arg, 1));
+            } else {
+                operands.push(arg);
+            }
+        }
+        if operands.is_empty() {
+            return Ok(Self::err("missing operand", 1));
+        }
+        let mut seconds = 0.0f64;
+        for arg in operands {
+            match parse_interval(arg) {
+                Some(s) => seconds += s,
+                None => {
                     return Ok(Self::err(format!("invalid time interval '{}'", arg), 1));
                 }
-                Ok(s) => s.min(MAX_SLEEP_SECONDS),
-                Err(_) => {
-                    // Try parsing as integer for better error messages
-                    if arg.parse::<i64>().is_ok() {
-                        arg.parse::<f64>().unwrap_or(0.0).min(MAX_SLEEP_SECONDS)
-                    } else {
-                        return Ok(Self::err(format!("invalid time interval '{}'", arg), 1));
-                    }
-                }
-            },
-            None => {
-                return Ok(Self::err("missing operand", 1));
             }
-        };
+        }
+        let seconds = seconds.min(MAX_SLEEP_SECONDS);
 
         if seconds > 0.0 {
             let duration = Duration::from_secs_f64(seconds);
@@ -79,6 +88,22 @@ impl Builtin for Sleep {
 
         Ok(ExecResult::ok(String::new()))
     }
+}
+
+/// Parse one GNU sleep operand into seconds; `None` when invalid or negative.
+fn parse_interval(arg: &str) -> Option<f64> {
+    let (value, used) = super::sortuniq::strtod(arg.as_bytes())?;
+    let multiplier = match &arg[used..] {
+        "" | "s" => 1.0,
+        "m" => 60.0,
+        "h" => 3600.0,
+        "d" => 86400.0,
+        _ => return None,
+    };
+    if value.is_nan() || value < 0.0 {
+        return None;
+    }
+    Some(value * multiplier)
 }
 
 #[cfg(any(
@@ -179,6 +204,33 @@ mod tests {
     async fn test_sleep_negative() {
         let result = run_sleep(&["-1"]).await;
         assert_eq!(result.exit_code, 1);
-        assert!(result.stderr.contains("invalid time interval"));
+        assert!(result.stderr.contains("invalid option -- '1'"));
+    }
+
+    #[test]
+    fn test_parse_interval_gnu_forms() {
+        assert_eq!(parse_interval("1"), Some(1.0));
+        assert_eq!(parse_interval("1.5m"), Some(90.0));
+        assert_eq!(parse_interval("2h"), Some(7200.0));
+        assert_eq!(parse_interval("1d"), Some(86400.0));
+        assert_eq!(parse_interval("0x10"), Some(16.0));
+        assert_eq!(parse_interval("0x.8p1"), Some(1.0));
+        assert_eq!(parse_interval(" 3"), Some(3.0));
+        assert_eq!(parse_interval(".5"), Some(0.5));
+        assert_eq!(parse_interval("inf"), Some(f64::INFINITY));
+        assert_eq!(parse_interval("1x"), None);
+        assert_eq!(parse_interval("1ss"), None);
+        assert_eq!(parse_interval("3 "), None);
+        assert_eq!(parse_interval("nan"), None);
+        assert_eq!(parse_interval(""), None);
+    }
+
+    #[tokio::test]
+    async fn test_sleep_sums_operands_and_dash_dash() {
+        let result = run_sleep(&["--", "0", "0s", "0m"]).await;
+        assert_eq!(result.exit_code, 0);
+        let result = run_sleep(&["0", "bad"]).await;
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("invalid time interval 'bad'"));
     }
 }

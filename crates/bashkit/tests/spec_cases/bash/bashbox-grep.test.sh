@@ -31,7 +31,6 @@ grep -q apple a.txt nope
 
 ### bashbox_grep_only_matching_skips_empty_matches
 # only matching skips empty matches
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 echo aaa | grep -o 'b*'
 ### expect
 ### end
@@ -51,7 +50,6 @@ x-v
 
 ### bashbox_grep_newline_separates_patterns
 # newline separates patterns
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf 'a\nb\nc\n' | grep "$(printf 'a\nc')"
 ### expect
 a
@@ -74,7 +72,6 @@ pie
 
 ### bashbox_grep_word_match_with_alternation
 # word match with alternation
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf 'ab\nxa\nb\n' | grep -wE 'a|b'
 ### expect
 b
@@ -82,7 +79,6 @@ b
 
 ### bashbox_grep_word_match_with_fixed_string
 # word match with fixed string
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf 'foo.bar\nfoo.\n' | grep -wF 'foo.'
 ### expect
 foo.
@@ -90,7 +86,6 @@ foo.
 
 ### bashbox_grep_bre_is_literal
 # BRE + is literal
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf 'a+b\nab\n' | grep 'a+b'
 ### expect
 a+b
@@ -106,7 +101,6 @@ dog
 
 ### bashbox_grep_bre_back_reference
 # BRE back-reference
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf 'abab\nabba\n' | grep '\(ab\)\1'
 ### expect
 abab
@@ -114,7 +108,6 @@ abab
 
 ### bashbox_grep_bre_leading_star_is_literal
 # BRE leading star is literal
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf '*a\nb\n' | grep '*a'
 ### expect
 *a
@@ -129,7 +122,6 @@ aa
 
 ### bashbox_grep_g_resets_to_bre
 # -G resets to BRE
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf 'a|b\na\n' | grep -G 'a|b'
 ### expect
 a|b

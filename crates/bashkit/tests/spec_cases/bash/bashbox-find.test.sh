@@ -58,7 +58,6 @@ find proj -quit
 
 ### bashbox_find_execdir_from_the_root
 # -execdir from the root
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 find / -maxdepth 0 -execdir echo {} \;
 ### expect
 /

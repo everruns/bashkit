@@ -589,7 +589,7 @@ impl Builtin for Shopt {
             for opt in SHOPT_OPTIONS {
                 let key = format!("SHOPT_{}", opt);
                 let on = ctx.variables.get(&key).map(|v| v == "1").unwrap_or(false);
-                output.push_str(&format!("{:<32}{}\n", opt, if on { "on" } else { "off" }));
+                output.push_str(&format!("{:<15}\t{}\n", opt, if on { "on" } else { "off" }));
             }
             return Ok(ExecResult::ok(output));
         }
@@ -691,7 +691,11 @@ impl Builtin for Shopt {
                     for opt in SHOPT_OPTIONS {
                         let key = format!("SHOPT_{}", opt);
                         let on = ctx.variables.get(&key).map(|v| v == "1").unwrap_or(false);
-                        output.push_str(&format!("{:<32}{}\n", opt, if on { "on" } else { "off" }));
+                        output.push_str(&format!(
+                            "{:<15}\t{}\n",
+                            opt,
+                            if on { "on" } else { "off" }
+                        ));
                     }
                     return Ok(ExecResult::ok(output));
                 }
@@ -708,7 +712,7 @@ impl Builtin for Shopt {
                     }
                     let key = format!("SHOPT_{}", opt);
                     let on = ctx.variables.get(&key).map(|v| v == "1").unwrap_or(false);
-                    output.push_str(&format!("{:<32}{}\n", opt, if on { "on" } else { "off" }));
+                    output.push_str(&format!("{:<15}\t{}\n", opt, if on { "on" } else { "off" }));
                 }
                 if any_invalid {
                     Ok(ExecResult {

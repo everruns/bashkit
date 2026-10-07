@@ -4,7 +4,6 @@
 
 ### bashbox_od_hexl_trailer_partial
 # hexl trailer partial
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf 'abc' | od -t x2z
 ### expect
 0000000 6261 0063                                >abc<

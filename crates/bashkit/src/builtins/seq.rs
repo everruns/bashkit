@@ -1,4 +1,10 @@
 //! seq builtin - print a sequence of numbers
+//!
+//! Decision: output formatting follows GNU `seq.c`: the default format is
+//! `%.Pf` with P the larger fraction-digit count of FIRST and INCREMENT
+//! (LAST does not count), `-w` zero-pads to the wider of FIRST/LAST in that
+//! format, `-f` goes through the printf formatter, and each value is
+//! computed as FIRST + i*INCREMENT so steps do not accumulate rounding.
 
 use async_trait::async_trait;
 
@@ -14,9 +20,94 @@ use crate::interpreter::ExecResult;
 ///        seq [OPTION]... FIRST INCREMENT LAST
 ///
 /// Options:
+///   -f FORMAT  Use printf-style floating-point FORMAT
 ///   -s STRING  Use STRING as separator (default: newline)
 ///   -w         Equalize width by padding with leading zeroes
 pub struct Seq;
+
+/// A parsed operand with GNU's precision/width bookkeeping.
+struct Operand {
+    value: f64,
+    /// Digits after the decimal point; `None` when not representable
+    /// as fixed-point (hex, inf, nan).
+    precision: Option<usize>,
+    width: usize,
+}
+
+fn parse_operand(arg: &str) -> Option<Operand> {
+    let t = arg.trim_start();
+    let value: f64 = {
+        let lower = t.to_ascii_lowercase();
+        let body = lower.trim_start_matches(['+', '-']);
+        if let Some(hex) = body.strip_prefix("0x") {
+            let neg = lower.starts_with('-');
+            let v = u64::from_str_radix(hex, 16).ok()? as f64;
+            if neg { -v } else { v }
+        } else {
+            t.parse().ok()?
+        }
+    };
+    if value.is_nan() {
+        return None;
+    }
+    let plain = !t.to_ascii_lowercase().contains(['x', 'i', 'n']);
+    let precision = plain.then(|| {
+        let mantissa_end = t.find(['e', 'E']).unwrap_or(t.len());
+        let frac = t[..mantissa_end]
+            .split_once('.')
+            .map_or(0, |(_, f)| f.len());
+        let exp: i64 = t
+            .get(mantissa_end + 1..)
+            .and_then(|e| e.parse().ok())
+            .unwrap_or(0);
+        if exp < 0 {
+            frac + exp.unsigned_abs() as usize
+        } else {
+            frac.saturating_sub(exp as usize)
+        }
+    });
+    Some(Operand {
+        value,
+        precision,
+        width: t.len(),
+    })
+}
+
+/// GNU `get_default_format`, as (zero-pad width, precision).
+fn default_format(
+    first: &Operand,
+    step: &Operand,
+    last: &Operand,
+    equal_width: bool,
+) -> Option<(usize, usize)> {
+    let prec = first.precision?.max(step.precision?);
+    let last_prec = last.precision?;
+    if !equal_width {
+        return Some((0, prec));
+    }
+    let first_prec = first.precision?;
+    let mut first_width = first.width + (prec - first_prec);
+    let mut last_width = (last.width + prec).saturating_sub(last_prec);
+    if last_prec > 0 && prec == 0 {
+        last_width = last_width.saturating_sub(1);
+    }
+    if last_prec == 0 && prec > 0 {
+        last_width += 1;
+    }
+    if first_prec == 0 && prec > 0 {
+        first_width += 1;
+    }
+    Some((first_width.max(last_width), prec))
+}
+
+fn invalid_arg(arg: &str) -> ExecResult {
+    ExecResult::err(
+        format!(
+            "seq: invalid floating point argument: '{arg}'\nTry 'seq --help' for more information.\n"
+        ),
+        1,
+    )
+}
 
 /// Bytes per write when streaming into a pipeline (one pipe's capacity).
 const STREAM_CHUNK_BYTES: usize = 4 * 1024;
@@ -26,120 +117,157 @@ impl Builtin for Seq {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
         if let Some(r) = super::check_help_version(
             ctx.args,
-            "Usage: seq [OPTION]... LAST\n  or:  seq [OPTION]... FIRST LAST\n  or:  seq [OPTION]... FIRST INCREMENT LAST\nPrint numbers from FIRST to LAST, in steps of INCREMENT.\n\n  -s STRING\tuse STRING to separate numbers (default: newline)\n  -w\tequalize width by padding with leading zeroes\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            "Usage: seq [OPTION]... LAST\n  or:  seq [OPTION]... FIRST LAST\n  or:  seq [OPTION]... FIRST INCREMENT LAST\nPrint numbers from FIRST to LAST, in steps of INCREMENT.\n\n  -f, --format=FORMAT\tuse printf style floating-point FORMAT\n  -s, --separator=STRING\tuse STRING to separate numbers (default: \\n)\n  -w, --equal-width\tequalize width by padding with leading zeroes\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
             Some("seq (bashkit) 0.1"),
         ) {
             return Ok(r);
         }
+        // GNU checks each option position: an argument that looks like a
+        // negative number ends option parsing, so `seq -3 -1` counts while
+        // `seq -s -1 1 2` still takes `-1` as the separator.
         let mut separator = "\n".to_string();
         let mut equal_width = false;
+        let mut format: Option<String> = None;
         let mut nums: Vec<String> = Vec::new();
-
+        let args = ctx.args;
         let mut i = 0;
-        while i < ctx.args.len() {
-            match ctx.args[i].as_str() {
-                "-s" => {
-                    i += 1;
-                    if i < ctx.args.len() {
-                        separator = ctx.args[i].clone();
+        while i < args.len() {
+            let a = args[i].as_str();
+            i += 1;
+            let b = a.as_bytes();
+            if b.len() > 1 && b[0] == b'-' && (b[1].is_ascii_digit() || b[1] == b'.') {
+                nums.extend(args[i - 1..].iter().cloned());
+                break;
+            }
+            if a == "--" {
+                nums.extend(args[i..].iter().cloned());
+                break;
+            }
+            if !a.starts_with('-') || a == "-" {
+                nums.push(a.to_string());
+                continue;
+            }
+            if let Some(long) = a.strip_prefix("--") {
+                let (name, inline) = match long.split_once('=') {
+                    Some((n, v)) => (n, Some(v.to_string())),
+                    None => (long, None),
+                };
+                let key = ["equal-width", "format", "separator"]
+                    .into_iter()
+                    .find(|n| !name.is_empty() && n.starts_with(name));
+                let Some(key) = key else {
+                    return Ok(super::invalid_option("seq", a, 1));
+                };
+                if key == "equal-width" {
+                    equal_width = true;
+                    continue;
+                }
+                let value = match inline {
+                    Some(v) => v,
+                    None if i < args.len() => {
+                        i += 1;
+                        args[i - 1].clone()
                     }
+                    None => {
+                        return Ok(ExecResult::err(
+                            format!("seq: option '--{key}' requires an argument\n"),
+                            1,
+                        ));
+                    }
+                };
+                if key == "format" {
+                    format = Some(value);
+                } else {
+                    separator = value;
                 }
-                "-w" => equal_width = true,
-                arg if arg.starts_with("-s") => {
-                    // -sSEP (no space)
-                    separator = arg[2..].to_string();
-                }
-                _ => {
-                    nums.push(ctx.args[i].clone());
+                continue;
+            }
+            for (pos, c) in a[1..].char_indices() {
+                match c {
+                    'w' => equal_width = true,
+                    'f' | 's' => {
+                        let attached = &a[1 + pos + 1..];
+                        let value = if !attached.is_empty() {
+                            attached.to_string()
+                        } else if i < args.len() {
+                            i += 1;
+                            args[i - 1].clone()
+                        } else {
+                            return Ok(ExecResult::err(
+                                format!("seq: option requires an argument -- '{c}'\n"),
+                                1,
+                            ));
+                        };
+                        if c == 'f' {
+                            format = Some(value);
+                        } else {
+                            separator = value;
+                        }
+                        break;
+                    }
+                    _ => return Ok(super::invalid_option("seq", &format!("-{c}"), 1)),
                 }
             }
-            i += 1;
+        }
+        if format.is_some() && equal_width {
+            return Ok(ExecResult::err(
+                "seq: format string may not be specified when printing equal width strings\n"
+                    .to_string(),
+                1,
+            ));
         }
 
         if nums.is_empty() {
             return Ok(ExecResult::err("seq: missing operand\n".to_string(), 1));
         }
-
-        let (first, increment, last) = match nums.len() {
-            1 => {
-                let last: f64 = match nums[0].parse() {
-                    Ok(v) => v,
-                    Err(_) => {
-                        return Ok(ExecResult::err(
-                            format!("seq: invalid floating point argument: '{}'\n", nums[0]),
-                            1,
-                        ));
-                    }
-                };
-                (1.0_f64, 1.0_f64, last)
+        if nums.len() > 3 {
+            return Ok(ExecResult::err(
+                format!("seq: extra operand '{}'\n", nums[3]),
+                1,
+            ));
+        }
+        let mut parsed = Vec::with_capacity(3);
+        for n in &nums {
+            match parse_operand(n) {
+                Some(op) => parsed.push(op),
+                None => return Ok(invalid_arg(n)),
             }
+        }
+        let one = || Operand {
+            value: 1.0,
+            precision: Some(0),
+            width: 1,
+        };
+        let (first, step, last) = match parsed.len() {
+            1 => (one(), one(), parsed.remove(0)),
             2 => {
-                let first: f64 = match nums[0].parse() {
-                    Ok(v) => v,
-                    Err(_) => {
-                        return Ok(ExecResult::err(
-                            format!("seq: invalid floating point argument: '{}'\n", nums[0]),
-                            1,
-                        ));
-                    }
-                };
-                let last: f64 = match nums[1].parse() {
-                    Ok(v) => v,
-                    Err(_) => {
-                        return Ok(ExecResult::err(
-                            format!("seq: invalid floating point argument: '{}'\n", nums[1]),
-                            1,
-                        ));
-                    }
-                };
-                (first, 1.0, last)
+                let last = parsed.remove(1);
+                (parsed.remove(0), one(), last)
             }
             _ => {
-                let first: f64 = match nums[0].parse() {
-                    Ok(v) => v,
-                    Err(_) => {
-                        return Ok(ExecResult::err(
-                            format!("seq: invalid floating point argument: '{}'\n", nums[0]),
-                            1,
-                        ));
-                    }
-                };
-                let increment: f64 = match nums[1].parse() {
-                    Ok(v) => v,
-                    Err(_) => {
-                        return Ok(ExecResult::err(
-                            format!("seq: invalid floating point argument: '{}'\n", nums[1]),
-                            1,
-                        ));
-                    }
-                };
-                let last: f64 = match nums[2].parse() {
-                    Ok(v) => v,
-                    Err(_) => {
-                        return Ok(ExecResult::err(
-                            format!("seq: invalid floating point argument: '{}'\n", nums[2]),
-                            1,
-                        ));
-                    }
-                };
-                (first, increment, last)
+                let last = parsed.remove(2);
+                let step = parsed.remove(1);
+                (parsed.remove(0), step, last)
             }
         };
 
-        if increment == 0.0 {
+        if step.value == 0.0 {
             return Ok(ExecResult::err("seq: zero increment\n".to_string(), 1));
         }
 
-        // Determine if all values are integers
-        let all_integer = first.fract() == 0.0 && increment.fract() == 0.0 && last.fract() == 0.0;
-
-        // Calculate width for -w flag
-        let width = if equal_width && all_integer {
-            let first_w = format!("{}", first as i64).len();
-            let last_w = format!("{}", last as i64).len();
-            first_w.max(last_w)
-        } else {
-            0
+        let fixed = default_format(&first, &step, &last, equal_width);
+        let render = |x: f64| -> std::result::Result<String, String> {
+            if let Some(fmt) = &format {
+                let bytes = super::printf::render_printf_bytes(fmt, &[format!("{x}")])?;
+                return Ok(String::from_utf8_lossy(&bytes).into_owned());
+            }
+            Ok(match fixed {
+                Some((width, prec)) => format!("{x:0width$.prec$}"),
+                None => {
+                    let bytes = super::printf::render_printf_bytes("%g", &[format!("{x}")])?;
+                    String::from_utf8_lossy(&bytes).into_owned()
+                }
+            })
         };
 
         let mut output = String::new();
@@ -147,23 +275,16 @@ impl Builtin for Seq {
         // `seq 1000000 | head -1` stops early with SIGPIPE.
         let stream = ctx.stdout_stream();
         let mut flushed = 0usize;
-        let mut current = first;
-        let mut first_item = true;
-
         // THREAT[TM-DOS-058]: Limit iterations and output size to prevent memory
         // exhaustion; THREAT[TM-DOS-109]: hitting either cap is reported.
-        let mut count = 0;
         let mut capped = None;
-
+        let mut i: u64 = 0;
         loop {
-            if increment > 0.0 && current > last + f64::EPSILON {
+            let x = first.value + (i as f64) * step.value;
+            if (step.value > 0.0 && x > last.value) || (step.value < 0.0 && x < last.value) {
                 break;
             }
-            if increment < 0.0 && current < last - f64::EPSILON {
-                break;
-            }
-            count += 1;
-            if count > SEQ_MAX_LINES {
+            if i as usize >= SEQ_MAX_LINES {
                 capped = Some(("line", SEQ_MAX_LINES));
                 break;
             }
@@ -181,30 +302,20 @@ impl Builtin for Seq {
                 capped = Some(("output byte", SEQ_MAX_OUTPUT_BYTES));
                 break;
             }
-
-            if !first_item {
+            if i > 0 {
                 output.push_str(&separator);
             }
-            first_item = false;
-
-            if all_integer {
-                let val = current as i64;
-                if equal_width {
-                    output.push_str(&format!("{:0>width$}", val, width = width));
-                } else {
-                    output.push_str(&format!("{}", val));
-                }
-            } else {
-                // Format float, removing trailing zeros
-                let formatted = format!("{:.10}", current);
-                let trimmed = formatted.trim_end_matches('0').trim_end_matches('.');
-                output.push_str(trimmed);
+            match render(x) {
+                Ok(s) => output.push_str(&s),
+                Err(e) => return Ok(ExecResult::err(e.replacen("printf:", "seq:", 1), 1)),
             }
-
-            current += increment;
+            i += 1;
+            if !x.is_finite() {
+                break;
+            }
         }
 
-        if !first_item {
+        if i > 0 {
             output.push('\n');
         }
         if let Some(stream) = &stream {
@@ -394,5 +505,30 @@ mod tests {
         let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
         let result = Seq.execute(ctx).await.unwrap();
         assert_eq!(result.stdout, "-3\n-2\n-1\n0\n");
+    }
+
+    async fn run(args: &[&str]) -> ExecResult {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        Seq.execute(ctx).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn seq_precision_follows_first_and_step() {
+        assert_eq!(run(&["1", "0.5", "2"]).await.stdout, "1.0\n1.5\n2.0\n");
+        assert_eq!(run(&["1", "2.50"]).await.stdout, "1\n2\n");
+        assert_eq!(
+            run(&["-w", "1", "-0.5", "-1"]).await.stdout,
+            "01.0\n00.5\n00.0\n-0.5\n-1.0\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn seq_format_and_separator_value() {
+        assert_eq!(run(&["-f", "%03g", "9", "10"]).await.stdout, "009\n010\n");
+        assert_eq!(run(&["-s", "-1", "1", "2"]).await.stdout, "1-12\n");
+        assert_eq!(run(&["-f", "%e", "1"]).await.stdout, "1.000000e+00\n");
     }
 }

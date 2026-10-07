@@ -76,3 +76,12 @@ stat -f /tmp/stat_combo.txt 2>/dev/null; echo "exit=$?"
 ### expect
 exit=1
 ### end
+
+### stat_quoted_name_and_link
+# %N quotes the name and shows a symlink's target
+cd /tmp && rm -f stn stl && touch stn && ln -s stn stl
+stat -c '%N' stn stl
+### expect
+'stn'
+'stl' -> 'stn'
+### end

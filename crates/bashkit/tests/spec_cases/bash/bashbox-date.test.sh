@@ -11,7 +11,6 @@ Thu Jan  1 00:00:00 UTC 1970
 
 ### bashbox_date_combined_ud
 # combined -ud
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 date -ud @86400; date -ud@86400 +%F
 ### expect
 Fri Jan  2 00:00:00 UTC 1970

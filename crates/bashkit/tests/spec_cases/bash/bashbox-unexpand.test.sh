@@ -4,7 +4,6 @@
 
 ### bashbox_unexpand_single_space_before_stop
 # single space before stop
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf 'abcdefg h\n' | unexpand -a
 ### expect
 abcdefg h
@@ -12,7 +11,6 @@ abcdefg h
 
 ### bashbox_unexpand_single_blank_becomes_tab
 # single blank becomes tab
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf 'abcdefg \tx\n' | unexpand -a
 ### expect
 abcdefg		x
@@ -20,7 +18,6 @@ abcdefg		x
 
 ### bashbox_unexpand_list
 # list
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf '  a   b      c\n' | unexpand -t 2,6
 ### expect
 	a	b      c
@@ -28,7 +25,6 @@ printf '  a   b      c\n' | unexpand -t 2,6
 
 ### bashbox_unexpand_list_exhausted
 # list exhausted
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf '  a   b      c   d\n' | unexpand -t 2,6
 ### expect
 	a	b      c   d
@@ -36,7 +32,6 @@ printf '  a   b      c   d\n' | unexpand -t 2,6
 
 ### bashbox_unexpand_extend
 # extend
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf '  a  b  c  d\n' | unexpand -t 2,/3
 ### expect
 	a  b  c  d
@@ -44,7 +39,6 @@ printf '  a  b  c  d\n' | unexpand -t 2,/3
 
 ### bashbox_unexpand_increment
 # increment
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf '  a  b  c  d\n' | unexpand -t 2,+3
 ### expect
 	a	b	c	d
@@ -52,7 +46,6 @@ printf '  a  b  c  d\n' | unexpand -t 2,+3
 
 ### bashbox_unexpand_obsolete_list
 # obsolete list
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf '  a   b      c\n' | unexpand -2,6
 ### expect
 	a   b      c
@@ -60,7 +53,6 @@ printf '  a   b      c\n' | unexpand -2,6
 
 ### bashbox_unexpand_obsolete_trailing_comma
 # obsolete trailing comma
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf '  a   b      c\n' | unexpand -2,6,
 ### expect
 	a   b      c
@@ -76,7 +68,6 @@ printf 'a       ' | unexpand -a | od -c
 
 ### bashbox_unexpand_non_blank_stops_leading_conversion
 # non-blank stops leading conversion
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf 'x       y\n' | unexpand
 ### expect
 x       y
@@ -84,7 +75,6 @@ x       y
 
 ### bashbox_unexpand_tab_at_stop
 # tab at stop
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf '\t\t  a\n' | unexpand -t 4
 ### expect
 		  a
@@ -92,7 +82,6 @@ printf '\t\t  a\n' | unexpand -t 4
 
 ### bashbox_unexpand_spaces_then_tab
 # spaces then tab
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf '   \ta\n' | unexpand
 ### expect
 	a
@@ -100,7 +89,6 @@ printf '   \ta\n' | unexpand
 
 ### bashbox_unexpand_one_space_then_tab
 # one space then tab
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf 'abcdefg \t \tx\n' | unexpand -a
 ### expect
 abcdefg			x
@@ -108,7 +96,6 @@ abcdefg			x
 
 ### bashbox_unexpand_blank_past_last_stop
 # blank past last stop
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf 'abc     d\n' | unexpand -t 2
 ### expect
 abc			d
