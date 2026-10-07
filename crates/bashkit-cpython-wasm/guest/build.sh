@@ -122,7 +122,10 @@ rm -rf "$ROOT" "$WORK/stdlib"
 mkdir -p "$ROOT/usr/local/lib" "$WORK/stdlib"
 cp -r "$SRC/Lib/." "$WORK/stdlib/"
 cp "$HOST_BUILD"/build/lib.wasi-wasm32-3.14/_sysconfigdata_*.py "$WORK/stdlib/"
-cp "$HERE/_bashkit_boot.py" "$HERE/_bashkit_http.py" "$WORK/stdlib/"
+cp "$HERE/_bashkit_boot.py" "$HERE/_bashkit_http.py" "$HERE/_bashkit_webcore.py" \
+    "$HERE/httpx.py" "$HERE/httpx2.py" "$WORK/stdlib/"
+# bashkit's own requests/httpx over the host bridge (see _bashkit_webcore.py).
+cp -r "$HERE/requests" "$WORK/stdlib/requests"
 (
     cd "$WORK/stdlib"
     # Not usable or not useful in a sandboxed, single-threaded, headless guest.
