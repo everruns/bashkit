@@ -2919,9 +2919,9 @@ impl Interpreter {
         fire_exit_hook: bool,
     ) -> Result<ExecResult> {
         self.script_depth += 1;
-        let result = self
-            .execute_script_body_inner(script, run_exit_trap, fire_exit_hook)
-            .await;
+        // Boxed so this wrapper adds no stack per nested `$(...)` level.
+        let result =
+            Box::pin(self.execute_script_body_inner(script, run_exit_trap, fire_exit_hook)).await;
         self.script_depth -= 1;
         result
     }
@@ -5513,8 +5513,9 @@ impl Interpreter {
         let first_is_bg = matches!(list.rest.first(), Some((ListOperator::Background, _)));
 
         if first_is_bg {
-            self.spawn_in_background(&list.first, &mut stdout, &mut stderr)
-                .await?;
+            // Boxed: the job path holds a forked Interpreter across an await,
+            // which would otherwise bloat every recursive execute_list frame.
+            Box::pin(self.spawn_in_background(&list.first, &mut stdout, &mut stderr)).await?;
             exit_code = 0;
             control_flow = ControlFlow::None;
             exit_code_from_conditional_context = false;
@@ -5602,8 +5603,7 @@ impl Interpreter {
 
             if should_execute {
                 if should_background {
-                    self.spawn_in_background(cmd, &mut stdout, &mut stderr)
-                        .await?;
+                    Box::pin(self.spawn_in_background(cmd, &mut stdout, &mut stderr)).await?;
                     exit_code = 0;
                     exit_code_from_conditional_context = false;
                 } else {

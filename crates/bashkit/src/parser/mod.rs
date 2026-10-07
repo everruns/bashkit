@@ -457,16 +457,7 @@ impl<'a> Parser<'a> {
                 // `{ cmd & }`, `do cmd & done`: the `&` before a closing
                 // keyword still backgrounds `cmd`.
                 if matches!(op, ListOperator::Background) {
-                    rest.push((
-                        ListOperator::Background,
-                        Command::Simple(SimpleCommand {
-                            name: Word::literal(""),
-                            args: vec![],
-                            redirects: vec![],
-                            assignments: vec![],
-                            span: self.current_span,
-                        }),
-                    ));
+                    rest.push(empty_background(self.current_span));
                 }
                 break;
             }
@@ -3869,6 +3860,23 @@ impl<'a> Parser<'a> {
         }
         operand
     }
+}
+
+/// `cmd &` right before a closing keyword: an empty command carrying the `&`.
+/// Out of line so the `Command` temporary does not enlarge the recursive
+/// `parse_command_list` frame (nested `$(...)` parse depth, TM-DOS-044).
+#[inline(never)]
+fn empty_background(span: Span) -> (ListOperator, Command) {
+    (
+        ListOperator::Background,
+        Command::Simple(SimpleCommand {
+            name: Word::literal(""),
+            args: vec![],
+            redirects: vec![],
+            assignments: vec![],
+            span,
+        }),
+    )
 }
 
 #[cfg(test)]
