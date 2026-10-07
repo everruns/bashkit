@@ -226,6 +226,12 @@ criteria = "safe-to-deploy"
 delta = "2.14.0 -> 2.14.2"
 notes = "Reviewed disjoint mutable references: all indices bounds-checked and duplicates excluded before references formed. Lifetimes preserved, centralized assertions, exact-key Eq and safe constructor insertions. No ambient changes."
 
+[[audits.insta]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-run"
+delta = "1.48.0 -> 1.49.0"
+notes = "Reviewed registry delta: escaped unit-variant JSON map keys, OsStr snapshot names, macro trailing-semicolon fixes and update hints; regression tests included. No new execution or unsafe code."
+
 [[audits.iri-string]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
@@ -317,6 +323,12 @@ criteria = "safe-to-deploy"
 delta = "3.12.7 -> 3.13.0"
 notes = "External<T> now checks a native-payload registry before casting the tagged object, turning a type-confusion cast into an InvalidArg error, and frees obj_ptr/size_hint_ptr when napi_wrap fails. Remaining additions are the wasm-only two-phase env-cleanup exports. New unsafe stays inside the existing NAPI FFI idiom and is now better guarded; the only std::process uses are abort() guards against unwinding across the FFI boundary. No new fs or net access."
 
+[[audits.napi]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "3.13.0 -> 3.14.0"
+notes = "Reviewed registry delta including new WASI heap-break arithmetic and allocator wrappers: serialized allocator access, checked page growth below 2 GiB, target-gated shared-memory refresh and crash reporting. Native handoff is a no-op; allocator tests cover overflow and growth failures."
+
 [[audits.napi-build]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
@@ -328,6 +340,12 @@ who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 delta = "2.4.4 -> 2.5.0"
 notes = "Adds the napi_wasi_threads cfg via rustc-check-cfg plus an exact-triple rustc-cfg for wasm32-wasip1-threads, and three --export-if-defined link args for the two-phase wasm env-cleanup entry points. Build script only prints cargo directives; no fs or net access."
+
+[[audits.napi-build]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "2.5.0 -> 2.6.0"
+notes = "Reviewed target-gated linker wrapping and feature/rustflag detection. Bundled wasm object disassembled: two forwarding malloc/free exports matching included C source. No new build-time subprocess or network access."
 
 [[audits.napi-derive]]
 who = "Mykhailo Chalyi <mykhailo.chalyi-contractor@procore.com>"
@@ -347,6 +365,12 @@ criteria = "safe-to-deploy"
 delta = "3.6.8 -> 3.6.9"
 notes = "No source changes; the release only bumps the napi/napi-derive-backend dependency versions in Cargo.toml."
 
+[[audits.napi-derive]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "3.6.9 -> 3.6.12"
+notes = "Reviewed syn 3 parser migration: function arguments read their type field, new AST attributes initialized and non-exhaustive path fields ignored. No new unsafe or build-time execution."
+
 [[audits.napi-derive-backend]]
 who = "Mykhailo Chalyi <mykhailo.chalyi-contractor@procore.com>"
 criteria = "safe-to-deploy"
@@ -359,11 +383,23 @@ criteria = "safe-to-deploy"
 delta = "6.1.3 -> 6.1.4"
 notes = "Reviewed redundant-borrow removals and too_many_arguments allow; generated bindings unchanged in behavior, no new unsafe or ambient access."
 
+[[audits.napi-derive-backend]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "6.1.4 -> 6.1.5"
+notes = "Reviewed syn 3 AST adaptation and generated enum property flags changed to writable/enumerable/configurable. No new unsafe or external execution."
+
 [[audits.napi-sys]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 delta = "3.3.1 -> 3.3.2"
 notes = "Reviewed single const addition napi_cannot_run_js=23 matching Node API; FFI declarations only, no code or ambient access."
+
+[[audits.napi-sys]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "3.3.2 -> 3.4.0"
+notes = "Reviewed exact-target build cfg, atomic shared-memory refresh and worker-crash flag modules. Checked pointer/page bounds and target gating; native code unchanged outside tests."
 
 [[audits.num-bigint]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
@@ -394,6 +430,36 @@ who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 delta = "0.2.7 -> 0.2.8"
 notes = "Reviewed Arc map uniqueness and equal size/alignment checks. Old T moves local and allocation becomes MaybeUninit U guard before closure, preserving allocation cleanup and preventing double-drop on panic. No ambient capability changes."
+
+[[audits.pyo3]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.29.2 -> 0.29.3"
+notes = "Reviewed registry delta: critical sections pin bytearray/dict access, checked CPython Unicode initialization with cleanup on invalid characters, gated CPython native iterators, Python finalization guard and deterministic test adjustments. Reviewed pointer/refcount lifetimes and unsafe access changes."
+
+[[audits.pyo3-build-config]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.29.2 -> 0.29.3"
+notes = "Reviewed registry delta: package-version and synchronized workspace dependency metadata only; build configuration source unchanged."
+
+[[audits.pyo3-ffi]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.29.2 -> 0.29.3"
+notes = "Reviewed registry delta: package-version and synchronized workspace dependency metadata only; FFI declarations unchanged."
+
+[[audits.pyo3-macros]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.29.2 -> 0.29.3"
+notes = "Reviewed registry delta: package-version and synchronized workspace dependency metadata only; macro entry-point source unchanged."
+
+[[audits.pyo3-macros-backend]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.29.2 -> 0.29.3"
+notes = "Reviewed registry delta: explicit literal macro input validation and syn literal destructuring updates. No new unsafe or build-time external execution."
 
 [[audits.rand]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
@@ -507,6 +573,12 @@ criteria = "safe-to-deploy"
 delta = "1.52.0 -> 1.52.1"
 notes = "Reviewed delta: reverts blocking-pool sharded queue to mutex/condvar VecDeque to fix spawn_blocking hang, adjusts fastrand cfg, and adds no new unsafe blocks or ambient capabilities."
 
+[[audits.tokio]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "1.53.1 -> 1.53.2"
+notes = "Reviewed registry delta: buffered-file partial-read retention, vectored-write progress handling, semaphore CAS success ordering, mpsc/task-trace state fixes, nonblocking JoinSet poll and shutdown-safe timer registration. Reviewed unsafe timer pinning/shutdown locks and associated regression tests; no new external execution."
+
 [[audits.tokio-rustls]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
@@ -531,6 +603,12 @@ criteria = "safe-to-deploy"
 delta = "0.8.0-pre.14 -> 0.8.1"
 notes = "Reviewed the 0.8.0-pre.14 -> 0.8.1 delta: the published source trees are byte-identical. Every file except Cargo.toml, Cargo.lock and .cargo_vcs_info.json hashes the same across the two releases (295 files, 293 of them Rust), and the three that differ carry only version strings plus the upstream release commit sha. Nothing to review beyond the version stamp; this is the stable cut of the pre-release already in use."
 
+[[audits.turso_core]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.8.1 -> 0.8.2"
+notes = "Reviewed published 0.8.1 -> 0.8.2 source delta. Core CDC insert/update/delete emission now uses ColumnLayout physical register offsets and skips virtual columns, preventing virtual-column values from being read as physical registers; record sizing uses non-virtual columns. No new unsafe, ambient IO, execution, or dependencies. Extension, macros and parser source unchanged; manifests update package and sibling versions only."
+
 [[audits.turso_ext]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
@@ -548,6 +626,12 @@ who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 delta = "0.8.0-pre.14 -> 0.8.1"
 notes = "Reviewed the 0.8.0-pre.14 -> 0.8.1 delta: the published source trees are byte-identical. Every file except Cargo.toml, Cargo.lock and .cargo_vcs_info.json hashes the same across the two releases (8 files, 6 of them Rust), and the three that differ carry only version strings plus the upstream release commit sha. Nothing to review beyond the version stamp; this is the stable cut of the pre-release already in use."
+
+[[audits.turso_ext]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.8.1 -> 0.8.2"
+notes = "Reviewed published 0.8.1 -> 0.8.2 source delta. Core CDC insert/update/delete emission now uses ColumnLayout physical register offsets and skips virtual columns, preventing virtual-column values from being read as physical registers; record sizing uses non-virtual columns. No new unsafe, ambient IO, execution, or dependencies. Extension, macros and parser source unchanged; manifests update package and sibling versions only."
 
 [[audits.turso_macros]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
@@ -567,6 +651,12 @@ criteria = "safe-to-deploy"
 delta = "0.8.0-pre.14 -> 0.8.1"
 notes = "Reviewed the 0.8.0-pre.14 -> 0.8.1 delta: the published source trees are byte-identical. Every file except Cargo.toml, Cargo.lock and .cargo_vcs_info.json hashes the same across the two releases (13 files, 12 of them Rust), and the three that differ carry only version strings plus the upstream release commit sha. Nothing to review beyond the version stamp; this is the stable cut of the pre-release already in use."
 
+[[audits.turso_macros]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.8.1 -> 0.8.2"
+notes = "Reviewed published 0.8.1 -> 0.8.2 source delta. Core CDC insert/update/delete emission now uses ColumnLayout physical register offsets and skips virtual columns, preventing virtual-column values from being read as physical registers; record sizing uses non-virtual columns. No new unsafe, ambient IO, execution, or dependencies. Extension, macros and parser source unchanged; manifests update package and sibling versions only."
+
 [[audits.turso_parser]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
@@ -584,6 +674,12 @@ who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 delta = "0.8.0-pre.14 -> 0.8.1"
 notes = "Reviewed the 0.8.0-pre.14 -> 0.8.1 delta: the published source trees are byte-identical. Every file except Cargo.toml, Cargo.lock and .cargo_vcs_info.json hashes the same across the two releases (11 files, 9 of them Rust), and the three that differ carry only version strings plus the upstream release commit sha. Nothing to review beyond the version stamp; this is the stable cut of the pre-release already in use."
+
+[[audits.turso_parser]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.8.1 -> 0.8.2"
+notes = "Reviewed published 0.8.1 -> 0.8.2 source delta. Core CDC insert/update/delete emission now uses ColumnLayout physical register offsets and skips virtual columns, preventing virtual-column values from being read as physical registers; record sizing uses non-virtual columns. No new unsafe, ambient IO, execution, or dependencies. Extension, macros and parser source unchanged; manifests update package and sibling versions only."
 
 [[audits.twox-hash]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
