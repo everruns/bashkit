@@ -11,7 +11,6 @@ a b c d
 
 ### bashbox_expand_extend
 # extend
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf 'a\tb\tc\td\te\n' | expand -t 2,5,/3
 ### expect
 a b  c   d  e
@@ -19,7 +18,6 @@ a b  c   d  e
 
 ### bashbox_expand_increment
 # increment
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf 'a\tb\tc\td\te\n' | expand -t 2,5,+3
 ### expect
 a b  c  d  e
@@ -27,7 +25,6 @@ a b  c  d  e
 
 ### bashbox_expand_only_extend
 # only extend
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf 'a\tb\n' | expand -t /3
 ### expect
 a  b
@@ -42,7 +39,6 @@ a  b
 
 ### bashbox_expand_repeated_t_adds_stops
 # repeated -t adds stops
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf 'a\tb\tc\n' | expand -t 2 -t 6
 ### expect
 a b   c
@@ -50,7 +46,6 @@ a b   c
 
 ### bashbox_expand_stdin
 # stdin
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf '\tz\n' | expand -t 3 -
 ### expect
    z
@@ -58,7 +53,6 @@ printf '\tz\n' | expand -t 3 -
 
 ### bashbox_expand_slash_then_value_later
 # slash then value later
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf 'a\tb\tc\n' | expand -t /,4
 ### expect
 a   b   c
