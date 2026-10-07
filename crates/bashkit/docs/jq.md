@@ -27,6 +27,10 @@ Implemented:
 | `-e`, `--exit-status` | Set exit code based on the output |
 | `-j` | Like `-r` but suppresses trailing newlines |
 | `--tab` | Use tabs for indentation |
+| `-a`, `--ascii-output` | Escape non-ASCII characters as `\uXXXX` (strings stay quoted even with `-r`) |
+| `--raw-output0` | Like `-r` with a NUL after each output; a string containing NUL is an error |
+| `--seq` | Write RS (0x1e) before each output; RS separates input values |
+| `--stream` | Feed each input as path events (`[path, leaf]`, `[path]`), as `tostream` does |
 | `--arg name value` | Bind `$name` to a string |
 | `--argjson name json` | Bind `$name` to a parsed JSON value |
 | `-f FILE`, `--from-file FILE` | Read the filter from FILE (VFS); all positionals become input files |
@@ -98,11 +102,19 @@ The limit counts real in-memory size, which is several times the JSON text:
 a 5.6 MB array of 100,000 small objects fits the default, much larger inputs
 need a larger `max_live_intermediate_bytes`.
 
+## Messages and halt
+
+`stderr`, `debug` and `halt_error` write to the jq command's stderr.
+`halt` and `halt_error` end the jq command (not the shell or host) with
+their exit code, skipping any remaining input.
+
 ## Known gaps
 
 Bashkit's jq is intentionally minimal in places where the host model differs
 from upstream jq:
 
+- `--seq` reads RS as whitespace; jq's rules for abandoned text between
+  separators are not reproduced.
 - Exotic numeric formatting modes (`@base32`, `@base64d`, etc.) follow
   whatever `jaq-json` ships.
 

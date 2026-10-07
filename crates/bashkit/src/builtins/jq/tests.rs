@@ -2162,3 +2162,58 @@ fn run_loop_never_calls_unwrap_valr() {
     // THREAT[TM-INF-023]: `jaq_core::unwrap_valr` exits the process on halt.
     assert!(!include_str!("mod.rs").contains("unwrap_valr("));
 }
+
+#[tokio::test]
+async fn ascii_output_escapes_non_ascii() {
+    let out = run_jq_with_args(&["-ac", "."], r#"{"s":"olá ☃ 😀"}"#)
+        .await
+        .unwrap();
+    assert_eq!(out, "{\"s\":\"ol\\u00e1 \\u2603 \\ud83d\\ude00\"}\n");
+    // -a keeps strings JSON-encoded even under -r, like jq.
+    let out = run_jq_with_args(&["-ra", "."], "\"é\"").await.unwrap();
+    assert_eq!(out, "\"\\u00e9\"\n");
+}
+
+#[tokio::test]
+async fn raw_output0_separates_with_nul() {
+    let out = run_jq_with_args(&["--raw-output0", ".[]"], r#"[1,"x",{}]"#)
+        .await
+        .unwrap();
+    assert_eq!(out, "1\0x\0{}\0");
+    let result = run_jq_result_with_args(&["--raw-output0", ".[]"], r#"["a\u0000b","c"]"#)
+        .await
+        .unwrap();
+    assert_eq!(result.stdout, "");
+    assert_eq!(
+        result.stderr,
+        "jq: error (at <stdin>:0): Cannot dump a string containing NUL with --raw-output0 option\n"
+    );
+    assert_eq!(result.exit_code, 5);
+}
+
+#[tokio::test]
+async fn stream_flag_feeds_path_events() {
+    let out = run_jq_with_args(&["-c", "--stream", "."], r#"{"a":[1,{"b":null}],"c":"d"}"#)
+        .await
+        .unwrap();
+    assert_eq!(
+        out,
+        "[[\"a\",0],1]\n[[\"a\",1,\"b\"],null]\n[[\"a\",1,\"b\"]]\n[[\"a\",1]]\n[[\"c\"],\"d\"]\n[[\"c\"]]\n"
+    );
+    let out = run_jq_with_args(&["-c", "--stream", "."], "1 [] {}")
+        .await
+        .unwrap();
+    assert_eq!(out, "[[],1]\n[[],[]]\n[[],{}]\n");
+    let out = run_jq_with_args(&["-nc", "--stream", "fromstream(inputs)"], r#"{"a":[1,2]}"#)
+        .await
+        .unwrap();
+    assert_eq!(out, "{\"a\":[1,2]}\n");
+}
+
+#[tokio::test]
+async fn seq_flag_uses_record_separators() {
+    let out = run_jq_with_args(&["--seq", "-c", "."], "\x1e[1]\n\x1e2\n")
+        .await
+        .unwrap();
+    assert_eq!(out, "\x1e[1]\n\x1e2\n");
+}

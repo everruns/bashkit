@@ -65,7 +65,7 @@ use compat::{
     ARGS_VAR_NAME, ENV_VAR_NAME, FILENAME_VAR_NAME, LINENO_VAR_NAME, PUBLIC_ENV_VAR_NAME,
     build_compat_prefix,
 };
-use convert::{JqJson, jq_to_val, parse_json_stream, val_to_jq_capped};
+use convert::{JqJson, jq_to_val, parse_json_stream, stream_events, val_to_jq_capped};
 use errors::{format_compile_errors, format_load_errors, format_runtime_error_at};
 use format::{Indent, render, sort_keys as sort_jq_keys};
 
@@ -405,16 +405,37 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
     } else {
         let mut slurped: Vec<JqJson> = Vec::new();
         for (name, text) in &sources {
-            let (vals, err) = parse_jq_json_stream_partial(&ctx, text)?;
-            if parsed.slurp {
-                slurped.extend(vals);
+            // `--seq`: RS (0x1e) separates values; read it as whitespace.
+            let seq_text;
+            let text = if parsed.seq {
+                seq_text = text.replace('\x1e', " ");
+                &seq_text
             } else {
-                let lines = input::value_lines(text);
-                for (i, v) in vals.iter().enumerate() {
+                text
+            };
+            let (vals, err) = parse_jq_json_stream_partial(&ctx, text)?;
+            let lines = input::value_lines(text);
+            // `--stream`: each value becomes its path events.
+            let vals: Vec<(JqJson, usize)> = vals
+                .into_iter()
+                .enumerate()
+                .flat_map(|(i, v)| {
+                    let line = lines.get(i).copied().unwrap_or(0);
+                    if parsed.stream {
+                        stream_events(&v).into_iter().map(|e| (e, line)).collect()
+                    } else {
+                        vec![(v, line)]
+                    }
+                })
+                .collect();
+            if parsed.slurp {
+                slurped.extend(vals.into_iter().map(|(v, _)| v));
+            } else {
+                for (v, line) in &vals {
                     items.push(FilterInput {
                         value: jq_to_val(v),
                         filename: name_val(name),
-                        lineno: lines.get(i).copied().unwrap_or(0),
+                        lineno: *line,
                     });
                 }
             }
@@ -592,19 +613,38 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
                             input_status = Some(i32::from(jq.is_null() || jq.is_false()));
                         }
 
-                        let effective_raw = parsed.raw_output || parsed.join_output;
-                        let formatted = if effective_raw {
-                            if let JqJson::String(s) = &jq {
+                        // With -a, jq JSON-encodes strings even under -r.
+                        let effective_raw =
+                            (parsed.raw_output || parsed.join_output || parsed.raw_output0)
+                                && !parsed.ascii_output;
+                        let formatted = match &jq {
+                            JqJson::String(s) if effective_raw => {
+                                if parsed.raw_output0 && s.contains('\0') {
+                                    let loc = location(&current.borrow());
+                                    stderr_out.push_str(&format!(
+                                        "jq: error (at {loc}): Cannot dump a string \
+                                         containing NUL with --raw-output0 option\n"
+                                    ));
+                                    input_status = Some(5);
+                                    break;
+                                }
                                 s.clone()
-                            } else {
-                                render(&jq, indent)
                             }
+                            _ => render(&jq, indent),
+                        };
+                        let formatted = if parsed.ascii_output {
+                            ascii_escape(&formatted)
                         } else {
-                            render(&jq, indent)
+                            formatted
                         };
 
+                        if parsed.seq {
+                            output.push('\x1e');
+                        }
                         output.push_str(&formatted);
-                        if !parsed.join_output {
+                        if parsed.raw_output0 {
+                            output.push('\0');
+                        } else if !parsed.join_output {
                             output.push('\n');
                         }
 
@@ -760,4 +800,25 @@ fn build_args_obj(positional: &[JqJson], named: &[(String, JqJson)]) -> JqJson {
         ("positional".to_string(), JqJson::Array(positional.to_vec())),
         ("named".to_string(), JqJson::Object(named_map)),
     ])
+}
+
+/// `-a`: escape every non-ASCII character as `\uXXXX` (UTF-16 surrogate
+/// pairs above the BMP). Rendered JSON has non-ASCII text only inside
+/// strings, so escaping the whole rendering is safe.
+fn ascii_escape(s: &str) -> String {
+    if s.is_ascii() {
+        return s.to_string();
+    }
+    let mut out = String::with_capacity(s.len() + 16);
+    for c in s.chars() {
+        if c.is_ascii() {
+            out.push(c);
+        } else {
+            let mut buf = [0u16; 2];
+            for unit in c.encode_utf16(&mut buf) {
+                out.push_str(&format!("\\u{unit:04x}"));
+            }
+        }
+    }
+    out
 }
