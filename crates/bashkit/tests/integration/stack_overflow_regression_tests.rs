@@ -56,3 +56,27 @@ async fn nested_subst_in_arithmetic_no_overflow() {
     // Must not panic or SIGABRT
     let _ = bash.exec(&script).await;
 }
+
+/// THREAT[TM-DOS-125]: a script that re-runs itself through `sh`/`bash`
+/// recursed until the process stack overflowed (taking every tenant in the
+/// process with it). Child shells now count against the function depth.
+#[tokio::test]
+async fn recursive_child_shell_is_bounded() {
+    let mut bash = Bash::new();
+    let r = bash
+        .exec("echo 'sh /tmp/s.sh' > /tmp/s.sh; sh /tmp/s.sh; echo rc=$?")
+        .await;
+    let r = r.unwrap();
+    assert!(r.stdout.contains("rc="), "stdout: {}", r.stdout);
+    assert!(
+        r.stderr.contains("maximum nesting depth exceeded"),
+        "stderr: {}",
+        r.stderr
+    );
+
+    let r = bash
+        .exec("f() { bash -c 'f() { bash -c f; }; f'; }; f; echo done")
+        .await
+        .unwrap();
+    assert!(r.stdout.contains("done"), "stdout: {}", r.stdout);
+}

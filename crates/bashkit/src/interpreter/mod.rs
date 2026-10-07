@@ -424,6 +424,10 @@ const ENV_SHELL_ONLY_BUILTINS: &[&str] = &[
     "wait",
 ];
 
+/// Nested `bash`/`sh` cap (TM-DOS-125). Sized so the deepest nesting fits a
+/// 2 MiB debug-build stack with room for functions inside each level.
+const MAX_CHILD_SHELL_DEPTH: usize = 8;
+
 const SPECIAL_BUILTIN_NAMES: &[&str] = &[
     ".", "bash", "builtin", "command", "declare", "eval", "exec", "getopts", "let", "local", "sh",
     "source", "typeset", "unset",
@@ -1508,6 +1512,8 @@ pub struct Interpreter {
     /// Nesting depth of `execute_script_body`; finished background job output
     /// is delivered only between top-level (depth 1) commands.
     script_depth: usize,
+    /// Nested `bash`/`sh` child shells (TM-DOS-125).
+    child_shell_depth: usize,
 }
 
 struct ArithmeticExpansionState {
@@ -2002,6 +2008,7 @@ impl Interpreter {
             seconds_base: (crate::time_compat::Instant::now(), 0),
             concurrent_jobs: true,
             script_depth: 0,
+            child_shell_depth: 0,
         }
     }
 
@@ -2153,6 +2160,8 @@ impl Interpreter {
             seconds_base: self.seconds_base,
             concurrent_jobs: self.concurrent_jobs,
             script_depth: 1,
+            // Forks are polled on this task's stack, so they inherit its depth.
+            child_shell_depth: self.child_shell_depth,
         }
     }
 
@@ -5268,6 +5277,19 @@ impl Interpreter {
         // mutations the child performs must not leak back to the parent.
         // Snapshot first so a full restore handles both directions; then
         // wipe the isolated state before running. See issue #1777.
+        // THREAT[TM-DOS-125]: each child shell adds a deep chain of stack
+        // frames; without a cap a script that runs itself via `sh` overflows
+        // the process stack. It counts against the function depth and has a
+        // tighter cap of its own (a level costs several function calls).
+        if self.child_shell_depth >= MAX_CHILD_SHELL_DEPTH
+            || self.counters.push_function(&self.limits).is_err()
+        {
+            return Ok(ExecResult::err(
+                format!("{shell_name}: maximum nesting depth exceeded\n"),
+                2,
+            ));
+        }
+        self.child_shell_depth += 1;
         let child_snapshot = self.snapshot_subshell_state();
         self.reset_state_for_child_shell();
 
@@ -5319,6 +5341,8 @@ impl Interpreter {
         // Restore parent state — full revert of the snapshot since the child
         // is process-isolated. This also undoes OPTIND/SHOPT_* writes above.
         self.restore_subshell_state(child_snapshot);
+        self.counters.pop_function();
+        self.child_shell_depth -= 1;
 
         match result {
             Ok(exec_result) => self.apply_redirections(exec_result, redirects).await,

@@ -183,3 +183,22 @@ async fn l_pipe_001_stages_run_sequentially() {
     assert_eq!(result.stdout, "y\n1 0\n");
     assert!(result.stderr.contains("output limit"), "{}", result.stderr);
 }
+
+/// L-PROC-004: child shells nest at most 8 deep.
+#[tokio::test]
+async fn l_proc_004_child_shell_depth() {
+    let mut bash = Bash::new();
+    // /tmp/dN.sh runs /tmp/d(N+1).sh; /tmp/d9.sh prints.
+    let setup = "for i in 1 2 3 4 5 6 7 8; do echo \"sh /tmp/d$((i+1)).sh\" > /tmp/d$i.sh; done; echo 'echo deep' > /tmp/d9.sh";
+    bash.exec(setup).await.unwrap();
+    // 8 nested shells: d2.sh .. d9.sh.
+    let r = bash.exec("sh /tmp/d2.sh").await.unwrap();
+    assert_eq!(r.stdout, "deep\n");
+    let r = bash.exec("sh /tmp/d1.sh").await.unwrap();
+    assert_eq!(r.stdout, "");
+    assert!(
+        r.stderr.contains("maximum nesting depth exceeded"),
+        "{}",
+        r.stderr
+    );
+}
