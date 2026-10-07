@@ -255,16 +255,20 @@ def test_tm_dos_029_arithmetic_overflow_does_not_crash():
 def test_tm_dos_029_division_by_zero_does_not_crash():
     """TM-DOS-029: division by zero must return an error value, not panic."""
     r = Bash().execute_sync("echo $((1 / 0)) 2>&1")
-    assert isinstance(r.exit_code, int)
-    assert r.stdout.strip() == "0"
+    # Like bash: the expansion error aborts the line with exit 1.
+    assert r.exit_code == 1
+    assert r.stdout == ""
+    assert "division by 0" in r.stderr
     _assert_sanitized_error(r.stderr)
 
 
 def test_tm_dos_029_modulo_by_zero_does_not_crash():
     """TM-DOS-029: modulo by zero must not unwind through the binding."""
     r = Bash().execute_sync("echo $((1 % 0)) 2>&1")
-    assert isinstance(r.exit_code, int)
-    assert r.stdout.strip() == "0"
+    # Like bash: the expansion error aborts the line with exit 1.
+    assert r.exit_code == 1
+    assert r.stdout == ""
+    assert "division by 0" in r.stderr
     _assert_sanitized_error(r.stderr)
 
 
