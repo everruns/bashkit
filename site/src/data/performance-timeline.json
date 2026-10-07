@@ -3,7 +3,8 @@
   "sources": {
     "bench": "crates/bashkit-bench/results/*.json",
     "criterion": "crates/bashkit/benches/results/*.md",
-    "evals": "crates/bashkit-eval/results/*.json"
+    "evals": "crates/bashkit-eval/results/*.json",
+    "gaps": "crates/bashkit-eval/results/gaps/gaps-*.json"
   },
   "summary": {
     "benchRuns": 10,
@@ -4905,6 +4906,252 @@
       }
     }
   ],
+  "gapTelemetry": {
+    "runs": [
+      {
+        "id": "gaps-20261007T075044Z",
+        "date": "2026-10-07",
+        "timestamp": "2026-10-07T07:50:44Z",
+        "source": "crates/bashkit-eval/results/gaps/gaps-20261007T075044Z.json",
+        "reportSource": "crates/bashkit-eval/results/gaps/gaps-20261007T075044Z.md",
+        "version": "0.18.2",
+        "sessions": 1493,
+        "calls": 5206,
+        "gapCallsNow": 125,
+        "gapCallsRecorded": 319,
+        "failedCallsNow": 231,
+        "failedCallsRecorded": 723
+      }
+    ],
+    "latest": {
+      "id": "gaps-20261007T075044Z",
+      "date": "2026-10-07",
+      "timestamp": "2026-10-07T07:50:44Z",
+      "source": "crates/bashkit-eval/results/gaps/gaps-20261007T075044Z.json",
+      "reportSource": "crates/bashkit-eval/results/gaps/gaps-20261007T075044Z.md",
+      "version": "0.18.2",
+      "sessions": 1493,
+      "calls": 5206,
+      "gapCallsNow": 125,
+      "gapCallsRecorded": 319,
+      "failedCallsNow": 231,
+      "failedCallsRecorded": 723,
+      "top": [
+        {
+          "kind": "parse_error",
+          "key": "expected 'done'",
+          "now": 23,
+          "recorded": 38,
+          "example": "cat > /tmp/generate_toc.sh << 'EOF'"
+        },
+        {
+          "kind": "parse_error",
+          "key": "unterminated command substitution",
+          "now": 18,
+          "recorded": 23,
+          "example": "bash /scripts/broken.sh"
+        },
+        {
+          "kind": "missing_command",
+          "key": "busybox",
+          "now": 10,
+          "recorded": 0,
+          "example": "busybox tar --help 2>&1 | head -n 40"
+        },
+        {
+          "kind": "unknown_option",
+          "key": "tar -",
+          "now": 9,
+          "recorded": 1,
+          "example": "tar -xzf /tmp/project.tar.gz -C /backup --strip-components=0"
+        },
+        {
+          "kind": "parse_error",
+          "key": "unexpected end of input in [[ ]]",
+          "now": 8,
+          "recorded": 7,
+          "example": "{"
+        },
+        {
+          "kind": "missing_command",
+          "key": "sudo",
+          "now": 7,
+          "recorded": 7,
+          "example": "sudo tee /etc/env.conf > /dev/null << 'EOF'"
+        },
+        {
+          "kind": "missing_command",
+          "key": "python3",
+          "now": 6,
+          "recorded": 6,
+          "example": "python3 << 'EOF'"
+        },
+        {
+          "kind": "unknown_option",
+          "key": "grep I",
+          "now": 6,
+          "recorded": 0,
+          "example": "grep -RIn --include='*.py' -E '^\\s*def\\s+.*validate.*\\(' . | tee /tmp/validate_matches.txt"
+        },
+        {
+          "kind": "missing_command",
+          "key": "gawk",
+          "now": 5,
+          "recorded": 1,
+          "example": "gawk --version 2>&1 || echo \"no gawk\""
+        },
+        {
+          "kind": "missing_command",
+          "key": "perl",
+          "now": 4,
+          "recorded": 3,
+          "example": "perl -0777 -pe 's/.*/$&/'}"
+        },
+        {
+          "kind": "parse_error",
+          "key": "(no detail)",
+          "now": 3,
+          "recorded": 11,
+          "example": "("
+        },
+        {
+          "kind": "parse_error",
+          "key": "unexpected token",
+          "now": 3,
+          "recorded": 4,
+          "example": "cat > /tmp/merge_ini.sh << 'EOF'"
+        },
+        {
+          "kind": "unknown_option",
+          "key": "join o",
+          "now": 3,
+          "recorded": 0,
+          "example": "join -t $'\\t' -a1 -a2 -e '' -o '0,1.2,2.2' /tmp/v1.tsv /tmp/v2.tsv > /tmp/joined.tsv"
+        },
+        {
+          "kind": "missing_command",
+          "key": "node",
+          "now": 2,
+          "recorded": 2,
+          "example": "cd /app && node -e '"
+        },
+        {
+          "kind": "unknown_option",
+          "key": "find -ls",
+          "now": 2,
+          "recorded": 2,
+          "example": "find /backup -ls"
+        },
+        {
+          "kind": "missing_command",
+          "key": "python",
+          "now": 2,
+          "recorded": 1,
+          "example": "python - <<'PY'"
+        },
+        {
+          "kind": "parse_error",
+          "key": "unterminated single quote",
+          "now": 2,
+          "recorded": 1,
+          "example": "awk -F, '"
+        },
+        {
+          "kind": "missing_command",
+          "key": "mawk",
+          "now": 2,
+          "recorded": 0,
+          "example": "mawk --version 2>&1 || echo \"no mawk\""
+        },
+        {
+          "kind": "unknown_option",
+          "key": "gzip c",
+          "now": 2,
+          "recorded": 0,
+          "example": "gzip -f /dist/release.tar 2>&1"
+        },
+        {
+          "kind": "unknown_option",
+          "key": "xargs r",
+          "now": 2,
+          "recorded": 0,
+          "example": "cd /home/eval && find src -type f -name '*.js' -print0 | xargs -0 -r grep -l 'console\\.log' | while …"
+        }
+      ],
+      "fixed": [
+        {
+          "kind": "unknown_option",
+          "key": "tar C",
+          "now": 0,
+          "recorded": 30,
+          "example": "tar -czf /tmp/project.tar.gz -C / project"
+        },
+        {
+          "kind": "unknown_option",
+          "key": "find -delete",
+          "now": 0,
+          "recorded": 15,
+          "example": "find /workspace -name \"*.tmp\" -type f -delete && find /workspace -name \"*.tmp\" -type f 2>/dev/null |…"
+        },
+        {
+          "kind": "unsupported",
+          "key": "env",
+          "now": 0,
+          "recorded": 13,
+          "example": "echo \"=== Run 1: No environment variables set (defaults) ===\""
+        },
+        {
+          "kind": "missing_command",
+          "key": "to_upper",
+          "now": 0,
+          "recorded": 12,
+          "example": "echo \"=== Demonstrating to_upper function ===\""
+        },
+        {
+          "kind": "missing_command",
+          "key": "/app/todo.sh",
+          "now": 0,
+          "recorded": 10,
+          "example": "/app/todo.sh add \"Buy groceries\""
+        },
+        {
+          "kind": "parse_error",
+          "key": "parser fuel exhausted (N operations, max N)",
+          "now": 0,
+          "recorded": 9,
+          "example": "find /workspace -name \"*.tmp\" -type f -exec rm {} \\; && echo \"Successfully deleted all .tmp files\""
+        },
+        {
+          "kind": "parse_error",
+          "key": "expected 'then'",
+          "now": 0,
+          "recorded": 7,
+          "example": "rm -f /app/tasks.txt"
+        },
+        {
+          "kind": "missing_command",
+          "key": "sum=470",
+          "now": 0,
+          "recorded": 7,
+          "example": ""
+        },
+        {
+          "kind": "missing_command",
+          "key": "./fizzbuzz.sh",
+          "now": 0,
+          "recorded": 6,
+          "example": "./fizzbuzz.sh"
+        },
+        {
+          "kind": "missing_command",
+          "key": "/scripts/healthcheck.sh",
+          "now": 0,
+          "recorded": 6,
+          "example": "/scripts/healthcheck.sh"
+        }
+      ]
+    }
+  },
   "modelTrends": [
     {
       "model": "anthropic/claude-haiku-4-5",

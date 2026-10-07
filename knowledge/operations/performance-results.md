@@ -27,6 +27,7 @@ directories:
 | `bashkit-bench` | `crates/bashkit-bench/results/` | `bench-*.json` plus matching `bench-*.md` |
 | Criterion benches | `crates/bashkit/benches/results/` | `criterion-*.md` |
 | `bashkit-eval` (archived) | `crates/bashkit-eval/results/` | `eval-*.json`, `scripting-eval-*.json`, plus matching `.md` reports |
+| `bashkit-replay` gap telemetry | `crates/bashkit-eval/results/gaps/` | `gaps-*.json` plus matching `gaps-*.md` |
 
 Markdown files are the user-facing reports linked from `/benches`; JSON files
 are the aggregation input for benchmark and eval summaries.
@@ -41,7 +42,8 @@ are the aggregation input for benchmark and eval summaries.
 ## Run Commands
 
 Default benchmark recipes that represent a real run MUST save artifacts in the
-directories above: `just bench`, `just bench-parallel`, `just bench-sqlite`, `just bench-python`.
+directories above: `just bench`, `just bench-parallel`, `just bench-sqlite`, `just bench-python`,
+`just gaps`.
 
 The comparison harness resolves `bash` from `PATH` and requires Bash 4 or newer
 (case conversion and associative arrays are benchmarked). A missing or older
@@ -72,6 +74,11 @@ the `/benches` page. It reads the result directories above and writes
 
 `site/package.json` MUST run that transformer in `prebuild`, so every
 `pnpm run build` refreshes `/benches` from the latest committed result artifacts.
+
+The transformer also emits `gapTelemetry`: `runs` (one point per
+`gaps-*.json`: calls, gap calls and failed calls, recorded vs now) and
+`latest` (that report's top 20 gaps and first 10 fixed gaps). `/benches`
+renders both next to the Python startup panel.
 
 The transformer also emits `pythonStartup`, one point per
 `criterion-python-*.md` report: median first call and next call from the raw

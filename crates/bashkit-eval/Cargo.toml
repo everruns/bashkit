@@ -18,6 +18,10 @@ description = "Mira eval study for bashkit tool usage"
 name = "bashkit-eval"
 path = "src/main.rs"
 
+[[bin]]
+name = "bashkit-replay"
+path = "src/replay_main.rs"
+
 [dependencies]
 # Mira eval framework (crates.io). Imported as `mira`; the `macros` feature
 # provides the #[eval] discovery attribute. We use the in-process Subject path

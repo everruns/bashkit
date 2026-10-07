@@ -292,6 +292,13 @@ eval-smoke *ARGS:
 eval-scripting *ARGS:
     mira --bin bashkit-eval run bashkit_scripting {{ARGS}}
 
+# Gap telemetry: replay every recorded eval tool call on the current bashkit,
+# save results/gaps/gaps-<ts>.{json,md}, refresh /benches data. No model or
+# network needed. `just gaps --print` only prints the report.
+gaps *ARGS:
+    cargo run --release -q -p bashkit-eval --bin bashkit-replay -- {{ARGS}}
+    @if [ -z "{{ARGS}}" ]; then node site/scripts/build-performance-data.mjs; fi
+
 # === Security ===
 
 # Auto-install cargo-vet if missing (idempotent, matches CI's
