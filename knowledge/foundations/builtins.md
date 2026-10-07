@@ -25,6 +25,20 @@ All external-style builtins support `--help` and `--version` flags via the
 flags `-h`/`-V` have different meanings in many tools). Tools where `-h`/`-V`
 genuinely mean help/version handle them directly in `execute()`.
 
+### GNU Option Parsing
+
+Hand-written coreutils-style builtins parse options with
+`builtins::arg_parser::gnu_getopt` (getopt_long semantics: bundles such as
+`-ud@0`, attached or separate values, `--long=VAL`, unambiguous long
+prefixes, `--`, optional argument permutation). It returns the options in
+command-line order plus operands, and GNU-worded errors (`invalid option --
+'z'`, `unrecognized option`, `requires an argument`) with the caller's exit
+code. New or reworked builtins should use it rather than ad-hoc loops, so
+option spelling matches GNU; builtins on a ported clap surface (see
+[Coreutils Argument Port](../runtimes/coreutils-args-port.md)) keep clap.
+Obsolete forms GNU still accepts (`head -5`, `fold -5`) are rewritten to the
+modern option before getopt runs, never when they are an option's value.
+
 ### Command Dispatch Order
 
 functions → special commands → builtins → path execution → $PATH search →
