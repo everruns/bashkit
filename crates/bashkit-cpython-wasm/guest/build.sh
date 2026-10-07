@@ -11,11 +11,12 @@
 # - The stdlib ships as one deflate-compressed zip of .py sources. The
 #   snapshot caches the zip directory, so the runtime must serve the exact
 #   same zip bytes; both artifacts are produced together by this script.
-# - Output is a gzip of the stripped snapshot plus the zip. The crate's
+# - Output is an xz of the stripped snapshot plus the zip (xz, not gzip:
+#   ~30% smaller, which keeps the crate under the crates.io 10 MiB cap). The crate's
 #   build.rs compiles the snapshot to Pulley bytecode ahead of time.
 #
 # Usage: guest/build.sh [WORK_DIR]
-# Requires: curl, tar, unzip, python3 (>=3.11), make, a C compiler for the
+# Requires: curl, tar, unzip, xz, python3 (>=3.11), make, a C compiler for the
 # native build Python. Everything else is downloaded into WORK_DIR.
 set -euo pipefail
 
@@ -130,11 +131,13 @@ cp -r "$HERE/requests" "$WORK/stdlib/requests"
     cd "$WORK/stdlib"
     # Not usable or not useful in a sandboxed, single-threaded, headless guest.
     rm -rf test idlelib tkinter turtledemo ensurepip venv pydoc_data turtle.py \
-        _pyrepl/__pycache__ curses dbm/gnu.py dbm/ndbm.py multiprocessing concurrent/futures/process.py
+        _pyrepl/__pycache__ curses mailbox.py dbm/gnu.py dbm/ndbm.py multiprocessing concurrent/futures/process.py
     # No FFI, TLS, sockets or TTY in the guest: these can never work.
     rm -rf ctypes ssl.py ftplib.py imaplib.py poplib.py smtplib.py socketserver.py \
         http/server.py wsgiref xmlrpc webbrowser.py _pyrepl pdb.py bdb.py pydoc.py \
         _aix_support.py _android_support.py _ios_support.py _osx_support.py
+    # Debugger stand-in: doctest imports pdb; breakpoint() prints a notice.
+    cp "$HERE/pdb.py" pdb.py
     # HTTP goes through the host's egress pipeline, not sockets
     # (_bashkit_http.py); http.client patches itself when first imported.
     printf '\n# bashkit: connections go through the host (see _bashkit_http).\nimport _bashkit_http\n_bashkit_http.patch_http_client(globals())\ndel _bashkit_http\n' >>http/client.py
@@ -185,7 +188,8 @@ case "$out" in
 esac
 
 mkdir -p "$CRATE/artifacts"
-gzip -9 -n -c "$WORK/python.wasm" >"$CRATE/artifacts/python.wasm.gz"
+rm -f "$CRATE/artifacts/python.wasm.gz"
+xz -9e -T1 -c "$WORK/python.wasm" >"$CRATE/artifacts/python.wasm.xz"
 cp "$ROOT/usr/local/lib/python314.zip" "$CRATE/artifacts/python314.zip"
 (
     cd "$CRATE/artifacts"
@@ -195,7 +199,7 @@ cp "$ROOT/usr/local/lib/python314.zip" "$CRATE/artifacts/python314.zip"
         echo "wasmtime_wizer=${WASMTIME_VERSION}"
         echo "zlib=${ZLIB_VERSION}"
         echo "sqlite=${SQLITE_AMALGAMATION}"
-        sha256sum python.wasm.gz python314.zip
+        sha256sum python.wasm.xz python314.zip
     } >MANIFEST
 )
 ls -la "$CRATE/artifacts"

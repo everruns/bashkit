@@ -160,6 +160,13 @@ worth keeping so the question does not get re-litigated from scratch.
   of `Quotable`), but they are imported by *generated* coreutils-port files, so
   removal means carrying rewrite rules in the porter. Low return.
 
+## Build-only dependencies of `bashkit-cpython-wasm`
+
+- `lzma-rs` (pure Rust, MIT) decodes the xz-compressed CPython snapshot in
+  `build.rs`. Never linked into a binary. xz keeps the crate under the
+  crates.io 10 MiB cap with more modules preloaded (see
+  [CPython WebAssembly Runtime](../runtimes/cpython-wasm.md)).
+
 ## Vendored crates
 
 - **`jaq-json`** is vendored into the jq builtin so its value operations can
