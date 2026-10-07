@@ -275,8 +275,10 @@ def test_tm_dos_029_modulo_by_zero_does_not_crash():
 def test_tm_dos_029_negative_exponent_does_not_crash():
     """TM-DOS-029: unsupported arithmetic should stay bounded."""
     r = Bash().execute_sync("echo $((2 ** -1)) 2>&1")
-    assert isinstance(r.exit_code, int)
-    assert r.stdout.strip() == "0"
+    # Like bash: a negative exponent is an error that aborts the line.
+    assert r.exit_code == 1
+    assert r.stdout == ""
+    assert "exponent less than 0" in r.stderr
     _assert_sanitized_error(r.stderr)
 
 
