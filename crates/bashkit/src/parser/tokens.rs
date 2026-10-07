@@ -69,6 +69,10 @@ pub enum Token {
     /// Here document with tab stripping (<<-)
     HereDocStrip,
 
+    /// Here document on a numbered descriptor (`3<<EOF`, `3<<-EOF` when the
+    /// flag is set)
+    HereDocFd(i32, bool),
+
     /// Here string (<<<)
     HereString,
 
@@ -107,6 +111,9 @@ pub enum Token {
 
     /// Redirect both stdout and stderr (&>)
     RedirectBoth,
+
+    /// Append both stdout and stderr (&>>)
+    RedirectBothAppend,
 
     /// Clobber redirect (>|) - force overwrite even with noclobber
     Clobber,

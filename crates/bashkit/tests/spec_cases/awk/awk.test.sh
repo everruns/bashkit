@@ -528,7 +528,7 @@ printf 'a\n' | awk 'BEGIN {a[1]="x"; a[2]="y"} {for (k in a) print k, a[k]}'
 ### end
 
 ### awk_for_in_string_keys
-# for-in with string keys sorts lexically
+# for-in visits keys in gawk hash order (single bytes land in byte order)
 printf 'a\n' | awk 'BEGIN {a["b"]="2"; a["a"]="1"; a["c"]="3"} {for (k in a) print k, a[k]}'
 ### expect
 a 1

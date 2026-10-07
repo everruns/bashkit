@@ -2211,7 +2211,7 @@ impl Interpreter {
             cancelled: Arc::clone(&self.cancelled),
             hooks: Arc::clone(&self.hooks),
             in_trap: false,
-            condition_sequence_depth: 0,
+            condition_sequence_depth: self.condition_sequence_depth,
             deferred_proc_subs: Vec::new(),
             proc_sub_paths: HashSet::new(),
             random_state: AtomicU32::new(random_seed),
@@ -2320,6 +2320,14 @@ impl Interpreter {
 
     fn is_errexit_enabled(&self) -> bool {
         self.flags.contains(BashFlags::ERREXIT)
+    }
+
+    /// `set -e` fires here: on, and not inside a context where bash ignores
+    /// it (an `if`/`while`/`until` condition, a non-final `&&`/`||` element,
+    /// a `!` pipeline). Those contexts reach into function bodies and
+    /// subshells run from them, so `if f; then` never stops inside `f`.
+    fn errexit_active(&self) -> bool {
+        self.is_errexit_enabled() && self.condition_sequence_depth == 0
     }
 
     /// Check if xtrace (set -x) is enabled.
@@ -3296,7 +3304,7 @@ impl Interpreter {
             // the status as suppressed (for example, a short-circuited AND-OR
             // list) or the command is an explicitly negated pipeline.
             // Lists are NOT suppressed here so set -e fires for failing lists.
-            if self.is_errexit_enabled() && exit_code != 0 {
+            if self.errexit_active() && exit_code != 0 {
                 let suppressed = matches!(command, Command::Pipeline(p) if p.negated)
                     || result.errexit_suppressed;
                 if !suppressed {
@@ -3475,6 +3483,16 @@ impl Interpreter {
                         self.set_simple_pipestatus(r.exit_code);
                     }
                     result
+                }
+                Command::Pipeline(pipeline) if pipeline.negated => {
+                    // `! cmd` is an errexit-ignored context, inside too.
+                    self.condition_sequence_depth += 1;
+                    let result = self.execute_pipeline(pipeline).await;
+                    self.condition_sequence_depth -= 1;
+                    result.map(|mut r| {
+                        r.errexit_suppressed = true;
+                        r
+                    })
                 }
                 Command::Pipeline(pipeline) => self.execute_pipeline(pipeline).await,
                 Command::List(list) => self.execute_list(list).await,
@@ -3746,7 +3764,7 @@ impl Interpreter {
                 let emit_before = self.output_emit_count;
                 let result = self.execute_command_sequence(&for_cmd.body).await?;
                 self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
-                let should_errexit = self.is_errexit_enabled()
+                let should_errexit = self.errexit_active()
                     && result.exit_code != 0
                     && result.control_flow == ControlFlow::None
                     && !result.errexit_suppressed;
@@ -4048,7 +4066,7 @@ impl Interpreter {
                 let emit_before = self.output_emit_count;
                 let result = self.execute_command_sequence(&arith_for.body).await?;
                 self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
-                let should_errexit = self.is_errexit_enabled()
+                let should_errexit = self.errexit_active()
                     && result.exit_code != 0
                     && result.control_flow == ControlFlow::None
                     && !result.errexit_suppressed;
@@ -4633,7 +4651,7 @@ impl Interpreter {
                 let emit_before = self.output_emit_count;
                 let result = self.execute_command_sequence(body).await?;
                 self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
-                let should_errexit = self.is_errexit_enabled()
+                let should_errexit = self.errexit_active()
                     && result.exit_code != 0
                     && result.control_flow == ControlFlow::None
                     && !result.errexit_suppressed;
@@ -5692,7 +5710,7 @@ impl Interpreter {
             // Suppression is decided by the callee and surfaced through
             // result.errexit_suppressed (e.g. AND-OR lists).
             let suppress = result.errexit_suppressed;
-            if check_errexit && self.is_errexit_enabled() && exit_code != 0 && !suppress {
+            if check_errexit && self.errexit_active() && exit_code != 0 && !suppress {
                 return Ok(ExecResult {
                     stdout,
                     stderr,
@@ -6282,7 +6300,15 @@ impl Interpreter {
             exit_code_from_conditional_context = false;
         } else {
             let emit_before = self.output_emit_count;
-            let result = self.execute_command(&list.first).await?;
+            // A non-final `&&`/`||` element runs with errexit ignored.
+            let conditional = list
+                .rest
+                .first()
+                .is_some_and(|(op, _)| matches!(op, ListOperator::And | ListOperator::Or));
+            self.condition_sequence_depth += usize::from(conditional);
+            let result = self.execute_command(&list.first).await;
+            self.condition_sequence_depth -= usize::from(conditional);
+            let result = result?;
             self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
             stdout.append(&result.stdout);
             stderr.append(&result.stderr);
@@ -6336,7 +6362,7 @@ impl Interpreter {
             // Check errexit before executing next semicolon-separated command:
             // if previous command failed outside conditional context, exit now.
             let should_check_errexit = matches!(op, ListOperator::Semicolon)
-                && self.is_errexit_enabled()
+                && self.errexit_active()
                 && exit_code != 0
                 && !exit_code_from_conditional_context;
 
@@ -6369,18 +6395,21 @@ impl Interpreter {
                     exit_code_from_conditional_context = false;
                 } else {
                     let emit_before = self.output_emit_count;
-                    let result = self.execute_command(cmd).await?;
+                    let followed_by_conditional_op =
+                        list.rest.get(i + 1).is_some_and(|(op, cmd)| {
+                            !Self::is_empty_sentinel(cmd)
+                                && matches!(op, ListOperator::And | ListOperator::Or)
+                        });
+                    self.condition_sequence_depth += usize::from(followed_by_conditional_op);
+                    let result = self.execute_command(cmd).await;
+                    self.condition_sequence_depth -= usize::from(followed_by_conditional_op);
+                    let result = result?;
                     self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
                     stdout.append(&result.stdout);
                     stderr.append(&result.stderr);
                     exit_code = result.exit_code;
                     self.last_exit_code = exit_code;
                     control_flow = result.control_flow;
-                    let followed_by_conditional_op =
-                        list.rest.get(i + 1).is_some_and(|(op, cmd)| {
-                            !Self::is_empty_sentinel(cmd)
-                                && matches!(op, ListOperator::And | ListOperator::Or)
-                        });
                     // Bash suppresses errexit for AND-OR list elements except the
                     // command following the final &&/|| operator.
                     exit_code_from_conditional_context =
@@ -6411,7 +6440,7 @@ impl Interpreter {
         // Final errexit check for the last command. A non-zero status only
         // remains suppressed when it was carried from a short-circuited or
         // non-final AND-OR list element; a failing final &&/|| command exits.
-        let should_final_errexit_check = self.is_errexit_enabled()
+        let should_final_errexit_check = self.errexit_active()
             && exit_code != 0
             && !exit_code_from_conditional_context
             && !self.is_in_condition_sequence();
@@ -8730,8 +8759,25 @@ impl Interpreter {
             self.pending_fd_capture_depth += 1;
         }
 
+        // Output the call's redirects will route must not stream from the
+        // body first (`f > out` printed `out` too), as for compounds.
+        let has_output_redirect = redirects.iter().any(|r| {
+            !matches!(
+                r.kind,
+                RedirectKind::Input | RedirectKind::HereDoc | RedirectKind::HereString
+            )
+        });
+        let saved_callback = if has_output_redirect {
+            self.output_callback.take()
+        } else {
+            None
+        };
+
         // Execute function body. Always restore call state even on error.
         let result = self.execute_command(&func_def.body).await;
+        if let Some(cb) = saved_callback {
+            self.output_callback = Some(cb);
+        }
         if capture_pending_fd {
             self.pending_fd_capture_depth = self.pending_fd_capture_depth.saturating_sub(1);
             if result.is_err() {
@@ -9126,6 +9172,20 @@ impl Interpreter {
         self.apply_redirections(result, redirects).await
     }
 
+    /// `getopts` unsets OPTARG for options without one; a `local OPTARG`
+    /// stays local (emptied) so the caller's value is untouched.
+    fn unset_optarg(&mut self) {
+        if self
+            .call_stack
+            .iter()
+            .any(|frame| frame.locals.contains_key("OPTARG"))
+        {
+            self.set_variable("OPTARG".to_string(), String::new());
+        } else {
+            self.vars_mut().remove("OPTARG");
+        }
+    }
+
     /// Usage: `getopts optstring name [args...]`
     ///
     /// Parses options from positional params (or `args`).
@@ -9158,16 +9218,13 @@ impl Interpreter {
         };
 
         // Get current OPTIND (1-based index into args)
-        let optind: usize = self
-            .scoped
-            .variables
-            .get("OPTIND")
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(1);
+        // OPTIND and OPTARG follow dynamic scope (`local OPTIND` in a
+        // function); an empty or unset OPTIND starts over at 1.
+        let optind: usize = self.expand_variable("OPTIND").parse().unwrap_or(1);
 
         // Check if we're past the end
         if optind < 1 || optind > parse_args.len() {
-            self.insert_variable_checked(varname.clone(), "?".to_string());
+            self.set_variable(varname.clone(), "?".to_string());
             return Ok(ExecResult {
                 stdout: crate::StreamData::new(),
                 stderr: crate::StreamData::new(),
@@ -9181,10 +9238,9 @@ impl Interpreter {
 
         // Check if this is an option (starts with -)
         if !current_arg.starts_with('-') || current_arg == "-" || current_arg == "--" {
-            self.insert_variable_checked(varname.clone(), "?".to_string());
+            self.set_variable(varname.clone(), "?".to_string());
             if current_arg == "--" {
-                self.vars_mut()
-                    .insert("OPTIND".to_string(), (optind + 1).to_string());
+                self.set_variable("OPTIND".to_string(), (optind + 1).to_string());
             }
             return Ok(ExecResult {
                 stdout: crate::StreamData::new(),
@@ -9204,10 +9260,9 @@ impl Interpreter {
 
         if char_idx >= opt_chars.len() {
             // Should not happen, but advance
-            self.vars_mut()
-                .insert("OPTIND".to_string(), (optind + 1).to_string());
+            self.set_variable("OPTIND".to_string(), (optind + 1).to_string());
             self.getopts_char_idx = 0;
-            self.insert_variable_checked(varname.clone(), "?".to_string());
+            self.set_variable(varname.clone(), "?".to_string());
             return Ok(ExecResult {
                 stdout: crate::StreamData::new(),
                 stderr: crate::StreamData::new(),
@@ -9224,36 +9279,31 @@ impl Interpreter {
         // Check if this option is in the optstring
         if let Some(pos) = spec.find(opt_char) {
             let needs_arg = spec.get(pos + 1..pos + 2) == Some(":");
-            self.insert_variable_checked(varname.clone(), opt_char.to_string());
+            self.set_variable(varname.clone(), opt_char.to_string());
 
             if needs_arg {
                 // Option needs an argument
                 if char_idx + 1 < opt_chars.len() {
                     // Rest of current arg is the argument
                     let arg_val: String = opt_chars[char_idx + 1..].iter().collect();
-                    self.insert_variable_checked("OPTARG".to_string(), arg_val);
-                    self.vars_mut()
-                        .insert("OPTIND".to_string(), (optind + 1).to_string());
+                    self.set_variable("OPTARG".to_string(), arg_val);
+                    self.set_variable("OPTIND".to_string(), (optind + 1).to_string());
                     self.getopts_char_idx = 0;
                 } else if optind < parse_args.len() {
                     // Next arg is the argument
-                    self.vars_mut()
-                        .insert("OPTARG".to_string(), parse_args[optind].clone());
-                    self.vars_mut()
-                        .insert("OPTIND".to_string(), (optind + 2).to_string());
+                    self.set_variable("OPTARG".to_string(), parse_args[optind].clone());
+                    self.set_variable("OPTIND".to_string(), (optind + 2).to_string());
                     self.getopts_char_idx = 0;
                 } else {
                     // Missing argument
-                    self.vars_mut().remove("OPTARG");
-                    self.vars_mut()
-                        .insert("OPTIND".to_string(), (optind + 1).to_string());
+                    self.unset_optarg();
+                    self.set_variable("OPTIND".to_string(), (optind + 1).to_string());
                     self.getopts_char_idx = 0;
                     if silent {
-                        self.insert_variable_checked(varname.clone(), ":".to_string());
-                        self.vars_mut()
-                            .insert("OPTARG".to_string(), opt_char.to_string());
+                        self.set_variable(varname.clone(), ":".to_string());
+                        self.set_variable("OPTARG".to_string(), opt_char.to_string());
                     } else {
-                        self.insert_variable_checked(varname.clone(), "?".to_string());
+                        self.set_variable(varname.clone(), "?".to_string());
                         let mut result = ExecResult::ok(String::new());
                         result.stderr = format!(
                             "bash: getopts: option requires an argument -- '{}'\n",
@@ -9266,34 +9316,33 @@ impl Interpreter {
                 }
             } else {
                 // No argument needed
-                self.vars_mut().remove("OPTARG");
+                self.unset_optarg();
                 if char_idx + 1 < opt_chars.len() {
-                    // More chars in this arg
+                    // More chars in this arg: OPTIND stays on it, as in bash.
+                    self.set_variable("OPTIND".to_string(), optind.to_string());
                     self.getopts_char_idx = char_idx + 1;
                 } else {
                     // Move to next arg
-                    self.vars_mut()
-                        .insert("OPTIND".to_string(), (optind + 1).to_string());
+                    self.set_variable("OPTIND".to_string(), (optind + 1).to_string());
                     self.getopts_char_idx = 0;
                 }
             }
         } else {
             // Unknown option
-            self.vars_mut().remove("OPTARG");
+            self.unset_optarg();
             if char_idx + 1 < opt_chars.len() {
+                self.set_variable("OPTIND".to_string(), optind.to_string());
                 self.getopts_char_idx = char_idx + 1;
             } else {
-                self.vars_mut()
-                    .insert("OPTIND".to_string(), (optind + 1).to_string());
+                self.set_variable("OPTIND".to_string(), (optind + 1).to_string());
                 self.getopts_char_idx = 0;
             }
 
             if silent {
-                self.insert_variable_checked(varname.clone(), "?".to_string());
-                self.vars_mut()
-                    .insert("OPTARG".to_string(), opt_char.to_string());
+                self.set_variable(varname.clone(), "?".to_string());
+                self.set_variable("OPTARG".to_string(), opt_char.to_string());
             } else {
-                self.insert_variable_checked(varname.clone(), "?".to_string());
+                self.set_variable(varname.clone(), "?".to_string());
                 let mut result = ExecResult::ok(String::new());
                 result.stderr = format!("bash: getopts: illegal option -- '{}'\n", opt_char).into();
                 result = self.apply_redirections(result, redirects).await?;
@@ -10508,6 +10557,17 @@ impl Interpreter {
                 }
             }
             let commands: &[Command] = if file_read.is_some() { &[] } else { commands };
+            // bash clears `set -e` in a command substitution unless
+            // `shopt -s inherit_errexit`; the snapshot restores it.
+            let inherit_errexit = self.is_errexit_enabled()
+                && self
+                    .scoped
+                    .variables
+                    .get("SHOPT_inherit_errexit")
+                    .is_some_and(|v| v == "1");
+            if self.is_errexit_enabled() && !inherit_errexit {
+                self.insert_variable_checked("SHOPT_e".to_string(), "0".to_string());
+            }
             // Captured output must not reach the streaming callback: compound
             // commands (`case`, `{ }`, `if`) emit through it as they run.
             let saved_callback = self.output_callback.take();
@@ -10527,6 +10587,13 @@ impl Interpreter {
                 }
                 self.last_exit_code = cmd_result.exit_code;
                 if matches!(cmd_result.control_flow, ControlFlow::Exit(_)) {
+                    break;
+                }
+                if inherit_errexit
+                    && self.errexit_active()
+                    && cmd_result.exit_code != 0
+                    && !cmd_result.errexit_suppressed
+                {
                     break;
                 }
             }
@@ -10634,6 +10701,10 @@ impl Interpreter {
         // SRANDOM ignores assignment (bash 5.1).
         if resolved == "SRANDOM" {
             return;
+        }
+        // Assigning OPTIND restarts `getopts` within an option group.
+        if resolved == "OPTIND" {
+            self.getopts_char_idx = 0;
         }
         if resolved == "RANDOM" {
             self.random_state

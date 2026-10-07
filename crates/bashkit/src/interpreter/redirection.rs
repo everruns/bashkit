@@ -73,9 +73,12 @@ impl Interpreter {
                     stdin = Some(format!("{}\n", content).into());
                 }
                 RedirectKind::HereDoc | RedirectKind::HereDocStrip => {
-                    // << EOF / <<- EOF - use the heredoc content as stdin
-                    let content = self.expand_word(&redirect.target).await?;
-                    stdin = Some(content.into());
+                    // << EOF / <<- EOF - use the heredoc content as stdin.
+                    // `3<<EOF` feeds fd 3, which nothing here reads.
+                    if matches!(redirect.fd, None | Some(0)) {
+                        let content = self.expand_word(&redirect.target).await?;
+                        stdin = Some(content.into());
+                    }
                 }
                 RedirectKind::DupInput => {
                     // <&FD - if FD is a coproc read FD, consume next line

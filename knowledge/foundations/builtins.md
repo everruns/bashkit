@@ -394,8 +394,12 @@ and the extensions agents use (`gensub`, `asort`/`asorti`, `patsplit`,
 `strftime`/`mktime`/`systime`, `BEGINFILE`/`ENDFILE`, `switch`, arrays of
 arrays, `PROCINFO["sorted_in"]`, `FIELDWIDTHS`/`FPAT`, `IGNORECASE`, `RS` as a
 regex, `RT`). `rand()` reproduces gawk's random() sequence. Debian-oracle
-differential score: 94% of 260 awk cases (51% before the rewrite); the
-remaining gawk gap is unsorted `for (k in a)` order.
+differential score: 94% of 260 awk cases (51% before the rewrite); every
+gawk case passes, the misses expect `mawk`'s own dialect. Unsorted
+`for (k in a)` follows gawk's storage (`order`): a non-negative integer
+first key makes an integer array (other keys listed first, then integers
+ascending), otherwise a chained hash (sdbm for strings) listed bucket by
+bucket, newest first.
 
 Pipeline: `lexer` -> `parser` (names resolved to slots, AST in `ast`) ->
 `interp` (async evaluator) with `io` (records, `getline`, redirections,

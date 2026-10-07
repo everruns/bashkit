@@ -30,6 +30,7 @@ mod funcs;
 mod interp;
 mod io;
 mod lexer;
+mod order;
 mod parser;
 mod regex;
 mod value;

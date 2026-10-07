@@ -146,7 +146,7 @@ pass in CI); only divergences and boundaries are recorded here.
 
 | ID | Tool | Limitation | Evidence |
 |----|------|------------|----------|
-| L-AWK-001 | awk | `for (k in a)` without `PROCINFO["sorted_in"]` visits numeric keys ascending, then the rest by bytes; gawk uses its hash-table order, so unsorted loops can print in a different order than Debian awk | `awk_for_in_string_keys` spec |
+| L-AWK-001 | awk | `for (k in a)` without `PROCINFO["sorted_in"]` follows a model of gawk's array storage replayed from the keys still present; after `delete`, gawk's order also depends on the deleted keys, so it can differ from Debian awk | `order::tests`, `awk_for_in_string_keys` spec |
 | L-AWK-002 | awk | `print \| cmd` collects the command's input and runs it at `close()` or exit (as if the pipe were read at once); `\|&` coprocesses, `@include`/`@load`/`@namespace`, MPFR (`-M`), `--profile` and the debugger are not supported | stance |
 | L-AWK-003 | awk | Commands (`system()`, pipes) need the shell: through `Bash::exec` they run as `sh -c` in the sandbox; a direct `Builtin::execute` call (embedders) has no shell, so they print a notice and report status 127 | `test_awk_print_redirect_pipe_needs_plan_driver` |
 | L-AWK-004 | awk | `mawk` and `nawk` run the gawk dialect: mawk's `-W` options, messages and its `substr`/division-by-zero behavior are not emulated | stance |

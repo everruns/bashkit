@@ -65,7 +65,7 @@ use compat::{
     build_compat_prefix,
 };
 use convert::{JqJson, jq_to_val, parse_json_stream, val_to_jq_capped};
-use errors::{format_compile_errors, format_load_errors, format_runtime_error};
+use errors::{format_compile_errors, format_load_errors, format_runtime_error_at};
 use format::{Indent, render, sort_keys as sort_jq_keys};
 
 /// Custom DataT that holds both the LUT and a shared input iterator.
@@ -140,7 +140,7 @@ pub struct Jq;
 struct FilterInput {
     value: Val,
     filename: Val,
-    lineno: Val,
+    lineno: usize,
 }
 
 #[async_trait]
@@ -200,32 +200,32 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
     // Build $ARGS object. positional: [...], named: {name: val, ...}.
     let args_obj = build_args_obj(&parsed.positional_args, &all_named_args);
 
-    // Read input (stdin or files).
-    let file_content: String;
-    let input = if !parsed.file_args.is_empty() {
-        let mut combined = String::new();
+    // Read input sources: stdin, or each FILE in order. A file that cannot
+    // be opened is reported like jq (`Could not open file`), skipped, and
+    // turns the final exit status into 2.
+    let mut stderr_out = String::new();
+    let mut input_failed = false;
+    let mut sources: Vec<(Option<&str>, String)> = Vec::new();
+    if parsed.file_args.is_empty() {
+        sources.push((None, ctx.stdin.map(|s| s.to_string()).unwrap_or_default()));
+    } else {
         for file_arg in &parsed.file_args {
             let path = resolve_path(ctx.cwd, file_arg);
-            let text = match read_text_file(&*ctx.fs, &path, "jq").await {
-                Ok(t) => t,
-                Err(e) => return Ok(e),
-            };
-            ctx.consume_budget_input(text.len())?;
-            if !combined.is_empty() && !combined.ends_with('\n') {
-                combined.push('\n');
+            match ctx.fs.read_file(&path).await {
+                Ok(bytes) => {
+                    let text = crate::StreamData::from(bytes).to_string();
+                    ctx.consume_budget_input(text.len())?;
+                    sources.push((Some(*file_arg), text));
+                }
+                Err(e) => {
+                    input_failed = true;
+                    stderr_out.push_str(&format!(
+                        "jq: error: Could not open file {file_arg}: {}\n",
+                        crate::error::io_error_reason(&e)
+                    ));
+                }
             }
-            combined.push_str(&text);
         }
-        file_content = combined;
-        file_content.as_str()
-    } else {
-        ctx.stdin.map(|stdin| &**stdin).unwrap_or("")
-    };
-
-    // Empty stdin without -n yields empty output (matches real jq for files
-    // and stdin alike), but -Rs explicitly produces "" — keep that path.
-    if input.trim().is_empty() && !parsed.null_input && !(parsed.raw_input && parsed.slurp) {
-        return Ok(ExecResult::ok(String::new()));
     }
 
     // Build shell env object for the custom `env` filter / $ENV.
@@ -293,9 +293,24 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
     var_names.push(ARGS_VAR_NAME);
 
     type D = InputData<Val>;
+    // jq's `input` fails with "No more inputs" when the stream is
+    // exhausted; jaq-std's yields nothing.
+    let input_run: jaq_core::RunPtr<D> = |cv| {
+        let next = cv.0.data().inputs().next();
+        Box::new(std::iter::once(match next {
+            Some(r) => r.map_err(|e| jaq_core::Exn::from(jaq_core::Error::str(e))),
+            None => Err(jaq_core::Exn::from(jaq_core::Error::str("No more inputs"))),
+        }))
+    };
     let input_funs: Vec<jaq_core::native::Fun<D>> = jaq_std::input::funs::<D>()
         .into_vec()
         .into_iter()
+        .filter(|(name, _, _)| *name != "input")
+        .chain(std::iter::once((
+            "input",
+            jaq_core::native::v(0),
+            input_run,
+        )))
         .map(|(name, arity, run)| (name, arity, jaq_core::Native::<D>::new(run)))
         .collect();
     // Replace jaq-std's `regex`-crate-backed natives (matches/split_matches/
@@ -350,56 +365,66 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
     let args_val = jq_to_val(&args_obj);
     let pre_var_vals: Vec<Val> = all_var_bindings.iter().map(|(_, v)| jq_to_val(v)).collect();
 
-    // Build inputs to process.
-    let inputs_to_process: Vec<FilterInput> = if parsed.null_input {
-        vec![FilterInput {
-            value: Val::Null,
-            filename: Val::Null,
-            lineno: Val::from(0isize),
-        }]
-    } else if parsed.raw_input && parsed.slurp {
-        vec![FilterInput {
-            value: Val::from(input.to_string()),
-            filename: stdin_filename(&parsed),
-            lineno: Val::from(0isize),
-        }]
+    // Build the input stream. Each value keeps its file name and the line
+    // number jq reports for it in errors.
+    let mut parse_error: Option<String> = None;
+    let mut items: Vec<FilterInput> = Vec::new();
+    let name_val = |name: &Option<&str>| match name {
+        Some(n) => Val::from((*n).to_string()),
+        None => Val::Null,
+    };
+    if parsed.raw_input && parsed.slurp {
+        let text: String = sources.iter().map(|(_, t)| t.as_str()).collect();
+        items.push(FilterInput {
+            value: Val::from(text),
+            filename: sources
+                .last()
+                .map(|(n, _)| name_val(n))
+                .unwrap_or(Val::Null),
+            lineno: 0,
+        });
     } else if parsed.raw_input {
-        let fname = stdin_filename(&parsed);
-        input
-            .lines()
-            .enumerate()
-            .map(|(i, line)| FilterInput {
-                value: Val::from(line.to_string()),
-                filename: fname.clone(),
-                lineno: Val::from(isize::try_from(i + 1).unwrap_or(isize::MAX)),
-            })
-            .collect()
-    } else if parsed.slurp {
-        match parse_jq_json_stream(&ctx, input)? {
-            Ok(vals) => {
-                let arr: JqJson = JqJson::Array(vals);
-                vec![FilterInput {
-                    value: jq_to_val(&arr),
-                    filename: stdin_filename(&parsed),
-                    lineno: Val::from(0isize),
-                }]
+        for (name, text) in &sources {
+            for (i, line) in text.lines().enumerate() {
+                items.push(FilterInput {
+                    value: Val::from(line.to_string()),
+                    filename: name_val(name),
+                    lineno: i + 1,
+                });
             }
-            Err(e) => return Ok(ExecResult::err(format!("{e}\n"), 5)),
         }
     } else {
-        match parse_jq_json_stream(&ctx, input)? {
-            Ok(jq_vals) => jq_vals
-                .iter()
-                .enumerate()
-                .map(|(i, v)| FilterInput {
-                    value: jq_to_val(v),
-                    filename: stdin_filename(&parsed),
-                    lineno: Val::from(isize::try_from(i + 1).unwrap_or(isize::MAX)),
-                })
-                .collect(),
-            Err(e) => return Ok(ExecResult::err(format!("{e}\n"), 5)),
+        let mut slurped: Vec<JqJson> = Vec::new();
+        for (name, text) in &sources {
+            let (vals, err) = parse_jq_json_stream_partial(&ctx, text)?;
+            if parsed.slurp {
+                slurped.extend(vals);
+            } else {
+                let lines = input::value_lines(text);
+                for (i, v) in vals.iter().enumerate() {
+                    items.push(FilterInput {
+                        value: jq_to_val(v),
+                        filename: name_val(name),
+                        lineno: lines.get(i).copied().unwrap_or(0),
+                    });
+                }
+            }
+            if let Some(e) = err {
+                parse_error = Some(e);
+                break;
+            }
         }
-    };
+        if parsed.slurp && parse_error.is_none() {
+            items.push(FilterInput {
+                value: jq_to_val(&JqJson::Array(slurped)),
+                filename: sources
+                    .last()
+                    .map(|(n, _)| name_val(n))
+                    .unwrap_or(Val::Null),
+                lineno: 0,
+            });
+        }
+    }
 
     let indent = if parsed.compact_output {
         Indent::Compact
@@ -408,8 +433,6 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
     };
 
     let mut output = String::new();
-    let mut has_output = false;
-    let mut all_null_or_false = true;
 
     // THREAT[TM-DOS-093]: jaq evaluation is a synchronous iterator that the
     // async execution timeout cannot preempt. Unbounded generators
@@ -457,41 +480,63 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
         ))
     };
 
-    // Drive the outer loop from the shared input iterator so `input`/`inputs`
-    // inside the filter consume from the same source (matching real jq:
-    // `[inputs]` on a 3-value stream returns the *remaining* values, not all).
-    // Metadata (filename, lineno) is tracked via a parallel index.
-    let metadata: Vec<(Val, Val)> = inputs_to_process
-        .iter()
-        .map(|fi| (fi.filename.clone(), fi.lineno.clone()))
-        .collect();
-    let value_iter: Box<dyn Iterator<Item = std::result::Result<Val, String>>> = Box::new(
-        inputs_to_process
-            .into_iter()
-            .map(|fi| Ok::<Val, String>(fi.value)),
-    );
+    // `input`/`inputs` inside the filter consume from the same stream as
+    // the outer loop (`[inputs]` on a 3-value stream returns the remaining
+    // values). With `-n` the filter runs once on null and the whole stream
+    // is left to `input`/`inputs`. Pulling a value records its file and
+    // line for `input_filename` and error locations.
+    let current: std::rc::Rc<std::cell::RefCell<(Val, usize)>> =
+        std::rc::Rc::new(std::cell::RefCell::new((Val::Null, 0)));
+    let tracker = current.clone();
+    let value_iter: Box<dyn Iterator<Item = std::result::Result<Val, String>>> =
+        Box::new(items.into_iter().map(move |fi| {
+            *tracker.borrow_mut() = (fi.filename, fi.lineno);
+            Ok::<Val, String>(fi.value)
+        }));
     let shared_inputs = RcIter::new(value_iter);
+    let null_input = parsed.null_input;
+    let location = |current: &(Val, usize)| -> String {
+        if null_input {
+            return "<unknown>".to_string();
+        }
+        match &current.0 {
+            Val::Null => format!("<stdin>:{}", current.1),
+            name => format!("{}:{}", name.to_string().trim_matches('"'), current.1),
+        }
+    };
+
+    // Exit status follows the last input processed, like jq: 5 after a
+    // runtime error, else 0; with `-e`, 1 when the last output was null or
+    // false and 4 when nothing was ever output.
+    let mut status: Option<i32> = None;
 
     // THREAT[TM-DOS-110]: the meter aborts a run by unwinding where jaq
     // gives it no error channel (see jaq_json::meter::Abort).
     let run_filter = std::panic::AssertUnwindSafe(|| -> Result<Option<ExecResult>> {
-        for (outer_idx, jaq_input) in (&shared_inputs).enumerate() {
-            let jaq_input: Val = match jaq_input {
-                Ok(v) => v,
-                Err(e) => {
-                    return Ok(Some(ExecResult::err(format!("jq: input error: {e}\n"), 5)));
+        let mut first = true;
+        loop {
+            let jaq_input: Val = if null_input {
+                if !first {
+                    break;
+                }
+                Val::Null
+            } else {
+                match (&shared_inputs).next() {
+                    Some(Ok(v)) => v,
+                    Some(Err(e)) => {
+                        return Ok(Some(ExecResult::err(format!("jq: input error: {e}\n"), 5)));
+                    }
+                    None => break,
                 }
             };
-            let (filename_val, lineno_val) = metadata
-                .get(outer_idx)
-                .cloned()
-                .unwrap_or((Val::Null, Val::from(0isize)));
+            first = false;
+            let (filename_val, lineno) = current.borrow().clone();
 
             let mut var_vals: Vec<Val> = pre_var_vals.clone();
             var_vals.push(env_val.clone()); // $__bashkit_env__
             var_vals.push(env_val.clone()); // $ENV
             var_vals.push(filename_val); // $__bashkit_filename__
-            var_vals.push(lineno_val); // $__bashkit_lineno__
+            var_vals.push(Val::from(isize::try_from(lineno).unwrap_or(isize::MAX))); // $__bashkit_lineno__
             var_vals.push(args_val.clone()); // $ARGS
 
             let data = InputDataRef {
@@ -501,6 +546,7 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
             };
             let cv_ctx = Ctx::<InputData<Val>>::new(data, Vars::new(var_vals));
 
+            let mut input_status: Option<i32> = if parsed.exit_status { None } else { Some(0) };
             for result in filter.id.run((cv_ctx, jaq_input)) {
                 ctx.consume_budget_work(1)?;
                 if meter.tripped() {
@@ -509,7 +555,6 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
                 }
                 match jaq_core::unwrap_valr(result) {
                     Ok(val) => {
-                        has_output = true;
                         let Some(mut jq) = val_to_jq_capped(&val, max_output_bytes) else {
                             return Ok(Some(ExecResult::err(
                                 format!("jq: output limit exceeded ({max_output_bytes} bytes)\n"),
@@ -519,8 +564,8 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
                         if parsed.sort_keys {
                             jq = sort_jq_keys(jq);
                         }
-                        if !(jq.is_null() || jq.is_false()) {
-                            all_null_or_false = false;
+                        if parsed.exit_status {
+                            input_status = Some(i32::from(jq.is_null() || jq.is_false()));
                         }
 
                         let effective_raw = parsed.raw_output || parsed.join_output;
@@ -560,9 +605,16 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
                         }
                     }
                     Err(e) => {
-                        return Ok(Some(ExecResult::err(format_runtime_error(&e), 5)));
+                        // jq reports the error and moves on to the next input.
+                        let loc = location(&current.borrow());
+                        stderr_out.push_str(&format_runtime_error_at(&e, &loc));
+                        input_status = Some(5);
+                        break;
                     }
                 }
+            }
+            if input_status.is_some() {
+                status = input_status;
             }
         }
         Ok(None)
@@ -588,20 +640,43 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
         },
     }
 
-    // Real jq exit codes for -e:
-    //   - 4 if there was no output at all
-    //   - 1 if all outputs were null or false
-    //   - 0 otherwise
-    if parsed.exit_status {
-        if !has_output {
-            return Ok(ExecResult::with_code(output, 4));
-        }
-        if all_null_or_false {
-            return Ok(ExecResult::with_code(output, 1));
-        }
+    let mut code = status.unwrap_or(if parsed.exit_status { 4 } else { 0 });
+    if let Some(e) = parse_error {
+        stderr_out.push_str(&e);
+        stderr_out.push('\n');
+        code = 5;
     }
+    if input_failed {
+        code = 2;
+    }
+    Ok(ExecResult {
+        stdout: output.into(),
+        stderr: stderr_out.into(),
+        exit_code: code,
+        ..Default::default()
+    })
+}
 
-    Ok(ExecResult::ok(output))
+/// Like [`parse_jq_json_stream`], but keeps the values before a syntax
+/// error: jq processes them, then reports the error.
+fn parse_jq_json_stream_partial(
+    ctx: &Context<'_>,
+    input: &str,
+) -> Result<(Vec<JqJson>, Option<String>)> {
+    let execution_budget = ctx
+        .execution_budget()
+        .map(|budget| {
+            budget
+                .try_with(Clone::clone)
+                .map_err(|_| crate::Error::Cancelled)
+        })
+        .transpose()?;
+    let normalized = match input::normalize(execution_budget.as_ref(), input) {
+        Ok(normalized) => normalized,
+        Err(input::NormalizeError::InvalidJson(message)) => return Ok((Vec::new(), Some(message))),
+        Err(input::NormalizeError::Resource(error)) => return Err(error),
+    };
+    Ok(convert::parse_json_stream_partial(normalized.as_str()))
 }
 
 fn parse_jq_json_stream(
@@ -657,16 +732,4 @@ fn build_args_obj(positional: &[JqJson], named: &[(String, JqJson)]) -> JqJson {
         ("positional".to_string(), JqJson::Array(positional.to_vec())),
         ("named".to_string(), JqJson::Object(named_map)),
     ])
-}
-
-/// `--slurpfile` / `--rawfile` reuse this to derive the filename Val.
-fn stdin_filename(parsed: &JqArgs<'_>) -> Val {
-    // Real jq reports the per-file path while reading FILE..., else null.
-    // We thread a single filename per call when files are passed; if no
-    // files, return null. (Per-file granularity within one call would
-    // need re-architecting input dispatch.)
-    match parsed.file_args.first() {
-        Some(p) => Val::from((*p).to_string()),
-        None => Val::Null,
-    }
 }
