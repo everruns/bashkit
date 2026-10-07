@@ -1836,8 +1836,24 @@ impl Interpreter {
             return value.to_string();
         }
 
-        // Use glob_match for patterns with bracket expressions or extglob
-        if Self::has_unescaped_char(pattern, '[') || self.contains_unescaped_extglob(pattern) {
+        // A lone `*` matches the empty string (shortest) or everything
+        // (longest), on either side: `${x#*}` and `${x%*}` keep `x` whole.
+        if pattern == "*" {
+            return if longest {
+                String::new()
+            } else {
+                value.to_string()
+            };
+        }
+
+        // The literal fast paths below handle one `*`. Anything else (`?`,
+        // brackets, extglob, several stars) goes through glob_match.
+        if Self::has_unescaped_char(pattern, '[')
+            || Self::has_unescaped_char(pattern, '?')
+            || self.contains_unescaped_extglob(pattern)
+            || Self::find_unescaped_char(pattern, '*')
+                .is_some_and(|star| Self::find_unescaped_char(&pattern[star + 1..], '*').is_some())
+        {
             return self.remove_pattern_glob(value, pattern, prefix, longest);
         }
 
@@ -1845,16 +1861,6 @@ impl Interpreter {
 
         if prefix {
             // Remove from beginning
-            if pattern == "*" {
-                if longest {
-                    return String::new();
-                } else if !value.is_empty() {
-                    return value.chars().skip(1).collect();
-                } else {
-                    return value.to_string();
-                }
-            }
-
             // Check if pattern contains *
             if let Some(star_pos) = Self::find_unescaped_char(pattern, '*') {
                 let prefix_part = &pattern[..star_pos];
@@ -1901,18 +1907,6 @@ impl Interpreter {
             }
         } else {
             // Remove from end (suffix)
-            if pattern == "*" {
-                if longest {
-                    return String::new();
-                } else if !value.is_empty() {
-                    let mut s = value.to_string();
-                    s.pop();
-                    return s;
-                } else {
-                    return value.to_string();
-                }
-            }
-
             // Check if pattern contains *
             if let Some(star_pos) = Self::find_unescaped_char(pattern, '*') {
                 let prefix_part = &pattern[..star_pos];
