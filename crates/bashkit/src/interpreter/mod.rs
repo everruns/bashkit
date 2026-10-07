@@ -7533,7 +7533,7 @@ impl Interpreter {
                 .unwrap_or(u64::MAX),
             )?;
 
-            self.apply_builtin_side_effects(&result).await;
+            self.apply_builtin_side_effects(&mut result).await;
 
             // Sync successful export operands into env so subprocess isolation can see them.
             // Keep syncing even if export returned nonzero for other args (bash-compatible).
@@ -10049,7 +10049,7 @@ impl Interpreter {
     }
 
     /// Process structured side effects from builtin execution.
-    async fn apply_builtin_side_effects(&mut self, result: &ExecResult) {
+    async fn apply_builtin_side_effects(&mut self, result: &mut ExecResult) {
         // Builtins that mutate SHOPT_* directly via `ctx.variables` (e.g. the
         // `set -e` / `set +u` paths in the `set` builtin) don't update the
         // cached `flags` bitfield. Resync once after every builtin so the
@@ -10057,6 +10057,7 @@ impl Interpreter {
         // ~10 SHOPT_* entries — cheaper than threading a structured "shopt
         // changed" channel through every builtin.
         self.refresh_shopt_flags();
+        let mut shift_failed = false;
         for effect in &result.side_effects {
             match effect {
                 builtins::BuiltinSideEffect::SetArray { name, elements } => {
@@ -10080,12 +10081,12 @@ impl Interpreter {
                     self.arrays_mut().remove(name);
                 }
                 builtins::BuiltinSideEffect::ShiftPositional(n) => {
-                    if let Some(frame) = self.call_stack.last_mut() {
-                        if *n <= frame.positional.len() {
-                            frame.positional.drain(..*n);
-                        } else {
-                            frame.positional.clear();
-                        }
+                    // bash: a count above `$#` shifts nothing and fails.
+                    let len = self.call_stack.last().map_or(0, |f| f.positional.len());
+                    if *n > len {
+                        shift_failed = true;
+                    } else if let Some(frame) = self.call_stack.last_mut() {
+                        frame.positional.drain(..*n);
                     }
                 }
                 builtins::BuiltinSideEffect::SetPositional(new_positional) => {
@@ -10115,6 +10116,9 @@ impl Interpreter {
                     self.set_variable(name.clone(), value.clone());
                 }
             }
+        }
+        if shift_failed {
+            result.exit_code = 1;
         }
     }
 

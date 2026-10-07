@@ -183,7 +183,7 @@ Chrono's validated strftime implementation, plus GNU `%N`, `%3N`, `%6N`, and
 | `caller` | `[FRAME]` | Display call stack frame |
 | `mapfile` | `-n`, `-O`, `-s`, `-t`, `-d` | Read lines into array |
 | `readarray` | `-n`, `-O`, `-s`, `-t`, `-d` | Alias for mapfile |
-| `shopt` | `-s`, `-u`, `-q` | Shell options |
+| `shopt` | `-s`, `-u`, `-q`, `-p`, `-o` | Shell options; `-o` acts on `set -o` names |
 | `seq` | `[FIRST [INCR]] LAST` | Print number sequence |
 | `tac` | (none) | Reverse file lines |
 | `rev` | (none) | Reverse characters per line |
@@ -321,7 +321,7 @@ Chrono's validated strftime implementation, plus GNU `%N`, `%3N`, `%6N`, and
 | `*`, `?` | ✅ | `*.txt` | Glob patterns |
 | `[abc]` | ✅ | `[0-9]` | Bracket globs |
 | `{a,b,c}` | ✅ | `{1..5}` | Brace expansion |
-| `~` | ✅ | `~/file` | Tilde expansion |
+| `~` | ✅ | `~/file`, `~+`, `~-` | Tilde expansion: HOME, PWD, OLDPWD |
 | `<(cmd)` | ✅ | `diff <(a) <(b)` | Process substitution |
 
 ---
