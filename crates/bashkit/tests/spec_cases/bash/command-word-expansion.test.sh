@@ -119,3 +119,14 @@ cat /tmp/cmdword_out
 ### expect
 redirected
 ### end
+
+### word_hash_mid_word_is_literal
+# `#` starts a comment only at the start of a word
+echo a#b c# #d
+x=1#2; echo "$x"
+echo ${x}#tail
+### expect
+a#b c#
+1#2
+1#2#tail
+### end
