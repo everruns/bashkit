@@ -322,6 +322,7 @@ Chrono's validated strftime implementation, plus GNU `%N`, `%3N`, `%6N`, and
 | `$_` | ❌ | Last argument |
 | `$RANDOM` | ✅ | Random number (0-32767) |
 | `$SRANDOM` | ✅ | 32-bit random number from the OS CSPRNG (bash 5.1); assignment ignored |
+| `$SECONDS` | ✅ | Whole seconds since the shell (the `Bash` instance) started; `SECONDS=N` restarts the count from N |
 | `$LINENO` | ✅ | Current line number |
 
 ---

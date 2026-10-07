@@ -304,8 +304,9 @@ async fn checkout_matches_a_full_snapshot_taken_at_the_same_point() {
         let mut via_blob = Bash::new();
         via_blob.restore_snapshot(&packed).unwrap();
 
-        // Scope to real content: /dev entries are synthetic and /dev/random differs per read.
-        let listing = "find / -path /dev -prune -o -type f -print | sort | xargs -I{} sh -c 'echo {}; cat {}'";
+        // Scope to real content: /dev entries are synthetic, and /dev/random
+        // and /proc/sys/kernel/random/uuid differ per read.
+        let listing = "find / \\( -path /dev -o -path /proc/sys/kernel/random \\) -prune -o -type f -print | sort | xargs -I{} sh -c 'echo {}; cat {}'";
         assert_eq!(
             via_graph.exec(listing).await.unwrap().stdout,
             via_blob.exec(listing).await.unwrap().stdout,

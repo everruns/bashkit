@@ -1315,6 +1315,7 @@ struct SubshellSnapshot {
     random_state: u32,
     getopts_char_idx: usize,
     last_bg_pid: Option<String>,
+    seconds_base: (crate::time_compat::Instant, i64),
 }
 
 /// Interpreter state.
@@ -1492,6 +1493,9 @@ pub struct Interpreter {
     shell_features: ShellFeatures,
     /// Hardened profiles intentionally reduce elapsed-time precision.
     hardened_timing: bool,
+    /// `$SECONDS` reads `seconds_base.1 + whole seconds since seconds_base.0`;
+    /// set at shell start and on `SECONDS=N`.
+    seconds_base: (crate::time_compat::Instant, i64),
     /// `&` jobs run concurrently (default) or to completion at spawn.
     concurrent_jobs: bool,
     /// Nesting depth of `execute_script_body`; finished background job output
@@ -1956,6 +1960,7 @@ impl Interpreter {
             random_state: AtomicU32::new(random_seed),
             shell_features,
             hardened_timing,
+            seconds_base: (crate::time_compat::Instant::now(), 0),
             concurrent_jobs: true,
             script_depth: 0,
         }
@@ -2106,6 +2111,7 @@ impl Interpreter {
             random_state: AtomicU32::new(random_seed),
             shell_features: self.shell_features,
             hardened_timing: self.hardened_timing,
+            seconds_base: self.seconds_base,
             concurrent_jobs: self.concurrent_jobs,
             script_depth: 1,
         }
@@ -9922,6 +9928,7 @@ impl Interpreter {
             random_state: self.random_state.load(Ordering::Relaxed),
             getopts_char_idx: self.getopts_char_idx,
             last_bg_pid: self.last_bg_pid.clone(),
+            seconds_base: self.seconds_base,
         }
     }
 
@@ -9935,6 +9942,7 @@ impl Interpreter {
             .store(snap.random_state, Ordering::Relaxed);
         self.getopts_char_idx = snap.getopts_char_idx;
         self.last_bg_pid = snap.last_bg_pid;
+        self.seconds_base = snap.seconds_base;
     }
 
     /// Perform the redirections of a null command (no command word) and
@@ -10224,6 +10232,12 @@ impl Interpreter {
         if resolved == "RANDOM" {
             self.random_state
                 .store(value.parse::<u32>().unwrap_or(0), Ordering::Relaxed);
+            return;
+        }
+        // SECONDS=N restarts the count from N (non-numbers count as 0).
+        if resolved == "SECONDS" {
+            let base = value.trim().parse::<i64>().unwrap_or(0);
+            self.seconds_base = (crate::time_compat::Instant::now(), base);
             return;
         }
         // Attribute lookup is now a single map probe + bit test.
@@ -10952,11 +10966,9 @@ impl Interpreter {
                 return COMPAT_BASH_VERSION.to_string();
             }
             "SECONDS" => {
-                // Seconds since shell started - always 0 in stateless model
-                if let Some(v) = self.scoped.variables.get("SECONDS") {
-                    return v.clone();
-                }
-                return "0".to_string();
+                let (start, base) = self.seconds_base;
+                let elapsed = i64::try_from(start.elapsed().as_secs()).unwrap_or(i64::MAX);
+                return base.saturating_add(elapsed).to_string();
             }
             _ => {}
         }
