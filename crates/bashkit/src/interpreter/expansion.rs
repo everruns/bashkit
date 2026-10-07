@@ -1369,22 +1369,22 @@ impl Interpreter {
             }
             ParameterOp::RemovePrefixShort => {
                 // ${var#pattern} - remove shortest prefix match
-                let expanded = self.expand_operand(operand);
+                let expanded = self.expand_pattern_operand(operand);
                 self.remove_pattern(value, &expanded, true, false)
             }
             ParameterOp::RemovePrefixLong => {
                 // ${var##pattern} - remove longest prefix match
-                let expanded = self.expand_operand(operand);
+                let expanded = self.expand_pattern_operand(operand);
                 self.remove_pattern(value, &expanded, true, true)
             }
             ParameterOp::RemoveSuffixShort => {
                 // ${var%pattern} - remove shortest suffix match
-                let expanded = self.expand_operand(operand);
+                let expanded = self.expand_pattern_operand(operand);
                 self.remove_pattern(value, &expanded, false, false)
             }
             ParameterOp::RemoveSuffixLong => {
                 // ${var%%pattern} - remove longest suffix match
-                let expanded = self.expand_operand(operand);
+                let expanded = self.expand_pattern_operand(operand);
                 self.remove_pattern(value, &expanded, false, true)
             }
             ParameterOp::ReplaceFirst {
@@ -1393,7 +1393,8 @@ impl Interpreter {
             } => {
                 // ${var/pattern/replacement} - replace first occurrence
                 let expanded_rep = self.expand_operand(replacement);
-                self.replace_pattern(value, pattern, &expanded_rep, false)
+                let expanded_pat = self.expand_replace_pattern(pattern);
+                self.replace_pattern(value, &expanded_pat, &expanded_rep, false)
             }
             ParameterOp::ReplaceAll {
                 pattern,
@@ -1401,7 +1402,8 @@ impl Interpreter {
             } => {
                 // ${var//pattern/replacement} - replace all occurrences
                 let expanded_rep = self.expand_operand(replacement);
-                self.replace_pattern(value, pattern, &expanded_rep, true)
+                let expanded_pat = self.expand_replace_pattern(pattern);
+                self.replace_pattern(value, &expanded_pat, &expanded_rep, true)
             }
             ParameterOp::UpperFirst => {
                 // ${var^} - uppercase first character
@@ -1435,6 +1437,90 @@ impl Interpreter {
     /// amplification in global pattern replacement.
     pub(crate) const MAX_EXPANSION_RESULT_BYTES: usize = 10 * 1024 * 1024;
 
+    /// Expand a `#`/`%` pattern operand. Bash removes quotes there even in a
+    /// double-quoted word, so `'...'` spans count as quoted (literal) text.
+    pub(super) fn expand_pattern_operand(&mut self, operand: &str) -> String {
+        self.expand_operand(&Self::single_quotes_as_quoted(operand))
+    }
+
+    /// Expand the pattern of `${x/pattern/rep}`. A leading `#`/`%` in the
+    /// source is the anchor; a `#`/`%` that comes from expansion is literal.
+    pub(super) fn expand_replace_pattern(&mut self, pattern: &str) -> String {
+        let (anchor, raw) = match pattern.chars().next() {
+            Some(c @ ('#' | '%')) => (Some(c), &pattern[1..]),
+            _ => (None, pattern),
+        };
+        let expanded = self.expand_pattern_operand(raw);
+        match anchor {
+            Some(c) => format!("{c}{expanded}"),
+            None if expanded.starts_with(['#', '%']) => format!("\\{expanded}"),
+            None => expanded,
+        }
+    }
+
+    /// Rewrite `'...'` spans outside `"..."` as `"..."` spans with every char
+    /// NUL-escaped, so operand expansion treats them as quoted literals.
+    pub(super) fn single_quotes_as_quoted(operand: &str) -> std::borrow::Cow<'_, str> {
+        if !operand.contains('\'') {
+            return std::borrow::Cow::Borrowed(operand);
+        }
+        let mut out = String::with_capacity(operand.len() + 8);
+        let mut chars = operand.chars();
+        let mut in_dq = false;
+        while let Some(c) = chars.next() {
+            match c {
+                '\x00' | '\\' => {
+                    out.push(c);
+                    if let Some(n) = chars.next() {
+                        out.push(n);
+                    }
+                }
+                '"' => {
+                    in_dq = !in_dq;
+                    out.push(c);
+                }
+                '\'' if !in_dq && out.ends_with('$') => {
+                    // `$'...'` is ANSI-C quoting; operand parsing decodes it.
+                    out.push(c);
+                    while let Some(q) = chars.next() {
+                        out.push(q);
+                        if q == '\\' {
+                            if let Some(n) = chars.next() {
+                                out.push(n);
+                            }
+                        } else if q == '\'' {
+                            break;
+                        }
+                    }
+                }
+                '\'' if !in_dq => {
+                    out.push('"');
+                    while let Some(q) = chars.next() {
+                        match q {
+                            '\'' => break,
+                            '\x00' => {
+                                out.push(q);
+                                if let Some(n) = chars.next() {
+                                    out.push(n);
+                                }
+                            }
+                            _ => {
+                                out.push('\x00');
+                                out.push(q);
+                            }
+                        }
+                    }
+                    out.push('"');
+                }
+                _ => out.push(c),
+            }
+        }
+        std::borrow::Cow::Owned(out)
+    }
+
+    /// `${var/pattern/rep}` on an expanded pattern: a leading `#` or `%`
+    /// anchors at the start or end, `\\c` is a literal `c`, `*`, `?` and `[...]`
+    /// are globs. Matches are leftmost-longest, as in bash.
     pub(super) fn replace_pattern(
         &self,
         value: &str,
@@ -1445,6 +1531,13 @@ impl Interpreter {
         if pattern.is_empty() {
             return value.to_string();
         }
+        let (anchor, pat) = if let Some(rest) = pattern.strip_prefix('#') {
+            (PatternAnchor::Start, rest)
+        } else if let Some(rest) = pattern.strip_prefix('%') {
+            (PatternAnchor::End, rest)
+        } else {
+            (PatternAnchor::None, pattern)
+        };
 
         let concat_or_original = |parts: &[&str]| {
             let mut total_len = 0usize;
@@ -1454,7 +1547,6 @@ impl Interpreter {
                     return None;
                 }
             }
-
             let mut result = String::with_capacity(total_len);
             for part in parts {
                 result.push_str(part);
@@ -1462,111 +1554,250 @@ impl Interpreter {
             Some(result)
         };
 
-        // Handle # prefix anchor (match at start only)
-        if let Some(rest) = pattern.strip_prefix('#') {
-            if rest.is_empty() {
-                // ${var/#/rep} with empty pattern: prepend replacement
-                return concat_or_original(&[replacement, value])
-                    .unwrap_or_else(|| value.to_string());
-            }
-            if let Some(stripped) = value.strip_prefix(rest) {
-                return concat_or_original(&[replacement, stripped])
-                    .unwrap_or_else(|| value.to_string());
-            }
-            // Try glob match at prefix
-            if rest.contains('*') {
-                let matched = self.remove_pattern(value, rest, true, false);
-                if matched != value {
-                    let prefix_len = value.len() - matched.len();
-                    return concat_or_original(&[replacement, &value[prefix_len..]])
-                        .unwrap_or_else(|| value.to_string());
-                }
-            }
-            return value.to_string();
+        if pat.is_empty() {
+            // ${var/#/rep} prepends, ${var/%/rep} appends.
+            let joined = match anchor {
+                PatternAnchor::Start => concat_or_original(&[replacement, value]),
+                PatternAnchor::End => concat_or_original(&[value, replacement]),
+                PatternAnchor::None => None,
+            };
+            return joined.unwrap_or_else(|| value.to_string());
         }
 
-        // Handle % suffix anchor (match at end only)
-        if let Some(rest) = pattern.strip_prefix('%') {
-            if rest.is_empty() {
-                // ${var/%/rep} with empty pattern: append replacement
-                return concat_or_original(&[value, replacement])
-                    .unwrap_or_else(|| value.to_string());
-            }
-            if let Some(stripped) = value.strip_suffix(rest) {
-                return concat_or_original(&[stripped, replacement])
-                    .unwrap_or_else(|| value.to_string());
-            }
-            // Try glob match at suffix
-            if rest.contains('*') {
-                let matched = self.remove_pattern(value, rest, false, false);
-                if matched != value {
-                    return concat_or_original(&[&matched, replacement])
-                        .unwrap_or_else(|| value.to_string());
-                }
-            }
+        let Some(ranges) = self.find_pattern_matches(value, pat, anchor, global) else {
             return value.to_string();
-        }
-
-        // Handle glob pattern with *
-        if pattern.contains('*') {
-            // Convert glob to regex-like behavior
-            // For simplicity, we'll handle basic cases: prefix*, *suffix, *middle*
-            if pattern == "*" {
-                // Replace everything
-                if replacement.len() > Self::MAX_EXPANSION_RESULT_BYTES {
-                    return value.to_string();
-                }
-                return replacement.to_string();
-            }
-
-            if let Some(star_pos) = pattern.find('*') {
-                let prefix = &pattern[..star_pos];
-                let suffix = &pattern[star_pos + 1..];
-
-                if prefix.is_empty() && !suffix.is_empty() {
-                    // *suffix - match anything ending with suffix
-                    if let Some(pos) = value.find(suffix) {
-                        let after = &value[pos + suffix.len()..];
-                        if global {
-                            let result = replacement.to_string()
-                                + &self.replace_pattern(after, pattern, replacement, true);
-                            if result.len() > Self::MAX_EXPANSION_RESULT_BYTES {
-                                return value.to_string();
-                            }
-                            return result;
-                        } else {
-                            return concat_or_original(&[replacement, after])
-                                .unwrap_or_else(|| value.to_string());
-                        }
-                    }
-                } else if !prefix.is_empty() && suffix.is_empty() {
-                    // prefix* - match prefix and anything after
-                    if value.starts_with(prefix) {
-                        if replacement.len() > Self::MAX_EXPANSION_RESULT_BYTES {
-                            return value.to_string();
-                        }
-                        return replacement.to_string();
-                    }
-                }
-            }
-            // If we can't match the glob pattern, return as-is
-            return value.to_string();
-        }
-
-        // Simple string replacement
-        if global {
-            let result = value.replace(pattern, replacement);
-            if result.len() > Self::MAX_EXPANSION_RESULT_BYTES {
+        };
+        let mut out = String::new();
+        let mut last = 0;
+        for (start, end) in ranges {
+            out.push_str(&value[last..start]);
+            out.push_str(replacement);
+            last = end;
+            if out.len() > Self::MAX_EXPANSION_RESULT_BYTES {
                 return value.to_string();
             }
-            result
-        } else {
-            let result = value.replacen(pattern, replacement, 1);
-            if result.len() > Self::MAX_EXPANSION_RESULT_BYTES {
-                return value.to_string();
-            }
-            result
         }
+        out.push_str(&value[last..]);
+        if out.len() > Self::MAX_EXPANSION_RESULT_BYTES {
+            return value.to_string();
+        }
+        out
+    }
+
+    /// Byte ranges of the matches `replace_pattern` substitutes, or `None`
+    /// when the search budget runs out (the value is then left unchanged).
+    fn find_pattern_matches(
+        &self,
+        value: &str,
+        pat: &str,
+        anchor: PatternAnchor,
+        global: bool,
+    ) -> Option<Vec<(usize, usize)>> {
+        let has_glob = Self::find_unescaped_char(pat, '*').is_some()
+            || Self::find_unescaped_char(pat, '?').is_some()
+            || Self::find_unescaped_char(pat, '[').is_some();
+        let extglob = self.contains_unescaped_extglob(pat);
+
+        if !has_glob && !extglob {
+            let literal = Self::unescape_pattern_literal(pat);
+            return Some(match anchor {
+                PatternAnchor::Start if value.starts_with(&literal) => vec![(0, literal.len())],
+                PatternAnchor::End if value.ends_with(&literal) => {
+                    vec![(value.len() - literal.len(), value.len())]
+                }
+                PatternAnchor::Start | PatternAnchor::End => Vec::new(),
+                PatternAnchor::None => {
+                    let mut found = value.match_indices(literal.as_str());
+                    if global {
+                        found.map(|(i, m)| (i, i + m.len())).collect()
+                    } else {
+                        found
+                            .next()
+                            .map(|(i, m)| vec![(i, i + m.len())])
+                            .unwrap_or_default()
+                    }
+                }
+            });
+        }
+
+        if !extglob && let Some(re) = Self::glob_pattern_regex(pat, anchor) {
+            // THREAT[TM-DOS-127]: the regex crate matches in linear time and
+            // the compiled program is size-capped, so a long value or pattern
+            // cannot blow up the search.
+            let mut ranges = Vec::new();
+            let mut pos = 0;
+            while pos <= value.len() {
+                let Some(m) = re.find_at(value, pos) else {
+                    break;
+                };
+                if m.start() == m.end() && anchor == PatternAnchor::None && !value.is_empty() {
+                    // A translated glob only matches empty at the end of the
+                    // value, where bash does not substitute.
+                    break;
+                }
+                ranges.push((m.start(), m.end()));
+                if !global || anchor != PatternAnchor::None || m.start() == m.end() {
+                    break;
+                }
+                pos = m.end();
+            }
+            return Some(ranges);
+        }
+
+        self.find_pattern_matches_glob(value, pat, anchor, global)
+    }
+
+    /// Extglob fallback, bash's own scan: at each position take the longest
+    /// match (an empty one counts, then one char is copied); never match at
+    /// the end of a non-empty value. THREAT[TM-DOS-127]: capped at
+    /// `MAX_GLOB_MATCH_CALLS` attempts.
+    fn find_pattern_matches_glob(
+        &self,
+        value: &str,
+        pat: &str,
+        anchor: PatternAnchor,
+        global: bool,
+    ) -> Option<Vec<(usize, usize)>> {
+        const MAX_GLOB_MATCH_CALLS: usize = 10_000;
+        let bounds: Vec<usize> = value
+            .char_indices()
+            .map(|(i, _)| i)
+            .chain(std::iter::once(value.len()))
+            .collect();
+        let n = bounds.len() - 1;
+        let mut calls = 0usize;
+        let mut ranges = Vec::new();
+        let mut s = 0;
+        loop {
+            if (s == n && n > 0) || s > n || (anchor == PatternAnchor::Start && s > 0) {
+                break;
+            }
+            let mut found = None;
+            let ends: Vec<usize> = if anchor == PatternAnchor::End {
+                vec![n]
+            } else {
+                (s..=n).rev().collect()
+            };
+            for e in ends {
+                calls += 1;
+                if calls > MAX_GLOB_MATCH_CALLS {
+                    return None;
+                }
+                if self.glob_match(&value[bounds[s]..bounds[e]], pat) {
+                    found = Some(e);
+                    break;
+                }
+            }
+            match found {
+                Some(e) => {
+                    ranges.push((bounds[s], bounds[e]));
+                    if !global || anchor != PatternAnchor::None {
+                        break;
+                    }
+                    s = if e > s { e } else { s + 1 };
+                }
+                None => s += 1,
+            }
+        }
+        Some(ranges)
+    }
+
+    /// Translate a bash glob (with `\\c` escapes) into an anchored-as-needed
+    /// regex. `None` when it does not translate or compile; callers then use
+    /// the glob fallback.
+    fn glob_pattern_regex(pat: &str, anchor: PatternAnchor) -> Option<regex::Regex> {
+        let chars: Vec<char> = pat.chars().collect();
+        let mut re = String::from("(?s)");
+        if anchor == PatternAnchor::Start {
+            re.push_str("\\A");
+        }
+        re.push_str("(?:");
+        let mut buf = [0u8; 4];
+        let mut i = 0;
+        while i < chars.len() {
+            match chars[i] {
+                '\\' if i + 1 < chars.len() => {
+                    re.push_str(&regex::escape(chars[i + 1].encode_utf8(&mut buf)));
+                    i += 2;
+                }
+                '*' => {
+                    re.push_str(".*");
+                    i += 1;
+                }
+                '?' => {
+                    re.push('.');
+                    i += 1;
+                }
+                '[' => match Self::glob_bracket_regex(&chars, i) {
+                    Some((class, next)) => {
+                        re.push_str(&class);
+                        i = next;
+                    }
+                    None => {
+                        re.push_str("\\[");
+                        i += 1;
+                    }
+                },
+                c => {
+                    re.push_str(&regex::escape(c.encode_utf8(&mut buf)));
+                    i += 1;
+                }
+            }
+        }
+        re.push(')');
+        if anchor == PatternAnchor::End {
+            re.push_str("\\z");
+        }
+        regex::RegexBuilder::new(&re)
+            .size_limit(1 << 20)
+            .dfa_size_limit(1 << 20)
+            .build()
+            .ok()
+    }
+
+    /// `[...]` starting at `start` as a regex class, plus the index after it.
+    fn glob_bracket_regex(chars: &[char], start: usize) -> Option<(String, usize)> {
+        let mut out = String::from("[");
+        let mut i = start + 1;
+        if matches!(chars.get(i), Some('!' | '^')) {
+            out.push('^');
+            i += 1;
+        }
+        let first = i;
+        while i < chars.len() {
+            let c = chars[i];
+            if c == ']' && i > first {
+                out.push(']');
+                return Some((out, i + 1));
+            }
+            if c == '[' && chars.get(i + 1) == Some(&':') {
+                let rest: String = chars[i + 2..].iter().collect();
+                if let Some(end) = rest.find(":]") {
+                    let name = &rest[..end];
+                    if name.chars().all(|ch| ch.is_ascii_lowercase()) && !name.is_empty() {
+                        out.push_str(&format!("[:{name}:]"));
+                        i += 2 + name.chars().count() + 2;
+                        continue;
+                    }
+                }
+            }
+            let c = if c == '\\' && i + 1 < chars.len() {
+                i += 1;
+                chars[i]
+            } else {
+                c
+            };
+            if c == '-' && i > first && chars.get(i + 1).is_some_and(|n| *n != ']') {
+                out.push('-');
+            } else {
+                if matches!(c, '\\' | ']' | '[' | '^' | '-' | '&' | '~') {
+                    out.push('\\');
+                }
+                out.push(c);
+            }
+            i += 1;
+        }
+        None
     }
 
     /// Remove prefix/suffix pattern from value
@@ -1808,4 +2039,12 @@ mod expansion_charge_tests {
             }
         }
     }
+}
+
+/// Where `${var/pattern/rep}` must match.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum PatternAnchor {
+    None,
+    Start,
+    End,
 }

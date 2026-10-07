@@ -11316,6 +11316,30 @@ mod tests {
     }
 
     #[test]
+    fn replace_pattern_glob_on_long_value_is_linear() {
+        // THREAT[TM-DOS-127]: a glob over a long value runs as a regex.
+        let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
+        let interp = Interpreter::new(Arc::clone(&fs));
+        let value = "ab".repeat(200_000);
+        let out = interp.replace_pattern(&value, "a?", "x", true);
+        assert_eq!(out, "x".repeat(200_000));
+        assert_eq!(interp.replace_pattern(&value, "z*", "x", true), value);
+    }
+
+    #[test]
+    fn replace_pattern_extglob_budget() {
+        // THREAT[TM-DOS-127]: the extglob fallback stops after its budget and
+        // leaves the value unchanged instead of scanning quadratically.
+        let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
+        let mut interp = Interpreter::new(Arc::clone(&fs));
+        Arc::make_mut(&mut interp.scoped.variables)
+            .insert("SHOPT_extglob".to_string(), "1".to_string());
+        assert_eq!(interp.replace_pattern("xaab", "+(a)", "-", false), "x-b");
+        let value = format!("{}a", "b".repeat(10_000));
+        assert_eq!(interp.replace_pattern(&value, "+(a)", "-", true), value);
+    }
+
+    #[test]
     fn test_per_element_param_expansion_respects_aggregate_limit() {
         let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
         let mut interp = Interpreter::new(Arc::clone(&fs));

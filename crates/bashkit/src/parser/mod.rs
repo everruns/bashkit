@@ -3709,8 +3709,18 @@ impl<'a> Parser<'a> {
                                         false
                                     };
                                     let mut pattern = String::new();
+                                    let mut in_dq = false;
                                     while let Some(&ch) = chars.peek() {
-                                        if ch == '/' || ch == '}' {
+                                        if ch == '\x00' {
+                                            pattern.push(chars.next().unwrap());
+                                            if let Some(n) = chars.next() {
+                                                pattern.push(n);
+                                            }
+                                            continue;
+                                        }
+                                        if ch == '"' {
+                                            in_dq = !in_dq;
+                                        } else if !in_dq && (ch == '/' || ch == '}') {
                                             break;
                                         }
                                         if ch == '\\' {
@@ -3722,6 +3732,9 @@ impl<'a> Parser<'a> {
                                                 continue;
                                             }
                                             pattern.push('\\');
+                                            if let Some(n) = chars.next() {
+                                                pattern.push(n);
+                                            }
                                             continue;
                                         }
                                         pattern.push(chars.next().unwrap());
@@ -3729,8 +3742,24 @@ impl<'a> Parser<'a> {
                                     let replacement = if chars.peek() == Some(&'/') {
                                         chars.next();
                                         let mut repl = String::new();
+                                        let mut in_dq = false;
                                         while let Some(&ch) = chars.peek() {
-                                            if ch == '}' {
+                                            if ch == '\x00' {
+                                                repl.push(chars.next().unwrap());
+                                                if let Some(n) = chars.next() {
+                                                    repl.push(n);
+                                                }
+                                                continue;
+                                            }
+                                            if ch == '"' {
+                                                in_dq = !in_dq;
+                                            } else if ch == '\\' {
+                                                repl.push(chars.next().unwrap());
+                                                if let Some(n) = chars.next() {
+                                                    repl.push(n);
+                                                }
+                                                continue;
+                                            } else if !in_dq && ch == '}' {
                                                 break;
                                             }
                                             repl.push(chars.next().unwrap());
@@ -3890,7 +3919,13 @@ impl<'a> Parser<'a> {
         let mut operand = String::new();
         let mut depth = 1; // Track nested braces
         while let Some(&c) = chars.peek() {
-            if c == '{' {
+            if c == '\x00' {
+                // Lexer escape: keep the pair, never count the escaped char.
+                operand.push(chars.next().unwrap());
+                if let Some(n) = chars.next() {
+                    operand.push(n);
+                }
+            } else if c == '{' {
                 depth += 1;
                 operand.push(chars.next().unwrap());
             } else if c == '}' {
