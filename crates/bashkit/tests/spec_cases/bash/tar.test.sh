@@ -7,8 +7,8 @@ echo "world" > /tmp/tartest/file2.txt
 tar -cf /tmp/test.tar /tmp/tartest/file1.txt /tmp/tartest/file2.txt
 tar -tf /tmp/test.tar | sort
 ### expect
-/tmp/tartest/file1.txt
-/tmp/tartest/file2.txt
+tmp/tartest/file1.txt
+tmp/tartest/file2.txt
 ### end
 
 ### tar_create_and_extract_stdout
@@ -22,11 +22,11 @@ data
 ### end
 
 ### tar_verbose_create
-### bash_diff: VFS tar verbose output goes to stderr differently
-# Verbose output when creating
+### bash_diff: real bash sees the remapped sandbox path
+# Verbose output when creating goes to stdout, with the name as given
 mkdir -p /tmp/vtest
 echo "x" > /tmp/vtest/f.txt
-tar -cvf /tmp/v.tar /tmp/vtest/f.txt 2>&1
+tar -cvf /tmp/v.tar /tmp/vtest/f.txt 2>/dev/null
 ### expect
 /tmp/vtest/f.txt
 ### end
@@ -57,10 +57,10 @@ echo "b" > /tmp/tdeep/sub/bot.txt
 tar -cf /tmp/tdeep.tar /tmp/tdeep
 tar -tf /tmp/tdeep.tar | sort
 ### expect
-/tmp/tdeep/
-/tmp/tdeep/sub/
-/tmp/tdeep/sub/bot.txt
-/tmp/tdeep/top.txt
+tmp/tdeep/
+tmp/tdeep/sub/
+tmp/tdeep/sub/bot.txt
+tmp/tdeep/top.txt
 ### end
 
 ### tar_missing_file
@@ -77,6 +77,25 @@ tar -cf /tmp/empty.tar
 ### expect
 ### end
 
+### tar_strips_leading_slash
+mkdir -p /tmp/tsl/d && echo hi > /tmp/tsl/d/f
+tar -cf /tmp/tsl.tar /tmp/tsl/d 2>/tmp/tsl.err; echo "rc=$?"
+cat /tmp/tsl.err
+tar -tf /tmp/tsl.tar | grep -c '^/'
+tar -tf /tmp/tsl.tar | grep -c 'tsl/d/f$'
+### expect
+rc=0
+tar: Removing leading `/' from member names
+0
+1
+### end
+
+### tar_verbose_create_goes_to_stdout
+cd /tmp/ && mkdir -p tvs && echo hi > tvs/f
+tar -cvf /tmp/tvs.tar tvs 2>/dev/null
+### expect
+tvs/
+tvs/f
 ### tar_strip_components
 # --strip-components drops leading path components on extract
 mkdir -p /tmp/sc/proj/src; echo a > /tmp/sc/proj/src/a.txt; echo r > /tmp/sc/proj/README

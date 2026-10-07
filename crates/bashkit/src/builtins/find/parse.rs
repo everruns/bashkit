@@ -109,6 +109,8 @@ pub(super) enum Expr {
         nul: bool,
     },
     Printf(String),
+    /// `-ls`: GNU's `ls -dils` style line.
+    Ls,
     Delete {
         id: usize,
     },
@@ -755,6 +757,10 @@ impl Parser<'_> {
             "-printf" => {
                 self.has_action = true;
                 Expr::Printf(self.arg(tok)?)
+            }
+            "-ls" => {
+                self.has_action = true;
+                Expr::Ls
             }
             "-delete" => {
                 self.has_action = true;

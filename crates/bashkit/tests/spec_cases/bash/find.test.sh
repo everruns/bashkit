@@ -467,3 +467,13 @@ find: File system loop detected; './d/up' is part of the same file system loop a
 rc=1
 ./f
 ### end
+
+### find_ls_layout
+cd /tmp/ && rm -rf fls && mkdir -p fls/d && echo hi > fls/d/f && cd fls
+find d -ls | awk '{print NF, $3, $NF}'
+find d -type f -ls | awk '{print $7}'
+### expect
+11 drwxr-xr-x d
+11 -rw-r--r-- d/f
+3
+### end

@@ -503,12 +503,17 @@ async fn create_tar(
     };
     let (final_data, _final_lease) = final_data.into_parts();
     let (verbose_output, _verbose_lease) = verbose_output.into_parts();
+    let notice = if files.iter().any(|f| f.starts_with('/')) {
+        "tar: Removing leading `/' from member names\n"
+    } else {
+        ""
+    };
 
     // Write to file or stdout
     if archive_name == "-" {
         return Ok(ExecResult {
             stdout: final_data.into(),
-            stderr: verbose_output.into(),
+            stderr: format!("{notice}{verbose_output}").into(),
             exit_code: 0,
             control_flow: crate::interpreter::ControlFlow::None,
             ..Default::default()
@@ -518,9 +523,10 @@ async fn create_tar(
     let archive_path = resolve_path(ctx.cwd, archive_name);
     ctx.fs.write_file(&archive_path, &final_data).await?;
 
+    // GNU tar lists members on stdout unless the archive itself goes there.
     Ok(ExecResult {
-        stdout: crate::StreamData::new(),
-        stderr: verbose_output.into(),
+        stdout: verbose_output.into(),
+        stderr: notice.to_string().into(),
         exit_code: 0,
         control_flow: crate::interpreter::ControlFlow::None,
         ..Default::default()
@@ -549,8 +555,8 @@ async fn add_file_to_tar(
     // Create tar header
     let mut header = [0u8; TAR_BLOCK_SIZE];
 
-    // Name (100 bytes)
-    let name_bytes = name.as_bytes();
+    // Name (100 bytes); GNU tar drops the leading `/` of absolute names.
+    let name_bytes = name.trim_start_matches('/').as_bytes();
     let name_len = name_bytes.len().min(100);
     header[..name_len].copy_from_slice(&name_bytes[..name_len]);
 
@@ -623,7 +629,7 @@ fn add_directory_to_tar<'a>(
         let mut header = [0u8; TAR_BLOCK_SIZE];
 
         // Name with trailing slash
-        let dir_name = format!("{}/", name);
+        let dir_name = format!("{}/", name.trim_start_matches('/'));
         let name_bytes = dir_name.as_bytes();
         let name_len = name_bytes.len().min(100);
         header[..name_len].copy_from_slice(&name_bytes[..name_len]);
@@ -2051,7 +2057,8 @@ mod tests {
 
         let result = Tar.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 0);
-        assert!(result.stderr.contains("test.txt"));
+        assert_eq!(result.stdout, "test.txt\n");
+        assert_eq!(result.stderr, "");
     }
 
     #[tokio::test]

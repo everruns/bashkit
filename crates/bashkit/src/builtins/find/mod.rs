@@ -447,6 +447,24 @@ fn eval<'a, 'b: 'a>(e: &'a Expr, cx: &'a mut Cx<'b>) -> EvalFuture<'a> {
                     .push(Effect::Out(printf::render(fmt, entry, start, &cx.cfg.fmt)));
                 true
             }
+            Expr::Ls => {
+                // GNU find's -ls layout (inode, 1K blocks, mode, links, owner,
+                // group, size, mtime, path, `-> target` for symlinks).
+                let start = &cx.cfg.roots[entry.root];
+                let mut line = printf::render(
+                    "%9i %6k %M %3n %-8u %-8g %8s %Tb %Te %TH:%TM %p",
+                    entry,
+                    start,
+                    &cx.cfg.fmt,
+                );
+                if let Some(target) = &entry.link_target {
+                    line.push_str(" -> ");
+                    line.push_str(target);
+                }
+                line.push('\n');
+                cx.effects.push(Effect::Out(line));
+                true
+            }
             Expr::Delete { id } => {
                 if !cx.cache.contains_key(id) {
                     let done = delete_entry(cx.cfg.fs.as_ref(), entry).await;
@@ -601,6 +619,7 @@ impl FindRun {
                 exec_templates.insert(*id, argv.clone());
             }
             Expr::Printf(f) => needs_nlink |= f.contains("%n"),
+            Expr::Ls => needs_nlink = true,
             _ => {}
         });
         let (secs, nanos) = clock.now_epoch();

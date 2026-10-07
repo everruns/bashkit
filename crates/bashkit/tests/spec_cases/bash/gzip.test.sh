@@ -16,7 +16,7 @@ seq 1 100 > /tmp/gzlarge/nums.txt
 tar -czf /tmp/large.tar.gz /tmp/gzlarge/nums.txt
 tar -tzf /tmp/large.tar.gz
 ### expect
-/tmp/gzlarge/nums.txt
+tmp/gzlarge/nums.txt
 ### end
 
 ### gzip_stdout_roundtrip
