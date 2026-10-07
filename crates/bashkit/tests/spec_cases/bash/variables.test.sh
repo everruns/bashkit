@@ -629,13 +629,12 @@ exit:1
 
 ### shopt_show_specific
 # shopt shows status of named option
-### bash_diff
 shopt nullglob
 shopt -s nullglob
 shopt nullglob
 ### expect
-nullglob                        off
-nullglob                        on
+nullglob       	off
+nullglob       	on
 ### end
 
 ### shopt_nullglob_no_matches
