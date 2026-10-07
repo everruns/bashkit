@@ -150,7 +150,7 @@ for dirpath, dirnames, filenames in os.walk("."):
         if name.endswith(".py"):
             rel = os.path.join(dirpath, name)[2:]
             try:
-                py_compile.compile(rel, cfile=rel + "c", dfile=rel, doraise=True,
+                py_compile.compile(rel, cfile=rel + "c", dfile="/usr/local/lib/python314.zip/" + rel, doraise=True,
                     invalidation_mode=py_compile.PycInvalidationMode.UNCHECKED_HASH)
             except py_compile.PyCompileError:
                 continue  # templates/fixtures that are not valid 3.14 source

@@ -216,7 +216,8 @@ def _fresh_main(filename=None):
 
 
 def _strip_driver_frames(tb):
-    me = __file__
+    # The code's own filename, not __file__ (that names the .pyc).
+    me = _strip_driver_frames.__code__.co_filename
     while tb is not None and tb.tb_frame.f_code.co_filename in (me, "<frozen runpy>"):
         tb = tb.tb_next
     return tb

@@ -543,7 +543,8 @@ for m in (\"ctypes\", \"ssl\", \"smtplib\", \"pdb\", \"pydoc\", \"_pydecimal\"):
         pass
 import decimal, datetime
 print(decimal.Decimal(\"1.10\") + 1, datetime.datetime.strptime(\"2020\", \"%Y\").year)
-'").await;
+'")
+    .await;
     assert_eq!(out, "True True\n2.10 2020\n");
 }
 
