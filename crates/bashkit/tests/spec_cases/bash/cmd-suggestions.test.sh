@@ -14,11 +14,11 @@ pip install foo
 ### expect
 ### end
 
-### cmd_unavailable_sudo
+### cmd_unavailable_doas
 ### bash_diff: bashkit hints for unavailable commands
 ### exit_code: 127
-# sudo gets helpful hint
-sudo ls
+# doas gets helpful hint (sudo runs the command)
+doas ls
 ### expect
 ### end
 

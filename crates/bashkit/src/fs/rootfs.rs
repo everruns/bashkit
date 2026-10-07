@@ -17,9 +17,9 @@
 //! - `/bin` and `/usr/bin` hold a stub per registered command (not shell-only
 //!   builtins) so `ls /usr/bin`, `[ -x /usr/bin/env ]`, `which`, and
 //!   `#!/usr/bin/env` work. Executing a stub dispatches the builtin.
-//! - THREAT[TM-INF-003]/[TM-ISO-018]: `/proc` and `/etc` are synthetic; values
-//!   come from the virtual identity (username, hostname, uid 1000, 4 CPUs) and
-//!   never from the host. `/etc/passwd` lists only the virtual user and
+//! - THREAT[TM-INF-003]/[TM-ISO-018]: `/proc` (including `/proc/self`) and
+//!   `/etc` are synthetic; values come from the virtual identity (username,
+//!   hostname, uid 1000, 4 CPUs) and never from the host. `/etc/passwd` lists only the virtual user and
 //!   `nobody` (no root line), so a `root:x:0:0` match always means a host leak.
 //! - Turned off with `BashBuilder::rootfs(false)`.
 
@@ -39,6 +39,10 @@ use crate::error::Result;
 /// Directory trees served by the system layer.
 /// Fresh random UUID per read, as on Linux.
 const PROC_UUID: &str = "/proc/sys/kernel/random/uuid";
+/// Seconds since the session filesystem was built, like boot time.
+const PROC_UPTIME: &str = "/proc/uptime";
+/// One root mount, named like `df` reports it.
+const PROC_MOUNTS: &str = "bashkit-vfs / bashkit-vfs rw 0 0\n";
 
 const SYS_TREES: &[&str] = &["/etc", "/proc", "/bin", "/usr/bin", "/root", "/dev/zero"];
 /// Ancestors of system trees, listed with the system entries merged in.
@@ -171,7 +175,7 @@ impl RootFs {
         sys.add_dir("/root", 0o700);
         sys.add_dir("/etc/ssl/certs", 0o755);
         let version = env!("CARGO_PKG_VERSION");
-        let files: [(&str, String); 13] = [
+        let files: [(&str, String); 15] = [
             (
                 "/etc/os-release",
                 format!(
@@ -225,6 +229,9 @@ impl RootFs {
                 ),
             ),
             ("/proc/loadavg", "0.00 0.00 0.00 1/1 1\n".to_string()),
+            // Placeholder; reads return seconds since this filesystem was built.
+            (PROC_UPTIME, "0.00 0.00\n".to_string()),
+            ("/proc/mounts", PROC_MOUNTS.to_string()),
             ("/proc/sys/kernel/hostname", format!("{hostname}\n")),
             // Placeholder of the right size; reads return a fresh UUID.
             (PROC_UUID, format!("{}\n", "0".repeat(36))),
@@ -232,7 +239,43 @@ impl RootFs {
         for (path, content) in files {
             sys.add_file(path, content, 0o644);
         }
+        // The shell's own process: `$$` is 1, so `/proc/self` and `/proc/1`
+        // hold the same static view (copies, since symlinks are never
+        // followed, TM-ESC-002).
+        for dir in ["/proc/self", "/proc/1"] {
+            for (name, content) in Self::proc_self_files() {
+                sys.add_file(format!("{dir}/{name}"), content, 0o444);
+            }
+            sys.add_symlink("/bin/bash", format!("{dir}/exe"));
+            sys.add_dir(format!("{dir}/fd"), 0o500);
+            for (fd, target) in [
+                ("0", "/dev/stdin"),
+                ("1", "/dev/stdout"),
+                ("2", "/dev/stderr"),
+            ] {
+                sys.add_symlink(target, format!("{dir}/fd/{fd}"));
+            }
+        }
         sys
+    }
+
+    /// Static `/proc/<pid>/*` content for the virtual shell process.
+    fn proc_self_files() -> [(&'static str, String); 6] {
+        [
+            (
+                "status",
+                "Name:\tbash\nUmask:\t0022\nState:\tR (running)\nTgid:\t1\nPid:\t1\nPPid:\t0\nUid:\t1000\t1000\t1000\t1000\nGid:\t1000\t1000\t1000\t1000\nThreads:\t1\nCapInh:\t0000000000000000\nCapPrm:\t0000000000000000\nCapEff:\t0000000000000000\nCapBnd:\t0000000000000000\nNoNewPrivs:\t1\nSeccomp:\t2\n"
+                    .to_string(),
+            ),
+            ("comm", "bash\n".to_string()),
+            ("cmdline", "bash\0".to_string()),
+            ("cgroup", "0::/\n".to_string()),
+            ("mounts", PROC_MOUNTS.to_string()),
+            (
+                "stat",
+                "1 (bash) R 0 1 1 0 -1 4194560 0 0 0 0 0 0 0 0 20 0 1 0 0 0 0\n".to_string(),
+            ),
+        ]
     }
 
     /// Publish a stub in every bin directory for each command name.
@@ -268,6 +311,14 @@ impl RootFs {
             // CSPRNG, the same source as `uuidgen`.
             let uuid = crate::builtins::random::uuid_v4().map_err(std::io::Error::other)?;
             return Ok(format!("{uuid}\n").into_bytes());
+        }
+        if p == Path::new(PROC_UPTIME) {
+            let up = SystemTime::now()
+                .duration_since(self.built)
+                .unwrap_or_default()
+                .as_secs_f64();
+            let idle = up * crate::builtins::VIRTUAL_NPROC as f64;
+            return Ok(format!("{up:.2} {idle:.2}\n").into_bytes());
         }
         match self.stub_name(p) {
             Some(name) => Ok(stub(&name).into_bytes()),

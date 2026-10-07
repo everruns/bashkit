@@ -57,6 +57,13 @@ Implemented
   first, one after another, on the cheap subshell snapshot
   (`enter_pipeline_stage`/`exit_pipeline_stage`): a builtin produces its
   output as one value anyway, and this keeps `echo x | grep x` fork-free.
+- The generators `yes` and `seq` (unredirected, not shadowed by a
+  function) also start the concurrent part: as a producer stage they write
+  4 KiB chunks straight into the pipe through `Context::stdout_stream`
+  (the interpreter hands the pipe only to the stage's own simple command,
+  matched by address, never to a command run from its arguments), so
+  `seq 1000000 | head -1` stops after one chunk with `PIPESTATUS` `141 0`.
+  Their output caps still apply when the reader takes everything.
 - From the first stage that runs shell code (loop, group, function, `eval`,
   nested shell), the rest run concurrently (`execute_streaming_stages`, on
   with `concurrent_jobs`). Each non-last stage is a forked interpreter like a

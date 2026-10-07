@@ -40,7 +40,7 @@ async fn l_proc_003_no_process_spawning() {
     // `/bin/sh` is a root-filesystem stub for the in-process interpreter: it
     // sees the VFS, never the host.
     let result = bash
-        .exec("echo vfs > /tmp/f; /bin/sh -c 'cat /tmp/f; [ -e /proc/1/exe ] || echo no-host'")
+        .exec("echo vfs > /tmp/f; /bin/sh -c 'cat /tmp/f; [ \"$(readlink /proc/1/exe)\" = /bin/bash ] && echo no-host'")
         .await
         .unwrap();
     assert_eq!(result.stdout, "vfs\nno-host\n");
@@ -171,17 +171,29 @@ async fn l_term_002_cat_does_not_wait_for_terminal_input() {
     );
 }
 
-/// L-PIPE-001: a leading single-builtin stage runs to its own cap before
-/// `head` reads, and never sees SIGPIPE.
+/// L-PIPE-001: a leading single-builtin stage (other than the streaming
+/// generators `yes`/`seq`) runs to completion before `head` reads, and never
+/// sees SIGPIPE: bash reports `141 0` here.
 #[tokio::test]
 async fn l_pipe_001_stages_run_sequentially() {
+    let mut bash = Bash::new();
+    let result = bash
+        .exec("seq 20000 > /tmp/big; cat /tmp/big | head -1; echo \"${PIPESTATUS[*]}\"")
+        .await
+        .unwrap();
+    assert_eq!(result.stdout, "1\n0 0\n");
+}
+
+/// The generators stream: `yes | head -1` stops with SIGPIPE, as in bash.
+#[tokio::test]
+async fn l_pipe_001_generators_stream() {
     let mut bash = Bash::new();
     let result = bash
         .exec("yes | head -1; echo \"${PIPESTATUS[*]}\"")
         .await
         .unwrap();
-    assert_eq!(result.stdout, "y\n1 0\n");
-    assert!(result.stderr.contains("output limit"), "{}", result.stderr);
+    assert_eq!(result.stdout, "y\n141 0\n");
+    assert!(result.stderr.is_empty(), "{}", result.stderr);
 }
 
 /// L-PROC-004: child shells nest at most 8 deep.

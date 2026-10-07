@@ -41,10 +41,12 @@ def test_tm_inf_001_vfs_cannot_read_host_etc_passwd():
 
 
 def test_tm_esc_003_vfs_cannot_read_host_proc():
-    """VFS must not expose /proc filesystem."""
+    """VFS /proc is synthetic: the shell's own entry, never the host process."""
     bash = Bash()
     r = bash.execute_sync("cat /proc/self/cmdline")
-    assert r.exit_code != 0 or r.stdout == "", "Host /proc leaked into VFS"
+    assert r.stdout == "bash\x00", "Host /proc leaked into VFS"
+    r = bash.execute_sync("cat /proc/self/environ /proc/self/maps")
+    assert r.exit_code != 0 and r.stdout == "", "Host /proc leaked into VFS"
 
 
 def test_tm_iso_002_vfs_writes_are_isolated_between_instances():

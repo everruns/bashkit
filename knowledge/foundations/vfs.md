@@ -168,7 +168,13 @@ mounts and custom filesystems always win.
 - `/proc`: static `cpuinfo` (`VIRTUAL_NPROC` CPUs), `meminfo`, `version`
   (`VIRTUAL_KERNEL_RELEASE`, same as `uname -r`), `loadavg`,
   `sys/kernel/hostname`, and `sys/kernel/random/uuid` (a fresh v4 UUID from
-  the OS CSPRNG on every read, like Linux). No pid directories.
+  the OS CSPRNG on every read, like Linux), `uptime` (seconds since this
+  filesystem was built), `mounts` (one `bashkit-vfs` root, as `df` shows).
+  `self` and `1` (the shell, `$$` = `$BASHPID` = 1) hold identical static
+  copies: `status` (uid/gid 1000, no capabilities), `comm`, `cmdline`,
+  `stat`, `cgroup` (`0::/`), `mounts`, `exe` -> `/bin/bash` and
+  `fd/{0,1,2}` -> `/dev/std*` (symlinks, stored not followed). No
+  `environ`, no per-job pid directories.
 - `/bin`, `/usr/bin`: one virtual stub per registered builtin that is not
   shell-only, answered from a shared name set on lookup and never stored as
   files (materializing them cost ~2 ms per `Bash` build). A stub's content starts with `STUB_MARKER`; executing it by

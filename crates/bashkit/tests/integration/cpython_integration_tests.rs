@@ -535,7 +535,7 @@ async fn stdlib_is_bytecode_only() {
     let out = ok("python3 -c '
 import email.message, http.client, xml.dom.minidom, json
 print(json.__file__.endswith(\".pyc\"), email.message.__file__.endswith(\".pyc\"))
-for m in (\"ctypes\", \"ssl\", \"smtplib\", \"pdb\", \"pydoc\", \"_pydecimal\"):
+for m in (\"ctypes\", \"ssl\", \"smtplib\", \"bdb\", \"pydoc\", \"_pydecimal\", \"mailbox\"):
     try:
         __import__(m)
         print(m, \"present\")
@@ -546,6 +546,34 @@ print(decimal.Decimal(\"1.10\") + 1, datetime.datetime.strptime(\"2020\", \"%Y\"
 '")
     .await;
     assert_eq!(out, "True True\n2.10 2020\n");
+}
+
+/// The real debugger is not shipped; a stand-in keeps doctest importable and
+/// makes `breakpoint()` print a notice and continue.
+#[tokio::test]
+async fn doctest_works_and_breakpoint_continues() {
+    let r = Bash::builder()
+        .cpython()
+        .build()
+        .exec(
+            "cat > /m.py <<'EOF'
+def add(a, b):
+    \"\"\"
+    >>> add(1, 2)
+    3
+    \"\"\"
+    return a + b
+EOF
+cd / && python3 -c 'import doctest, m; print(doctest.testmod(m)); breakpoint(); print(\"after\")'",
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        r.stdout, "TestResults(failed=0, attempted=1)\nafter\n",
+        "{}",
+        r.stderr
+    );
+    assert!(r.stderr.contains("debugger not available"), "{}", r.stderr);
 }
 
 #[tokio::test]
