@@ -456,6 +456,7 @@ find: invalid -size type `q'
 ### end
 
 ### find_follow_detects_loops
+### bash_diff: host locale picks ASCII vs curly quotes around names
 # THREAT[TM-DOS-121]: -L symlink loops are reported, never followed forever
 rm -rf /tmp/fx14 && mkdir -p /tmp/fx14/d && cd /tmp/fx14
 ln -s .. d/up; touch f

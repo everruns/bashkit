@@ -54,6 +54,7 @@ __4=
 ### end
 
 ### cmp_reports_first_difference
+### bash_diff: GNU diffutils <3.11 says "char", newer says "byte"; bashkit pins the older form
 d=$(mktemp -d); cd "$d"
 printf 'hello\n' > a; printf 'hellp\n' > b; printf 'hel' > c; : > e
 cmp a a; echo rc=$?

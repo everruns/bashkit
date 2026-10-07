@@ -42,6 +42,7 @@ hi
 ### end
 
 ### env_errors
+### bash_diff: host locale picks ASCII vs curly quotes around names
 env nosuch 2>&1; echo rc=$?
 env exit 3 2>&1; echo still=$?
 env -C /nonexistent pwd 2>&1; echo rc=$?
