@@ -158,14 +158,14 @@ impl Builtin for Ls {
         let multiple_paths = paths.len() > 1 || opts.recursive;
 
         // Separate file and directory arguments (like real ls)
-        let mut file_args: Vec<(&str, crate::fs::Metadata)> = Vec::new();
+        let mut file_args: Vec<(&str, std::path::PathBuf, crate::fs::Metadata)> = Vec::new();
         let mut dir_args: Vec<(usize, &str, std::path::PathBuf)> = Vec::new();
 
         for (i, path_str) in paths.iter().enumerate() {
             let path = resolve_path(ctx.cwd, path_str);
 
-            // Check if path exists
-            if !ctx.fs.exists(&path).await.unwrap_or(false) {
+            // lstat: a dangling link still lists as itself.
+            let Ok(lmeta) = ctx.fs.lstat(&path).await else {
                 return Ok(ExecResult::err(
                     format!(
                         "ls: cannot access '{}': No such file or directory\n",
@@ -173,16 +173,23 @@ impl Builtin for Ls {
                     ),
                     2,
                 ));
-            }
-
-            let metadata = ctx.fs.stat(&path).await?;
+            };
+            // GNU: a link operand is followed unless -l, -d or -F describe
+            // the link itself.
+            let metadata = if lmeta.file_type.is_symlink()
+                && !(opts.long || opts.directory || opts.classify)
+            {
+                ctx.fs.stat(&path).await.unwrap_or(lmeta)
+            } else {
+                lmeta
+            };
 
             // With -d/--directory, list the directory entry itself rather than
             // descending into it: treat directory arguments like ordinary
             // non-directory entries. classify_suffix() still appends "/" under
             // -F because it keys off the metadata. (POSIX; common `ls -d */`.)
-            if metadata.file_type.is_file() || opts.directory {
-                file_args.push((path_str, metadata));
+            if !metadata.file_type.is_dir() || opts.directory {
+                file_args.push((path_str, path, metadata));
             } else {
                 dir_args.push((i, path_str, path));
             }
@@ -190,13 +197,14 @@ impl Builtin for Ls {
 
         // Sort file arguments by time if -t, preserving original paths
         if opts.sort_by_time {
-            file_args.sort_by_key(|entry| std::cmp::Reverse(entry.1.modified));
+            file_args.sort_by_key(|entry| std::cmp::Reverse(entry.2.modified));
         }
 
         // Output file arguments first (preserving path as given by user)
         if opts.long {
-            for (path_str, metadata) in &file_args {
+            for (path_str, path, metadata) in &file_args {
                 let mut entry = format_long_entry(path_str, metadata, opts.human);
+                push_link_target(&ctx, path, metadata, &mut entry).await;
                 if opts.classify {
                     // Insert suffix before the trailing newline
                     let suffix = classify_suffix(metadata);
@@ -209,7 +217,7 @@ impl Builtin for Ls {
         } else if !file_args.is_empty() {
             let names: Vec<String> = file_args
                 .iter()
-                .map(|(path_str, metadata)| {
+                .map(|(path_str, _, metadata)| {
                     let mut name = (*path_str).to_string();
                     if opts.classify {
                         name.push_str(classify_suffix(metadata));
@@ -293,6 +301,13 @@ async fn list_directory(
     if opts.long {
         for entry in &filtered {
             let mut line = format_long_entry(&entry.name, &entry.metadata, opts.human);
+            push_link_target(
+                ctx,
+                &vfs_join(path, &entry.name),
+                &entry.metadata,
+                &mut line,
+            )
+            .await;
             if opts.classify {
                 let suffix = classify_suffix(&entry.metadata);
                 if !suffix.is_empty() {
@@ -347,6 +362,21 @@ async fn list_directory(
     }
 
     Ok(())
+}
+
+/// `ls -l`: append ` -> target` to a symlink's line (before the newline).
+async fn push_link_target(
+    ctx: &Context<'_>,
+    path: &Path,
+    metadata: &crate::fs::Metadata,
+    line: &mut String,
+) {
+    if metadata.file_type.is_symlink()
+        && let Ok(target) = ctx.fs.read_link(path).await
+    {
+        let at = line.len().saturating_sub(1);
+        line.insert_str(at, &format!(" -> {}", target.display()));
+    }
 }
 
 /// Return the classify indicator character for a file type.

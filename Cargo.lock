@@ -365,6 +365,7 @@ dependencies = [
  "bashkit-cpython-wasm",
  "bigdecimal",
  "bitflags 2.13.2",
+ "blake2",
  "branches",
  "bstr",
  "bytes",

@@ -26,6 +26,13 @@ authors.workspace = true
 repository.workspace = true
 publish = false
 
+[features]
+# Interactive `Terminal` class (keystrokes in, escape-sequence bytes out) for
+# xterm.js-style renderers. Off by default for crate users, like
+# `bashkit/terminal`; `scripts/build.sh` turns it on for the npm package because
+# it costs ~60 KB gzipped and stays inert until a page constructs `Terminal`.
+terminal = ["bashkit/terminal"]
+
 [lib]
 crate-type = ["cdylib", "rlib"]
 

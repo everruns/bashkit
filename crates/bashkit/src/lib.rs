@@ -19,7 +19,7 @@
 //! - **Python (CPython)** - Real CPython 3.14 in a WebAssembly sandbox (`cpython` feature)
 //! - **Experimental: SQLite** - Embedded SQLite-compatible engine via [Turso](https://github.com/tursodatabase/turso) (`sqlite` feature)
 //!
-//! # Built-in Commands (164)
+//! # Built-in Commands (182)
 //!
 //! | Category | Commands |
 //! |----------|----------|
@@ -27,17 +27,17 @@
 //! | Navigation | `cd`, `pwd`, `ls`, `find`, `tree`, `pushd`, `popd`, `dirs` |
 //! | Flow control | `true`, `false`, `exit`, `return`, `break`, `continue`, `test`, `[`, `assert` |
 //! | Variables | `export`, `set`, `unset`, `local`, `shift`, `source`, `.`, `eval`, `readonly`, `times`, `declare`, `typeset`, `let`, `dotenv`, `envsubst` |
-//! | Shell | `bash`, `sh` (virtual re-invocation), `exec`, `:`, `trap`, `caller`, `getopts`, `shopt`, `command`, `type`, `which`, `hash`, `alias`, `unalias`, `compgen`, `fc`, `help` |
+//! | Shell | `bash`, `sh` (virtual re-invocation), `exec`, `:`, `trap`, `caller`, `getopts`, `shopt`, `command`, `builtin`, `enable`, `umask`, `ulimit`, `type`, `which`, `hash`, `alias`, `unalias`, `compgen`, `fc`, `help` |
 //! | Text processing | `grep`, `rg`, `sed`, `awk`, `jq` and `yq` (with `jq` feature), `head`, `tail`, `sort`, `uniq`, `cut`, `tr`, `wc`, `paste`, `column`, `diff`, `comm`, `strings`, `tac`, `rev`, `seq`, `expr`, `fold`, `expand`, `unexpand`, `join`, `split`, `iconv`, `shuf`, `template` |
-//! | File operations | `mkdir`, `mktemp`, `mkfifo`, `rm`, `cp`, `mv`, `touch`, `chmod`, `chown`, `ln`, `rmdir`, `realpath`, `readlink`, `truncate`, `glob`, `patch` |
+//! | File operations | `mkdir`, `mktemp`, `mkfifo`, `rm`, `cp`, `mv`, `touch`, `chmod`, `chown`, `ln`, `rmdir`, `realpath`, `readlink`, `truncate`, `install`, `dd`, `glob`, `patch` |
 //! | File inspection | `file`, `stat`, `less` |
 //! | Archives | `tar`, `gzip`, `gunzip`, `bzip2`, `bunzip2`, `bzcat`, `zip`, `unzip` |
-//! | Byte tools | `od`, `xxd`, `hexdump`, `base64` |
-//! | Checksums | `md5sum`, `sha1sum`, `sha256sum`, `verify` |
-//! | Utilities | `sleep`, `date`, `basename`, `dirname`, `timeout`, `wait`, `watch`, `yes`, `kill`, `clear`, `numfmt`, `retry`, `parallel` |
+//! | Byte tools | `od`, `xxd`, `hexdump`, `base64`, `base32`, `basenc`, `cmp` |
+//! | Checksums | `md5sum`, `sha1sum`, `sha224sum`, `sha256sum`, `sha384sum`, `sha512sum`, `b2sum`, `cksum`, `verify` |
+//! | Utilities | `sleep`, `date`, `basename`, `dirname`, `timeout`, `wait`, `watch`, `yes`, `kill`, `clear`, `numfmt`, `factor`, `tsort`, `retry`, `parallel` |
 //! | Disk | `df`, `du` |
 //! | Pipeline | `xargs`, `tee` |
-//! | System info | `whoami`, `hostname`, `uname`, `id`, `env`, `printenv`, `history` |
+//! | System info | `whoami`, `hostname`, `uname`, `id`, `nproc`, `locale`, `env`, `printenv`, `history` |
 //! | Structured data | `json`, `csv`, `tomlq`, `semver` |
 //! | Network | `curl`, `wget`, `http` (requires [`NetworkAllowlist`])
 //! | Arithmetic | `bc` |
@@ -1927,6 +1927,12 @@ pub struct BashBuilder {
     history_file: Option<PathBuf>,
     /// When true, deny all filesystem mutations after configured mounts/files are applied.
     readonly_filesystem: bool,
+    /// When true, skip the default `/etc`, `/proc`, `/bin`, `/usr/bin` layer.
+    no_rootfs: bool,
+    /// When true, symlinks are stored but not followed (pre-0.19 behavior).
+    no_follow_symlinks: bool,
+    /// When true, `&` jobs run to completion when spawned.
+    sequential_jobs: bool,
     /// Interceptor hooks
     hooks_on_exit: Vec<hooks::Interceptor<hooks::ExitEvent>>,
     hooks_before_exec: Vec<hooks::Interceptor<hooks::ExecInput>>,
@@ -3264,6 +3270,94 @@ impl BashBuilder {
         self
     }
 
+    /// Provide the default root filesystem layout (on by default).
+    ///
+    /// Adds a read-only system layer under the session filesystem:
+    /// `/etc/{os-release,passwd,group,hostname,hosts,shells,timezone}`,
+    /// `/proc/{cpuinfo,meminfo,version,loadavg}`, and a stub in `/bin` and
+    /// `/usr/bin` for every registered command, so `which ls` prints
+    /// `/usr/bin/ls` and `/usr/bin/env` runs. Content comes from the virtual
+    /// identity (username, hostname), never the host. Session files shadow
+    /// system files; system files cannot be modified or removed. See
+    /// `knowledge/foundations/vfs.md` ("Root filesystem layout").
+    ///
+    /// ```rust
+    /// # use bashkit::Bash;
+    /// # #[tokio::main]
+    /// # async fn main() -> bashkit::Result<()> {
+    /// let mut bash = Bash::builder().build();
+    /// let r = bash.exec("which ls; grep ^ID= /etc/os-release").await?;
+    /// assert_eq!(r.stdout, "/usr/bin/ls\nID=bashkit\n");
+    ///
+    /// let mut bare = Bash::builder().rootfs(false).build();
+    /// let r = bare.exec("test -e /etc/passwd || echo none").await?;
+    /// assert_eq!(r.stdout, "none\n");
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn rootfs(mut self, enabled: bool) -> Self {
+        self.no_rootfs = !enabled;
+        self
+    }
+
+    /// Follow symbolic links in path lookups (on by default).
+    ///
+    /// `cat link`, `cd linkdir`, `echo x > link` and `[ -d linkdir ]` act on
+    /// the link's target, as on Linux; `rm`, `mv`, `readlink`, `[ -L ]` and
+    /// `ls -l` act on the link itself. Targets are VFS paths, so a link can
+    /// never reach the host, and lookups give up after 40 links with "Too
+    /// many levels of symbolic links". With `false`, links are stored but
+    /// opening one fails. See `knowledge/foundations/vfs.md` ("Symlink
+    /// Handling").
+    ///
+    /// ```rust
+    /// # use bashkit::Bash;
+    /// # #[tokio::main]
+    /// # async fn main() -> bashkit::Result<()> {
+    /// let mut bash = Bash::builder().build();
+    /// let r = bash.exec("echo hi > /tmp/t; ln -s t /tmp/l; cat /tmp/l").await?;
+    /// assert_eq!(r.stdout, "hi\n");
+    ///
+    /// let mut bare = Bash::builder().follow_symlinks(false).build();
+    /// let r = bare.exec("echo hi > /tmp/t; ln -s t /tmp/l; cat /tmp/l").await?;
+    /// assert_eq!(r.exit_code, 1);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn follow_symlinks(mut self, enabled: bool) -> Self {
+        self.no_follow_symlinks = !enabled;
+        self
+    }
+
+    /// Run background jobs (`cmd &`) concurrently (on by default).
+    ///
+    /// Jobs run on a forked shell and are polled together with the
+    /// foreground script on the same task (no threads), so `sleep 1 & sleep 1
+    /// & wait` takes one second and `kill $!` stops a running job. `exec()`
+    /// returns once every job finished. With `false`, each job runs to
+    /// completion when it is started, which keeps output order fully
+    /// deterministic (eval replay, snapshot tests). See
+    /// `knowledge/foundations/parallel-execution.md` ("Background jobs").
+    ///
+    /// ```rust
+    /// # use bashkit::Bash;
+    /// # #[tokio::main]
+    /// # async fn main() -> bashkit::Result<()> {
+    /// let mut bash = Bash::builder().build();
+    /// let r = bash.exec("sleep 5 & kill $!; wait $!; echo $?").await?;
+    /// assert_eq!(r.stdout, "143\n");
+    ///
+    /// let mut seq = Bash::builder().concurrent_jobs(false).build();
+    /// let r = seq.exec("(sleep 0.01; echo a) & echo b; wait").await?;
+    /// assert_eq!(r.stdout, "a\nb\n");
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn concurrent_jobs(mut self, enabled: bool) -> Self {
+        self.sequential_jobs = !enabled;
+        self
+    }
+
     /// Build the Bash instance.
     ///
     /// If mounted files are specified, they are added via an [`OverlayFs`] layer
@@ -3323,6 +3417,23 @@ impl BashBuilder {
             base_fs,
         );
 
+        // Layer 1.5: default root filesystem layout (/etc, /proc, /usr/bin).
+        let rootfs = (!self.no_rootfs).then(|| {
+            Arc::new(fs::RootFs::new(
+                base_fs.clone(),
+                self.username
+                    .as_deref()
+                    .unwrap_or(builtins::DEFAULT_USERNAME),
+                self.hostname
+                    .as_deref()
+                    .unwrap_or(builtins::DEFAULT_HOSTNAME),
+            ))
+        });
+        let base_fs: Arc<dyn FileSystem> = match &rootfs {
+            Some(root) => Arc::clone(root) as Arc<dyn FileSystem>,
+            None => base_fs,
+        };
+
         // Layer 2: If there are mounted text/lazy files, wrap in an OverlayFs
         let has_mounts = !self.mounted_files.is_empty() || !self.mounted_lazy_files.is_empty();
         let base_fs: Arc<dyn FileSystem> = if has_mounts {
@@ -3350,6 +3461,13 @@ impl BashBuilder {
         // Layer 4: Wrap in MountableFs for post-build live mount/unmount
         let mountable = Arc::new(MountableFs::new(base_fs));
         let fs: Arc<dyn FileSystem> = Arc::clone(&mountable) as Arc<dyn FileSystem>;
+
+        // Layer 5: follow symlinks across every layer and mount.
+        let fs: Arc<dyn FileSystem> = if self.no_follow_symlinks {
+            fs
+        } else {
+            Arc::new(fs::FollowFs::new(fs))
+        };
 
         let mut result = Self::build_with_fs(
             fs,
@@ -3395,6 +3513,14 @@ impl BashBuilder {
         #[cfg(feature = "realfs")]
         {
             result.host_mounts = host_mounts;
+        }
+
+        if let Some(root) = &rootfs {
+            root.set_commands(result.interpreter.rootfs_command_names());
+        }
+
+        if self.sequential_jobs {
+            result.interpreter.set_concurrent_jobs(false);
         }
 
         // Set hooks after build — avoids adding another arg to build_with_fs.

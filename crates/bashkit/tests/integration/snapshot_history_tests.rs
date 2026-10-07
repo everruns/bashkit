@@ -1183,7 +1183,13 @@ async fn forged_paths_are_inert_rather_than_a_sandbox_escape() {
         "canary\n"
     );
 
-    for unreachable in ["/etc/passwd", "/b.txt", "/a/b.txt", "/relative.txt"] {
+    // /etc/passwd exists, but only as the synthetic root-filesystem file.
+    let passwd = bash.exec("cat /etc/passwd").await.unwrap().stdout;
+    assert!(
+        !passwd.contains("root::0:0::/:/bin/sh"),
+        "forged /etc/passwd became readable"
+    );
+    for unreachable in ["/b.txt", "/a/b.txt", "/relative.txt"] {
         let result = bash.exec(&format!("cat {unreachable}")).await.unwrap();
         assert_ne!(
             result.exit_code, 0,
@@ -1202,7 +1208,7 @@ async fn forged_paths_are_inert_rather_than_a_sandbox_escape() {
         root.contains("canary.txt"),
         "expected the canary in {root:?}"
     );
-    for hidden in ["passwd", "b.txt", "relative.txt"] {
+    for hidden in ["b.txt", "relative.txt"] {
         assert!(
             !root.contains(hidden),
             "{hidden} surfaced in root: {root:?}"
@@ -1237,12 +1243,20 @@ async fn a_forged_symlink_cannot_reach_outside_the_vfs() {
         "canary\n"
     );
 
-    for probe in [
-        "cat /escape/passwd",
-        "ls /escape/",
-        "cat /loop",
-        "ls -L /loop",
-    ] {
+    // `/../../../etc` clamps at the VFS root: the link reaches the
+    // synthetic /etc, never the host's.
+    let result = bash.exec("cat /escape/passwd").await.unwrap();
+    assert!(
+        result.stdout.starts_with("sandbox:x:1000:1000"),
+        "{:?}",
+        result.stdout
+    );
+    assert!(!result.stdout.contains("root:x:0:0"));
+    let result = bash.exec("ls /escape/").await.unwrap();
+    assert!(result.stdout.contains("os-release"), "{:?}", result.stdout);
+    assert!(!result.stdout.contains("shadow"));
+
+    for probe in ["cat /loop", "ls -L /loop"] {
         let result = bash.exec(probe).await.unwrap();
         assert!(
             result.stdout.is_empty(),

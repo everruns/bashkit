@@ -12,7 +12,7 @@ individual threat IDs and mitigation status, see the
 
 | Boundary | What it does |
 |----------|-------------|
-| **Virtual filesystem** | Scripts run against an in-memory VFS. No real filesystem access by default. Path traversal (`../../../etc/passwd`) is normalised away. Symlinks are stored but never followed. |
+| **Virtual filesystem** | Scripts run against an in-memory VFS. No real filesystem access by default. Path traversal (`../../../etc/passwd`) is normalised away. Symlinks are followed inside the VFS only: a target is always a VFS path, so a link can never reach the host. |
 | **No process execution** | `exec` is excluded entirely. `bash -c` re-invokes the virtual interpreter instead of spawning a real process. Background jobs (`&`) parse but run synchronously. |
 | **Network allowlist** | HTTP/HTTPS only, pre-validated against an explicit host allowlist. No DNS resolution, no auto-redirect, no auto-decompression. |
 | **Resource limits** | Configurable caps on commands, loop iterations, recursion depth, AST depth, timeouts, and parser operations prevent denial-of-service from malicious scripts. |

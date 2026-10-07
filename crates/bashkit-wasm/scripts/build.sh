@@ -13,6 +13,9 @@ WORKSPACE_ROOT="$(cd "$CRATE_DIR/../.." && pwd)"
 OUT_DIR="$CRATE_DIR/pkg"
 TARGET=wasm32-unknown-unknown
 PROFILE="${1:-release}"
+# Cargo features, comma-separated. The npm package ships `terminal` (the
+# `Terminal` class, ~60 KB gzipped); set BASHKIT_WASM_FEATURES="" to drop it.
+FEATURES="${BASHKIT_WASM_FEATURES-terminal}"
 
 echo "==> cargo build ($PROFILE) for $TARGET"
 if [ "$PROFILE" = "release" ]; then
@@ -23,7 +26,7 @@ else
   TARGET_SUBDIR="debug"
 fi
 # shellcheck disable=SC2086
-cargo build -p bashkit-wasm --target "$TARGET" $CARGO_PROFILE_FLAG
+cargo build -p bashkit-wasm --target "$TARGET" $CARGO_PROFILE_FLAG ${FEATURES:+--features "$FEATURES"}
 
 WASM_IN="$WORKSPACE_ROOT/target/$TARGET/$TARGET_SUBDIR/bashkit_wasm.wasm"
 

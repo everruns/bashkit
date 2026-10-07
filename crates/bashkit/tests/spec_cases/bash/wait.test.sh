@@ -1,5 +1,4 @@
 ### wait_basic
-### bash_diff: VFS runs background jobs synchronously
 # wait returns success
 wait
 echo $?
@@ -8,7 +7,6 @@ echo $?
 ### end
 
 ### wait_with_pid
-### bash_diff: VFS runs background jobs synchronously
 # wait with a PID argument
 echo "hello" &
 wait $!
@@ -27,7 +25,6 @@ set
 ### end
 
 ### bang_var_isolated_across_subshell
-### bash_diff: VFS runs background jobs synchronously
 # A $(...) subshell starting its own background job must not change the
 # parent's $! (last background PID is per-shell state, like real bash).
 true &
@@ -39,7 +36,6 @@ isolated
 ### end
 
 ### bg_internal_names_are_ordinary_vars
-### bash_diff: VFS runs background jobs synchronously
 # _LAST_BG_PID / _BG_EXIT_CODE are no longer interpreter channels in the
 # variable namespace; backgrounding tracks $! in typed state and leaves these
 # user variables untouched.

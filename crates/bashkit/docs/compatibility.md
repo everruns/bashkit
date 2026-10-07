@@ -74,7 +74,7 @@ for sandbox security reasons. See the compliance spec for details.
 | `rg` | `-i/-S/-s`, `-n/-N`, `--column`, `-b/--byte-offset`, `--vimgrep`, basic `--json`, `--stats`, `--null`, `-c`, `--count-matches`, `--include-zero`, `-l`, `--files-with-matches`, `--files-without-match`, `--files`, `-F`, `-w`, `-x`, `-a/--text`, `--binary`, `-m`, `-M/--max-columns`, `--max-columns-preview`, `--max-depth`, `-A`, `-B`, `-C`, separator flags, `--heading/--no-heading`, `--sort/--sortr`, `--path-separator`, `-g/--glob`, `--ignore-file`, `.ignore`/`.gitignore`, `--no-ignore*`, `--require-git/--no-require-git`, `-u/--unrestricted`, `--messages/--no-messages`, `-t/--type`, `-T/--type-not`, `--type-add`, `--type-clear`, `--type-list`, `--hidden/--no-hidden`, `-o`, `-q`, `-e`, `-f`, `-E/--encoding` (`auto`, `none`, UTF-8, UTF-16LE/BE), `-r`, `--passthru`, `--trim`, `-H/-I`, `--no-config`, `--line-buffered`, `--block-buffered`, `--mmap/--no-mmap`, `-P/--pcre2`, `--no-pcre2`, `--engine`, `--auto-hybrid-regex`, `--no-auto-hybrid-regex`, `--help`, `--version` | Recursive ripgrep-style search |
 | `sed` | `s///[gpiImMN w]`, `y`, `d`, `D`, `p`, `P`, `n`, `N`, `q[N]`, `Q[N]`, `=`, `l[N]`, `z`, `F`, `a`, `i`, `c`, `r`, `R`, `w`, `W`, `h/H/g/G/x`, `b`/`t`/`T`/`:label`, `{}`, `#`/`#n`; addresses `N`, `$`, `/re/[IM]`, `\cREc`, `first~step`, `a,b`, `a,+N`, `a,~N`, `0,/re/`, `!`; options `-n -e -f -i[SUF] -E/-r -s -z -l N -u --` and long forms | Stream editing; one stream across operands unless `-s`/`-i` |
 | `awk` | `'{print}'`, `-F`, `-v`, loops, arrays, increment, ternary | Text processing |
-| `jq` | `.field`, `.[n]`, pipes, file args, `-r`, `-c`, `-n`, `-s`, `-S`, `-e`, `-j`, `--tab`, `--arg`, `--argjson`, `-V`, combined flags | JSON processing |
+| `jq` | `.field`, `.[n]`, pipes, file args, `-r`, `-c`, `-n`, `-s`, `-S`, `-e`, `-j`, `-f`/`--from-file`, `--tab`, `--arg`, `--argjson`, `-V`, combined flags | JSON processing |
 | `sleep` | `N`, `N.N` | Pause execution (max 60s) |
 | `head` | `-n N`, `-N` | First N lines (default 10) |
 | `tail` | `-n N`, `-N` | Last N lines (default 10) |
@@ -84,7 +84,7 @@ for sandbox security reasons. See the compliance spec for details.
 | `rm` | `-rf` | Remove files/directories |
 | `cp` | `-r` | Copy files |
 | `mv` | - | Move/rename files |
-| `touch` | - | Create empty files |
+| `touch` | `-c`, `-d`/`--date`, `-r`/`--reference`, `-t`, `-a`/`-m` | Create files, set modification time |
 | `chmod` | `MODE` | Change permissions (octal only) |
 | `wc` | `-l`, `-w`, `-c` | Count lines/words/bytes |
 | `sort` | `-r`, `-n`, `-u` | Sort lines |
@@ -92,13 +92,17 @@ for sandbox security reasons. See the compliance spec for details.
 | `cut` | `-d DELIM`, `-f FIELDS` | Extract fields |
 | `tr` | `-d`, character ranges | Translate/delete chars |
 | `date` | `+FORMAT`, `-u`, `-R`, `-I`, `-r`, `-d`/`--date` (relative, compound, epoch) | Display/format date with sandboxed IANA timezone support |
-| `wait` | `[JOB_ID...]` | Wait for background jobs |
+| `wait` | `[-n] [-p VAR] [-f] [ID...]` (PID or `%jobspec`) | Wait for background jobs |
+| `jobs` | `-l`, `-p` | List running background jobs |
+| `ps` | `-f`, `aux`, `-o`, `-p` | Virtual process list (shell + jobs) |
+| `pgrep`/`pkill` | `-f`, `-l`, `-a`, `-c`, `-x`, `-SIGNAL` | Match jobs by command |
+| `disown`, `fg`, `bg` | `[JOBSPEC]` | `fg` waits; `bg` is a no-op (jobs already run) |
 | `curl` | `-s`, `-o`, `-X`, `-d`/`--data`, `--data-raw`, `--data-binary`, `--data-urlencode`, `-G`/`--get`, `-H`, `-I`, `-f`, `-L`, `-w`, `--compressed`, `-u`, `-A`, `-e`, `-v`, `-m` | HTTP client (requires http_client feature) |
 | `wget` | `-q`, `-O`, `--spider`, `--header`, `-U`, `--post-data`, `-t` | Download files (requires http_client feature) |
 | `time` | `[-p] [-f FORMAT] [-o FILE] [-a] [-v] [--] PIPELINE` | Reserved-word timing; elapsed/status/Bashkit counters are truthful, host CPU/RSS fields say `unavailable` |
 | `timeout` | `DURATION COMMAND` | Run with time limit (stub) |
 | `ls` | `-l`, `-a`, `-h`, `-1`, `-R`, `-t`, `-F`, `-C`, `-d` | List directory contents |
-| `find` | `-name`, `-type`, `-maxdepth`, `-print` | Search for files |
+| `find` | GNU expression grammar (`( )`, `!`, `-a`, `-o`, `,`), `-H`/`-L`/`-P`, `-name`/`-iname`, `-path`/`-ipath`, `-regex`/`-iregex`/`-regextype`, `-type`/`-xtype`, `-size`, `-empty`, `-mtime`/`-mmin`/`-newer`/`-newerXY`, `-perm`, `-user`/`-group`/`-uid`/`-gid`, `-maxdepth`/`-mindepth`/`-depth`, `-print`/`-print0`/`-printf`, `-exec`/`-execdir` (`;` and `+`), `-delete`, `-prune`, `-quit` | Search for files (gaps: L-FIND-001) |
 | `rmdir` | `-p` | Remove empty directories |
 | `xargs` | `-I`, `-n`, `-d` | Build commands from stdin |
 | `tee` | `-a` | Write to files and stdout |
@@ -112,7 +116,7 @@ for sandbox security reasons. See the compliance spec for details.
 | `bzip2` | `-c`, `-d`, `-z`, `-k`, `-f` | Compress or decompress bzip2 streams/files |
 | `bunzip2` | `-c`, `-k`, `-f` | Decompress bzip2 streams/files |
 | `bzcat` | | Decompress bzip2 streams/files to stdout |
-| `env` | `[VAR=val]` | Print/modify environment |
+| `env` | `-i`, `-u`, `-C`, `-0`, `[VAR=val]`, `CMD [ARGS]` | Print environment or run a command in a modified one |
 | `printenv` | `[VAR]` | Print environment variables |
 | `history` | (none) | Command history (limited in virtual mode) |
 | `hostname` | (none) | Display virtual hostname |
@@ -164,7 +168,7 @@ Chrono's validated strftime implementation, plus GNU `%N`, `%3N`, `%6N`, and
 |---------|-------------------|-------|
 | `ln` | `-s`, `-f` | Create links |
 | `chown` | `OWNER[:GROUP] FILE` | Change ownership (virtual) |
-| `kill` | `-SIGNAL PID` | Send signals (virtual) |
+| `kill` | `-l`, `-s SIG`, `-n NUM`, `-SIG`, `PID`/`%job` | Terminate background jobs (exit 128+signal); stop/continue signals are ignored |
 | `trap` | `COMMAND SIGNAL...`, `-p`, `-l` | Signal/event handlers |
 | `type` | `NAME...` | Describe command type |
 | `which` | `NAME...` | Locate a command |
@@ -399,9 +403,12 @@ Default limits (configurable):
 |---------|--------|-------|
 | Virtual filesystem | ✅ | InMemoryFs, OverlayFs, MountableFs |
 | Real filesystem | ❌ | Virtual by default |
-| Symlinks | ✅ | Stored but not followed |
+| Symlinks | ✅ | Followed in the VFS (40-link cap); `..` resolves lexically |
 | Permissions | ✅ | Metadata stored, not enforced |
 | `/dev/null` | ✅ | Interpreter-level handling (cannot be bypassed) |
+| `/dev/zero` | ✅ | 1 MiB of zeros per read |
+| `/etc`, `/proc` | ⚠️ | Synthetic, read-only (`os-release`, `passwd`, `cpuinfo`, ...); `rootfs(false)` disables |
+| `/bin`, `/usr/bin` | ✅ | Stub per builtin; `which`/`type` report paths, running a stub runs the builtin |
 
 ---
 
@@ -462,7 +469,7 @@ cargo test --test spec_tests -- bash_comparison_tests --ignored
 - [x] Byte inspection (`strings`, `od`, `xxd`, `hexdump`)
 - [x] `basename`/`dirname` builtins
 - [x] `date` builtin
-- [x] Background execution (`&`, `wait`) - parsed, runs synchronously
+- [x] Background execution (`&`, `wait`) - jobs run concurrently on the session's task (no stop/continue)
 - [x] Network (`curl`, `wget`) - full HTTP implementation with security mitigations
 - [x] `timeout` builtin - stub, requires interpreter-level integration
 - [x] Process substitution (`<(cmd)`, `>(cmd)`)

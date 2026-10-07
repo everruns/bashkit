@@ -43,9 +43,10 @@ execution model. Evidence is a threat-model ID, a test, or `stance`
 | ID | Limitation | Why | Evidence |
 |----|------------|-----|----------|
 | L-PROC-001 | `exec` does not replace the process; `exec cmd` runs cmd then stops execution (fd redirects work) | True process replace would break sandbox containment | TM-ESC-005 |
-| L-PROC-002 | No job control (`bg`, `fg`, `jobs`) | Requires process state; interactive-only feature | `l_proc_002_no_job_control` |
+| L-PROC-002 | Background jobs run concurrently (`jobs`, `wait -n`, `kill`, `ps`, `pgrep`), but cannot be stopped or resumed: `kill -STOP/-CONT` are ignored, there is no `suspend`/Ctrl-Z, `bg` is a no-op and `fg` just waits; jobs end when `exec()` returns | No terminal process groups in a virtual shell; a job must not outlive the call that owns it (TM-DOS-122) | `l_proc_002_no_job_control` |
 | L-PROC-003 | No process spawning; external commands run as builtins | Core sandbox model: no fork/exec escape surface | `l_proc_003_no_process_spawning` |
-| L-FS-001 | Symlinks stored but never followed in path resolution (`ln -s` works, `read_link()` returns targets, traversal blocked) | Prevents symlink loops and link-based sandbox escapes | TM-DOS-011 |
+| L-FS-001 | Symlinks are followed, but `..` after a linked directory resolves lexically (`/link/..` is the link's parent, the `cd -L` view), and `ln` without `-s` makes a symlink, not a hard link | The interpreter normalizes paths before the VFS sees them; the VFS has no inodes to share | `symlink.test.sh`, `ln_default_symbolic` |
+| L-ROOTFS-001 | Default rootfs is static and read-only: `/proc` has no `self`, pid dirs, `uptime` or live counters; `/etc/passwd` has no root entry; `/dev/zero` yields 1 MiB per read; `/bin`, `/usr/bin` are stubs that dispatch builtins | Host state must not leak (TM-INF-003, TM-ISO-018); fixed values keep runs deterministic | `rootfs_layout`, `threat_etc_passwd_blocked` |
 | L-FS-002 | No file permission enforcement in the VFS | Single-tenant virtual FS; permissions would be theater | `l_fs_002_no_permission_enforcement` |
 | L-FS-003 | On Windows, `RealFs::symlink()` validates the target but creates an empty host file rather than a symlink/reparse point; pre-existing host symlinks and junctions remain readable subject to containment checks | Windows requires choosing file-vs-directory link semantics and may require link privileges; the portable VFS symlink contract does not carry that host metadata | TM-ESC-033 |
 | L-NET-001 | No raw network sockets; HTTP only via `curl`/`wget`/`http` builtins | Allowlist-mediated egress is the only network surface | `l_net_001_no_raw_sockets` |
@@ -129,6 +130,7 @@ Boundaries of the WebAssembly CPython guest; see
 | L-CPY-006 | Deep C-level recursion ends the call with `python3: fatal error: stack overflow` instead of `RecursionError` | The interpreter's wasm stack is bounded (4 MiB); the trap is contained | `deep_c_recursion_is_contained` |
 | L-CPY-007 | No interactive REPL; `python3` with no program reads one from stdin | No TTY inside the sandbox | stance |
 | L-CPY-008 | Guest memory per call is capped at 1 GiB even if `max_memory` is higher | Pooled instance slots have a fixed maximum size | [CPython WebAssembly Runtime](../runtimes/cpython-wasm.md) |
+| L-CPY-009 | Stdlib ships as bytecode only: tracebacks show no source line for stdlib frames, `inspect.getsource()` fails on stdlib objects. Modules that cannot work in the guest are not shipped: `ctypes`, `ssl`, `ftplib`, `imaplib`, `poplib`, `smtplib`, `socketserver`, `http.server`, `wsgiref`, `xmlrpc`, `webbrowser`, `pdb`, `bdb`, `pydoc` (so `help()`), `_pyrepl` | Compiling source on Pulley costs seconds per import; sources would push the crate past the crates.io 10 MiB cap. No FFI, TLS, sockets or TTY exist | `stdlib_is_bytecode_only` (cpython_integration_tests) |
 
 ## Text Processing
 
@@ -154,6 +156,11 @@ pass in CI); only divergences and boundaries are recorded here.
 | L-CURL-001 | curl | Spec-test coverage for methods/headers/auth/redirects not ported (needs `http_client` + allowlist in harness); payload behavior has integration and real-curl differential coverage | stance |
 | L-CURL-002 | curl/wget | Unknown options are ignored for compatibility, not rejected (real curl/wget error); deliberate leniency | `curl.rs` |
 | L-PRINTF-001 | printf | `%(fmt)T` argument `-2` (bash: shell start time) formats the current time; the shell start instant is not tracked. GNU-only `%N` in the time format is expanded to nanoseconds, bash prints it literally | `printf.rs::expand_time_directives` |
+| L-FACTOR-001 | factor | Numbers above 2^64-1 are rejected ("too large"); GNU factor accepts arbitrary precision | `factor.rs::rejects_bad_tokens` |
+| L-ENV-001 | umask, ulimit, enable | `umask` is stored and reported (subshell-scoped) but does not yet change VFS file creation modes; `ulimit` reports fixed sandbox values (not host limits) and stores lowered values without enforcing them, real caps are `ExecutionLimits`; `enable -n/-d/-f` (disable or load builtins) are refused | `shellenv.rs`, `process-env-builtins.test.sh` |
+| L-DD-001 | dd | Transfer-statistics line reports `0 s, 0 B/s` (no wall-clock rate); each invocation moves at most 64 MiB (`DD_MAX_BYTES`) and an uncounted `/dev/zero`/`/dev/urandom` read stops there with exit 1 | `dd.rs` |
+| L-FIND-001 | find | Not implemented: `-ok`/`-okdir` (need an interactive terminal; refused with an error), `-ls`, `-fls`, `-fprint`/`-fprint0`/`-fprintf`, `-samefile`, `-inum`, `-links`, `-fstype`, `-context`, `-used`. Entries are visited in byte-sorted order, not readdir order. Access/change times read the modification time (the VFS keeps one). `-newerXt` dates use `date -d` parsing. `{} +` batches run at the end of the walk (or every 4096 paths), so their output follows find's own output; `-execdir ... {} +` is not flushed per directory. `-printf` `%i`/`%D` print 0, `%F` prints `vfs`, `%k`/`%b` assume 4 KiB blocks | `find/mod.rs`, `find.test.sh` |
+| L-FIND-002 | find | `-exec` commands run with no stdin (GNU passes find's stdin through) | `find/mod.rs` |
 | L-STR-001 | strings | Accepts dash-prefixed filenames (e.g. `-data.bin`), so only a lone unknown short option (`-Q`) is rejected as invalid; GNU rejects `-data.bin` too | `strings.rs` |
 
 Safety boundaries (enforced, not bugs): printf width/precision caps,

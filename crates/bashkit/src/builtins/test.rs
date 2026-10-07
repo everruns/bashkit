@@ -202,7 +202,7 @@ async fn evaluate_unary(
         "-L" | "-h" => {
             // symbolic link
             let path = resolve_file_path(cwd, arg);
-            if let Ok(meta) = fs.stat(&path).await {
+            if let Ok(meta) = fs.lstat(&path).await {
                 meta.file_type.is_symlink()
             } else {
                 false

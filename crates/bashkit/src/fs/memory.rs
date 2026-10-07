@@ -54,6 +54,9 @@ use super::vfs_join;
 #[cfg(feature = "failpoints")]
 use fail::fail_point;
 
+/// Bytes returned by one read of `/dev/zero` (TM-DOS-003: never unbounded).
+const DEV_ZERO_READ_BYTES: usize = 1 << 20;
+
 /// In-memory filesystem implementation.
 ///
 /// `InMemoryFs` is the default filesystem used by [`Bash::new()`](crate::Bash::new).
@@ -1120,6 +1123,11 @@ impl FileSystem for InMemoryFs {
             return Self::generate_random_bytes();
         }
 
+        // THREAT[TM-DOS-003]: /dev/zero reads are bounded too (1 MiB of zeros).
+        if path == Path::new("/dev/zero") {
+            return Ok(vec![0; DEV_ZERO_READ_BYTES]);
+        }
+
         // First try with a read lock for the common (non-lazy) case
         {
             let entries = self.entries.read().unwrap();
@@ -1210,7 +1218,7 @@ impl FileSystem for InMemoryFs {
         let path = Self::normalize_path(path);
 
         // Special handling for /dev/null - discard all writes
-        if path == Path::new("/dev/null") {
+        if path == Path::new("/dev/null") || path == Path::new("/dev/zero") {
             return Ok(());
         }
 
@@ -1276,7 +1284,7 @@ impl FileSystem for InMemoryFs {
         let path = Self::normalize_path(path);
 
         // Special handling for /dev/null - discard all writes
-        if path == Path::new("/dev/null") {
+        if path == Path::new("/dev/null") || path == Path::new("/dev/zero") {
             return Ok(());
         }
 

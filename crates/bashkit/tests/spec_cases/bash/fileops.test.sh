@@ -251,3 +251,22 @@ echo "$f" | grep -q "^/tmp/custom/" && echo "in_custom"
 in_custom
 exists
 ### end
+
+### touch_date_reference_nocreate
+rm -rf /tmp/tdr && mkdir -p /tmp/tdr && cd /tmp/tdr
+TZ=UTC touch -d '2001-02-03 04:05:06' old
+TZ=UTC date -r old '+%Y-%m-%d %H:%M:%S' 2>/dev/null || stat -c %Y old
+touch -r old copy
+[ old -nt copy ] || [ copy -nt old ] || echo same-mtime
+touch -c missing; ls missing 2>/dev/null || echo not-created
+touch -cm --date=@0 old; TZ=UTC date -r old +%Y
+touch -t 200102030405.06 stamp; TZ=UTC date -r stamp '+%m/%d %H:%M:%S'
+touch --bogus 2>/dev/null; echo rc=$?
+### expect
+2001-02-03 04:05:06
+same-mtime
+not-created
+1970
+02/03 04:05:06
+rc=1
+### end

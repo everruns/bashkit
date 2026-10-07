@@ -17,6 +17,8 @@ type SystemTime = bashkit::time::SystemTime;
 pub(crate) fn apply(builder: BashBuilder) -> BashBuilder {
     builder
         .fs(Arc::new(DisabledFs))
+        // No synthetic /etc, /proc or /usr/bin over the disabled filesystem.
+        .rootfs(false)
         .shell_features(ShellFeatures::none())
         .builtin_filter(builtin_allowed)
 }

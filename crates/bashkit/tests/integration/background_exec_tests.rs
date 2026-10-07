@@ -87,9 +87,9 @@ cat /tmp/wait_pid.txt
 #[tokio::test]
 async fn background_exit_code_via_wait() {
     let mut bash = Bash::new();
-    let result = bash.exec("false &\nwait\necho $?").await.unwrap();
-    // wait should return the exit code of the background job
-    assert!(result.stdout.contains("1"));
+    let result = bash.exec("false &\nwait $!\necho $?").await.unwrap();
+    // `wait $pid` returns the job's status; bare `wait` returns 0 (bash).
+    assert_eq!(result.stdout.trim(), "1");
 }
 
 /// cmd1 & cmd2 — cmd2 runs in foreground while cmd1 is backgrounded
@@ -112,4 +112,55 @@ async fn background_jobs_do_not_leak_across_exec_calls() {
     let result = bash.exec("wait\necho $?").await.unwrap();
     assert_eq!(result.exit_code, 0);
     assert_eq!(result.stdout.trim(), "0");
+}
+
+/// TM-DOS-122: live background jobs are capped by `max_background_jobs`.
+#[tokio::test]
+async fn background_job_limit() {
+    let limits = bashkit::ExecutionLimits::new().max_background_jobs(2);
+    let mut bash = Bash::builder().limits(limits).build();
+    let result = bash
+        .exec("sleep 5 & sleep 5 & sleep 5 & echo rc=$?; kill %1 %2; wait")
+        .await
+        .unwrap();
+    assert!(result.stdout.contains("rc=1"), "stdout: {}", result.stdout);
+    assert!(
+        result.stderr.contains("Resource temporarily unavailable"),
+        "stderr: {}",
+        result.stderr
+    );
+}
+
+/// TM-DOS-122: a fork bomb terminates. Nested `&` shares the session-wide
+/// job cap and counts as subshell nesting (TM-DOS-092). Runs on a big-stack
+/// thread: unoptimized builds use far more stack per nesting level.
+#[test]
+fn background_fork_bomb_is_bounded() {
+    let handle = std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(|| {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            rt.block_on(async {
+                let limits = bashkit::ExecutionLimits::new()
+                    .max_background_jobs(8)
+                    .max_subshell_depth(4);
+                let mut bash = Bash::builder().limits(limits).build();
+                let run = bash.exec("f() { f & f & }; f; wait; echo survived");
+                tokio::time::timeout(std::time::Duration::from_secs(30), run)
+                    .await
+                    .expect("fork bomb must terminate")
+                    .unwrap()
+            })
+        })
+        .unwrap();
+    let result = handle.join().unwrap();
+    assert!(
+        result.stdout.contains("survived"),
+        "stdout: {}",
+        result.stdout
+    );
+    assert!(result.stderr.contains("Resource temporarily unavailable"));
 }

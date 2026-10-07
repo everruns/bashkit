@@ -68,19 +68,19 @@ true is a shell builtin
 ### end
 
 ### type_a_builtin
-### bash_diff: real bash also shows PATH entries for echo
-# type -a shows all matches
+# type -a shows the builtin, then every PATH match
 type -a echo
 ### expect
 echo is a shell builtin
+echo is /usr/bin/echo
+echo is /bin/echo
 ### end
 
 ### which_builtin
-### bash_diff: real which shows PATH, bashkit shows name
-# which finds builtins
+# which searches PATH; the root filesystem provides /usr/bin/echo
 which echo
 ### expect
-echo
+/usr/bin/echo
 ### end
 
 ### which_not_found
@@ -91,21 +91,34 @@ which nonexistent_cmd_xyz
 ### end
 
 ### which_multiple
-### bash_diff: real which shows PATH, bashkit shows name
 # which handles multiple names
 which echo cat
 ### expect
-echo
-cat
+/usr/bin/echo
+/usr/bin/cat
 ### end
 
 ### which_function
-### bash_diff: real which only searches PATH, not functions
-# which finds functions
+### exit_code:1
+# which only searches PATH, not functions
 myfunc() { echo hi; }
 which myfunc
 ### expect
-myfunc
+### end
+
+### type_external_command
+# Commands that are programs on a real system resolve to /usr/bin
+type ls
+type -t ls
+command -v ls
+command -V cat
+type -P echo
+### expect
+ls is /usr/bin/ls
+file
+/usr/bin/ls
+cat is /usr/bin/cat
+/usr/bin/echo
 ### end
 
 ### hash_noop
@@ -115,4 +128,29 @@ hash
 echo "ok"
 ### expect
 ok
+### end
+
+### rootfs_layout
+# Default root filesystem: /etc, /proc and command stubs
+grep -c '^processor' /proc/cpuinfo
+grep '^ID=' /etc/os-release
+cut -d: -f1 /etc/passwd
+cat /etc/hostname
+/usr/bin/env A=1 printenv A
+[ -x /usr/bin/env ] && echo env-exec
+head -c 4 /dev/zero | od -An -c
+echo hi > /etc/passwd 2>/dev/null || echo denied
+mkdir -p /etc/myapp && echo conf > /etc/myapp/x && cat /etc/myapp/x
+### bash_diff: synthetic identity (sandbox user, bashkit-sandbox host, 4 CPUs)
+### expect
+4
+ID=bashkit
+sandbox
+nobody
+bashkit-sandbox
+1
+env-exec
+  \0  \0  \0  \0
+denied
+conf
 ### end
