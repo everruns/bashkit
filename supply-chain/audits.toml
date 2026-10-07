@@ -603,6 +603,12 @@ criteria = "safe-to-deploy"
 delta = "0.8.0-pre.14 -> 0.8.1"
 notes = "Reviewed the 0.8.0-pre.14 -> 0.8.1 delta: the published source trees are byte-identical. Every file except Cargo.toml, Cargo.lock and .cargo_vcs_info.json hashes the same across the two releases (295 files, 293 of them Rust), and the three that differ carry only version strings plus the upstream release commit sha. Nothing to review beyond the version stamp; this is the stable cut of the pre-release already in use."
 
+[[audits.turso_core]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.8.1 -> 0.8.2"
+notes = "Reviewed published 0.8.1 -> 0.8.2 source delta. Core CDC insert/update/delete emission now uses ColumnLayout physical register offsets and skips virtual columns, preventing virtual-column values from being read as physical registers; record sizing uses non-virtual columns. No new unsafe, ambient IO, execution, or dependencies. Extension, macros and parser source unchanged; manifests update package and sibling versions only."
+
 [[audits.turso_ext]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
@@ -620,6 +626,12 @@ who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 delta = "0.8.0-pre.14 -> 0.8.1"
 notes = "Reviewed the 0.8.0-pre.14 -> 0.8.1 delta: the published source trees are byte-identical. Every file except Cargo.toml, Cargo.lock and .cargo_vcs_info.json hashes the same across the two releases (8 files, 6 of them Rust), and the three that differ carry only version strings plus the upstream release commit sha. Nothing to review beyond the version stamp; this is the stable cut of the pre-release already in use."
+
+[[audits.turso_ext]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.8.1 -> 0.8.2"
+notes = "Reviewed published 0.8.1 -> 0.8.2 source delta. Core CDC insert/update/delete emission now uses ColumnLayout physical register offsets and skips virtual columns, preventing virtual-column values from being read as physical registers; record sizing uses non-virtual columns. No new unsafe, ambient IO, execution, or dependencies. Extension, macros and parser source unchanged; manifests update package and sibling versions only."
 
 [[audits.turso_macros]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
@@ -639,6 +651,12 @@ criteria = "safe-to-deploy"
 delta = "0.8.0-pre.14 -> 0.8.1"
 notes = "Reviewed the 0.8.0-pre.14 -> 0.8.1 delta: the published source trees are byte-identical. Every file except Cargo.toml, Cargo.lock and .cargo_vcs_info.json hashes the same across the two releases (13 files, 12 of them Rust), and the three that differ carry only version strings plus the upstream release commit sha. Nothing to review beyond the version stamp; this is the stable cut of the pre-release already in use."
 
+[[audits.turso_macros]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.8.1 -> 0.8.2"
+notes = "Reviewed published 0.8.1 -> 0.8.2 source delta. Core CDC insert/update/delete emission now uses ColumnLayout physical register offsets and skips virtual columns, preventing virtual-column values from being read as physical registers; record sizing uses non-virtual columns. No new unsafe, ambient IO, execution, or dependencies. Extension, macros and parser source unchanged; manifests update package and sibling versions only."
+
 [[audits.turso_parser]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
@@ -656,6 +674,12 @@ who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 delta = "0.8.0-pre.14 -> 0.8.1"
 notes = "Reviewed the 0.8.0-pre.14 -> 0.8.1 delta: the published source trees are byte-identical. Every file except Cargo.toml, Cargo.lock and .cargo_vcs_info.json hashes the same across the two releases (11 files, 9 of them Rust), and the three that differ carry only version strings plus the upstream release commit sha. Nothing to review beyond the version stamp; this is the stable cut of the pre-release already in use."
+
+[[audits.turso_parser]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.8.1 -> 0.8.2"
+notes = "Reviewed published 0.8.1 -> 0.8.2 source delta. Core CDC insert/update/delete emission now uses ColumnLayout physical register offsets and skips virtual columns, preventing virtual-column values from being read as physical registers; record sizing uses non-virtual columns. No new unsafe, ambient IO, execution, or dependencies. Extension, macros and parser source unchanged; manifests update package and sibling versions only."
 
 [[audits.twox-hash]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
