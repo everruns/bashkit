@@ -3188,10 +3188,15 @@ impl<'a> Parser<'a> {
                 if let Some(literal_ch) = chars.next() {
                     current.push(literal_ch);
                 }
-            } else if ch == '\u{1e}' {
-                in_quoted_segment = true;
-            } else if ch == '\u{1f}' {
-                in_quoted_segment = false;
+            } else if ch == '\u{1e}' || ch == '\u{1f}' {
+                // A quote boundary ends the literal run, so `part_quoted`
+                // records which literal text was quoted (brace expansion
+                // only sees unquoted literals).
+                let quoted = ch == '\u{1e}';
+                if quoted != in_quoted_segment && !current.is_empty() {
+                    push_part!(WordPart::Literal(std::mem::take(&mut current)));
+                }
+                in_quoted_segment = quoted;
             } else if ch == '$' {
                 // Flush current literal
                 if !current.is_empty() {
@@ -3478,6 +3483,10 @@ impl<'a> Parser<'a> {
                         }
 
                         // Check for array access ${arr[index]} or ${arr[@]:offset:length}
+                        // `${arr[i]OP...}` with a pattern/case/transform OP reuses the
+                        // scalar operator parsing below on the name `arr[i]`.
+                        let mut subscript_op = false;
+                        let had_subscript = chars.peek() == Some(&'[');
                         if chars.peek() == Some(&'[') {
                             chars.next(); // consume '['
                             let mut index = String::new();
@@ -3572,7 +3581,7 @@ impl<'a> Parser<'a> {
                                             chars.next();
                                         }
                                         push_part!(WordPart::ArraySlice {
-                                            name: var_name,
+                                            name: std::mem::take(&mut var_name),
                                             offset,
                                             length,
                                         });
@@ -3595,23 +3604,29 @@ impl<'a> Parser<'a> {
                                         operand,
                                         colon_variant: false,
                                     });
+                                } else if matches!(next_c, '#' | '%' | '/' | '^' | ',' | '@') {
+                                    var_name = format!("{}[{}]", var_name, index);
+                                    subscript_op = true;
                                 } else {
                                     // Plain array access ${arr[index]}
                                     if chars.peek() == Some(&'}') {
                                         chars.next();
                                     }
                                     push_part!(WordPart::ArrayAccess {
-                                        name: var_name,
+                                        name: std::mem::take(&mut var_name),
                                         index,
                                     });
                                 }
                             } else {
                                 push_part!(WordPart::ArrayAccess {
-                                    name: var_name,
+                                    name: std::mem::take(&mut var_name),
                                     index,
                                 });
                             }
-                        } else if let Some(&c) = chars.peek() {
+                        }
+                        if (!had_subscript || subscript_op)
+                            && let Some(&c) = chars.peek()
+                        {
                             // Check for operator
                             match c {
                                 ':' => {
@@ -3824,13 +3839,12 @@ impl<'a> Parser<'a> {
                                     } else {
                                         ParameterOp::UpperFirst
                                     };
-                                    if chars.peek() == Some(&'}') {
-                                        chars.next();
-                                    }
+                                    // `${v^^pat}`: only characters matching `pat`.
+                                    let operand = self.read_brace_operand(&mut chars);
                                     push_part!(WordPart::ParameterExpansion {
                                         name: var_name,
                                         operator: op,
-                                        operand: String::new(),
+                                        operand,
                                         colon_variant: false,
                                     });
                                 }
@@ -3842,13 +3856,12 @@ impl<'a> Parser<'a> {
                                     } else {
                                         ParameterOp::LowerFirst
                                     };
-                                    if chars.peek() == Some(&'}') {
-                                        chars.next();
-                                    }
+                                    // `${v^^pat}`: only characters matching `pat`.
+                                    let operand = self.read_brace_operand(&mut chars);
                                     push_part!(WordPart::ParameterExpansion {
                                         name: var_name,
                                         operator: op,
-                                        operand: String::new(),
+                                        operand,
                                         colon_variant: false,
                                     });
                                 }
@@ -3889,7 +3902,7 @@ impl<'a> Parser<'a> {
                                     }
                                 }
                             }
-                        } else if !var_name.is_empty() {
+                        } else if !had_subscript && !var_name.is_empty() {
                             push_part!(WordPart::Variable(var_name));
                         }
                     }

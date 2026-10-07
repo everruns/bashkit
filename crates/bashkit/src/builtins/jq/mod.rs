@@ -5,7 +5,7 @@
 //! Layout:
 //!  - `args`: CLI parsing (incl. `--slurpfile`, `--rawfile`, `--args`,
 //!    `--jsonargs`, `--indent`)
-//!  - `convert`: serde_json <-> JqJson <-> jaq Val conversion, depth check
+//!  - `convert`: order-preserving JSON reader -> JqJson <-> jaq Val, depth check
 //!  - `format`: indent-aware output rendering (custom `--indent N`)
 //!  - `compat`: prepended jq-compat definitions and global var names
 //!  - `errors`: jq-style error formatting (no Debug-shape leaks)
@@ -64,7 +64,7 @@ use compat::{
     ARGS_VAR_NAME, ENV_VAR_NAME, FILENAME_VAR_NAME, LINENO_VAR_NAME, PUBLIC_ENV_VAR_NAME,
     build_compat_prefix,
 };
-use convert::{JqJson, MAX_JQ_JSON_DEPTH, jq_to_val, parse_json_stream, val_to_jq_capped};
+use convert::{JqJson, jq_to_val, parse_json_stream, val_to_jq_capped};
 use errors::{format_compile_errors, format_load_errors, format_runtime_error};
 use format::{Indent, render, sort_keys as sort_jq_keys};
 
@@ -184,15 +184,12 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
             }
         }
         let value = match req.kind {
-            FileVarKind::Raw => serde_json::Value::String(text),
+            FileVarKind::Raw => JqJson::String(text),
             FileVarKind::Slurp => match parse_jq_json_stream(&ctx, &text)? {
-                Ok(vals) => {
-                    // Inner values are already depth-checked by parse_json_stream;
-                    // the wrapping array adds one level which the recursive
-                    // limit already accommodates.
-                    let arr: Vec<serde_json::Value> = vals.iter().map(jq_to_serde_value).collect();
-                    serde_json::Value::Array(arr)
-                }
+                // Inner values are already depth-checked by parse_json_stream;
+                // the wrapping array adds one level which the recursive
+                // limit already accommodates.
+                Ok(vals) => JqJson::Array(vals),
                 Err(e) => return Ok(ExecResult::err(format!("{e}\n"), 5)),
             },
         };
@@ -236,11 +233,12 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
     // ctx.env takes precedence over ctx.variables (prefix assignments
     // shadow exported variables).
     let env_obj = {
-        let mut map = serde_json::Map::new();
+        // Sorted by name: deterministic regardless of HashMap order.
+        let mut map = std::collections::BTreeMap::new();
         for (k, v) in ctx.variables.iter().chain(ctx.env.iter()) {
-            map.insert(k.clone(), serde_json::Value::String(v.clone()));
+            map.insert(k.clone(), JqJson::String(v.clone()));
         }
-        serde_json::Value::Object(map)
+        JqJson::Object(map.into_iter().collect())
     };
 
     // Compose the filter: prepend compat defs, the env def, etc.
@@ -348,12 +346,9 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
     };
 
     // Pre-convert globals to Val once.
-    let env_val = jq_to_val(&jq_from_serde(&env_obj));
-    let args_val = jq_to_val(&jq_from_serde(&args_obj));
-    let pre_var_vals: Vec<Val> = all_var_bindings
-        .iter()
-        .map(|(_, v)| jq_to_val(&jq_from_serde(v)))
-        .collect();
+    let env_val = jq_to_val(&env_obj);
+    let args_val = jq_to_val(&args_obj);
+    let pre_var_vals: Vec<Val> = all_var_bindings.iter().map(|(_, v)| jq_to_val(v)).collect();
 
     // Build inputs to process.
     let inputs_to_process: Vec<FilterInput> = if parsed.null_input {
@@ -648,20 +643,20 @@ fn file_binding_limit_error(used: usize, next: u64) -> ExecResult {
     )
 }
 
-/// `--rawfile`/`--slurpfile`/$ARGS plumbing helper. The serialized object is
-/// `{"positional": [...], "named": {...}}`.
-fn build_args_obj(
-    positional: &[serde_json::Value],
-    named: &[(String, serde_json::Value)],
-) -> serde_json::Value {
-    let mut named_map = serde_json::Map::new();
+/// `--rawfile`/`--slurpfile`/$ARGS plumbing helper. The object is
+/// `{"positional": [...], "named": {...}}`, named in argument order.
+fn build_args_obj(positional: &[JqJson], named: &[(String, JqJson)]) -> JqJson {
+    let mut named_map: Vec<(String, JqJson)> = Vec::new();
     for (k, v) in named {
-        named_map.insert(k.clone(), v.clone());
+        match named_map.iter_mut().find(|(n, _)| n == k) {
+            Some(slot) => slot.1 = v.clone(),
+            None => named_map.push((k.clone(), v.clone())),
+        }
     }
-    serde_json::json!({
-        "positional": positional,
-        "named": serde_json::Value::Object(named_map),
-    })
+    JqJson::Object(vec![
+        ("positional".to_string(), JqJson::Array(positional.to_vec())),
+        ("named".to_string(), JqJson::Object(named_map)),
+    ])
 }
 
 /// `--slurpfile` / `--rawfile` reuse this to derive the filename Val.
@@ -673,33 +668,5 @@ fn stdin_filename(parsed: &JqArgs<'_>) -> Val {
     match parsed.file_args.first() {
         Some(p) => Val::from((*p).to_string()),
         None => Val::Null,
-    }
-}
-
-/// Convert a serde_json::Value into our internal JqJson with a depth check.
-fn jq_from_serde(v: &serde_json::Value) -> JqJson {
-    convert::serde_to_jq(v, 0, MAX_JQ_JSON_DEPTH).unwrap_or(JqJson::Null)
-}
-
-/// Convert a JqJson back to serde_json::Value (lossy for Number tokens
-/// outside i64/f64 range, which is acceptable since this only feeds into
-/// our re-serializer for `--slurpfile` arrays — values originate from
-/// `parse_json_stream`, so they round-trip cleanly).
-fn jq_to_serde_value(v: &JqJson) -> serde_json::Value {
-    match v {
-        JqJson::Null => serde_json::Value::Null,
-        JqJson::Bool(b) => serde_json::Value::Bool(*b),
-        JqJson::Number(s) => {
-            serde_json::from_str::<serde_json::Value>(s).unwrap_or(serde_json::Value::Null)
-        }
-        JqJson::String(s) => serde_json::Value::String(s.clone()),
-        JqJson::Array(arr) => serde_json::Value::Array(arr.iter().map(jq_to_serde_value).collect()),
-        JqJson::Object(map) => {
-            let mut out = serde_json::Map::new();
-            for (k, item) in map {
-                out.insert(k.clone(), jq_to_serde_value(item));
-            }
-            serde_json::Value::Object(out)
-        }
     }
 }

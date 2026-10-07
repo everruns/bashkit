@@ -420,7 +420,7 @@ execute permission (mode & 0o111); exit 127 missing / 126 non-executable; sheban
 
 | ID | Threat | Attack Vector | Mitigation | Status |
 |----|--------|--------------|------------|--------|
-| TM-ESC-009 | sudo/su | `sudo rm -rf /` | Not implemented | **MITIGATED** |
+| TM-ESC-009 | sudo/su | `sudo rm -rf /` | `sudo` runs the command as the same sandbox user (no identity or permission change, L-SUDO-001); `su`/`doas` not implemented | **MITIGATED** |
 | TM-ESC-010 | setuid | Permission changes | Virtual FS, no real perms | **MITIGATED** |
 | TM-ESC-011 | Capability abuse | Linux capabilities | Runs in-process | **MITIGATED** |
 
@@ -436,7 +436,7 @@ execute permission (mode & 0o111); exit 127 missing / 126 non-executable; sheban
 |----|--------|--------------|------------|--------|
 | TM-INF-001 | Env var leak | `echo $SECRET_KEY` | Env vars caller-controlled | **CALLER RISK** |
 | TM-INF-002 | File secrets | `cat /secrets/key` | Virtual FS isolation | **MITIGATED** |
-| TM-INF-003 | Proc secrets | `/proc/self/environ` | Only a static synthetic /proc (rootfs: cpuinfo, meminfo, version, loadavg); no `self` or pid dirs | **MITIGATED** |
+| TM-INF-003 | Proc secrets | `/proc/self/environ` | Only a static synthetic /proc (rootfs: cpuinfo, meminfo, version, loadavg, uptime, mounts); `self` and `1` are static copies of the virtual shell (uid 1000, no `environ`), never host data | **MITIGATED** |
 | TM-INF-004 | Memory dump | Core dumps | No crash dumps | **MITIGATED** |
 
 | TM-INF-013 | Host env leak via jq | jq now uses custom `$__bashkit_env__` variable, not `std::env` |, | **FIXED** (2026-03 audit verified) |

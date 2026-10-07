@@ -101,6 +101,8 @@ fn bench_call(c: &mut Criterion) {
 const IMPORTS: &[(&str, &str)] = &[
     ("email_message", "python3 -c 'import email.message'"),
     ("http_client", "python3 -c 'import http.client'"),
+    // bashkit's own requests/httpx, preloaded in the snapshot.
+    ("requests_httpx", "python3 -c 'import requests, httpx'"),
 ];
 
 fn bench_import(c: &mut Criterion) {

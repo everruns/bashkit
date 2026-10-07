@@ -7,14 +7,14 @@ libraries statically linked into it (see `guest/build.sh` and
 
 | Component | Version | License | Where |
 |-----------|---------|---------|-------|
-| CPython (interpreter and stdlib) | 3.14.8 | Python-2.0 (PSF License Agreement and predecessors) | `artifacts/python.wasm.gz`, `artifacts/python314.zip` |
-| libmpdec (`decimal`) | bundled with CPython | BSD-2-Clause | `artifacts/python.wasm.gz` |
-| Expat (`pyexpat`, `xml.etree`) | bundled with CPython | MIT | `artifacts/python.wasm.gz` |
-| HACL* (`hashlib` md5/sha1/sha2/sha3/blake2, `hmac`) | bundled with CPython | MIT | `artifacts/python.wasm.gz` |
-| zlib | 1.3.1 | Zlib | `artifacts/python.wasm.gz` |
-| SQLite | 3.50.4 | Public domain (blessing) | `artifacts/python.wasm.gz` |
-| wasi-libc (WASI SDK 24) | 24 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT; musl parts MIT | `artifacts/python.wasm.gz` |
-| compiler-rt builtins (WASI SDK 24) | 24 | Apache-2.0 WITH LLVM-exception | `artifacts/python.wasm.gz` |
+| CPython (interpreter and stdlib) | 3.14.8 | Python-2.0 (PSF License Agreement and predecessors) | `artifacts/python.wasm.xz`, `artifacts/python314.zip` |
+| libmpdec (`decimal`) | bundled with CPython | BSD-2-Clause | `artifacts/python.wasm.xz` |
+| Expat (`pyexpat`, `xml.etree`) | bundled with CPython | MIT | `artifacts/python.wasm.xz` |
+| HACL* (`hashlib` md5/sha1/sha2/sha3/blake2, `hmac`) | bundled with CPython | MIT | `artifacts/python.wasm.xz` |
+| zlib | 1.3.1 | Zlib | `artifacts/python.wasm.xz` |
+| SQLite | 3.50.4 | Public domain (blessing) | `artifacts/python.wasm.xz` |
+| wasi-libc (WASI SDK 24) | 24 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT; musl parts MIT | `artifacts/python.wasm.xz` |
+| compiler-rt builtins (WASI SDK 24) | 24 | Apache-2.0 WITH LLVM-exception | `artifacts/python.wasm.xz` |
 
 The full license texts that require reproduction follow.
 

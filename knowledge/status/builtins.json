@@ -79,6 +79,10 @@
     },
     {
       "feature": null,
+      "name": "busybox"
+    },
+    {
+      "feature": null,
       "name": "bzcat"
     },
     {
@@ -276,6 +280,10 @@
     {
       "feature": null,
       "name": "flock"
+    },
+    {
+      "feature": null,
+      "name": "fmt"
     },
     {
       "feature": null,
@@ -527,6 +535,10 @@
     },
     {
       "feature": null,
+      "name": "pr"
+    },
+    {
+      "feature": null,
       "name": "printenv"
     },
     {
@@ -696,6 +708,10 @@
     {
       "feature": null,
       "name": "strings"
+    },
+    {
+      "feature": null,
+      "name": "sudo"
     },
     {
       "feature": null,
@@ -894,5 +910,5 @@
       "name": "zip"
     }
   ],
-  "count": 223
+  "count": 227
 }

@@ -388,6 +388,14 @@ criteria = "safe-to-deploy"
 version = "0.3.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.crc]]
+version = "3.4.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.crc-catalog]]
+version = "2.5.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.crc32c]]
 version = "0.6.8"
 criteria = "safe-to-deploy"
@@ -1015,6 +1023,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.loom]]
 version = "0.7.2"
+criteria = "safe-to-deploy"
+
+[[exemptions.lzma-rs]]
+version = "0.3.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.mach2]]
