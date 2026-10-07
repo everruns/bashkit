@@ -390,6 +390,19 @@ TM-DOS-126 in the [Threat Model](../security/threat-model.md).
 When `bot-auth` feature is enabled, all outbound HTTP requests are transparently
 signed with Ed25519 per RFC 9421 (see [Request Signing](../security/request-signing.md)).
 
+### pr
+
+`pr` (`builtins/pr.rs`) is written from GNU `pr`'s observable behavior, not
+its source (GPL). Output matches GNU byte for byte on an 88-case differential
+corpus: page layout (5-line header with date, centered title and page number,
+body, 5-line trailer, 66 lines), `-COLUMN` down/across with last-page
+balancing, `-m`, `-n`, `-d`, `-o`, `-s`/`-S`/`-J`, `-l`/`-w`/`-W`, `+FIRST:LAST`
+and the error messages. Multi-column padding uses GNU's tab rule: padding and
+blank runs of two or more become tabs where they reach a tab stop. Header
+dates come from the sandbox clock and `TZ` (the `date` builtin's), file dates
+from VFS mtimes. Output is capped at 16 MiB because padding can multiply
+input size. Gaps: L-PR-001.
+
 ### Archive Compression
 
 `tar` supports plain, gzip, and bzip2 archives. It accepts GNU short/old-style
