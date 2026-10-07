@@ -332,3 +332,42 @@ echo "still here"
 after 3
 still here
 ### end
+
+### pipeline_endless_producer_into_head
+# head exits after two lines; the endless loop gets SIGPIPE (141)
+while :; do echo x; done | head -n 2
+echo "${PIPESTATUS[*]}"
+### expect
+x
+x
+141 0
+### end
+
+### pipeline_endless_producer_into_reads
+# A group that reads two lines and leaves ends the producer too
+i=0
+while :; do echo $((i++)); done | { read -r a; read -r b; echo "$a $b"; }
+echo "${PIPESTATUS[*]}"
+### expect
+0 1
+141 0
+### end
+
+### pipeline_endless_through_middle_stage
+# Every stage upstream of head is ended by SIGPIPE
+while :; do echo a; done | while read -r l; do echo "<$l>"; done | head -n 2
+echo "${PIPESTATUS[*]}"
+### expect
+<a>
+<a>
+141 141 0
+### end
+
+### pipeline_reader_breaks_out_early
+# A while-read loop that breaks ends an endless producer
+while :; do echo y; done | while read -r l; do echo "got $l"; break; done
+echo "${PIPESTATUS[*]}"
+### expect
+got y
+141 0
+### end

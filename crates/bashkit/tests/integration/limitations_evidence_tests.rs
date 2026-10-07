@@ -165,8 +165,8 @@ async fn l_term_002_cat_does_not_wait_for_terminal_input() {
     );
 }
 
-/// L-PIPE-001: stages run one after another, so the producer runs to its own
-/// cap before `head` reads, and never sees SIGPIPE.
+/// L-PIPE-001: a leading single-builtin stage runs to its own cap before
+/// `head` reads, and never sees SIGPIPE.
 #[tokio::test]
 async fn l_pipe_001_stages_run_sequentially() {
     let mut bash = Bash::new();
