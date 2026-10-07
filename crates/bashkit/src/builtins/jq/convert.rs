@@ -287,36 +287,39 @@ fn format_f64_canonical(f: f64) -> String {
 /// Parse multiple JSON values from a stream (handles NDJSON, multi-line,
 /// concatenated). Each value is depth-checked and keeps its key order.
 pub(super) fn parse_json_stream(input: &str) -> std::result::Result<Vec<JqJson>, String> {
+    match parse_json_stream_partial(input) {
+        (vals, None) => Ok(vals),
+        (_, Some(e)) => Err(e),
+    }
+}
+
+/// Parse a whitespace-separated JSON stream, returning the values before
+/// the first syntax error together with that error.
+pub(super) fn parse_json_stream_partial(input: &str) -> (Vec<JqJson>, Option<String>) {
     use serde::de::DeserializeSeed;
 
-    let trimmed = input.trim();
-    if trimmed.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let too_deep = std::cell::Cell::new(None);
-    let mut de = serde_json::Deserializer::from_str(trimmed);
     let mut vals = Vec::new();
-    loop {
-        // Skip inter-value whitespace; stop at end of input.
-        if de.end().is_ok() {
-            break;
-        }
+    // Split into values first so a literal glued to junk (`1\u{1}2`) is one
+    // invalid token, as in jq, instead of a valid `1` followed by an error.
+    for (start, end) in super::input::value_spans(input) {
+        let too_deep = std::cell::Cell::new(None);
+        let mut de = serde_json::Deserializer::from_str(&input[start..end]);
         let seed = JqSeed {
             depth: 0,
             max: MAX_JQ_JSON_DEPTH,
             too_deep: &too_deep,
         };
-        match seed.deserialize(&mut de) {
+        match seed.deserialize(&mut de).and_then(|v| de.end().map(|()| v)) {
             Ok(v) => vals.push(v),
             Err(e) => {
-                return Err(too_deep
+                let msg = too_deep
                     .take()
-                    .unwrap_or_else(|| format!("jq: invalid JSON: {e}")));
+                    .unwrap_or_else(|| format!("jq: invalid JSON: {e}"));
+                return (vals, Some(msg));
             }
         }
     }
-    Ok(vals)
+    (vals, None)
 }
 
 #[cfg(test)]

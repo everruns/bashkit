@@ -108,6 +108,93 @@ pub(super) fn normalize<'a>(
     })
 }
 
+/// Byte spans of the top-level values in a JSON text stream, split the way
+/// jq tokenizes: strings, bracketed values, and literal tokens that run to
+/// the next whitespace or structural character. The parser validates each
+/// span; this only finds boundaries.
+pub(super) fn value_spans(text: &str) -> Vec<(usize, usize)> {
+    let b = text.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    loop {
+        while i < b.len() && b[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if i >= b.len() {
+            break;
+        }
+        let start = i;
+        let scalar = !matches!(b[i], b'[' | b'{' | b'"');
+        let (mut depth, mut in_str, mut esc) = (0usize, false, false);
+        while i < b.len() {
+            let c = b[i];
+            i += 1;
+            if in_str {
+                if esc {
+                    esc = false;
+                } else if c == b'\\' {
+                    esc = true;
+                } else if c == b'"' {
+                    in_str = false;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                continue;
+            }
+            if scalar {
+                if c.is_ascii_whitespace()
+                    || matches!(c, b'[' | b'{' | b'"' | b']' | b'}' | b',' | b':')
+                {
+                    i -= 1;
+                    if i == start {
+                        // A stray structural character: its own (invalid) span.
+                        i += 1;
+                    }
+                    break;
+                }
+                continue;
+            }
+            match c {
+                b'"' => in_str = true,
+                b'[' | b'{' => depth += 1,
+                b']' | b'}' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        out.push((start, i));
+    }
+    out
+}
+
+/// Line number jq reports for each top-level value of `text`: jq reads
+/// input a line at a time, so a value counts every newline up to the end
+/// of the line it ends on.
+pub(super) fn value_lines(text: &str) -> Vec<usize> {
+    let b = text.as_bytes();
+    let (mut counted, mut lines) = (0usize, 0usize);
+    value_spans(text)
+        .into_iter()
+        .map(|(_, end)| {
+            let last = end.saturating_sub(1);
+            let eol = b[last..]
+                .iter()
+                .position(|&c| c == b'\n')
+                .map_or(b.len(), |p| last + p + 1);
+            if eol > counted {
+                lines += b[counted..eol].iter().filter(|&&c| c == b'\n').count();
+                counted = eol;
+            }
+            lines
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -172,5 +259,27 @@ mod tests {
                 ExecutionBudgetExceeded::LiveBytes { .. }
             ))
         ));
+    }
+
+    #[test]
+    fn value_spans_split_like_jq() {
+        let text = "1 \"a b\" [1, [2]] {\"k\": \"}\"}2[3]";
+        let parts: Vec<&str> = super::value_spans(text)
+            .into_iter()
+            .map(|(a, b)| &text[a..b])
+            .collect();
+        assert_eq!(
+            parts,
+            ["1", "\"a b\"", "[1, [2]]", "{\"k\": \"}\"}", "2", "[3]"]
+        );
+        let glued = "1\u{1}2";
+        assert_eq!(super::value_spans(glued), [(0, glued.len())]);
+    }
+
+    #[test]
+    fn value_lines_count_lines_read() {
+        assert_eq!(super::value_lines("1\n2\n3"), [1, 2, 2]);
+        assert_eq!(super::value_lines("[\n1\n]\n2"), [3, 3]);
+        assert_eq!(super::value_lines("1 2"), [0, 0]);
     }
 }

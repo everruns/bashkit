@@ -338,9 +338,13 @@ async fn exit_status_truthy_returns_0() {
 }
 
 #[tokio::test]
-async fn exit_status_mixed_truthy_wins() {
-    // If any output is non-null/non-false, exit is 0 (unless no output).
+async fn exit_status_last_value_wins() {
+    // jq -e: the last output decides (here false -> 1).
     let result = run_jq_result_with_args(&["-e", ".[]"], "[null, 1, false]")
+        .await
+        .unwrap();
+    assert_eq!(result.exit_code, 1);
+    let result = run_jq_result_with_args(&["-e", ".[]"], "[null, false, 1]")
         .await
         .unwrap();
     assert_eq!(result.exit_code, 0);
@@ -651,9 +655,13 @@ async fn input_filename_returns_path_when_file_given() {
 }
 
 #[tokio::test]
-async fn input_line_number_increments_per_input() {
-    // For NDJSON stdin, each value advances the line counter by 1.
+async fn input_line_number_counts_lines_read() {
+    // jq reads a line at a time: the last value has no newline after it,
+    // so it still reports line 2 (matches jq 1.7).
     let result = run_jq("input_line_number", "1\n2\n3").await.unwrap();
+    let lines: Vec<&str> = result.trim().split('\n').collect();
+    assert_eq!(lines, vec!["1", "2", "2"]);
+    let result = run_jq("input_line_number", "1\n2\n\n3").await.unwrap();
     let lines: Vec<&str> = result.trim().split('\n').collect();
     assert_eq!(lines, vec!["1", "2", "3"]);
 }
@@ -721,8 +729,11 @@ async fn missing_file_errors() {
     let result = run_jq_with_files(&[".", "/missing.json"], &[])
         .await
         .unwrap();
-    assert_eq!(result.exit_code, 1);
-    assert!(result.stderr.contains("jq: /missing.json:"));
+    assert_eq!(result.exit_code, 2);
+    assert_eq!(
+        result.stderr,
+        "jq: error: Could not open file /missing.json: No such file or directory\n"
+    );
 }
 
 // =========================================================================
@@ -915,7 +926,7 @@ async fn regex_invalid_pattern_yields_short_error() {
         .await
         .unwrap();
     assert_ne!(result.exit_code, 0);
-    assert!(result.stderr.starts_with("jq: error: "));
+    assert!(result.stderr.starts_with("jq: error (at <stdin>:0): "));
     assert!(result.stderr.len() < 300);
     // Must not leak fancy-regex internal Debug shapes
     assert!(!result.stderr.contains("ParseError"));
@@ -1000,7 +1011,7 @@ async fn runtime_error_summarizes_index_operands() {
     assert_eq!(result.exit_code, 5);
     assert_eq!(
         result.stderr,
-        "jq: error: Cannot index array with string \"product_name\"\n"
+        "jq: error (at <stdin>:0): Cannot index array with string \"product_name\"\n"
     );
 }
 
@@ -1010,7 +1021,7 @@ async fn runtime_error_iterate_over_null() {
     assert_eq!(result.exit_code, 5);
     assert_eq!(
         result.stderr,
-        "jq: error: Cannot iterate over null (null)\n"
+        "jq: error (at <stdin>:0): Cannot iterate over null (null)\n"
     );
 }
 
@@ -1761,4 +1772,150 @@ async fn filter_from_file_treats_positionals_as_inputs() {
         .expect("jq -f runs");
     assert_eq!(result.exit_code, 2);
     assert!(result.stderr.contains("Could not open /missing.jq"));
+}
+
+// =========================================================================
+// Input stream: -n with input/inputs, per-file names, errors per input
+// (behavior checked against jq 1.7)
+// =========================================================================
+
+#[tokio::test]
+async fn null_input_leaves_stream_to_input_and_inputs() {
+    assert_eq!(
+        run_jq_with_args(&["-n", "input"], "41 42").await.unwrap(),
+        "41\n"
+    );
+    assert_eq!(
+        run_jq_with_args(&["-nc", "[inputs]"], "1 \"a\" [2]")
+            .await
+            .unwrap(),
+        "[1,\"a\",[2]]\n"
+    );
+    assert_eq!(
+        run_jq_with_args(&["-nc", "[limit(2; inputs)], input"], "1 2 3 4")
+            .await
+            .unwrap(),
+        "[1,2]\n3\n"
+    );
+    assert_eq!(
+        run_jq_with_args(&["-n", "reduce inputs as $x (0; . + $x)"], "1 2 39")
+            .await
+            .unwrap(),
+        "42\n"
+    );
+}
+
+#[tokio::test]
+async fn slurp_of_empty_input_is_empty_array() {
+    assert_eq!(run_jq_with_args(&["-s", "."], "").await.unwrap(), "[]\n");
+    assert_eq!(run_jq_with_args(&["."], "").await.unwrap(), "");
+}
+
+#[tokio::test]
+async fn input_fails_when_stream_is_exhausted() {
+    let result = run_jq_result_with_args(&["-c", "[., input]"], "1 2 3")
+        .await
+        .unwrap();
+    assert_eq!(result.stdout, "[1,2]\n");
+    assert_eq!(result.stderr, "jq: error (at <stdin>:0): No more inputs\n");
+    assert_eq!(result.exit_code, 5);
+}
+
+#[tokio::test]
+async fn input_filename_follows_each_file() {
+    let result = run_jq_with_files(
+        &["-c", "[., input_filename]", "/a.json", "/b.json"],
+        &[("/a.json", "{\"f\":\"a\"}"), ("/b.json", "1 2")],
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        result.stdout,
+        "[{\"f\":\"a\"},\"/a.json\"]\n[1,\"/b.json\"]\n[2,\"/b.json\"]\n"
+    );
+}
+
+#[tokio::test]
+async fn missing_file_among_others_is_skipped_with_exit_2() {
+    let result = run_jq_with_files(
+        &["-c", ".", "/a.json", "/nope.json"],
+        &[("/a.json", "{\"ok\":true}")],
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.stdout, "{\"ok\":true}\n");
+    assert_eq!(
+        result.stderr,
+        "jq: error: Could not open file /nope.json: No such file or directory\n"
+    );
+    assert_eq!(result.exit_code, 2);
+}
+
+#[tokio::test]
+async fn runtime_error_moves_on_to_next_input() {
+    let result = run_jq_result_with_args(
+        &["-c", ".a | ascii_downcase"],
+        "{\"a\":\"X\"} 1 {\"a\":\"Y\"}",
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.stdout, "\"x\"\n\"y\"\n");
+    assert_eq!(
+        result.stderr,
+        "jq: error (at <stdin>:0): Cannot index number with string \"a\"\n"
+    );
+    // The last input succeeded.
+    assert_eq!(result.exit_code, 0);
+}
+
+#[tokio::test]
+async fn runtime_error_location_names_file_and_line() {
+    let result = run_jq_with_files(
+        &[".[] | .n | ascii_downcase", "/d.json"],
+        &[("/d.json", "[\n  {\"n\": \"A\"},\n  {\"n\": 5}\n]\n")],
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.stdout, "\"a\"\n");
+    assert!(
+        result.stderr.starts_with("jq: error (at /d.json:4): "),
+        "stderr={}",
+        result.stderr
+    );
+    assert_eq!(result.exit_code, 5);
+}
+
+#[tokio::test]
+async fn error_with_string_prints_message_unquoted() {
+    let result = run_jq_result_with_args(&["-n", "error(\"boom\")"], "")
+        .await
+        .unwrap();
+    assert_eq!(result.stderr, "jq: error (at <unknown>): boom\n");
+    let result = run_jq_result_with_args(&["-n", "error({a:1})"], "")
+        .await
+        .unwrap();
+    assert_eq!(
+        result.stderr,
+        "jq: error (at <unknown>) (not a string): {\"a\":1}\n"
+    );
+}
+
+#[tokio::test]
+async fn values_before_a_parse_error_are_processed() {
+    let result = run_jq_result_with_args(&["-c", "."], "{\"a\":1}\n{a:2}")
+        .await
+        .unwrap();
+    assert_eq!(result.stdout, "{\"a\":1}\n");
+    assert!(
+        result.stderr.contains("invalid JSON"),
+        "stderr={}",
+        result.stderr
+    );
+    assert_eq!(result.exit_code, 5);
+    // A literal glued to junk is one bad token: nothing is emitted.
+    let result = run_jq_result_with_args(&["-c", "."], "1\u{0001}2")
+        .await
+        .unwrap();
+    assert_eq!(result.stdout, "");
+    assert_eq!(result.exit_code, 5);
 }
