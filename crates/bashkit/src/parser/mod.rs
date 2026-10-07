@@ -3336,7 +3336,12 @@ impl<'a> Parser<'a> {
                             if chars.peek() == Some(&'}') {
                                 chars.next();
                             }
-                            push_part!(WordPart::Length(var_name));
+                            if var_name.is_empty() {
+                                // `${#}` is `$#`, not a length.
+                                push_part!(WordPart::Variable("#".to_string()));
+                            } else {
+                                push_part!(WordPart::Length(var_name));
+                            }
                         }
                     } else if chars.peek() == Some(&'!') {
                         // Check for ${!arr[@]} or ${!arr[*]} - array indices
@@ -3474,10 +3479,11 @@ impl<'a> Parser<'a> {
                             }
                         }
 
-                        // Handle special parameters: ${@...}, ${*...}
+                        // Handle special parameters: ${@...}, ${*...}, ${-...},
+                        // ${?...}, ${$...}
                         if var_name.is_empty()
                             && let Some(&c) = chars.peek()
-                            && matches!(c, '@' | '*')
+                            && matches!(c, '@' | '*' | '-' | '?' | '$')
                         {
                             var_name.push(chars.next().unwrap());
                         }

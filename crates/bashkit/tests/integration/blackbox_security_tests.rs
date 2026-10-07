@@ -594,10 +594,11 @@ mod finding_shell_options_leak {
         let result = bash.exec("set -bhm").await.unwrap();
         assert_eq!(result.exit_code, 0, "set -bhm should succeed");
         let result = bash.exec("echo \"$-\"").await.unwrap();
+        // Only the always-on defaults (hashall, braceexpand) remain.
         assert_eq!(
             result.stdout.trim(),
-            "",
-            "set -b/-h/-m leaked across exec() calls through $-"
+            "hB",
+            "set -b/-m leaked across exec() calls through $-"
         );
     }
 
