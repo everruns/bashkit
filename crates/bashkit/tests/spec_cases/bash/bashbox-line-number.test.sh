@@ -31,7 +31,6 @@ in 2
 
 ### bashbox_line_number_lineno_assignments_do_not_stick_a_local_does_unset_makes_it_
 # LINENO assignments do not stick, a local does, unset makes it plain
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 LINENO=50
 echo $LINENO
 h() { local LINENO=7; echo $LINENO; }

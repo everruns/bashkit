@@ -52,7 +52,6 @@ a) b) )
 
 ### bashbox_compound_syntax_a_brace_inside_inside
 # a brace inside $(...) inside ${...}
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 echo ${x:-$(echo })}
 ### expect
 }
@@ -60,7 +59,6 @@ echo ${x:-$(echo })}
 
 ### bashbox_compound_syntax_quoted_and_escaped_braces_inside
 # quoted and escaped braces inside ${...}
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 y=ab; echo ${x:-"}"} ${x:-\}} ${x:-'a}'} ${y/a/\}} "${y/b/'}'}"
 ### expect
 } } a} }b a}

@@ -241,6 +241,7 @@ impl Interpreter {
                 quoted: word.quoted,
                 has_unquoted_glob: word.has_unquoted_glob,
                 part_quoted,
+                raw: None,
             });
         }
         Some(words)

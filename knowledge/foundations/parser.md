@@ -157,6 +157,59 @@ break, so words and further redirects after it parse normally:
 (space, tab, newline, `;`, `&`, `|`, `(`, `)`, or end); `[[:digit:]]*` is a
 bracket-expression word.
 
+**Function printing (`type`, `declare -f`).** `parser/print_cmd.rs` ports
+bash's `print_cmd.c` layout over the AST: `name () ` / `{ ` header, 4-space
+indent, `;` + newline between commands, `elif` printed as a nested
+`else if`, `for x;` as `for x in "$@";`, a lone `[[ x ]]` operand as `-n x`,
+`|&` as `2>&1 |`, and here-document bodies deferred to the end of their line
+(including bash's quirk where the `;` after the command following a heredoc
+is dropped). Words print as written: while parsing a function definition the
+parser turns on lexer raw capture, and every word built from a token keeps
+its source text in `Word::raw` (top-level words leave it `None`, so ordinary
+scripts pay nothing). Raw text is captured from consumed chars, not span
+offsets, because heredoc rest-of-line re-injection makes offsets drift.
+Compound arrays print their elements joined by one space, `(( ))` and
+`for (( ))` keep their text (`ArithmeticForCommand::raw`), and
+`Redirect::heredoc_delim` keeps the delimiter (`'EOF'` when quoted). A word
+without source text is reconstructed from its parts (never `Debug`,
+TM-INF-022). Function bodies may be any compound command with redirections
+(`f() ( ... )`, `f() if ...; fi`, `f() { ...; } >log`).
+
+**Arithmetic commands.** `(( ... ))` and `for (( ...; ...; ... ))` are read
+as raw text up to the matching `))` (`Lexer::read_dparen_body`), like bash's
+`parse_dparen`, so `<<` is a shift (not a heredoc) and spacing survives;
+evaluation uses `arith_exec_text` (trimmed, double quotes removed, as
+`let "..."`).
+
+**Here-document delimiters.** The delimiter's source text decides quoting:
+any `'`, `"` or `\` in it (`<<'E'`, `<<\E`, `<<E"OF"`) makes the body
+literal, and the delimiter is the quote-removed text. Several heredocs on one
+command (`cat <<A <<'B'`) read their bodies in order. Lexer lookahead
+(`Lexer::lookahead`) sees re-injected rest-of-line text first, so tokens
+after a heredoc on the same line lex the same as anywhere else.
+
+**`]]`, `|&`.** `]]` closes `[[` only as a whole word; `]]x` is a word, and
+`]]` in argument position is the literal word. `a |& b` is `a 2>&1 | b`
+(the `2>&1` is appended to `a`'s redirections).
+
+**Backquotes parse late.** Bash parses a backquoted command when it runs, so
+`` x=`fi` `` fails only that substitution (status 2). The lexer converts
+backquotes to `$(...)`; a body that does not parse becomes
+`$(eval 'body')`, which reports the syntax error at run time and never runs
+anything else. `$(...)` keeps rejecting the script at parse time.
+
+**Process substitution end.** `<(...)`/`>(...)` bodies end where the shared
+`subst_scan` scanner closes them (`Lexer::skip_subst_body`), so
+`<(case a in a) ...;; esac)` keeps the pattern's `)`; the body is still
+sliced from the source, not copied (TM-DOS-021).
+
+**Substitutions in `${x:-...}` operands.** Operand expansion is sync, so the
+`$(...)` parts of a `:-`/`:=`/`:?`/`:+` operand run ahead in
+`prefetch_operand_substs` (async) and are consumed in order. They run only
+when the operator uses the operand, so an unused default never executes.
+`${x:-$(echo })}`: the lexer and `read_brace_operand` let a substitution own
+its braces.
+
 ## Alternatives Considered
 
 - PEG (pest, pom): rejected, bash grammar is context-sensitive, here-docs awkward, manual parser gives better errors.

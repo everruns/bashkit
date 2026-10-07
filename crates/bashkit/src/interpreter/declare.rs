@@ -329,6 +329,7 @@ pub(super) fn split_keyed_word(word: &Word) -> Option<(Word, Word, bool)> {
                             parts,
                             has_unquoted_glob: false,
                             part_quoted: quoted,
+                            raw: None,
                         };
                         return Some((
                             make(key_parts, key_quoted),
@@ -678,12 +679,13 @@ impl Interpreter {
         opts: &DeclOpts,
         names: &[String],
     ) -> ExecResult {
-        let show = |name: &str| {
-            if opts.function_names {
-                format!("declare -f {name}\n")
-            } else {
-                format!("{name} ()\n{{\n    ...\n}}\n")
-            }
+        // `-F` lists names (`declare -f NAME` when listing all, the bare
+        // name for an operand); `-f` prints bodies as bash's print_cmd does.
+        let show = |name: &str, listing_all: bool| match self.scoped.functions.get(name) {
+            Some(_) if opts.function_names && listing_all => format!("declare -f {name}\n"),
+            Some(_) if opts.function_names => format!("{name}\n"),
+            Some(f) => format!("{}\n", crate::parser::function_string(name, &f.body)),
+            None => String::new(),
         };
         let mut out = String::new();
         let mut err = String::new();
@@ -693,7 +695,7 @@ impl Interpreter {
                 let mut fnames: Vec<&String> = self.scoped.functions.keys().collect();
                 fnames.sort();
                 for f in fnames {
-                    out.push_str(&show(f));
+                    out.push_str(&show(f, true));
                 }
             }
         } else {
@@ -704,7 +706,7 @@ impl Interpreter {
                         err.push_str(&format!("bash: {cmd}: {name}: not a function\n"));
                     }
                 } else if matches!(kind, DeclKind::Declare | DeclKind::Local) {
-                    out.push_str(&show(name));
+                    out.push_str(&show(name, false));
                 }
             }
         }

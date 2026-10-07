@@ -284,6 +284,7 @@ impl Interpreter {
                         quoted: false,
                         has_unquoted_glob: false,
                         part_quoted: Vec::new(),
+                        raw: None,
                     }
                     .to_string();
                     result.push_str(&text);
@@ -434,6 +435,20 @@ impl Interpreter {
                         self.nounset_error = Some(format!("bash: {}: unbound variable\n", name));
                     }
 
+                    if operand.contains("$(") {
+                        // Boxed: keeps this frame small for deep `$(...)` nesting
+                        // (TM-DOS-089).
+                        Box::pin(self.prefetch_operand_substs(
+                            operator,
+                            operand,
+                            *colon_variant,
+                            is_set,
+                            &value,
+                        ))
+                        .await?;
+                    } else {
+                        self.operand_substs.clear();
+                    }
                     // Delegate to sync helper to avoid bloating the async state
                     // machine with Vec<String> locals (causes stack overflow at
                     // depth 32 in debug builds — see stack_overflow_regression_tests).
@@ -734,6 +749,7 @@ impl Interpreter {
                             quoted: part_is_quoted,
                             has_unquoted_glob: false,
                             part_quoted: vec![part_is_quoted],
+                            raw: None,
                         };
                         self.expand_word(&single).await?
                     };
@@ -1100,6 +1116,52 @@ impl Interpreter {
 
     /// Expand an operand string from a parameter expansion (sync, lazy).
     /// Only called when the operand is actually needed, providing lazy evaluation.
+    /// `${x:-$(cmd)}`: run the operand's command substitutions before the
+    /// sync operand expansion, only when the operator uses the operand (so
+    /// an unused default never runs). Outputs queue in `operand_substs`.
+    async fn prefetch_operand_substs(
+        &mut self,
+        operator: &ParameterOp,
+        operand: &str,
+        colon_variant: bool,
+        is_set: bool,
+        value: &str,
+    ) -> Result<()> {
+        self.operand_substs.clear();
+        if !operand.contains("$(") {
+            return Ok(());
+        }
+        let unset_or_null = !is_set || (colon_variant && value.is_empty());
+        let uses_operand = match operator {
+            ParameterOp::UseDefault | ParameterOp::AssignDefault | ParameterOp::Error => {
+                unset_or_null
+            }
+            ParameterOp::UseReplacement => !unset_or_null,
+            _ => false,
+        };
+        if !uses_operand {
+            return Ok(());
+        }
+        let (word, _, _) = Self::parse_marked_operand(
+            operand,
+            self.limits.max_ast_depth,
+            self.limits.max_parser_operations,
+        );
+        for part in &word.parts {
+            if let WordPart::CommandSubstitution(commands) = part {
+                // THREAT[TM-DOS-088]: same depth accounting as word `$(...)`.
+                if self.counters.push_subst(&self.limits).is_err() {
+                    return Err(crate::error::Error::Execution(
+                        "maximum command substitution depth exceeded".to_string(),
+                    ));
+                }
+                let out = self.execute_cmd_subst(commands).await?;
+                self.operand_substs.push_back(out);
+            }
+        }
+        Ok(())
+    }
+
     pub(super) fn expand_operand(&mut self, operand: &str) -> String {
         if operand.is_empty() {
             return String::new();
@@ -1157,7 +1219,14 @@ impl Interpreter {
                     let value = self.expand_variable(name).len().to_string();
                     Self::push_operand_expansion(&mut result, &value, in_marked || force_quoted);
                 }
-                // TODO: handle CommandSubstitution etc. in sync operand expansion
+                // Run ahead by `prefetch_operand_substs` (default-family
+                // operators only); other operators leave the queue empty.
+                WordPart::CommandSubstitution(_) => {
+                    if let Some(out) = self.operand_substs.pop_front() {
+                        Self::push_operand_expansion(&mut result, &out, in_marked || force_quoted);
+                    }
+                }
+                // TODO: process substitution in sync operand expansion
                 _ => {}
             }
         }
@@ -1586,7 +1655,7 @@ impl Interpreter {
                 replacement,
             } => {
                 // ${var/pattern/replacement} - replace first occurrence
-                let expanded_rep = self.expand_operand(replacement);
+                let expanded_rep = self.expand_replacement_operand(replacement);
                 let expanded_pat = self.expand_replace_pattern(pattern);
                 self.replace_pattern(value, &expanded_pat, &expanded_rep, false)
             }
@@ -1595,7 +1664,7 @@ impl Interpreter {
                 replacement,
             } => {
                 // ${var//pattern/replacement} - replace all occurrences
-                let expanded_rep = self.expand_operand(replacement);
+                let expanded_rep = self.expand_replacement_operand(replacement);
                 let expanded_pat = self.expand_replace_pattern(pattern);
                 self.replace_pattern(value, &expanded_pat, &expanded_rep, true)
             }
@@ -1648,6 +1717,13 @@ impl Interpreter {
     /// Expand a `#`/`%` pattern operand. Bash removes quotes there even in a
     /// double-quoted word, so `'...'` spans count as quoted (literal) text.
     pub(super) fn expand_pattern_operand(&mut self, operand: &str) -> String {
+        self.expand_operand(&Self::single_quotes_as_quoted(operand))
+    }
+
+    /// Expand the replacement of `${x/pattern/rep}`. Like the pattern,
+    /// bash quote-removes `'...'` there even inside double quotes
+    /// (`"${y/b/'}'}"` is `a}`).
+    pub(super) fn expand_replacement_operand(&mut self, operand: &str) -> String {
         self.expand_operand(&Self::single_quotes_as_quoted(operand))
     }
 
@@ -2208,6 +2284,7 @@ mod expansion_charge_tests {
             quoted,
             has_unquoted_glob,
             part_quoted: Vec::new(),
+            raw: None,
         }
     }
 

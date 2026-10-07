@@ -97,7 +97,6 @@ echo !x
 
 ### bashbox_lexer_double_brackets_followed_by_text_are_a_word
 # double brackets followed by text are a word
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 echo ]]x
 ### expect
 ]]x
@@ -119,7 +118,6 @@ yes
 
 ### bashbox_lexer_is_a_shift_inside
 # << is a shift inside (( ))
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 (( x = 1 << 2 ))
 echo $x
 ### expect
@@ -188,7 +186,6 @@ $x
 
 ### bashbox_lexer_backslash_escaped
 # backslash escaped
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 x=1; cat <<\E\OF
 $x
 EOF
@@ -198,7 +195,6 @@ $x
 
 ### bashbox_lexer_partly_quoted
 # partly quoted
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 x=1; cat <<E"OF"
 $x
 EOF
