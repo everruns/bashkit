@@ -345,6 +345,30 @@ all earlier stages succeed. See [Known Limitations](../operations/limitations.md
 for deliberate mikefarah/yq gaps and [Threat Model](../security/threat-model.md)
 for input/output bounds.
 
+### make
+
+`make` is a GNU make 4.3 subset implemented as an `ExecutionPlan::Driver`
+(`builtins/make/`). It parses the makefile (`parse.rs`: assignments of every
+flavor, conditionals, `define`, `include`/`-include`, explicit, pattern,
+static-pattern and old-style suffix rules, target-specific variables, special
+targets `.PHONY`/`.SILENT`/`.IGNORE`/`.ONESHELL`/`.EXPORT_ALL_VARIABLES`/
+`.DEFAULT_GOAL`), expands variables and functions (`expand.rs`, text, file-name,
+conditional, `foreach`, `call`, `origin`, `flavor`, `error`/`warning`/`info`,
+`wildcard`, `shell`), then walks the dependency graph comparing VFS mtimes.
+
+Each recipe line goes back to the interpreter as `sh -c LINE` with exported
+variables as assignments, so recipes see the sandbox shell, its budget and its
+limits; no host process exists. `$(shell)` uses `PlanStep::Capture` (output
+captured, never streamed) and make's own messages use `PlanStep::Emit`, so they
+interleave with recipe output in order. Expansion is synchronous: a `$(shell)`,
+`$(wildcard)` or `include` miss stops expansion, the driver answers the query
+and parsing restarts with the answer cached. Messages and exit codes follow GNU
+(`*** No rule to make target`, `Error N`, `-k`, `-q` exit 1, `-n`).
+
+Deliberate gaps are L-MAKE-001..003 in
+[Known Limitations](../operations/limitations.md); amplification caps are
+TM-DOS-126 in the [Threat Model](../security/threat-model.md).
+
 ### Network Builtins
 
 `curl`, `wget`, `http` require the `http_client` feature + URL allowlist.

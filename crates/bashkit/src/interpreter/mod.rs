@@ -748,8 +748,9 @@ fn unavailable_command_hint(name: &str) -> Option<&'static str> {
         "docker" | "podman" | "kubectl" | "systemctl" | "service" => {
             Some("Container and service management is not available in the sandbox.")
         }
-        "make" | "cmake" | "gcc" | "g++" | "clang" | "rustc" | "cargo" | "go" | "javac"
-        | "node" => Some("Compilers and build tools are not available in the sandbox."),
+        "cmake" | "gcc" | "g++" | "clang" | "rustc" | "cargo" | "go" | "javac" | "node" => {
+            Some("Compilers and build tools are not available in the sandbox.")
+        }
         "vi" | "vim" | "nano" | "emacs" => {
             Some("Interactive editors are not available. Use echo/printf/cat to write files.")
         }
@@ -1698,6 +1699,7 @@ impl Interpreter {
             "factor" => Factor,
             "tsort" => Tsort,
             "nproc" => Nproc,
+            "make" => Make,
             "arch" => Arch,
             "tty" => Tty,
             "free" => Free,
@@ -9688,24 +9690,69 @@ impl Interpreter {
                 chdir,
             } => Box::pin(self.execute_env_plan(command, clear, unset, set, chdir)).await?,
             builtins::ExecutionPlan::Driver(mut driver) => {
+                // Output that will be redirected must not stream first
+                // (`make 2>&1`, `find -exec ... > out`).
+                let redirected = redirects.iter().any(|r| {
+                    !matches!(
+                        r.kind,
+                        RedirectKind::Input | RedirectKind::HereDoc | RedirectKind::HereString
+                    )
+                });
+                let outer_callback = if redirected {
+                    self.output_callback.take()
+                } else {
+                    None
+                };
                 let mut last = None;
-                loop {
-                    match driver.next(last.take()).await? {
-                        builtins::PlanStep::Run { command, cwd } => {
+                let result = loop {
+                    let step = match driver.next(last.take()).await {
+                        Ok(step) => step,
+                        Err(e) => break Err(e),
+                    };
+                    match step {
+                        step @ (builtins::PlanStep::Run { .. }
+                        | builtins::PlanStep::Capture { .. }) => {
+                            let (command, cwd, capture) = match step {
+                                builtins::PlanStep::Run { command, cwd } => (command, cwd, false),
+                                builtins::PlanStep::Capture { command, cwd } => {
+                                    (command, cwd, true)
+                                }
+                                _ => unreachable!(),
+                            };
                             let inner_cmd = subcommand_to_command(&command);
                             let saved_stdin = self.pipeline_stdin.take();
                             self.pipeline_stdin = command.stdin;
                             let saved_cwd = cwd.map(|dir| std::mem::replace(&mut self.cwd, dir));
+                            // Captured output goes to the driver only.
+                            let saved_callback = if capture {
+                                self.output_callback.take()
+                            } else {
+                                None
+                            };
                             let result = self.execute_command(&inner_cmd).await;
+                            if saved_callback.is_some() {
+                                self.output_callback = saved_callback;
+                            }
                             if let Some(dir) = saved_cwd {
                                 self.cwd = dir;
                             }
                             self.pipeline_stdin = saved_stdin;
-                            last = Some(result?);
+                            match result {
+                                Ok(r) => last = Some(r),
+                                Err(e) => break Err(e),
+                            }
                         }
-                        builtins::PlanStep::Done(result) => break result,
+                        builtins::PlanStep::Emit { stdout, stderr } => {
+                            let before = self.output_emit_count;
+                            self.maybe_emit_output(&stdout, &stderr, before);
+                        }
+                        builtins::PlanStep::Done(result) => break Ok(result),
                     }
+                };
+                if outer_callback.is_some() {
+                    self.output_callback = outer_callback;
                 }
+                result?
             }
             builtins::ExecutionPlan::Batch { commands } => {
                 let mut combined_stdout = crate::StreamData::new();

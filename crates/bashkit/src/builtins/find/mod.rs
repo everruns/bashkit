@@ -1003,10 +1003,12 @@ impl Builtin for Find {
         match run.next(None).await? {
             PlanStep::Done(result) => Ok(result),
             // Only reachable if the plan path was skipped; -exec needs it.
-            PlanStep::Run { .. } => Ok(ExecResult::err(
-                "find: -exec is not available in this context\n".to_string(),
-                1,
-            )),
+            PlanStep::Run { .. } | PlanStep::Capture { .. } | PlanStep::Emit { .. } => {
+                Ok(ExecResult::err(
+                    "find: -exec is not available in this context\n".to_string(),
+                    1,
+                ))
+            }
         }
     }
 
