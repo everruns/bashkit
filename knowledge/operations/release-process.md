@@ -80,6 +80,11 @@ silently failed.
    --all-targets --all-features -- -D warnings`, `cargo test`.
 5. **Verify publish-readiness** (catches what local tests don't, the
    `cargo publish` packaging step, missing files, version drift):
+   - `cargo publish --dry-run -p bashkit-cpython-wasm` must succeed and the
+     `.crate` must stay under crates.io's 10 MiB limit (it embeds the CPython
+     snapshot; ~9.5 MiB as of 0.18). `bashkit` depends on the same version
+     of it, so `publish.yml` publishes it first and the `bashkit` dry-run only
+     resolves once that version is live.
    - `cargo publish --dry-run -p bashkit` must succeed. Package
      `bashkit-cli` and `bashkit-scripted-tool` in a disposable copy against the latest published
      registry core version (remove the local path in the copy) as a structural
@@ -214,6 +219,7 @@ Use the latest entries in `CHANGELOG.md` as the template. Rules:
 
 ## Package Names and Registries
 
+- `bashkit-cpython-wasm` on crates.io (embedded CPython for the `cpython` feature; published first)
 - `bashkit` on crates.io (core library)
 - `bashkit-scripted-tool` on crates.io (`ScriptedTool` / `ToolDef` / `ToolRegistry`)
 - `bashkit-cli` on crates.io (CLI tool)

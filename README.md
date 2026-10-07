@@ -27,7 +27,7 @@ Homepage: [bashkit.sh](https://bashkit.sh)
 - **Async-first** - Built on tokio
 - **Language bindings** - Python (PyO3) and JavaScript/TypeScript (NAPI-RS) for Node.js, Bun, and Deno
 - **Experimental: Git support** - Virtual git operations on the virtual filesystem (`git` feature)
-- **Experimental: Python support** - Embedded Python interpreter via [Monty](https://github.com/pydantic/monty) (`python` feature)
+- **Experimental: Python support** - Embedded Python interpreter via [Monty](https://github.com/pydantic/monty) (`python` feature), or real CPython 3.14 in a WebAssembly sandbox (`cpython` feature)
 - **Experimental: TypeScript support** - Embedded TypeScript interpreter via [ZapCode](https://github.com/TheUncharted/zapcode) (`typescript` feature)
 - **Experimental: SQLite support** - Embedded SQLite-compatible engine via [Turso](https://github.com/tursodatabase/turso) (`sqlite` feature)
 
@@ -42,6 +42,7 @@ Optional features:
 ```bash
 cargo add bashkit --features git              # Virtual git operations
 cargo add bashkit --features python           # Embedded Python interpreter
+cargo add bashkit --features cpython          # Real CPython 3.14 (WebAssembly sandbox)
 cargo add bashkit --features typescript       # Embedded TypeScript interpreter
 cargo add bashkit --features sqlite           # Embedded SQLite engine (Turso)
 cargo add bashkit --features realfs           # Real filesystem backend
@@ -177,7 +178,7 @@ check must consult it. Available in Rust, Node (`bash.analyze()`), and Python
 | Data formats | `csv`, `json`, `yaml`, `tomlq`, `template`, `envsubst` |
 | Network | `curl`, `wget` (requires allowlist), `http` |
 | DevOps | `assert`, `dotenv`, `glob`, `log`, `retry`, `semver`, `verify`, `parallel`, `patch` |
-| Experimental | `python`, `python3` (requires `python` feature), `ts`, `typescript`, `node`, `deno`, `bun` (requires `typescript` feature), `git` (requires `git` feature), `ssh`, `scp`, `sftp` (requires `ssh` feature), `sqlite`, `sqlite3` (requires `sqlite` feature) |
+| Experimental | `python`, `python3` (requires `python` or `cpython` feature), `ts`, `typescript`, `node`, `deno`, `bun` (requires `typescript` feature), `git` (requires `git` feature), `ssh`, `scp`, `sftp` (requires `ssh` feature), `sqlite`, `sqlite3` (requires `sqlite` feature) |
 
 ## Shell Features
 
@@ -389,6 +390,11 @@ Stdlib modules: `math`, `pathlib`, `os` (getenv/environ), `sys`, `typing`.
 Security note: `re` is intentionally disabled due to regex backtracking DoS risk.
 Limitations: file I/O is VFS-scoped, no network, no classes, no third-party imports.
 See [crates/bashkit/docs/python.md](crates/bashkit/docs/python.md) for the full guide.
+
+For full CPython 3.14 (complete language and stdlib, CPython CLI semantics), enable the
+`cpython` feature and call `.cpython()` instead. The interpreter runs as a WebAssembly guest,
+one fresh instance per call. See [crates/bashkit/docs/cpython.md](crates/bashkit/docs/cpython.md)
+for the trade-offs against Monty and the limitations.
 
 ## Experimental: TypeScript Support
 

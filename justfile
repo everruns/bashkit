@@ -260,6 +260,11 @@ bench-sqlite:
     ./scripts/bench-sqlite.sh
     pnpm --dir site run data:performance
 
+# Python runtimes (CPython wasm vs Monty): raw start, per call, compute, load
+bench-python:
+    ./scripts/bench-python.sh
+    pnpm --dir site run data:performance
+
 # === Eval (mira study) ===
 # Evals run on the mira framework (github.com/everruns/mira). The crate is a
 # study binary the `mira` host CLI spawns over stdio; mira owns the model

@@ -48,6 +48,9 @@ pub mod custom_fs_tests;
 pub mod memory_growth_security_tests;
 // Both assert named-IANA-zone behavior, which only exists with `tzdata`.
 // `date_timezone_no_tzdata_tests` covers the closed-to-UTC side.
+pub mod cpython_capability_tests;
+pub mod cpython_integration_tests;
+pub mod cpython_security_tests;
 #[cfg(feature = "tzdata")]
 pub mod date_timezone_differential_tests;
 #[cfg(not(feature = "tzdata"))]

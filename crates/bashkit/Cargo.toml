@@ -138,6 +138,11 @@ os_display = "0.1.3"
 # enforcement during an uninterrupted VM loop.
 # See knowledge/runtimes/python-builtin.md § Upgrade blocker.
 monty = { version = "=0.0.19", optional = true }
+
+# Real CPython 3.14 as a WASI guest, precompiled to Pulley (cpython feature).
+# See knowledge/runtimes/cpython-wasm.md.
+bashkit-cpython-wasm = { path = "../bashkit-cpython-wasm", version = "0.18.2", optional = true }
+wasmtime = { workspace = true, optional = true, features = ["pooling-allocator"] }
 monty-types = { version = "=0.0.19", optional = true }
 # Monty's ruff AST uses compact_str 0.9; get-size2 >=0.10.2 only implements
 # GetSize for compact_str 0.10. Enforce downstream too, not only in Cargo.lock.
@@ -256,6 +261,9 @@ ssh = ["russh"]
 # Enable python/python3 builtins via embedded Monty interpreter
 # Usage: cargo build --features python
 python = ["dep:monty", "dep:monty-types", "dep:get-size2"]
+# Enable python/python3 builtins via real CPython 3.14 in a WebAssembly sandbox
+# Usage: cargo build --features cpython
+cpython = ["dep:bashkit-cpython-wasm", "dep:wasmtime"]
 # Enable ts/node/deno/bun builtins via embedded ZapCode TypeScript interpreter
 # Usage: cargo build --features typescript
 typescript = ["dep:zapcode-core"]
@@ -331,6 +339,11 @@ name = "sqlite"
 harness = false
 required-features = ["sqlite"]
 
+[[bench]]
+name = "python"
+harness = false
+required-features = ["python", "cpython"]
+
 [[example]]
 name = "terminal_vi"
 required-features = ["terminal"]
@@ -362,6 +375,18 @@ required-features = ["python"]
 [[example]]
 name = "python_external_functions"
 required-features = ["python"]
+
+[[example]]
+name = "python_startup"
+required-features = ["python", "cpython"]
+
+[[example]]
+name = "cpython_scripts"
+required-features = ["cpython"]
+
+[[example]]
+name = "cpython_load"
+required-features = ["cpython"]
 
 [[example]]
 name = "typescript_scripts"

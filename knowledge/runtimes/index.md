@@ -1,6 +1,7 @@
 # Runtimes and packages
 
 * [Python Builtin](python-builtin.md) - Embedded Python execution through Monty with security and resource controls.
+* [CPython WebAssembly Runtime](cpython-wasm.md) - Real CPython 3.14 as python3, compiled to WASI, snapshotted with Wizer and run on Wasmtime's Pulley interpreter over the bashkit VFS.
 * [ZapCode Runtime](zapcode-runtime.md) - Embedded TypeScript runtime, external functions, VFS bridging, and resource limits.
 * [SQLite Builtin](sqlite-builtin.md) - Embedded SQLite through Turso with memory and virtual filesystem backends.
 * [Coreutils Argument Port](coreutils-args-port.md) - Code generation design for porting uutils clap arguments and uucore modules.

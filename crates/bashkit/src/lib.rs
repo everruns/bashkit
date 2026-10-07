@@ -16,6 +16,7 @@
 //! - **Async-first** - Built on tokio
 //! - **Experimental: Git** - Virtual git operations on the VFS (`git` feature)
 //! - **Experimental: Python** - Embedded Python via [Monty](https://github.com/pydantic/monty) (`python` feature)
+//! - **Python (CPython)** - Real CPython 3.14 in a WebAssembly sandbox (`cpython` feature)
 //! - **Experimental: SQLite** - Embedded SQLite-compatible engine via [Turso](https://github.com/tursodatabase/turso) (`sqlite` feature)
 //!
 //! # Built-in Commands (164)
@@ -40,7 +41,7 @@
 //! | Structured data | `json`, `csv`, `tomlq`, `semver` |
 //! | Network | `curl`, `wget`, `http` (requires [`NetworkAllowlist`])
 //! | Arithmetic | `bc` |
-//! | Experimental | `python`, `python3` (requires `python` feature), `git` (requires `git` feature), `ts`, `typescript`, `node`, `deno`, `bun` (requires `typescript` feature), `ssh`, `scp`, `sftp` (requires `ssh` feature), `sqlite`, `sqlite3` (requires `sqlite` feature)
+//! | Experimental | `python`, `python3` (requires `python` or `cpython` feature), `git` (requires `git` feature), `ts`, `typescript`, `node`, `deno`, `bun` (requires `typescript` feature), `ssh`, `scp`, `sftp` (requires `ssh` feature), `sqlite`, `sqlite3` (requires `sqlite` feature)
 //!
 //! # Shell Features
 //!
@@ -406,6 +407,7 @@
 //! - [`live_mounts_guide`] - Live mount/unmount on running instances
 //! - [`namespace_filesystems_guide`] - Static namespaces with rebasing and per-mount access
 //! - `python_guide` - Embedded Python (Monty) guide (requires `python` feature)
+//! - `cpython_guide` - Embedded CPython (WebAssembly) guide (requires `cpython` feature)
 //! - `logging_guide` - Structured logging with security (requires `logging` feature)
 //!
 //! # Resources
@@ -568,10 +570,13 @@ pub use builtins::ssh::{SshClient, SshHandler, SshOutput, SshTarget};
 pub use builtins::{Python, PythonExternalFnHandler, PythonExternalFns, PythonLimits};
 
 // Shared resource-limit core for embedded language VMs (Python, TypeScript).
-#[cfg(any(feature = "python", feature = "typescript"))]
+#[cfg(any(feature = "python", feature = "typescript", feature = "cpython"))]
 pub use builtins::RuntimeLimits;
 #[cfg(any(feature = "python", feature = "typescript"))]
 pub use runtime_call::RuntimeCallContext;
+
+#[cfg(feature = "cpython")]
+pub use builtins::{CPython, CPythonLimits};
 
 #[cfg(feature = "sqlite")]
 pub use builtins::{Sqlite, SqliteBackend, SqliteLimits};
@@ -2430,6 +2435,43 @@ impl BashBuilder {
         self.python_with_limits(limits)
     }
 
+    /// Enable `python`/`python3` backed by real CPython 3.14 running in a
+    /// WebAssembly sandbox, with default [`CPythonLimits`].
+    ///
+    /// The guest only reaches the virtual filesystem, captured stdio, clocks
+    /// and a random source; there is no network, subprocess or host
+    /// filesystem access. Each call runs in a fresh instance mapped from a
+    /// pre-initialized snapshot, so no state crosses calls or tenants.
+    /// Requires the `cpython` feature. Replaces the Monty-backed builtins when
+    /// both features are enabled and this method is called after
+    /// [`BashBuilder::python`].
+    ///
+    /// The interpreter loads on the first call; call [`CPython::warm_up`] at
+    /// process start to move that cost out of the first request.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let bash = Bash::builder().cpython().build();
+    /// bash.exec("python3 -c 'import json; print(json.dumps([1, 2]))'").await?;
+    /// ```
+    #[cfg(feature = "cpython")]
+    pub fn cpython(self) -> Self {
+        self.cpython_with_limits(builtins::CPythonLimits::default())
+    }
+
+    /// Enable CPython `python`/`python3` with custom limits.
+    ///
+    /// See [`BashBuilder::cpython`].
+    #[cfg(feature = "cpython")]
+    pub fn cpython_with_limits(self, limits: builtins::CPythonLimits) -> Self {
+        self.builtin(
+            "python",
+            Box::new(builtins::CPython::with_limits(limits.clone())),
+        )
+        .builtin("python3", Box::new(builtins::CPython::with_limits(limits)))
+    }
+
     /// Enable embedded SQLite (`sqlite`/`sqlite3` builtins) via Turso.
     ///
     /// Registers both names with the default [`SqliteLimits`]. The Turso
@@ -3877,6 +3919,20 @@ pub mod threat_model {}
 #[cfg(feature = "python")]
 #[doc = include_str!("../docs/python.md")]
 pub mod python_guide {}
+
+/// Guide for real CPython 3.14 running as a WebAssembly guest.
+///
+/// Topics covered:
+/// - Quick start with `Bash::builder().cpython()`
+/// - Why CPython instead of Monty
+/// - Supported command line, stdio, environment and VFS behavior
+/// - Resource limits via [`CPythonLimits`]
+/// - Limitations (no subprocess, network, threads or third-party packages)
+///
+/// **Related:** [`BashBuilder::cpython`], [`CPythonLimits`], [`CPython`], [`threat_model`]
+#[cfg(feature = "cpython")]
+#[doc = include_str!("../docs/cpython.md")]
+pub mod cpython_guide {}
 
 /// Guide for the embedded SQLite builtin (Turso).
 ///

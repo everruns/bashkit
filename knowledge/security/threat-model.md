@@ -1790,6 +1790,37 @@ The following components are fuzz-tested for robustness:
 
 ---
 
+## CPython WebAssembly Security (TM-PY-CPY)
+
+The `cpython` feature runs real CPython 3.14 as a `wasm32-wasip1` guest on
+Wasmtime's Pulley interpreter ([CPython WebAssembly Runtime](../runtimes/cpython-wasm.md)).
+CPython itself is *not* trusted: a guest bug, a malicious script or a crafted
+input may corrupt the guest's own linear memory. The boundary is the wasm
+sandbox plus the WASI host in `builtins/cpython/wasi.rs`, which is the only
+code that touches bashkit state.
+
+```
+python code -> CPython (wasm guest) -> wasi_snapshot_preview1 imports -> WASI host -> bashkit VFS / captured stdio
+```
+
+| ID | Threat | Severity | Mitigation | Test |
+|----|--------|----------|------------|------|
+| TM-PY-CPY-001 | Host filesystem access (absolute paths, `..`, `/proc`, symlinks) | Critical | Only the VFS is reachable; paths clamp at `/`; symlinks are not followed | `host_files_are_not_reachable`, `parent_traversal_is_clamped_at_vfs_root`, `host_system_paths_absent`, `symlinks_are_not_followed` |
+| TM-PY-CPY-002 | Tampering with or shadowing the stdlib | High | Stdlib zip is a read-only host overlay; tenant files next to it are not on `sys.path`; preloaded modules come from the snapshot | `stdlib_zip_is_read_only`, `vfs_files_cannot_shadow_stdlib` |
+| TM-PY-CPY-003 | Network, process, thread or native-code escape | Critical | No socket or process imports; sockets return `ENOTSUP`; no threads, `ctypes` or dynamic loading in the guest | `network_unavailable`, `urllib_cannot_fetch`, `processes_unavailable`, `threads_and_native_code_unavailable` |
+| TM-PY-CPY-004 | CPU exhaustion (busy loops, swallowed exceptions, sleeps) | High | Fuel-driven async yields; every poll checks the call deadline and the request `ExecutionBudget`; sleeps never pass the deadline | `infinite_loop_times_out`, `sleep_is_bounded_by_deadline`, `swallowing_exceptions_cannot_escape_timeout`, `shell_timeout_tighter_than_python_limit_wins`, `cancellation_stops_busy_guest` |
+| TM-PY-CPY-005 | Memory exhaustion (guest heap, host-side file buffers) | High | Store limiter caps linear memory (MemoryError in Python); open-file buffers share the same budget; VFS limits apply | `huge_allocation_raises_memory_error`, `incremental_growth_raises_memory_error`, `file_buffers_share_the_memory_budget`, `vfs_file_size_limit_applies` |
+| TM-PY-CPY-006 | Output and descriptor floods | Medium | `max_output` cap with truncation note; 1024 fds per call | `output_is_capped_and_marked_truncated`, `output_flood_loop_is_bounded`, `descriptor_table_is_bounded` |
+| TM-PY-CPY-007 | Guest crash (abort, stack overflow, parser bombs) takes down the host | Critical | Traps end only that call (exit 1, Display-only message); instance discarded; shell continues | `deep_c_recursion_is_contained`, `parser_bomb_is_contained`, `abort_is_contained`, `shell_continues_after_guest_failures` |
+| TM-PY-CPY-008 | State leaking across calls or tenants | Critical | Fresh instance per call from a copy-on-write snapshot; per-`Bash` VFS; only exported variables reach `os.environ`; `random` re-seeded per call | `no_state_crosses_calls`, `concurrent_tenants_are_isolated`, `host_environment_not_visible`, `interpreter_state_does_not_persist_between_calls` |
+| TM-PY-CPY-009 | Internal shapes leaking through errors (TM-INF-022) | Medium | Trap and host errors formatted via Display, capped at 512 bytes; driver frames stripped from tracebacks | `error_paths_do_not_leak_internals`, `trap_messages_are_display_only`, `cpython_fuzz` |
+| TM-PY-CPY-010 | Predictable `hash()` within a call | Low | Accepted: hash flooding is bounded by the call's CPU and memory limits and affects only that call (L-CPY-005) | stance |
+
+Fuzzing: `cpython_security_tests` runs bounded proptest cases (arbitrary
+source, stitched os/sys/file fragments, arbitrary CLI arguments) through
+`assert_no_leak`; `fuzz/fuzz_targets/cpython_fuzz.rs` runs nightly under
+cargo-fuzz with the host-environment canary.
+
 ## Python / Monty Security (TM-PY)
 
 > **Experimental.** Monty is an early-stage Python interpreter that may have
