@@ -25,6 +25,12 @@ pub const DEFAULT_USERNAME: &str = "sandbox";
 /// A constant so the host core count is never exposed (TM-INF-008).
 pub const VIRTUAL_NPROC: u64 = 4;
 
+/// Kernel release reported by `uname -r` and `/proc/version`.
+pub const VIRTUAL_KERNEL_RELEASE: &str = "5.15.0-sandbox";
+
+/// Kernel version reported by `uname -v` and `/proc/version`.
+pub const VIRTUAL_KERNEL_VERSION: &str = "#1 SMP PREEMPT sandbox";
+
 /// Hardcoded virtual user ID.
 pub const SANDBOX_UID: u32 = 1000;
 
@@ -190,10 +196,10 @@ impl Builtin for Uname {
             parts.push(self.hostname.clone());
         }
         if show_all || show_release {
-            parts.push("5.15.0-sandbox".to_string());
+            parts.push(VIRTUAL_KERNEL_RELEASE.to_string());
         }
         if show_all || show_version {
-            parts.push("#1 SMP PREEMPT sandbox".to_string());
+            parts.push(VIRTUAL_KERNEL_VERSION.to_string());
         }
         if show_all || show_machine {
             parts.push("x86_64".to_string());

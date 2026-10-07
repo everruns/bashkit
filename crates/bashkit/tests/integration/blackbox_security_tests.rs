@@ -1125,8 +1125,11 @@ mod filesystem_escape_passing {
             .exec("cd /tmp\ncat ../../../etc/passwd\ncat /tmp/../../../etc/shadow")
             .await
             .unwrap();
+        // `..` clamps at the VFS root, so this reads the synthetic
+        // /etc/passwd (virtual identity only), never the host's.
         assert!(
-            !result.stdout.contains("root:"),
+            !result.stdout.contains("daemon:")
+                && !result.stdout.contains("root:x:0:0:root:/root:/bin/sh\n"),
             "Dot-dot traversal accessed host files"
         );
     }
@@ -1166,10 +1169,13 @@ mod filesystem_escape_passing {
             .exec("find / -name \"*.conf\" 2>/dev/null\nfind / -name \"passwd\" 2>/dev/null")
             .await
             .unwrap();
+        // Only the synthetic root filesystem is visible: no host config.
         assert!(
-            !result.stdout.contains("/etc/passwd"),
-            "find discovered host files"
+            !result.stdout.contains(".conf"),
+            "find discovered host files: {}",
+            result.stdout
         );
+        assert_eq!(result.stdout.trim(), "/etc/passwd");
     }
 
     /// Null byte in filename doesn't crash

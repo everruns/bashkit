@@ -142,9 +142,47 @@ the interpreter.
 ├──────────────────────────────────┤
 │  MountableFs (real mounts)       │  ← BashBuilder::mount_real_*_at()
 ├──────────────────────────────────┤
+│  RootFs (system layout, default) │  ← BashBuilder::rootfs(false) to drop
+├──────────────────────────────────┤
 │  Base filesystem                 │  ← InMemoryFs or custom
 └──────────────────────────────────┘
 ```
+
+### Root Filesystem Layout (`RootFs`)
+
+Decision: on by default (user decision, 2026-10-06). Agents probe
+`/etc/os-release`, `which ls`, `/proc/cpuinfo`, `head -c N /dev/zero`;
+an empty root made those fail in ways real Linux never does.
+
+`fs/rootfs.rs` wraps the session filesystem with a read-only system layer
+(an unlimited, read-only `InMemoryFs` shared process-wide per username +
+hostname; startup cost is a cache lookup, ~10 µs). A path is served from the
+system layer only when the session filesystem lacks it, so user files,
+mounts and custom filesystems always win.
+
+- `/etc`: `os-release` (`ID=bashkit`, crate version), `passwd` (session user
+  at uid 1000, `nobody`; **no root line**, so `root:x:0:0` in output always
+  means a host leak), `group`, `hostname`, `hosts`, `shells`, `timezone`.
+- `/proc`: static `cpuinfo` (`VIRTUAL_NPROC` CPUs), `meminfo`, `version`
+  (`VIRTUAL_KERNEL_RELEASE`, same as `uname -r`), `loadavg`,
+  `sys/kernel/hostname`. No pid directories.
+- `/bin`, `/usr/bin`: one virtual stub per registered builtin that is not
+  shell-only, answered from a shared name set on lookup and never stored as
+  files (materializing them cost ~2 ms per `Bash` build). A stub's content starts with `STUB_MARKER`; executing it by
+  path (`/usr/bin/env`, `/bin/ls`) dispatches the builtin. `type`/`which`/
+  `command -v` report `/usr/bin/NAME` for non-bash builtins via a PATH search
+  (`search_path`), and keep `builtin` for the bash 5.2 set
+  (`BASH_BUILTIN_NAMES`).
+- `/root`, `/dev/zero` (reads return 1 MiB of zeros, writes are discarded;
+  generated in `InMemoryFs`).
+
+Rules: system-only files cannot be written or removed (`PermissionDenied`);
+creating a file in a system dir (`/etc/app.conf`) creates the parent in the
+session fs first; `mkdir /bin` shadows the system dir. Listings of `/`,
+`/usr`, `/dev` merge both layers. Usage accounting, snapshots and
+`fs()` writes go to the session fs only, so the layer costs no quota and is
+never persisted. Restricted shells turn it off with `rootfs(false)` (the
+logic-only `ScriptedTool` shell does).
 
 `NamespaceFs` can be supplied as the base when callers need a bounded,
 pre-composed tree. The usual outer `MountableFs` still enables later live mounts.
@@ -174,6 +212,11 @@ the builtin's stdout/stderr. Writes land after the builtin's own output on the
 same stream (`tee /dev/stdout` prints its copies back to back, as through a
 pipe). Only fds 0-2: `/dev/fd/63` stays a real file for process
 substitution.
+
+#### /dev/zero
+Handled in `InMemoryFs`: every read returns `DEV_ZERO_READ_BYTES` (1 MiB)
+of zeros, writes and appends are discarded like `/dev/null`. The directory
+entry comes from `RootFs` so base file counts are unchanged.
 
 #### /dev/urandom and /dev/random
 Handled at filesystem level: return 8192 bytes of random data per read

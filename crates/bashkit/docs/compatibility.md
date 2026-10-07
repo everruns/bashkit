@@ -402,6 +402,9 @@ Default limits (configurable):
 | Symlinks | ✅ | Stored but not followed |
 | Permissions | ✅ | Metadata stored, not enforced |
 | `/dev/null` | ✅ | Interpreter-level handling (cannot be bypassed) |
+| `/dev/zero` | ✅ | 1 MiB of zeros per read |
+| `/etc`, `/proc` | ⚠️ | Synthetic, read-only (`os-release`, `passwd`, `cpuinfo`, ...); `rootfs(false)` disables |
+| `/bin`, `/usr/bin` | ✅ | Stub per builtin; `which`/`type` report paths, running a stub runs the builtin |
 
 ---
 

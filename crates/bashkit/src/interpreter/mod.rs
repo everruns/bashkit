@@ -6931,8 +6931,8 @@ impl Interpreter {
         }
 
         // Read file content
-        let content = match self.fs.read_file(&path).await {
-            Ok(c) => decode_file_bytes_for_path(&path, &c),
+        let raw = match self.fs.read_file(&path).await {
+            Ok(c) => c,
             Err(_) => {
                 return Ok(ExecResult::err(
                     format!("bash: {}: No such file or directory\n", name),
@@ -6940,6 +6940,16 @@ impl Interpreter {
                 ));
             }
         };
+        // A root-filesystem stub (`/usr/bin/env`) runs the builtin it names.
+        if let Some(cmd) = crate::fs::stub_command(&raw)
+            && self.builtins.contains_key(cmd)
+        {
+            let cmd = cmd.to_string();
+            return self
+                .execute_registered_builtin(&cmd, args, stdin.as_ref(), redirects)
+                .await;
+        }
+        let content = decode_file_bytes_for_path(&path, &raw);
 
         self.execute_script_content(name, &content, args, stdin, redirects)
             .await
@@ -6950,6 +6960,16 @@ impl Interpreter {
     /// Returns `Ok(None)` if no matching file found (caller emits "command not found").
     /// Resolve a command name to its full path via PATH search on VFS.
     /// Returns the resolved path string if found, None otherwise.
+    /// Commands that get a `/bin` + `/usr/bin` stub in the root filesystem:
+    /// every registered builtin that also exists as a program on a real
+    /// system (shell-only builtins like `cd` do not).
+    pub(crate) fn rootfs_command_names(&self) -> impl Iterator<Item = &str> + Clone {
+        self.builtins
+            .keys()
+            .map(String::as_str)
+            .filter(|n| !ENV_SHELL_ONLY_BUILTINS.contains(n))
+    }
+
     async fn resolve_command_path(&self, name: &str) -> Option<String> {
         if !self.shell_features.has_script_execution() {
             return None;
@@ -8329,14 +8349,17 @@ impl Interpreter {
         match mode {
             'v' => {
                 // command -v: print name/path if it's a known command
+                let registered = self.builtins.contains_key(cmd_name.as_str())
+                    || self.has_host_builtin(cmd_name);
                 let output = if self.scoped.functions.contains_key(cmd_name.as_str())
-                    || self.builtins.contains_key(cmd_name.as_str())
-                    || self.has_host_builtin(cmd_name)
                     || is_keyword(cmd_name)
+                    || (registered && builtins::BASH_BUILTIN_NAMES.contains(&cmd_name.as_str()))
                 {
                     Some(cmd_name.to_string())
+                } else if let Some(path) = self.resolve_command_path(cmd_name).await {
+                    Some(path)
                 } else {
-                    self.resolve_command_path(cmd_name).await
+                    registered.then(|| cmd_name.to_string())
                 };
                 let mut result = if let Some(name) = output {
                     ExecResult::ok(format!("{}\n", name))
@@ -8354,16 +8377,22 @@ impl Interpreter {
             }
             'V' => {
                 // command -V: verbose description
+                let registered = self.has_host_builtin(cmd_name)
+                    || self.builtins.contains_key(cmd_name.as_str());
+                let path =
+                    if registered && builtins::BASH_BUILTIN_NAMES.contains(&cmd_name.as_str()) {
+                        None
+                    } else {
+                        self.resolve_command_path(cmd_name).await
+                    };
                 let description = if self.scoped.functions.contains_key(cmd_name.as_str()) {
                     format!("{} is a function\n", cmd_name)
-                } else if self.has_host_builtin(cmd_name)
-                    || self.builtins.contains_key(cmd_name.as_str())
-                {
-                    format!("{} is a shell builtin\n", cmd_name)
                 } else if is_keyword(cmd_name) {
                     format!("{} is a shell keyword\n", cmd_name)
-                } else if let Some(path) = self.resolve_command_path(cmd_name).await {
+                } else if let Some(path) = path {
                     format!("{} is {}\n", cmd_name, path)
+                } else if registered {
+                    format!("{} is a shell builtin\n", cmd_name)
                 } else {
                     return Ok(ExecResult::err(
                         format!("bash: command: {}: not found\n", cmd_name),

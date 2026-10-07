@@ -234,6 +234,7 @@ pub use source::Source;
 pub use split::Split;
 pub use strings::Strings;
 pub use system::{DEFAULT_HOSTNAME, DEFAULT_USERNAME, Hostname, Id, Nproc, Uname, Whoami};
+pub(crate) use system::{VIRTUAL_KERNEL_RELEASE, VIRTUAL_KERNEL_VERSION, VIRTUAL_NPROC};
 pub use template::Template;
 pub use test::{Bracket, Test};
 pub use textrev::{Rev, Tac};
@@ -585,6 +586,112 @@ pub struct SubCommand {
     /// only to this command's environment. Used by `xargs --process-slot-var`
     /// to expose a per-invocation parallel-slot index.
     pub assignments: Vec<(String, String)>,
+}
+
+/// Builtins of GNU bash 5.2 (`enable -a`). Every other registered command
+/// stands in for a program, so `type`/`which`/`command -v` report it at its
+/// `/usr/bin` path when the root filesystem provides one.
+pub(crate) const BASH_BUILTIN_NAMES: &[&str] = &[
+    ".",
+    ":",
+    "[",
+    "alias",
+    "bg",
+    "bind",
+    "break",
+    "builtin",
+    "caller",
+    "cd",
+    "command",
+    "compgen",
+    "complete",
+    "compopt",
+    "continue",
+    "declare",
+    "dirs",
+    "disown",
+    "echo",
+    "enable",
+    "eval",
+    "exec",
+    "exit",
+    "export",
+    "false",
+    "fc",
+    "fg",
+    "getopts",
+    "hash",
+    "help",
+    "history",
+    "jobs",
+    "kill",
+    "let",
+    "local",
+    "logout",
+    "mapfile",
+    "popd",
+    "printf",
+    "pushd",
+    "pwd",
+    "read",
+    "readarray",
+    "readonly",
+    "return",
+    "set",
+    "shift",
+    "shopt",
+    "source",
+    "suspend",
+    "test",
+    "times",
+    "trap",
+    "true",
+    "type",
+    "typeset",
+    "ulimit",
+    "umask",
+    "unalias",
+    "unset",
+    "wait",
+];
+
+/// Search `PATH` (shell variable, then environment) on the VFS for an
+/// executable regular file named `name`.
+pub(crate) async fn search_path(ctx: &Context<'_>, name: &str) -> Option<String> {
+    search_path_all(ctx, name, true).await.into_iter().next()
+}
+
+/// Every executable `name` along `PATH`, in order (`type -a`); stops at the
+/// first when `first_only`.
+pub(crate) async fn search_path_all(
+    ctx: &Context<'_>,
+    name: &str,
+    first_only: bool,
+) -> Vec<String> {
+    let mut found = Vec::new();
+    if name.is_empty() || name.contains('/') {
+        return found;
+    }
+    let path_var = ctx
+        .variables
+        .get("PATH")
+        .or_else(|| ctx.env.get("PATH"))
+        .cloned()
+        .unwrap_or_default();
+    for dir in path_var.split(':').filter(|d| !d.is_empty()) {
+        let candidate = format!("{}/{name}", dir.trim_end_matches('/'));
+        if let Ok(meta) = ctx.fs.stat(Path::new(&candidate)).await
+            && meta.file_type.is_file()
+            && meta.mode & 0o111 != 0
+            && !found.contains(&candidate)
+        {
+            found.push(candidate);
+            if first_only {
+                break;
+            }
+        }
+    }
+    found
 }
 
 /// One step requested by a [`PlanDriver`].

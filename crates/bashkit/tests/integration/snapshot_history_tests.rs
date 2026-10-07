@@ -1183,7 +1183,13 @@ async fn forged_paths_are_inert_rather_than_a_sandbox_escape() {
         "canary\n"
     );
 
-    for unreachable in ["/etc/passwd", "/b.txt", "/a/b.txt", "/relative.txt"] {
+    // /etc/passwd exists, but only as the synthetic root-filesystem file.
+    let passwd = bash.exec("cat /etc/passwd").await.unwrap().stdout;
+    assert!(
+        !passwd.contains("root::0:0::/:/bin/sh"),
+        "forged /etc/passwd became readable"
+    );
+    for unreachable in ["/b.txt", "/a/b.txt", "/relative.txt"] {
         let result = bash.exec(&format!("cat {unreachable}")).await.unwrap();
         assert_ne!(
             result.exit_code, 0,
@@ -1202,7 +1208,7 @@ async fn forged_paths_are_inert_rather_than_a_sandbox_escape() {
         root.contains("canary.txt"),
         "expected the canary in {root:?}"
     );
-    for hidden in ["passwd", "b.txt", "relative.txt"] {
+    for hidden in ["b.txt", "relative.txt"] {
         assert!(
             !root.contains(hidden),
             "{hidden} surfaced in root: {root:?}"

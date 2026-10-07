@@ -429,7 +429,7 @@ execute permission (mode & 0o111); exit 127 missing / 126 non-executable; sheban
 |----|--------|--------------|------------|--------|
 | TM-INF-001 | Env var leak | `echo $SECRET_KEY` | Env vars caller-controlled | **CALLER RISK** |
 | TM-INF-002 | File secrets | `cat /secrets/key` | Virtual FS isolation | **MITIGATED** |
-| TM-INF-003 | Proc secrets | `/proc/self/environ` | No /proc filesystem | **MITIGATED** |
+| TM-INF-003 | Proc secrets | `/proc/self/environ` | Only a static synthetic /proc (rootfs: cpuinfo, meminfo, version, loadavg); no `self` or pid dirs | **MITIGATED** |
 | TM-INF-004 | Memory dump | Core dumps | No crash dumps | **MITIGATED** |
 
 | TM-INF-013 | Host env leak via jq | jq now uses custom `$__bashkit_env__` variable, not `std::env` |, | **FIXED** (2026-03 audit verified) |
@@ -942,7 +942,7 @@ Only exact domain matches are allowed (TM-NET-017).
 | TM-ISO-015 | Concurrent FS leakage | Race condition leaks files between parallel sessions | Separate `Arc<FileSystem>` per instance | **MITIGATED** |
 | TM-ISO-016 | Snapshot/restore side effects | `restore_shell_state()` affects other sessions | Snapshot is per-instance, no shared state | **MITIGATED** |
 | TM-ISO-017 | Adversarial variable probing | Script enumerates common secret var names | Default-empty env, no host env inheritance | **MITIGATED** |
-| TM-ISO-018 | /proc /sys probing | Script reads `/proc/self/environ` etc. | VFS has no real /proc or /etc | **MITIGATED** |
+| TM-ISO-018 | /proc /sys probing | Script reads `/proc/self/environ` etc. | /proc and /etc are synthetic rootfs files built from session config; synthetic passwd has no root line, so `root:x:0:0` means a host leak | **MITIGATED** |
 | TM-ISO-019 | jq cross-session env | `jq 'env.X'` sees other session's vars | jaq reads from injected global, not `std::env` | **MITIGATED** |
 | TM-ISO-020 | Subshell mutation leakage | Subshell vars leak to parent or sibling sessions | Snapshot/restore in subshell + per-instance state | **MITIGATED** |
 
