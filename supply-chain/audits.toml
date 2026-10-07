@@ -531,6 +531,12 @@ criteria = "safe-to-deploy"
 delta = "0.8.0-pre.14 -> 0.8.1"
 notes = "Reviewed the 0.8.0-pre.14 -> 0.8.1 delta: the published source trees are byte-identical. Every file except Cargo.toml, Cargo.lock and .cargo_vcs_info.json hashes the same across the two releases (295 files, 293 of them Rust), and the three that differ carry only version strings plus the upstream release commit sha. Nothing to review beyond the version stamp; this is the stable cut of the pre-release already in use."
 
+[[audits.turso_core]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.8.1 -> 0.8.2"
+notes = "Reviewed complete published package diff. Only Rust change fixes CDC UPDATE register indexing for virtual generated columns: skip virtual columns, use ColumnLayout.to_reg_offset, and consistently allocate and serialize twice num_non_virtual_cols registers. Both changed and unchanged column branches use the same mapping. No new unsafe code, host access, build scripts, or dependencies. Other changes are release metadata and matching Turso dependency versions."
+
 [[audits.turso_ext]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
@@ -548,6 +554,12 @@ who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 delta = "0.8.0-pre.14 -> 0.8.1"
 notes = "Reviewed the 0.8.0-pre.14 -> 0.8.1 delta: the published source trees are byte-identical. Every file except Cargo.toml, Cargo.lock and .cargo_vcs_info.json hashes the same across the two releases (8 files, 6 of them Rust), and the three that differ carry only version strings plus the upstream release commit sha. Nothing to review beyond the version stamp; this is the stable cut of the pre-release already in use."
+
+[[audits.turso_ext]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.8.1 -> 0.8.2"
+notes = "Reviewed complete published package diff. Source files are byte-identical; only Cargo.toml, Cargo.lock, and .cargo_vcs_info.json release metadata changes. No runtime, unsafe, host access, or build-script changes."
 
 [[audits.turso_macros]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
@@ -567,6 +579,12 @@ criteria = "safe-to-deploy"
 delta = "0.8.0-pre.14 -> 0.8.1"
 notes = "Reviewed the 0.8.0-pre.14 -> 0.8.1 delta: the published source trees are byte-identical. Every file except Cargo.toml, Cargo.lock and .cargo_vcs_info.json hashes the same across the two releases (13 files, 12 of them Rust), and the three that differ carry only version strings plus the upstream release commit sha. Nothing to review beyond the version stamp; this is the stable cut of the pre-release already in use."
 
+[[audits.turso_macros]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.8.1 -> 0.8.2"
+notes = "Reviewed complete published package diff. Source files are byte-identical; only Cargo.toml, Cargo.lock, and .cargo_vcs_info.json release metadata changes. No runtime, unsafe, host access, or build-script changes."
+
 [[audits.turso_parser]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
@@ -584,6 +602,12 @@ who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 delta = "0.8.0-pre.14 -> 0.8.1"
 notes = "Reviewed the 0.8.0-pre.14 -> 0.8.1 delta: the published source trees are byte-identical. Every file except Cargo.toml, Cargo.lock and .cargo_vcs_info.json hashes the same across the two releases (11 files, 9 of them Rust), and the three that differ carry only version strings plus the upstream release commit sha. Nothing to review beyond the version stamp; this is the stable cut of the pre-release already in use."
+
+[[audits.turso_parser]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.8.1 -> 0.8.2"
+notes = "Reviewed complete published package diff. Source files are byte-identical; only Cargo.toml, Cargo.lock, and .cargo_vcs_info.json release metadata changes. No runtime, unsafe, host access, or build-script changes."
 
 [[audits.twox-hash]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
