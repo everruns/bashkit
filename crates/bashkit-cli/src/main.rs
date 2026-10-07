@@ -486,7 +486,10 @@ fn run_oneshot(args: Args, mode: CliMode) -> Result<i32> {
                 (None, None) => unreachable!("run_oneshot called for non-executable mode"),
             };
 
-            let result = match bash.exec_with_options(&script, options).await {
+            // Boxed: the exec future is large, and `block_on` keeps this block on
+            // the main thread's stack, which the recursion limit is sized
+            // against (TM-DOS-020, two-MiB stack check in cli_oneshot).
+            let result = match Box::pin(bash.exec_with_options(&script, options)).await {
                 Ok(result) => result,
                 // Like bash: a syntax error with nothing runnable before it is
                 // reported on stderr and exits 2 (the partial-run case already
