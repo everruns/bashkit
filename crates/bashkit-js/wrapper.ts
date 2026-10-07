@@ -86,6 +86,8 @@ const nativeFileSystemStat: (
   modified: number;
   created: number;
 } = native.__fileSystemStat;
+const nativeFileSystemLstat: typeof nativeFileSystemStat =
+  native.__fileSystemLstat;
 const nativeFileSystemExists: (fs: any, path: string) => boolean =
   native.__fileSystemExists;
 const nativeFileSystemReadDir: (
@@ -635,6 +637,16 @@ export class FileSystem {
     return nativeFileSystemStat(this.native, path);
   }
 
+  lstat(path: string): {
+    fileType: string;
+    size: number;
+    mode: number;
+    modified: number;
+    created: number;
+  } {
+    return nativeFileSystemLstat(this.native, path);
+  }
+
   exists(path: string): boolean {
     return nativeFileSystemExists(this.native, path);
   }
@@ -1164,7 +1176,7 @@ export class Bash {
     this.native.remove(path, recursive);
   }
 
-  /** Get metadata for a path (fileType, size, mode, timestamps). */
+  /** Get metadata for a path (fileType, size, mode, timestamps), following symlinks. */
   stat(path: string): {
     fileType: string;
     size: number;
@@ -1173,6 +1185,17 @@ export class Bash {
     created: number;
   } {
     return this.native.stat(path);
+  }
+
+  /** Like `stat`, but a symlink reports itself (`fileType: "symlink"`). */
+  lstat(path: string): {
+    fileType: string;
+    size: number;
+    mode: number;
+    modified: number;
+    created: number;
+  } {
+    return this.native.lstat(path);
   }
 
   /** Append content to a file. */
@@ -1648,7 +1671,7 @@ export class BashTool {
     this.native.remove(path, recursive);
   }
 
-  /** Get metadata for a path (fileType, size, mode, timestamps). */
+  /** Get metadata for a path (fileType, size, mode, timestamps), following symlinks. */
   stat(path: string): {
     fileType: string;
     size: number;
@@ -1657,6 +1680,17 @@ export class BashTool {
     created: number;
   } {
     return this.native.stat(path);
+  }
+
+  /** Like `stat`, but a symlink reports itself (`fileType: "symlink"`). */
+  lstat(path: string): {
+    fileType: string;
+    size: number;
+    mode: number;
+    modified: number;
+    created: number;
+  } {
+    return this.native.lstat(path);
   }
 
   /** Append content to a file. */
