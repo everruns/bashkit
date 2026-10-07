@@ -2001,9 +2001,27 @@ export interface TerminalToolDefinition {
   };
 }
 
+/** Arguments of {@link Terminal.call}, named as in `toolDefinition()`. */
+export interface TerminalCallArgs {
+  /** Keys in Vim notation (`"ls<Enter>"`, `"<C-c>"`). */
+  input?: string;
+  /** How long to wait for the session to need input (default 5000). */
+  wait_ms?: number;
+  /** Regex: return as soon as command output printed during the call matches. */
+  wait_for?: string;
+  /** `full` (default), `changes` (only changed rows) or `none`. */
+  screen?: "full" | "changes" | "none";
+}
+
 export interface TerminalCallResult {
-  /** Visible screen as plain text. */
-  screen: string;
+  /** Visible screen as plain text (screen `full`). */
+  screen?: string;
+  /** Rows changed since the previous call (screen `changes`). */
+  screen_changes?: Array<{ row: number; text: string }>;
+  /** Cursor position, 0-based (screen `changes`). */
+  cursor?: { row: number; col: number };
+  /** Whether `wait_for` matched (only when it was given). */
+  matched?: boolean;
   activity: "prompt" | "continuation" | "running" | "exited";
   /** Command line still running (activity `running`). */
   running_command?: string;
@@ -2059,10 +2077,16 @@ export class Terminal {
   /**
    * Agent step: type `input` in Vim key notation (`"ls<Enter>"`,
    * `"ihi<Esc>:wq<Enter>"`, `"<C-c>"`), wait up to `waitMs` (default 5000),
-   * and report the screen, activity and finished commands.
+   * and report the screen, activity and finished commands. Pass an object
+   * to forward a model's tool call as is (`wait_for`, `screen`, ...).
    */
-  async call(input = "", waitMs?: number): Promise<TerminalCallResult> {
-    return JSON.parse(await this.native.__callJson(input, waitMs));
+  async call(
+    input: string | TerminalCallArgs = "",
+    waitMs?: number,
+  ): Promise<TerminalCallResult> {
+    const args: TerminalCallArgs =
+      typeof input === "string" ? { input, wait_ms: waitMs } : input;
+    return JSON.parse(await this.native.__callJson(JSON.stringify(args)));
   }
 
   /** Visible screen as plain text. */

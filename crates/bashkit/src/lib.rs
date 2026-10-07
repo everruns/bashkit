@@ -826,6 +826,27 @@ pub struct Bash {
     /// excluded from the execution timeout.
     #[cfg(feature = "terminal")]
     input_wait_clock: Option<time_compat::InputWaitClock>,
+    /// Set by [`terminal::Terminal`]: a notify fired on Ctrl-C. While set,
+    /// `exec` aborts the running command mid-way when it fires and the
+    /// cancellation token is set, instead of waiting for the next command
+    /// boundary.
+    #[cfg(feature = "terminal")]
+    interrupt: Option<Arc<tokio::sync::Notify>>,
+    /// `$?` for the next exec: an interactive shell keeps `$?` across lines.
+    #[cfg(feature = "terminal")]
+    carried_exit_code: Option<i32>,
+}
+
+/// Resolve once `notify` fires while `cancel` is set. A notify permit left
+/// over from an earlier command (the flag already reset) is ignored.
+#[cfg(feature = "terminal")]
+async fn wait_for_interrupt(notify: &tokio::sync::Notify, cancel: &std::sync::atomic::AtomicBool) {
+    loop {
+        notify.notified().await;
+        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            return;
+        }
+    }
 }
 
 impl Default for Bash {
@@ -954,6 +975,10 @@ impl Bash {
     async fn exec_impl(&mut self, script: &str, invocation: Invocation) -> Result<ExecResult> {
         // THREAT[TM-ISO-005/006/007]: Reset transient state between exec() calls
         self.interpreter.reset_transient_state();
+        #[cfg(feature = "terminal")]
+        if let Some(code) = self.carried_exit_code.take() {
+            self.interpreter.set_last_exit_code(code);
+        }
 
         // THREAT[TM-DOS-059]: Count every host exec() call at the boundary so
         // malformed or parser-expensive scripts cannot bypass session limits.
@@ -1166,17 +1191,44 @@ impl Bash {
         // prevent sleep and pending async callbacks from bypassing the budget.
         let execution_timeout = self.interpreter.limits().timeout;
         #[cfg(feature = "terminal")]
-        let timed = match self.input_wait_clock.clone() {
-            Some(clock) => {
-                crate::time_compat::timeout_excluding_input_wait(
-                    execution_timeout,
-                    &clock,
-                    self.interpreter.execute(&ast),
-                )
-                .await
-            }
-            None => {
-                crate::time_compat::timeout(execution_timeout, self.interpreter.execute(&ast)).await
+        let timed = {
+            let clock = self.input_wait_clock.clone();
+            let interrupt = self.interrupt.clone();
+            let cancel = self.interpreter.cancellation_token();
+            let run = async {
+                match clock {
+                    Some(clock) => {
+                        crate::time_compat::timeout_excluding_input_wait(
+                            execution_timeout,
+                            &clock,
+                            self.interpreter.execute(&ast),
+                        )
+                        .await
+                    }
+                    None => {
+                        crate::time_compat::timeout(
+                            execution_timeout,
+                            self.interpreter.execute(&ast),
+                        )
+                        .await
+                    }
+                }
+            };
+            // Terminal Ctrl-C: drop the running command mid-way, the same way
+            // the execution timeout does, then reconcile interpreter state.
+            let outcome = match interrupt {
+                Some(notify) => tokio::select! {
+                    r = run => Some(r),
+                    () = wait_for_interrupt(&notify, &cancel) => None,
+                },
+                None => Some(run.await),
+            };
+            match outcome {
+                Some(r) => r,
+                None => {
+                    self.interpreter.clear_cancelled_execution_state();
+                    Ok(Err(Error::Cancelled))
+                }
             }
         };
         #[cfg(not(feature = "terminal"))]
@@ -1368,6 +1420,13 @@ impl Bash {
                 .extensions(extensions),
         )
         .await
+    }
+
+    /// Seed `$?` for the next exec (terminal: `$?` survives across lines,
+    /// and Ctrl-C reports 130).
+    #[cfg(feature = "terminal")]
+    pub(crate) fn carry_exit_code(&mut self, code: i32) {
+        self.carried_exit_code = Some(code);
     }
 
     /// Return a shared cancellation token.
@@ -3846,6 +3905,10 @@ impl BashBuilder {
             host_mounts: HostMounts::default(),
             #[cfg(feature = "terminal")]
             input_wait_clock: None,
+            #[cfg(feature = "terminal")]
+            interrupt: None,
+            #[cfg(feature = "terminal")]
+            carried_exit_code: None,
         }
     }
 }

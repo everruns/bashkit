@@ -1931,8 +1931,18 @@ class Terminal:
     def run_until_idle(self, timeout: float | None = None) -> Literal["idle", "exited", "timeout"]:
         """Run until the session needs input or exits, or ``timeout`` seconds pass."""
         ...
-    def call(self, input: str = "", wait_ms: int | None = None) -> dict[str, Any]:
-        """Agent step: type ``input`` in Vim key notation, wait, report screen and commands."""
+    def call(
+        self,
+        input: str = "",
+        wait_ms: int | None = None,
+        wait_for: str | None = None,
+        screen: Literal["full", "changes", "none"] | None = None,
+    ) -> dict[str, Any]:
+        """Agent step: type ``input`` in Vim key notation, wait, report screen and commands.
+
+        ``wait_for`` (regex) returns as soon as command output matches.
+        ``screen="changes"`` returns only rows changed since the last call.
+        """
         ...
     def screen_text(self) -> str: ...
     def history_text(self) -> str: ...
