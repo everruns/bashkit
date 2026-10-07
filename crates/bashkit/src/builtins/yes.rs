@@ -15,6 +15,9 @@ use crate::interpreter::ExecResult;
 /// In bashkit, output is limited to avoid infinite loops.
 pub struct Yes;
 
+/// Bytes per write when streaming into a pipeline (one pipe's capacity).
+const STREAM_CHUNK_BYTES: usize = 4 * 1024;
+
 impl BuiltinHelper for Yes {
     const NAME: &'static str = "yes";
 }
@@ -66,6 +69,23 @@ impl Builtin for Yes {
         // THREAT[TM-DOS-109]: the cap always ends `yes`; say so on stderr so a
         // consumer wanting more lines than the cap can tell output was cut.
         let output = build_yes_output(&text);
+        if let Some(stream) = ctx.stdout_stream() {
+            // Pipeline producer: hand the reader one chunk at a time, so
+            // `yes | head -1` stops after the first chunk with SIGPIPE.
+            let lines = output.lines().count();
+            for chunk in output.as_bytes().chunks(STREAM_CHUNK_BYTES) {
+                ctx.consume_budget_work(1)?;
+                if !stream.write(chunk).await {
+                    return Ok(ExecResult::with_code("", 141));
+                }
+            }
+            return Ok(super::limits::cap_exceeded(
+                "yes",
+                String::new(),
+                "output",
+                format!("{lines} lines"),
+            ));
+        }
         let lines = output.lines().count();
         Ok(super::limits::cap_exceeded(
             "yes",
