@@ -799,3 +799,59 @@ async fn no_leak_invalid_regex() {
         &["regex::Error", "ParseError {"],
     );
 }
+
+#[tokio::test]
+async fn gnu_character_escapes_are_literal() {
+    assert_eq!(out(&["s/z/\\x5cA/"], "z\n").await, "\\A\n");
+    assert_eq!(out(&["s/yes/yes\\x26/"], "yes\n").await, "yes&\n");
+    assert_eq!(out(&["s/\\x2a/S/"], "a*b\n").await, "aSb\n");
+    assert_eq!(out(&["s/b/\\d065\\o101\\cA/"], "abc\n").await, "aAA\x01c\n");
+    assert_eq!(out(&["y/b/\\x00/"], "abc\n").await, "a\0c\n");
+    // `\t` and `\n` also work inside bracket expressions; other escapes
+    // stay literal members.
+    assert_eq!(out(&["s/^[ \\t]*//"], "  \t a\n").await, "a\n");
+    assert_eq!(out(&["s/[\\.]/X/g"], "a.b\\c\n").await, "aXbXc\n");
+}
+
+#[tokio::test]
+async fn null_data_joins_lines_with_nul() {
+    assert_eq!(
+        out(
+            &["-z", "N;N;s/^/X/g;s/^/X/mg;s/$/Y/g;s/$/Y/mg"],
+            "a\0b\0c\0"
+        )
+        .await,
+        "XXaY\0XbY\0XcYY\0"
+    );
+    assert_eq!(out(&["-z", "H;$!d;x"], "a\0b\0").await, "\0a\0b\0");
+}
+
+#[tokio::test]
+async fn unreadable_input_file_is_reported_and_skipped() {
+    let fs = Arc::new(InMemoryFs::new());
+    fs.write_file(std::path::Path::new("/in.txt"), b"still\n")
+        .await
+        .unwrap();
+    let r = run_with(fs, &["-n", "p", "nope.txt", "in.txt"], None).await;
+    assert_eq!(r.stdout, "still\n");
+    assert_eq!(
+        r.stderr,
+        "sed: can't read nope.txt: No such file or directory\n"
+    );
+    assert_eq!(r.exit_code, 2);
+}
+
+#[tokio::test]
+async fn loops_that_read_input_are_not_capped() {
+    // `$!N;P;D` restarts once per line and `:b;$b;N;...;bb` loops once per
+    // line; both are bounded by the input, so long inputs must finish.
+    let input: String = (1..=3000).map(|n| format!("{n}\n")).collect();
+    assert_eq!(out(&["$!N;P;D"], &input).await, input);
+    let dups = "x\n".repeat(3000) + "y\n";
+    let r = run_sed(&["h;:b;$b;N;/^\\(.*\\)\\n\\1$/{g;bb;};$b;P;D"], Some(&dups)).await;
+    assert_eq!(r.stdout, "x\ny\n");
+    assert_eq!(r.stderr, "");
+    // A loop that reads nothing is still stopped.
+    let r = run_sed(&[":a;s/^/x/;ta"], Some("a\n")).await;
+    assert!(r.stderr.contains("loop limit"), "{}", r.stderr);
+}
