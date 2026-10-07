@@ -212,10 +212,35 @@ fn stdout_survives_a_nonzero_exit() {
 #[test]
 fn parse_error_reports_on_stderr_and_exits_nonzero() {
     let out = run(&["-c", "if ["]);
-    assert_ne!(code(&out), 0);
+    // bash exits 2 on a syntax error.
+    assert_eq!(code(&out), 2);
     let err = stderr(&out);
-    assert!(err.contains("parse error"), "stderr: {err}");
+    assert!(
+        err.starts_with("bash: syntax error: parse error"),
+        "stderr: {err}"
+    );
+    assert!(err.ends_with('\n'), "stderr: {err:?}");
     assert_eq!(stdout(&out), "", "parse errors must not write to stdout");
+}
+
+#[test]
+fn script_parse_error_exits_2_with_or_without_earlier_commands() {
+    let dir = tempfile::tempdir().unwrap();
+    for (body, want_stdout) in [
+        ("[[ abc =~ ( ]]\n", ""),
+        ("echo ok\n[[ abc =~ ( ]]\n", "ok\n"),
+    ] {
+        let script = dir.path().join("bad.sh");
+        std::fs::write(&script, body).unwrap();
+        let out = run(&[script.to_str().unwrap()]);
+        assert_eq!(code(&out), 2, "{body:?}");
+        assert_eq!(stdout(&out), want_stdout, "{body:?}");
+        assert!(
+            stderr(&out).starts_with("bash: syntax error: "),
+            "{body:?}: {}",
+            stderr(&out)
+        );
+    }
 }
 
 #[test]
