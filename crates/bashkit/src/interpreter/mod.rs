@@ -6432,77 +6432,81 @@ impl Interpreter {
     /// stores them without `-i`/`-l`/`-u`, and a readonly target only prints
     /// an error (returned for stderr); a bare assignment to a readonly
     /// variable abandons the line instead.
-    async fn process_command_assignments(
-        &mut self,
-        assignments: &[Assignment],
+    fn process_command_assignments<'a>(
+        &'a mut self,
+        assignments: &'a [Assignment],
         has_command: bool,
-    ) -> Result<String> {
-        let mut stderr = String::new();
-        for assignment in assignments {
-            match &assignment.value {
-                AssignmentValue::Scalar(word) => {
-                    let value = self.expand_word(word).await?;
-                    let target = match self.resolve_nameref_strict(&assignment.name) {
-                        Ok(t) => t,
-                        Err(()) => {
-                            return Err(crate::error::Error::LineAbort(format!(
-                                "bash: warning: {}: circular name reference\n",
-                                assignment.name
-                            )));
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String>> + Send + 'a>> {
+        // Boxed: keeps this future off execute_simple_command's frame, which
+        // repeats per function nesting level (THREAT[TM-DOS-020]).
+        Box::pin(async move {
+            let mut stderr = String::new();
+            for assignment in assignments {
+                match &assignment.value {
+                    AssignmentValue::Scalar(word) => {
+                        let value = self.expand_word(word).await?;
+                        let target = match self.resolve_nameref_strict(&assignment.name) {
+                            Ok(t) => t,
+                            Err(()) => {
+                                return Err(crate::error::Error::LineAbort(format!(
+                                    "bash: warning: {}: circular name reference\n",
+                                    assignment.name
+                                )));
+                            }
+                        };
+                        let base = target.split('[').next().unwrap_or(&target).to_string();
+                        // THREAT[TM-INJ-019]: assignments to readonly variables fail
+                        // visibly, as in bash.
+                        if self.is_var_readonly(&base) {
+                            let msg = format!("bash: {base}: readonly variable\n");
+                            if has_command {
+                                stderr.push_str(&msg);
+                                continue;
+                            }
+                            return Err(crate::error::Error::LineAbort(msg));
                         }
-                    };
-                    let base = target.split('[').next().unwrap_or(&target).to_string();
-                    // THREAT[TM-INJ-019]: assignments to readonly variables fail
-                    // visibly, as in bash.
-                    if self.is_var_readonly(&base) {
-                        let msg = format!("bash: {base}: readonly variable\n");
-                        if has_command {
-                            stderr.push_str(&msg);
-                            continue;
-                        }
-                        return Err(crate::error::Error::LineAbort(msg));
-                    }
-                    if let Some(index_str) = &assignment.index {
-                        self.assign_element(&base, index_str, value, assignment.append)
-                            .await?;
-                    } else if has_command {
-                        self.assign_raw = true;
-                        if assignment.append {
-                            let existing = self.expand_variable(&assignment.name);
-                            self.set_variable(assignment.name.clone(), existing + &value);
+                        if let Some(index_str) = &assignment.index {
+                            self.assign_element(&base, index_str, value, assignment.append)
+                                .await?;
+                        } else if has_command {
+                            self.assign_raw = true;
+                            if assignment.append {
+                                let existing = self.expand_variable(&assignment.name);
+                                self.set_variable(assignment.name.clone(), existing + &value);
+                            } else {
+                                self.set_variable(assignment.name.clone(), value);
+                            }
+                            self.assign_raw = false;
+                        } else if assignment.append {
+                            self.append_scalar(&assignment.name, value);
                         } else {
                             self.set_variable(assignment.name.clone(), value);
                         }
-                        self.assign_raw = false;
-                    } else if assignment.append {
-                        self.append_scalar(&assignment.name, value);
-                    } else {
-                        self.set_variable(assignment.name.clone(), value);
                     }
-                }
-                AssignmentValue::Array(words) => {
-                    let arr_name = match self.resolve_nameref_strict(&assignment.name) {
-                        Ok(n) => n,
-                        Err(()) => {
+                    AssignmentValue::Array(words) => {
+                        let arr_name = match self.resolve_nameref_strict(&assignment.name) {
+                            Ok(n) => n,
+                            Err(()) => {
+                                return Err(crate::error::Error::LineAbort(format!(
+                                    "bash: warning: {}: circular name reference\n",
+                                    assignment.name
+                                )));
+                            }
+                        };
+                        // THREAT[TM-INJ-019]: arrays honour readonly like scalars.
+                        if self.is_var_readonly(&arr_name) {
                             return Err(crate::error::Error::LineAbort(format!(
-                                "bash: warning: {}: circular name reference\n",
-                                assignment.name
+                                "bash: {arr_name}: readonly variable\n"
                             )));
                         }
-                    };
-                    // THREAT[TM-INJ-019]: arrays honour readonly like scalars.
-                    if self.is_var_readonly(&arr_name) {
-                        return Err(crate::error::Error::LineAbort(format!(
-                            "bash: {arr_name}: readonly variable\n"
-                        )));
+                        let assoc = self.scoped.assoc_arrays.contains_key(&arr_name);
+                        self.assign_array_words(&arr_name, words, assignment.append, assoc)
+                            .await?;
                     }
-                    let assoc = self.scoped.assoc_arrays.contains_key(&arr_name);
-                    self.assign_array_words(&arr_name, words, assignment.append, assoc)
-                        .await?;
                 }
             }
-        }
-        Ok(stderr)
+            Ok(stderr)
+        })
     }
 
     /// Try alias expansion. Returns `Some(result)` if alias was expanded, `None` otherwise.
@@ -7852,14 +7856,27 @@ impl Interpreter {
         args: Vec<String>,
         stdin: Option<crate::StreamData>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecResult>> + Send + 'a>> {
-        Box::pin(async move {
-            // Check for functions first
-            if let Some(func_def) = self.scoped.functions.get(name).cloned() {
-                return self
-                    .execute_function_call(name, &func_def, args, stdin, &command.redirects)
-                    .await;
-            }
+        // Functions first, in their own small future: a function call is the
+        // recursion path, and the builtin/path-search arms below would
+        // otherwise add their large frame to every call level
+        // (THREAT[TM-DOS-020]: bounded recursion on a 2 MiB stack).
+        if let Some(func_def) = self.scoped.functions.get(name).cloned() {
+            return Box::pin(async move {
+                self.execute_function_call(name, &func_def, args, stdin, &command.redirects)
+                    .await
+            });
+        }
+        self.dispatch_non_function(name, command, args, stdin)
+    }
 
+    fn dispatch_non_function<'a>(
+        &'a mut self,
+        name: &'a str,
+        command: &'a SimpleCommand,
+        args: Vec<String>,
+        stdin: Option<crate::StreamData>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecResult>> + Send + 'a>> {
+        Box::pin(async move {
             // Interpreter-level special builtins
             if Self::is_special_builtin_name(name) {
                 return self
