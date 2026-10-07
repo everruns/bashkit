@@ -429,6 +429,13 @@ const SPECIAL_BUILTIN_NAMES: &[&str] = &[
     "source", "typeset", "unset",
 ];
 
+/// Interpreter-dispatched names that real bash reports as shell builtins
+/// (`type builtin`, `command -V let`) although they have no entry in the
+/// builtin map. `bash`/`sh` are programs in real bash, not builtins.
+fn is_dispatch_only_builtin(name: &str) -> bool {
+    SPECIAL_BUILTIN_NAMES.contains(&name) && !matches!(name, "bash" | "sh")
+}
+
 /// Sorted, deduped union of baked-in/custom builtins, interpreter-special
 /// builtins, and the host registry.
 fn merged_builtin_names(
@@ -453,7 +460,7 @@ impl ShellRef<'_> {
 
     /// Check if a name is a registered builtin command.
     pub(crate) fn has_builtin(&self, name: &str) -> bool {
-        self.builtins.contains_key(name)
+        self.builtins.contains_key(name) || is_dispatch_only_builtin(name)
     }
 
     /// Sorted names of all dispatchable builtins (registered + special + host
@@ -1685,6 +1692,15 @@ impl Interpreter {
             "factor" => Factor,
             "tsort" => Tsort,
             "nproc" => Nproc,
+            "arch" => Arch,
+            "tty" => Tty,
+            "free" => Free,
+            "getconf" => Getconf,
+            "sync" => SyncCmd,
+            "hostid" => Hostid,
+            "chgrp" => Chgrp,
+            "shasum" => Shasum,
+            "sum" => Sum,
             "dd" => Dd,
             "install" => Install,
             "umask" => Umask,
@@ -1791,6 +1807,13 @@ impl Interpreter {
             Arc::new(builtins::Source::new(fs.clone())),
         );
         builtins.insert(".".to_string(), Arc::new(builtins::Source::new(fs.clone())));
+        builtins.insert("nohup".to_string(), Arc::new(builtins::RunAs::nohup()));
+        builtins.insert("nice".to_string(), Arc::new(builtins::RunAs::nice()));
+        builtins.insert("flock".to_string(), Arc::new(builtins::RunAs::flock()));
+        builtins.insert("egrep".to_string(), Arc::new(builtins::GrepAlias::egrep()));
+        builtins.insert("fgrep".to_string(), Arc::new(builtins::GrepAlias::fgrep()));
+        builtins.insert("link".to_string(), Arc::new(builtins::Link::hard()));
+        builtins.insert("unlink".to_string(), Arc::new(builtins::Link::unlink()));
 
         // THREAT[TM-INF-018]: Resolve the virtual clock mode for `date`.
         // Priority: fixed_epoch > epoch_offset > real clock.
@@ -1827,6 +1850,20 @@ impl Interpreter {
         builtins.insert(
             "whoami".to_string(),
             Arc::new(builtins::Whoami::with_username(&username_val)),
+        );
+        builtins.insert(
+            "groups".to_string(),
+            Arc::new(builtins::UserInfo::groups(&username_val)),
+        );
+        builtins.insert(
+            "logname".to_string(),
+            Arc::new(builtins::UserInfo::logname(&username_val)),
+        );
+        builtins.insert("users".to_string(), Arc::new(builtins::UserInfo::users()));
+        builtins.insert("who".to_string(), Arc::new(builtins::UserInfo::who()));
+        builtins.insert(
+            "uptime".to_string(),
+            Arc::new(builtins::Uptime::with_clock(clock)),
         );
         builtins.insert(
             "find".to_string(),
@@ -5437,6 +5474,18 @@ fn route_fd_table_content(
         &mut new_stderr,
     );
 
+    // `N>file` creates (or truncates) the file even when nothing writes to
+    // fd N.
+    for (_, target) in extra_fd_targets {
+        route(
+            &crate::StreamData::new(),
+            target,
+            &mut file_writes,
+            &mut new_stdout,
+            &mut new_stderr,
+        );
+    }
+
     // Route pending fd3+ output
     for (fd_num, data) in pending {
         let target = extra_fd_targets
@@ -7706,10 +7755,19 @@ impl Interpreter {
     /// every registered builtin that also exists as a program on a real
     /// system (shell-only builtins like `cd` do not).
     pub(crate) fn rootfs_command_names(&self) -> impl Iterator<Item = &str> + Clone {
+        // `bash`/`sh` are dispatched by the interpreter, not the map, but
+        // real systems ship them as `/bin/bash` and `/bin/sh`. Without
+        // script execution they do not run, so no stub either.
+        let shells: &'static [&'static str] = if self.shell_features.has_script_execution() {
+            &["bash", "sh"]
+        } else {
+            &[]
+        };
         self.builtins
             .keys()
             .map(String::as_str)
             .filter(|n| !ENV_SHELL_ONLY_BUILTINS.contains(n))
+            .chain(shells.iter().copied())
     }
 
     async fn resolve_command_path(&self, name: &str) -> Option<String> {
@@ -8443,8 +8501,23 @@ impl Interpreter {
         let prev_pipeline_stdin = self.pipeline_stdin.take();
         self.pipeline_stdin = stdin;
 
+        // `f 3>file`: writes to fd 3 inside the body route to the file.
+        let capture_pending_fd = redirection::has_high_fd_file_redirect(redirects);
+        if capture_pending_fd {
+            if self.pending_fd_capture_depth == 0 {
+                self.clear_pending_fd_redirect_state();
+            }
+            self.pending_fd_capture_depth += 1;
+        }
+
         // Execute function body. Always restore call state even on error.
         let result = self.execute_command(&func_def.body).await;
+        if capture_pending_fd {
+            self.pending_fd_capture_depth = self.pending_fd_capture_depth.saturating_sub(1);
+            if result.is_err() {
+                self.clear_pending_fd_redirect_state();
+            }
+        }
 
         // Restore previous pipeline stdin
         self.pipeline_stdin = prev_pipeline_stdin;
@@ -9092,6 +9165,7 @@ impl Interpreter {
             'v' => {
                 // command -v: print name/path if it's a known command
                 let registered = self.builtins.contains_key(cmd_name.as_str())
+                    || is_dispatch_only_builtin(cmd_name)
                     || self.has_host_builtin(cmd_name);
                 let output = if self.scoped.functions.contains_key(cmd_name.as_str())
                     || is_keyword(cmd_name)
@@ -9120,6 +9194,7 @@ impl Interpreter {
             'V' => {
                 // command -V: verbose description
                 let registered = self.has_host_builtin(cmd_name)
+                    || is_dispatch_only_builtin(cmd_name)
                     || self.builtins.contains_key(cmd_name.as_str());
                 let path =
                     if registered && builtins::BASH_BUILTIN_NAMES.contains(&cmd_name.as_str()) {
@@ -10047,7 +10122,8 @@ impl Interpreter {
                         | RedirectKind::OutputBoth
                 )
             });
-            let capture_pending_fd = has_dup_output && has_file_redirect;
+            let capture_pending_fd = (has_dup_output && has_file_redirect)
+                || redirection::has_high_fd_file_redirect(redirects);
             if capture_pending_fd {
                 if self.pending_fd_capture_depth == 0 {
                     self.clear_pending_fd_redirect_state();

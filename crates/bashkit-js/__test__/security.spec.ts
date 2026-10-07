@@ -221,8 +221,11 @@ test("WB: stderr truncation on massive error output", (t) => {
 test("WB: exec cannot escape sandbox (TM-ESC-001)", (t) => {
   const bash = new Bash();
   // exec runs commands within VFS sandbox — external binaries don't exist
-  const r = bash.executeSync("exec /bin/bash");
+  const r = bash.executeSync("exec /usr/bin/gcc");
   t.not(r.exitCode, 0, "exec of external binary must fail in sandbox");
+  // /bin/bash is a rootfs stub that re-enters the in-process interpreter
+  const inner = bash.executeSync("exec /bin/bash -c 'cat /etc/passwd'");
+  t.false(inner.stdout.includes("root:x:0:0"), "host passwd must not leak");
 });
 
 test("WB: /proc filesystem not accessible (TM-ESC-003)", (t) => {

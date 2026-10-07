@@ -338,16 +338,23 @@ mod sandbox_escape {
 
     /// Test exec cannot escape sandbox — only VFS scripts are reachable
     ///
-    /// exec now executes commands within the VFS (run + exit). Since the VFS
-    /// doesn't contain /bin/bash, exec /bin/bash still fails with exit 127.
-    /// This preserves the security invariant: no real process replacement.
+    /// exec executes commands within the VFS (run + exit). A host program
+    /// path is not there, so it fails with exit 127; `/bin/bash` is a
+    /// root-filesystem stub that re-enters the in-process interpreter.
+    /// Either way there is no real process replacement.
     #[tokio::test]
     async fn threat_exec_not_available() {
         let mut bash = Bash::new();
 
-        let result = bash.exec("exec /bin/bash").await.unwrap();
-        // exec tries to run /bin/bash in VFS — doesn't exist, so exit 127
+        let result = bash.exec("exec /usr/bin/gcc").await.unwrap();
         assert_eq!(result.exit_code, 127);
+
+        let result = bash
+            .exec("exec /bin/bash -c 'cat /etc/passwd'")
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert!(!result.stdout.contains("root:x:0:0"), "host passwd leaked");
     }
 
     /// Test exec argv is never re-parsed as shell source (quote injection safe).

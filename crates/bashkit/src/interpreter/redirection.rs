@@ -126,7 +126,9 @@ impl Interpreter {
             )
         });
 
-        if has_dup_output && has_file_redirect {
+        // `N>file` (N>=3) opens fd N without touching stdout; only the
+        // fd-table path keeps fd N separate from fd 1.
+        if (has_dup_output && has_file_redirect) || has_high_fd_file_redirect(redirects) {
             return self.apply_redirections_fd_table(result, redirects).await;
         }
 
@@ -396,6 +398,7 @@ impl Interpreter {
                     };
                     match redirect.fd {
                         Some(2) => fd2 = target,
+                        Some(n) if n >= 3 => self.pending_fd_targets.push((n, target)),
                         _ => fd1 = target,
                     }
                 }
@@ -414,6 +417,7 @@ impl Interpreter {
                     };
                     match redirect.fd {
                         Some(2) => fd2 = target,
+                        Some(n) if n >= 3 => self.pending_fd_targets.push((n, target)),
                         _ => fd1 = target,
                     }
                 }
@@ -515,4 +519,14 @@ impl Interpreter {
             }
         }
     }
+}
+
+/// Whether any redirect opens a file on fd 3 or above (`3>f`, `9>>lock`).
+pub(super) fn has_high_fd_file_redirect(redirects: &[Redirect]) -> bool {
+    redirects.iter().any(|r| {
+        matches!(
+            r.kind,
+            RedirectKind::Output | RedirectKind::Clobber | RedirectKind::Append
+        ) && r.fd.is_some_and(|fd| fd >= 3)
+    })
 }

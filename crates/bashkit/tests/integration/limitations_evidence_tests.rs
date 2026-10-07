@@ -29,15 +29,21 @@ async fn l_proc_002_no_job_control() {
 #[tokio::test]
 async fn l_proc_003_no_process_spawning() {
     let mut bash = Bash::new();
-    // `sh -c 'echo hi'` style host escape: /bin/sh is not a spawnable path.
-    let result = bash.exec("/bin/sh -c 'echo escaped'").await.unwrap();
+    // A host program path is not spawnable.
+    let result = bash.exec("/usr/bin/gcc -v").await.unwrap();
     assert_eq!(result.exit_code, 127);
     assert!(
         result.stderr.contains("No such file or directory"),
         "stderr: {}",
         result.stderr
     );
-    assert!(!result.stdout.contains("escaped"));
+    // `/bin/sh` is a root-filesystem stub for the in-process interpreter: it
+    // sees the VFS, never the host.
+    let result = bash
+        .exec("echo vfs > /tmp/f; /bin/sh -c 'cat /tmp/f; [ -e /proc/1/exe ] || echo no-host'")
+        .await
+        .unwrap();
+    assert_eq!(result.stdout, "vfs\nno-host\n");
 
     let result = bash.exec("definitely-not-a-command").await.unwrap();
     assert_eq!(result.exit_code, 127);

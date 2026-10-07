@@ -207,7 +207,7 @@ Scripts may attempt to break out of the sandbox to access the host system.
 
 | Threat | Attack Example | Mitigation | Status |
 |--------|---------------|------------|--------|
-| Shell escape (TM-ESC-005) | `exec /bin/bash` | Not implemented (exit 127) | MITIGATED |
+| Shell escape (TM-ESC-005) | `exec /bin/bash` | Re-enters the in-process interpreter; host binaries are unreachable (exit 127) | MITIGATED |
 | External commands (TM-ESC-006) | `./malicious` | Runs in VFS sandbox, no host shell | MITIGATED |
 | Background proc (TM-ESC-007) | `malicious &` | Background not implemented | MITIGATED |
 | eval injection (TM-ESC-008) | `eval "$input"` | Sandboxed eval (builtins only) | MITIGATED |
