@@ -19,7 +19,7 @@ use regex::{Regex, RegexBuilder};
 use crate::builtins::search_common::{REGEX_DFA_SIZE_LIMIT, REGEX_SIZE_LIMIT};
 
 /// Translate a POSIX BRE (or ERE, when `extended`) into `regex` crate syntax.
-pub(super) fn translate(pattern: &str, extended: bool) -> String {
+pub(crate) fn translate(pattern: &str, extended: bool) -> String {
     let chars: Vec<char> = pattern.chars().collect();
     let mut out = String::with_capacity(pattern.len() + 8);
     let mut i = 0;
@@ -113,7 +113,8 @@ pub(super) fn translate(pattern: &str, extended: bool) -> String {
                 branch_start = false;
             }
             '*' => {
-                if !extended && branch_start {
+                // A leading `*` is literal in BRE and (GNU) ERE alike.
+                if branch_start {
                     out.push_str("\\*");
                 } else {
                     out.push('*');

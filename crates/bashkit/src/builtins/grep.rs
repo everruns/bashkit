@@ -361,34 +361,25 @@ impl GrepOptions {
     }
 
     fn build_matcher(&self) -> Result<Matcher> {
-        // Build patterns for each -e pattern
-        let escaped_patterns: Vec<String> = self
-            .patterns
+        // GNU grep treats each newline-separated piece as its own pattern.
+        let pieces: Vec<&str> = self.patterns.iter().flat_map(|p| p.split('\n')).collect();
+        let escaped_patterns: Vec<String> = pieces
             .iter()
             .map(|p| {
-                // Empty pattern matches everything (like .*)
+                // Empty pattern matches everything
                 if p.is_empty() {
-                    return ".*".to_string();
+                    return String::new();
                 }
-                let pat = if self.fixed_strings {
+                if self.fixed_strings {
                     regex::escape(p)
                 } else if self.perl_regex {
                     // PCRE mode (-P): pass through to fancy-regex unchanged so
                     // lookaround / backreferences are preserved.
-                    p.clone()
-                } else if !self.extended_regex {
-                    // BRE mode: convert to ERE for the regex crate
-                    // In BRE: ( ) are literal, \( \) are groups
-                    // In ERE/regex crate: ( ) are groups, \( \) are literal
-                    bre_to_ere(p)
+                    p.to_string()
                 } else {
-                    p.clone()
-                };
-                // Wrap with word boundaries if -w flag is set
-                if self.word_regex {
-                    format!(r"\b{}\b", pat)
-                } else {
-                    pat
+                    // POSIX BRE/ERE (shared with sed): positional `* ^ $`,
+                    // literal `+ ? | ( ) { }` in BRE, bracket escaping.
+                    super::sed::translate_posix_regex(p, self.extended_regex)
                 }
             })
             .collect();
@@ -404,6 +395,14 @@ impl GrepOptions {
                 .join("|")
         };
 
+        // -w: the match must not touch a word constituent on either side
+        // (GNU semantics; `\b` would accept `foo.` inside `foo.bar`).
+        let combined = if self.word_regex {
+            format!(r"(?<![\w])(?:{})(?![\w])", combined)
+        } else {
+            combined
+        };
+
         // Wrap for whole-line matching if -x flag is set
         let final_pattern = if self.whole_line {
             format!("^(?:{})$", combined)
@@ -411,16 +410,20 @@ impl GrepOptions {
             combined
         };
 
-        // -P uses the backtracking PCRE engine; everything else uses the
-        // default linear-time engine. `-F` (fixed strings) takes precedence
-        // over `-P`, matching GNU grep.
-        if self.perl_regex && !self.fixed_strings {
-            build_fancy_matcher(&final_pattern, self.ignore_case)
-                .map_err(|e| Error::Execution(format!("grep: invalid pattern: {}", e)))
-        } else {
-            build_regex_opts(&final_pattern, self.ignore_case)
-                .map(Matcher::Standard)
-                .map_err(|e| Error::Execution(format!("grep: invalid pattern: {}", e)))
+        // -P, -w (look-around) and back-references need the backtracking
+        // engine; everything else uses the default linear-time engine.
+        let invalid = |e: String| Error::Execution(format!("grep: invalid pattern: {}", e));
+        if (self.perl_regex && !self.fixed_strings) || self.word_regex {
+            return build_fancy_matcher(&final_pattern, self.ignore_case)
+                .map_err(|e| invalid(e.to_string()));
+        }
+        match build_regex_opts(&final_pattern, self.ignore_case) {
+            Ok(re) => Ok(Matcher::Standard(re)),
+            Err(e) if !self.fixed_strings && e.to_string().contains("backreference") => {
+                build_fancy_matcher(&final_pattern, self.ignore_case)
+                    .map_err(|e| invalid(e.to_string()))
+            }
+            Err(e) => Err(invalid(e.to_string())),
         }
     }
 }
@@ -516,43 +519,6 @@ fn path_has_excluded_dir(
 /// silently altered the data a caller got back.
 fn process_content(content: Vec<u8>, _binary_as_text: bool) -> String {
     String::from_utf8_lossy(&content).into_owned()
-}
-
-/// Convert a BRE (Basic Regular Expression) pattern to ERE for the regex crate.
-/// In BRE: ( ) { } are literal; \( \) \{ \} \+ \? \| are metacharacters.
-/// In ERE/regex crate: ( ) { } + ? | are metacharacters.
-fn bre_to_ere(pattern: &str) -> String {
-    let mut result = String::with_capacity(pattern.len());
-    let chars: Vec<char> = pattern.chars().collect();
-    let mut i = 0;
-
-    while i < chars.len() {
-        if chars[i] == '\\' && i + 1 < chars.len() {
-            match chars[i + 1] {
-                // BRE escaped metacharacters → ERE unescaped
-                '(' | ')' | '{' | '}' | '+' | '?' | '|' => {
-                    result.push(chars[i + 1]);
-                    i += 2;
-                }
-                // Other escapes pass through
-                _ => {
-                    result.push('\\');
-                    result.push(chars[i + 1]);
-                    i += 2;
-                }
-            }
-        } else if chars[i] == '(' || chars[i] == ')' || chars[i] == '{' || chars[i] == '}' {
-            // BRE literal chars → escape them for ERE
-            result.push('\\');
-            result.push(chars[i]);
-            i += 1;
-        } else {
-            result.push(chars[i]);
-            i += 1;
-        }
-    }
-
-    result
 }
 
 #[async_trait]
@@ -949,6 +915,10 @@ impl Builtin for Grep {
                     let mut o_matches = 0usize;
                     for (line_num, line) in lines.iter().enumerate() {
                         matcher.for_each_range(line, |(start, end)| {
+                            // GNU -o skips empty matches.
+                            if start == end {
+                                return true;
+                            }
                             if let Some(max) = opts.max_count
                                 && o_matches >= max
                             {
@@ -1143,16 +1113,12 @@ async fn try_indexed_search(
                 return None;
             }
 
-            let pattern = if opts.extended_regex {
-                opts.patterns[0].clone()
-            } else {
-                bre_to_ere(&opts.patterns[0])
-            };
-            let pattern = if opts.word_regex {
-                format!(r"\b{}\b", pattern)
-            } else {
-                pattern
-            };
+            // -w needs look-around and newlines split patterns: let the
+            // regular path handle both.
+            if opts.word_regex || opts.patterns[0].contains('\n') {
+                return None;
+            }
+            let pattern = super::sed::translate_posix_regex(&opts.patterns[0], opts.extended_regex);
             if opts.whole_line {
                 format!("^(?:{})$", pattern)
             } else {
@@ -1502,6 +1468,42 @@ mod tests {
             .unwrap();
         assert_eq!(result.exit_code, 1);
         assert_eq!(result.stdout, "");
+    }
+
+    #[tokio::test]
+    async fn test_grep_word_match_checks_both_edges() {
+        let r = run_grep(&["-wF", "foo."], Some("foo.bar\nfoo.\n"))
+            .await
+            .unwrap();
+        assert_eq!(r.stdout, "foo.\n");
+        let r = run_grep(&["-wE", "a|b"], Some("ab\nxa\nb\n"))
+            .await
+            .unwrap();
+        assert_eq!(r.stdout, "b\n");
+    }
+
+    #[tokio::test]
+    async fn test_grep_bre_semantics() {
+        let r = run_grep(&["a+b"], Some("a+b\nab\n")).await.unwrap();
+        assert_eq!(r.stdout, "a+b\n");
+        let r = run_grep(&["\\(ab\\)\\1"], Some("abab\nabba\n"))
+            .await
+            .unwrap();
+        assert_eq!(r.stdout, "abab\n");
+        let r = run_grep(&["*a"], Some("*a\nb\n")).await.unwrap();
+        assert_eq!(r.stdout, "*a\n");
+        let r = run_grep(&["-E", "-G", "a|b"], Some("a|b\na\n"))
+            .await
+            .unwrap();
+        assert_eq!(r.stdout, "a|b\n");
+    }
+
+    #[tokio::test]
+    async fn test_grep_newline_separates_patterns_and_o_skips_empty() {
+        let r = run_grep(&["a\nc"], Some("a\nb\nc\n")).await.unwrap();
+        assert_eq!(r.stdout, "a\nc\n");
+        let r = run_grep(&["-o", "b*"], Some("aaa\n")).await.unwrap();
+        assert_eq!(r.stdout, "");
     }
 
     #[tokio::test]
@@ -2489,21 +2491,24 @@ mod tests {
 
     #[tokio::test]
     async fn test_grep_pattern_type_perl_then_extended_last_wins() {
-        // -P then -E: extended wins, so -E cleared perl_regex and the
-        // backreference is rejected by the linear-time engine (error).
-        let result = run_grep(&["-P", "-E", r"(.)\1"], Some("aa")).await;
-        assert!(result.is_err());
+        // -P then -E: extended wins, so `\d` is POSIX (a literal `d`),
+        // not the PCRE digit class.
+        let result = run_grep(&["-P", "-E", r"\d"], Some("1\nd\n"))
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "d\n");
     }
 
     #[tokio::test]
     async fn test_grep_pattern_type_long_options_last_wins() {
-        // --perl-regexp then --extended-regexp: extended wins -> backref rejected.
+        // --perl-regexp then --extended-regexp: extended wins -> POSIX `\d`.
         let result = run_grep(
-            &["--perl-regexp", "--extended-regexp", r"(.)\1"],
-            Some("aa"),
+            &["--perl-regexp", "--extended-regexp", r"\d"],
+            Some("1\nd\n"),
         )
-        .await;
-        assert!(result.is_err());
+        .await
+        .unwrap();
+        assert_eq!(result.stdout, "d\n");
     }
 
     #[tokio::test]
