@@ -482,7 +482,10 @@ impl Parser {
                 match self.bump() {
                     // `\<delim>` is the delimiter as an ordinary character.
                     Some(n) if n == delim => {
-                        if n.is_ascii_alphanumeric() {
+                        // In a regex GNU drops the backslash, so the
+                        // character keeps its plain regex meaning: `\|`
+                        // with `|` as delimiter is a literal `|` in BRE.
+                        if bracket_aware || n.is_ascii_alphanumeric() {
                             out.push(n);
                         } else {
                             out.push('\\');
@@ -574,6 +577,8 @@ impl Parser {
                 };
                 Ok(Kind::List(width))
             }
+            'a' if self.bare_backslash_text() => Ok(Kind::Nop),
+            'i' if self.bare_backslash_text() => Ok(Kind::Nop),
             'a' => Ok(Kind::Append(self.text())),
             'i' => Ok(Kind::Insert(self.text())),
             'c' => Ok(Kind::Change(self.text())),
@@ -641,6 +646,17 @@ impl Parser {
 
     /// Text argument of `a`, `i` and `c`, in both the POSIX `a\` + newline form
     /// and the GNU one-liner form.
+    /// `a\` / `i\` ending the script: GNU adds no line at all.
+    fn bare_backslash_text(&mut self) -> bool {
+        let save = self.pos;
+        self.skip_blanks();
+        if self.eat('\\') && self.peek().is_none() {
+            return true;
+        }
+        self.pos = save;
+        false
+    }
+
     fn text(&mut self) -> String {
         self.skip_blanks();
         if self.eat('\\') {

@@ -799,3 +799,16 @@ async fn no_leak_invalid_regex() {
         &["regex::Error", "ParseError {"],
     );
 }
+
+#[tokio::test]
+async fn escaped_delimiter_in_a_regex_is_the_plain_character() {
+    // `\|` with `|` as delimiter is a literal `|` in BRE, as in GNU sed.
+    assert_eq!(out(&["s|a\\|b|X|"], "a|b\n").await, "X\n");
+    // ... and keeps its regex meaning when the character is special.
+    assert_eq!(out(&["s.a\\.b.X."], "axb\n").await, "X\n");
+}
+
+#[tokio::test]
+async fn bare_append_backslash_adds_nothing() {
+    assert_eq!(out(&["a\\"], "a\n").await, "a\n");
+}
