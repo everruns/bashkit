@@ -7054,20 +7054,13 @@ impl Interpreter {
             } else if let Some(ref ps) = self.pipeline_stdin {
                 if !ps.is_empty() {
                     if name == "read" {
-                        // Consume one line from pipeline stdin
+                        // Consume one record (line, `-d` delimiter, `-n` count,
+                        // `\<newline>` continuation) from pipeline stdin.
                         let data = ps.clone();
-                        if let Some(newline_pos) =
-                            data.as_bytes().iter().position(|&byte| byte == b'\n')
-                        {
-                            let line = String::from_utf8_lossy(&data.as_bytes()[..=newline_pos])
-                                .into_owned();
-                            self.pipeline_stdin = Some(data.as_bytes()[newline_pos + 1..].into());
-                            Some(line.into())
-                        } else {
-                            // Last line without trailing newline
-                            self.pipeline_stdin = Some(crate::StreamData::new());
-                            Some(data)
-                        }
+                        let bytes = data.as_bytes();
+                        let used = builtins::read_consumed_len(bytes, &args);
+                        self.pipeline_stdin = Some(bytes[used..].into());
+                        Some(bytes[..used].into())
                     } else {
                         Some(ps.clone())
                     }

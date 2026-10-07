@@ -232,6 +232,7 @@ pub use pr::Pr;
 pub use printf::Printf;
 pub use random::{Openssl, Uuidgen};
 pub use read::Read;
+pub(crate) use read::consumed_len as read_consumed_len;
 pub use retry::Retry;
 pub use rg::Rg;
 pub use sed::Sed;
