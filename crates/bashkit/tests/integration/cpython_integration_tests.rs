@@ -508,6 +508,47 @@ async fn interpreter_state_does_not_persist_between_calls() {
 }
 
 #[tokio::test]
+async fn preloaded_modules_stay_mutable_and_reimportable() {
+    // Snapshot objects are immortal (no refcount writes); mutating, deleting
+    // and re-importing them must still behave like regular CPython.
+    let out = ok(
+        "python3 -c 'import json, sys; json.dumps = None; del sys.modules[\"json\"]; \
+         import json as j2; print(j2.dumps([1]), j2 is not json)'",
+    )
+    .await;
+    assert_eq!(out, "[1] True\n");
+}
+
+#[tokio::test]
+async fn environ_is_replaced_each_call() {
+    let out = ok("export A=1; python3 -c 'import os; os.environ[\"B\"] = \"x\"; print(os.environ[\"A\"])'; \
+         unset A; export C=3; python3 -c 'import os; print(\"A\" in os.environ, \"B\" in os.environ, os.environ[\"C\"], os.getenv(\"C\"))'")
+    .await;
+    assert_eq!(out, "1\nFalse False 3 3\n");
+}
+
+/// L-CPY-009: the stdlib is precompiled bytecode (importing a module outside
+/// the snapshot must not compile source on Pulley), and modules that can
+/// never work in the guest are not shipped.
+#[tokio::test]
+async fn stdlib_is_bytecode_only() {
+    let out = ok("python3 -c '
+import email.message, http.client, xml.dom.minidom, json
+print(json.__file__.endswith(\".pyc\"), email.message.__file__.endswith(\".pyc\"))
+for m in (\"ctypes\", \"ssl\", \"smtplib\", \"pdb\", \"pydoc\", \"_pydecimal\"):
+    try:
+        __import__(m)
+        print(m, \"present\")
+    except ModuleNotFoundError:
+        pass
+import decimal, datetime
+print(decimal.Decimal(\"1.10\") + 1, datetime.datetime.strptime(\"2020\", \"%Y\").year)
+'")
+    .await;
+    assert_eq!(out, "True True\n2.10 2020\n");
+}
+
+#[tokio::test]
 async fn local_modules_are_reimported_each_call() {
     let out = ok(
         "mkdir -p /m; cd /m; echo 'V = 1' > ver.py; python3 -c 'import ver; print(ver.V)'; \

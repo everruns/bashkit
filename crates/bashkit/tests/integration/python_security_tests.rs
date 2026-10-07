@@ -197,8 +197,10 @@ mod blackbox_builtins {
             .exec("python3 -c \"f = open('/etc/passwd', 'r')\nprint(f.read())\"")
             .await
             .unwrap();
-        assert_ne!(r.exit_code, 0, "open() must not read the host filesystem");
-        assert!(!r.stdout.contains("root:"));
+        // open() resolves through the VFS: either it fails or it reads the
+        // synthetic rootfs passwd (which has no root entry), never the host's.
+        assert!(!r.stdout.contains("root:"), "{}", r.stdout);
+        assert!(r.exit_code != 0 || r.stdout.starts_with("sandbox:x:1000"));
     }
 
     #[tokio::test]
@@ -618,9 +620,15 @@ mod whitebox_vfs_escape {
             .exec("python3 -c \"from pathlib import Path\nfor p in Path('/').iterdir():\n    print(p)\"")
             .await
             .unwrap();
-        // Should only list VFS contents, not real filesystem
-        assert!(!r.stdout.contains("/proc"));
+        // Only the VFS root layout (rootfs dirs included), no host dirs.
+        let allowed = [
+            "/bin", "/dev", "/etc", "/home", "/proc", "/root", "/tmp", "/usr",
+        ];
+        for line in r.stdout.lines() {
+            assert!(allowed.contains(&line), "unexpected root entry: {line}");
+        }
         assert!(!r.stdout.contains("/sys"));
+        assert!(!r.stdout.contains("/boot"));
     }
 }
 

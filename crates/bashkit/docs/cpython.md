@@ -42,7 +42,7 @@ No runtime opt-in variable is needed (unlike Monty's
 the guest never runs native code in your process.
 
 The interpreter loads on the first call of a process: the first `python3`
-takes about 22 ms on the reference machine, later calls about 6 ms. To move
+takes about 20 ms on the reference machine, later calls about 5 ms. To move
 that one-time cost out of the first request, call
 `bashkit::CPython::warm_up()` at startup.
 
@@ -60,7 +60,7 @@ return a value. Scripts written by people and agents expect a Python
 | CLI | `-c`, file, `-` | `-c`, `-m`, file, directory with `__main__.py`, `-`, stdin, `-x`, `-W`, `-V`, `-h` |
 | Errors | Monty-specific text | CPython tracebacks, exit codes, `sys.exit` semantics |
 | Isolation | In-process Rust interpreter | WebAssembly sandbox (memory-safe boundary), fresh instance per call |
-| Start per call | ~15 µs | ~5-6 ms (first call in a process ~22 ms) |
+| Start per call | ~15 µs | ~5 ms (first call in a process ~20 ms) |
 | CPU-bound speed | Native | ~4-30x slower than Monty (interpreted wasm) |
 | Host callbacks | Yes (external functions) | Not yet |
 
@@ -126,7 +126,12 @@ let bash = Bash::builder()
   `_hashlib` (OpenSSL), `tkinter`, `curses`, `readline`, `dbm.gnu` are not
   built. `hashlib` still provides md5, sha1, sha2, sha3 and blake2.
 - **No interactive mode**: `python3` with no program reads one from stdin;
-  there is no REPL.
+  there is no REPL, and `pdb` and `pydoc` (`help()`) are not shipped.
+- **Stdlib is bytecode only**: tracebacks through stdlib code show no source
+  line, and `inspect.getsource()` fails on stdlib objects. Your own code
+  keeps full tracebacks. Network clients and servers (`smtplib`, `ftplib`,
+  `http.server`, `xmlrpc`, ...) are not shipped since the guest has no
+  sockets.
 - **Symlinks are not followed**, like everywhere in the Bashkit VFS.
 - **`errno` numbers are WASI's** (`ENOENT` is 44, not 2). Exception types
   (`FileNotFoundError`, ...) and messages are correct; code comparing
@@ -148,7 +153,7 @@ let bash = Bash::builder()
 
 The `cpython` feature adds about 45 MB to a binary: the precompiled
 interpreter snapshot (~41 MB, mostly the pre-initialized 40 MB heap image so
-it can be mapped copy-on-write) and the zipped stdlib (~2.5 MB) are embedded,
+it can be mapped copy-on-write) and the zipped stdlib bytecode (~3.5 MB) are embedded,
 plus the Wasmtime runtime. Pages are mapped on demand, so resident memory per
 process is far smaller.
 

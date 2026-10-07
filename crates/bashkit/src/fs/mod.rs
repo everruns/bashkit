@@ -401,6 +401,7 @@
 //! ```
 
 mod backend;
+mod follow;
 mod limits;
 mod memory;
 mod mountable;
@@ -410,11 +411,14 @@ mod posix;
 mod readonly;
 #[cfg(feature = "realfs")]
 mod realfs;
+mod rootfs;
 mod search;
 mod std_streams;
 mod traits;
 
 pub use backend::FsBackend;
+#[allow(unused_imports)]
+pub(crate) use follow::{FollowFs, MAX_SYMLINK_HOPS};
 pub use limits::{FsLimitExceeded, FsLimits, FsUsage};
 pub use memory::{InMemoryFs, LazyLoader, VfsEntry, VfsEntryKind, VfsSnapshot};
 pub use mountable::MountableFs;
@@ -424,10 +428,10 @@ pub use posix::PosixFs;
 pub use readonly::ReadOnlyFs;
 #[cfg(feature = "realfs")]
 pub use realfs::{RealFs, RealFsMode};
+pub(crate) use rootfs::{RootFs, stub_command};
 pub use search::{
     SearchCapabilities, SearchCapable, SearchMatch, SearchProvider, SearchQuery, SearchResults,
 };
-#[allow(unused_imports)]
 pub(crate) use std_streams::{StdStreamsFs, args_name_std_stream};
 pub use traits::{DirEntry, FileSystem, FileSystemExt, FileType, Metadata, fs_errors};
 

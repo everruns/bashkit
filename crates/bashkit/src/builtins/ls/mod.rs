@@ -1,12 +1,10 @@
-//! Directory listing builtins - ls, find, rmdir.
+//! Directory listing builtins - ls, rmdir, and shared glob matching.
 
-mod find;
 mod glob;
 mod list;
 mod rmdir;
 
-pub use find::Find;
-pub(crate) use glob::glob_match;
+pub(crate) use glob::{fnmatch, glob_match};
 pub use list::Ls;
 pub use rmdir::Rmdir;
 

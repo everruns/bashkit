@@ -285,8 +285,9 @@ mod sandbox_escape {
 
         // Try to escape via ../
         let result = bash.exec("cat ../../../etc/passwd").await.unwrap();
-        assert!(result.exit_code != 0 || result.stdout.is_empty());
-        assert!(!result.stdout.contains("root:"));
+        // `..` clamps at the VFS root: only the synthetic file is reachable.
+        assert!(result.stdout.contains("sandbox:x:1000:1000"));
+        assert!(!result.stdout.contains("daemon:"));
     }
 
     /// Test absolute path to /etc/passwd fails
@@ -295,9 +296,18 @@ mod sandbox_escape {
         let mut bash = Bash::new();
 
         let result = bash.exec("cat /etc/passwd").await.unwrap();
-        // Should fail - file doesn't exist in virtual FS
-        assert!(result.exit_code != 0);
-        assert!(!result.stdout.contains("root:"));
+        // THREAT[TM-ISO-018]: synthetic file built from the virtual identity.
+        assert_eq!(
+            result.stdout,
+            "sandbox:x:1000:1000:sandbox:/home/sandbox:/bin/bash\nnobody:x:65534:65534:nobody:/nonexistent:/usr/sbin/nologin\n"
+        );
+        let bare = Bash::builder()
+            .rootfs(false)
+            .build()
+            .exec("cat /etc/passwd")
+            .await
+            .unwrap();
+        assert_ne!(bare.exit_code, 0);
     }
 
     /// Test /proc access is blocked (no /proc in virtual FS)
@@ -364,10 +374,13 @@ mod sandbox_escape {
     async fn threat_external_commands_blocked() {
         let mut bash = Bash::new();
 
-        // Try to run a non-builtin command - should fail
-        if let Ok(r) = bash.exec("/bin/ls").await {
+        // A path with no root-filesystem stub is not executable.
+        if let Ok(r) = bash.exec("/bin/host-only-tool").await {
             assert!(r.exit_code != 0);
         }
+        // /bin/ls is a stub that runs the builtin over the VFS, not the host ls.
+        let r = bash.exec("/bin/ls /").await.unwrap();
+        assert!(r.stdout.contains("tmp\n") && !r.stdout.contains("boot\n"));
 
         if let Ok(r) = bash.exec("./malicious").await {
             assert!(r.exit_code != 0);
@@ -994,12 +1007,13 @@ echo "$PRIVATE_KEY"
         let mut bash = Bash::new();
 
         // These should not expose host information
+        // /proc and /etc hold only synthetic files (checked below).
+        let listing = bash.exec("ls /proc").await.unwrap();
+        assert_eq!(listing.stdout, "cpuinfo\nloadavg\nmeminfo\nsys\nversion\n");
         let probes = vec![
             "cat /proc/self/environ 2>/dev/null",
             "cat /proc/self/cmdline 2>/dev/null",
             "cat /proc/1/environ 2>/dev/null",
-            "ls /proc 2>/dev/null",
-            "cat /etc/passwd 2>/dev/null",
             "cat /etc/shadow 2>/dev/null",
         ];
 
@@ -1447,11 +1461,12 @@ mod python_security {
             .exec("python3 -c \"f = open('/etc/passwd')\nprint(f.read())\"")
             .await
             .unwrap();
-        assert_ne!(result.exit_code, 0, "host file open should fail");
+        // Either open() fails or it reads the synthetic rootfs passwd.
         assert!(
             !result.stdout.contains("root:"),
             "Should not read real /etc/passwd"
         );
+        assert!(result.exit_code != 0 || result.stdout.starts_with("sandbox:x:1000"));
     }
 
     /// TM-PY-006: Python error output goes to stderr, not stdout
@@ -1589,21 +1604,20 @@ mod python_security {
     async fn threat_python_vfs_no_real_fs() {
         let mut bash = bash_with_python();
 
-        // pathlib.Path should read from VFS, not real filesystem
-        // /etc/passwd exists on real Linux but not in VFS
+        // pathlib.Path reads the VFS: /etc/passwd is the synthetic rootfs
+        // file (no root entry), never the host's.
         let result = bash
-            .exec(
-                "python3 -c \"from pathlib import Path\ntry:\n    Path('/etc/passwd').read_text()\n    print('LEAKED')\nexcept FileNotFoundError:\n    print('safe')\"",
-            )
+            .exec("python3 -c \"from pathlib import Path\nprint(Path('/etc/passwd').read_text())\"")
             .await
             .unwrap();
         assert_eq!(result.exit_code, 0);
         assert!(
-            result.stdout.contains("safe"),
-            "Should not access real /etc/passwd"
+            result.stdout.starts_with("sandbox:x:1000:1000"),
+            "Should read synthetic /etc/passwd: {}",
+            result.stdout
         );
         assert!(
-            !result.stdout.contains("LEAKED"),
+            !result.stdout.contains("root:x:0:0"),
             "Must not leak real filesystem"
         );
     }
@@ -1632,12 +1646,13 @@ mod python_security {
         // Path traversal via ../.. should not escape VFS
         let result = bash
             .exec(
-                "python3 -c \"from pathlib import Path\ntry:\n    Path('/tmp/../../../etc/passwd').read_text()\n    print('ESCAPED')\nexcept FileNotFoundError:\n    print('blocked')\"",
+                "python3 -c \"from pathlib import Path\ntry:\n    print(Path('/tmp/../../../etc/passwd').read_text())\nexcept FileNotFoundError:\n    print('blocked')\"",
             )
             .await
             .unwrap();
+        // `..` clamps at the VFS root: at most the synthetic passwd.
         assert!(
-            !result.stdout.contains("ESCAPED"),
+            !result.stdout.contains("root:x:0:0"),
             "Path traversal must not escape VFS"
         );
     }
@@ -2642,9 +2657,10 @@ cat /tmp/dst/safe.txt
         assert_eq!(result.exit_code, 0, "tar extract: {}", result.stderr);
         assert!(result.stdout.contains("normal"));
 
-        // Verify /etc/passwd doesn't exist (VFS has no real files)
+        // /etc/passwd is the synthetic root-filesystem file, untouched by the archive.
         let result = bash.exec("cat /etc/passwd").await.unwrap();
-        assert_ne!(result.exit_code, 0, "VFS should not have /etc/passwd");
+        assert!(result.stdout.contains("sandbox:x:1000:1000"));
+        assert!(!result.stdout.contains("daemon:"));
     }
 
     /// TM-DOS-005: Tar extraction respects max_file_size limit.

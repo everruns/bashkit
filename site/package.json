@@ -23,6 +23,8 @@
     "@astrojs/markdown-remark": "^7.3.1",
     "@astrojs/sitemap": "^3.7.4",
     "@everruns/bashkit-wasm": "0.17.1",
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/xterm": "6.0.0",
     "asciinema-player": "3.10.0",
     "astro": "^7.3.5",
     "rehype-autolink-headings": "^7.1.0",

@@ -57,9 +57,9 @@
 //!   codes, so they do not have to scrape prompts out of screen text.
 //!   [`Terminal::activity`] says whether the shell is at a prompt or which
 //!   command line is running.
-//! - Cooked mode is a small built-in line discipline (echo, backspace, ^U, ^W,
-//!   ^C, ^D). Command stdin is still a value fixed before the command starts
-//!   (L-CLI-002), so `read` does not block on the terminal; programs that need
+//! - Cooked mode is a small built-in line editor (echo, cursor keys, Up/Down
+//!   history, backspace/delete, ^U, ^K, ^W, ^C, ^D). Command stdin is still a
+//!   value fixed before the command starts (L-CLI-002), so `read` does not block on the terminal; programs that need
 //!   keystrokes (`vi`) read the device directly in raw mode.
 
 mod keys;
@@ -410,10 +410,11 @@ async fn shell_loop(mut bash: crate::Bash, tty: Tty, exit: Arc<ExitState>, log: 
     if !bash.shell_state_view().env.contains_key("TERM") {
         bash.set_env("TERM", "xterm-256color");
     }
+    let mut history = History::default();
     loop {
         log.set_activity(TerminalActivity::Prompt);
         tty.write_cooked(prompt(&bash, "PS1", DEFAULT_PS1).as_bytes());
-        let mut input = match read_line(&tty).await {
+        let mut input = match read_line(&tty, &history).await {
             LineRead::Line(line) => line,
             LineRead::Interrupt => continue,
             LineRead::Eof => {
@@ -424,6 +425,7 @@ async fn shell_loop(mut bash: crate::Bash, tty: Tty, exit: Arc<ExitState>, log: 
         if input.trim().is_empty() {
             continue;
         }
+        history.push(&input);
 
         let capture = Arc::new(Mutex::new(OutputCapture::default()));
         last_exit = loop {
@@ -469,7 +471,7 @@ async fn shell_loop(mut bash: crate::Bash, tty: Tty, exit: Arc<ExitState>, log: 
                     }
                     log.set_activity(TerminalActivity::ContinuationPrompt);
                     tty.write_cooked(prompt(&bash, "PS2", DEFAULT_PS2).as_bytes());
-                    match read_line(&tty).await {
+                    match read_line(&tty, &history).await {
                         LineRead::Line(next) => {
                             input.push('\n');
                             input.push_str(&next);
@@ -567,9 +569,142 @@ enum LineRead {
     Eof,
 }
 
-/// Cooked-mode line editor: echo, backspace, ^U, ^W, ^C, ^D.
-async fn read_line(tty: &Tty) -> LineRead {
-    let mut line = String::new();
+/// Most recent command lines kept for Up/Down recall.
+const MAX_HISTORY: usize = 500;
+
+/// Command-line history for the cooked-mode editor (oldest first).
+#[derive(Default)]
+struct History(std::collections::VecDeque<String>);
+
+impl History {
+    fn push(&mut self, line: &str) {
+        if self.0.back().is_some_and(|last| last == line) {
+            return;
+        }
+        if self.0.len() == MAX_HISTORY {
+            self.0.pop_front();
+        }
+        self.0.push_back(line.to_string());
+    }
+}
+
+/// Keys the editor understands from CSI/SS3 escape sequences.
+enum EscKey {
+    Up,
+    Down,
+    Left,
+    Right,
+    Home,
+    End,
+    Delete,
+    Other,
+}
+
+/// Line being edited plus the cursor, as a char index.
+struct LineEditor<'a> {
+    tty: &'a Tty,
+    chars: Vec<char>,
+    cursor: usize,
+    bytes: usize,
+}
+
+impl<'a> LineEditor<'a> {
+    fn new(tty: &'a Tty) -> Self {
+        Self {
+            tty,
+            chars: Vec::new(),
+            cursor: 0,
+            bytes: 0,
+        }
+    }
+
+    fn text(&self) -> String {
+        self.chars.iter().collect()
+    }
+
+    /// Redraw only what changed: step back to where the old and new text
+    /// first differ, write the new tail, erase leftovers, then step back to
+    /// the new cursor. Assumes one cell per char.
+    fn set(&mut self, chars: Vec<char>, cursor: usize) {
+        let same = self
+            .chars
+            .iter()
+            .zip(&chars)
+            .take_while(|(a, b)| a == b)
+            .count()
+            .min(self.cursor);
+        let mut out = String::new();
+        if self.cursor > same {
+            out.push_str(&format!("\x1b[{}D", self.cursor - same));
+        }
+        out.extend(chars[same..].iter());
+        out.push_str("\x1b[J");
+        let back = chars.len().saturating_sub(cursor);
+        if back > 0 {
+            out.push_str(&format!("\x1b[{back}D"));
+        }
+        self.tty.write(out.as_bytes());
+        self.bytes = chars.iter().map(|c| c.len_utf8()).sum();
+        self.chars = chars;
+        self.cursor = cursor;
+    }
+
+    fn move_to(&mut self, cursor: usize) {
+        let cursor = cursor.min(self.chars.len());
+        if cursor < self.cursor {
+            self.tty
+                .write(format!("\x1b[{}D", self.cursor - cursor).as_bytes());
+        } else if cursor > self.cursor {
+            self.tty
+                .write(format!("\x1b[{}C", cursor - self.cursor).as_bytes());
+        }
+        self.cursor = cursor;
+    }
+
+    fn insert(&mut self, s: &str) {
+        if self.bytes + s.len() > MAX_LINE_BYTES {
+            return;
+        }
+        if self.cursor == self.chars.len() {
+            // Fast path: typing at the end just echoes.
+            self.chars.extend(s.chars());
+            self.cursor = self.chars.len();
+            self.bytes += s.len();
+            self.tty.write(s.as_bytes());
+            return;
+        }
+        let mut chars = self.chars.clone();
+        let added: Vec<char> = s.chars().collect();
+        let cursor = self.cursor + added.len();
+        chars.splice(self.cursor..self.cursor, added);
+        self.set(chars, cursor);
+    }
+
+    /// Delete `range` (char indices) and leave the cursor at its start.
+    fn delete(&mut self, range: std::ops::Range<usize>) {
+        if range.is_empty() {
+            return;
+        }
+        let mut chars = self.chars.clone();
+        let start = range.start;
+        chars.drain(range);
+        self.set(chars, start);
+    }
+
+    fn replace(&mut self, line: &str) {
+        let chars: Vec<char> = line.chars().collect();
+        let len = chars.len();
+        self.set(chars, len);
+    }
+}
+
+/// Cooked-mode line editor: echo, cursor movement (Left/Right, Home/End,
+/// ^A/^E), Up/Down history, Backspace/Delete, ^U, ^K, ^W, ^C, ^D.
+async fn read_line(tty: &Tty, history: &History) -> LineRead {
+    let mut ed = LineEditor::new(tty);
+    // Index into `history` while browsing; `history.0.len()` is the draft.
+    let mut hist_pos = history.0.len();
+    let mut draft = String::new();
     let mut pending: Vec<u8> = Vec::new();
     loop {
         let b = match tty.read_event().await {
@@ -579,50 +714,63 @@ async fn read_line(tty: &Tty) -> LineRead {
         };
         match b {
             b'\r' | b'\n' => {
+                ed.move_to(ed.chars.len());
                 tty.write(b"\r\n");
-                return LineRead::Line(line);
+                return LineRead::Line(ed.text());
             }
             0x03 => {
+                ed.move_to(ed.chars.len());
                 tty.write(b"^C\r\n");
                 return LineRead::Interrupt;
             }
-            0x04 if line.is_empty() => return LineRead::Eof,
-            0x7f | 0x08 => {
-                if line.pop().is_some() {
-                    tty.write(b"\x08 \x08");
-                }
-            }
-            0x15 => {
-                for _ in line.drain(..) {
-                    tty.write(b"\x08 \x08");
-                }
-            }
+            0x04 if ed.chars.is_empty() => return LineRead::Eof,
+            0x04 => ed.delete(ed.cursor..(ed.cursor + 1).min(ed.chars.len())),
+            0x7f | 0x08 if ed.cursor > 0 => ed.delete(ed.cursor - 1..ed.cursor),
+            0x01 => ed.move_to(0),
+            0x05 => ed.move_to(ed.chars.len()),
+            0x02 => ed.move_to(ed.cursor.saturating_sub(1)),
+            0x06 => ed.move_to(ed.cursor + 1),
+            0x0b => ed.delete(ed.cursor..ed.chars.len()),
+            0x15 => ed.delete(0..ed.cursor),
             0x17 => {
-                while line.ends_with(' ') {
-                    line.pop();
-                    tty.write(b"\x08 \x08");
+                let mut start = ed.cursor;
+                while start > 0 && ed.chars[start - 1] == ' ' {
+                    start -= 1;
                 }
-                while !line.is_empty() && !line.ends_with(' ') {
-                    line.pop();
-                    tty.write(b"\x08 \x08");
+                while start > 0 && ed.chars[start - 1] != ' ' {
+                    start -= 1;
                 }
+                ed.delete(start..ed.cursor);
             }
-            0x1b => skip_escape_sequence(tty),
-            b'\t' => {
-                if line.len() < MAX_LINE_BYTES {
-                    line.push('\t');
-                    tty.write(b"\t");
+            0x1b => match read_escape(tty) {
+                EscKey::Left => ed.move_to(ed.cursor.saturating_sub(1)),
+                EscKey::Right => ed.move_to(ed.cursor + 1),
+                EscKey::Home => ed.move_to(0),
+                EscKey::End => ed.move_to(ed.chars.len()),
+                EscKey::Delete => ed.delete(ed.cursor..(ed.cursor + 1).min(ed.chars.len())),
+                EscKey::Up if hist_pos > 0 => {
+                    if hist_pos == history.0.len() {
+                        draft = ed.text();
+                    }
+                    hist_pos -= 1;
+                    ed.replace(&history.0[hist_pos]);
                 }
-            }
-            b if b < 0x20 => {}
+                EscKey::Down if hist_pos < history.0.len() => {
+                    hist_pos += 1;
+                    match history.0.get(hist_pos) {
+                        Some(line) => ed.replace(line),
+                        None => ed.replace(&draft),
+                    }
+                }
+                _ => {}
+            },
+            b'\t' => ed.insert("\t"),
+            b if b < 0x20 || b == 0x7f => {}
             b => {
                 pending.push(b);
                 match std::str::from_utf8(&pending) {
                     Ok(s) => {
-                        if line.len() + s.len() <= MAX_LINE_BYTES {
-                            line.push_str(s);
-                            tty.write(s.as_bytes());
-                        }
+                        ed.insert(s);
                         pending.clear();
                     }
                     Err(e) if e.error_len().is_some() || pending.len() >= 4 => pending.clear(),
@@ -633,19 +781,34 @@ async fn read_line(tty: &Tty) -> LineRead {
     }
 }
 
-/// Discard a CSI/SS3 sequence (arrow keys etc.) the line editor ignores.
-fn skip_escape_sequence(tty: &Tty) {
-    if !matches!(tty.peek_byte(), Some(b'[') | Some(b'O')) {
-        return;
-    }
+/// Read the rest of a CSI/SS3 sequence after ESC and classify it. Unknown
+/// sequences are consumed and ignored.
+fn read_escape(tty: &Tty) -> EscKey {
+    let intro = match tty.peek_byte() {
+        Some(b @ (b'[' | b'O')) => b,
+        _ => return EscKey::Other,
+    };
     tty.try_read_byte();
+    let mut params = Vec::new();
     for _ in 0..16 {
         match tty.try_read_byte() {
-            Some(b) if (0x40..=0x7e).contains(&b) => return,
-            Some(_) => {}
-            None => return,
+            Some(b) if (0x40..=0x7e).contains(&b) => {
+                return match (intro, params.as_slice(), b) {
+                    (_, [], b'A') => EscKey::Up,
+                    (_, [], b'B') => EscKey::Down,
+                    (_, [], b'C') => EscKey::Right,
+                    (_, [], b'D') => EscKey::Left,
+                    (_, [], b'H') | (b'[', b"1" | b"7", b'~') => EscKey::Home,
+                    (_, [], b'F') | (b'[', b"4" | b"8", b'~') => EscKey::End,
+                    (b'[', b"3", b'~') => EscKey::Delete,
+                    _ => EscKey::Other,
+                };
+            }
+            Some(b) => params.push(b),
+            None => return EscKey::Other,
         }
     }
+    EscKey::Other
 }
 
 #[cfg(test)]
@@ -701,6 +864,46 @@ mod tests {
         assert!(text.contains("\nabc\n"), "{text}");
         assert!(text.contains("\nok\n"), "{text}");
         assert!(!text.contains("garbage"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn arrow_keys_edit_mid_line() {
+        let mut term = Terminal::new(Bash::builder());
+        // Left x5, insert; Home + Delete x2 + insert; Ctrl-E, Ctrl-A, Ctrl-K.
+        run(
+            &mut term,
+            "echo world\x1b[D\x1b[D\x1b[D\x1b[D\x1b[Dhello \r",
+        )
+        .await;
+        run(&mut term, "XXcho hi\x1b[H\x1b[3~\x1b[3~e\x1b[F!\r").await;
+        run(
+            &mut term,
+            "echo keep junk\x1b[D\x1b[D\x1b[D\x1b[D\x1b[D\x0b\x01\x05\r",
+        )
+        .await;
+        let text = term.screen_text();
+        assert!(text.contains("$ echo hello world\nhello world\n"), "{text}");
+        assert!(text.contains("$ echo hi!\nhi!\n"), "{text}");
+        assert!(text.contains("\nkeep\n$"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn up_down_recall_history() {
+        let mut term = Terminal::new(Bash::builder());
+        run(&mut term, "echo one\r").await;
+        run(&mut term, "echo two\r").await;
+        // Up twice reaches "echo one"; Down returns to "echo two"; edit it.
+        run(&mut term, "\x1b[A\x1b[A\x1b[B\x7fZ\r").await;
+        // Up past the oldest entry stays there; Down past the newest restores
+        // the draft.
+        run(
+            &mut term,
+            "draft\x1b[A\x1b[A\x1b[A\x1b[A\x1b[B\x1b[B\x1b[B\x1b[B\x15echo end\r",
+        )
+        .await;
+        let text = term.screen_text();
+        assert!(text.contains("$ echo twZ\ntwZ\n"), "{text}");
+        assert!(text.contains("$ echo end\nend\n$"), "{text}");
     }
 
     #[tokio::test]

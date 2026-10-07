@@ -454,6 +454,11 @@ impl<'a> Parser<'a> {
             if let Some(cmd) = self.parse_pipeline()? {
                 rest.push((op, cmd));
             } else {
+                // `{ cmd & }`, `do cmd & done`: the `&` before a closing
+                // keyword still backgrounds `cmd`.
+                if matches!(op, ListOperator::Background) {
+                    rest.push(empty_background(self.current_span));
+                }
                 break;
             }
         }
@@ -770,7 +775,12 @@ impl<'a> Parser<'a> {
                 _ => {
                     // Check for POSIX-style function: name() { body }
                     // Don't match if word contains '=' (that's an assignment like arr=(a b c))
+                    // Reserved words (`then (cmd)`) never name a function.
                     if !word.contains('=')
+                        && !matches!(
+                            word.as_str(),
+                            "then" | "else" | "elif" | "fi" | "do" | "done" | "esac" | "in" | "!"
+                        )
                         && matches!(self.peek_next(), Some(tokens::Token::LeftParen))
                     {
                         return self.parse_function_posix().map(Some);
@@ -3850,6 +3860,23 @@ impl<'a> Parser<'a> {
         }
         operand
     }
+}
+
+/// `cmd &` right before a closing keyword: an empty command carrying the `&`.
+/// Out of line so the `Command` temporary does not enlarge the recursive
+/// `parse_command_list` frame (nested `$(...)` parse depth, TM-DOS-044).
+#[inline(never)]
+fn empty_background(span: Span) -> (ListOperator, Command) {
+    (
+        ListOperator::Background,
+        Command::Simple(SimpleCommand {
+            name: Word::literal(""),
+            args: vec![],
+            redirects: vec![],
+            assignments: vec![],
+            span,
+        }),
+    )
 }
 
 #[cfg(test)]

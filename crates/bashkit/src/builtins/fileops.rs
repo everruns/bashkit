@@ -174,9 +174,9 @@ impl Builtin for Rm {
         for file in files {
             let path = resolve_path(ctx.cwd, file);
 
-            // Check if exists
-            let exists = ctx.fs.exists(&path).await.unwrap_or(false);
-            if !exists {
+            // lstat: rm acts on a link itself (dangling links included).
+            let metadata = ctx.fs.lstat(&path).await;
+            if metadata.is_err() {
                 if !force {
                     return Ok(ExecResult::err(
                         format!("rm: cannot remove '{}': No such file or directory\n", file),
@@ -187,7 +187,6 @@ impl Builtin for Rm {
             }
 
             // Check if it's a directory
-            let metadata = ctx.fs.stat(&path).await;
             if let Ok(meta) = metadata
                 && meta.file_type.is_dir()
                 && !recursive
@@ -449,7 +448,17 @@ impl Builtin for Mv {
 /// The touch builtin - change file timestamps or create empty files.
 ///
 /// Usage: touch FILE...
-pub struct Touch;
+#[derive(Default)]
+pub struct Touch {
+    clock: super::Date,
+}
+
+impl Touch {
+    /// Touch builtin parsing `-d` dates against `clock` (shared with `date`).
+    pub fn with_clock(clock: super::Date) -> Self {
+        Self { clock }
+    }
+}
 
 fn parse_touch_timestamp(raw: &str) -> std::result::Result<SystemTime, String> {
     let (main, seconds) = match raw.split_once('.') {
@@ -505,83 +514,134 @@ fn parse_touch_timestamp(raw: &str) -> std::result::Result<SystemTime, String> {
     Ok(crate::time_compat::from_chrono(utc))
 }
 
+const TOUCH_HELP: &str = "Usage: touch [OPTION]... FILE...\nUpdate the access and modification times of each FILE to the current time.\nA FILE argument that does not exist is created empty, unless -c is supplied.\n\n  -a\t\t\tchange only the access time (same as -m: the VFS keeps one timestamp)\n  -c, --no-create\tdo not create any files\n  -d, --date=STRING\tparse STRING and use it instead of current time\n  -f\t\t\t(ignored)\n  -h, --no-dereference\taffect each symbolic link instead of any referenced file\n  -m\t\t\tchange only the modification time\n  -r, --reference=FILE\tuse this file's times instead of current time\n  -t STAMP\t\tuse [[CC]YY]MMDDhhmm[.ss] instead of current time\n      --time=WORD\tchange the specified time (accepted)\n      --help\tdisplay this help and exit\n      --version\toutput version information and exit\n";
+
 #[async_trait]
 impl Builtin for Touch {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        if let Some(r) = super::check_help_version(
-            ctx.args,
-            "Usage: touch [OPTION]... FILE...\nUpdate the access and modification times of each FILE to the current time.\nA FILE argument that does not exist is created empty.\n\n  -t STAMP\tuse [[CC]YY]MMDDhhmm[.ss] instead of current time\n      --help\tdisplay this help and exit\n      --version\toutput version information and exit\n",
-            Some("touch (bashkit) 0.1"),
-        ) {
+        if let Some(r) =
+            super::check_help_version(ctx.args, TOUCH_HELP, Some("touch (bashkit) 0.1"))
+        {
             return Ok(r);
         }
 
-        if ctx.args.is_empty() {
-            return Ok(ExecResult::err(
-                "touch: missing file operand\n".to_string(),
-                1,
-            ));
-        }
-
+        let fail = |msg: String| Ok(ExecResult::err(msg, 1));
         let mut files = Vec::new();
         let mut target_time = SystemTime::now();
-        let mut i = 0;
-        while i < ctx.args.len() {
-            let arg = &ctx.args[i];
-            if arg == "-t" {
-                i += 1;
-                if i >= ctx.args.len() {
-                    return Ok(ExecResult::err(
-                        "touch: option requires an argument -- 't'\n".to_string(),
-                        1,
+        let mut no_create = false;
+        let mut reference: Option<String> = None;
+        let mut args = ctx.args.iter();
+        while let Some(arg) = args.next() {
+            let a = arg.as_str();
+            if a == "--" {
+                files.extend(args.by_ref());
+                break;
+            }
+            if !a.starts_with('-') || a == "-" {
+                files.push(arg);
+                continue;
+            }
+            if let Some(long) = a.strip_prefix("--") {
+                let (key, inline) = match long.split_once('=') {
+                    Some((k, v)) => (k, Some(v.to_string())),
+                    None => (long, None),
+                };
+                let mut value = || inline.clone().or_else(|| args.next().cloned());
+                match key {
+                    "no-create" => no_create = true,
+                    "no-dereference" => {}
+                    "time" => {
+                        value();
+                    }
+                    "date" => {
+                        let Some(v) = value() else {
+                            return fail("touch: option '--date' requires an argument\n".into());
+                        };
+                        match self.clock.parse_date(ctx.env.get("TZ"), &v) {
+                            Ok(dt) => target_time = crate::time_compat::from_chrono(dt),
+                            Err(_) => return fail(format!("touch: invalid date format '{v}'\n")),
+                        }
+                    }
+                    "reference" => reference = value(),
+                    _ => return fail(format!("touch: unrecognized option '{a}'\n")),
+                }
+                continue;
+            }
+            let chars: Vec<char> = a[1..].chars().collect();
+            for (idx, c) in chars.iter().enumerate() {
+                let rest: String = chars[idx + 1..].iter().collect();
+                let mut value = || {
+                    if rest.is_empty() {
+                        args.next().cloned()
+                    } else {
+                        Some(rest.clone())
+                    }
+                };
+                match c {
+                    'a' | 'm' | 'f' | 'h' => continue,
+                    'c' => {
+                        no_create = true;
+                        continue;
+                    }
+                    'd' => {
+                        let Some(v) = value() else {
+                            return fail("touch: option requires an argument -- 'd'\n".into());
+                        };
+                        match self.clock.parse_date(ctx.env.get("TZ"), &v) {
+                            Ok(dt) => target_time = crate::time_compat::from_chrono(dt),
+                            Err(_) => return fail(format!("touch: invalid date format '{v}'\n")),
+                        }
+                    }
+                    't' => {
+                        let Some(v) = value() else {
+                            return fail("touch: option requires an argument -- 't'\n".into());
+                        };
+                        match parse_touch_timestamp(&v) {
+                            Ok(parsed) => target_time = parsed,
+                            Err(err) => return fail(err),
+                        }
+                    }
+                    'r' => {
+                        let Some(v) = value() else {
+                            return fail("touch: option requires an argument -- 'r'\n".into());
+                        };
+                        reference = Some(v);
+                    }
+                    other => return fail(format!("touch: invalid option -- '{other}'\n")),
+                }
+                break;
+            }
+        }
+
+        if let Some(r) = reference {
+            match ctx.fs.stat(&resolve_path(ctx.cwd, &r)).await {
+                Ok(meta) => target_time = meta.modified,
+                Err(_) => {
+                    return fail(format!(
+                        "touch: failed to get attributes of '{r}': No such file or directory\n"
                     ));
                 }
-                match parse_touch_timestamp(&ctx.args[i]) {
-                    Ok(parsed) => target_time = parsed,
-                    Err(err) => return Ok(ExecResult::err(err, 1)),
-                }
-            } else if let Some(stamp) = arg.strip_prefix("-t")
-                && !stamp.is_empty()
-            {
-                match parse_touch_timestamp(stamp) {
-                    Ok(parsed) => target_time = parsed,
-                    Err(err) => return Ok(ExecResult::err(err, 1)),
-                }
-            } else if arg.starts_with('-') {
-                return Ok(ExecResult::err(
-                    format!("touch: invalid option -- '{}'\n", arg),
-                    1,
-                ));
-            } else {
-                files.push(arg);
             }
-            i += 1;
         }
 
         if files.is_empty() {
-            return Ok(ExecResult::err(
-                "touch: missing file operand\n".to_string(),
-                1,
-            ));
+            return fail("touch: missing file operand\n".to_string());
         }
 
         for file in files {
             let path = resolve_path(ctx.cwd, file);
 
-            if !ctx.fs.exists(&path).await.unwrap_or(false)
-                && let Err(e) = ctx.fs.write_file(&path, &[]).await
-            {
-                return Ok(ExecResult::err(
-                    format!("touch: cannot touch '{}': {}\n", file, e),
-                    1,
-                ));
+            if !ctx.fs.exists(&path).await.unwrap_or(false) {
+                if no_create {
+                    continue;
+                }
+                if let Err(e) = ctx.fs.write_file(&path, &[]).await {
+                    return fail(format!("touch: cannot touch '{}': {}\n", file, e));
+                }
             }
 
             if let Err(e) = ctx.fs.set_modified_time(&path, target_time).await {
-                return Ok(ExecResult::err(
-                    format!("touch: cannot touch '{}': {}\n", file, e),
-                    1,
-                ));
+                return fail(format!("touch: cannot touch '{}': {}\n", file, e));
             }
         }
 
@@ -599,7 +659,7 @@ pub struct Chmod;
 /// Parse a symbolic mode string and apply it to an existing mode.
 /// Handles: [ugoa]*[+-=][rwxXst]+ (comma-separated clauses).
 /// Examples: +x, u+x, a+r, go-w, u=rwx, ug+rw
-fn apply_symbolic_mode(mode_str: &str, current_mode: u32) -> Option<u32> {
+pub(super) fn apply_symbolic_mode(mode_str: &str, current_mode: u32) -> Option<u32> {
     let mut mode = current_mode;
 
     for clause in mode_str.split(',') {
@@ -932,54 +992,6 @@ impl Builtin for Chown {
     }
 }
 
-/// The kill builtin - send signal to process (no-op in VFS).
-///
-/// Usage: kill [-s SIGNAL] [-SIGNAL] PID...
-///
-/// Since there are no real processes in the virtual environment, kill is a no-op
-/// that accepts the command syntax for compatibility.
-pub struct Kill;
-
-#[async_trait]
-impl Builtin for Kill {
-    async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        if let Some(r) = super::check_help_version(
-            ctx.args,
-            "Usage: kill [-s SIGNAL | -SIGNAL] PID...\nSend a signal to a process.\n\n  -s SIGNAL\tspecify the signal to send\n  -l, -L\tlist signal names\n      --help\tdisplay this help and exit\n      --version\toutput version information and exit\n",
-            Some("kill (bashkit) 0.1"),
-        ) {
-            return Ok(r);
-        }
-
-        let mut pids: Vec<&str> = Vec::new();
-
-        for arg in ctx.args {
-            if arg == "-l" || arg == "-L" {
-                // List signal names
-                return Ok(ExecResult::ok(
-                    "HUP INT QUIT ILL TRAP ABRT BUS FPE KILL USR1 SEGV USR2 PIPE ALRM TERM\n"
-                        .to_string(),
-                ));
-            }
-            if arg.starts_with('-') {
-                continue; // skip signal spec
-            }
-            pids.push(arg);
-        }
-
-        if pids.is_empty() {
-            return Ok(ExecResult::err(
-                "kill: usage: kill [-s sigspec | -n signum | -sigspec] pid | jobspec ...\n"
-                    .to_string(),
-                2,
-            ));
-        }
-
-        // In VFS, no real processes exist — just succeed silently
-        Ok(ExecResult::ok(String::new()))
-    }
-}
-
 /// The mktemp builtin - create temporary files or directories.
 ///
 /// Argument surface is generated from uutils/coreutils' `uu_app()` via
@@ -1235,7 +1247,7 @@ mod tests {
             shell: None,
         };
 
-        let result = Touch.execute(ctx).await.unwrap();
+        let result = Touch::default().execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 0);
         assert!(fs.exists(&cwd.join("newfile.txt")).await.unwrap());
     }
@@ -1268,7 +1280,7 @@ mod tests {
             shell: None,
         };
 
-        let result = Touch.execute(ctx).await.unwrap();
+        let result = Touch::default().execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 0);
 
         let metadata = fs.stat(&file).await.unwrap();
@@ -1307,7 +1319,7 @@ mod tests {
             shell: None,
         };
 
-        let result = Touch.execute(ctx).await.unwrap();
+        let result = Touch::default().execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 1);
         assert!(result.stderr.contains("invalid date format"));
     }

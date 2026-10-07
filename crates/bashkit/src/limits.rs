@@ -151,6 +151,12 @@ pub struct ExecutionLimits {
     /// Default: 10MB (10,000,000 bytes)
     pub max_word_split_bytes: usize,
 
+    // THREAT[TM-DOS-122]: each `&` job holds a forked shell state and a
+    // pending future until it finishes or is killed.
+    /// Maximum background jobs running at once; past it `&` fails.
+    /// Default: 64
+    pub max_background_jobs: usize,
+
     /// Whether to capture the final environment state in ExecResult.
     /// Default: false (opt-in to avoid cloning cost when not needed)
     pub capture_final_env: bool,
@@ -181,6 +187,7 @@ impl Default for ExecutionLimits {
             max_history_output_bytes: 1_048_576, // 1MB
             max_word_split_fields: 100_000,
             max_word_split_bytes: 10_000_000,
+            max_background_jobs: 64,
             capture_final_env: false,
         }
     }
@@ -229,6 +236,12 @@ impl ExecutionLimits {
             max_history_output_bytes: 10_485_760,       // 10 MB
             ..Self::default()
         }
+    }
+
+    /// Set the maximum number of background jobs running at once.
+    pub fn max_background_jobs(mut self, count: usize) -> Self {
+        self.max_background_jobs = count;
+        self
     }
 
     /// Set maximum command count.

@@ -1158,11 +1158,18 @@ mod tests {
         // THREAT[TM-ESC]: Completing /etc/ must not show real host entries.
         let bash = test_bash();
         let helper = make_helper(&bash);
-        let results = helper.complete_path("/etc/pass");
-        // VFS has no /etc/passwd by default — must be empty
+        let results = helper.complete_path("/etc/");
+        // The rootfs layer serves a synthetic /etc; host-only entries
+        // (shadow, ssh, ...) must never appear.
         assert!(
-            !results.iter().any(|r| r.contains("passwd")),
-            "must not expose host /etc/passwd: {results:?}"
+            results.iter().any(|r| r.contains("os-release")),
+            "expected synthetic /etc: {results:?}"
+        );
+        assert!(
+            !results
+                .iter()
+                .any(|r| r.contains("shadow") || r.contains("ssh") || r.contains("sudoers")),
+            "must not expose host /etc entries: {results:?}"
         );
     }
 
@@ -1172,8 +1179,15 @@ mod tests {
         let bash = test_bash();
         let helper = make_helper(&bash);
         let results = helper.complete_path("/proc/");
-        // VFS doesn't have /proc — should be empty
-        assert!(results.is_empty(), "must not expose /proc: {results:?}");
+        // Only the synthetic /proc files exist; no host pid directories.
+        assert!(
+            !results.is_empty()
+                && results.iter().all(|r| {
+                    let name = r.trim_start_matches("/proc/").trim_end_matches('/');
+                    ["cpuinfo", "loadavg", "meminfo", "sys", "version"].contains(&name)
+                }),
+            "must not expose host /proc: {results:?}"
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]

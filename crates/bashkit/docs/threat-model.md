@@ -47,7 +47,7 @@ through configurable limits.
 | Append flood (TM-DOS-010) | `while true; do echo x >> f; done` | FS + loop limits | MITIGATED |
 | RealFs append memory exhaustion (TM-DOS-105) | Tiny append to a large writable host file | Stream existing bytes into atomic sibling staging with bounded memory | MITIGATED |
 | Deep Agents VFS search amplification (TM-DOS-113) | Dense matching files or a broad recursive `grep`/`glob` bypass shell execution limits and amplify into host objects | Grep caps results at 1,000 matches and 100 KB of matched text; line scans stream; every direct walk carries a per-operation deadline, 10,000-file and 10 MB traversal budget, and a cancellation flag the async workers set | **MITIGATED** |
-| Symlink loops (TM-DOS-011) | `ln -s /a /b; ln -s /b /a` | No symlink following | MITIGATED |
+| Symlink loops (TM-DOS-011) | `ln -s /a /b; ln -s /b /a` | At most 40 links per lookup, then "Too many levels of symbolic links" | MITIGATED |
 | Deep dirs (TM-DOS-012) | `mkdir -p a/b/c/.../z` (1000 levels) | `max_path_depth` (100) | MITIGATED |
 | Long filenames (TM-DOS-013) | 10KB filename | `max_filename_length` (255) + `max_path_length` (4096) | MITIGATED |
 | Many dir entries (TM-DOS-014) | 1M files in one dir | `max_file_count` | MITIGATED |
@@ -87,6 +87,8 @@ through configurable limits.
 | Builtin parser depth (TM-DOS-027) | Deeply nested awk/jq | `MAX_AWK_PARSER_DEPTH` (100) + `MAX_JQ_JSON_DEPTH` (100) | MITIGATED |
 | Collect dirs recursion (TM-DOS-049) | Deep VFS tree | Mitigated by `max_path_depth` | MITIGATED |
 | Python read-only self-mount recursion (TM-DOS-118) | `bash.mount("/", bash.fs(), read_only=True)` hides the live filesystem identity behind a wrapper | Python validates the resolved filesystem identity before wrapping it | MITIGATED |
+| find traversal amplification (TM-DOS-121) | `find -L` over a symlink cycle, unbounded `-exec ... {} +` batches, or `*`-heavy `-name` patterns | Canonical-path loop detection with a 40-hop symlink cap, budget-charged directory listings, capped output, batches flushed every 4096 paths, linear-time glob matching | MITIGATED |
+| Background job flooding (TM-DOS-122) | `while :; do sleep 99 & done` holds unbounded concurrent interpreters | `max_background_jobs` (64 default, 16 hardened) caps live jobs; extra `&` fails like bash's fork EAGAIN; jobs share the session budget, timeout and cancellation; every job is reaped when `exec()` returns | MITIGATED |
 
 **Parser and Arithmetic:**
 
@@ -188,7 +190,7 @@ Scripts may attempt to break out of the sandbox to access the host system.
 | Threat | Attack Example | Mitigation | Status |
 |--------|---------------|------------|--------|
 | Path traversal (TM-ESC-001) | `cat /../../../etc/passwd` | Path normalization | MITIGATED |
-| Symlink escape (TM-ESC-002) | `ln -s /etc/passwd /tmp/x` | Symlinks not followed | MITIGATED |
+| Symlink escape (TM-ESC-002) | `ln -s /etc/passwd /tmp/x` | Links resolve to VFS paths only; real-mount containment still applies to the result | MITIGATED |
 | Real FS access (TM-ESC-003) | Direct syscalls | No real FS by default | MITIGATED |
 | Mount escape (TM-ESC-004) | Mount real paths | MountableFs controlled by caller | MITIGATED |
 | VFS limit bypass (TM-ESC-012) | `add_file()` skips limits | Restrict API visibility | **MITIGATED** |
@@ -250,7 +252,7 @@ Scripts may attempt to leak sensitive information.
 |--------|---------------|------------|--------|
 | Env var leak (TM-INF-001) | `echo $SECRET` | Caller responsibility | CALLER RISK |
 | File secrets (TM-INF-002) | `cat /secrets/key` | Virtual FS isolation | MITIGATED |
-| Proc secrets (TM-INF-003) | `/proc/self/environ` | No /proc filesystem | MITIGATED |
+| Proc secrets (TM-INF-003) | `/proc/self/environ` | Static synthetic /proc only, no `self` | MITIGATED |
 | Memory dump (TM-INF-004) | Core dumps | No crash dumps | MITIGATED |
 
 **Host Information:**
@@ -523,7 +525,7 @@ echo $user_input
 | Concurrent FS leakage (TM-ISO-015) | Race condition leaks files | Separate `Arc<FileSystem>` per instance | MITIGATED |
 | Snapshot/restore side effects (TM-ISO-016) | `restore_shell_state()` affects others | Snapshot is per-instance | MITIGATED |
 | Adversarial variable probing (TM-ISO-017) | Enumerate common secret var names | Default-empty env, no host env inheritance | MITIGATED |
-| /proc /sys probing (TM-ISO-018) | Read `/proc/self/environ` | VFS has no real /proc or /etc | MITIGATED |
+| /proc /sys probing (TM-ISO-018) | Read `/proc/self/environ` | /proc and /etc are synthetic, built from session config | MITIGATED |
 | jq cross-session env (TM-ISO-019) | `jq 'env.X'` sees other vars | jaq reads from injected global | MITIGATED |
 | Subshell mutation leakage (TM-ISO-020) | Subshell vars leak to parent | Snapshot/restore + per-instance state | MITIGATED |
 | EXIT trap cross-exec leak (TM-ISO-021) | EXIT trap fires in next `exec()` | Reset traps in `reset_for_execution()` | **MITIGATED** |

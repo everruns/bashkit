@@ -116,7 +116,7 @@ embedded in rustdoc. It contains:
 |----|--------|--------------|------------|--------|
 | TM-DOS-001 | Large script input | `Bash::exec(huge_string)` | `max_input_bytes` limit (10MB) | **MITIGATED** |
 | TM-DOS-002 | Output flooding | `yes \| head -n 1000000000` | Command limit stops loop | Mitigated |
-| TM-DOS-003 | Variable explosion | `x=$(cat /dev/urandom)` | /dev/urandom returns bounded 8KB | Mitigated |
+| TM-DOS-003 | Variable explosion | `x=$(cat /dev/urandom)`, `dd if=/dev/zero` | /dev/urandom returns bounded 8KB; `dd` generates `/dev/zero`/`/dev/urandom` only up to `DD_MAX_BYTES` (64 MiB) per invocation | Mitigated |
 | TM-DOS-004 | Array growth | `arr+=(element)` in loop | Command limit | Mitigated |
 
 **Current Risk**: LOW. Implementation: `ExecutionLimits` in `limits.rs`, `max_input_bytes` 10MB (TM-DOS-001), `max_commands` 10K per `exec()` (TM-DOS-002, TM-DOS-004).
@@ -206,7 +206,7 @@ delegation (see TM-DOS-046). Regression tests: `path_validation_security` module
 
 | ID | Threat | Attack Vector | Mitigation | Status |
 |----|--------|--------------|------------|--------|
-| TM-DOS-011 | Symlink loops | `ln -s /a /b; ln -s /b /a` | No symlink following | **MITIGATED** |
+| TM-DOS-011 | Symlink loops | `ln -s /a /b; ln -s /b /a` | `FollowFs` follows at most 40 links per lookup (Linux MAXSYMLINKS), then fails with "Too many levels of symbolic links"; `find -L` adds canonical-path loop detection (TM-DOS-121). Regressions: `fs::follow::tests::loops_fail_with_eloop`, `hop_limit_allows_long_chains`, `symlink_loop_is_reported` spec | **MITIGATED** |
 | TM-DOS-012 | Deep directory nesting | `mkdir -p a/b/c/.../z` (1000 levels) | `max_path_depth` limit (100) | **MITIGATED** |
 | TM-DOS-013 | Long filenames | Create 10KB filename | `max_filename_length` (255) + `max_path_length` (4096) | **MITIGATED** |
 | TM-DOS-014 | Many directory entries | Create 1M files in one dir | `max_file_count` limit | **MITIGATED** |
@@ -214,8 +214,9 @@ delegation (see TM-DOS-046). Regression tests: `path_validation_security` module
 
 **Current Risk**: LOW. Implementation: `FsLimits` in `fs/limits.rs`, `max_path_depth` 100 (TM-DOS-012), `max_filename_length` 255 + `max_path_length` 4096 (TM-DOS-013); `validate_path()` rejects control chars and bidi overrides (TM-DOS-015).
 
-**Note**: Symlink loops (TM-DOS-011) are mitigated because InMemoryFs stores symlinks but doesn't
-follow them during path resolution - symlink targets are only returned by `read_link()`.
+**Note**: Symlinks are followed only by the session's outermost layer (`fs/follow.rs`); inner
+layers never follow. Each lookup is capped at 40 links, so a loop costs at most 40 x path-depth
+`lstat` calls before failing with ELOOP (TM-DOS-011).
 
 #### 1.2 Infinite Loops
 
@@ -287,6 +288,8 @@ runaway scripts without permanently breaking the session.
 | TM-DOS-118 | Python read-only self-mount recursion | `bash.mount("/", bash.fs(), read_only=True)` wraps the live filesystem before the core pointer-identity guard, then filesystem reads recurse until stack exhaustion | `Bash.mount()` and `BashTool.mount()` compare the resolved source with the live filesystem before constructing `ReadOnlyFs`; regression tests cover both Python surfaces | **MITIGATED** |
 | TM-DOS-119 | Interactive terminal resource exhaustion | A host or script floods the in-process `Terminal` (`terminal` feature): unbounded typed-ahead input, output nobody drains, or a `vi` buffer grown by pastes, `p` and `:s` until memory runs out | Unread input is capped at 1 MiB (`send` returns the accepted count), retained raw output at the newest 4 MiB, scrollback at 1000 rows, untaken transcript records at 1 MiB total (64 KiB of output per record, oldest records drop first), the cooked-mode line and `TerminalTool` input per call at 64 KiB, the `vi` buffer at 8 MiB (load, insert, put and substitute check it), and `vi` undo/redo history at 16 MiB total; `vi` patterns use `regex` with a 1 MiB compiled-size limit. `:w` goes through the session VFS, so VFS limits and read-only mounts apply. Regressions: `terminal::tests::input_backlog_is_capped`, `terminal::tests::transcript_output_is_capped_per_record`, `terminal::tests::transcript_total_size_is_bounded`, `terminal::tests::history_is_bounded`, `terminal::tool::tests::bad_arguments_are_user_facing_errors`, `builtins::vi::tests::buffer_cap_stops_inserts`, `builtins::vi::tests::readonly_vfs_write_error_keeps_editor_open` | **MITIGATED** |
 | TM-DOS-120 | Interactive input wait vs. execution timeout | Excluding keyboard waits from `ExecutionLimits::timeout` (so a `vi` session is not killed while a person or agent thinks) must not let busy work escape the deadline | Only time blocked in the terminal device read is excluded (`InputWaitClock`); the timer re-arms with the remaining *active* budget, so CPU work, `sleep`, and pending callbacks still time out. Only a `Terminal` installs the clock; plain `exec()` is unchanged. Regressions: `terminal::tests::waiting_for_input_does_not_count_toward_timeout`, `terminal::tests::busy_work_still_times_out` | **MITIGATED** |
+| TM-DOS-121 | `find` traversal amplification | `find -L` over a symlink cycle (`ln -s .. d/up`) re-enters the same directories forever; `-exec ... \;` as a predicate or `{} +` batches could also queue unbounded command lines; the old `-name` glob matcher recursed with string clones per `*` (exponential on `*a*a*...b`) | `-L`/`-H` resolve each directory to its canonical path (realpath with a 40-hop ELOOP cap) and refuse to enter one already on the current path (`File system loop detected`, exit 1); every directory listing charges `consume_work`; find's own output stays capped by `FIND_MAX_OUTPUT_BYTES`; `{} +` batches flush every 4096 paths; `fnmatch` uses a single star restore point (O(value x pattern)). Regression tests: `find_follow_detects_loops` spec case, `ls::glob::tests::many_stars_are_linear` | **MITIGATED** |
+| TM-DOS-122 | Background job flooding | `while :; do sleep 99 & done`, or a fork bomb `f(){ f & f & }; f`, keeps unbounded concurrent forked interpreters alive | `ExecutionLimits::max_background_jobs` (default 64, `hardened()` 16) caps live jobs; the next `&` prints bash's `fork: retry: Resource temporarily unavailable` and returns 1 without forking. Jobs are polled on the caller's task (no `tokio::spawn`), share the session's command/loop budget, timeout and cancel token, and `exec()` waits for or drops every job before returning, so nothing outlives the call. Regressions: `jobs::tests::*`, `jobs.test.sh` spec cases, `background_job_limit` | **MITIGATED** |
 | TM-DOS-101 | yq structured-data amplification | YAML aliases can expand exponentially during deserialization; deep YAML/JSON, document floods, jaq generators, and YAML re-serialization can consume stack, CPU, or memory beyond the source size | Reject YAML alias tokens with a bounded lexical pass before deserialization; VFS/stdin and aggregate input budgets; serde_yaml_ng recursion cap 128 plus Bashkit depth 100; 4096-document cap; shared jaq work/deadline/output limits; post-serialization stdout cap; YAML+JSON depth/document/input/output regressions plus `yq_fuzz` and arbitrary-input proptest | **MITIGATED** |
 | TM-DOS-107 | Static-analysis command validation amplification | A large comment before thousands of commands makes a whole-script ordered-subsequence scan per command | Build one source-character position index, then validate each analyzed command-name character with a logarithmic position lookup instead of rescanning source | **MITIGATED** |
 **TM-DOS-051** is historical. The custom parser was deleted with the `yaml`
@@ -323,7 +326,7 @@ panicked. Resolved with `wrapping_*` ops, masked shift amounts, clamped exponent
 | ID | Threat | Attack Vector | Mitigation | Status |
 |----|--------|--------------|------------|--------|
 | TM-ESC-001 | Path traversal | `cat ../../../etc/passwd` | Path normalization | **MITIGATED** |
-| TM-ESC-002 | Symlink escape | `ln -s /etc/passwd /tmp/x` | Symlinks not followed | **MITIGATED** |
+| TM-ESC-002 | Symlink escape | `ln -s /etc/passwd /tmp/x` | Links are followed in the VFS namespace only: targets are VFS paths (absolute from the VFS root, `..` clamped there) and every resolved path goes back through mounts and `RealFs` containment; permission errors are never retried through resolution, so host-planted links inside a real mount stay blocked. Regressions: `fs::follow::tests::absolute_targets_stay_in_vfs`, `realfs_host_planted_symlink_is_not_followed_out`, `a_forged_symlink_cannot_reach_outside_the_vfs` | **MITIGATED** |
 | TM-ESC-003 | Real FS access | Direct syscalls | No real FS by default; `RealFs` canonicalizes existing paths and nearest existing ancestors before attaching missing suffixes | **MITIGATED** |
 | TM-ESC-004 | Mount escape | Mount real paths | MountableFs controlled | **MITIGATED** |
 | TM-ESC-016 | Symlink escape via overlay rename | `ln -s /etc/passwd x; mv x y` | Overlay rename/copy preserve symlinks as symlinks | **FIXED** |
@@ -428,7 +431,7 @@ execute permission (mode & 0o111); exit 127 missing / 126 non-executable; sheban
 |----|--------|--------------|------------|--------|
 | TM-INF-001 | Env var leak | `echo $SECRET_KEY` | Env vars caller-controlled | **CALLER RISK** |
 | TM-INF-002 | File secrets | `cat /secrets/key` | Virtual FS isolation | **MITIGATED** |
-| TM-INF-003 | Proc secrets | `/proc/self/environ` | No /proc filesystem | **MITIGATED** |
+| TM-INF-003 | Proc secrets | `/proc/self/environ` | Only a static synthetic /proc (rootfs: cpuinfo, meminfo, version, loadavg); no `self` or pid dirs | **MITIGATED** |
 | TM-INF-004 | Memory dump | Core dumps | No crash dumps | **MITIGATED** |
 
 | TM-INF-013 | Host env leak via jq | jq now uses custom `$__bashkit_env__` variable, not `std::env` |, | **FIXED** (2026-03 audit verified) |
@@ -632,7 +635,7 @@ Bash::builder()
 | TM-INF-005 | Hostname | `hostname`, `$HOSTNAME` | Returns configurable virtual value | **MITIGATED** |
 | TM-INF-006 | Username | `whoami`, `$USER` | Returns configurable virtual value | **MITIGATED** |
 | TM-INF-007 | IP address | `ip addr`, `ifconfig` | Not implemented | **MITIGATED** |
-| TM-INF-008 | System info | `uname -a` | Returns configurable virtual values | **MITIGATED** |
+| TM-INF-008 | System info | `uname -a`, `nproc` | Returns configurable virtual values; `nproc` reports the constant `VIRTUAL_NPROC` (4), never the host core count | **MITIGATED** |
 | TM-INF-009 | User ID | `id` | Returns hardcoded uid=1000 | **MITIGATED** |
 
 **Current Risk**: NONE. Implementation: `builtins/system.rs`, `hostname` (default
@@ -941,7 +944,7 @@ Only exact domain matches are allowed (TM-NET-017).
 | TM-ISO-015 | Concurrent FS leakage | Race condition leaks files between parallel sessions | Separate `Arc<FileSystem>` per instance | **MITIGATED** |
 | TM-ISO-016 | Snapshot/restore side effects | `restore_shell_state()` affects other sessions | Snapshot is per-instance, no shared state | **MITIGATED** |
 | TM-ISO-017 | Adversarial variable probing | Script enumerates common secret var names | Default-empty env, no host env inheritance | **MITIGATED** |
-| TM-ISO-018 | /proc /sys probing | Script reads `/proc/self/environ` etc. | VFS has no real /proc or /etc | **MITIGATED** |
+| TM-ISO-018 | /proc /sys probing | Script reads `/proc/self/environ` etc. | /proc and /etc are synthetic rootfs files built from session config; synthetic passwd has no root line, so `root:x:0:0` means a host leak | **MITIGATED** |
 | TM-ISO-019 | jq cross-session env | `jq 'env.X'` sees other session's vars | jaq reads from injected global, not `std::env` | **MITIGATED** |
 | TM-ISO-020 | Subshell mutation leakage | Subshell vars leak to parent or sibling sessions | Snapshot/restore in subshell + per-instance state | **MITIGATED** |
 
@@ -1381,7 +1384,6 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | Threat ID | Vulnerability | Impact | Rationale |
 |-----------|---------------|--------|-----------|
 | TM-CRY-002 | RSA timing sidechannel in `rsa` (RUSTSEC-2023-0071) | Private key recovery over the network | No upstream patch exists for any `rsa` version; reachable only via the opt-in `ssh` feature, and Ed25519 keys avoid the affected path |
-| TM-DOS-011 | Symlinks not followed | Functionality gap | By design - prevents symlink attacks |
 | TM-DOS-025 | Regex backtracking | CPU exhaustion | Linear-time `regex` engine by default; fancy-regex paths (`grep -P`, `sed`) capped by `FANCY_BACKTRACK_LIMIT` |
 | TM-UNI-004 | Zero-width chars in variable names | Variable confusion | Matches Bash behavior |
 | TM-UNI-006 | Homoglyph filenames | Visual confusion | Impractical to fully detect |
@@ -1419,7 +1421,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | Path char validation | TM-DOS-015 | `fs/limits.rs` | Yes |
 | Archive bomb protection | TM-DOS-007, TM-DOS-102, TM-NET-013 | `builtins/archive.rs` | Yes |
 | Path normalization | TM-ESC-001, TM-ESC-033, TM-INJ-005 | `fs/mod.rs`, `fs/realfs.rs` | Yes |
-| No symlink following | TM-ESC-002, TM-DOS-011 | `fs/memory.rs` | Yes |
+| VFS-only symlink following, 40-link cap | TM-ESC-002, TM-DOS-011 | `fs/follow.rs` | Yes |
 | Network allowlist | TM-INF-010, TM-NET-001 to TM-NET-007 | `network/allowlist.rs` | Yes |
 | Domain allowlist | TM-NET-015, TM-NET-016, TM-NET-017 | `network/allowlist.rs` | Planned |
 | Sandboxed eval/bash/sh, no exec | TM-ESC-005 to TM-ESC-008, TM-ESC-015, TM-INJ-003 | `interpreter/mod.rs` | Yes |
@@ -1805,7 +1807,7 @@ python code -> CPython (wasm guest) -> wasi_snapshot_preview1 imports -> WASI ho
 
 | ID | Threat | Severity | Mitigation | Test |
 |----|--------|----------|------------|------|
-| TM-PY-CPY-001 | Host filesystem access (absolute paths, `..`, `/proc`, symlinks) | Critical | Only the VFS is reachable; paths clamp at `/`; symlinks are not followed | `host_files_are_not_reachable`, `parent_traversal_is_clamped_at_vfs_root`, `host_system_paths_absent`, `symlinks_are_not_followed` |
+| TM-PY-CPY-001 | Host filesystem access (absolute paths, `..`, `/proc`, symlinks) | Critical | Only the VFS is reachable; paths clamp at `/`; symlinks resolve inside the VFS only, `lstat` reports the link | `host_files_are_not_reachable`, `parent_traversal_is_clamped_at_vfs_root`, `host_system_paths_absent`, `rootfs_files_come_from_the_vfs_not_the_host`, `symlinks_resolve_inside_the_vfs_only` |
 | TM-PY-CPY-002 | Tampering with or shadowing the stdlib | High | Stdlib zip is a read-only host overlay; tenant files next to it are not on `sys.path`; preloaded modules come from the snapshot | `stdlib_zip_is_read_only`, `vfs_files_cannot_shadow_stdlib` |
 | TM-PY-CPY-003 | Network, process, thread or native-code escape | Critical | No socket or process imports; sockets return `ENOTSUP`; no threads, `ctypes` or dynamic loading in the guest | `network_unavailable`, `urllib_cannot_fetch`, `processes_unavailable`, `threads_and_native_code_unavailable` |
 | TM-PY-CPY-004 | CPU exhaustion (busy loops, swallowed exceptions, sleeps) | High | Fuel-driven async yields; every poll checks the call deadline and the request `ExecutionBudget`; sleeps never pass the deadline | `infinite_loop_times_out`, `sleep_is_bounded_by_deadline`, `swallowing_exceptions_cannot_escape_timeout`, `shell_timeout_tighter_than_python_limit_wins`, `cancellation_stops_busy_guest` |

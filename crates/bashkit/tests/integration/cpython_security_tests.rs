@@ -59,27 +59,49 @@ async fn parent_traversal_is_clamped_at_vfs_root() {
 async fn host_system_paths_absent() {
     let r = run("python3 -c '
 import os
-for p in [\"/etc/passwd\", \"/proc/self/environ\", \"/proc/self/mem\", \"/sys\", \"/root\"]:
+for p in [\"/proc/self/environ\", \"/proc/self/mem\", \"/sys\"]:
     print(p, os.path.exists(p))
 '")
     .await;
     assert_eq!(
         r.stdout,
-        "/etc/passwd False\n/proc/self/environ False\n/proc/self/mem False\n/sys False\n/root False\n"
+        "/proc/self/environ False\n/proc/self/mem False\n/sys False\n"
     );
 }
 
 #[tokio::test]
-async fn symlinks_are_not_followed() {
-    // L-FS-001 / TM-ESC-002: the VFS stores symlinks but never follows them.
-    let r = run("echo secret > /target; ln -s /target /link; \
-         python3 -c 'import os; print(os.path.islink(\"/link\"), os.readlink(\"/link\"))
-try:
-    open(\"/link\").read()
-except OSError:
-    print(\"blocked\")'")
+async fn rootfs_files_come_from_the_vfs_not_the_host() {
+    // The default rootfs ships a virtual /etc/passwd and /root; the guest must
+    // see those VFS copies, never the host's files.
+    let r = run("python3 -c '
+import os
+print(os.path.isdir(\"/root\"))
+print(open(\"/etc/passwd\").read(), end=\"\")
+'")
     .await;
-    assert_eq!(r.stdout, "True /target\nblocked\n");
+    let vfs = bash().exec("cat /etc/passwd").await.expect("exec").stdout;
+    assert_eq!(r.stdout, format!("True\n{vfs}"));
+    if let Ok(host) = std::fs::read_to_string("/etc/passwd") {
+        assert_ne!(vfs, host, "VFS /etc/passwd must not mirror the host");
+    }
+}
+
+#[tokio::test]
+async fn symlinks_resolve_inside_the_vfs_only() {
+    // TM-ESC-002: links are followed, but only within the VFS. lstat still
+    // reports the link itself, and a link aimed at a host path finds nothing.
+    let host = std::env::current_exe().unwrap();
+    let script = format!(
+        "echo secret > /target; ln -s /target /link; ln -s '{}' /hostlink; \
+         python3 -c 'import os; print(os.path.islink(\"/link\"), os.readlink(\"/link\"))
+print(open(\"/link\").read().strip())
+print(os.path.islink(\"/hostlink\"), os.path.exists(\"/hostlink\"))
+os.unlink(\"/link\")
+print(os.path.exists(\"/target\"), os.path.lexists(\"/link\"))'",
+        host.display()
+    );
+    let r = run(&script).await;
+    assert_eq!(r.stdout, "True /target\nsecret\nTrue False\nTrue False\n");
 }
 
 #[tokio::test]

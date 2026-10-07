@@ -103,6 +103,10 @@ pub(crate) const SEQ_MAX_LINES: usize = 100_000;
 /// seq: max output bytes per invocation.
 pub(crate) const SEQ_MAX_OUTPUT_BYTES: usize = 1_048_576;
 
+/// dd: max bytes one invocation moves (THREAT[TM-DOS-003]: `/dev/zero`
+/// and `/dev/urandom` are unbounded sources).
+pub(crate) const DD_MAX_BYTES: usize = 64 * 1024 * 1024;
+
 /// Result for a builtin that stopped early at one of the caps above.
 ///
 /// Decision (#2446): reaching a cap is never silent. The output produced so

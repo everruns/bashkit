@@ -174,10 +174,11 @@ fn format_od_byte(byte: u8, output_type: OutputType) -> String {
                 11 => "\\v".to_string(),
                 12 => "\\f".to_string(),
                 13 => "\\r".to_string(),
-                0x20..=0x7e => format!("  {}", byte as char),
-                _ => format!(" {:03o}", byte),
+                0x20..=0x7e => (byte as char).to_string(),
+                _ => format!("{:03o}", byte),
             };
-            format!(" {}", c.trim_start())
+            // GNU right-aligns each char in a 4-column cell.
+            format!("{c:>4}")
         }
     }
 }

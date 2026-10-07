@@ -20,7 +20,7 @@ mod state;
 mod time_command;
 
 #[allow(unused_imports)]
-pub use jobs::{JobTable, SharedJobTable};
+pub use jobs::{JobInfo, JobState, JobTable, SharedJobTable};
 pub use state::{BuiltinSideEffect, ControlFlow, ExecResult};
 use time_command::{
     TimeUsage, render_time_format, sanitize_time_path, validate_time_format, verbose_time_report,
@@ -179,6 +179,27 @@ impl ShellFeatures {
 
 /// Predicate selecting which default builtins a shell registers.
 pub(crate) type BuiltinFilter = Arc<dyn Fn(&str) -> bool + Send + Sync>;
+
+/// Best-effort source text of a command, for `jobs` and `ps`.
+fn describe_command(cmd: &Command) -> String {
+    match cmd {
+        Command::Simple(c) => std::iter::once(&c.name)
+            .chain(c.args.iter())
+            .map(|w| w.to_string())
+            .filter(|w| !w.is_empty())
+            .collect::<Vec<_>>()
+            .join(" "),
+        Command::Pipeline(p) => p
+            .commands
+            .iter()
+            .map(describe_command)
+            .collect::<Vec<_>>()
+            .join(" | "),
+        Command::List(l) => describe_command(&l.first),
+        Command::Compound(..) => "(...)".to_string(),
+        Command::Function(f) => format!("{} ()", f.name),
+    }
+}
 
 fn word_literal_text(word: &Word) -> Option<&str> {
     if word.parts.len() == 1
@@ -352,9 +373,59 @@ pub(crate) struct ShellRef<'a> {
 // interpreter state; others (e.g. `bash`, `command`, `exec`, `getopts`) live
 // only here. Listing every name guarantees inventory completeness regardless of
 // map membership.
+// Builtins that exist only inside a shell (no `/usr/bin` program of that
+// name), so `env NAME` cannot run them.
+const ENV_SHELL_ONLY_BUILTINS: &[&str] = &[
+    ".",
+    "alias",
+    "bg",
+    "break",
+    "builtin",
+    "caller",
+    "cd",
+    "compgen",
+    "continue",
+    "declare",
+    "dirs",
+    "disown",
+    "enable",
+    "eval",
+    "exec",
+    "exit",
+    "export",
+    "fc",
+    "fg",
+    "getopts",
+    "hash",
+    "help",
+    "history",
+    "jobs",
+    "let",
+    "local",
+    "mapfile",
+    "popd",
+    "pushd",
+    "readarray",
+    "readonly",
+    "return",
+    "set",
+    "shift",
+    "shopt",
+    "source",
+    "times",
+    "trap",
+    "type",
+    "typeset",
+    "ulimit",
+    "umask",
+    "unalias",
+    "unset",
+    "wait",
+];
+
 const SPECIAL_BUILTIN_NAMES: &[&str] = &[
-    ".", "bash", "command", "declare", "eval", "exec", "getopts", "let", "local", "sh", "source",
-    "typeset", "unset",
+    ".", "bash", "builtin", "command", "declare", "eval", "exec", "getopts", "let", "local", "sh",
+    "source", "typeset", "unset",
 ];
 
 /// Sorted, deduped union of baked-in/custom builtins, interpreter-special
@@ -696,6 +767,8 @@ pub(crate) fn is_internal_variable(name: &str) -> bool {
         || name.starts_with("_LOWER_")
         || name.starts_with("_INTEGER_")
         || name.starts_with("_ARRAY_READ_")
+        || name == "_UMASK"
+        || name.starts_with("_ULIMIT_")
         || name == "_SHIFT_COUNT"
         || name == "_SET_POSITIONAL"
 }
@@ -1182,13 +1255,13 @@ pub struct Interpreter {
     current_line: usize,
     /// HTTP client for network builtins (curl, wget)
     #[cfg(feature = "http_client")]
-    http_client: Option<crate::network::HttpClient>,
+    http_client: Option<Arc<crate::network::HttpClient>>,
     /// Git client for git builtins
     #[cfg(feature = "git")]
     git_client: Option<crate::builtins::git::GitClient>,
     /// SSH client for ssh/scp/sftp builtins
     #[cfg(feature = "ssh")]
-    ssh_client: Option<crate::builtins::ssh::SshClient>,
+    ssh_client: Option<Arc<crate::builtins::ssh::SshClient>>,
     /// Stdin inherited from pipeline for compound commands (while read, etc.)
     /// Each read operation consumes one line, advancing through the data.
     pipeline_stdin: Option<crate::StreamData>,
@@ -1264,7 +1337,7 @@ pub struct Interpreter {
     /// command boundary with `Error::Cancelled`.
     cancelled: Arc<AtomicBool>,
     /// Interceptor hooks registry (shared with Bash callers).
-    hooks: crate::hooks::Hooks,
+    hooks: Arc<crate::hooks::Hooks>,
     /// True while executing a trap handler. Suppresses recursive DEBUG trap
     /// invocation to prevent amplification attacks (TM-DOS-035).
     in_trap: bool,
@@ -1289,6 +1362,11 @@ pub struct Interpreter {
     shell_features: ShellFeatures,
     /// Hardened profiles intentionally reduce elapsed-time precision.
     hardened_timing: bool,
+    /// `&` jobs run concurrently (default) or to completion at spawn.
+    concurrent_jobs: bool,
+    /// Nesting depth of `execute_script_body`; finished background job output
+    /// is delivered only between top-level (depth 1) commands.
+    script_depth: usize,
 }
 
 struct ArithmeticExpansionState {
@@ -1438,14 +1516,12 @@ impl Interpreter {
             "rm" => Rm,
             "cp" => Cp,
             "mv" => Mv,
-            "touch" => Touch,
             "chmod" => Chmod,
             "ln" => Ln,
             "chown" => Chown,
             "rmdir" => Rmdir,
             // Directory listing and search
             "ls" => Ls,
-            "find" => Find,
             "tree" => Tree,
             "truncate" => Truncate,
             "shuf" => Shuf,
@@ -1461,6 +1537,23 @@ impl Interpreter {
             "md5sum" => Md5sum,
             "sha1sum" => Sha1sum,
             "sha256sum" => Sha256sum,
+            "sha224sum" => Sha224sum,
+            "sha384sum" => Sha384sum,
+            "sha512sum" => Sha512sum,
+            "b2sum" => B2sum,
+            "cksum" => Cksum,
+            "base32" => Base32,
+            "basenc" => Basenc,
+            "cmp" => Cmp,
+            "factor" => Factor,
+            "tsort" => Tsort,
+            "nproc" => Nproc,
+            "dd" => Dd,
+            "install" => Install,
+            "umask" => Umask,
+            "ulimit" => Ulimit,
+            "locale" => Locale,
+            "enable" => Enable,
             // Archive operations
             "tar" => Tar,
             "gzip" => Gzip,
@@ -1480,6 +1573,11 @@ impl Interpreter {
             "sleep" => Sleep,
             "kill" => Kill,
             "wait" => Wait,
+            "jobs" => Jobs,
+            "disown" => Disown,
+            "bg" => Bg,
+            "fg" => Fg,
+            "ps" => Ps,
             "timeout" => Timeout,
             // Navigation
             "pushd" => Pushd,
@@ -1571,6 +1669,10 @@ impl Interpreter {
             "printf".to_string(),
             Arc::new(builtins::Printf::with_clock(clock)),
         );
+        builtins.insert(
+            "touch".to_string(),
+            Arc::new(builtins::Touch::with_clock(clock)),
+        );
 
         // System info builtins (configurable virtual values)
         let hostname_val = hostname.unwrap_or_else(|| builtins::DEFAULT_HOSTNAME.to_string());
@@ -1587,6 +1689,12 @@ impl Interpreter {
             "whoami".to_string(),
             Arc::new(builtins::Whoami::with_username(&username_val)),
         );
+        builtins.insert(
+            "find".to_string(),
+            Arc::new(builtins::Find::new(clock, &username_val)),
+        );
+        builtins.insert("pgrep".to_string(), Arc::new(builtins::Pgrep::new()));
+        builtins.insert("pkill".to_string(), Arc::new(builtins::Pgrep::pkill()));
         builtins.insert(
             "id".to_string(),
             Arc::new(builtins::Id::with_username(&username_val)),
@@ -1705,7 +1813,7 @@ impl Interpreter {
             pending_fd_targets: Vec::new(),
             pending_fd_capture_depth: 0,
             cancelled: Arc::new(AtomicBool::new(false)),
-            hooks: crate::hooks::Hooks::default(),
+            hooks: Arc::new(crate::hooks::Hooks::default()),
             in_trap: false,
             condition_sequence_depth: 0,
             deferred_proc_subs: Vec::new(),
@@ -1713,6 +1821,8 @@ impl Interpreter {
             random_state: AtomicU32::new(random_seed),
             shell_features,
             hardened_timing,
+            concurrent_jobs: true,
+            script_depth: 0,
         }
     }
 
@@ -1776,9 +1886,91 @@ impl Interpreter {
         }
     }
 
+    /// Run `&` jobs concurrently (default) or to completion when spawned.
+    pub(crate) fn set_concurrent_jobs(&mut self, enabled: bool) {
+        self.concurrent_jobs = enabled;
+    }
+
+    /// Fork the shell for a background job: a subshell's view of the state
+    /// (variables, functions, cwd, fds, options) with shared filesystem,
+    /// builtins, hooks, budget and cancellation. The job gets its own job
+    /// table, output accumulators and history.
+    fn fork_for_job(&self) -> Interpreter {
+        let random_seed = self
+            .random_state
+            .load(Ordering::Relaxed)
+            .wrapping_mul(1_103_515_245)
+            .wrapping_add(12_345);
+        Interpreter {
+            fs: Arc::clone(&self.fs),
+            env: self.env.clone(),
+            scoped: self.scoped.clone(),
+            flags: self.flags,
+            cwd: self.cwd.clone(),
+            last_exit_code: self.last_exit_code,
+            builtins: self.builtins.clone(),
+            host_builtins: self.host_builtins.clone(),
+            command_resolver: self.command_resolver.clone(),
+            call_stack: self.call_stack.clone(),
+            bash_source_stack: self.bash_source_stack.clone(),
+            limits: self.limits.clone(),
+            session_limits: self.session_limits.clone(),
+            memory_limits: self.memory_limits.clone(),
+            memory_budget: self.memory_budget.clone(),
+            memory_limit_error: None,
+            trace: crate::trace::TraceCollector::new(self.trace.mode()),
+            counters: self.counters.clone(),
+            execution_budget: self.execution_budget.clone(),
+            jobs: self.jobs.fork(),
+            current_line: self.current_line,
+            #[cfg(feature = "http_client")]
+            http_client: self.http_client.clone(),
+            #[cfg(feature = "git")]
+            git_client: self.git_client.clone(),
+            #[cfg(feature = "ssh")]
+            ssh_client: self.ssh_client.clone(),
+            pipeline_stdin: None,
+            getopts_char_idx: self.getopts_char_idx,
+            last_bg_pid: self.last_bg_pid.clone(),
+            output_callback: None,
+            execution_extensions: Arc::clone(&self.execution_extensions),
+            output_emit_count: 0,
+            output_stream_stdout_bytes: 0,
+            output_stream_stderr_bytes: 0,
+            nounset_error: None,
+            pipestatus: Vec::new(),
+            expanding_aliases: HashSet::new(),
+            regex_cache: RuntimeRegexCache::default(),
+            history: Vec::new(),
+            history_bytes: 0,
+            history_saved_entries: 0,
+            history_needs_rewrite: false,
+            history_file: None,
+            history_loaded: true,
+            subst_generation: self.subst_generation,
+            coproc_buffers: HashMap::new(),
+            coproc_next_fd: self.coproc_next_fd,
+            exec_fd_table: self.exec_fd_table.clone(),
+            pending_fd_output: HashMap::new(),
+            pending_fd_targets: Vec::new(),
+            pending_fd_capture_depth: 0,
+            cancelled: Arc::clone(&self.cancelled),
+            hooks: Arc::clone(&self.hooks),
+            in_trap: false,
+            condition_sequence_depth: 0,
+            deferred_proc_subs: Vec::new(),
+            proc_sub_paths: HashSet::new(),
+            random_state: AtomicU32::new(random_seed),
+            shell_features: self.shell_features,
+            hardened_timing: self.hardened_timing,
+            concurrent_jobs: self.concurrent_jobs,
+            script_depth: 1,
+        }
+    }
+
     /// Replace the hooks registry (called from BashBuilder::build).
     pub(crate) fn set_hooks(&mut self, hooks: crate::hooks::Hooks) {
-        self.hooks = hooks;
+        self.hooks = Arc::new(hooks);
     }
 
     // === CoW accessors ===
@@ -2643,13 +2835,13 @@ impl Interpreter {
     /// This is only available when the `http_client` feature is enabled.
     #[cfg(feature = "http_client")]
     pub fn set_http_client(&mut self, client: crate::network::HttpClient) {
-        self.http_client = Some(client);
+        self.http_client = Some(Arc::new(client));
     }
 
     /// Get a mutable reference to the HTTP client (for setting hooks after build).
     #[cfg(feature = "http_client")]
     pub(crate) fn http_client_mut(&mut self) -> Option<&mut crate::network::HttpClient> {
-        self.http_client.as_mut()
+        self.http_client.as_mut().and_then(Arc::get_mut)
     }
 
     /// Set the git client for git builtins.
@@ -2665,7 +2857,7 @@ impl Interpreter {
     /// This is only available when the `ssh` feature is enabled.
     #[cfg(feature = "ssh")]
     pub fn set_ssh_client(&mut self, client: crate::builtins::ssh::SshClient) {
-        self.ssh_client = Some(client);
+        self.ssh_client = Some(Arc::new(client));
     }
 
     /// Execute a script.
@@ -2676,10 +2868,19 @@ impl Interpreter {
         // not represent host-level exec() invocations.
 
         let result = {
-            let result = self.execute_script_body(script, true, true).await;
-            // Script boundary cleanup: background jobs are scoped to a single exec()
-            // call, so they cannot accumulate across long-lived sessions.
-            let _ = self.jobs.lock().await.wait_all_results().await;
+            let jobs = Arc::clone(&self.jobs);
+            let mut result =
+                jobs::with_jobs(&jobs, self.execute_script_body(script, true, true)).await;
+            // Script boundary: background jobs are scoped to a single exec()
+            // call. Like a pipe reader waiting for EOF, the call waits for
+            // every job and delivers output not yet reported.
+            jobs.finish_all().await;
+            let (out, err) = jobs.lock().take_finished_output();
+            if let Ok(r) = &mut result {
+                r.stdout.append(&out);
+                r.stderr.append(&err);
+            }
+            jobs.lock().clear();
             if let Some(error) = &self.memory_limit_error {
                 Err(crate::error::Error::ResourceLimit(error.clone()))
             } else {
@@ -2717,6 +2918,20 @@ impl Interpreter {
         run_exit_trap: bool,
         fire_exit_hook: bool,
     ) -> Result<ExecResult> {
+        self.script_depth += 1;
+        // Boxed so this wrapper adds no stack per nested `$(...)` level.
+        let result =
+            Box::pin(self.execute_script_body_inner(script, run_exit_trap, fire_exit_hook)).await;
+        self.script_depth -= 1;
+        result
+    }
+
+    async fn execute_script_body_inner(
+        &mut self,
+        script: &Script,
+        run_exit_trap: bool,
+        fire_exit_hook: bool,
+    ) -> Result<ExecResult> {
         let mut stdout = crate::StreamData::new();
         let mut stderr = crate::StreamData::new();
         let mut exit_code = 0;
@@ -2726,10 +2941,18 @@ impl Interpreter {
         let max_stderr = self.limits.max_stderr_bytes;
 
         let mut stopped = false;
+        let top_level = self.script_depth == 1;
         for command in &script.commands {
             self.check_cancelled()?;
             let emit_before = self.output_emit_count;
-            let result = self.execute_command(command).await?;
+            let mut result = self.execute_command(command).await?;
+            if top_level {
+                // Background jobs that finished meanwhile report here, as
+                // bash prints their output while the script continues.
+                let (out, err) = self.take_finished_job_output();
+                result.stdout.append(&out);
+                result.stderr.append(&err);
+            }
             self.check_cancelled()?;
             self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
 
@@ -4333,10 +4556,7 @@ impl Interpreter {
         self.arrays_mut().insert(name.clone(), arr);
 
         // Set NAME_PID to a virtual PID (use job table counter)
-        let virtual_pid = {
-            let table = self.jobs.lock().await;
-            table.last_job_id().unwrap_or(0) + 1000
-        };
+        let virtual_pid = self.jobs.lock().alloc_pid();
         self.vars_mut()
             .insert(format!("{}_PID", name), virtual_pid.to_string());
 
@@ -5196,39 +5416,87 @@ impl Interpreter {
         }
     }
 
-    /// Run a command as a "background" job.
+    /// Run a command as a background job (`cmd &`).
     ///
-    /// Executes the command synchronously (deterministic in virtual env) but
-    /// stores the result in the job table so `wait` and `$!` work correctly.
-    /// The command's stdout is emitted immediately (like real bash terminal output).
+    /// With concurrent jobs (the default) the command runs on a forked shell
+    /// as a job future driven alongside the foreground (see `jobs.rs`). It is
+    /// polled once right away, so a job that never blocks finishes here and
+    /// its output is emitted in order, as before. Sequential mode runs the
+    /// command to completion here.
     async fn spawn_in_background(
         &mut self,
         cmd: &Command,
         parent_stdout: &mut crate::StreamData,
         parent_stderr: &mut crate::StreamData,
     ) -> Result<()> {
-        // Execute the command synchronously
+        let text = describe_command(cmd);
         let emit_before = self.output_emit_count;
-        let result = self.execute_command(cmd).await?;
-        self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
+        let finished = if self.concurrent_jobs {
+            // THREAT[TM-DOS-122]: cap live jobs.
+            // The cap is session-wide (nested jobs share it) and a job is a
+            // subshell for nesting depth, so `f(){ f & f & }; f` stays bounded.
+            let slot = self.jobs.try_claim(self.limits.max_background_jobs);
+            let mut child = self.fork_for_job();
+            let depth_ok = child.counters.push_subshell(&child.limits).is_ok();
+            let Some(slot) = slot.filter(|_| depth_ok) else {
+                let msg = format!(
+                    "bash: fork: retry: Resource temporarily unavailable (max {} background jobs, {} nested)\n",
+                    self.limits.max_background_jobs, self.limits.max_subshell_depth
+                );
+                parent_stderr.append(&crate::StreamData::from(msg));
+                self.last_exit_code = 1;
+                return Ok(());
+            };
+            let cmd = cmd.clone();
+            let mut fut: jobs::JobFuture = Box::pin(async move {
+                let _slot = slot;
+                let jobs = Arc::clone(&child.jobs);
+                let result = jobs::with_jobs(&jobs, child.execute_command(&cmd)).await;
+                jobs.finish_all().await;
+                let (out, err) = jobs.lock().take_finished_output();
+                match result {
+                    Ok(mut r) => {
+                        r.stdout.append(&out);
+                        r.stderr.append(&err);
+                        if let ControlFlow::Exit(code) = r.control_flow {
+                            r.exit_code = code;
+                        }
+                        r.control_flow = ControlFlow::None;
+                        r
+                    }
+                    Err(e) => ExecResult::err(format!("bash: {e}\n"), 1),
+                }
+            });
+            match std::future::poll_fn(|cx| std::task::Poll::Ready(fut.as_mut().poll(cx))).await {
+                std::task::Poll::Ready(result) => Some(result),
+                std::task::Poll::Pending => {
+                    let (_, pid) = self.jobs.lock().spawn_running(text.clone(), fut);
+                    self.last_bg_pid = Some(pid.to_string());
+                    None
+                }
+            }
+        } else {
+            Some(self.execute_command(cmd).await?)
+        };
 
-        // Emit output immediately (background output goes to terminal in real bash)
-        parent_stdout.append(&result.stdout);
-        parent_stderr.append(&result.stderr);
-
-        // Store only the exit code in the job table (output already emitted).
-        // The command already ran to completion synchronously, so the result is
-        // final — register it directly rather than round-tripping through
-        // tokio::spawn (which also panics on wasm, where no reactor runs).
-        let exit_code = result.exit_code;
-        let job_result = ExecResult::with_code(String::new(), exit_code);
-        let job_id = self.jobs.lock().await.spawn(job_result);
-        self.last_bg_pid = Some(job_id.to_string());
+        if let Some(result) = finished {
+            self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
+            // Emit output immediately (background output goes to terminal in real bash)
+            parent_stdout.append(&result.stdout);
+            parent_stderr.append(&result.stderr);
+            let (_, pid) = self.jobs.lock().spawn_finished(text, result);
+            self.last_bg_pid = Some(pid.to_string());
+        }
 
         // Background commands always return exit code 0 to the parent.
         // The real exit code lives in the job table for `wait` to read.
         self.last_exit_code = 0;
         Ok(())
+    }
+
+    /// Output of background jobs that finished since the last report.
+    fn take_finished_job_output(&self) -> (crate::StreamData, crate::StreamData) {
+        self.jobs.lock().take_finished_output()
     }
 
     /// Execute a command list (cmd1 && cmd2 || cmd3)
@@ -5245,8 +5513,9 @@ impl Interpreter {
         let first_is_bg = matches!(list.rest.first(), Some((ListOperator::Background, _)));
 
         if first_is_bg {
-            self.spawn_in_background(&list.first, &mut stdout, &mut stderr)
-                .await?;
+            // Boxed: the job path holds a forked Interpreter across an await,
+            // which would otherwise bloat every recursive execute_list frame.
+            Box::pin(self.spawn_in_background(&list.first, &mut stdout, &mut stderr)).await?;
             exit_code = 0;
             control_flow = ControlFlow::None;
             exit_code_from_conditional_context = false;
@@ -5334,8 +5603,7 @@ impl Interpreter {
 
             if should_execute {
                 if should_background {
-                    self.spawn_in_background(cmd, &mut stdout, &mut stderr)
-                        .await?;
+                    Box::pin(self.spawn_in_background(cmd, &mut stdout, &mut stderr)).await?;
                     exit_code = 0;
                     exit_code_from_conditional_context = false;
                 } else {
@@ -6423,11 +6691,11 @@ impl Interpreter {
                     fs,
                     stdin,
                     #[cfg(feature = "http_client")]
-                    http_client: self.http_client.as_ref(),
+                    http_client: self.http_client.as_deref(),
                     #[cfg(feature = "git")]
                     git_client: self.git_client.as_ref(),
                     #[cfg(feature = "ssh")]
-                    ssh_client: self.ssh_client.as_ref(),
+                    ssh_client: self.ssh_client.as_deref(),
                     shell: Some(shell_ref),
                 };
 
@@ -6488,11 +6756,11 @@ impl Interpreter {
                 fs,
                 stdin,
                 #[cfg(feature = "http_client")]
-                http_client: self.http_client.as_ref(),
+                http_client: self.http_client.as_deref(),
                 #[cfg(feature = "git")]
                 git_client: self.git_client.as_ref(),
                 #[cfg(feature = "ssh")]
-                ssh_client: self.ssh_client.as_ref(),
+                ssh_client: self.ssh_client.as_deref(),
                 shell: Some(shell_ref),
             };
 
@@ -6660,6 +6928,7 @@ impl Interpreter {
             "source" | "." => Some(self.execute_source(args, redirects).await),
             "eval" => Some(self.execute_eval(args, stdin, redirects).await),
             "command" => Some(self.execute_command_builtin(args, stdin, redirects).await),
+            "builtin" => Some(self.execute_builtin_builtin(args, stdin, redirects).await),
             "declare" | "typeset" => Some(self.execute_declare_builtin(args, redirects).await),
             "let" => Some(self.execute_let_builtin(args, redirects).await),
             "unset" => Some(self.execute_unset_builtin(args, redirects).await),
@@ -6856,8 +7125,8 @@ impl Interpreter {
         }
 
         // Read file content
-        let content = match self.fs.read_file(&path).await {
-            Ok(c) => decode_file_bytes_for_path(&path, &c),
+        let raw = match self.fs.read_file(&path).await {
+            Ok(c) => c,
             Err(_) => {
                 return Ok(ExecResult::err(
                     format!("bash: {}: No such file or directory\n", name),
@@ -6865,6 +7134,16 @@ impl Interpreter {
                 ));
             }
         };
+        // A root-filesystem stub (`/usr/bin/env`) runs the builtin it names.
+        if let Some(cmd) = crate::fs::stub_command(&raw)
+            && self.builtins.contains_key(cmd)
+        {
+            let cmd = cmd.to_string();
+            return self
+                .execute_registered_builtin(&cmd, args, stdin.as_ref(), redirects)
+                .await;
+        }
+        let content = decode_file_bytes_for_path(&path, &raw);
 
         self.execute_script_content(name, &content, args, stdin, redirects)
             .await
@@ -6875,6 +7154,16 @@ impl Interpreter {
     /// Returns `Ok(None)` if no matching file found (caller emits "command not found").
     /// Resolve a command name to its full path via PATH search on VFS.
     /// Returns the resolved path string if found, None otherwise.
+    /// Commands that get a `/bin` + `/usr/bin` stub in the root filesystem:
+    /// every registered builtin that also exists as a program on a real
+    /// system (shell-only builtins like `cd` do not).
+    pub(crate) fn rootfs_command_names(&self) -> impl Iterator<Item = &str> + Clone {
+        self.builtins
+            .keys()
+            .map(String::as_str)
+            .filter(|n| !ENV_SHELL_ONLY_BUILTINS.contains(n))
+    }
+
     async fn resolve_command_path(&self, name: &str) -> Option<String> {
         if !self.shell_features.has_script_execution() {
             return None;
@@ -8173,6 +8462,37 @@ impl Interpreter {
         Ok(result)
     }
 
+    /// `builtin NAME [ARGS]`: run a shell builtin, bypassing functions.
+    async fn execute_builtin_builtin(
+        &mut self,
+        args: &[String],
+        stdin: Option<crate::StreamData>,
+        redirects: &[Redirect],
+    ) -> Result<ExecResult> {
+        let args = match args.first().map(String::as_str) {
+            Some("--") => &args[1..],
+            _ => args,
+        };
+        let Some(name) = args.first() else {
+            return Ok(ExecResult::ok(String::new()));
+        };
+        if !(Self::is_special_builtin_name(name)
+            || self.builtins.contains_key(name.as_str())
+            || self.has_host_builtin(name))
+        {
+            return Ok(ExecResult::err(
+                format!("bash: builtin: {name}: not a shell builtin\n"),
+                1,
+            ));
+        }
+        // `command NAME` already runs the builtin and skips functions; a
+        // leading `--` keeps a `-v`-named builtin from becoming a flag.
+        let mut command_args = Vec::with_capacity(args.len() + 1);
+        command_args.push("--".to_string());
+        command_args.extend(args.iter().cloned());
+        Box::pin(self.execute_command_builtin(&command_args, stdin, redirects)).await
+    }
+
     /// Execute the `command` builtin.
     ///
     /// - `command -v name` — print command path/name if found (exit 0) or nothing (exit 1)
@@ -8189,7 +8509,8 @@ impl Interpreter {
         }
 
         let mut mode = ' '; // default: run the command
-        let mut cmd_args_start = 0;
+        // Stays past the end when only flags were given (`command -v`).
+        let mut cmd_args_start = args.len();
 
         // Parse flags
         let mut i = 0;
@@ -8204,6 +8525,9 @@ impl Interpreter {
             } else if arg == "-p" {
                 // -p: use default PATH (ignore in sandboxed env)
                 i += 1;
+            } else if arg == "--" {
+                cmd_args_start = i + 1;
+                break;
             } else {
                 cmd_args_start = i;
                 break;
@@ -8219,14 +8543,17 @@ impl Interpreter {
         match mode {
             'v' => {
                 // command -v: print name/path if it's a known command
+                let registered = self.builtins.contains_key(cmd_name.as_str())
+                    || self.has_host_builtin(cmd_name);
                 let output = if self.scoped.functions.contains_key(cmd_name.as_str())
-                    || self.builtins.contains_key(cmd_name.as_str())
-                    || self.has_host_builtin(cmd_name)
                     || is_keyword(cmd_name)
+                    || (registered && builtins::BASH_BUILTIN_NAMES.contains(&cmd_name.as_str()))
                 {
                     Some(cmd_name.to_string())
+                } else if let Some(path) = self.resolve_command_path(cmd_name).await {
+                    Some(path)
                 } else {
-                    self.resolve_command_path(cmd_name).await
+                    registered.then(|| cmd_name.to_string())
                 };
                 let mut result = if let Some(name) = output {
                     ExecResult::ok(format!("{}\n", name))
@@ -8244,16 +8571,22 @@ impl Interpreter {
             }
             'V' => {
                 // command -V: verbose description
+                let registered = self.has_host_builtin(cmd_name)
+                    || self.builtins.contains_key(cmd_name.as_str());
+                let path =
+                    if registered && builtins::BASH_BUILTIN_NAMES.contains(&cmd_name.as_str()) {
+                        None
+                    } else {
+                        self.resolve_command_path(cmd_name).await
+                    };
                 let description = if self.scoped.functions.contains_key(cmd_name.as_str()) {
                     format!("{} is a function\n", cmd_name)
-                } else if self.has_host_builtin(cmd_name)
-                    || self.builtins.contains_key(cmd_name.as_str())
-                {
-                    format!("{} is a shell builtin\n", cmd_name)
                 } else if is_keyword(cmd_name) {
                     format!("{} is a shell keyword\n", cmd_name)
-                } else if let Some(path) = self.resolve_command_path(cmd_name).await {
+                } else if let Some(path) = path {
                     format!("{} is {}\n", cmd_name, path)
+                } else if registered {
+                    format!("{} is a shell builtin\n", cmd_name)
                 } else {
                     return Ok(ExecResult::err(
                         format!("bash: command: {}: not found\n", cmd_name),
@@ -8700,6 +9033,33 @@ impl Interpreter {
                     }
                 }
             }
+            builtins::ExecutionPlan::Env {
+                command,
+                clear,
+                unset,
+                set,
+                chdir,
+            } => Box::pin(self.execute_env_plan(command, clear, unset, set, chdir)).await?,
+            builtins::ExecutionPlan::Driver(mut driver) => {
+                let mut last = None;
+                loop {
+                    match driver.next(last.take()).await? {
+                        builtins::PlanStep::Run { command, cwd } => {
+                            let inner_cmd = subcommand_to_command(&command);
+                            let saved_stdin = self.pipeline_stdin.take();
+                            self.pipeline_stdin = command.stdin;
+                            let saved_cwd = cwd.map(|dir| std::mem::replace(&mut self.cwd, dir));
+                            let result = self.execute_command(&inner_cmd).await;
+                            if let Some(dir) = saved_cwd {
+                                self.cwd = dir;
+                            }
+                            self.pipeline_stdin = saved_stdin;
+                            last = Some(result?);
+                        }
+                        builtins::PlanStep::Done(result) => break result,
+                    }
+                }
+            }
             builtins::ExecutionPlan::Batch { commands } => {
                 let mut combined_stdout = crate::StreamData::new();
                 let mut combined_stderr = crate::StreamData::new();
@@ -8763,6 +9123,77 @@ impl Interpreter {
         };
 
         self.apply_redirections(result, redirects).await
+    }
+
+    /// `env [-i] [-u NAME] [-C DIR] [NAME=VALUE]... CMD`: run CMD like a
+    /// child process. Shell state is snapshotted and restored, so neither the
+    /// environment edits nor anything CMD does leaks back to the caller.
+    async fn execute_env_plan(
+        &mut self,
+        command: builtins::SubCommand,
+        clear: bool,
+        unset: Vec<String>,
+        set: Vec<(String, String)>,
+        chdir: Option<String>,
+    ) -> Result<ExecResult> {
+        let snapshot = self.snapshot_subshell_state();
+        let saved_env = self.env.clone();
+        let saved_stdin = self.pipeline_stdin.take();
+        if clear {
+            // A child started with an empty environment sees no shell
+            // variables at all; internal option markers stay.
+            self.vars_mut().retain(|name, _| is_internal_variable(name));
+            self.env.clear();
+        }
+        for name in unset {
+            self.env.remove(&name);
+            self.vars_mut().remove(&name);
+        }
+        for (name, value) in set {
+            if is_internal_variable(&name) {
+                continue;
+            }
+            self.env.insert(name.clone(), value.clone());
+            self.vars_mut().insert(name, value);
+        }
+        let mut result = Ok(None);
+        if let Some(dir) = chdir {
+            let path = crate::builtins::resolve_path(&self.cwd, &dir);
+            if self
+                .fs
+                .stat(&path)
+                .await
+                .is_ok_and(|m| m.file_type.is_dir())
+            {
+                self.cwd = path;
+            } else {
+                result = Ok(Some(ExecResult::err(
+                    format!("env: cannot change directory to '{dir}': No such file or directory\n"),
+                    125,
+                )));
+            }
+        }
+        if matches!(result, Ok(None)) && ENV_SHELL_ONLY_BUILTINS.contains(&command.name.as_str()) {
+            // No program by this name exists on a real system.
+            result = Ok(Some(ExecResult::err(String::new(), 127)));
+        } else if matches!(result, Ok(None)) {
+            self.pipeline_stdin = command.stdin.clone();
+            let inner = subcommand_to_command(&command);
+            result = self.execute_command(&inner).await.map(Some);
+        }
+        self.pipeline_stdin = saved_stdin;
+        self.restore_subshell_state(snapshot);
+        self.env = saved_env;
+        let mut result = result?.unwrap_or_default();
+        // A child process can't break, return or exit the calling shell.
+        result.control_flow = ControlFlow::None;
+        if result.exit_code == 127
+            && (result.stderr.is_empty() || result.stderr.contains("command not found"))
+        {
+            // env execs a program, so a missing command reads like execvp's error.
+            result.stderr = format!("env: '{}': No such file or directory\n", command.name).into();
+        }
+        Ok(result)
     }
 
     /// Restore interpreter stacks/counters after an in-flight command future is cancelled.

@@ -503,6 +503,16 @@ impl NativeFileSystemState {
         })
     }
 
+    fn lstat(&self, path: String) -> napi::Result<FileMetadata> {
+        self.with_fs(|fs| async move {
+            let meta = fs
+                .lstat(Path::new(&path))
+                .await
+                .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+            Ok(metadata_to_js(&meta))
+        })
+    }
+
     fn exists(&self, path: String) -> napi::Result<bool> {
         self.with_fs(|fs| async move {
             fs.exists(Path::new(&path))
@@ -659,6 +669,14 @@ pub fn file_system_stat(
     path: String,
 ) -> napi::Result<FileMetadata> {
     fs.stat(path)
+}
+
+#[napi(js_name = "__fileSystemLstat")]
+pub fn file_system_lstat(
+    fs: &External<NativeFileSystemState>,
+    path: String,
+) -> napi::Result<FileMetadata> {
+    fs.lstat(path)
 }
 
 #[napi(js_name = "__fileSystemExists")]
@@ -2241,7 +2259,7 @@ impl Bash {
     // VFS — direct filesystem access
     // ========================================================================
 
-    /// Get metadata for a path in the virtual filesystem.
+    /// Get metadata for a path in the virtual filesystem, following symlinks.
     #[napi]
     pub fn stat(&self, path: String) -> napi::Result<FileMetadata> {
         block_on_with(&self.state, |s| async move {
@@ -2249,6 +2267,20 @@ impl Bash {
             let meta = bash
                 .fs()
                 .stat(Path::new(&path))
+                .await
+                .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+            Ok(metadata_to_js(&meta))
+        })
+    }
+
+    /// Get metadata without following a symlink in the final component.
+    #[napi]
+    pub fn lstat(&self, path: String) -> napi::Result<FileMetadata> {
+        block_on_with(&self.state, |s| async move {
+            let bash = s.inner.lock().await;
+            let meta = bash
+                .fs()
+                .lstat(Path::new(&path))
                 .await
                 .map_err(|e| napi::Error::from_reason(e.to_string()))?;
             Ok(metadata_to_js(&meta))
@@ -2940,7 +2972,7 @@ impl BashTool {
     // VFS — direct filesystem access (no shell command composition)
     // ========================================================================
 
-    /// Get metadata for a path in the virtual filesystem.
+    /// Get metadata for a path in the virtual filesystem, following symlinks.
     #[napi]
     pub fn stat(&self, path: String) -> napi::Result<FileMetadata> {
         block_on_with(&self.state, |s| async move {
@@ -2948,6 +2980,20 @@ impl BashTool {
             let meta = bash
                 .fs()
                 .stat(Path::new(&path))
+                .await
+                .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+            Ok(metadata_to_js(&meta))
+        })
+    }
+
+    /// Get metadata without following a symlink in the final component.
+    #[napi]
+    pub fn lstat(&self, path: String) -> napi::Result<FileMetadata> {
+        block_on_with(&self.state, |s| async move {
+            let bash = s.inner.lock().await;
+            let meta = bash
+                .fs()
+                .lstat(Path::new(&path))
                 .await
                 .map_err(|e| napi::Error::from_reason(e.to_string()))?;
             Ok(metadata_to_js(&meta))

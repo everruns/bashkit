@@ -35,6 +35,9 @@ pub(super) const MAX_FILE_VAR_BYTES: usize = 16 * 1024 * 1024;
 /// the few we explicitly do not implement (`--seq`, `--stream`, color flags).
 pub(super) struct JqArgs<'a> {
     pub filter: &'a str,
+    /// `-f FILE` / `--from-file FILE`: read the filter from FILE; every
+    /// positional argument is then an input file.
+    pub filter_file: Option<&'a str>,
     pub raw_input: bool,
     pub raw_output: bool,
     pub join_output: bool,
@@ -102,6 +105,7 @@ const HELP_TEXT: &str = "Usage: jq [OPTIONS...] FILTER [FILE...]\n\n\
     \t--argjson name value\tset variable $name to JSON value\n\
     \t--slurpfile name file\tbind $name to JSON values parsed from file\n\
     \t--rawfile name file\tbind $name to raw string contents of file\n\
+    \t-f, --from-file file\tread the filter from file\n\
     \t--args\t\t\tremaining args populate $ARGS.positional as strings\n\
     \t--jsonargs\t\tremaining args populate $ARGS.positional as JSON values\n\
     \t-V, --version\t\toutput version information and exit\n\
@@ -127,6 +131,7 @@ pub(super) fn parse<'a>(args: &'a [String]) -> ParseOutcome<'a> {
 
     let mut out = JqArgs {
         filter: ".",
+        filter_file: None,
         raw_input: false,
         raw_output: false,
         join_output: false,
@@ -294,6 +299,18 @@ pub(super) fn parse<'a>(args: &'a [String]) -> ParseOutcome<'a> {
                     )));
                 }
             },
+            "--from-file" => match args.get(i + 1) {
+                Some(path) => {
+                    out.filter_file = Some(path.as_str());
+                    i += 2;
+                    continue;
+                }
+                None => {
+                    return ParseOutcome::Done(usage_error(
+                        "jq: --from-file takes a parameter".into(),
+                    ));
+                }
+            },
             "--args" => {
                 positional_mode = Some(PositionalMode::Strings);
             }
@@ -306,8 +323,10 @@ pub(super) fn parse<'a>(args: &'a [String]) -> ParseOutcome<'a> {
             }
             // Short flag(s): may be combined like -rn, -sc, -snr.
             s if s.starts_with('-') && s.len() > 1 => {
+                let mut takes_file = false;
                 for ch in s[1..].chars() {
                     match ch {
+                        'f' => takes_file = true,
                         'r' => out.raw_output = true,
                         'R' => out.raw_input = true,
                         'c' => out.compact_output = true,
@@ -319,6 +338,20 @@ pub(super) fn parse<'a>(args: &'a [String]) -> ParseOutcome<'a> {
                         'a' | 'C' | 'M' => {} // ASCII / color / monochrome — accept silently
                         unknown => {
                             return ParseOutcome::Done(unknown_option(&format!("-{unknown}")));
+                        }
+                    }
+                }
+                if takes_file {
+                    match args.get(i + 1) {
+                        Some(path) => {
+                            out.filter_file = Some(path.as_str());
+                            i += 2;
+                            continue;
+                        }
+                        None => {
+                            return ParseOutcome::Done(usage_error(
+                                "jq: -f takes a parameter".into(),
+                            ));
                         }
                     }
                 }
@@ -336,6 +369,12 @@ pub(super) fn parse<'a>(args: &'a [String]) -> ParseOutcome<'a> {
             }
         }
         i += 1;
+    }
+
+    // With a filter file, the positional taken as the filter is an input.
+    if out.filter_file.is_some() && found_filter {
+        out.file_args.insert(0, out.filter);
+        out.filter = ".";
     }
 
     ParseOutcome::Args(out)

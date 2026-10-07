@@ -59,11 +59,24 @@ call:
 5. **`gc.freeze()` in the snapshot**: without it every call's exit-time
    `gc.collect()` walked the whole snapshot heap, dirtying its pages; calls
    cost ~100 ms instead of ~5 ms.
+6. **Immortal snapshot objects**: every GC-tracked snapshot object and its
+   direct referents are made immortal (`_Py_SetImmortal`) before freezing,
+   so reference counting stops writing to snapshot pages. Copy-on-write
+   faults per call dropped ~20% (341 to 273 for `print(1)`).
+7. **Lean driver**: the per-call environment is installed from C
+   (`_bashkit.load_environ`) instead of per-key `os.environ` updates.
+8. **Bytecode-only stdlib**: `build.sh` compiles the stdlib zip to
+   unchecked-hash `.pyc` with the native build interpreter and ships no
+   `.py`. Compiling source on Pulley cost 3-7 s per non-preloaded import
+   (`import http.client` 7.2 s, now ~0.5 s); sources plus bytecode would
+   exceed the crates.io 10 MiB crate cap. Modules that cannot work in the
+   guest (FFI, TLS, sockets, TTY) and pure-Python twins of C modules are
+   not shipped (L-CPY-009).
 
 Measured on a 4-vCPU x86-64 VM (see `criterion-python-*` results under
 `crates/bashkit/benches/results/`): first `python3` in a fresh process
-~22 ms (one-time engine/module load and first-touch page faults), then
-`python3 -c pass` ~5.5 ms per call warm; Monty ~15 µs (first call ~0.4 ms).
+~20 ms (one-time engine/module load and first-touch page faults), then
+`python3 -c 'print(1)'` ~5 ms per call warm; Monty ~15 µs (first call ~0.4 ms).
 CPU-bound Python is ~4-30x slower than Monty. 1024 concurrent tenants × 4
 calls: 0 failures, ~90 calls/s on 4 vCPUs, 4.7 GB peak RSS.
 
@@ -83,8 +96,10 @@ calls: 0 failures, ~90 calls/s on 4 vCPUs, 4.7 GB peak RSS.
   return `ENOTSUP`; there is no process API.
 - Files are whole in-memory buffers written back on close/sync/exit. Buffers
   are bounded by `max_file_size` and, in total, by the call's memory budget.
-- Paths normalize lexically and clamp at `/`. The VFS does not follow
-  symlinks (L-FS-001); neither does the host.
+- Paths normalize lexically and clamp at `/`. Symlinks resolve inside the
+  VFS only (TM-ESC-002); `path_filestat_get` honors WASI `SYMLINK_FOLLOW`, so
+  `lstat`/`os.path.islink` see the link itself, and unlink/rmdir act on the
+  link, never its target.
 - The stdlib zip is a read-only overlay at a fixed path. Writes, renames,
   truncation, unlink and directory changes there fail (`EROFS`/`ENOENT`/
   `EACCES`); tenant files placed next to it are not on `sys.path`.
@@ -155,6 +170,14 @@ compile-affecting configuration that produced it. 49.x needs rustc 1.96.
 
 - Python cannot call back into the shell (subprocess bridge) or host
   functions (`ToolDef`). TODO: design a `bashkit` module over a host import.
+- Where a warm call goes (`print(1)`, 2026-10-07 profile): ~4 ms Pulley
+  interpreting ~500K guest instructions (two thirds driver: compile, env,
+  `random` reseed, exit `gc.collect`), ~1 ms in ~270 page faults. The
+  one-time first-call cost is ~13 ms building the copy-on-write memory image
+  (wasmtime copies the 40 MB snapshot span, 14 MB of real data, into a
+  memfd). Native AOT compiled in `build.rs` (no run-time compile) measured
+  2.3 ms per call, but native code cannot run from the binary's read-only
+  static, so the first load copies the 41 MB module (+35 ms) unless warmed.
 - ~650 page faults per call (host Pulley stack + guest CoW writes); kernel
   fault cost grows under concurrency, so 4 vCPUs reach ~2x, not 4x, single
   thread throughput. TODO: profile which pages fault; consider pooling the

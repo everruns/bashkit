@@ -275,3 +275,10 @@ TZ=UTC printf -v d '%(%F)T' 0; echo "$d"
 ### expect
 1970-01-01
 ### end
+
+### printf_hex_escape_emits_raw_bytes
+# \xHH above 0x7f is a raw byte, not a U+FFFD replacement
+printf '\xff\xfe' | od -An -tx1
+### expect
+ ff fe
+### end

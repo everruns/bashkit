@@ -106,9 +106,13 @@ test("WB: recursive function depth limited (TM-DOS-020)", (t) => {
 test("WB: fork bomb pattern blocked (TM-DOS-021)", (t) => {
   const bash = new Bash({ maxCommands: 100 });
   const r = bash.executeSync(":(){ :|:& };:");
-  // Should fail — no real process forking and command limit
+  // Background jobs run concurrently, so like real bash the top-level `:`
+  // returns 0 once it has backgrounded the bomb. The bomb itself must hit a
+  // limit (job slots, function depth or command budget) and terminate.
   t.true(
-    r.exitCode !== 0 || r.error !== undefined,
+    r.exitCode !== 0 ||
+      r.error !== undefined ||
+      /limit|fork: retry/.test(r.stderr),
     "fork bomb pattern must not run indefinitely",
   );
 });
@@ -227,10 +231,12 @@ test("WB: /proc filesystem not accessible (TM-ESC-003)", (t) => {
   t.not(r.exitCode, 0, "/proc must not be accessible");
 });
 
-test("WB: /etc/passwd not accessible (TM-INF-001)", (t) => {
+test("WB: /etc/passwd is synthetic, never the host's (TM-INF-001)", (t) => {
   const bash = new Bash();
   const r = bash.executeSync("cat /etc/passwd 2>&1");
-  t.not(r.exitCode, 0, "host files must not be accessible");
+  // The root filesystem provides a virtual-identity passwd (no root line).
+  t.false(r.stdout.includes("root:x:0:0"), "host files must not be accessible");
+  t.true(r.stdout.includes(":x:1000:1000:"));
 });
 
 test("WB: environment variables do not leak host info (TM-INF-002)", (t) => {

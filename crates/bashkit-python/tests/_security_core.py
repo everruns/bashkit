@@ -388,8 +388,11 @@ def test_tm_inj_005_crlf_line_endings_in_scripts_execute_safely():
 def test_tm_inj_005_direct_read_file_traversal_is_blocked():
     """TM-INJ-005: Bash.read_file() must not expose paths outside the VFS root."""
     bash = Bash()
-    with pytest.raises(RuntimeError, match="file not found"):
-        bash.read_file("/tmp/../../etc/passwd")
+    # `..` clamps at the VFS root; /etc/passwd is the synthetic root-filesystem
+    # file built from the virtual identity, never the host's.
+    content = bash.read_file("/tmp/../../etc/passwd")
+    assert "root:x:0:0" not in content
+    assert ":x:1000:1000:" in content
 
 
 def test_tm_inj_005_direct_write_file_traversal_normalizes_inside_vfs():
