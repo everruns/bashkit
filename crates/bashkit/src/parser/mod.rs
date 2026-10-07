@@ -2463,33 +2463,33 @@ impl<'a> Parser<'a> {
         if !matches!(self.current_token, Some(tokens::Token::LeftParen)) {
             return None;
         }
-        self.advance(); // consume '('
-        let mut compound = saved_w;
-        compound.push('(');
-        loop {
-            match &self.current_token {
-                Some(tokens::Token::RightParen) => {
-                    compound.push(')');
-                    self.advance();
-                    break;
-                }
-                Some(tokens::Token::Word(elem))
-                | Some(tokens::Token::LiteralWord(elem))
-                | Some(tokens::Token::QuotedWord(elem))
-                | Some(tokens::Token::QuotedGlobWord(elem)) => {
-                    if !compound.ends_with('(') {
-                        compound.push(' ');
-                    }
-                    compound.push_str(elem);
-                    self.advance();
-                }
-                None => break,
-                _ => {
-                    self.advance();
-                }
-            }
+        let lhs = saved_w.strip_suffix('=')?;
+        let (name, append) = match lhs.strip_suffix('+') {
+            Some(name) => (name, true),
+            None => (lhs, false),
+        };
+        let base = name.split('[').next().unwrap_or(name);
+        let valid = base
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+            && base.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+        if !valid {
+            return None;
         }
-        Some(self.parse_word(compound))
+        let name = name.to_string();
+        self.advance(); // consume '('
+        let elements = self.collect_array_elements();
+        Some(Word {
+            parts: vec![WordPart::CompoundAssignment {
+                name,
+                append,
+                elements,
+            }],
+            quoted: true,
+            has_unquoted_glob: false,
+            part_quoted: Vec::new(),
+        })
     }
 
     /// Parse a heredoc redirect (`<<` or `<<-`) and any trailing redirects on the same line.

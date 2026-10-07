@@ -430,6 +430,43 @@ impl<'a> Lexer<'a> {
         self.read_word()
     }
 
+    /// Consume a backtick command substitution at the cursor and append it
+    /// to `word` as `$(cmd)`.
+    fn read_backtick_into(&mut self, word: &mut String) -> Result<(), String> {
+        self.advance(); // consume opening `
+        word.push_str("$(");
+        let mut closed = false;
+        while let Some(c) = self.peek_char() {
+            if c == '`' {
+                self.advance(); // consume closing `
+                closed = true;
+                break;
+            }
+            if c == '\\' {
+                // In backticks, backslash only escapes $, `, \, newline
+                self.advance();
+                if let Some(next) = self.peek_char() {
+                    if matches!(next, '$' | '`' | '\\' | '\n') {
+                        word.push(next);
+                        self.advance();
+                    } else {
+                        word.push('\\');
+                        word.push(next);
+                        self.advance();
+                    }
+                }
+            } else {
+                word.push(c);
+                self.advance();
+            }
+        }
+        if !closed {
+            return Err("unterminated backtick substitution".to_string());
+        }
+        word.push(')');
+        Ok(())
+    }
+
     fn read_word_starting_with(&mut self, prefix: &str) -> Option<Token> {
         let mut word = prefix.to_string();
         let mut has_quoted_expansion = false;
@@ -559,6 +596,10 @@ impl<'a> Lexer<'a> {
                     }
                 }
                 continue;
+            } else if ch == '`' {
+                if let Err(e) = self.read_backtick_into(&mut word) {
+                    return Some(Token::Error(e));
+                }
             } else if self.is_word_char(ch) || ch == ']' || ch == '}' {
                 // `}` included for the same reason as in `read_word`: it is a
                 // reserved word, not a metacharacter, so it stays inside the
@@ -900,39 +941,9 @@ impl<'a> Lexer<'a> {
             } else if ch == '`' {
                 // Backtick command substitution: convert `cmd` to $(cmd)
                 has_unquoted_expansion = true;
-                self.advance(); // consume opening `
-                word.push_str("$(");
-                let mut closed = false;
-                while let Some(c) = self.peek_char() {
-                    if c == '`' {
-                        self.advance(); // consume closing `
-                        closed = true;
-                        break;
-                    }
-                    if c == '\\' {
-                        // In backticks, backslash only escapes $, `, \, newline
-                        self.advance();
-                        if let Some(next) = self.peek_char() {
-                            if matches!(next, '$' | '`' | '\\' | '\n') {
-                                word.push(next);
-                                self.advance();
-                            } else {
-                                word.push('\\');
-                                word.push(next);
-                                self.advance();
-                            }
-                        }
-                    } else {
-                        word.push(c);
-                        self.advance();
-                    }
+                if let Err(e) = self.read_backtick_into(&mut word) {
+                    return Some(Token::Error(e));
                 }
-                if !closed {
-                    return Some(Token::Error(
-                        "unterminated backtick substitution".to_string(),
-                    ));
-                }
-                word.push(')');
             } else if ch == '\\' {
                 self.advance();
                 if let Some(next) = self.peek_char() {
@@ -955,56 +966,6 @@ impl<'a> Lexer<'a> {
                     }
                 } else {
                     word.push('\\');
-                }
-            } else if ch == '(' && word.ends_with('=') && self.looks_like_assoc_assign() {
-                // Associative compound assignment: var=([k]="v" ...) — keep entire
-                // (...) as part of word so declare -A m=([k]="v") stays one token.
-                word.push(ch);
-                self.advance();
-                let mut depth = 1;
-                while let Some(c) = self.peek_char() {
-                    word.push(c);
-                    self.advance();
-                    match c {
-                        '(' => depth += 1,
-                        ')' => {
-                            depth -= 1;
-                            if depth == 0 {
-                                break;
-                            }
-                        }
-                        '"' => {
-                            while let Some(qc) = self.peek_char() {
-                                word.push(qc);
-                                self.advance();
-                                if qc == '"' {
-                                    break;
-                                }
-                                if qc == '\\'
-                                    && let Some(esc) = self.peek_char()
-                                {
-                                    word.push(esc);
-                                    self.advance();
-                                }
-                            }
-                        }
-                        '\'' => {
-                            while let Some(qc) = self.peek_char() {
-                                word.push(qc);
-                                self.advance();
-                                if qc == '\'' {
-                                    break;
-                                }
-                            }
-                        }
-                        '\\' => {
-                            if let Some(esc) = self.peek_char() {
-                                word.push(esc);
-                                self.advance();
-                            }
-                        }
-                        _ => {}
-                    }
                 }
             } else if ch == '(' && word.ends_with(['@', '?', '*', '+', '!']) {
                 // Extglob: @(...), ?(...), *(...), +(...), !(...)
@@ -2181,7 +2142,12 @@ impl<'a> Lexer<'a> {
 
         // Continue reading any remaining word characters (e.g., [abc]def)
         while let Some(ch) = self.peek_char() {
-            if self.is_word_char(ch) {
+            if matches!(ch, '"' | '\'' | '$' | '`') {
+                // A quoted or expanded tail stays in the same word:
+                // `[k]="v w"` or `[k]=`cmd arg`` in a compound array is one
+                // element.
+                return self.read_word_starting_with(&word);
+            } else if self.is_word_char(ch) {
                 word.push(ch);
                 self.advance();
             } else {
@@ -2190,30 +2156,6 @@ impl<'a> Lexer<'a> {
         }
 
         Some(Token::Word(word))
-    }
-
-    /// Peek ahead (without consuming) to see if `=(` starts an associative
-    /// compound assignment like `([key]=val ...)`.  Returns true when the
-    /// first non-whitespace char after `(` is `[`.
-    fn looks_like_assoc_assign(&self) -> bool {
-        // Cap the lookahead like looks_like_brace_expansion: an uncapped scan
-        // over leading whitespace made `x=(` followed by megabytes of spaces
-        // O(n) per call (TM-DOS-024).
-        const MAX_LOOKAHEAD: usize = 10_000;
-        let mut chars = self.chars.clone();
-        // Skip the `(` we haven't consumed yet
-        if chars.next() != Some('(') {
-            return false;
-        }
-        // Skip optional whitespace
-        for ch in chars.take(MAX_LOOKAHEAD) {
-            match ch {
-                ' ' | '\t' => continue,
-                '[' => return true,
-                _ => return false,
-            }
-        }
-        false
     }
 
     /// Read the raw body of a `(( ... ))` arithmetic command, right after
@@ -2686,13 +2628,13 @@ mod tests {
 
     #[test]
     fn test_assoc_compound_assignment() {
-        // declare -A m=([foo]="bar" [baz]="qux") should keep the compound
-        // assignment as a single Word token
-        let mut lexer = Lexer::new(r#"m=([foo]="bar" [baz]="qux")"#);
-        assert_eq!(
-            lexer.next_token(),
-            Some(Token::Word(r#"m=([foo]="bar" [baz]="qux")"#.to_string()))
-        );
+        // m=([foo]="bar") lexes like any compound: the parser collects the
+        // element tokens between the parentheses.
+        let mut lexer = Lexer::new(r#"m=([foo]="bar")"#);
+        assert_eq!(lexer.next_token(), Some(Token::Word("m=".to_string())));
+        assert_eq!(lexer.next_token(), Some(Token::LeftParen));
+        assert!(matches!(lexer.next_token(), Some(Token::Word(_))));
+        assert_eq!(lexer.next_token(), Some(Token::RightParen));
         assert_eq!(lexer.next_token(), None);
     }
 

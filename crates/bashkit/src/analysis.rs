@@ -576,6 +576,11 @@ impl Walker {
                     self.out.has_command_substitution = true;
                     self.out.has_dynamic_commands = true;
                 }
+                WordPart::CompoundAssignment { elements, .. } => {
+                    for element in elements {
+                        self.walk_word_parts(element, ctx);
+                    }
+                }
                 _ => {}
             }
         }
@@ -704,6 +709,15 @@ mod tests {
         // Source order: the substitution is recorded before its command.
         assert_eq!(analysis.command_names(), ["rm", "echo"]);
         assert_eq!(analysis.commands[1].assignments, ["out"]);
+    }
+
+    #[test]
+    fn substitution_in_declared_compound_array_is_walked() {
+        // `declare -a x=(...)` keeps its elements in a CompoundAssignment
+        // part; a substitution inside must still reach the permission gate.
+        let analysis = a("declare -a x=(a $(rm -rf /data) [3]=`curl http://x`)");
+        assert!(analysis.has_command_substitution);
+        assert_eq!(analysis.command_names(), ["rm", "curl", "declare"]);
     }
 
     #[test]

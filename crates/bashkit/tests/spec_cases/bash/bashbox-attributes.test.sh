@@ -11,7 +11,6 @@ FOO=1; printenv FOO; echo $?
 
 ### bashbox_attributes_export_marks_the_name_so_later_values_reach_commands
 # export marks the name, so later values reach commands
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 export X=1; X=2; printenv X; export Y; Y=3; printenv Y
 ### expect
 2
@@ -20,7 +19,6 @@ export X=1; X=2; printenv X; export Y; Y=3; printenv Y
 
 ### bashbox_attributes_a_local_inherits_the_export_attribute
 # a local inherits the export attribute
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 export x=g; f(){ local x=1; printenv x; }; f
 ### expect
 1
@@ -28,7 +26,6 @@ export x=g; f(){ local x=1; printenv x; }; f
 
 ### bashbox_attributes_local_x_exports_only_the_local
 # local -x exports only the local
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 x=g; f(){ local -x x=1; printenv x; }; f; printenv x; echo $?
 ### expect
 1
@@ -44,7 +41,6 @@ export x=1; unset x; x=2; printenv x; echo $?
 
 ### bashbox_attributes_export_n_un_exports
 # export -n un-exports
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 export A=1; export -n A; printenv A; echo $? $A
 ### expect
 1 1
@@ -52,7 +48,6 @@ export A=1; export -n A; printenv A; echo $? $A
 
 ### bashbox_attributes_declare_p_shows_r_and_x
 # declare -p shows r and x
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 declare -rx R=1; declare -p R; declare -x S; declare -p S; export -p | grep -w '[RS]'
 ### expect
 declare -rx R="1"
@@ -63,7 +58,6 @@ declare -x S
 
 ### bashbox_attributes_declare_x_un_exports
 # declare +x un-exports
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 declare -x A=1; declare +x A; printenv A; echo $?
 ### expect
 1
@@ -81,7 +75,6 @@ ahBc
 
 ### bashbox_attributes_allexport_covers_locals_and_read_not_arrays
 # allexport covers locals and read, not arrays
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 set -o allexport; f(){ local l=3; declare -p l; }; f; read r <<< hi; declare -p r; arr=(1); declare -p arr
 ### expect
 declare -x l="3"
@@ -109,7 +102,6 @@ export V=0; V=1 printenv V; printenv V
 
 ### bashbox_attributes_arrays_print_with_a_or_a_an_associative_one_with_a_trailing_
 # arrays print with a or A, an associative one with a trailing space
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 declare -a arr=(1 2); export arr; declare -p arr; declare -A m=([k]=v); declare -p m
 ### expect
 declare -ax arr=([0]="1" [1]="2")
@@ -118,7 +110,6 @@ declare -A m=([k]="v" )
 
 ### bashbox_attributes_a_local_hides_a_until_the_function_returns
 # a local hides -A until the function returns
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 declare -A m=([a]=1); f(){ local m; declare -p m; local -A n; n[x]=1; declare -p n; }; f; declare -p m
 ### expect
 declare -- m
@@ -128,7 +119,6 @@ declare -A m=([a]="1" )
 
 ### bashbox_attributes_declare_rejects_names_that_are_not_identifiers_and_options_a
 # declare rejects names that are not identifiers, and options after the names
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 declare 1x=2 y=3 -z; echo $? $y
 ### expect
 1 3
@@ -136,7 +126,6 @@ declare 1x=2 y=3 -z; echo $? $y
 
 ### bashbox_attributes_local_rejects_names_that_are_not_identifiers
 # local rejects names that are not identifiers
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 f(){ local a-b=1 c=2; echo $? $c; }; f
 ### expect
 1 2
@@ -144,7 +133,6 @@ f(){ local a-b=1 c=2; echo $? $c; }; f
 
 ### bashbox_attributes_readonly_rejects_names_that_are_not_identifiers
 # readonly rejects names that are not identifiers
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 readonly 9=1 r=1; echo $? $r; readonly | grep ' r='
 ### expect
 1 1
@@ -153,7 +141,6 @@ declare -r r="1"
 
 ### bashbox_attributes_export_rejects_names_that_are_not_identifiers
 # export rejects names that are not identifiers
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 export a.b x=1; echo $?; printenv x
 ### expect
 1
@@ -162,7 +149,6 @@ export a.b x=1; echo $?; printenv x
 
 ### bashbox_attributes_export_rejects_unknown_options
 # export rejects unknown options
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 export -z; echo $?
 ### expect
 2
@@ -170,7 +156,6 @@ export -z; echo $?
 
 ### bashbox_attributes_declare_assigns_an_array_element
 # declare assigns an array element
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 declare a[1]=x; declare -p a
 ### expect
 declare -a a=([1]="x")
@@ -178,7 +163,6 @@ declare -a a=([1]="x")
 
 ### bashbox_attributes_readonly_p_shows_each_variable_s_attributes
 # readonly -p shows each variable's attributes
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 readonly U; export V; readonly V; readonly -p | grep -w '[UV]'
 ### expect
 declare -r U
@@ -187,7 +171,6 @@ declare -rx V
 
 ### bashbox_attributes_declare_p_escapes_quotes_dollars_backquotes_and_backslashes
 # declare -p escapes quotes, dollars, backquotes and backslashes
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 x='a"b$c`d\e'; declare -p x; a=("q\""); declare -p a
 ### expect
 declare -- x="a\"b\$c\`d\\e"
@@ -196,7 +179,6 @@ declare -a a=([0]="q\"")
 
 ### bashbox_attributes_export_f_only_checks_that_the_functions_exist
 # export -f only checks that the functions exist
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 f(){ :; }; export -f f; echo $?; export -f nosuch; echo $?
 ### expect
 0

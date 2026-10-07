@@ -408,6 +408,21 @@ impl fmt::Display for Word {
                 WordPart::Transformation { name, operator } => {
                     write!(f, "${{{}@{}}}", name, operator)?
                 }
+                WordPart::CompoundAssignment {
+                    name,
+                    append,
+                    elements,
+                } => {
+                    let op = if *append { "+=" } else { "=" };
+                    write!(f, "{}{}(", name, op)?;
+                    for (i, element) in elements.iter().enumerate() {
+                        if i > 0 {
+                            write!(f, " ")?;
+                        }
+                        write!(f, "{}", element)?;
+                    }
+                    write!(f, ")")?
+                }
             }
         }
         Ok(())
@@ -419,6 +434,18 @@ impl fmt::Display for Word {
 pub enum WordPart {
     /// Literal text
     Literal(String),
+    /// A compound array assignment in argument position, as given to a
+    /// declaration builtin: `declare -a name=(a b)`, `local m+=([k]=v)`.
+    /// Elements are kept unexpanded; the builtin expands them like the
+    /// elements of an `name=(...)` statement.
+    CompoundAssignment {
+        /// Variable name (may carry a subscript, which bash rejects).
+        name: String,
+        /// `+=(...)` rather than `=(...)`.
+        append: bool,
+        /// The element words, `[key]=value` elements included.
+        elements: Vec<Word>,
+    },
     /// Variable expansion ($VAR or ${VAR})
     Variable(String),
     /// Command substitution ($(...))

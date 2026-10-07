@@ -1177,12 +1177,16 @@ mod edge_cases {
         let depth = 500;
         let script = format!("echo $(({} 1 {}))", "(".repeat(depth), ")".repeat(depth),);
         let result = bash.exec(&script).await;
-        // Must not crash. With depth limit it returns 0 (depth exceeded → fallback)
+        // Must not crash. Past the depth limit the expansion fails like a
+        // bash arithmetic error: message on stderr, line abandoned.
         match result {
             Ok(r) => {
-                // Bounded arithmetic evaluator returns 0 when depth exceeded
-                let output = r.stdout.trim();
-                assert!(!output.is_empty(), "should produce output, not crash");
+                assert!(
+                    r.stderr.contains("recursion level exceeded"),
+                    "depth limit should be reported, got {:?}",
+                    r.stderr
+                );
+                assert_eq!(r.exit_code, 1);
             }
             Err(_) => {
                 // Error also acceptable (parser-level rejection)
@@ -1982,10 +1986,10 @@ mod nesting_depth_security {
         let depth = 1000;
         let script = format!("echo $(({} 7 {}))", "(".repeat(depth), ")".repeat(depth),);
         let result = bash.exec(&script).await;
-        // Must not crash — returns 0 (depth exceeded) or error
+        // Must not crash: the depth limit reports an arithmetic error.
         if let Ok(r) = result {
-            // With depth limiting, deeply nested expr returns 0 as fallback
-            assert!(!r.stdout.trim().is_empty(), "should produce output");
+            assert!(r.stderr.contains("recursion level exceeded"));
+            assert_eq!(r.exit_code, 1);
         }
     }
 
@@ -3757,7 +3761,8 @@ echo ${#big2}
         assert!(!lines.is_empty(), "should have produced some output");
     }
 
-    /// TM-DOS-060: local builtin assignments must honor variable count budget.
+    /// TM-DOS-060: declaration builtin assignments must honor variable count
+    /// budget. (`local` outside a function assigns nothing, as in bash.)
     #[tokio::test]
     async fn tm_dos_060_local_assignment_respects_budget() {
         let mem = MemoryLimits::new().max_variable_count(2);
@@ -3767,7 +3772,7 @@ echo ${#big2}
             .build();
 
         let script = r#"
-local a=1 b=2 c=3
+declare a=1 b=2 c=3
 printf "%s\n" "${a:-unset}" "${b:-unset}" "${c:-unset}"
 "#;
         let error = bash.exec(script).await.unwrap_err();
@@ -3820,7 +3825,9 @@ f
             .lines()
             .map(|line| line.parse::<usize>().unwrap())
             .collect();
-        assert_eq!(counts, vec![0, 0]);
+        // At most the one budgeted entry is stored, never all three.
+        assert_eq!(counts.len(), 2);
+        assert!(counts.iter().all(|c| *c <= 1), "counts: {counts:?}");
     }
 
     /// TM-INF-023: bare local declarations must shadow stale global array bindings.

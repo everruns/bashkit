@@ -28,7 +28,6 @@ read a -r < /dev/null; echo $?
 
 ### bashbox_read_names_an_array_element_is_a_valid_name
 # an array element is a valid name
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 read 'a[1]' b <<< 'x y'; echo "$? [${a[1]}] [$b]"
 ### expect
 0 [x] [y]

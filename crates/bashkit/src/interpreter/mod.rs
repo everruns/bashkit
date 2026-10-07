@@ -12,6 +12,7 @@
 
 mod arithmetic;
 mod brace_expansion;
+mod declare;
 mod expansion;
 mod glob;
 mod jobs;
@@ -429,8 +430,8 @@ const ENV_SHELL_ONLY_BUILTINS: &[&str] = &[
 const MAX_CHILD_SHELL_DEPTH: usize = 8;
 
 const SPECIAL_BUILTIN_NAMES: &[&str] = &[
-    ".", "bash", "builtin", "command", "declare", "eval", "exec", "getopts", "let", "local", "sh",
-    "source", "typeset", "unset",
+    ".", "bash", "builtin", "command", "declare", "eval", "exec", "export", "getopts", "let",
+    "local", "readonly", "sh", "source", "typeset", "unset",
 ];
 
 /// Interpreter-dispatched names that real bash reports as shell builtins
@@ -922,56 +923,20 @@ pub(crate) fn is_valid_var_name(name: &str) -> bool {
     chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-/// Flags shared between `declare` and `local` builtins.
-#[derive(Default)]
-struct DeclareFlags {
-    nameref: bool,
-    array: bool,
-    assoc: bool,
-    integer: bool,
-}
+// Important decision: locals use shallow binding, like bash. `local x`
+// moves the caller-visible scalar binding (value, attributes, nameref, env
+// entry) into the frame's `saved_vars` and the live maps then hold the local;
+// popping the frame (or `unset` from a callee) puts the saved binding back.
+// Lookups and builtins therefore only ever see the live maps, so `read`,
+// `printf -v` and `declare -p` work on locals with no frame walk.
 
-impl DeclareFlags {
-    /// Parse common declare/local flags from a flag argument like "-naAi".
-    fn parse_flag_chars(&mut self, flag_arg: &str) {
-        for c in flag_arg[1..].chars() {
-            match c {
-                'n' => self.nameref = true,
-                'a' => self.array = true,
-                'A' => self.assoc = true,
-                'i' => self.integer = true,
-                _ => {}
-            }
-        }
-    }
-}
-
-/// Reconstruct compound assignments that were split across arguments.
-///
-/// Shell compound assignments like `arr=(1 2 3)` get split into
-/// `["arr=(1", "2", "3)"]` by the parser. This merges them back.
-fn merge_compound_assignments<S: AsRef<str>>(args: &[S]) -> Vec<String> {
-    let mut merged = Vec::new();
-    let mut pending: Option<String> = None;
-    for arg in args {
-        let s = arg.as_ref();
-        if let Some(ref mut p) = pending {
-            p.push(' ');
-            p.push_str(s);
-            if s.ends_with(')') {
-                merged.push(p.clone());
-                pending = None;
-            }
-        } else if s.contains("=(") && !s.ends_with(')') {
-            pending = Some(s.to_string());
-        } else {
-            merged.push(s.to_string());
-        }
-    }
-    if let Some(p) = pending {
-        merged.push(p);
-    }
-    merged
+/// A caller binding saved by a `local` declaration (shallow binding).
+#[derive(Debug, Clone, Default)]
+struct SavedVar {
+    value: Option<String>,
+    attrs: Option<VarAttrs>,
+    nameref: Option<String>,
+    env: Option<String>,
 }
 
 /// A frame in the call stack for local variable scoping
@@ -979,8 +944,11 @@ fn merge_compound_assignments<S: AsRef<str>>(args: &[S]) -> Vec<String> {
 struct CallFrame {
     /// Function name
     name: String,
-    /// Local variables in this scope
-    locals: HashMap<String, String>,
+    /// Caller bindings shadowed by `local` in this frame, keyed by name.
+    /// The keys are this frame's local variables.
+    saved_vars: HashMap<String, SavedVar>,
+    /// True for a shell function frame (where `local` is allowed).
+    is_function: bool,
     /// Indexed arrays shadowed by local declarations in this scope.
     local_arrays: HashMap<String, Option<HashMap<usize, String>>>,
     /// Associative arrays shadowed by local declarations in this scope.
@@ -1215,6 +1183,8 @@ bitflags::bitflags! {
         const LOWER    = 0b0000_0100;
         const UPPER    = 0b0000_1000;
         const EXPORT   = 0b0001_0000;
+        /// Declared (`declare x`, `declare -a x`) but never assigned.
+        const NOVALUE  = 0b0010_0000;
     }
 }
 
@@ -1523,6 +1493,12 @@ pub struct Interpreter {
     /// subscripts, `declare -i` values, substring offsets). The command
     /// boundary turns it into a line abort, as bash does.
     arith_error: StdMutex<Option<String>>,
+    /// Element words of `name=(...)` arguments of the command being run;
+    /// see `declare::COMPOUND_MARK`.
+    pending_compound_args: Vec<Vec<Word>>,
+    /// Set while prefix assignments (`x=1 cmd`) run: bash stores those
+    /// without applying `-i`/`-l`/`-u`.
+    assign_raw: bool,
 }
 
 impl Interpreter {
@@ -1992,6 +1968,8 @@ impl Interpreter {
             script_depth: 0,
             child_shell_depth: 0,
             arith_error: StdMutex::new(None),
+            pending_compound_args: Vec::new(),
+            assign_raw: false,
         }
     }
 
@@ -2147,6 +2125,8 @@ impl Interpreter {
             // Forks are polled on this task's stack, so they inherit its depth.
             child_shell_depth: self.child_shell_depth,
             arith_error: StdMutex::new(None),
+            pending_compound_args: Vec::new(),
+            assign_raw: false,
         }
     }
 
@@ -2439,7 +2419,7 @@ impl Interpreter {
     /// frame created for per-invocation positional parameters, including on
     /// the error paths where the interpreter left frames behind.
     pub(crate) fn truncate_call_stack(&mut self, len: usize) {
-        self.call_stack.truncate(len);
+        self.unwind_call_stack(len);
     }
 
     /// Install `$0` and positional parameters for a top-level execution.
@@ -2457,7 +2437,8 @@ impl Interpreter {
     ) {
         self.call_stack.push(CallFrame {
             name: name.unwrap_or_else(|| Self::DEFAULT_ARG0.to_string()),
-            locals: HashMap::new(),
+            saved_vars: HashMap::new(),
+            is_function: false,
             local_arrays: HashMap::new(),
             local_assoc_arrays: HashMap::new(),
             positional,
@@ -5248,7 +5229,8 @@ impl Interpreter {
         // Push call frame, apply options, execute, restore, pop
         self.call_stack.push(CallFrame {
             name: name_arg,
-            locals: HashMap::new(),
+            saved_vars: HashMap::new(),
+            is_function: false,
             local_arrays: HashMap::new(),
             local_assoc_arrays: HashMap::new(),
             positional: positional_args,
@@ -6248,171 +6230,82 @@ impl Interpreter {
     }
 
     /// Process variable assignments from a command's prefix (e.g. `VAR=val cmd`).
-    async fn process_command_assignments(&mut self, assignments: &[Assignment]) -> Result<()> {
+    ///
+    /// `has_command`: the assignments prefix a command (`x=1 cmd`). Bash then
+    /// stores them without `-i`/`-l`/`-u`, and a readonly target only prints
+    /// an error (returned for stderr); a bare assignment to a readonly
+    /// variable abandons the line instead.
+    async fn process_command_assignments(
+        &mut self,
+        assignments: &[Assignment],
+        has_command: bool,
+    ) -> Result<String> {
+        let mut stderr = String::new();
         for assignment in assignments {
             match &assignment.value {
                 AssignmentValue::Scalar(word) => {
                     let value = self.expand_word(word).await?;
-                    if let Some(index_str) = &assignment.index {
-                        let resolved_name = self.resolve_nameref(&assignment.name).to_string();
-                        if self.scoped.assoc_arrays.contains_key(&resolved_name) {
-                            let key = self.expand_assoc_key(index_str).await?;
-                            let existing = self
-                                .scoped
-                                .assoc_arrays
-                                .get(&resolved_name)
-                                .and_then(|a| a.get(&key))
-                                .cloned();
-                            let is_new_entry = existing.is_none();
-                            let old_len = existing.as_ref().map_or(0, String::len);
-                            let new_len = if assignment.append {
-                                old_len + value.len()
-                            } else {
-                                value.len()
-                            };
-                            // A new entry also charges its key; an overwrite only
-                            // charges the value delta.
-                            let added = if is_new_entry {
-                                key.len() + new_len
-                            } else {
-                                new_len
-                            };
-                            if self.admit_array_write(
-                                usize::from(is_new_entry),
-                                added,
-                                if is_new_entry { 0 } else { old_len },
-                            ) {
-                                let arr = self.assoc_arrays_mut().entry(resolved_name).or_default();
-                                if assignment.append {
-                                    arr.insert(key, existing.unwrap_or_default() + &value);
-                                } else {
-                                    arr.insert(key, value);
-                                }
-                            }
-                        } else {
-                            let index =
-                                self.resolve_indexed_array_subscript(&resolved_name, index_str);
-                            let existing = self
-                                .scoped
-                                .arrays
-                                .get(&resolved_name)
-                                .and_then(|a| a.get(&index))
-                                .cloned();
-                            let is_new_entry = existing.is_none();
-                            let old_len = existing.as_ref().map_or(0, String::len);
-                            let new_len = if assignment.append {
-                                old_len + value.len()
-                            } else {
-                                value.len()
-                            };
-                            if self.admit_array_write(
-                                usize::from(is_new_entry),
-                                new_len,
-                                if is_new_entry { 0 } else { old_len },
-                            ) {
-                                let arr = self.arrays_mut().entry(resolved_name).or_default();
-                                if assignment.append {
-                                    arr.insert(index, existing.unwrap_or_default() + &value);
-                                } else {
-                                    arr.insert(index, value);
-                                }
-                            }
+                    let target = match self.resolve_nameref_strict(&assignment.name) {
+                        Ok(t) => t,
+                        Err(()) => {
+                            return Err(crate::error::Error::LineAbort(format!(
+                                "bash: warning: {}: circular name reference\n",
+                                assignment.name
+                            )));
                         }
+                    };
+                    let base = target.split('[').next().unwrap_or(&target).to_string();
+                    // THREAT[TM-INJ-019]: assignments to readonly variables fail
+                    // visibly, as in bash.
+                    if self.is_var_readonly(&base) {
+                        let msg = format!("bash: {base}: readonly variable\n");
+                        if has_command {
+                            stderr.push_str(&msg);
+                            continue;
+                        }
+                        return Err(crate::error::Error::LineAbort(msg));
+                    }
+                    if let Some(index_str) = &assignment.index {
+                        self.assign_element(&base, index_str, value, assignment.append)
+                            .await?;
+                    } else if has_command {
+                        self.assign_raw = true;
+                        if assignment.append {
+                            let existing = self.expand_variable(&assignment.name);
+                            self.set_variable(assignment.name.clone(), existing + &value);
+                        } else {
+                            self.set_variable(assignment.name.clone(), value);
+                        }
+                        self.assign_raw = false;
                     } else if assignment.append {
-                        let existing = self.expand_variable(&assignment.name);
-                        self.set_variable(assignment.name.clone(), existing + &value);
+                        self.append_scalar(&assignment.name, value);
                     } else {
                         self.set_variable(assignment.name.clone(), value);
                     }
                 }
                 AssignmentValue::Array(words) => {
-                    // Expand directly into the replacement array so word-split expansions cannot
-                    // accumulate an unbounded temporary Vec before max_array_entries is enforced.
-                    let arr_name = self.resolve_nameref(&assignment.name).to_string();
-                    let old_entries = self.scoped.arrays.get(&arr_name).map_or(0, |arr| arr.len());
-                    let remaining_entries = self
-                        .memory_limits
-                        .max_array_entries
-                        .saturating_sub(self.memory_budget.array_entries);
-                    let max_new_entries = old_entries.saturating_add(remaining_entries);
-                    let mut next_arr = if assignment.append {
-                        self.scoped
-                            .arrays
-                            .get(&arr_name)
-                            .cloned()
-                            .unwrap_or_default()
-                    } else {
-                        HashMap::new()
-                    };
-                    let mut idx = if assignment.append {
-                        next_arr.keys().max().map(|k| k + 1).unwrap_or(0)
-                    } else {
-                        0
-                    };
-
-                    'array_words: for word in words.iter() {
-                        let is_unquoted_expansion = !word.quoted
-                            && word.parts.iter().any(|p| {
-                                matches!(
-                                    p,
-                                    WordPart::Variable(_)
-                                        | WordPart::CommandSubstitution(_)
-                                        | WordPart::ArithmeticExpansion(_)
-                                        | WordPart::ParameterExpansion { .. }
-                                        | WordPart::ArrayAccess { .. }
-                                )
-                            });
-                        // "${arr[@]}" or "$@" in array context should splat
-                        // individual elements, not join into a single string.
-                        let is_quoted_splat = word.quoted
-                            && word.parts.len() == 1
-                            && matches!(
-                                &word.parts[0],
-                                WordPart::ArrayAccess { index, .. } if index == "@"
-                            );
-                        let is_quoted_positional_splat = word.quoted
-                            && word.parts.len() == 1
-                            && matches!(
-                                &word.parts[0],
-                                WordPart::Variable(name) if name == "@"
-                            );
-
-                        if is_unquoted_expansion {
-                            let remaining = max_new_entries.saturating_sub(next_arr.len());
-                            if remaining == 0 {
-                                break;
-                            }
-                            let expanded = self.expand_word(word).await?;
-                            for field in self.ifs_split_limited(&expanded, remaining)? {
-                                next_arr.insert(idx, field);
-                                idx += 1;
-                            }
-                            if next_arr.len() >= max_new_entries {
-                                break 'array_words;
-                            }
-                        } else if is_quoted_splat || is_quoted_positional_splat {
-                            for field in self.expand_word_to_fields(word).await? {
-                                if next_arr.len() >= max_new_entries {
-                                    break 'array_words;
-                                }
-                                next_arr.insert(idx, field);
-                                idx += 1;
-                            }
-                        } else {
-                            let value = self.expand_word(word).await?;
-                            if next_arr.len() >= max_new_entries {
-                                break;
-                            }
-                            next_arr.insert(idx, value);
-                            idx += 1;
+                    let arr_name = match self.resolve_nameref_strict(&assignment.name) {
+                        Ok(n) => n,
+                        Err(()) => {
+                            return Err(crate::error::Error::LineAbort(format!(
+                                "bash: warning: {}: circular name reference\n",
+                                assignment.name
+                            )));
                         }
+                    };
+                    // THREAT[TM-INJ-019]: arrays honour readonly like scalars.
+                    if self.is_var_readonly(&arr_name) {
+                        return Err(crate::error::Error::LineAbort(format!(
+                            "bash: {arr_name}: readonly variable\n"
+                        )));
                     }
-
-                    let _ = self.insert_array_checked(arr_name, next_arr);
+                    let assoc = self.scoped.assoc_arrays.contains_key(&arr_name);
+                    self.assign_array_words(&arr_name, words, assignment.append, assoc)
+                        .await?;
                 }
             }
         }
-        Ok(())
+        Ok(stderr)
     }
 
     /// Try alias expansion. Returns `Some(result)` if alias was expanded, `None` otherwise.
@@ -6654,7 +6547,11 @@ impl Interpreter {
             }
 
             let pre_expanded_args = if !name.is_empty() {
-                match self.expand_command_args(command).await {
+                let decl = matches!(
+                    name.as_str(),
+                    "declare" | "typeset" | "local" | "export" | "readonly" | "builtin" | "command"
+                );
+                match self.expand_command_args(command, decl).await {
                     Ok(args) if name_extra_args.is_empty() => Some(args),
                     Ok(args) => {
                         let mut all = name_extra_args;
@@ -6683,10 +6580,27 @@ impl Interpreter {
 
             let pre_assign_subst_gen = self.subst_generation;
 
-            if let Err(err) = self.process_command_assignments(&command.assignments).await {
-                self.discard_deferred_proc_subs_from(deferred_proc_sub_start);
-                return Err(err);
-            }
+            // Environment before the prefix assignments, so `V=1 cmd` on an
+            // exported `V` restores the old value afterwards.
+            let pre_assign_env: HashMap<String, Option<String>> = if name.is_empty() {
+                HashMap::new()
+            } else {
+                command
+                    .assignments
+                    .iter()
+                    .map(|a| (a.name.clone(), self.env.get(&a.name).cloned()))
+                    .collect()
+            };
+            let assign_stderr = match self
+                .process_command_assignments(&command.assignments, !name.is_empty())
+                .await
+            {
+                Ok(stderr) => stderr,
+                Err(err) => {
+                    self.discard_deferred_proc_subs_from(deferred_proc_sub_start);
+                    return Err(err);
+                }
+            };
             if let Some(err) = self.pending_arith_abort() {
                 self.restore_variables(var_saves);
                 self.discard_deferred_proc_subs_from(deferred_proc_sub_start);
@@ -6752,9 +6666,12 @@ impl Interpreter {
                 if assignment.index.is_none()
                     && let Some(value) = self.scoped.variables.get(&assignment.name).cloned()
                 {
-                    env_saves
-                        .entry(assignment.name.clone())
-                        .or_insert_with(|| self.env.get(&assignment.name).cloned());
+                    env_saves.entry(assignment.name.clone()).or_insert_with(|| {
+                        pre_assign_env
+                            .get(&assignment.name)
+                            .cloned()
+                            .unwrap_or(None)
+                    });
                     self.env.insert(assignment.name.clone(), value);
                 }
             }
@@ -6794,6 +6711,17 @@ impl Interpreter {
             // Restore variables
             self.restore_variables(var_saves);
 
+            let result = if assign_stderr.is_empty() {
+                result
+            } else {
+                result.map(|mut r| {
+                    let mut stderr: crate::StreamData = assign_stderr.into();
+                    stderr.append(&r.stderr);
+                    r.stderr = stderr;
+                    r
+                })
+            };
+
             // Prepend xtrace to stderr
             let mut result = if let Some(trace) = xtrace_line {
                 result.map(|mut r| {
@@ -6820,10 +6748,35 @@ impl Interpreter {
     fn expand_command_args<'a>(
         &'a mut self,
         command: &'a SimpleCommand,
+        decl: bool,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<String>>> + Send + 'a>> {
         Box::pin(async move {
             let mut args: Vec<String> = Vec::new();
+            let mut compounds: Vec<Vec<Word>> = Vec::new();
             for word in &command.args {
+                // `name=(...)` operand of a declaration builtin: the builtin
+                // expands the elements; pass a placeholder naming them.
+                if let [
+                    WordPart::CompoundAssignment {
+                        name,
+                        append,
+                        elements,
+                    },
+                ] = word.parts.as_slice()
+                {
+                    if decl {
+                        let op = if *append { "+=" } else { "=" };
+                        args.push(format!(
+                            "{name}{op}{m}{}{m}",
+                            compounds.len(),
+                            m = declare::COMPOUND_MARK
+                        ));
+                        compounds.push(elements.clone());
+                    } else {
+                        args.push(word.to_string());
+                    }
+                    continue;
+                }
                 // Use field expansion so "${arr[@]}" produces multiple args
                 let fields = self.expand_word_to_fields(word).await?;
 
@@ -6856,6 +6809,7 @@ impl Interpreter {
                     }
                 }
             }
+            self.pending_compound_args = compounds;
             Ok(args)
         })
     }
@@ -7407,25 +7361,6 @@ impl Interpreter {
 
             self.apply_builtin_side_effects(&result).await;
 
-            // Sync successful export operands into env so subprocess isolation can see them.
-            // Keep syncing even if export returned nonzero for other args (bash-compatible).
-            if name == "export" {
-                for arg in args {
-                    if let Some(eq_pos) = arg.find('=') {
-                        let var_name = &arg[..eq_pos];
-                        if self.is_var_readonly(var_name) {
-                            continue;
-                        }
-                        if let Some(value) = self.scoped.variables.get(var_name) {
-                            self.env.insert(var_name.to_string(), value.clone());
-                        }
-                    } else if let Some(value) = self.scoped.variables.get(arg.as_str()) {
-                        // export NAME (without =) — mark existing variable as exported
-                        self.env.insert(arg.to_string(), value.clone());
-                    }
-                }
-            }
-
             let result = self.apply_redirections(result, redirects).await?;
             self.apply_after_tool(name, result)
         })
@@ -7529,13 +7464,32 @@ impl Interpreter {
 
         match name {
             "exec" => Some(self.execute_exec_builtin(args, redirects).await),
-            "local" => Some(self.execute_local_builtin(args, redirects).await),
+            "local" => Some(
+                self.execute_declaration_builtin(name, declare::DeclKind::Local, args, redirects)
+                    .await,
+            ),
+            "export" => Some(
+                self.execute_declaration_builtin(name, declare::DeclKind::Export, args, redirects)
+                    .await,
+            ),
+            "readonly" => Some(
+                self.execute_declaration_builtin(
+                    name,
+                    declare::DeclKind::Readonly,
+                    args,
+                    redirects,
+                )
+                .await,
+            ),
             "bash" | "sh" => Some(self.execute_shell(name, args, stdin, redirects).await),
             "source" | "." => Some(self.execute_source(args, redirects).await),
             "eval" => Some(self.execute_eval(args, stdin, redirects).await),
             "command" => Some(self.execute_command_builtin(args, stdin, redirects).await),
             "builtin" => Some(self.execute_builtin_builtin(args, stdin, redirects).await),
-            "declare" | "typeset" => Some(self.execute_declare_builtin(args, redirects).await),
+            "declare" | "typeset" => Some(
+                self.execute_declaration_builtin(name, declare::DeclKind::Declare, args, redirects)
+                    .await,
+            ),
             "let" => Some(self.execute_let_builtin(args, redirects).await),
             "unset" => Some(self.execute_unset_builtin(args, redirects).await),
             "getopts" => Some(self.execute_getopts(args, redirects).await),
@@ -7932,7 +7886,8 @@ impl Interpreter {
         // Push call frame: $0 = script name, $1..N = args
         self.call_stack = vec![CallFrame {
             name: name.to_string(),
-            locals: HashMap::new(),
+            saved_vars: HashMap::new(),
+            is_function: false,
             local_arrays: HashMap::new(),
             local_assoc_arrays: HashMap::new(),
             positional: args.to_vec(),
@@ -8074,7 +8029,8 @@ impl Interpreter {
             if self.call_stack.is_empty() {
                 self.call_stack.push(CallFrame {
                     name: filename.clone(),
-                    locals: HashMap::new(),
+                    saved_vars: HashMap::new(),
+                    is_function: false,
                     local_arrays: HashMap::new(),
                     local_assoc_arrays: HashMap::new(),
                     positional: source_args,
@@ -8323,6 +8279,15 @@ impl Interpreter {
 
     fn push_alias_reparse_word_part(out: &mut String, part: &WordPart) {
         match part {
+            WordPart::CompoundAssignment { .. } => {
+                let word = Word {
+                    parts: vec![part.clone()],
+                    quoted: false,
+                    has_unquoted_glob: false,
+                    part_quoted: Vec::new(),
+                };
+                out.push_str(&word.to_string());
+            }
             WordPart::Literal(s) => Self::push_alias_reparse_literal(out, s, false),
             WordPart::Variable(name) => out.push_str(&format!("${}", name)),
             WordPart::CommandSubstitution(cmd) => out.push_str(&format!("$({:?})", cmd)),
@@ -8477,7 +8442,8 @@ impl Interpreter {
         // Push call frame with positional parameters
         self.call_stack.push(CallFrame {
             name: name.to_string(),
-            locals: HashMap::new(),
+            saved_vars: HashMap::new(),
+            is_function: true,
             local_arrays: HashMap::new(),
             local_assoc_arrays: HashMap::new(),
             positional: args,
@@ -8571,216 +8537,6 @@ impl Interpreter {
         result.errexit_suppressed = false;
 
         self.apply_redirections(result, redirects).await
-    }
-
-    /// Execute the `local` builtin — set variables in function call frame.
-    async fn execute_local_builtin(
-        &mut self,
-        args: &[String],
-        redirects: &[Redirect],
-    ) -> Result<ExecResult> {
-        let mut flags = DeclareFlags::default();
-        let mut var_args: Vec<&String> = Vec::new();
-        for arg in args {
-            if arg.starts_with('-') && !arg.contains('=') {
-                flags.parse_flag_chars(arg);
-            } else {
-                var_args.push(arg);
-            }
-        }
-
-        let merged = merge_compound_assignments(&var_args);
-
-        if !self.call_stack.is_empty() {
-            // In a function - set in locals
-            for arg in &merged {
-                if let Some(eq_pos) = arg.find('=') {
-                    let var_name = &arg[..eq_pos];
-                    let value = &arg[eq_pos + 1..];
-                    if !is_valid_var_name(var_name) {
-                        let result = ExecResult::err(
-                            format!("local: `{}': not a valid identifier\n", arg),
-                            1,
-                        );
-                        return self.apply_redirections(result, redirects).await;
-                    }
-                    // THREAT[TM-INJ-014]: Block internal variable prefix injection via local
-                    if is_internal_variable(var_name) {
-                        continue;
-                    }
-                    // Handle compound array assignment: local arr=(1 2 3) or local -a/-A arr=(...)
-                    let is_compound = value.starts_with('(') && value.ends_with(')');
-                    if is_compound {
-                        self.shadow_local_array_bindings(var_name, false, false);
-                        let inner = &value[1..value.len() - 1];
-                        let inserted = if flags.assoc {
-                            self.remember_local_assoc_array_binding(var_name);
-                            let mut arr = HashMap::new();
-                            let mut rest = inner.trim();
-                            while let Some(bracket_start) = rest.find('[') {
-                                if let Some(bracket_end) = rest[bracket_start..].find(']') {
-                                    let key = &rest[bracket_start + 1..bracket_start + bracket_end];
-                                    let after = &rest[bracket_start + bracket_end + 1..];
-                                    if let Some(eq_rest) = after.strip_prefix('=') {
-                                        let eq_rest = eq_rest.trim_start();
-                                        let (val, remainder) =
-                                            if let Some(stripped) = eq_rest.strip_prefix('"') {
-                                                if let Some(end_q) = stripped.find('"') {
-                                                    (
-                                                        &stripped[..end_q],
-                                                        stripped[end_q + 1..].trim_start(),
-                                                    )
-                                                } else {
-                                                    (stripped.trim_end_matches('"'), "")
-                                                }
-                                            } else {
-                                                match eq_rest.find(char::is_whitespace) {
-                                                    Some(sp) => {
-                                                        (&eq_rest[..sp], eq_rest[sp..].trim_start())
-                                                    }
-                                                    None => (eq_rest, ""),
-                                                }
-                                            };
-                                        arr.insert(key.to_string(), val.to_string());
-                                        rest = remainder;
-                                    } else {
-                                        break;
-                                    }
-                                } else {
-                                    break;
-                                }
-                            }
-                            self.insert_assoc_array_checked(var_name.to_string(), arr)
-                        } else {
-                            self.remember_local_array_binding(var_name);
-                            let mut arr = HashMap::new();
-                            for (idx, val) in inner.split_whitespace().enumerate() {
-                                arr.insert(idx, val.trim_matches('"').to_string());
-                            }
-                            self.insert_array_checked(var_name.to_string(), arr)
-                        };
-                        // Mark local only when the backing array fit the memory budget.
-                        if inserted {
-                            self.insert_local_checked(var_name.to_string(), String::new());
-                        }
-                    } else if flags.nameref {
-                        self.shadow_local_array_bindings(var_name, false, false);
-                        self.insert_local_checked(var_name.to_string(), String::new());
-                    } else if flags.integer {
-                        self.shadow_local_array_bindings(var_name, false, false);
-                        let int_val = self.evaluate_arithmetic_with_assign(value);
-                        self.insert_local_checked(var_name.to_string(), int_val.to_string());
-                        self.add_var_attr(var_name, VarAttrs::INTEGER);
-                    } else {
-                        self.shadow_local_array_bindings(var_name, false, false);
-                        self.insert_local_checked(var_name.to_string(), value.to_string());
-                    }
-                } else if !is_internal_variable(arg) {
-                    if flags.assoc {
-                        self.shadow_local_array_bindings(arg, false, false);
-                        if self.insert_assoc_array_checked(arg.to_string(), HashMap::new()) {
-                            self.insert_local_checked(arg.to_string(), String::new());
-                        }
-                    } else if flags.array {
-                        self.shadow_local_array_bindings(arg, false, false);
-                        if self.insert_array_checked(arg.to_string(), HashMap::new()) {
-                            self.insert_local_checked(arg.to_string(), String::new());
-                        }
-                    } else {
-                        self.shadow_local_array_bindings(arg, false, false);
-                        self.insert_local_checked(arg.to_string(), String::new());
-                    }
-                    if flags.integer {
-                        self.add_var_attr(arg, VarAttrs::INTEGER);
-                    }
-                }
-            }
-            // Set nameref markers (after frame borrow is released)
-            if flags.nameref {
-                for arg in &merged {
-                    if let Some(eq_pos) = arg.find('=') {
-                        let var_name = &arg[..eq_pos];
-                        let value = &arg[eq_pos + 1..];
-                        if !is_internal_variable(var_name) {
-                            self.set_nameref(var_name, value.to_string());
-                        }
-                    }
-                }
-            }
-        } else {
-            // Not in a function - set in global variables (bash behavior)
-            for arg in &merged {
-                if let Some(eq_pos) = arg.find('=') {
-                    let var_name = &arg[..eq_pos];
-                    let value = &arg[eq_pos + 1..];
-                    // THREAT[TM-INJ-014]: Block internal variable prefix injection via local
-                    if is_internal_variable(var_name) {
-                        continue;
-                    }
-                    let is_compound = value.starts_with('(') && value.ends_with(')');
-                    if is_compound {
-                        let inner = &value[1..value.len() - 1];
-                        if flags.assoc {
-                            let mut arr = HashMap::new();
-                            let mut rest = inner.trim();
-                            while let Some(bracket_start) = rest.find('[') {
-                                if let Some(bracket_end) = rest[bracket_start..].find(']') {
-                                    let key = &rest[bracket_start + 1..bracket_start + bracket_end];
-                                    let after = &rest[bracket_start + bracket_end + 1..];
-                                    if let Some(eq_rest) = after.strip_prefix('=') {
-                                        let eq_rest = eq_rest.trim_start();
-                                        let (val, remainder) =
-                                            if let Some(stripped) = eq_rest.strip_prefix('"') {
-                                                if let Some(end_q) = stripped.find('"') {
-                                                    (
-                                                        &stripped[..end_q],
-                                                        stripped[end_q + 1..].trim_start(),
-                                                    )
-                                                } else {
-                                                    (stripped.trim_end_matches('"'), "")
-                                                }
-                                            } else {
-                                                match eq_rest.find(char::is_whitespace) {
-                                                    Some(sp) => {
-                                                        (&eq_rest[..sp], eq_rest[sp..].trim_start())
-                                                    }
-                                                    None => (eq_rest, ""),
-                                                }
-                                            };
-                                        arr.insert(key.to_string(), val.to_string());
-                                        rest = remainder;
-                                    } else {
-                                        break;
-                                    }
-                                } else {
-                                    break;
-                                }
-                            }
-                            let _ = self.insert_assoc_array_checked(var_name.to_string(), arr);
-                        } else {
-                            let mut arr = HashMap::new();
-                            for (idx, val) in inner.split_whitespace().enumerate() {
-                                arr.insert(idx, val.trim_matches('"').to_string());
-                            }
-                            let _ = self.insert_array_checked(var_name.to_string(), arr);
-                        }
-                    } else if flags.nameref {
-                        self.set_nameref(var_name, value.to_string());
-                    } else {
-                        self.insert_variable_checked(var_name.to_string(), value.to_string());
-                    }
-                } else if !is_internal_variable(arg) {
-                    if flags.assoc {
-                        self.assoc_arrays_mut().entry(arg.to_string()).or_default();
-                    } else if flags.array {
-                        self.arrays_mut().entry(arg.to_string()).or_default();
-                    } else {
-                        self.insert_variable_checked(arg.to_string(), String::new());
-                    }
-                }
-            }
-        }
-        Ok(ExecResult::ok(String::new()))
     }
 
     /// Execute the `let` builtin — evaluate arithmetic expressions.
@@ -8888,28 +8644,7 @@ impl Interpreter {
                     exit_code = 1;
                     continue;
                 }
-                self.vars_mut().remove(&resolved);
-                self.env.remove(&resolved);
-                // THREAT[TM-DOS-114]: `unset arr` must return the array's entry
-                // slots and bytes to the budget. Without this a set/unset cycle
-                // drifts until a healthy script is refused.
-                let released = self
-                    .arrays_mut()
-                    .remove(&resolved)
-                    .map_or((0, 0), |arr| (arr.len(), Self::indexed_array_bytes(&arr)));
-                let released_assoc = self
-                    .assoc_arrays_mut()
-                    .remove(&resolved)
-                    .map_or((0, 0), |arr| (arr.len(), Self::assoc_array_bytes(&arr)));
-                self.memory_budget
-                    .record_array_remove(released.0 + released_assoc.0);
-                self.memory_budget
-                    .release_array_bytes(released.1 + released_assoc.1);
-                self.clear_var_attrs(&resolved);
-                self.remove_nameref(&resolved);
-                for frame in self.call_stack.iter_mut().rev() {
-                    frame.locals.remove(&resolved);
-                }
+                self.unset_variable(&resolved);
             }
         }
         let result = ExecResult {
@@ -8918,6 +8653,60 @@ impl Interpreter {
             ..Default::default()
         };
         self.apply_redirections(result, redirects).await
+    }
+
+    /// Remove every live binding of `name`: scalar value, arrays,
+    /// attributes, nameref and env entry.
+    fn clear_live_binding(&mut self, name: &str) {
+        self.remove_scalar_value(name);
+        self.env.remove(name);
+        // THREAT[TM-DOS-114]: `unset arr` must return the array's entry
+        // slots and bytes to the budget. Without this a set/unset cycle
+        // drifts until a healthy script is refused.
+        let released = self
+            .arrays_mut()
+            .remove(name)
+            .map_or((0, 0), |arr| (arr.len(), Self::indexed_array_bytes(&arr)));
+        let released_assoc = self
+            .assoc_arrays_mut()
+            .remove(name)
+            .map_or((0, 0), |arr| (arr.len(), Self::assoc_array_bytes(&arr)));
+        self.memory_budget
+            .record_array_remove(released.0 + released_assoc.0);
+        self.memory_budget
+            .release_array_bytes(released.1 + released_assoc.1);
+        self.clear_var_attrs(name);
+        self.remove_nameref(name);
+    }
+
+    /// `unset name` (bash semantics). A local of the current function stays
+    /// local but unset. A local of a calling function is popped instead, so
+    /// the binding it shadowed becomes visible again.
+    fn unset_variable(&mut self, name: &str) {
+        let owner = self
+            .call_stack
+            .iter()
+            .rposition(|f| f.saved_vars.contains_key(name));
+        let current = self.local_frame_index();
+        if let Some(idx) = owner
+            && Some(idx) != current
+        {
+            let frame = &mut self.call_stack[idx];
+            let saved = frame.saved_vars.remove(name).unwrap_or_default();
+            let indexed = frame.local_arrays.remove(name);
+            let assoc = frame.local_assoc_arrays.remove(name);
+            self.restore_saved_var(name, saved);
+            match indexed {
+                Some(prev) => self.restore_array_binding(name, prev),
+                None => self.restore_array_binding(name, None),
+            }
+            match assoc {
+                Some(prev) => self.restore_assoc_array_binding(name, prev),
+                None => self.restore_assoc_array_binding(name, None),
+            }
+            return;
+        }
+        self.clear_live_binding(name);
     }
 
     /// Usage: `getopts optstring name [args...]`
@@ -9296,331 +9085,6 @@ impl Interpreter {
         }
     }
 
-    /// Execute `declare`/`typeset` builtin — declare variables with attributes.
-    ///
-    /// - `declare var=value` — set variable
-    /// - `declare -i var=value` — integer attribute (stored as-is)
-    /// - `declare -r var=value` — readonly
-    /// - `declare -x var=value` — export
-    /// - `declare -a arr` — indexed array
-    /// - `declare -p [var]` — print variable declarations
-    async fn execute_declare_builtin(
-        &mut self,
-        args: &[String],
-        redirects: &[Redirect],
-    ) -> Result<ExecResult> {
-        if args.is_empty() {
-            // declare with no args: print all variables, filtering hidden markers (TM-INF-017)
-            let mut output = String::new();
-            let mut entries: Vec<_> = self.scoped.variables.iter().collect();
-            entries.sort_by_key(|(k, _)| (*k).clone());
-            for (name, value) in entries {
-                if is_hidden_variable(name) {
-                    continue;
-                }
-                output.push_str(&format!("declare -- {}=\"{}\"\n", name, value));
-            }
-            let mut result = ExecResult::ok(output);
-            result = self.apply_redirections(result, redirects).await?;
-            return Ok(result);
-        }
-
-        let mut print_mode = false;
-        let mut is_readonly = false;
-        let mut is_export = false;
-        let mut is_function = false;
-        let mut flags = DeclareFlags::default();
-        let mut remove_nameref = false;
-        let mut is_lowercase = false;
-        let mut is_uppercase = false;
-        let mut names: Vec<&str> = Vec::new();
-
-        for arg in args {
-            if arg.starts_with('-') && !arg.contains('=') {
-                flags.parse_flag_chars(arg);
-                for c in arg[1..].chars() {
-                    match c {
-                        'p' => print_mode = true,
-                        'r' => is_readonly = true,
-                        'x' => is_export = true,
-                        'f' => is_function = true,
-                        'l' => is_lowercase = true,
-                        'u' => is_uppercase = true,
-                        _ => {} // n, a, A, i handled by flags
-                    }
-                }
-            } else if arg.starts_with('+') && !arg.contains('=') {
-                // +n removes nameref attribute
-                for c in arg[1..].chars() {
-                    if c == 'n' {
-                        remove_nameref = true;
-                    }
-                }
-            } else {
-                names.push(arg);
-            }
-        }
-
-        // declare -f: function display mode
-        if is_function {
-            let mut output = String::new();
-            if names.is_empty() {
-                // List all functions
-                let mut func_names: Vec<_> =
-                    self.scoped.functions.keys().cloned().collect::<Vec<_>>();
-                func_names.sort();
-                for fname in &func_names {
-                    output.push_str(&format!("{} ()\n{{\n    ...\n}}\n", fname));
-                }
-            } else {
-                // Print specific functions — return 1 if any not found
-                for name in &names {
-                    if self.scoped.functions.contains_key(*name) {
-                        output.push_str(&format!("{} ()\n{{\n    ...\n}}\n", name));
-                    } else {
-                        let mut result = ExecResult::with_code(String::new(), 1);
-                        result = self.apply_redirections(result, redirects).await?;
-                        return Ok(result);
-                    }
-                }
-            }
-            let mut result = ExecResult::ok(output);
-            result = self.apply_redirections(result, redirects).await?;
-            return Ok(result);
-        }
-
-        if print_mode {
-            let mut output = String::new();
-            if names.is_empty() {
-                // Print all variables, filtering internal markers (TM-INF-017)
-                let mut entries: Vec<_> = self.scoped.variables.iter().collect();
-                entries.sort_by_key(|(k, _)| (*k).clone());
-                for (name, value) in entries {
-                    if is_internal_variable(name) {
-                        continue;
-                    }
-                    output.push_str(&format!("declare -- {}=\"{}\"\n", name, value));
-                }
-            } else {
-                for name in &names {
-                    // Strip =value if present
-                    let var_name = name.split('=').next().unwrap_or(name);
-                    if let Some(value) = self.scoped.variables.get(var_name) {
-                        let mut attrs = String::from("--");
-                        if self.is_var_readonly(var_name) {
-                            attrs = String::from("-r");
-                        }
-                        output.push_str(&format!("declare {} {}=\"{}\"\n", attrs, var_name, value));
-                    } else if let Some(arr) = self.scoped.assoc_arrays.get(var_name) {
-                        let mut items: Vec<_> = arr.iter().collect();
-                        items.sort_by_key(|(k, _)| (*k).clone());
-                        let inner: String = items
-                            .iter()
-                            .map(|(k, v)| format!("[{}]=\"{}\"", k, v))
-                            .collect::<Vec<_>>()
-                            .join(" ");
-                        output.push_str(&format!("declare -A {}=({})\n", var_name, inner));
-                    } else if let Some(arr) = self.scoped.arrays.get(var_name) {
-                        let mut items: Vec<_> = arr.iter().collect();
-                        items.sort_by_key(|(k, _)| *k);
-                        let inner: String = items
-                            .iter()
-                            .map(|(k, v)| format!("[{}]=\"{}\"", k, v))
-                            .collect::<Vec<_>>()
-                            .join(" ");
-                        output.push_str(&format!("declare -a {}=({})\n", var_name, inner));
-                    } else {
-                        return Ok(ExecResult::err(
-                            format!("bash: declare: {}: not found\n", var_name),
-                            1,
-                        ));
-                    }
-                }
-            }
-            let mut result = ExecResult::ok(output);
-            result = self.apply_redirections(result, redirects).await?;
-            return Ok(result);
-        }
-
-        // Reconstruct compound assignments: declare -A m=([a]="1" [b]="2")
-        let merged_names = merge_compound_assignments(&names);
-
-        let mut declare_stderr = String::new();
-        let mut declare_exit_code: i32 = 0;
-
-        // Set variables
-        for name in &merged_names {
-            if let Some(eq_pos) = name.find('=') {
-                let var_name = &name[..eq_pos];
-                let value = &name[eq_pos + 1..];
-
-                // THREAT[TM-INJ-012]: Block internal variable prefix injection via declare
-                if is_internal_variable(var_name) {
-                    continue;
-                }
-
-                // THREAT[TM-INJ-020]: Refuse to overwrite readonly variables and
-                // surface the error so callers cannot mistake a silent skip for success.
-                if self.is_var_readonly(var_name) {
-                    declare_stderr
-                        .push_str(&format!("bash: declare: {var_name}: readonly variable\n"));
-                    declare_exit_code = 1;
-                    continue;
-                }
-
-                // Handle compound array assignment: declare -A m=([k]="v" ...)
-                if (flags.assoc || flags.array) && value.starts_with('(') && value.ends_with(')') {
-                    let inner = &value[1..value.len() - 1];
-                    if flags.assoc {
-                        let arr = self
-                            .assoc_arrays_mut()
-                            .entry(var_name.to_string())
-                            .or_default();
-                        arr.clear();
-                        // Parse [key]="value" pairs
-                        let mut rest = inner.trim();
-                        while let Some(bracket_start) = rest.find('[') {
-                            if let Some(bracket_end) = rest[bracket_start..].find(']') {
-                                let key = &rest[bracket_start + 1..bracket_start + bracket_end];
-                                let after = &rest[bracket_start + bracket_end + 1..];
-                                if let Some(eq_rest) = after.strip_prefix('=') {
-                                    let eq_rest = eq_rest.trim_start();
-                                    let (val, remainder) = if let Some(stripped) =
-                                        eq_rest.strip_prefix('"')
-                                    {
-                                        // Quoted value
-                                        if let Some(end_q) = stripped.find('"') {
-                                            (&stripped[..end_q], stripped[end_q + 1..].trim_start())
-                                        } else {
-                                            (stripped.trim_end_matches('"'), "")
-                                        }
-                                    } else {
-                                        // Unquoted value — up to next space or end
-                                        match eq_rest.find(char::is_whitespace) {
-                                            Some(sp) => {
-                                                (&eq_rest[..sp], eq_rest[sp..].trim_start())
-                                            }
-                                            None => (eq_rest, ""),
-                                        }
-                                    };
-                                    arr.insert(key.to_string(), val.to_string());
-                                    rest = remainder;
-                                } else {
-                                    break;
-                                }
-                            } else {
-                                break;
-                            }
-                        }
-                    } else {
-                        // Indexed array: declare -a arr=(a b c)
-                        let arr = self.arrays_mut().entry(var_name.to_string()).or_default();
-                        arr.clear();
-                        for (idx, val) in inner.split_whitespace().enumerate() {
-                            arr.insert(idx, val.trim_matches('"').to_string());
-                        }
-                    }
-                } else if flags.nameref {
-                    // declare -n ref=target: create nameref
-                    self.set_nameref(var_name, value.to_string());
-                } else if flags.integer {
-                    // Evaluate as arithmetic expression
-                    let int_val = self.evaluate_arithmetic_with_assign(value);
-                    self.insert_variable_checked(var_name.to_string(), int_val.to_string());
-                    // Set persistent integer attribute marker
-                    self.add_var_attr(var_name, VarAttrs::INTEGER);
-                } else {
-                    // Apply case conversion attributes
-                    let final_value = if is_lowercase {
-                        value.to_lowercase()
-                    } else if is_uppercase {
-                        value.to_uppercase()
-                    } else {
-                        value.to_string()
-                    };
-                    self.insert_variable_checked(var_name.to_string(), final_value);
-                }
-
-                // Set case conversion attribute markers
-                if is_lowercase {
-                    self.add_var_attr(var_name, VarAttrs::LOWER);
-                    self.remove_var_attr(var_name, VarAttrs::UPPER);
-                }
-                if is_uppercase {
-                    self.add_var_attr(var_name, VarAttrs::UPPER);
-                    self.remove_var_attr(var_name, VarAttrs::LOWER);
-                }
-                if is_readonly {
-                    self.add_var_attr(var_name, VarAttrs::READONLY);
-                }
-                if is_export {
-                    self.env.insert(
-                        var_name.to_string(),
-                        self.scoped
-                            .variables
-                            .get(var_name)
-                            .cloned()
-                            .unwrap_or_default(),
-                    );
-                }
-            } else {
-                // Declare without value
-                if remove_nameref {
-                    // typeset +n ref: remove nameref attribute
-                    self.remove_nameref(name);
-                } else if flags.nameref {
-                    // typeset -n ref (without =value): use existing variable value as target
-                    if let Some(existing) = self.scoped.variables.get(name.as_str()).cloned()
-                        && !existing.is_empty()
-                    {
-                        self.set_nameref(name, existing);
-                    }
-                } else if flags.assoc {
-                    // Initialize empty associative array
-                    self.assoc_arrays_mut().entry(name.to_string()).or_default();
-                } else if flags.array {
-                    // Initialize empty indexed array
-                    self.arrays_mut().entry(name.to_string()).or_default();
-                } else if !self.scoped.variables.contains_key(name.as_str()) {
-                    self.insert_variable_checked(name.to_string(), String::new());
-                }
-                // Set case conversion attribute markers
-                if is_lowercase {
-                    self.add_var_attr(name, VarAttrs::LOWER);
-                    self.remove_var_attr(name, VarAttrs::UPPER);
-                }
-                if is_uppercase {
-                    self.add_var_attr(name, VarAttrs::UPPER);
-                    self.remove_var_attr(name, VarAttrs::LOWER);
-                }
-                if is_readonly {
-                    self.add_var_attr(name, VarAttrs::READONLY);
-                }
-                if flags.integer {
-                    self.add_var_attr(name, VarAttrs::INTEGER);
-                }
-                if is_export {
-                    self.env.insert(
-                        name.to_string(),
-                        self.scoped
-                            .variables
-                            .get(name.as_str())
-                            .cloned()
-                            .unwrap_or_default(),
-                    );
-                }
-            }
-        }
-
-        let mut result = ExecResult {
-            stderr: declare_stderr.into(),
-            exit_code: declare_exit_code,
-            ..Default::default()
-        };
-        result = self.apply_redirections(result, redirects).await?;
-        Ok(result)
-    }
-
     /// Execute an [`ExecutionPlan`] returned by a builtin's `execution_plan()` method.
     ///
     /// This is the interpreter hook that fulfills sub-command execution requests
@@ -9902,7 +9366,7 @@ impl Interpreter {
             .saturating_sub(baseline_bash_source_len);
 
         if leaked_call_frames > 0 {
-            self.call_stack.truncate(baseline_call_stack_len);
+            self.unwind_call_stack(baseline_call_stack_len);
         }
         if leaked_bash_source_entries > 0 {
             self.bash_source_stack.truncate(baseline_bash_source_len);
@@ -9976,7 +9440,8 @@ impl Interpreter {
                         // synthetic frame keeps the default shell name.
                         self.call_stack.push(CallFrame {
                             name: Self::DEFAULT_ARG0.to_string(),
-                            locals: HashMap::new(),
+                            saved_vars: HashMap::new(),
+                            is_function: false,
                             local_arrays: HashMap::new(),
                             local_assoc_arrays: HashMap::new(),
                             positional: new_positional.clone(),
@@ -10356,16 +9821,30 @@ impl Interpreter {
             return;
         }
         // Resolve nameref: if `name` is a nameref, assign to the target
-        // instead. The common case (no nameref) reuses `name` without
-        // allocating; only nameref hops allocate a fresh owned target.
-        let resolved_string: String = {
-            let resolved = self.resolve_nameref(&name);
-            if std::ptr::eq(resolved.as_ptr(), name.as_ptr()) {
-                name
-            } else {
-                resolved.to_string()
+        // instead. The common case (no nameref) moves `name` through.
+        let resolved_string: String = if self.scoped.namerefs.is_empty() {
+            name
+        } else {
+            if let Some(target) = self.scoped.namerefs.get(&name)
+                && target.is_empty()
+            {
+                // `declare -n r; r=x`: the first value assigned is the target.
+                self.set_nameref(&name, value);
+                return;
+            }
+            match self.resolve_nameref_strict(&name) {
+                Ok(target) => target,
+                Err(()) => {
+                    self.record_arith_error(format!("warning: {name}: circular name reference"));
+                    return;
+                }
             }
         };
+        // A nameref to an element (`declare -n r=a[1]`) writes the element.
+        if resolved_string.ends_with(']') && resolved_string.contains('[') {
+            self.set_parameter_expansion_target(&resolved_string, value);
+            return;
+        }
         let resolved: &str = resolved_string.as_str();
         // RANDOM=N reseeds the PRNG (matches bash behavior)
         // SRANDOM ignores assignment (bash 5.1).
@@ -10389,6 +9868,15 @@ impl Interpreter {
         if attrs.contains(VarAttrs::READONLY) {
             return;
         }
+        if attrs.contains(VarAttrs::NOVALUE) {
+            self.remove_var_attr(resolved, VarAttrs::NOVALUE);
+        }
+        // Prefix assignments (`x=1 cmd`) store the text as given.
+        let attrs = if self.assign_raw {
+            attrs - (VarAttrs::INTEGER | VarAttrs::LOWER | VarAttrs::UPPER)
+        } else {
+            attrs
+        };
         // Apply integer attribute (declare -i): evaluate as arithmetic
         let value = if attrs.contains(VarAttrs::INTEGER) {
             self.evaluate_arithmetic_with_assign(&value).to_string()
@@ -10403,57 +9891,21 @@ impl Interpreter {
         } else {
             value
         };
-        // Check allexport (set -a): auto-export to env — now a bit test.
-        let allexport = self.flags.contains(BashFlags::ALLEXPORT);
-
-        // Walk the call stack top-down looking for an existing local binding.
-        // The previous implementation cloned `resolved_string` for the
-        // `entry()` API in every frame even when the key was absent — for a
-        // tight `for i in {1..N}; do x=$((x+1)); done` inside a function this
-        // is one clone per iteration. Using `get_mut` skips the clone unless
-        // we actually have a local to update.
-        for frame_idx in (0..self.call_stack.len()).rev() {
-            if let Some(old_val_len) = self.call_stack[frame_idx]
-                .locals
-                .get(resolved)
-                .map(String::len)
-            {
-                if let Err(error) = self.memory_budget.check_variable_insert(
-                    resolved.len(),
-                    value.len(),
-                    false,
-                    resolved.len(),
-                    old_val_len,
-                    &self.memory_limits,
-                ) {
-                    self.memory_limit_error.get_or_insert(error);
-                    return;
-                }
-                self.memory_budget.record_variable_insert(
-                    resolved.len(),
-                    value.len(),
-                    false,
-                    resolved.len(),
-                    old_val_len,
-                );
-                if allexport {
-                    let env_value = value.clone();
-                    self.call_stack[frame_idx]
-                        .locals
-                        .insert(resolved_string.clone(), value);
-                    self.insert_env_checked(resolved_string, env_value);
-                    return;
-                }
-                self.call_stack[frame_idx]
-                    .locals
-                    .insert(resolved_string, value);
-                return;
-            }
+        // Assigning an array name assigns element 0 (key "0" if associative).
+        if !self.scoped.arrays.is_empty() && self.scoped.arrays.contains_key(resolved) {
+            self.set_indexed_element_checked(resolved, 0, value);
+            return;
         }
-        // No local frame matched — insert at global scope. Only allexport
-        // needs the extra clone for the env mirror; the common path moves
-        // `value` straight into `variables`.
-        if allexport {
+        if !self.scoped.assoc_arrays.is_empty() && self.scoped.assoc_arrays.contains_key(resolved) {
+            self.set_assoc_element_checked(resolved_string, "0".to_string(), value);
+            return;
+        }
+        // Exported names (EXPORT attribute, `set -a`, or a name inherited
+        // from the host environment) mirror their value into `env`.
+        let exported = attrs.contains(VarAttrs::EXPORT)
+            || self.flags.contains(BashFlags::ALLEXPORT)
+            || self.env.contains_key(resolved);
+        if exported {
             let env_value = value.clone();
             if self.insert_variable_checked(resolved_string.clone(), value) {
                 self.insert_env_checked(resolved_string, env_value);
@@ -10588,42 +10040,99 @@ impl Interpreter {
         true
     }
 
-    /// Insert a variable into the current local frame with memory budget checking.
-    /// Records a fatal execution error if the budget would be exceeded.
-    fn insert_local_checked(&mut self, key: String, value: String) {
-        let Some(frame) = self.call_stack.last() else {
-            return;
-        };
-        let is_new = !frame.locals.contains_key(&key);
-        let old_value_len = frame.locals.get(&key).map_or(0, String::len);
-        let (old_key_len, old_value_len) = if is_new {
-            (0, 0)
-        } else {
-            (key.len(), old_value_len)
-        };
+    /// Index of the frame `local` declares into: the innermost frame, when it
+    /// is a function frame.
+    fn local_frame_index(&self) -> Option<usize> {
+        let idx = self.call_stack.len().checked_sub(1)?;
+        self.call_stack[idx].is_function.then_some(idx)
+    }
 
-        if let Err(error) = self.memory_budget.check_variable_insert(
-            key.len(),
-            value.len(),
-            is_new,
-            old_key_len,
-            old_value_len,
-            &self.memory_limits,
-        ) {
-            self.memory_limit_error.get_or_insert(error);
-            return;
+    /// Is `name` a local of the innermost function frame?
+    fn is_local_in_current_frame(&self, name: &str) -> bool {
+        self.local_frame_index()
+            .is_some_and(|idx| self.call_stack[idx].saved_vars.contains_key(name))
+    }
+
+    /// Make `name` local to the current function (shallow binding): save the
+    /// caller-visible binding in the frame and leave `name` unset, keeping
+    /// only an inherited export attribute. A second `local` of the same name
+    /// in the same frame keeps the current local. Returns false outside a
+    /// function.
+    fn make_local(&mut self, name: &str) -> bool {
+        let Some(idx) = self.local_frame_index() else {
+            return false;
+        };
+        if self.call_stack[idx].saved_vars.contains_key(name) {
+            return true;
         }
-
-        self.memory_budget.record_variable_insert(
-            key.len(),
-            value.len(),
-            is_new,
-            old_key_len,
-            old_value_len,
+        // The saved value stays charged to the budget while the frame holds it.
+        let value = Arc::make_mut(&mut self.scoped.variables).remove(name);
+        let attrs = self.var_attrs_mut().remove(name);
+        let nameref = self.namerefs_mut().remove(name);
+        let env = self.env.get(name).cloned();
+        let exported = attrs.is_some_and(|a| a.contains(VarAttrs::EXPORT)) || env.is_some();
+        self.call_stack[idx].saved_vars.insert(
+            name.to_string(),
+            SavedVar {
+                value,
+                attrs,
+                nameref,
+                env,
+            },
         );
+        if exported {
+            self.add_var_attr(name, VarAttrs::EXPORT);
+        }
+        self.shadow_local_array_bindings(name, false, false);
+        true
+    }
 
-        if let Some(frame) = self.call_stack.last_mut() {
-            frame.locals.insert(key, value);
+    /// Remove the live scalar value of `name`, releasing its budget charge.
+    fn remove_scalar_value(&mut self, name: &str) -> Option<String> {
+        let old = Arc::make_mut(&mut self.scoped.variables).remove(name)?;
+        if !Self::is_internal_variable(name) {
+            self.memory_budget
+                .record_variable_remove(name.len(), old.len());
+        }
+        Some(old)
+    }
+
+    /// Put a binding saved by `local` back in place of the live one.
+    fn restore_saved_var(&mut self, name: &str, saved: SavedVar) {
+        self.remove_scalar_value(name);
+        if let Some(v) = saved.value {
+            Arc::make_mut(&mut self.scoped.variables).insert(name.to_string(), v);
+        }
+        match saved.attrs {
+            Some(a) => {
+                self.var_attrs_mut().insert(name.to_string(), a);
+            }
+            None => {
+                self.var_attrs_mut().remove(name);
+            }
+        }
+        match saved.nameref {
+            Some(t) => {
+                self.namerefs_mut().insert(name.to_string(), t);
+            }
+            None => {
+                self.namerefs_mut().remove(name);
+            }
+        }
+        match saved.env {
+            Some(e) => {
+                self.env.insert(name.to_string(), e);
+            }
+            None => {
+                self.env.remove(name);
+            }
+        }
+    }
+
+    /// Pop call frames down to `len`, restoring every shadowed binding.
+    pub(crate) fn unwind_call_stack(&mut self, len: usize) {
+        while self.call_stack.len() > len {
+            self.pop_call_frame();
         }
     }
 
@@ -10663,7 +10172,10 @@ impl Interpreter {
 
     /// Pop a call frame and restore any global array bindings shadowed by `local -a/-A`.
     fn pop_call_frame(&mut self) -> Option<CallFrame> {
-        let frame = self.call_stack.pop()?;
+        let mut frame = self.call_stack.pop()?;
+        for (name, saved) in std::mem::take(&mut frame.saved_vars) {
+            self.restore_saved_var(&name, saved);
+        }
         for (name, previous) in &frame.local_arrays {
             self.restore_array_binding(name, previous.clone());
         }
@@ -10967,24 +10479,6 @@ impl Interpreter {
     }
 
     fn lookup_regular_variable(&self, name: &str) -> Option<String> {
-        for frame in self.call_stack.iter().rev() {
-            if let Some(value) = frame.locals.get(name) {
-                // `local -a x=(...)` also leaves a scalar placeholder; the
-                // array it shadows-in is the real value.
-                if frame.local_arrays.contains_key(name)
-                    && let Some(arr) = self.scoped.arrays.get(name)
-                {
-                    return arr.get(&0).cloned();
-                }
-                if frame.local_assoc_arrays.contains_key(name)
-                    && let Some(arr) = self.scoped.assoc_arrays.get(name)
-                {
-                    return arr.get("0").cloned();
-                }
-                return Some(value.clone());
-            }
-        }
-
         if let Some(value) = self.scoped.variables.get(name) {
             return Some(value.clone());
         }
@@ -11181,12 +10675,6 @@ impl Interpreter {
                 .map(|f| n <= f.positional.len())
                 .unwrap_or(false);
         }
-        // Local variables
-        for frame in self.call_stack.iter().rev() {
-            if frame.locals.contains_key(name) {
-                return true;
-            }
-        }
         // Shell variables
         if self.scoped.variables.contains_key(name) {
             return true;
@@ -11267,14 +10755,6 @@ impl Interpreter {
                     stderr.append(&trap_result.stderr);
                 }
             }
-        }
-    }
-
-    /// Set a local variable in the current call frame
-    #[allow(dead_code)]
-    fn set_local(&mut self, name: &str, value: &str) {
-        if let Some(frame) = self.call_stack.last_mut() {
-            frame.locals.insert(name.to_string(), value.to_string());
         }
     }
 }
@@ -11361,7 +10841,8 @@ mod tests {
         interp.set_variable("p".to_string(), replacement);
         interp.call_stack.push(CallFrame {
             name: "f".to_string(),
-            locals: HashMap::new(),
+            saved_vars: HashMap::new(),
+            is_function: false,
             local_arrays: HashMap::new(),
             local_assoc_arrays: HashMap::new(),
             positional: vec!["x".to_string(); 6000],
@@ -11478,7 +10959,8 @@ mod tests {
         interp.counters.function_depth = 1;
         interp.call_stack.push(CallFrame {
             name: "caller".to_string(),
-            locals: HashMap::new(),
+            saved_vars: HashMap::new(),
+            is_function: false,
             local_arrays: HashMap::new(),
             local_assoc_arrays: HashMap::new(),
             positional: Vec::new(),
@@ -11489,7 +10971,8 @@ mod tests {
 
         interp.call_stack.push(CallFrame {
             name: "bash".to_string(),
-            locals: HashMap::new(),
+            saved_vars: HashMap::new(),
+            is_function: false,
             local_arrays: HashMap::new(),
             local_assoc_arrays: HashMap::new(),
             positional: Vec::new(),
@@ -11657,22 +11140,24 @@ mod tests {
         interp.set_memory_limits(crate::limits::MemoryLimits::new().max_total_variable_bytes(20));
         interp.call_stack.push(CallFrame {
             name: "f".to_string(),
-            locals: HashMap::from([("A".to_string(), "1".to_string())]),
+            saved_vars: HashMap::new(),
+            is_function: true,
             local_arrays: HashMap::new(),
             local_assoc_arrays: HashMap::new(),
             positional: Vec::new(),
         });
-        interp
-            .memory_budget
-            .record_variable_insert(1, 1, true, 0, 0);
         interp.set_variable("FILL".to_string(), "123456789012".to_string());
+        assert!(interp.make_local("A"));
         interp.flags.insert(BashFlags::ALLEXPORT);
-        interp.insert_env_checked("A".to_string(), "1".to_string());
+        interp.set_variable("A".to_string(), "1".to_string());
 
         interp.set_variable("A".to_string(), "1234567890".to_string());
 
-        let frame = interp.call_stack.last().unwrap();
-        assert_eq!(frame.locals.get("A").map(String::as_str), Some("1"));
+        assert!(interp.call_stack[0].saved_vars.contains_key("A"));
+        assert_eq!(
+            interp.scoped.variables.get("A").map(String::as_str),
+            Some("1")
+        );
         assert_eq!(interp.env.get("A").map(String::as_str), Some("1"));
     }
 
@@ -13130,8 +12615,10 @@ mod tests {
             .await
             .unwrap();
         // With the bug, this would silently resolve to an arbitrary variable.
-        // With the fix, the cycle is detected and 'a' resolves to itself.
-        assert_eq!(result.exit_code, 0);
+        // As in bash, assigning through the cycle warns and abandons the line.
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("circular name reference"));
+        assert_eq!(result.stdout, "");
     }
 
     // Issue #437: arithmetic expansion byte/char index mismatch
@@ -14301,9 +13788,11 @@ cat /tmp/test_fd_exec_public.txt"#,
         let mut restored = Interpreter::new(Arc::new(InMemoryFs::new()));
         restored.restore_shell_state(&state);
 
-        let assign = Parser::new("POLICY=unsafe; echo $POLICY").parse().unwrap();
+        // The refused assignment abandons its line (bash); the next runs.
+        let assign = Parser::new("POLICY=unsafe\necho $POLICY").parse().unwrap();
         let out = restored.execute(&assign).await.unwrap();
         assert_eq!(out.exit_code, 0);
+        assert!(out.stderr.contains("POLICY: readonly variable"));
         assert_eq!(out.stdout.trim(), "safe");
     }
 
@@ -14405,7 +13894,7 @@ cat /tmp/test_fd_exec_public.txt"#,
         assert_eq!(restored.resolve_nameref("alias_var"), "POLICY");
         assert!(!restored.scoped.variables.contains_key("_NAMEREF_alias_var"));
 
-        let ast = Parser::new("alias_var=unsafe; echo $POLICY")
+        let ast = Parser::new("alias_var=unsafe\necho $POLICY")
             .parse()
             .unwrap();
         let result = restored.execute(&ast).await.unwrap();

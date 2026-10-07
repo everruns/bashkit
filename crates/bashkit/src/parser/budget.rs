@@ -218,6 +218,12 @@ fn validate_word_part(
         WordPart::CommandSubstitution(commands) => validate_commands(commands, ctx),
         WordPart::ProcessSubstitution { commands, .. } => validate_commands(commands, ctx),
         WordPart::Literal(s) if !word_is_quoted => check_brace_range(s),
+        WordPart::CompoundAssignment { elements, .. } => {
+            for element in elements {
+                validate_word(element, ctx)?;
+            }
+            Ok(())
+        }
         _ => Ok(()),
     }
 }

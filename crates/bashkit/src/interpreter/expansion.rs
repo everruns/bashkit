@@ -196,6 +196,18 @@ impl Interpreter {
 
         for part in &word.parts {
             match part {
+                WordPart::CompoundAssignment { .. } => {
+                    // Only declaration builtins take `name=(...)`; elsewhere
+                    // the text stands for itself.
+                    let text = Word {
+                        parts: vec![part.clone()],
+                        quoted: false,
+                        has_unquoted_glob: false,
+                        part_quoted: Vec::new(),
+                    }
+                    .to_string();
+                    result.push_str(&text);
+                }
                 WordPart::Literal(s) => {
                     // Tilde expansion: ~ at start of word expands to $HOME
                     if is_first_part && s.starts_with('~') {
