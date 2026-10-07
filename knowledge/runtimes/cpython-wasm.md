@@ -113,11 +113,55 @@ attack surface (TM-PY-CPY-011).
   from one `build.sh` run.
 - One instance serves one call; state is never reused.
 
+### HTTP bridge
+
+Python HTTP leaves the guest at the HTTP level, never as sockets:
+`_bashkit.http(method, url, headers, body, timeout)` (C, `bashkit_main.c`)
+calls the host import `bashkit.http_request`, which decodes the request and
+runs it through `HttpClient::request_with_timeouts`, the same pipeline as
+`curl` (allowlist, SSRF precheck, `before_http` hooks and credential
+injection, signing, the embedder's `HttpTransport`, response cap,
+`after_http`). Rejected: socket emulation (needs OpenSSL and TLS in the guest,
+and policy could only see host:port) and shelling out to `curl` (needs a
+process bridge, quoting on every request).
+
+- Wire format: u32 little-endian length-prefixed fields. The response comes
+  back in two steps (`http_request` reports the size, `http_take` copies),
+  so the guest allocates once and the copy counts against its memory limit.
+- Host validation before dispatch: methods GET/POST/PUT/DELETE/HEAD/PATCH,
+  URL <= 8 KiB with no controls or spaces, <= 128 headers and 64 KiB,
+  token header names, no CR/LF/NUL in values, body <= 16 MiB. Host-owned
+  headers (`Host`, framing, hop-by-hop, proxy) are dropped, so a guest
+  cannot retarget the request past the allowlist or smuggle a second one.
+  `check_request_invariants` is the fuzz entry (`cpython_http_fuzz`).
+- Timeout = min(request timeout, call deadline); `CPythonLimits::max_http_requests`
+  (default 100) caps requests per call. Redirects are followed by Python,
+  so every hop is a new, re-checked request.
+- No network configured, or no `http_client` feature: every request fails
+  with "network access not configured". Errors reach Python as
+  `ConnectionError`, `TimeoutError` or `ValueError` (invalid request), text
+  capped at 512 bytes.
+- Stdlib adapter (`_bashkit_http.py`): http.client keeps its own request
+  and response code; only the socket is swapped for a bridge socket that
+  parses the bytes http.client writes (incl. chunked uploads), sends them
+  once complete, and serves the reply as HTTP/1.1 bytes the real
+  `HTTPResponse` parses. `HTTPSConnection` is defined although `ssl` is not
+  built, so urllib.request registers https. Applied by a footer `build.sh`
+  appends to `http/client.py`, so scripts that never import it pay nothing.
+- The guest is linked with the `bashkit` imports; `wasmtime wizer` and the
+  build smoke test run with `-W unknown-imports-trap=y` since init never
+  calls them.
+- Next: `requests`/`urllib3` and `httpx2` ship in a separate packages crate
+  behind the opt-in `cpython-http` feature (`import httpx` aliases
+  `httpx2`).
+
 ### WASI host decisions
 
 - Only `wasi_snapshot_preview1`, only against bashkit state: VFS, captured
   stdin bytes, in-memory stdout/stderr, host RNG and clocks. Socket calls
   return `ENOTSUP`; there is no process API.
+- One more import module, `bashkit` (`builtins/cpython/http.rs`), carries
+  HTTP. See [HTTP bridge](#http-bridge).
 - Files are whole in-memory buffers written back on close/sync/exit. Buffers
   are bounded by `max_file_size` and, in total, by the call's memory budget.
 - Paths normalize lexically and clamp at `/`. Symlinks resolve inside the

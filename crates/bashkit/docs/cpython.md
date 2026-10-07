@@ -63,6 +63,7 @@ return a value. Scripts written by people and agents expect a Python
 | Start per call | ~15 µs | ~4.4 ms (first call in a process ~19 ms) |
 | CPU-bound speed | Native | ~4-30x slower than Monty (interpreted wasm); ~4x slower with `cpython-native` |
 | Host callbacks | Yes (external functions) | Not yet |
+| HTTP | No | `urllib.request`, `http.client` through Bashkit's egress allowlist |
 
 Pick CPython when scripts need real Python behavior; pick Monty when you
 need host function callbacks or microsecond start-up for tiny snippets.
@@ -112,12 +113,50 @@ let bash = Bash::builder()
 - **Concurrency**: up to 512 CPython calls run at once per process; further
   calls wait for a free slot within their own deadline.
 
+## HTTP
+
+With the `http_client` feature and a network allowlist
+(`BashBuilder::network`), `urllib.request`
+and `http.client` work for `http://` and `https://` URLs. Each request is
+handed to the host and goes through the same pipeline as `curl`: allowlist,
+private-IP (SSRF) checks, credential injection, request signing, your
+`HttpTransport` and the response size cap. TLS runs
+on the host; the guest has no sockets.
+
+```rust,ignore
+let mut bash = Bash::builder()
+    .cpython()
+    .network(NetworkAllowlist::new().allow("https://api.example.com"))
+    .build();
+bash.exec(r#"python3 -c '
+import json, urllib.request
+with urllib.request.urlopen("https://api.example.com/v1/items") as r:
+    print(json.load(r))
+'"#).await?;
+```
+
+- A denied URL raises `URLError` (or `ConnectionError` from `http.client`)
+  with the same "access denied" text `curl` prints; a timeout raises
+  `TimeoutError`. Without a network allowlist every request fails with
+  "network access not configured".
+- Redirects are followed by Python, so every hop is checked again.
+- Methods: GET, POST, PUT, DELETE, HEAD, PATCH. Headers the host owns
+  (`Host`, `Content-Length`, `Transfer-Encoding`, `Connection`, proxy
+  headers) are set by the host; values with CR/LF are rejected.
+- Responses are buffered (up to the client's `max_response_bytes`), so
+  streaming past that cap fails. `ssl` contexts, `verify=False`, client
+  certificates and proxy settings are ignored: the host verifies TLS.
+- `CPythonLimits::max_http_requests` caps requests per call (default
+  100); a request's timeout never outlasts the call's deadline.
+
+`requests` and `httpx` are not bundled yet.
+
 ## Limitations
 
 - **No subprocesses**: `subprocess`, `os.system`, `os.fork`, `os.popen` raise
   `OSError`/`AttributeError`. Python cannot call back into the shell yet.
-- **No network**: `socket`, `urllib.request`, `http.client` cannot connect.
-  Use the shell's `curl`/`http` builtins.
+- **HTTP only, through Bashkit's egress**: see [HTTP](#http). Raw
+  `socket` connections, `ssl` and non-HTTP protocols are unavailable.
 - **No threads**: `threading.Thread.start()` raises `RuntimeError`;
   `multiprocessing` and `concurrent.futures.ProcessPoolExecutor` are absent.
   `asyncio` works.
@@ -129,9 +168,9 @@ let bash = Bash::builder()
   there is no REPL, and `pdb` and `pydoc` (`help()`) are not shipped.
 - **Stdlib is bytecode only**: tracebacks through stdlib code show no source
   line, and `inspect.getsource()` fails on stdlib objects. Your own code
-  keeps full tracebacks. Network clients and servers (`smtplib`, `ftplib`,
-  `http.server`, `xmlrpc`, ...) are not shipped since the guest has no
-  sockets.
+  keeps full tracebacks. Non-HTTP network clients and servers (`smtplib`,
+  `ftplib`, `http.server`, `xmlrpc`, ...) are not shipped since the guest has
+  no sockets.
 - **Symlinks are not followed**, like everywhere in the Bashkit VFS.
 - **`errno` numbers are WASI's** (`ENOENT` is 44, not 2). Exception types
   (`FileNotFoundError`, ...) and messages are correct; code comparing

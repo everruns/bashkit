@@ -306,11 +306,11 @@ jobs:
       # the runner's python3), security and load tests. Feature-gated, so the
       # main test step above does not build it into bashkit.
       - name: Run CPython tests
-        run: cargo test -p bashkit --features cpython --lib --test integration -- cpython
+        run: cargo test -p bashkit --features cpython,http_client --lib --test integration -- cpython
 
       # Same suites on the opt-in native-code build (`cpython-native`).
       - name: Run CPython tests (native code)
-        run: cargo test -p bashkit --features cpython-native --lib --test integration -- cpython
+        run: cargo test -p bashkit --features cpython-native,http_client --lib --test integration -- cpython
 
       - name: Run realfs tests
         run: cargo test --features realfs -p bashkit --test realfs_tests -p bashkit-cli
@@ -568,6 +568,7 @@ jobs:
         run: |
           cargo +nightly fuzz build
           cargo +nightly fuzz build --features cpython cpython_fuzz
+          cargo +nightly fuzz build --features cpython cpython_http_fuzz
 
   # Gate job for branch protection — name must stay "Check"
   check:

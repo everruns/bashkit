@@ -282,6 +282,8 @@ pub use ssh::{Scp, Sftp, Ssh};
 pub use runtime_limits::RuntimeLimits;
 
 #[cfg(feature = "cpython")]
+pub(crate) use cpython::check_http_request_invariants;
+#[cfg(feature = "cpython")]
 pub use cpython::{CPython, CPythonLimits};
 #[cfg(feature = "python")]
 pub(crate) use python::PythonInprocessOptIn;
@@ -913,7 +915,7 @@ pub struct Context<'a> {
     /// a [`NetworkAllowlist`](crate::NetworkAllowlist) is configured via
     /// [`BashBuilder::network`](crate::BashBuilder::network).
     #[cfg(feature = "http_client")]
-    pub http_client: Option<&'a crate::network::HttpClient>,
+    pub http_client: Option<&'a std::sync::Arc<crate::network::HttpClient>>,
 
     /// Git client for git operations.
     ///

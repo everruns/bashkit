@@ -4,7 +4,8 @@
 //! Decisions (see `knowledge/runtimes/cpython-wasm.md`):
 //! - Isolation comes from the wasm boundary, not from CPython. The guest can
 //!   only reach what [`wasi`] hands it: the VFS, captured stdio, a host RNG and
-//!   clocks. No host filesystem, network, process or thread API exists.
+//!   clocks, plus HTTP through bashkit's `HttpClient` ([`http`]). No host
+//!   filesystem, socket, process or thread API exists.
 //! - No runtime opt-in env var (unlike Monty's `BASHKIT_ALLOW_INPROCESS_PYTHON`):
 //!   the guest never runs native code in the host, so calling
 //!   `BashBuilder::cpython()` is the opt-in.
@@ -24,7 +25,10 @@
 //! - Memory is capped by a store limiter; `memory.grow` past the cap fails and
 //!   surfaces as `MemoryError` inside Python, not as a host error.
 
+mod http;
 mod wasi;
+
+pub(crate) use http::check_request_invariants as check_http_request_invariants;
 
 use std::future::Future;
 use std::sync::OnceLock;
@@ -48,6 +52,8 @@ const DEFAULT_MAX_MEMORY: usize = 256 * 1024 * 1024;
 const DEFAULT_MAX_RECURSION: usize = 1000;
 /// Default cap on captured stdout + stderr.
 const DEFAULT_MAX_OUTPUT: usize = 16 * 1024 * 1024;
+/// Default cap on HTTP requests per call.
+const DEFAULT_MAX_HTTP_REQUESTS: usize = 100;
 /// Guest instructions between cooperative yields (~1 ms on Pulley).
 const YIELD_INTERVAL_FUEL: u64 = 100_000;
 /// Request-budget work units charged per call before the guest runs.
@@ -72,6 +78,8 @@ pub struct CPythonLimits {
     /// Maximum captured stdout + stderr bytes; output past this is dropped
     /// and the result is marked truncated.
     pub max_output: usize,
+    /// Maximum HTTP requests one call may make (each redirect hop counts).
+    pub max_http_requests: usize,
 }
 
 impl Default for CPythonLimits {
@@ -83,6 +91,7 @@ impl Default for CPythonLimits {
                 max_call_depth: DEFAULT_MAX_RECURSION,
             },
             max_output: DEFAULT_MAX_OUTPUT,
+            max_http_requests: DEFAULT_MAX_HTTP_REQUESTS,
         }
     }
 }
@@ -114,6 +123,13 @@ impl CPythonLimits {
     #[must_use]
     pub fn max_output(mut self, bytes: usize) -> Self {
         self.max_output = bytes;
+        self
+    }
+
+    /// Set the maximum number of HTTP requests per call.
+    #[must_use]
+    pub fn max_http_requests(mut self, n: usize) -> Self {
+        self.max_http_requests = n;
         self
     }
 }
@@ -186,6 +202,7 @@ fn link(engine: Engine, slots: Option<tokio::sync::Semaphore>) -> wasmtime::Resu
     let module = bashkit_cpython_wasm::load_module(&engine)?;
     let mut linker = Linker::new(&engine);
     wasi::add_to_linker(&mut linker)?;
+    http::add_to_linker(&mut linker)?;
     let pre = linker.instantiate_pre(&module)?;
     Ok(Runtime { engine, pre, slots })
 }
@@ -228,7 +245,9 @@ impl Builtin for CPython {
             "python/python3: CPython 3.14 in a WebAssembly sandbox. Full pure-Python \
              stdlib plus json, re, csv, sqlite3, zlib, hashlib, decimal, datetime. \
              open()/pathlib/os work on the virtual filesystem. -c, -m, script files and \
-             stdin work. No network, no subprocess, no threads, no pip or third-party packages.",
+             stdin work. HTTP only via urllib.request/http.client and only to hosts the \
+             network allowlist permits; no raw sockets, no subprocess, no threads, no pip \
+             or third-party packages.",
         )
     }
 
@@ -301,6 +320,11 @@ impl Builtin for CPython {
                 stdlib_path: bashkit_cpython_wasm::STDLIB_ZIP_PATH,
                 stdlib: bashkit_cpython_wasm::STDLIB_ZIP,
                 deadline,
+                http: http::HttpState::new(
+                    #[cfg(feature = "http_client")]
+                    ctx.http_client.cloned(),
+                    self.limits.max_http_requests,
+                ),
             },
         );
 

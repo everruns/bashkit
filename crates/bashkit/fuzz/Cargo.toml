@@ -164,3 +164,11 @@ required-features = ["cpython"]
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "cpython_http_fuzz"
+path = "fuzz_targets/cpython_http_fuzz.rs"
+required-features = ["cpython"]
+test = false
+doc = false
+bench = false
