@@ -1,7 +1,13 @@
 //! fold builtin command - wrap lines at specified width
+//!
+//! Decision: a port of GNU fold's column state machine. Backspace moves one
+//! column left, CR resets to column 0, TAB advances to the next multiple of
+//! 8, and a character that alone overflows an empty line is kept on it. Each
+//! char counts one column (no wide-char widths); `-b` counts UTF-8 bytes.
 
 use async_trait::async_trait;
 
+use super::arg_parser::{OptArg, gnu_getopt};
 use super::{Builtin, BuiltinHelper, Context, read_text_file, resolve_path};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
@@ -20,126 +26,145 @@ impl BuiltinHelper for Fold {
     const NAME: &'static str = "fold";
 }
 
+const TAB_WIDTH: usize = 8;
+
+fn adjust_column(column: usize, c: char, count_bytes: bool) -> usize {
+    if count_bytes {
+        return column + c.len_utf8();
+    }
+    match c {
+        '\x08' => column.saturating_sub(1),
+        '\r' => 0,
+        '\t' => column + TAB_WIDTH - column % TAB_WIDTH,
+        _ => column + 1,
+    }
+}
+
+fn fold_text(text: &str, width: usize, break_spaces: bool, count_bytes: bool, out: &mut String) {
+    let mut line: Vec<char> = Vec::new();
+    let mut column = 0usize;
+    for c in text.chars() {
+        if c == '\n' {
+            out.extend(line.drain(..));
+            out.push('\n');
+            column = 0;
+            continue;
+        }
+        loop {
+            column = adjust_column(column, c, count_bytes);
+            if column <= width {
+                line.push(c);
+                break;
+            }
+            if break_spaces && let Some(blank) = line.iter().rposition(|&b| b == ' ' || b == '\t') {
+                let rest = line.split_off(blank + 1);
+                out.extend(line.drain(..));
+                out.push('\n');
+                line = rest;
+                column = line
+                    .iter()
+                    .fold(0, |col, &ch| adjust_column(col, ch, count_bytes));
+                continue;
+            }
+            if line.is_empty() {
+                line.push(c);
+                break;
+            }
+            out.extend(line.drain(..));
+            out.push('\n');
+            column = 0;
+        }
+    }
+    out.extend(line);
+}
+
+/// Rewrite the obsolete `-NUM` form into `-wNUM`.
+fn normalize_args(args: &[String]) -> Vec<String> {
+    let mut out = Vec::with_capacity(args.len());
+    let mut done = false;
+    for a in args {
+        if !done && a == "--" {
+            done = true;
+        }
+        let digits = a.strip_prefix('-').filter(|d| !d.is_empty());
+        match digits {
+            Some(d) if !done && d.bytes().all(|b| b.is_ascii_digit()) => {
+                out.push(format!("-w{d}"));
+            }
+            _ => out.push(a.clone()),
+        }
+    }
+    out
+}
+
 #[async_trait]
 impl Builtin for Fold {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
         if let Some(r) = Self::check_help(
             ctx.args,
-            "Usage: fold [OPTION]... [FILE]...\nWrap each input line to fit in specified width.\n\n  -b\t\tcount bytes rather than columns\n  -s\t\tbreak at spaces\n  -w WIDTH\tuse WIDTH columns instead of 80\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            "Usage: fold [OPTION]... [FILE]...\nWrap each input line to fit in specified width.\n\n  -b, --bytes\tcount bytes rather than columns\n  -s, --spaces\tbreak at spaces\n  -w, --width=WIDTH\tuse WIDTH columns instead of 80\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
             Some("fold (bashkit) 0.1"),
         ) {
             return Ok(r);
         }
-        let mut width: usize = 80;
-        let mut break_at_spaces = false;
-        let mut files: Vec<&str> = Vec::new();
-
-        let mut i = 0;
-        while i < ctx.args.len() {
-            match ctx.args[i].as_str() {
-                "-s" => break_at_spaces = true,
-                "-b" => { /* byte mode is default for us since we use chars */ }
-                "-w" => {
-                    i += 1;
-                    if i >= ctx.args.len() {
-                        return Ok(Self::err("option requires an argument -- 'w'", 1));
-                    }
-                    width = ctx.args[i].parse().unwrap_or(80);
-                }
-                s if s.starts_with("-w") && s.len() > 2 => {
-                    width = s[2..].parse().unwrap_or(80);
-                }
-                // Reject unknown options; `-`/`--` and operands fall through.
-                s if s.starts_with('-') && s.len() > 1 && s != "--" => {
-                    return Ok(super::invalid_option("fold", s, 1));
-                }
-                _ => files.push(&ctx.args[i]),
-            }
-            i += 1;
-        }
-
-        if width == 0 {
-            width = 1; // prevent infinite loop
-        }
-
-        let input = if files.is_empty() {
-            ctx.stdin.map(ToString::to_string).unwrap_or_default()
-        } else {
-            let mut buf = String::new();
-            for file in &files {
-                let path = resolve_path(ctx.cwd, file);
-                match read_text_file(ctx.fs.as_ref(), &path, "fold").await {
-                    Ok(text) => buf.push_str(&text),
-                    Err(_) => {
-                        return Ok(Self::err_path(file, "No such file or directory", 1));
-                    }
-                }
-            }
-            buf
+        let args = normalize_args(ctx.args);
+        let (opts, mut files) = match gnu_getopt(
+            "fold",
+            &args,
+            "bsw:",
+            &[
+                ("bytes", OptArg::No, 'b'),
+                ("spaces", OptArg::No, 's'),
+                ("width", OptArg::Required, 'w'),
+            ],
+            true,
+            1,
+        ) {
+            Ok(v) => v,
+            Err(e) => return Ok(e),
         };
+        let mut width: usize = 80;
+        let mut break_spaces = false;
+        let mut count_bytes = false;
+        for o in opts {
+            match o.key {
+                'b' => count_bytes = true,
+                's' => break_spaces = true,
+                _ => {
+                    let val = o.value.unwrap_or_default();
+                    width = match val.parse::<usize>() {
+                        Ok(w) if w > 0 => w,
+                        _ => {
+                            return Ok(Self::err(
+                                &format!("invalid number of columns: '{val}'"),
+                                1,
+                            ));
+                        }
+                    };
+                }
+            }
+        }
+        if files.is_empty() {
+            files.push("-".to_string());
+        }
 
         let mut output = String::new();
-        let lines: Vec<&str> = input.split('\n').collect();
-        for (i, line) in lines.iter().enumerate() {
-            fold_line(line, width, break_at_spaces, &mut output);
-            if i < lines.len() - 1 {
-                output.push('\n');
+        for file in &files {
+            if file == "-" {
+                let stdin = ctx.stdin.map(ToString::to_string).unwrap_or_default();
+                fold_text(&stdin, width, break_spaces, count_bytes, &mut output);
+                continue;
             }
-        }
-        // Preserve trailing newline if input had one
-        if input.ends_with('\n') && !output.ends_with('\n') {
-            output.push('\n');
+            let path = resolve_path(ctx.cwd, file);
+            match read_text_file(ctx.fs.as_ref(), &path, "fold").await {
+                Ok(text) => fold_text(&text, width, break_spaces, count_bytes, &mut output),
+                Err(_) => {
+                    return Ok(Self::err_path(file, "No such file or directory", 1));
+                }
+            }
         }
 
         Ok(ExecResult::ok(output))
-    }
-}
-
-fn fold_line(line: &str, width: usize, break_at_spaces: bool, output: &mut String) {
-    if line.len() <= width {
-        output.push_str(line);
-        return;
-    }
-
-    let chars: Vec<char> = line.chars().collect();
-    let mut pos = 0;
-
-    while pos < chars.len() {
-        let remaining = chars.len() - pos;
-        if remaining <= width {
-            for ch in &chars[pos..] {
-                output.push(*ch);
-            }
-            break;
-        }
-
-        let end = pos + width;
-        if break_at_spaces {
-            // Find last space within the width
-            let mut break_pos = end;
-            let mut found = false;
-            for j in (pos..end).rev() {
-                if chars[j] == ' ' {
-                    break_pos = j + 1;
-                    found = true;
-                    break;
-                }
-            }
-            if !found {
-                break_pos = end;
-            }
-            for ch in &chars[pos..break_pos] {
-                output.push(*ch);
-            }
-            output.push('\n');
-            pos = break_pos;
-        } else {
-            for ch in &chars[pos..end] {
-                output.push(*ch);
-            }
-            output.push('\n');
-            pos = end;
-        }
     }
 }
 
@@ -224,5 +249,36 @@ mod tests {
     async fn test_fold_empty_input() {
         let result = run_fold(&[], Some("")).await;
         assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_fold_tab_counts_to_next_stop() {
+        let result = run_fold(&["-w", "4"], Some("\tab\n")).await;
+        assert_eq!(result.stdout, "\t\nab\n");
+    }
+
+    #[tokio::test]
+    async fn test_fold_backspace_moves_left() {
+        let result = run_fold(&["-w", "3"], Some("\x08abcde\n")).await;
+        assert_eq!(result.stdout, "\x08abc\nde\n");
+    }
+
+    #[tokio::test]
+    async fn test_fold_spaces_breaks_after_blank() {
+        let result = run_fold(&["-s", "-w", "6"], Some("ab cd efgh\n")).await;
+        assert_eq!(result.stdout, "ab cd \nefgh\n");
+    }
+
+    #[tokio::test]
+    async fn test_fold_obsolete_width() {
+        let result = run_fold(&["-3"], Some("abcdef\n")).await;
+        assert_eq!(result.stdout, "abc\ndef\n");
+    }
+
+    #[tokio::test]
+    async fn test_fold_invalid_width() {
+        let result = run_fold(&["-w", "0"], Some("a\n")).await;
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("invalid number of columns: '0'"));
     }
 }
