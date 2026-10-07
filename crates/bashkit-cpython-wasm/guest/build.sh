@@ -131,12 +131,21 @@ cp -r "$HERE/requests" "$WORK/stdlib/requests"
     cd "$WORK/stdlib"
     # Not usable or not useful in a sandboxed, single-threaded, headless guest.
     rm -rf test idlelib tkinter turtledemo ensurepip venv pydoc_data turtle.py \
-        _pyrepl/__pycache__ curses mailbox.py dbm/gnu.py dbm/ndbm.py multiprocessing concurrent/futures/process.py
+        _pyrepl/__pycache__ curses mailbox.py multiprocessing concurrent/futures/process.py
     # No FFI, TLS, sockets or TTY in the guest: these can never work.
     rm -rf ctypes ssl.py ftplib.py imaplib.py poplib.py smtplib.py socketserver.py \
         http/server.py wsgiref xmlrpc webbrowser.py _pyrepl pdb.py bdb.py pydoc.py \
         _aix_support.py _android_support.py _ios_support.py _osx_support.py
-    # Debugger stand-in: doctest imports pdb; breakpoint() prints a notice.
+    # Low-use for the main workload (agents running file-processing and glue
+    # scripts): test/profiling/packaging tooling, macOS/legacy formats, and
+    # modules whose C backends the guest lacks (_bz2, _lzma, _zstd, termios,
+    # _interpreters). Dropped so they cost no crate bytes or preload budget.
+    rm -rf unittest doctest.py cProfile.py profile.py pstats.py trace.py tabnanny.py \
+        pyclbr.py modulefinder.py pickletools.py compileall.py zipapp.py dbm shelve.py \
+        plistlib.py wave.py netrc.py cmd.py rlcompleter.py pty.py tty.py this.py \
+        antigravity.py __hello__.py __phello__ concurrent/interpreters \
+        bz2.py lzma.py compression/bz2.py compression/lzma.py compression/zstd
+    # Debugger stand-in: breakpoint() prints a notice and continues.
     cp "$HERE/pdb.py" pdb.py
     # HTTP goes through the host's egress pipeline, not sockets
     # (_bashkit_http.py); http.client patches itself when first imported.
