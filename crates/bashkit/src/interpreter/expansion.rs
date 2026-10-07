@@ -9,6 +9,65 @@
 use super::*;
 
 impl Interpreter {
+    /// Elements of `name` as `${name[@]}` sees them, as `(key, value)`:
+    /// an associative array in bash's hash order, an indexed array by
+    /// index, and a set scalar as its element 0 (`x=5; echo ${x[@]}
+    /// ${!x[@]}` prints `5 0`). `None` when the name has no value.
+    pub(super) fn array_view(&self, name: &str) -> Option<Vec<(String, String)>> {
+        let name = self.resolve_nameref(name);
+        if let Some(arr) = self.scoped.assoc_arrays.get(name) {
+            return Some(
+                super::declare::assoc_keys_bash_order(arr)
+                    .into_iter()
+                    .map(|k| (k.clone(), arr[k].clone()))
+                    .collect(),
+            );
+        }
+        if let Some(arr) = self.scoped.arrays.get(name) {
+            let mut items: Vec<_> = arr.iter().collect();
+            items.sort_unstable_by_key(|(i, _)| **i);
+            return Some(
+                items
+                    .into_iter()
+                    .map(|(i, v)| (i.to_string(), v.clone()))
+                    .collect(),
+            );
+        }
+        self.scalar_value(name).map(|v| vec![("0".to_string(), v)])
+    }
+
+    /// Values of `${name[@]}` (see [`Self::array_view`]).
+    pub(super) fn array_values(&self, name: &str) -> Vec<String> {
+        self.array_view(name)
+            .map(|items| items.into_iter().map(|(_, v)| v).collect())
+            .unwrap_or_default()
+    }
+
+    /// Keys of `${!name[@]}` (see [`Self::array_view`]).
+    pub(super) fn array_keys(&self, name: &str) -> Vec<String> {
+        self.array_view(name)
+            .map(|items| items.into_iter().map(|(k, _)| k).collect())
+            .unwrap_or_default()
+    }
+
+    /// The value of a plain (non-array) variable, if set.
+    fn scalar_value(&self, name: &str) -> Option<String> {
+        self.scoped
+            .variables
+            .get(name)
+            .or_else(|| self.env.get(name))
+            .cloned()
+    }
+
+    /// `${x[i]}` on a scalar `x`: element 0 (or -1) is the scalar itself.
+    fn scalar_element(&self, name: &str, index: &str) -> Option<String> {
+        if self.scoped.arrays.contains_key(name) || self.scoped.assoc_arrays.contains_key(name) {
+            return None;
+        }
+        let value = self.scalar_value(name)?;
+        matches!(self.evaluate_arithmetic(index), 0 | -1).then_some(value)
+    }
+
     /// Expand an array access expression (`${arr[index]}`).
     pub(super) fn expand_array_access_part(&self, name: &str, index: &str) -> String {
         let resolved_name = self.resolve_nameref(name);
@@ -23,18 +82,7 @@ impl Interpreter {
             } else {
                 " ".to_string()
             };
-            if let Some(arr) = self.scoped.assoc_arrays.get(arr_name) {
-                let mut keys: Vec<_> = arr.keys().collect();
-                keys.sort();
-                let values: Vec<String> =
-                    keys.iter().filter_map(|k| arr.get(*k).cloned()).collect();
-                result.push_str(&values.join(&sep));
-            } else if let Some(arr) = self.scoped.arrays.get(arr_name) {
-                let mut indices: Vec<_> = arr.keys().collect();
-                indices.sort();
-                let values: Vec<_> = indices.iter().filter_map(|i| arr.get(i)).collect();
-                result.push_str(&values.into_iter().cloned().collect::<Vec<_>>().join(&sep));
-            }
+            result.push_str(&self.array_values(arr_name).join(&sep));
         } else if let Some(extra_idx) = extra_index {
             if let Some(arr) = self.scoped.assoc_arrays.get(arr_name) {
                 if let Some(value) = arr.get(&extra_idx) {
@@ -53,13 +101,13 @@ impl Interpreter {
             if let Some(value) = arr.get(&key) {
                 result.push_str(value);
             }
-        } else {
+        } else if let Some(arr) = self.scoped.arrays.get(arr_name) {
             let idx = self.resolve_indexed_array_subscript(arr_name, index);
-            if let Some(arr) = self.scoped.arrays.get(arr_name)
-                && let Some(value) = arr.get(&idx)
-            {
+            if let Some(value) = arr.get(&idx) {
                 result.push_str(value);
             }
+        } else if let Some(value) = self.scalar_element(arr_name, index) {
+            result.push_str(&value);
         }
         result
     }
@@ -293,13 +341,7 @@ impl Interpreter {
                             .unwrap_or(name.len());
                         let start = (bracket_pos + 1).min(index_end);
                         let index_str = &name[start..index_end];
-                        let idx: usize =
-                            self.evaluate_arithmetic(index_str).try_into().unwrap_or(0);
-                        if let Some(arr) = self.scoped.arrays.get(arr_name) {
-                            arr.get(&idx).cloned().unwrap_or_default()
-                        } else {
-                            String::new()
-                        }
+                        self.expand_array_access_part(arr_name, index_str)
                     } else {
                         self.expand_variable(name)
                     };
@@ -359,18 +401,8 @@ impl Interpreter {
                     );
                 }
                 WordPart::ArrayIndices(name) => {
-                    let resolved = self.resolve_nameref(name);
-                    if let Some(arr) = self.scoped.assoc_arrays.get(resolved) {
-                        let mut keys: Vec<_> = arr.keys().cloned().collect();
-                        keys.sort();
-                        Self::append_expansion_for_word(&mut result, word, &keys.join(" "));
-                    } else if let Some(arr) = self.scoped.arrays.get(resolved) {
-                        let mut indices: Vec<_> = arr.keys().collect();
-                        indices.sort();
-                        let index_strs: Vec<String> =
-                            indices.iter().map(|i| i.to_string()).collect();
-                        Self::append_expansion_for_word(&mut result, word, &index_strs.join(" "));
-                    }
+                    let keys = self.array_keys(name);
+                    Self::append_expansion_for_word(&mut result, word, &keys.join(" "));
                 }
                 WordPart::Substring {
                     name,
@@ -398,11 +430,8 @@ impl Interpreter {
                     offset,
                     length,
                 } => {
-                    if let Some(arr) = self.scoped.arrays.get(name) {
-                        let mut indices: Vec<_> = arr.keys().cloned().collect();
-                        indices.sort();
-                        let values: Vec<_> =
-                            indices.iter().filter_map(|i| arr.get(i).cloned()).collect();
+                    if let Some(items) = self.array_view(name) {
+                        let values: Vec<String> = items.into_iter().map(|(_, v)| v).collect();
 
                         let offset_val: isize = self.evaluate_arithmetic(offset) as isize;
                         let start = if offset_val < 0 {
@@ -431,11 +460,10 @@ impl Interpreter {
                     let is_nameref = nameref_target.is_some();
 
                     if is_nameref && operator.is_none() {
-                        // Nameref without operator: ${!ref} returns the
-                        // name the nameref points to (original behavior).
-                        if let Some(ref target) = nameref_target {
-                            Self::append_expansion_for_word(&mut result, word, target);
-                        }
+                        // Nameref without operator: ${!ref} is the name
+                        // at the end of the nameref chain.
+                        let target = self.resolve_nameref(name).to_string();
+                        Self::append_expansion_for_word(&mut result, word, &target);
                     } else {
                         // Resolve the indirect target variable name
                         let resolved_name = if let Some(target) = nameref_target {
@@ -494,13 +522,14 @@ impl Interpreter {
                 }
                 WordPart::ArrayLength(name) => {
                     let resolved = self.resolve_nameref(name);
-                    if let Some(arr) = self.scoped.assoc_arrays.get(resolved) {
-                        result.push_str(&arr.len().to_string());
+                    let len = if let Some(arr) = self.scoped.assoc_arrays.get(resolved) {
+                        arr.len()
                     } else if let Some(arr) = self.scoped.arrays.get(resolved) {
-                        result.push_str(&arr.len().to_string());
+                        arr.len()
                     } else {
-                        result.push('0');
-                    }
+                        usize::from(self.scalar_value(resolved).is_some())
+                    };
+                    result.push_str(&len.to_string());
                 }
                 WordPart::ProcessSubstitution { commands, is_input } => {
                     let expanded = self
@@ -584,46 +613,20 @@ impl Interpreter {
                 if let WordPart::ArrayAccess { name, index } = &word.parts[0]
                     && (index == "@" || index == "*")
                 {
-                    // Check assoc arrays first
-                    if let Some(arr) = self.scoped.assoc_arrays.get(name) {
-                        let mut keys: Vec<_> = arr.keys().cloned().collect();
-                        keys.sort();
-                        let values: Vec<String> =
-                            keys.iter().filter_map(|k| arr.get(k).cloned()).collect();
-                        if word.quoted && index == "*" {
-                            let sep = self.get_ifs_separator();
-                            return Ok(vec![values.join(&sep)]);
-                        }
-                        return Ok(values);
+                    let Some(items) = self.array_view(name) else {
+                        return Ok(Vec::new());
+                    };
+                    let values: Vec<String> = items.into_iter().map(|(_, v)| v).collect();
+                    // "${arr[*]}" joins into single field with IFS; "${arr[@]}" keeps separate
+                    if word.quoted && index == "*" {
+                        let sep = self.get_ifs_separator();
+                        return Ok(vec![values.join(&sep)]);
                     }
-                    if let Some(arr) = self.scoped.arrays.get(name) {
-                        let mut indices: Vec<_> = arr.keys().collect();
-                        indices.sort();
-                        let values: Vec<String> =
-                            indices.iter().filter_map(|i| arr.get(i).cloned()).collect();
-                        // "${arr[*]}" joins into single field with IFS; "${arr[@]}" keeps separate
-                        if word.quoted && index == "*" {
-                            let sep = self.get_ifs_separator();
-                            return Ok(vec![values.join(&sep)]);
-                        }
-                        return Ok(values);
-                    }
-                    return Ok(Vec::new());
+                    return Ok(values);
                 }
                 // "${!arr[@]}" - array keys/indices as separate fields
                 if let WordPart::ArrayIndices(name) = &word.parts[0] {
-                    let resolved = self.resolve_nameref(name);
-                    if let Some(arr) = self.scoped.assoc_arrays.get(resolved) {
-                        let mut keys: Vec<_> = arr.keys().cloned().collect();
-                        keys.sort();
-                        return Ok(keys);
-                    }
-                    if let Some(arr) = self.scoped.arrays.get(resolved) {
-                        let mut indices: Vec<_> = arr.keys().collect();
-                        indices.sort();
-                        return Ok(indices.iter().map(|i| i.to_string()).collect());
-                    }
-                    return Ok(Vec::new());
+                    return Ok(self.array_keys(name));
                 }
             }
 
@@ -768,25 +771,8 @@ impl Interpreter {
             } else {
                 " ".to_string()
             };
-            if let Some(arr) = self.scoped.assoc_arrays.get(resolved_arr_name) {
-                let is_set = !arr.is_empty();
-                let mut keys: Vec<_> = arr.keys().collect();
-                keys.sort();
-                let values: Vec<String> =
-                    keys.iter().filter_map(|k| arr.get(*k).cloned()).collect();
-                return (is_set, values.join(&sep));
-            }
-            if let Some(arr) = self.scoped.arrays.get(resolved_arr_name) {
-                let is_set = !arr.is_empty();
-                let mut indices: Vec<_> = arr.keys().collect();
-                indices.sort();
-                let values: Vec<_> = indices.iter().filter_map(|i| arr.get(i)).collect();
-                return (
-                    is_set,
-                    values.into_iter().cloned().collect::<Vec<_>>().join(&sep),
-                );
-            }
-            return (false, String::new());
+            let values = self.array_values(resolved_arr_name);
+            return (!values.is_empty(), values.join(&sep));
         }
 
         // Check for array element subscript: name[key]
@@ -811,7 +797,10 @@ impl Interpreter {
                     None => (false, String::new()),
                 };
             }
-            return (false, String::new());
+            return match self.scalar_element(resolved_arr_name, key) {
+                Some(v) => (true, v),
+                None => (false, String::new()),
+            };
         }
 
         // Special parameters @ and *
@@ -847,18 +836,7 @@ impl Interpreter {
             .strip_suffix("[@]")
             .or_else(|| name.strip_suffix("[*]"))
         {
-            let resolved = self.resolve_nameref(arr_name);
-            if let Some(arr) = self.scoped.assoc_arrays.get(resolved) {
-                let mut keys: Vec<_> = arr.keys().collect();
-                keys.sort();
-                return Some(keys.iter().filter_map(|k| arr.get(*k).cloned()).collect());
-            }
-            if let Some(arr) = self.scoped.arrays.get(resolved) {
-                let mut indices: Vec<_> = arr.keys().collect();
-                indices.sort();
-                return Some(indices.iter().filter_map(|i| arr.get(i).cloned()).collect());
-            }
-            return Some(Vec::new());
+            return Some(self.array_values(arr_name));
         }
         None
     }

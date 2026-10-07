@@ -3702,7 +3702,15 @@ impl Interpreter {
                 // Set loop variable (respects nameref). `value` is moved
                 // straight into `set_variable` — previously we cloned it
                 // even though `values` already owned the String for us.
-                self.set_variable(for_cmd.variable.clone(), value);
+                // A nameref control variable is re-pointed at each word
+                // (bash: `declare -n r; for r in a b` binds r to a, then b).
+                if self.scoped.namerefs.contains_key(&for_cmd.variable)
+                    && declare::valid_nameref_target(&value)
+                {
+                    self.set_nameref(&for_cmd.variable, value);
+                } else {
+                    self.set_variable(for_cmd.variable.clone(), value);
+                }
 
                 // Execute body
                 let emit_before = self.output_emit_count;
@@ -4269,6 +4277,7 @@ impl Interpreter {
                     match args[0].as_str() {
                         "-z" => args[1].is_empty(),
                         "-n" => !args[1].is_empty(),
+                        "-v" => self.cond_var_is_set(&args[1]),
                         "-e" | "-a" => self.fs.exists(&resolve(&args[1])).await.unwrap_or(false),
                         "-f" => self
                             .fs
@@ -4370,6 +4379,23 @@ impl Interpreter {
                 _ => false,
             }
         })
+    }
+
+    /// `[[ -v name ]]`: a scalar is set when it has a value; an array name
+    /// alone tests element 0 (key `"0"` for assoc); `name[sub]` tests that
+    /// element and `name[@]` any element.
+    fn cond_var_is_set(&self, arg: &str) -> bool {
+        if arg.contains('[') && arg.ends_with(']') {
+            return self.resolve_param_expansion_name(arg).0;
+        }
+        let name = self.resolve_nameref(arg);
+        if let Some(arr) = self.scoped.arrays.get(name) {
+            return arr.contains_key(&0);
+        }
+        if let Some(arr) = self.scoped.assoc_arrays.get(name) {
+            return arr.contains_key("0");
+        }
+        self.is_variable_set(name)
     }
 
     /// Perform regex match and set BASH_REMATCH array.
@@ -7359,7 +7385,7 @@ impl Interpreter {
                 .unwrap_or(u64::MAX),
             )?;
 
-            self.apply_builtin_side_effects(&result).await;
+            self.apply_builtin_side_effects(&mut result).await;
 
             let result = self.apply_redirections(result, redirects).await?;
             self.apply_after_tool(name, result)
@@ -9393,7 +9419,7 @@ impl Interpreter {
     }
 
     /// Process structured side effects from builtin execution.
-    async fn apply_builtin_side_effects(&mut self, result: &ExecResult) {
+    async fn apply_builtin_side_effects(&mut self, result: &mut ExecResult) {
         // Builtins that mutate SHOPT_* directly via `ctx.variables` (e.g. the
         // `set -e` / `set +u` paths in the `set` builtin) don't update the
         // cached `flags` bitfield. Resync once after every builtin so the
@@ -9401,7 +9427,8 @@ impl Interpreter {
         // ~10 SHOPT_* entries — cheaper than threading a structured "shopt
         // changed" channel through every builtin.
         self.refresh_shopt_flags();
-        for effect in &result.side_effects {
+        let effects = std::mem::take(&mut result.side_effects);
+        for effect in &effects {
             match effect {
                 builtins::BuiltinSideEffect::SetArray { name, elements } => {
                     let mut arr = HashMap::new();
@@ -9457,10 +9484,21 @@ impl Interpreter {
                     self.last_exit_code = *code;
                 }
                 builtins::BuiltinSideEffect::SetVariable { name, value } => {
+                    // A builtin (read, getopts, ...) assigning through a
+                    // circular nameref fails that command, as in bash,
+                    // instead of abandoning the line like an assignment.
+                    if self.resolve_nameref_strict(name).is_err() {
+                        result
+                            .stderr
+                            .push_str(&format!("bash: warning: {name}: circular name reference\n"));
+                        result.exit_code = 1;
+                        continue;
+                    }
                     self.set_variable(name.clone(), value.clone());
                 }
             }
         }
+        result.side_effects = effects;
     }
 
     /// Resolve a path relative to cwd, normalizing `.` and `..` components.
@@ -9969,6 +10007,8 @@ impl Interpreter {
                 return;
             }
 
+            // A scalar written through a subscript becomes element 0.
+            self.promote_scalar_to_indexed(&resolved_name);
             let index = self.resolve_indexed_array_subscript(&resolved_name, key);
             let old_len = self
                 .scoped

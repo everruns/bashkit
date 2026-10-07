@@ -106,7 +106,7 @@ pub(super) enum VarKind {
 }
 
 /// Is `s` usable as a nameref target: a name or `name[subscript]`.
-fn valid_nameref_target(s: &str) -> bool {
+pub(super) fn valid_nameref_target(s: &str) -> bool {
     match s.find('[') {
         Some(b) => is_valid_var_name(&s[..b]) && s.ends_with(']') && s.len() > b + 2,
         None => is_valid_var_name(s),

@@ -8,7 +8,6 @@ gone
 ### end
 
 ### unset_then_check_defined
-### skip: [[ -v VAR ]] unary operator not yet implemented
 # unset var should not be -v defined
 export UNSET_DEF_TEST=x
 unset UNSET_DEF_TEST

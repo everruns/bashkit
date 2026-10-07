@@ -97,7 +97,6 @@ declare -nr q="z"
 
 ### bashbox_declare_declared_but_unset_arrays_and_scalars_print_bare
 # declared but unset arrays and scalars print bare
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 declare -a e; declare -A f; declare -i g; declare -p e f g; e+=(q); declare -p e; [[ -v f ]]; echo $?
 ### expect
 declare -a e
@@ -159,7 +158,6 @@ declare -- a="7x"
 
 ### bashbox_declare_a_chain_of_namerefs
 # a chain of namerefs
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 declare -n r=x; declare -n s=r; s=5; echo $x ${!s}
 ### expect
 5 x
@@ -206,7 +204,6 @@ declare -n r="x"
 
 ### bashbox_declare_a_for_loop_points_a_nameref_at_each_word
 # a for loop points a nameref at each word
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 declare -n r; for r in a b; do r=v; done; declare -p a b r
 ### expect
 declare -- a="v"
@@ -265,7 +262,6 @@ next 1
 
 ### bashbox_declare_read_through_a_circular_reference_fails
 # read through a circular reference fails
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 declare -n a=b; declare -n b=a; read a <<< x; echo $?
 ### expect
 1

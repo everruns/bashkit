@@ -12,7 +12,6 @@ g
 
 ### bashbox_local_scope_local_a_with_keys
 # local -A with keys
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 f(){ local -A m=([k]=v [j]=w); echo "${!m[@]} ${m[k]}"; }; f; declare -p m; echo $?
 ### expect
 k j v
@@ -101,7 +100,6 @@ g
 
 ### bashbox_local_scope_a_local_scalar_hides_a_global_array
 # a local scalar hides a global array
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 a=(1 2 3); f(){ local a=x; echo "${a[@]} ${#a[@]}"; declare -p a; }; f; echo "${a[@]}"
 ### expect
 x 1
@@ -111,7 +109,6 @@ declare -- a="x"
 
 ### bashbox_local_scope_a_local_array_hides_a_global_scalar
 # a local array hides a global scalar
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 a=s; f(){ local -a a=(1 2); echo "${a[@]}"; }; f; echo "${a[@]}"; declare -p a
 ### expect
 1 2
@@ -190,7 +187,6 @@ declare -ar a=([0]="1")
 
 ### bashbox_local_scope_a_scalar_is_element_0_of_an_array
 # a scalar is element 0 of an array
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 x=5; echo "${x[@]} ${#x[@]} ${!x[@]} ${x[0]}"; x[1]=6; echo "${x[@]} $x"; declare -p x
 ### expect
 5 1 0 5
@@ -208,7 +204,6 @@ xy 2
 
 ### bashbox_local_scope_arithmetic_on_a_scalar_element
 # arithmetic on a scalar element
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 x=4; echo $((x[0] + 1)); ((x[1] = 7)); echo "${x[@]}"
 ### expect
 5
