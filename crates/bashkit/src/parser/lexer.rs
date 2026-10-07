@@ -244,7 +244,15 @@ impl<'a> Lexer<'a> {
             }
             '[' => {
                 self.advance();
-                if self.peek_char() == Some('[') {
+                // `[[` is the keyword only as a whole word; `[[:digit:]]*` is
+                // a glob bracket expression.
+                let mut lookahead = self.chars.clone();
+                let keyword = lookahead.next() == Some('[')
+                    && matches!(
+                        lookahead.next(),
+                        None | Some(' ' | '\t' | '\n' | ';' | '&' | '|' | '(' | ')')
+                    );
+                if keyword {
                     self.advance();
                     Some(Token::DoubleLeftBracket)
                 } else {

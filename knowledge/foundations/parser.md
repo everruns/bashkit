@@ -112,8 +112,15 @@ prefix.
 **End of `$(...)`.** `parser/subst_scan.rs` is the one scanner the lexer and
 `parse_word` share to find the closing `)`: it tracks quotes, escapes,
 backticks, nested `$(`, comments and heredoc bodies (`<<`, `<<-`, quoted
-delimiters; `<<<` and arithmetic `<<` excluded). Known gap: a bare `case`
-pattern `)` inside `$(...)` still closes early.
+delimiters; `<<<` and arithmetic `<<` excluded). It also follows `case`
+in command position (subject, `in`, pattern, body; `;;`/`;&`/`;;&` back to
+pattern), so a pattern's `)` and an optional leading `(` do not change the
+paren depth. Keywords are recognised only as whole unquoted words in command
+position, so `echo case)` still closes.
+
+**`[[` lexing.** `[[` is the keyword only when followed by a word break
+(space, tab, newline, `;`, `&`, `|`, `(`, `)`, or end); `[[:digit:]]*` is a
+bracket-expression word.
 
 ## Alternatives Considered
 

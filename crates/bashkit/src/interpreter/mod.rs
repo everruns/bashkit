@@ -10326,14 +10326,30 @@ impl Interpreter {
                 }
             }
             let commands: &[Command] = if file_read.is_some() { &[] } else { commands };
+            // Captured output must not reach the streaming callback: compound
+            // commands (`case`, `{ }`, `if`) emit through it as they run.
+            let saved_callback = self.output_callback.take();
+            let mut run: Result<()> = Ok(());
             for cmd in commands {
-                let cmd_result = self.execute_command(cmd).await?;
-                stdout.try_push_str(&cmd_result.stdout.command_substitution_text())?;
+                let cmd_result = match self.execute_command(cmd).await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        run = Err(e);
+                        break;
+                    }
+                };
+                if let Err(e) = stdout.try_push_str(&cmd_result.stdout.command_substitution_text())
+                {
+                    run = Err(e.into());
+                    break;
+                }
                 self.last_exit_code = cmd_result.exit_code;
                 if matches!(cmd_result.control_flow, ControlFlow::Exit(_)) {
                     break;
                 }
             }
+            self.output_callback = saved_callback;
+            run?;
             // Fire EXIT trap set inside the command substitution
             if let Some(trap_cmd) = self.scoped.traps.get("EXIT").cloned()
                 && snapshot.scoped.traps.get("EXIT") != Some(&trap_cmd)

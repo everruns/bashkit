@@ -121,3 +121,23 @@ fn threat_recursive_pipeline_is_bounded() {
     };
     assert!(failed, "{result:?}");
 }
+
+/// Output of compound commands inside `$(...)` is captured, never streamed
+/// to the caller (a `case`, group or `if` inside a substitution leaked).
+#[tokio::test]
+async fn command_substitution_output_is_not_streamed() {
+    let streamed = Arc::new(Mutex::new(String::new()));
+    let sink = streamed.clone();
+    let mut bash = Bash::new();
+    let result = bash
+        .exec_streaming(
+            "x=$(case a in a) echo c;; esac); y=$({ echo g; }); z=$(if true; then echo i; fi)\necho \"$x$y$z\"",
+            Box::new(move |stdout, _stderr| {
+                sink.lock().unwrap().push_str(&stdout.to_string());
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.stdout, "cgi\n");
+    assert_eq!(*streamed.lock().unwrap(), "cgi\n");
+}
