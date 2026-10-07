@@ -15,6 +15,13 @@
 //!   (default 5 s, max 60 s). A command still running is reported, not
 //!   killed; the next call (even with no input) keeps waiting, and `<C-c>`
 //!   interrupts it.
+//! - `wait_for` (regex) returns as soon as matching text appears in command
+//!   output printed during the call. It matches command stdout/stderr only,
+//!   never the echoed keystrokes or prompts, so `echo ready<Enter>` with
+//!   `wait_for: "ready"` waits for the output line, not the typed command.
+//!   Polls in 50 ms slices; the session keeps running between slices.
+//! - `screen: "changes"` returns only rows that differ from the previous
+//!   call (any mode updates the baseline), to keep long sessions cheap.
 
 use std::time::Duration;
 
@@ -31,6 +38,11 @@ const MAX_WAIT_MS: u64 = 60_000;
 // THREAT[TM-DOS-119]: tool input feeds the bounded terminal queue; reject
 // oversized calls up front instead of silently truncating.
 const MAX_INPUT_BYTES: usize = 64 * 1024;
+/// Longest `wait_for` pattern, and the compiled-regex size cap.
+// THREAT[TM-DOS-119]: the pattern is model-supplied; bound compile cost.
+const MAX_PATTERN_BYTES: usize = 1024;
+const MAX_REGEX_SIZE: usize = 1 << 20;
+const WAIT_SLICE: Duration = Duration::from_millis(50);
 
 const DESCRIPTION: &str = "Interactive bash terminal in a sandbox. Type keys, get the screen back. \
 Use it for full-screen programs such as vi and less, or a shell session that persists between calls.";
@@ -63,6 +75,16 @@ pub struct TerminalToolError(String);
 /// ```
 pub struct TerminalTool {
     terminal: Terminal,
+    /// Screen rows at the previous report, for `screen: "changes"`.
+    last_rows: Option<Vec<String>>,
+}
+
+/// How much of the screen a call returns.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ScreenMode {
+    Full,
+    Changes,
+    None,
 }
 
 impl TerminalTool {
@@ -75,6 +97,7 @@ impl TerminalTool {
     pub fn with_size(builder: BashBuilder, size: TerminalSize) -> Self {
         Self {
             terminal: Terminal::with_size(builder, size),
+            last_rows: None,
         }
     }
 
@@ -108,7 +131,10 @@ Send keys in `input` using Vim notation: text is typed as-is, <Enter> runs a lin
 <C-d> ends input, <lt> types a literal '<'. Each call returns the screen, the activity \
 (prompt, continuation, running, exited) and every command that finished with its exact \
 output and exit code. vi and less work; quit vi with <Esc>:wq<Enter>, less with q. \
-If activity is running, call again (input may be empty) to keep waiting, or send <C-c>."
+If activity is running, call again (input may be empty) to keep waiting, or send <C-c>. \
+Set wait_for to a regex to return as soon as command output matches (for example a server's \
+'listening' line); matched tells whether it did. Set screen to \"changes\" to get only the rows \
+that changed since the last call, or \"none\" to skip the screen."
             .to_string()
     }
 
@@ -126,6 +152,15 @@ If activity is running, call again (input may be empty) to keep waiting, or send
                     "minimum": 0,
                     "maximum": MAX_WAIT_MS,
                     "description": "How long to wait for the session to need input (default 5000)."
+                },
+                "wait_for": {
+                    "type": "string",
+                    "description": "Regex (multi-line: ^ and $ match at line ends). Return as soon as command output printed during this call matches it, even if the command is still running. Typed keys and prompts are not matched."
+                },
+                "screen": {
+                    "type": "string",
+                    "enum": ["full", "changes", "none"],
+                    "description": "full (default): whole screen. changes: only rows that differ from the previous call, as screen_changes. none: no screen."
                 }
             }
         })
@@ -135,9 +170,27 @@ If activity is running, call again (input may be empty) to keep waiting, or send
     pub fn output_schema(&self) -> Value {
         json!({
             "type": "object",
-            "required": ["screen", "activity", "commands", "waiting_for_input"],
+            "required": ["activity", "commands", "waiting_for_input"],
             "properties": {
-                "screen": {"type": "string", "description": "Visible screen as plain text"},
+                "screen": {"type": "string", "description": "Visible screen as plain text (screen = full)"},
+                "screen_changes": {
+                    "type": "array",
+                    "description": "Rows that changed since the previous call (screen = changes)",
+                    "items": {
+                        "type": "object",
+                        "required": ["row", "text"],
+                        "properties": {
+                            "row": {"type": "integer", "description": "0-based screen row"},
+                            "text": {"type": "string"}
+                        }
+                    }
+                },
+                "cursor": {
+                    "type": "object",
+                    "description": "Cursor position, 0-based (screen = changes)",
+                    "properties": {"row": {"type": "integer"}, "col": {"type": "integer"}}
+                },
+                "matched": {"type": "boolean", "description": "Whether wait_for matched (only when wait_for was given)"},
                 "activity": {
                     "type": "string",
                     "enum": ["prompt", "continuation", "running", "exited"],
@@ -200,27 +253,77 @@ If activity is running, call again (input may be empty) to keep waiting, or send
             })?,
         }
         .min(MAX_WAIT_MS);
+        let wait_for = match args.get("wait_for") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(p)) => Some(compile_pattern(p)?),
+            Some(_) => return Err(TerminalToolError("`wait_for` must be a string".into())),
+        };
+        let mode = match args.get("screen") {
+            None | Some(Value::Null) => ScreenMode::Full,
+            Some(Value::String(m)) if m == "full" => ScreenMode::Full,
+            Some(Value::String(m)) if m == "changes" => ScreenMode::Changes,
+            Some(Value::String(m)) if m == "none" => ScreenMode::None,
+            Some(_) => {
+                return Err(TerminalToolError(
+                    "`screen` must be \"full\", \"changes\" or \"none\"".into(),
+                ));
+            }
+        };
 
         let bytes = parse_keys(input);
+        let mark = self.terminal.tty().output_mark();
         if self.terminal.send(&bytes) < bytes.len() {
             return Err(TerminalToolError(
                 "terminal input buffer is full; wait for the running command first".into(),
             ));
         }
-        let waiting = matches!(
-            crate::time_compat::timeout(
-                Duration::from_millis(wait_ms),
-                self.terminal.run_until_idle()
-            )
-            .await,
-            Ok(TerminalStatus::Idle | TerminalStatus::Exited(_))
-        );
-        Ok(self.report(waiting))
+        let wait = Duration::from_millis(wait_ms);
+        let (waiting, matched) = match wait_for {
+            None => (self.wait_idle(wait).await, None),
+            Some(re) => {
+                let (waiting, matched) = self.wait_match(wait, mark, &re).await;
+                (waiting, Some(matched))
+            }
+        };
+        let mut out = self.report(waiting, mode);
+        if let Some(matched) = matched {
+            out["matched"] = json!(matched);
+        }
+        Ok(out)
     }
 
-    fn report(&self, waiting: bool) -> Value {
+    async fn wait_idle(&mut self, wait: Duration) -> bool {
+        matches!(
+            crate::time_compat::timeout(wait, self.terminal.run_until_idle()).await,
+            Ok(TerminalStatus::Idle | TerminalStatus::Exited(_))
+        )
+    }
+
+    /// Run until `re` matches output written since `mark`, the session needs
+    /// input, or `wait` passes. Returns (waiting_for_input, matched).
+    async fn wait_match(&mut self, wait: Duration, mark: u64, re: &regex::Regex) -> (bool, bool) {
+        let deadline = crate::time_compat::Instant::now() + wait;
+        loop {
+            if self.output_matches(mark, re) {
+                return (self.terminal.tty().is_idle(), true);
+            }
+            let left = deadline.saturating_duration_since(crate::time_compat::Instant::now());
+            if left.is_zero() {
+                return (false, false);
+            }
+            if self.wait_idle(left.min(WAIT_SLICE)).await {
+                return (true, self.output_matches(mark, re));
+            }
+        }
+    }
+
+    fn output_matches(&self, mark: u64, re: &regex::Regex) -> bool {
+        let raw = self.terminal.tty().output_since(mark);
+        re.is_match(&strip_ansi(&String::from_utf8_lossy(&raw)))
+    }
+
+    fn report(&mut self, waiting: bool, mode: ScreenMode) -> Value {
         let mut out = json!({
-            "screen": self.terminal.screen_text(),
             "waiting_for_input": waiting,
             "full_screen": self.terminal.is_alternate_screen(),
             "commands": self
@@ -242,8 +345,75 @@ If activity is running, call again (input may be empty) to keep waiting, or send
         if let Some((key, value)) = extra {
             out[key] = value;
         }
+        let rows = self.terminal.screen_rows();
+        match mode {
+            ScreenMode::Full => out["screen"] = json!(self.terminal.screen_text()),
+            ScreenMode::Changes => {
+                let prev = self.last_rows.as_deref().unwrap_or(&[]);
+                let resized = prev.len() != rows.len();
+                let changes: Vec<Value> = rows
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, row)| resized || prev.get(*i) != Some(*row))
+                    .map(|(i, row)| json!({"row": i, "text": row}))
+                    .collect();
+                let (row, col) = self.terminal.cursor();
+                out["screen_changes"] = json!(changes);
+                out["cursor"] = json!({"row": row, "col": col});
+            }
+            ScreenMode::None => {}
+        }
+        self.last_rows = Some(rows);
         out
     }
+}
+
+fn compile_pattern(pattern: &str) -> Result<regex::Regex, TerminalToolError> {
+    if pattern.len() > MAX_PATTERN_BYTES {
+        return Err(TerminalToolError(format!(
+            "`wait_for` is longer than {MAX_PATTERN_BYTES} bytes"
+        )));
+    }
+    regex::RegexBuilder::new(pattern)
+        .size_limit(MAX_REGEX_SIZE)
+        .multi_line(true)
+        .build()
+        .map_err(|e| TerminalToolError(format!("`wait_for` is not a valid regex: {e}")))
+}
+
+/// Drop terminal control sequences (CSI, OSC, two-byte ESC) and `\r` so
+/// `wait_for` matches the text a reader sees.
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\r' => {}
+            '\x1b' => match chars.next() {
+                Some('[') => {
+                    for c in chars.by_ref() {
+                        if ('@'..='~').contains(&c) {
+                            break;
+                        }
+                    }
+                }
+                Some(']') => {
+                    while let Some(c) = chars.next() {
+                        if c == '\x07' {
+                            break;
+                        }
+                        if c == '\x1b' && chars.peek() == Some(&'\\') {
+                            chars.next();
+                            break;
+                        }
+                    }
+                }
+                _ => {}
+            },
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 fn record_json(r: CommandRecord) -> Value {
@@ -405,6 +575,105 @@ mod tests {
         let big = "a".repeat(MAX_INPUT_BYTES + 1);
         let err = tool.call(json!({"input": big})).await.unwrap_err();
         assert!(err.to_string().contains("smaller parts"));
+    }
+
+    #[tokio::test]
+    async fn wait_for_returns_on_match_while_running() {
+        let mut tool = TerminalTool::new(Bash::builder());
+        let started = std::time::Instant::now(); // std-time-ok: native-only test
+        let out = tool
+            .call(json!({
+                "input": "for i in 1 2 3; do echo tick$i; sleep 1; done<Enter>",
+                "wait_for": "tick[2]",
+                "wait_ms": 10000
+            }))
+            .await
+            .unwrap();
+        assert_eq!(out["matched"], true);
+        assert_eq!(out["activity"], "running");
+        assert_eq!(out["waiting_for_input"], false);
+        assert!(started.elapsed() < std::time::Duration::from_millis(2500));
+        assert!(out["screen"].as_str().unwrap().contains("tick2"));
+        let out = tool.call(json!({"input": "<C-c>"})).await.unwrap();
+        assert_eq!(out["activity"], "prompt");
+    }
+
+    #[tokio::test]
+    async fn wait_for_ignores_typed_echo() {
+        let mut tool = TerminalTool::new(Bash::builder());
+        let out = tool
+            .call(json!({"input": "echo ready<Enter>", "wait_for": "^ready$"}))
+            .await
+            .unwrap();
+        assert_eq!(out["matched"], true);
+        let out = tool
+            .call(json!({"input": "true ready<Enter>", "wait_for": "ready"}))
+            .await
+            .unwrap();
+        assert_eq!(out["matched"], false);
+        assert_eq!(out["waiting_for_input"], true);
+    }
+
+    #[tokio::test]
+    async fn wait_for_times_out_without_match() {
+        let mut tool = TerminalTool::new(Bash::builder());
+        let out = tool
+            .call(json!({"input": "sleep 5<Enter>", "wait_for": "never", "wait_ms": 100}))
+            .await
+            .unwrap();
+        assert_eq!(out["matched"], false);
+        assert_eq!(out["activity"], "running");
+        assert!(out.get("matched").is_some());
+        let out = tool.call(json!({"input": "<C-c>"})).await.unwrap();
+        assert!(out.get("matched").is_none());
+    }
+
+    #[test]
+    fn wait_for_rejects_bad_patterns() {
+        assert!(
+            compile_pattern("(")
+                .unwrap_err()
+                .to_string()
+                .contains("not a valid regex")
+        );
+        assert!(compile_pattern(&"a".repeat(MAX_PATTERN_BYTES + 1)).is_err());
+        assert!(compile_pattern("a{1000}{1000}").is_err());
+    }
+
+    #[test]
+    fn strip_ansi_keeps_visible_text() {
+        assert_eq!(strip_ansi("\x1b[1;31mred\x1b[0m ok\r\n"), "red ok\n");
+        assert_eq!(strip_ansi("\x1b]0;title\x07x\x1b]2;t\x1b\\y\x1b7z"), "xyz");
+    }
+
+    #[tokio::test]
+    async fn screen_changes_returns_only_changed_rows() {
+        let mut tool = TerminalTool::new(Bash::builder());
+        let out = tool
+            .call(json!({"input": "echo one<Enter>", "screen": "changes"}))
+            .await
+            .unwrap();
+        // First call: every row is new.
+        assert_eq!(out["screen_changes"].as_array().unwrap().len(), 24);
+        assert!(out.get("screen").is_none());
+        let out = tool
+            .call(json!({"input": "echo two<Enter>", "screen": "changes"}))
+            .await
+            .unwrap();
+        let changes = out["screen_changes"].as_array().unwrap();
+        let texts: Vec<_> = changes
+            .iter()
+            .map(|c| c["text"].as_str().unwrap())
+            .collect();
+        assert_eq!(texts, ["$ echo two", "two", "$"]);
+        assert_eq!(changes[0]["row"], 2);
+        assert_eq!(out["cursor"], json!({"row": 4, "col": 2}));
+        let out = tool.call(json!({"screen": "none"})).await.unwrap();
+        assert!(out.get("screen").is_none() && out.get("screen_changes").is_none());
+        let out = tool.call(json!({"screen": "changes"})).await.unwrap();
+        assert_eq!(out["screen_changes"], json!([]));
+        assert!(tool.call(json!({"screen": "diff"})).await.is_err());
+        assert!(tool.call(json!({"wait_for": 1})).await.is_err());
     }
 
     #[test]

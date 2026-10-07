@@ -191,6 +191,17 @@ call again, with empty input, to keep waiting, or send `<C-c>`. One
 `TerminalTool` is one session, so keep it for the whole conversation.
 `call` takes at most 64 KiB of `input` per call.
 
+Two optional arguments keep agent loops short:
+
+- `wait_for`: a regex. The call returns as soon as output printed by commands
+  during the call matches, even while the command keeps running, and sets
+  `matched`. Typed keys and prompts are not matched, so
+  `{"input": "./serve.sh<Enter>", "wait_for": "listening on"}` returns when the
+  server prints its line. `^` and `$` match at line ends.
+- `screen`: `"full"` (default) returns `screen`; `"changes"` returns
+  `screen_changes` (`[{row, text}]`, only rows that differ from the previous
+  call) and `cursor`; `"none"` returns no screen.
+
 It is not a `BashTool`: that tool runs each call in a fresh shell, while a
 terminal keeps the shell, open programs and the screen between calls.
 
@@ -308,8 +319,8 @@ same execution limits, no host processes. A few terminal-specific rules apply:
 - **Bounded buffers.** Unread input is capped at 1 MiB (`send` returns how many
   bytes it accepted), retained raw output at the newest 4 MiB, and the `vi`
   buffer at 8 MiB.
-- **Ctrl-C** stops a running command at the next command boundary, so a single
-  builtin such as `sleep 5` finishes first.
+- **Ctrl-C** stops a running command right away, even inside `sleep`, and
+  sets `$?` to 130.
 - **Command stdin is not the terminal.** `read` with no input gets end-of-file
   instead of waiting for typed text. Only `vi` reads keystrokes directly.
 

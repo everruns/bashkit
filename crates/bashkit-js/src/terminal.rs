@@ -132,15 +132,15 @@ impl Terminal {
         env.spawn_future(run_until_idle(Arc::clone(&self.tool), timeout_ms))
     }
 
-    /// Agent step as a JSON string; the JS wrapper parses it (see `call`).
+    /// Agent step: tool arguments as a JSON string in, result JSON out; the
+    /// JS wrapper builds and parses them (see `call`).
     #[napi(js_name = "__callJson", ts_return_type = "Promise<string>")]
     pub fn call_json<'env>(
         &self,
         env: &'env Env,
-        input: Option<String>,
-        wait_ms: Option<u32>,
+        args_json: String,
     ) -> napi::Result<PromiseRaw<'env, String>> {
-        env.spawn_future(call_json(Arc::clone(&self.tool), input, wait_ms))
+        env.spawn_future(call_json(Arc::clone(&self.tool), args_json))
     }
 
     /// Visible screen as plain text.
@@ -278,15 +278,9 @@ async fn run_until_idle(
     }
 }
 
-async fn call_json(
-    tool: Arc<Mutex<TerminalTool>>,
-    input: Option<String>,
-    wait_ms: Option<u32>,
-) -> napi::Result<String> {
-    let mut args = serde_json::json!({ "input": input.unwrap_or_default() });
-    if let Some(ms) = wait_ms {
-        args["wait_ms"] = ms.into();
-    }
+async fn call_json(tool: Arc<Mutex<TerminalTool>>, args_json: String) -> napi::Result<String> {
+    let args: serde_json::Value = serde_json::from_str(&args_json)
+        .map_err(|e| napi::Error::from_reason(format!("invalid call arguments: {e}")))?;
     let mut guard = tool.lock().await;
     let out = guard
         .call(args)

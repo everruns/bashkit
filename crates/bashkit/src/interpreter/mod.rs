@@ -1512,6 +1512,8 @@ impl Interpreter {
             "readlink" => Readlink,
             "mkdir" => Mkdir,
             "mktemp" => Mktemp,
+            "uuidgen" => Uuidgen,
+            "openssl" => Openssl,
             "mkfifo" => Mkfifo,
             "rm" => Rm,
             "cp" => Cp,
@@ -1824,6 +1826,12 @@ impl Interpreter {
             concurrent_jobs: true,
             script_depth: 0,
         }
+    }
+
+    /// Set `$?` from outside a command (terminal carries it across lines).
+    #[cfg(feature = "terminal")]
+    pub(crate) fn set_last_exit_code(&mut self, code: i32) {
+        self.last_exit_code = code;
     }
 
     /// Return a shared cancellation token. Set it to `true` from any thread
@@ -9677,6 +9685,10 @@ impl Interpreter {
         };
         let resolved: &str = resolved_string.as_str();
         // RANDOM=N reseeds the PRNG (matches bash behavior)
+        // SRANDOM ignores assignment (bash 5.1).
+        if resolved == "SRANDOM" {
+            return;
+        }
         if resolved == "RANDOM" {
             self.random_state
                 .store(value.parse::<u32>().unwrap_or(0), Ordering::Relaxed);
@@ -10377,6 +10389,14 @@ impl Interpreter {
                 self.random_state.store(next, Ordering::Relaxed);
                 return ((next >> 16) & 0x7fff).to_string();
             }
+            "SRANDOM" => {
+                // $SRANDOM - 32 bits from the OS CSPRNG, not the LCG (bash 5.1).
+                let mut b = [0u8; 4];
+                if getrandom::fill(&mut b).is_err() {
+                    return String::new();
+                }
+                return u32::from_le_bytes(b).to_string();
+            }
             "LINENO" => {
                 // $LINENO - current line number from command span
                 return self.current_line.to_string();
@@ -10448,6 +10468,7 @@ impl Interpreter {
                 | "!"
                 | "-"
                 | "RANDOM"
+                | "SRANDOM"
                 | "LINENO"
                 | "PWD"
                 | "OLDPWD"
