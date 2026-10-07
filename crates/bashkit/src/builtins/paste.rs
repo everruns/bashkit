@@ -28,6 +28,7 @@ struct PasteOptions {
     zero_terminated: bool,
 }
 
+#[allow(clippy::result_large_err)]
 fn parse_paste_args(
     args: &[String],
 ) -> std::result::Result<(PasteOptions, Vec<String>), ExecResult> {

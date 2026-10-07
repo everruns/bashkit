@@ -104,12 +104,12 @@ impl Builtin for Comm {
             0 => return Ok(Self::err("missing operand", 1)),
             1 => {
                 return Ok(Self::err(
-                    &format!("missing operand after '{}'", files[0]),
+                    format!("missing operand after '{}'", files[0]),
                     1,
                 ));
             }
             2 => {}
-            _ => return Ok(Self::err(&format!("extra operand '{}'", files[2]), 1)),
+            _ => return Ok(Self::err(format!("extra operand '{}'", files[2]), 1)),
         }
         let sep = if opts.zero_terminated { '\0' } else { '\n' };
 

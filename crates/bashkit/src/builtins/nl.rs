@@ -106,6 +106,7 @@ fn parse_int(val: &str, what: &str) -> std::result::Result<i64, String> {
         .map_err(|_| format!("nl: invalid {what}: '{val}'"))
 }
 
+#[allow(clippy::result_large_err)]
 fn parse_nl_args(args: &[String]) -> std::result::Result<(NlOptions, Vec<String>), ExecResult> {
     let (parsed, files) = gnu_getopt(
         "nl",

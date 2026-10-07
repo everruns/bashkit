@@ -223,6 +223,7 @@ pub(crate) struct ParsedOpt {
 /// `(name, arg, key)`. With `permute`, operands and options may interleave
 /// (GNU default); without it, the first operand ends option parsing.
 /// Errors are GNU-shaped messages with `code` as the exit status.
+#[allow(clippy::result_large_err)]
 pub(crate) fn gnu_getopt(
     cmd: &str,
     args: &[String],

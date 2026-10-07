@@ -135,10 +135,7 @@ impl Builtin for Fold {
                     width = match val.parse::<usize>() {
                         Ok(w) if w > 0 => w,
                         _ => {
-                            return Ok(Self::err(
-                                &format!("invalid number of columns: '{val}'"),
-                                1,
-                            ));
+                            return Ok(Self::err(format!("invalid number of columns: '{val}'"), 1));
                         }
                     };
                 }

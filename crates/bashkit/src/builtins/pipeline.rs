@@ -129,7 +129,7 @@ fn strtoul_prefix(s: &str, base: u32) -> (u64, &str) {
 fn xargs_delimiter(s: &str) -> std::result::Result<char, ExecResult> {
     let mut chars = s.chars();
     match (chars.next(), chars.next()) {
-        (Some(c), None) => return Ok(c),
+        (Some(c), None) => Ok(c),
         (Some('\\'), Some(n)) => {
             let simple = match n {
                 'a' => Some('\x07'),
@@ -504,10 +504,11 @@ fn build_xargs_plan(opts: &XargsOptions, input: &str) -> XargsPlan {
     }
 
     // GNU runs pending arguments, and runs once on empty input unless -r.
-    if !replace && (!b.cur.is_empty() || (b.commands.is_empty() && !opts.no_run_if_empty)) {
-        if error.is_none() || !b.cur.is_empty() {
-            b.exec();
-        }
+    if !replace
+        && (!b.cur.is_empty() || (b.commands.is_empty() && !opts.no_run_if_empty))
+        && (error.is_none() || !b.cur.is_empty())
+    {
+        b.exec();
     }
     XargsPlan {
         commands: b.commands,

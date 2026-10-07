@@ -108,7 +108,7 @@ impl Builtin for Base64 {
             // GNU: a newline after every WRAP columns and after a final
             // partial line; `-w 0` never wraps and adds no newline.
             let output = if wrap > 0 {
-                let mut wrapped = String::with_capacity(encoded.len() + encoded.len() / wrap + 1);
+                let mut wrapped = String::with_capacity(encoded.len() * 2);
                 for (i, ch) in encoded.chars().enumerate() {
                     if i > 0 && i % wrap == 0 {
                         wrapped.push('\n');

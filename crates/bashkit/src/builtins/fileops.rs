@@ -379,16 +379,16 @@ impl Builtin for Cp {
     }
 }
 
+/// Future returned by [`copy_tree`]: outer `Err` aborts, inner `Err` is a
+/// user-facing message.
+type CopyTreeFuture<'a> = std::pin::Pin<
+    Box<dyn std::future::Future<Output = Result<std::result::Result<(), String>>> + Send + 'a>,
+>;
+
 /// Recursively copy `src` to `dst` (GNU `cp -R` without `-L`: symlinks are
 /// recreated, not followed). The outer error is cancellation/budget; the
 /// inner one is a user-facing message for the first failed entry.
-fn copy_tree<'a>(
-    ctx: &'a Context<'_>,
-    src: &'a Path,
-    dst: &'a Path,
-) -> std::pin::Pin<
-    Box<dyn std::future::Future<Output = Result<std::result::Result<(), String>>> + Send + 'a>,
-> {
+fn copy_tree<'a>(ctx: &'a Context<'_>, src: &'a Path, dst: &'a Path) -> CopyTreeFuture<'a> {
     Box::pin(async move {
         ctx.consume_budget_work(1)?;
         let meta = match ctx.fs.lstat(src).await {

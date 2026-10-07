@@ -651,8 +651,8 @@ impl SortConfig {
         let transform = |s: &[u8]| -> Vec<u8> {
             s.iter()
                 .filter(|&&c| {
-                    !(o.dictionary && !(c.is_ascii_alphanumeric() || c == b' ' || c == b'\t'))
-                        && !(o.nonprinting && !(0x20..0x7f).contains(&c))
+                    (!o.dictionary || c.is_ascii_alphanumeric() || c == b' ' || c == b'\t')
+                        && (!o.nonprinting || (0x20..0x7f).contains(&c))
                 })
                 .map(|&c| if o.fold { c.to_ascii_uppercase() } else { c })
                 .collect()
@@ -746,6 +746,7 @@ impl Builtin for Sort {
         let mut zero_terminated = false;
         let mut files: Vec<String> = Vec::new();
 
+        #[allow(clippy::result_large_err)]
         let set_tab = |val: &str, tab: &mut Option<char>| -> std::result::Result<(), ExecResult> {
             let c = if val == "\\0" {
                 '\0'
@@ -912,8 +913,7 @@ impl Builtin for Sort {
             }
             // Bundle of short options.
             let body = &arg[1..];
-            let mut chars = body.char_indices();
-            while let Some((pos, c)) = chars.next() {
+            for (pos, c) in body.char_indices() {
                 match c {
                     'k' | 'o' | 't' | 'S' | 'T' | 'y' => {
                         let attached = &body[pos + c.len_utf8()..];
@@ -1137,6 +1137,7 @@ fn uniq_key(line: &str, o: &UniqKeyOpts) -> String {
     }
 }
 
+#[allow(clippy::result_large_err)]
 fn parse_uniq_count(opt: &str, val: &str) -> std::result::Result<usize, ExecResult> {
     val.trim().parse().map_err(|_| {
         let what = match opt {

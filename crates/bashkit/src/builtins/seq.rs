@@ -39,9 +39,9 @@ fn parse_operand(arg: &str) -> Option<Operand> {
     let value: f64 = {
         let lower = t.to_ascii_lowercase();
         let body = lower.trim_start_matches(['+', '-']);
-        if body.starts_with("0x") {
+        if let Some(hex) = body.strip_prefix("0x") {
             let neg = lower.starts_with('-');
-            let v = u64::from_str_radix(&body[2..], 16).ok()? as f64;
+            let v = u64::from_str_radix(hex, 16).ok()? as f64;
             if neg { -v } else { v }
         } else {
             t.parse().ok()?
