@@ -60,6 +60,16 @@ shim adds or overrides:
 | `input` / `inputs` | Pull from the same stream as the main loop; with `-n` the whole stream is theirs. `input` fails with `No more inputs` at the end. |
 | Most other 1.7/1.8 stdlib filters | Forwarded from `jaq-std` (`getpath`, `paths`, `to_entries`, `group_by`, `ltrimstr`/`rtrimstr`, `splits`, `test`, `now`, `debug`, `limit`, etc.). |
 
+## Numbers
+
+Computed numbers print like jq: `pow(2;10)` is `1024`, `1e17*1` is `1e+17`,
+`0.00001*1` is `1e-05`, NaN is `null` and infinities print as the largest
+double. Input literals print as read until arithmetic changes them (`1.0`
+stays `1.0`). Division by zero is an error, `%` truncates its operands to
+integers, a fractional array index is truncated, and `gamma` is the log-gamma
+function, all as in jq. Math and index errors use jq's wording, so
+`try ("a"+1) catch .` gives `string ("a") and number (1) cannot be added`.
+
 ## Errors
 
 Filter compile failures exit `3`. A runtime error is reported as
