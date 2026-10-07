@@ -59,14 +59,31 @@ async fn parent_traversal_is_clamped_at_vfs_root() {
 async fn host_system_paths_absent() {
     let r = run("python3 -c '
 import os
-for p in [\"/etc/passwd\", \"/proc/self/environ\", \"/proc/self/mem\", \"/sys\", \"/root\"]:
+for p in [\"/proc/self/environ\", \"/proc/self/mem\", \"/sys\"]:
     print(p, os.path.exists(p))
 '")
     .await;
     assert_eq!(
         r.stdout,
-        "/etc/passwd False\n/proc/self/environ False\n/proc/self/mem False\n/sys False\n/root False\n"
+        "/proc/self/environ False\n/proc/self/mem False\n/sys False\n"
     );
+}
+
+#[tokio::test]
+async fn rootfs_files_come_from_the_vfs_not_the_host() {
+    // The default rootfs ships a virtual /etc/passwd and /root; the guest must
+    // see those VFS copies, never the host's files.
+    let r = run("python3 -c '
+import os
+print(os.path.isdir(\"/root\"))
+print(open(\"/etc/passwd\").read(), end=\"\")
+'")
+    .await;
+    let vfs = bash().exec("cat /etc/passwd").await.expect("exec").stdout;
+    assert_eq!(r.stdout, format!("True\n{vfs}"));
+    if let Ok(host) = std::fs::read_to_string("/etc/passwd") {
+        assert_ne!(vfs, host, "VFS /etc/passwd must not mirror the host");
+    }
 }
 
 #[tokio::test]

@@ -1187,7 +1187,7 @@ async fn forged_paths_are_inert_rather_than_a_sandbox_escape() {
     let passwd = bash.exec("cat /etc/passwd").await.unwrap().stdout;
     assert!(
         !passwd.contains("root::0:0::/:/bin/sh"),
-        "forged /etc/passwd became readable: {passwd:?}"
+        "forged /etc/passwd became readable"
     );
     for unreachable in ["/b.txt", "/a/b.txt", "/relative.txt"] {
         let result = bash.exec(&format!("cat {unreachable}")).await.unwrap();
