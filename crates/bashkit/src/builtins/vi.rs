@@ -79,6 +79,7 @@ impl Builtin for Vi {
 /// running `$EDITOR path`. Returns `None` outside a terminal session, else
 /// the editor's exit status (0 on `:wq`/`:q`, 1 on `:cq`), or an error
 /// message when `$VISUAL`/`$EDITOR` names an editor bashkit does not have.
+#[cfg_attr(not(feature = "git"), allow(dead_code))]
 pub(crate) async fn edit_file(
     ctx: &Context<'_>,
     path: &Path,

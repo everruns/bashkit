@@ -251,7 +251,7 @@ pub use vars::{Eval, Local, Readonly, Set, Shift, Shopt, Times, Unset};
 pub use verify::Verify;
 #[cfg(feature = "terminal")]
 pub use vi::Vi;
-#[cfg(feature = "terminal")]
+#[cfg(all(feature = "terminal", feature = "git"))]
 pub(crate) use vi::edit_file;
 pub use wait::Wait;
 pub use wc::Wc;
