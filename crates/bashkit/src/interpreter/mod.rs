@@ -8013,14 +8013,27 @@ impl Interpreter {
         args: Vec<String>,
         stdin: Option<crate::StreamData>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecResult>> + Send + 'a>> {
-        Box::pin(async move {
-            // Check for functions first
-            if let Some(func_def) = self.scoped.functions.get(name).cloned() {
-                return self
-                    .execute_function_call(name, &func_def, args, stdin, &command.redirects)
-                    .await;
-            }
+        // Functions first, in their own small future: a function call is the
+        // recursion path, and the builtin/path-search arms below would
+        // otherwise add their large frame to every call level
+        // (THREAT[TM-DOS-020]: bounded recursion on a 2 MiB stack).
+        if let Some(func_def) = self.scoped.functions.get(name).cloned() {
+            return Box::pin(async move {
+                self.execute_function_call(name, &func_def, args, stdin, &command.redirects)
+                    .await
+            });
+        }
+        self.dispatch_non_function(name, command, args, stdin)
+    }
 
+    fn dispatch_non_function<'a>(
+        &'a mut self,
+        name: &'a str,
+        command: &'a SimpleCommand,
+        args: Vec<String>,
+        stdin: Option<crate::StreamData>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecResult>> + Send + 'a>> {
+        Box::pin(async move {
             // Interpreter-level special builtins
             if Self::is_special_builtin_name(name) {
                 return self
@@ -11897,6 +11910,7 @@ fn split_indexed_element(word: &Word) -> Option<(String, Word)> {
             quoted: true,
             has_unquoted_glob: false,
             part_quoted,
+            raw: None,
         },
     ))
 }
