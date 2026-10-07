@@ -282,6 +282,9 @@ Chrono's validated strftime implementation, plus GNU `%N`, `%3N`, `%6N`, and
 | `${var^^}` | ✅ | `${s^^}` | Uppercase all |
 | `${var,}` | ✅ | `${s,}` | Lowercase first |
 | `${var,,}` | ✅ | `${s,,}` | Lowercase all |
+| `${var^^pat}` | ✅ | `${s^^[aeiou]}` | Case change only for characters matching `pat` (also `^`, `,`, `,,`) |
+| `${var@op}` | ✅ | `${s@Q}` | Transform: `Q` quote, `E` escapes, `U`/`u`/`L` case, `A` assignment, `a` attributes |
+| `${arr[@]op}` | ✅ | `${a[@]/x/y}`, `${a[@]^^}`, `${a[@]@Q}` | Pattern, case and transform operators apply per element (also `${a[i]op}`, `$@`, `$*`) |
 
 ### Prefix Environment Assignments
 
