@@ -1919,3 +1919,119 @@ async fn values_before_a_parse_error_are_processed() {
     assert_eq!(result.stdout, "");
     assert_eq!(result.exit_code, 5);
 }
+
+// =========================================================================
+// Numbers and value errors (behavior checked against jq 1.7)
+// =========================================================================
+
+#[tokio::test]
+async fn computed_floats_print_like_jq() {
+    let out = run_jq_with_args(
+        &[
+            "-nc",
+            "[pow(2;10), (17/5|floor), (1.5*2), 1e17*1, 0.00001*1, (0.1+0.2), (2.5*2.5)]",
+        ],
+        "",
+    )
+    .await
+    .unwrap();
+    assert_eq!(out, "[1024,3,3,1e+17,1e-05,0.30000000000000004,6.25]\n");
+}
+
+#[tokio::test]
+async fn input_number_literals_keep_their_form_until_computed() {
+    let out = run_jq_with_args(&["-c", "[.[], (.[0] + 1)]"], "[1.0, 2.50]")
+        .await
+        .unwrap();
+    assert_eq!(out, "[1.0,2.5,2]\n");
+}
+
+#[tokio::test]
+async fn nan_and_infinities_render_like_jq() {
+    let out = run_jq_with_args(
+        &[
+            "-nc",
+            "[nan, infinite, -infinite, (nan|isnan), (infinite|isinfinite)]",
+        ],
+        "",
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        out,
+        "[null,1.7976931348623157e+308,-1.7976931348623157e+308,true,true]\n"
+    );
+}
+
+#[tokio::test]
+async fn math_errors_use_jq_wording() {
+    let out = run_jq_with_args(
+        &[
+            "-c",
+            "[(try (\"a\"+1) catch .), (try ({\"aaaaaaa\":\"bbbbbbbbbbb\"}+1) catch .), (try ([1]*{}) catch .), (try (1/0) catch .), (try (5%0) catch .)]",
+        ],
+        "null",
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        out,
+        concat!(
+            "[\"string (\\\"a\\\") and number (1) cannot be added\",",
+            "\"object ({\\\"aaaaaaa\\\":...) and number (1) cannot be added\",",
+            "\"array ([1]) and object ({}) cannot be multiplied\",",
+            "\"number (1) and number (0) cannot be divided because the divisor is zero\",",
+            "\"number (5) and number (0) cannot be divided (remainder) because the divisor is zero\"]\n"
+        )
+    );
+}
+
+#[tokio::test]
+async fn division_by_zero_is_a_runtime_error() {
+    let result = run_jq_result_with_args(&["-c", "1 / .x"], "{\"x\": 2} {\"x\": 0} {\"x\": 4}")
+        .await
+        .unwrap();
+    assert_eq!(result.stdout, "0.5\n0.25\n");
+    assert_eq!(
+        result.stderr,
+        "jq: error (at <stdin>:0): number (1) and number (0) cannot be divided because the divisor is zero\n"
+    );
+}
+
+#[tokio::test]
+async fn remainder_truncates_operands() {
+    let out = run_jq_with_args(&["-nc", "[5 % 3, -5 % 3, 5 % -3, 5.9 % 3, 1e20 % 7]"], "")
+        .await
+        .unwrap();
+    assert_eq!(out, "[2,-2,2,2,0]\n");
+}
+
+#[tokio::test]
+async fn index_rules_follow_jq() {
+    let out = run_jq_with_args(
+        &["-c", ".[-1], .[-10], .[1.7], (try .[\"a\"] catch .)"],
+        "[1, 2, 3]",
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        out,
+        "3\nnull\n2\n\"Cannot index array with string \\\"a\\\"\"\n"
+    );
+    let result = run_jq_result_with_args(&["getpath([\"a\",0])"], "{\"a\":{\"b\":1}}")
+        .await
+        .unwrap();
+    assert_eq!(
+        result.stderr,
+        "jq: error (at <stdin>:0): Cannot index object with number\n"
+    );
+    assert_eq!(result.exit_code, 5);
+}
+
+#[tokio::test]
+async fn gamma_is_log_gamma() {
+    let out = run_jq_with_args(&["-nc", "[8 | gamma, significand, logb]"], "")
+        .await
+        .unwrap();
+    assert_eq!(out, "[8.525161361065413,1,3]\n");
+}
