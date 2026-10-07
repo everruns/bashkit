@@ -8,7 +8,10 @@ is already initialized.
 Decisions:
 - Tracebacks hide this driver's frames so output matches real `python3`.
 - `random` is re-seeded per call: the snapshot would otherwise hand every
-  tenant the same sequence.
+  tenant the same sequence. Seeding is lazy (first use in a call), since it
+  costs ~0.2 ms on Pulley and most calls never touch `random`. Calling the
+  C base method directly (`_random.Random.random(random._inst)`) skips the
+  seed and sees the snapshot's state; `random` is not a CSPRNG anyway.
 - The snapshot heap is frozen (`gc.freeze`) so garbage collection only
   scans objects created by the current call.
 - Snapshot objects are made immortal before freezing: reference counting
@@ -73,6 +76,7 @@ def preload():
         except Exception:  # pragma: no cover - optional modules
             pass
     _patch_asyncio()
+    _install_lazy_random()
     # Move every object the snapshot holds into the permanent generation.
     # The collector then never traverses (or writes to) snapshot memory, so
     # per-call GC cost scales with what the script allocates, and snapshot
@@ -96,6 +100,63 @@ def _immortalize_snapshot():
     objects = gc.get_objects(generation=None)
     _bashkit.immortalize(objects)
     _bashkit.immortalize(gc.get_referents(*objects))
+
+
+_RANDOM_API = (
+    "seed", "random", "uniform", "triangular", "randint", "choice", "randrange",
+    "sample", "shuffle", "choices", "normalvariate", "lognormvariate",
+    "expovariate", "vonmisesvariate", "gammavariate", "gauss", "betavariate",
+    "binomialvariate", "paretovariate", "weibullvariate", "getstate",
+    "setstate", "getrandbits", "randbytes",
+)
+_LAZY_ENTRY_POINTS = ("random", "getrandbits", "getstate", "seed", "setstate")
+
+
+def _install_lazy_random():
+    # The module-level functions are methods bound to `random._inst`. Give
+    # that instance a subclass whose entry points seed it from os.urandom on
+    # first use, then turn it back into a plain Random and rebind the module
+    # functions, so later calls pay nothing extra.
+    import random
+
+    base = random.Random
+
+    def wake(self):
+        # Only the overridden entry points need rebinding; the other module
+        # functions are base-class methods and see the class switch. Module
+        # attribute writes are slow on Pulley (~40 us each), so keep it to five.
+        self.__class__ = base
+        for name in _LAZY_ENTRY_POINTS:
+            setattr(random, name, getattr(self, name))
+
+    class _LazyRandom(base):
+        def random(self):
+            wake(self)
+            base.seed(self)
+            return self.random()
+
+        def getrandbits(self, k):
+            wake(self)
+            base.seed(self)
+            return self.getrandbits(k)
+
+        def getstate(self):
+            wake(self)
+            base.seed(self)
+            return self.getstate()
+
+        def seed(self, *args, **kwargs):
+            wake(self)
+            return self.seed(*args, **kwargs)
+
+        def setstate(self, state):
+            wake(self)
+            return self.setstate(state)
+
+    inst = random._inst
+    inst.__class__ = _LazyRandom
+    for name in _RANDOM_API:
+        setattr(random, name, getattr(inst, name))
 
 
 def _patch_asyncio():
@@ -197,9 +258,6 @@ def _refresh_process_state():
             os.chdir(pwd)
         except OSError:
             pass
-    random = sys.modules.get("random")
-    if random is not None:
-        random.seed()
 
 
 def _fresh_main(filename=None):

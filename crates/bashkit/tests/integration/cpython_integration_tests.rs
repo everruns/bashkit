@@ -566,6 +566,31 @@ async fn random_is_reseeded_per_call() {
     assert_eq!(out, "differ\n");
 }
 
+/// Seeding is lazy: every entry point into the shared `random` instance must
+/// still see a fresh per-call seed, and explicit seeding stays deterministic.
+#[tokio::test]
+async fn lazy_random_seed_covers_every_entry_point() {
+    let differ = |snippet: &str| {
+        format!(
+            "a=$(python3 -c '{snippet}'); b=$(python3 -c '{snippet}'); [ \"$a\" != \"$b\" ] && echo differ"
+        )
+    };
+    for snippet in [
+        "from random import random; print(random())",
+        "import random; print(random.randint(0, 10**18))",
+        "import random; print(random.getrandbits(64))",
+        "import random; print(random.choice(range(10**9)))",
+        "import random; print(random.getstate()[1][:4])",
+        "import random; x = list(range(50)); random.shuffle(x); print(x)",
+    ] {
+        assert_eq!(ok(&differ(snippet)).await, "differ\n", "{snippet}");
+    }
+    let out = ok("python3 -c 'import random; random.seed(42); a = random.random(); random.seed(42); print(a == random.random(), random.Random(42).random() == a)'; \
+         python3 -c 'import random; s = random.getstate(); a = random.random(); random.setstate(s); print(a == random.random())'")
+    .await;
+    assert_eq!(out, "True True\nTrue\n");
+}
+
 #[tokio::test]
 async fn separate_bash_instances_share_nothing() {
     let mut a = bash();
