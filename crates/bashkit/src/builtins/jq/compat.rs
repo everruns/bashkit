@@ -18,6 +18,9 @@
 //!  - `halt_error`: jq prints a string as is, null as nothing, and other
 //!    values as JSON plus a newline, then halts (the run loop turns the
 //!    halt into the command's exit code, never a process exit).
+//!  - `implode` / `strptime` / `fromdate` / `@base64d`: jq's handling of
+//!    invalid code points (U+FFFD), its strptime error text, and unpadded
+//!    base64 input.
 //!  - `@tsv` / `@csv`: jaq-std doesn't define them. Strict variants reject
 //!    non-scalars with a runtime error matching real jq's wording.
 //!  - `input_filename` / `input_line_number`: bashkit threads these as
@@ -114,6 +117,32 @@ def fromstream(f):
 def truncate_stream(stream):
   . as $n | null | stream
   | if (.[0] | length) > $n then setpath([0]; .[0][$n:]) else empty end;
+def _bk_implode: implode;
+def implode:
+  map(if type == "number" and (. > 1114111 or (. >= 55296 and . <= 57343))
+      then 65533 else . end)
+  | _bk_implode;
+def _bk_strptime($f): strptime($f);
+def strptime($f):
+  if type != "string" or ($f | type) != "string" then
+    error("strptime/1 requires string inputs and arguments")
+  else
+    . as $s
+    | try _bk_strptime($f)
+      catch error("date \($s | tojson) does not match format \($f | tojson)")
+  end;
+def fromdateiso8601: strptime("%Y-%m-%dT%H:%M:%SZ") | mktime;
+def fromdate: fromdateiso8601;
+def @base64d:
+  tostring | . as $s
+  | (sub("=+$"; "")) as $t
+  | ($t | length % 4) as $r
+  | if $r == 1 then error("string (\($s | tojson)) trailing base64 byte found")
+    else
+      ($t + (if $r == 2 then "==" elif $r == 3 then "=" else "" end))
+      | try decode_base64
+        catch error("string (\($s | tojson)) is not valid base64 data")
+    end;
 def halt_error($code):
   (if type == "string" then . elif . == null then empty else tojson + "\n" end
    | stderr_empty), halt($code);

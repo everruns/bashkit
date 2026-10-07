@@ -2,6 +2,7 @@
 
 ## 2026-10-07
 
+* **Fix**: jq `implode` maps invalid code points to U+FFFD, `strptime`/`fromdate` fail with jq's `date "X" does not match format "F"`, and `@base64d` accepts unpadded input and non-zero trailing bits with jq's error texts.
 * **Feature**: jq destructuring alternatives `T as P1 ?// P2 | BODY`: every pattern variable is bound (null when unbound), an error in a pattern or the body moves to the next pattern, the last error propagates. jaq does not parse `?//`; `builtins/jq/altpat.rs` rewrites it to `try`/`catch` before compiling (body copied per pattern, at most 16 rewrites).
 * **Feature**: jq `$__loc__` (`{"file":"<top-level>","line":N}`), including `{$__loc__}` shorthand and string interpolation. jaq has no `$__loc__`, so the filter text is rewritten before compiling (`builtins/jq/loc.rs` skips strings and comments).
 * **Feature**: jq `-a`/`--ascii-output` (escape non-ASCII, quoted even with `-r`), `--raw-output0` (NUL after each output, NUL in a string is an error), `--seq` (RS before each output, RS read as a separator) and `--stream` (inputs become `tostream` path events, also with `-n`/`-s`). `-a` was accepted and ignored before.

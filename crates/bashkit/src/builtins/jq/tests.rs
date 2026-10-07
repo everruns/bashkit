@@ -2251,3 +2251,26 @@ async fn destructuring_alternatives_follow_jq() {
         "jq: error (at <stdin>:0): Cannot index array with string \"a\"\n"
     );
 }
+
+#[tokio::test]
+async fn decoding_builtins_follow_jq() {
+    let out = run_jq_with_args(
+        &[
+            "-nc",
+            "([55296, 65] | implode), (\"YW\" | @base64d), (\"YQ\" | @base64d), \
+             (try (\"!!\" | @base64d) catch .), (try (\"Y\" | @base64d) catch .), \
+             (try (\"x\" | strptime(\"%Y\")) catch .), (try (\"2026-01-15\" | fromdate) catch .), \
+             (\"2026-01-15T12:00:00Z\" | fromdate)",
+        ],
+        "",
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        out,
+        "\"\u{fffd}A\"\n\"a\"\n\"a\"\n\"string (\\\"!!\\\") is not valid base64 data\"\n\
+         \"string (\\\"Y\\\") trailing base64 byte found\"\n\
+         \"date \\\"x\\\" does not match format \\\"%Y\\\"\"\n\
+         \"date \\\"2026-01-15\\\" does not match format \\\"%Y-%m-%dT%H:%M:%SZ\\\"\"\n1768478400\n"
+    );
+}

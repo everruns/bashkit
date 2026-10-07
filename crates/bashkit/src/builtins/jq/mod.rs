@@ -343,6 +343,28 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
                 Box::new(std::iter::empty())
             }),
         ),
+        // jq accepts base64 with non-zero trailing bits ("YW" is "a").
+        (
+            "decode_base64",
+            jaq_core::native::v(0),
+            jaq_core::Native::<D>::new(|cv| {
+                use base64::Engine;
+                use base64::engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig};
+                use jaq_std::ValT;
+                const LENIENT: GeneralPurpose = GeneralPurpose::new(
+                    &base64::alphabet::STANDARD,
+                    GeneralPurposeConfig::new()
+                        .with_decode_allow_trailing_bits(true)
+                        .with_decode_padding_mode(DecodePaddingMode::Indifferent),
+                );
+                jaq_core::native::bome(cv.1.try_as_utf8_bytes().and_then(|s| {
+                    LENIENT
+                        .decode(s)
+                        .map_err(|e| jaq_core::Error::str(e.to_string()))
+                        .map(Val::from_utf8_bytes)
+                }))
+            }),
+        ),
         (
             "debug_empty",
             jaq_core::native::v(0),
@@ -354,8 +376,10 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
     ];
     let native_funs = jaq_core::funs::<D>()
         .chain(jaq_std::funs::<D>().filter(|(name, _, _)| {
-            !matches!(*name, "env" | "stderr_empty" | "debug_empty")
-                && !regex_compat::SHADOWED_NATIVE_NAMES.contains(name)
+            !matches!(
+                *name,
+                "env" | "stderr_empty" | "debug_empty" | "decode_base64"
+            ) && !regex_compat::SHADOWED_NATIVE_NAMES.contains(name)
         }))
         .chain(message_funs)
         .chain(input_funs)
