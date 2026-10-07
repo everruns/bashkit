@@ -23,7 +23,6 @@ impl Builtin for Echo {
         ) {
             return Ok(r);
         }
-        let mut output = String::new();
         let mut add_newline = true;
         let mut interpret_escapes = false;
         let mut args_iter = ctx.args.iter().peekable();
@@ -61,101 +60,131 @@ impl Builtin for Echo {
 
         // Collect remaining arguments
         let remaining: Vec<&String> = args_iter.collect();
+        let mut output: Vec<u8> = Vec::new();
 
         for (i, arg) in remaining.iter().enumerate() {
             if i > 0 {
-                output.push(' ');
+                output.push(b' ');
             }
 
             if interpret_escapes {
-                output.push_str(&interpret_escape_sequences(arg));
+                // `\c` stops all further output, the newline included.
+                if interpret_escape_sequences(arg, &mut output) {
+                    return Ok(ExecResult::ok_bytes(output));
+                }
             } else {
-                output.push_str(arg);
+                output.extend_from_slice(arg.as_bytes());
             }
         }
 
         if add_newline {
-            output.push('\n');
+            output.push(b'\n');
         }
 
-        Ok(ExecResult::ok(output))
+        Ok(ExecResult::ok_bytes(output))
     }
 }
 
-fn interpret_escape_sequences(s: &str) -> String {
-    let mut result = String::new();
+/// Expand bash `echo -e` escapes into `out` (octal/hex escapes are raw
+/// bytes). Returns `true` when `\c` asked to stop all output.
+fn interpret_escape_sequences(s: &str, out: &mut Vec<u8>) -> bool {
     let mut chars = s.chars().peekable();
+    let mut buf = [0u8; 4];
 
     while let Some(ch) = chars.next() {
-        if ch == '\\' {
-            match chars.next() {
-                Some('n') => result.push('\n'),
-                Some('t') => result.push('\t'),
-                Some('r') => result.push('\r'),
-                Some('\\') => result.push('\\'),
-                Some('a') => result.push('\x07'), // bell
-                Some('b') => result.push('\x08'), // backspace
-                Some('f') => result.push('\x0c'), // form feed
-                Some('v') => result.push('\x0b'), // vertical tab
-                Some('0') => {
-                    // Octal escape \0nnn
-                    let mut value = 0u8;
-                    for _ in 0..3 {
-                        if let Some(&digit) = chars.peek() {
-                            if ('0'..='7').contains(&digit) {
-                                value = value * 8 + (digit as u8 - b'0');
-                                chars.next();
-                            } else {
-                                break;
-                            }
-                        }
-                    }
-                    result.push(value as char);
-                }
-                Some('x') => {
-                    // Hex escape \xHH
-                    let mut value = 0u8;
-                    for _ in 0..2 {
-                        if let Some(&digit) = chars.peek() {
-                            if digit.is_ascii_hexdigit() {
-                                value = value * 16
-                                    + digit.to_digit(16).expect(
-                                        "to_digit(16) valid: guarded by is_ascii_hexdigit()",
-                                    ) as u8;
-                                chars.next();
-                            } else {
-                                break;
-                            }
-                        }
-                    }
-                    result.push(value as char);
-                }
-                Some('c') => {
-                    // Stop output
-                    break;
-                }
-                Some(other) => {
-                    result.push('\\');
-                    result.push(other);
-                }
-                None => result.push('\\'),
-            }
-        } else {
-            result.push(ch);
+        if ch != '\\' {
+            out.extend_from_slice(ch.encode_utf8(&mut buf).as_bytes());
+            continue;
         }
+        let byte = match chars.next() {
+            Some('n') => b'\n',
+            Some('t') => b'\t',
+            Some('r') => b'\r',
+            Some('\\') => b'\\',
+            Some('a') => 0x07,
+            Some('b') => 0x08,
+            Some('e') | Some('E') => 0x1b,
+            Some('f') => 0x0c,
+            Some('v') => 0x0b,
+            Some('c') => return true,
+            Some('0') => {
+                // \0nnn: zero to three octal digits after the 0.
+                let mut value = 0u32;
+                for _ in 0..3 {
+                    match chars.peek().and_then(|d| d.to_digit(8)) {
+                        Some(d) => {
+                            value = value * 8 + d;
+                            chars.next();
+                        }
+                        None => break,
+                    }
+                }
+                (value & 0xff) as u8
+            }
+            Some(c @ ('x' | 'u' | 'U')) => {
+                let max = match c {
+                    'x' => 2,
+                    'u' => 4,
+                    _ => 8,
+                };
+                let mut value = 0u32;
+                let mut digits = 0;
+                while digits < max {
+                    match chars.peek().and_then(|d| d.to_digit(16)) {
+                        Some(d) => {
+                            value = value * 16 + d;
+                            chars.next();
+                            digits += 1;
+                        }
+                        None => break,
+                    }
+                }
+                if digits == 0 {
+                    // No hex digits: the escape stays as written.
+                    out.push(b'\\');
+                    out.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
+                    continue;
+                }
+                if c == 'x' {
+                    value as u8
+                } else {
+                    let ch = char::from_u32(value).unwrap_or('\u{fffd}');
+                    out.extend_from_slice(ch.encode_utf8(&mut buf).as_bytes());
+                    continue;
+                }
+            }
+            Some(other) => {
+                out.push(b'\\');
+                out.extend_from_slice(other.encode_utf8(&mut buf).as_bytes());
+                continue;
+            }
+            None => b'\\',
+        };
+        out.push(byte);
     }
-
-    result
+    false
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn esc(s: &str) -> (Vec<u8>, bool) {
+        let mut out = Vec::new();
+        let stop = interpret_escape_sequences(s, &mut out);
+        (out, stop)
+    }
+
     #[test]
     fn test_escape_sequences() {
-        assert_eq!(interpret_escape_sequences("hello\\nworld"), "hello\nworld");
-        assert_eq!(interpret_escape_sequences("tab\\there"), "tab\there");
-        assert_eq!(interpret_escape_sequences("\\\\backslash"), "\\backslash");
+        assert_eq!(esc("hello\\nworld").0, b"hello\nworld");
+        assert_eq!(esc("tab\\there").0, b"tab\there");
+        assert_eq!(esc("\\\\backslash").0, b"\\backslash");
+        // Unknown escapes and \x without digits stay as written.
+        assert_eq!(esc("\\z\\xg\\").0, b"\\z\\xg\\");
+        // Octal/hex escapes are raw bytes, not Latin-1 characters.
+        assert_eq!(esc("\\0377\\xff").0, vec![0xff, 0xff]);
+        assert_eq!(esc("a\\cb"), (b"a".to_vec(), true));
+        assert_eq!(esc("\\u00e9").0, "é".as_bytes());
     }
 }

@@ -4,7 +4,6 @@
 
 ### bashbox_base64_empty_input_encodes_to_nothing
 # empty input encodes to nothing
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf '' | base64
 ### expect
 ### end

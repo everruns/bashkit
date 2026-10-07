@@ -2,16 +2,18 @@
 
 use async_trait::async_trait;
 
+use crate::builtins::arg_parser::OptArg;
 use crate::builtins::{Builtin, Context, resolve_path};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
 
 /// The rmdir builtin - remove empty directories.
 ///
-/// Usage: rmdir [-p] DIRECTORY...
+/// Usage: rmdir [-pv] [--ignore-fail-on-non-empty] DIRECTORY...
 ///
 /// Options:
-///   -p   Remove parent directories as well if they become empty
+///   -p   Remove DIRECTORY and then each of its operand prefixes (a/b/c, a/b, a)
+///   -v   Print a line for every directory processed
 pub struct Rmdir;
 
 #[async_trait]
@@ -19,90 +21,97 @@ impl Builtin for Rmdir {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
         if let Some(r) = crate::builtins::check_help_version(
             ctx.args,
-            "Usage: rmdir [OPTION]... DIRECTORY...\nRemove empty directories.\n\n  -p\t\tremove DIRECTORY and its ancestors\n      --help\tdisplay this help and exit\n      --version\toutput version information and exit\n",
+            "Usage: rmdir [OPTION]... DIRECTORY...\nRemove empty directories.\n\n  -p, --parents\tremove DIRECTORY and its ancestors\n  -v, --verbose\toutput a diagnostic for every directory processed\n      --ignore-fail-on-non-empty\tignore failures due to non-empty directories\n      --help\tdisplay this help and exit\n      --version\toutput version information and exit\n",
             Some("rmdir (bashkit) 0.1"),
         ) {
             return Ok(r);
         }
 
-        if ctx.args.is_empty() {
-            return Ok(ExecResult::err("rmdir: missing operand\n".to_string(), 1));
-        }
-
-        let parents = ctx.args.iter().any(|a| a == "-p");
-        let dirs: Vec<_> = ctx.args.iter().filter(|a| !a.starts_with('-')).collect();
-
+        let (parsed, dirs) = match crate::builtins::arg_parser::gnu_getopt(
+            "rmdir",
+            ctx.args,
+            "pv",
+            &[
+                ("parents", OptArg::No, 'p'),
+                ("verbose", OptArg::No, 'v'),
+                ("ignore-fail-on-non-empty", OptArg::No, 'i'),
+            ],
+            true,
+            1,
+        ) {
+            Ok(v) => v,
+            Err(e) => return Ok(e),
+        };
+        let parents = parsed.iter().any(|o| o.key == 'p');
+        let verbose = parsed.iter().any(|o| o.key == 'v');
+        let ignore_non_empty = parsed.iter().any(|o| o.key == 'i');
         if dirs.is_empty() {
             return Ok(ExecResult::err("rmdir: missing operand\n".to_string(), 1));
         }
 
-        for dir in dirs {
-            let path = resolve_path(ctx.cwd, dir);
-
-            // Check if exists
-            if !ctx.fs.exists(&path).await.unwrap_or(false) {
-                return Ok(ExecResult::err(
-                    format!(
-                        "rmdir: failed to remove '{}': No such file or directory\n",
-                        dir
-                    ),
-                    1,
-                ));
-            }
-
-            // Check if it's a directory
-            let metadata = ctx.fs.stat(&path).await?;
-            if !metadata.file_type.is_dir() {
-                return Ok(ExecResult::err(
-                    format!("rmdir: failed to remove '{}': Not a directory\n", dir),
-                    1,
-                ));
-            }
-
-            // Check if directory is empty
-            let entries = ctx.fs.read_dir(&path).await?;
-            if !entries.is_empty() {
-                return Ok(ExecResult::err(
-                    format!("rmdir: failed to remove '{}': Directory not empty\n", dir),
-                    1,
-                ));
-            }
-
-            // Remove the directory
-            if let Err(e) = ctx.fs.remove(&path, false).await {
-                return Ok(ExecResult::err(
-                    format!("rmdir: failed to remove '{}': {}\n", dir, e),
-                    1,
-                ));
-            }
-
-            // If -p, try to remove parent directories
-            if parents {
-                let mut current = path.parent();
-                while let Some(parent) = current {
-                    // Don't remove root or cwd
-                    if parent.as_os_str().is_empty() || parent == ctx.cwd.as_path() {
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+        for dir in &dirs {
+            // GNU -p walks the operand's own prefixes: a/b/c, a/b, a.
+            let mut target = dir.as_str();
+            loop {
+                if verbose {
+                    stdout.push_str(&format!("rmdir: removing directory, '{target}'\n"));
+                }
+                match remove_empty_dir(&ctx, target).await? {
+                    Ok(()) => {}
+                    Err(reason) => {
+                        if !(ignore_non_empty && reason == "Directory not empty") {
+                            stderr.push_str(&format!(
+                                "rmdir: failed to remove '{target}': {reason}\n"
+                            ));
+                        }
                         break;
                     }
-
-                    // Check if parent is empty
-                    if let Ok(entries) = ctx.fs.read_dir(parent).await {
-                        if entries.is_empty() {
-                            if ctx.fs.remove(parent, false).await.is_err() {
-                                break;
-                            }
-                        } else {
+                }
+                if !parents {
+                    break;
+                }
+                let trimmed = target.trim_end_matches('/');
+                match trimmed.rfind('/') {
+                    Some(i) => {
+                        let parent = trimmed[..i].trim_end_matches('/');
+                        if parent.is_empty() {
                             break;
                         }
-                    } else {
-                        break;
+                        target = parent;
                     }
-
-                    current = parent.parent();
+                    None => break,
                 }
             }
         }
 
-        Ok(ExecResult::ok(String::new()))
+        Ok(ExecResult {
+            stdout: stdout.into(),
+            exit_code: i32::from(!stderr.is_empty()),
+            stderr: stderr.into(),
+            ..Default::default()
+        })
     }
+}
+
+/// Remove one empty directory; the inner error is GNU's reason text.
+async fn remove_empty_dir(
+    ctx: &Context<'_>,
+    dir: &str,
+) -> Result<std::result::Result<(), &'static str>> {
+    let path = resolve_path(ctx.cwd, dir);
+    let Ok(metadata) = ctx.fs.lstat(&path).await else {
+        return Ok(Err("No such file or directory"));
+    };
+    if !metadata.file_type.is_dir() {
+        return Ok(Err("Not a directory"));
+    }
+    if !ctx.fs.read_dir(&path).await?.is_empty() {
+        return Ok(Err("Directory not empty"));
+    }
+    if ctx.fs.remove(&path, false).await.is_err() {
+        return Ok(Err("Device or resource busy"));
+    }
+    Ok(Ok(()))
 }

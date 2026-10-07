@@ -8,6 +8,8 @@
 //! caught and return graceful errors.
 
 use async_trait::async_trait;
+
+use super::arg_parser::OptArg;
 use chrono::format::{Item, StrftimeItems};
 use chrono::{DateTime, Duration, LocalResult, NaiveDate, NaiveDateTime, TimeZone, Utc};
 #[cfg(feature = "tzdata")]
@@ -524,50 +526,45 @@ impl Builtin for Date {
         let mut rfc2822 = false;
         let mut iso8601: Option<String> = None;
 
-        let mut p = super::arg_parser::ArgParser::new(ctx.args);
-        while !p.is_done() {
-            if p.flag_any(&["-u", "--utc"]) {
-                utc = true;
-            } else if let Some(val) = p.current().and_then(|s| s.strip_prefix("--date=")) {
-                date_str = Some(strip_surrounding_quotes(val).to_string());
-                p.advance();
-            } else if let Some(val) = p.flag_value_opt("-d") {
-                date_str = Some(val.to_string());
-            } else if p.flag("--date") {
-                if let Some(val) = p.positional() {
-                    date_str = Some(val.to_string());
+        // GNU getopt surface: bundles (`-ud@0`), attached values, long
+        // options with `=` or a separate value, unambiguous prefixes.
+        let (parsed, operands) = match super::arg_parser::gnu_getopt(
+            "date",
+            ctx.args,
+            "d:r:uRI::",
+            &[
+                ("date", OptArg::Required, 'd'),
+                ("reference", OptArg::Required, 'r'),
+                ("utc", OptArg::No, 'u'),
+                ("universal", OptArg::No, 'u'),
+                ("rfc-2822", OptArg::No, 'R'),
+                ("rfc-email", OptArg::No, 'R'),
+                ("iso-8601", OptArg::Optional, 'I'),
+            ],
+            true,
+            1,
+        ) {
+            Ok(v) => v,
+            Err(e) => return Ok(e),
+        };
+        for o in parsed {
+            let val = o.value.unwrap_or_default();
+            match o.key {
+                'd' => date_str = Some(strip_surrounding_quotes(&val).to_string()),
+                'r' => ref_file = Some(val),
+                'u' => utc = true,
+                'R' => rfc2822 = true,
+                _ => {
+                    iso8601 = Some(if val.is_empty() {
+                        "date".to_string()
+                    } else {
+                        val
+                    })
                 }
-            } else if let Some(val) = p.current().and_then(|s| s.strip_prefix("--reference=")) {
-                ref_file = Some(val.to_string());
-                p.advance();
-            } else if let Some(val) = p.flag_value_opt("-r") {
-                ref_file = Some(val.to_string());
-            } else if p.flag("--reference") {
-                if let Some(val) = p.positional() {
-                    ref_file = Some(val.to_string());
-                }
-            } else if p.flag_any(&["-R", "--rfc-2822", "--rfc-email"]) {
-                rfc2822 = true;
-            } else if let Some(val) = p.current().and_then(|s| s.strip_prefix("--iso-8601=")) {
-                iso8601 = Some(val.to_string());
-                p.advance();
-            } else if p.flag_any(&["-I", "--iso-8601"]) {
-                iso8601 = Some("date".to_string());
-            } else if let Some(val) = p.current().and_then(|s| s.strip_prefix("-I")) {
-                iso8601 = Some(val.to_string());
-                p.advance();
-            } else if let Some(arg) = p.current().filter(|s| s.starts_with('+')) {
-                format_arg = Some(arg.to_string());
-                p.advance();
-            } else if let Some(arg) = p
-                .current()
-                .filter(|s| s.starts_with('-') && s.len() > 1 && *s != "--")
-            {
-                // Unknown option-shaped token → reject (date exits 1).
-                return Ok(super::invalid_option("date", arg, 1));
-            } else {
-                p.advance();
             }
+        }
+        if let Some(fmt) = operands.iter().find(|s| s.starts_with('+')) {
+            format_arg = Some(fmt.clone());
         }
 
         // THREAT[TM-INF-018]: Resolve only the virtual environment's TZ.

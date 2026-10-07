@@ -29,7 +29,7 @@ async fn mixed_utf8_and_invalid_bytes_survive_stdin_pipeline_and_redirect() {
         .await
         .unwrap();
 
-    assert_eq!(result.stdout.text().unwrap(), "aMOp/wAK\n");
+    assert_eq!(result.stdout.text().unwrap(), "aMOp/wAK");
     assert_eq!(
         bash.fs()
             .read_file(std::path::Path::new("/blob"))

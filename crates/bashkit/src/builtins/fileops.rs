@@ -230,8 +230,10 @@ impl Builtin for Cp {
             return Ok(r);
         }
 
-        // Reject unknown options like GNU cp; accept-and-ignore the rest (cp
-        // copies non-recursively in the VFS regardless). '--' ends options.
+        // Reject unknown options like GNU cp. `-r`/`-R`/`-a` (and the long
+        // forms) copy directories recursively; the remaining flags are
+        // accepted and ignored. '--' ends options.
+        let mut recursive = false;
         let mut files: Vec<&String> = Vec::new();
         let mut opts_done = false;
         for arg in ctx.args {
@@ -240,7 +242,11 @@ impl Builtin for Cp {
             } else if arg == "--" {
                 opts_done = true;
             } else if let Some(long) = arg.strip_prefix("--") {
-                match long.split('=').next().unwrap_or("") {
+                let name = long.split('=').next().unwrap_or("");
+                if matches!(name, "archive" | "recursive") {
+                    recursive = true;
+                }
+                match name {
                     "archive"
                     | "attributes-only"
                     | "backup"
@@ -271,8 +277,9 @@ impl Builtin for Cp {
             } else if arg.starts_with('-') && arg.len() > 1 {
                 for c in arg[1..].chars() {
                     match c {
-                        'a' | 'd' | 'f' | 'H' | 'i' | 'l' | 'L' | 'n' | 'P' | 'p' | 'r' | 'R'
-                        | 's' | 't' | 'T' | 'u' | 'v' | 'x' | 'Z' => {}
+                        'a' | 'r' | 'R' => recursive = true,
+                        'd' | 'f' | 'H' | 'i' | 'l' | 'L' | 'n' | 'P' | 'p' | 's' | 't' | 'T'
+                        | 'u' | 'v' | 'x' | 'Z' => {}
                         _ => return Ok(super::invalid_option("cp", &format!("-{c}"), 1)),
                     }
                 }
@@ -311,6 +318,7 @@ impl Builtin for Cp {
             ));
         }
 
+        let mut stderr = String::new();
         for source in sources {
             let src_path = resolve_path(ctx.cwd, source);
 
@@ -325,16 +333,126 @@ impl Builtin for Cp {
                 dest_path.clone()
             };
 
+            let src_is_dir = ctx
+                .fs
+                .stat(&src_path)
+                .await
+                .is_ok_and(|m| m.file_type.is_dir());
+            if src_is_dir {
+                if !recursive {
+                    stderr.push_str(&format!(
+                        "cp: -r not specified; omitting directory '{source}'\n"
+                    ));
+                    continue;
+                }
+                if final_dest.starts_with(&src_path) {
+                    let shown = if dest_is_dir {
+                        let name = Path::new(source.as_str())
+                            .file_name()
+                            .map(|s| s.to_string_lossy().into_owned())
+                            .unwrap_or_default();
+                        format!("{}/{name}", dest.trim_end_matches('/'))
+                    } else {
+                        dest.to_string()
+                    };
+                    stderr.push_str(&format!(
+                        "cp: cannot copy a directory, '{source}', into itself, '{shown}'\n"
+                    ));
+                    continue;
+                }
+                if let Err(msg) = copy_tree(&ctx, &src_path, &final_dest).await? {
+                    stderr.push_str(&format!("cp: {msg}\n"));
+                }
+                continue;
+            }
+
             if let Err(e) = ctx.fs.copy(&src_path, &final_dest).await {
-                return Ok(ExecResult::err(
-                    format!("cp: cannot copy '{}': {}\n", source, e),
-                    1,
-                ));
+                stderr.push_str(&format!("cp: cannot copy '{}': {}\n", source, e));
             }
         }
 
-        Ok(ExecResult::ok(String::new()))
+        if stderr.is_empty() {
+            Ok(ExecResult::ok(String::new()))
+        } else {
+            Ok(ExecResult::err(stderr, 1))
+        }
     }
+}
+
+/// Future returned by [`copy_tree`]: outer `Err` aborts, inner `Err` is a
+/// user-facing message.
+type CopyTreeFuture<'a> = std::pin::Pin<
+    Box<dyn std::future::Future<Output = Result<std::result::Result<(), String>>> + Send + 'a>,
+>;
+
+/// Recursively copy `src` to `dst` (GNU `cp -R` without `-L`: symlinks are
+/// recreated, not followed). The outer error is cancellation/budget; the
+/// inner one is a user-facing message for the first failed entry.
+fn copy_tree<'a>(ctx: &'a Context<'_>, src: &'a Path, dst: &'a Path) -> CopyTreeFuture<'a> {
+    Box::pin(async move {
+        ctx.consume_budget_work(1)?;
+        let meta = match ctx.fs.lstat(src).await {
+            Ok(m) => m,
+            Err(e) => return Ok(Err(format!("cannot stat '{}': {e}", src.display()))),
+        };
+        if meta.file_type.is_dir() {
+            match ctx.fs.stat(dst).await {
+                Ok(m) if m.file_type.is_dir() => {}
+                Ok(_) => {
+                    return Ok(Err(format!(
+                        "cannot overwrite non-directory '{}' with directory '{}'",
+                        dst.display(),
+                        src.display()
+                    )));
+                }
+                Err(_) => {
+                    if let Err(e) = ctx.fs.mkdir(dst, false).await {
+                        return Ok(Err(format!(
+                            "cannot create directory '{}': {e}",
+                            dst.display()
+                        )));
+                    }
+                    let _ = ctx.fs.chmod(dst, meta.mode).await;
+                }
+            }
+            let entries = match ctx.fs.read_dir(src).await {
+                Ok(e) => e,
+                Err(e) => return Ok(Err(format!("cannot access '{}': {e}", src.display()))),
+            };
+            for entry in entries {
+                let from = vfs_join(src, &entry.name);
+                let to = vfs_join(dst, &entry.name);
+                if let Err(msg) = copy_tree(ctx, &from, &to).await? {
+                    return Ok(Err(msg));
+                }
+            }
+            return Ok(Ok(()));
+        }
+        if meta.file_type.is_symlink() {
+            let target = match ctx.fs.read_link(src).await {
+                Ok(t) => t,
+                Err(e) => {
+                    return Ok(Err(format!(
+                        "cannot read symbolic link '{}': {e}",
+                        src.display()
+                    )));
+                }
+            };
+            if ctx.fs.lstat(dst).await.is_ok() {
+                let _ = ctx.fs.remove(dst, false).await;
+            }
+            return Ok(ctx
+                .fs
+                .symlink(&target, dst)
+                .await
+                .map_err(|e| format!("cannot create symbolic link '{}': {e}", dst.display())));
+        }
+        Ok(ctx
+            .fs
+            .copy(src, dst)
+            .await
+            .map_err(|e| format!("cannot copy '{}': {e}", src.display())))
+    })
 }
 
 /// The mv builtin - move (rename) files.
@@ -1007,26 +1125,41 @@ impl Builtin for Chown {
 ///   -q, --quiet          Suppress error diagnostics on failure.
 pub struct Mktemp;
 
-fn mktemp_suffix_for_attempt(attempt: usize) -> String {
+/// `len` random `[A-Za-z0-9]` characters, re-seeded per attempt.
+fn mktemp_random(attempt: usize, len: usize) -> String {
     use std::collections::hash_map::RandomState;
     use std::hash::{BuildHasher, Hasher};
 
-    let mut hasher = RandomState::new().build_hasher();
-    hasher.write_usize(attempt);
-    let random = hasher.finish();
-    format!("{:010x}", random % 0xFF_FFFF_FFFF)
+    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    let state = RandomState::new();
+    (0..len)
+        .map(|i| {
+            let mut hasher = state.build_hasher();
+            hasher.write_usize(attempt);
+            hasher.write_usize(i);
+            CHARS[(hasher.finish() % CHARS.len() as u64) as usize] as char
+        })
+        .collect()
 }
 
-fn mktemp_name(template: Option<&str>, suffix: &str) -> String {
-    if let Some(tmpl) = template {
-        if tmpl.contains("XXXXXX") {
-            tmpl.replacen("XXXXXX", &suffix[..6], 1)
-        } else {
-            format!("{}.{}", tmpl, &suffix[..6])
-        }
-    } else {
-        format!("tmp.{}", &suffix[..10])
+/// Split TEMPLATE into (prefix, X count, suffix) the GNU way: without
+/// `--suffix`, the suffix is whatever follows the last `X`.
+fn mktemp_split<'a>(
+    template: &'a str,
+    suffix: Option<&'a str>,
+) -> std::result::Result<(&'a str, usize, &'a str), String> {
+    let (body, suffix) = match suffix {
+        Some(suf) => (template, suf),
+        None => match template.rfind('X') {
+            Some(i) => (&template[..=i], &template[i + 1..]),
+            None => (template, ""),
+        },
+    };
+    let xs = body.bytes().rev().take_while(|b| *b == b'X').count();
+    if xs < 3 {
+        return Err(format!("mktemp: too few X's in template '{template}'\n"));
     }
+    Ok((&body[..body.len() - xs], xs, suffix))
 }
 
 // Cached `mktemp` arg surface: pre-built once, cloned per invocation.
@@ -1061,93 +1194,114 @@ impl Builtin for Mktemp {
         let create_dir = matches.get_flag("directory");
         let dry_run = matches.get_flag("dry-run");
         let quiet = matches.get_flag("quiet");
-        let use_tmpdir = matches.get_flag("t");
-        // -p and --tmpdir parse to Option<PathBuf>: empty value falls
-        // back to the default. clap stores the *outer* presence as the
-        // arg id, the typed value as Option<PathBuf>.
+        let use_t = matches.get_flag("t");
+        // -p and --tmpdir parse to Option<PathBuf>; an empty value means
+        // "use $TMPDIR or /tmp".
         let p_value: Option<&Option<PathBuf>> = matches.get_one("p");
         let tmpdir_value: Option<&Option<PathBuf>> = matches.get_one("tmpdir");
+        let dir_arg: Option<String> = match (tmpdir_value, p_value) {
+            (Some(Some(p)), _) | (_, Some(Some(p))) => Some(p.to_string_lossy().into_owned()),
+            _ => None,
+        }
+        .filter(|d| !d.is_empty());
         let suffix_arg = matches
             .get_one::<OsString>("suffix")
             .map(|s| s.to_string_lossy().into_owned());
-
-        let prefix_dir: String = match (tmpdir_value, p_value) {
-            (Some(Some(p)), _) | (_, Some(Some(p))) => p.to_string_lossy().into_owned(),
-            _ => "/tmp".to_string(),
-        };
-
-        let template: Option<String> = matches
+        let template_arg: Option<String> = matches
             .get_one::<OsString>("template")
             .map(|s| s.to_string_lossy().into_owned());
 
-        for attempt in 0..MKTEMP_MAX_ATTEMPTS {
-            let rand_part = mktemp_suffix_for_attempt(attempt);
-            let name_with_x = mktemp_name(template.as_deref(), &rand_part);
-            let name = match &suffix_arg {
-                Some(suf) => format!("{name_with_x}{suf}"),
-                None => name_with_x,
-            };
+        let fail = |msg: String| ExecResult::err(if quiet { String::new() } else { msg }, 1);
 
-            let path = if template.as_deref().is_some_and(|t| t.starts_with('/')) {
-                name
-            } else if use_tmpdir || template.is_none() || !name.contains('/') {
-                format!("{}/{}", prefix_dir, name)
-            } else {
-                let p = resolve_path(ctx.cwd, &name);
-                p.to_string_lossy().to_string()
-            };
-
-            let full_path = std::path::PathBuf::from(&path);
-
-            if let Some(parent) = full_path.parent()
-                && !ctx.fs.exists(parent).await.unwrap_or(false)
-            {
-                let _ = ctx.fs.mkdir(parent, true).await;
+        // GNU: no TEMPLATE implies --tmpdir; -t prefers $TMPDIR over -p.
+        let use_dest_dir =
+            template_arg.is_none() || p_value.is_some() || tmpdir_value.is_some() || use_t;
+        let template = template_arg.unwrap_or_else(|| "tmp.XXXXXXXXXX".to_string());
+        if suffix_arg.as_deref().is_some_and(|s| s.contains('/')) {
+            return Ok(fail(format!(
+                "mktemp: invalid suffix '{}', contains directory separator\n",
+                suffix_arg.as_deref().unwrap_or_default()
+            )));
+        }
+        let (prefix, xs, suffix) = match mktemp_split(&template, suffix_arg.as_deref()) {
+            Ok(parts) => parts,
+            Err(msg) => return Ok(fail(msg)),
+        };
+        let env_tmpdir = ctx.env.get("TMPDIR").filter(|d| !d.is_empty()).cloned();
+        let dest_dir = if !use_dest_dir {
+            None
+        } else if use_t {
+            Some(env_tmpdir.or(dir_arg).unwrap_or_else(|| "/tmp".to_string()))
+        } else {
+            Some(dir_arg.or(env_tmpdir).unwrap_or_else(|| "/tmp".to_string()))
+        };
+        if dest_dir.is_some() && template.starts_with('/') {
+            return Ok(fail(format!(
+                "mktemp: invalid template, '{template}'; with --tmpdir, it may not be absolute\n"
+            )));
+        }
+        if use_t && template.contains('/') {
+            return Ok(fail(format!(
+                "mktemp: invalid template, '{template}', contains directory separator\n"
+            )));
+        }
+        // Sandbox convenience: a VFS without /tmp still gets the default
+        // directory (an explicit -p/TMPDIR directory must already exist).
+        if dest_dir.as_deref() == Some("/tmp") {
+            let tmp = std::path::Path::new("/tmp");
+            if !ctx.fs.exists(tmp).await.unwrap_or(false) {
+                let _ = ctx.fs.mkdir(tmp, true).await;
             }
+        }
+        let shown_template = match &dest_dir {
+            Some(dir) => format!("{}/{template}", dir.trim_end_matches('/')),
+            None => template.clone(),
+        };
+
+        for attempt in 0..MKTEMP_MAX_ATTEMPTS {
+            let name = format!("{prefix}{}{suffix}", mktemp_random(attempt, xs));
+            // Shown as built (relative stays relative); created under cwd.
+            let shown = match &dest_dir {
+                Some(dir) => format!("{}/{name}", dir.trim_end_matches('/')),
+                None => name,
+            };
+            let full_path = resolve_path(ctx.cwd, &shown);
 
             if ctx.fs.exists(&full_path).await.unwrap_or(false) {
                 continue;
             }
-
             if dry_run {
-                return Ok(ExecResult::ok(format!("{}\n", path)));
+                return Ok(ExecResult::ok(format!("{shown}\n")));
             }
-
-            if create_dir {
-                match ctx.fs.mkdir(&full_path, false).await {
-                    Ok(_) => return Ok(ExecResult::ok(format!("{}\n", path))),
-                    Err(_) if ctx.fs.exists(&full_path).await.unwrap_or(false) => continue,
-                    Err(e) => {
-                        let msg = if quiet {
-                            String::new()
-                        } else {
-                            format!("mktemp: failed to create directory '{}': {}\n", path, e)
-                        };
-                        return Ok(ExecResult::err(msg, 1));
-                    }
-                }
+            let created = if create_dir {
+                ctx.fs.mkdir(&full_path, false).await
             } else {
-                match ctx.fs.write_file(&full_path, &[]).await {
-                    Ok(_) => return Ok(ExecResult::ok(format!("{}\n", path))),
-                    Err(_) if ctx.fs.exists(&full_path).await.unwrap_or(false) => continue,
-                    Err(e) => {
-                        let msg = if quiet {
-                            String::new()
-                        } else {
-                            format!("mktemp: failed to create file '{}': {}\n", path, e)
-                        };
-                        return Ok(ExecResult::err(msg, 1));
-                    }
+                ctx.fs.write_file(&full_path, &[]).await
+            };
+            match created {
+                Ok(_) => return Ok(ExecResult::ok(format!("{shown}\n"))),
+                Err(_) if ctx.fs.exists(&full_path).await.unwrap_or(false) => continue,
+                Err(_) => {
+                    let what = if create_dir { "directory" } else { "file" };
+                    let parent_missing = match full_path.parent() {
+                        Some(p) => !ctx.fs.exists(p).await.unwrap_or(false),
+                        None => false,
+                    };
+                    let reason = if parent_missing {
+                        "No such file or directory"
+                    } else {
+                        "Permission denied"
+                    };
+                    return Ok(fail(format!(
+                        "mktemp: failed to create {what} via template '{shown_template}': {reason}\n"
+                    )));
                 }
             }
         }
 
-        let msg = if quiet {
-            String::new()
-        } else {
-            "mktemp: failed to create unique temporary path after 64 attempts\n".to_string()
-        };
-        Ok(ExecResult::err(msg, 1))
+        Ok(fail(format!(
+            "mktemp: failed to create file via template '{shown_template}': File exists\n"
+        )))
     }
 }
 #[cfg(test)]
@@ -1536,15 +1690,22 @@ mod tests {
     }
 
     #[test]
-    fn test_mktemp_name_template_replaces_xxxxxx() {
-        let name = mktemp_name(Some("/tmp/myapp.XXXXXX"), "abcdef1234");
-        assert_eq!(name, "/tmp/myapp.abcdef");
+    fn test_mktemp_split_template() {
+        assert_eq!(
+            mktemp_split("/tmp/myapp.XXXXXX", None),
+            Ok(("/tmp/myapp.", 6, ""))
+        );
+        assert_eq!(mktemp_split("aXXXb.txt", None), Ok(("a", 3, "b.txt")));
+        assert_eq!(mktemp_split("aXXXX", Some(".c")), Ok(("a", 4, ".c")));
+        assert!(mktemp_split("/tmp/myapp", None).is_err());
+        assert!(mktemp_split("aXX", None).is_err());
     }
 
     #[test]
-    fn test_mktemp_name_template_without_xxxxxx_appends_suffix() {
-        let name = mktemp_name(Some("/tmp/myapp"), "abcdef1234");
-        assert_eq!(name, "/tmp/myapp.abcdef");
+    fn test_mktemp_random_charset() {
+        let r = mktemp_random(0, 32);
+        assert_eq!(r.len(), 32);
+        assert!(r.bytes().all(|b| b.is_ascii_alphanumeric()));
     }
 
     async fn run_fileop<B: Builtin>(builtin: &B, args: &[&str]) -> ExecResult {

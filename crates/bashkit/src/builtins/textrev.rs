@@ -80,89 +80,97 @@ impl Builtin for Tac {
             }
         };
 
-        // TODO(uutils-parity): implement -b/--before, -r/--regex,
-        // -s/--separator. The generated parser accepts them so scripts that
-        // pass the flags are not rejected outright; until the body lands we
-        // error explicitly when any are actually requested rather than
-        // silently no-op'ing.
-        if matches.get_flag("before")
-            || matches.get_flag("regex")
-            || matches.contains_id("separator")
-        {
-            return Ok(ExecResult::err(
-                "tac: -b/-r/-s not yet implemented in bashkit\n".to_string(),
-                2,
-            ));
-        }
+        let before = matches.get_flag("before");
+        let regex = matches.get_flag("regex");
+        // GNU: an empty separator means a NUL byte.
+        let separator = match matches.get_one::<OsString>("separator") {
+            Some(s) if s.is_empty() => "\0".to_string(),
+            Some(s) => s.to_string_lossy().into_owned(),
+            None => "\n".to_string(),
+        };
+        let sep = if regex {
+            let translated = super::sed::translate_posix_regex(&separator, false);
+            match super::search_common::build_regex(&translated) {
+                Ok(re) => TacSep::Regex(re),
+                Err(_) => {
+                    return Ok(ExecResult::err(
+                        format!("tac: invalid regular expression: '{separator}'\n"),
+                        1,
+                    ));
+                }
+            }
+        } else {
+            TacSep::Literal(separator)
+        };
 
-        let files: Vec<String> = matches
+        let mut files: Vec<String> = matches
             .get_many::<OsString>("file")
             .map(|vs| vs.map(|v| v.to_string_lossy().into_owned()).collect())
             .unwrap_or_default();
-
-        let raw = match read_tac_files(&ctx, &files).await {
-            Ok(r) => r,
-            Err(e) => return Ok(e),
-        };
-
-        Ok(ExecResult::ok(reverse_lines(&raw)))
-    }
-}
-
-async fn read_tac_files(
-    ctx: &Context<'_>,
-    files: &[String],
-) -> std::result::Result<String, ExecResult> {
-    let mut raw = String::new();
-    if files.is_empty() {
-        if let Some(stdin) = ctx.stdin {
-            raw.push_str(stdin);
+        if files.is_empty() {
+            files.push("-".to_string());
         }
-        return Ok(raw);
-    }
-    for file in files {
-        if file == "-" {
-            if let Some(stdin) = ctx.stdin {
-                raw.push_str(stdin);
-            }
-        } else {
-            let path = if Path::new(file).is_absolute() {
-                file.clone()
-            } else {
-                vfs_join(ctx.cwd, file).to_string_lossy().into_owned()
+
+        // GNU tac reverses each file on its own, then outputs them in order.
+        let mut out = String::new();
+        for file in &files {
+            let raw = match read_tac_file(&ctx, file).await {
+                Ok(r) => r,
+                Err(e) => return Ok(e),
             };
-            let text = read_text_file(&*ctx.fs, Path::new(&path), "tac").await?;
-            raw.push_str(&text);
+            reverse_records(&raw, &sep, before, &mut out);
         }
+        Ok(ExecResult::ok(out))
     }
-    Ok(raw)
 }
 
-fn reverse_lines(raw: &str) -> String {
-    if raw.is_empty() {
-        return String::new();
-    }
-    // GNU tac splits input into records by newline separators; each record
-    // keeps its own trailing separator (the last record has none when input
-    // is unterminated). Reversing records preserves that — so an
-    // unterminated last line concatenates directly with the previous one
-    // without an inserted newline.
-    let has_trailing_newline = raw.ends_with('\n');
-    let trimmed = if has_trailing_newline {
-        &raw[..raw.len() - 1]
-    } else {
-        raw
-    };
-    let lines: Vec<&str> = trimmed.split('\n').collect();
-    let last = lines.len() - 1;
-    let mut out = String::new();
-    for (i, line) in lines.iter().enumerate().rev() {
-        out.push_str(line);
-        if i != last || has_trailing_newline {
-            out.push('\n');
+enum TacSep {
+    Literal(String),
+    Regex(regex::Regex),
+}
+
+impl TacSep {
+    /// Byte ranges of every non-empty separator match, left to right.
+    fn matches(&self, raw: &str) -> Vec<(usize, usize)> {
+        match self {
+            TacSep::Literal(s) => raw
+                .match_indices(s.as_str())
+                .map(|(i, m)| (i, i + m.len()))
+                .collect(),
+            TacSep::Regex(re) => re
+                .find_iter(raw)
+                .filter(|m| !m.is_empty())
+                .map(|m| (m.start(), m.end()))
+                .collect(),
         }
     }
-    out
+}
+
+async fn read_tac_file(ctx: &Context<'_>, file: &str) -> std::result::Result<String, ExecResult> {
+    if file == "-" {
+        return Ok(ctx.stdin.map(ToString::to_string).unwrap_or_default());
+    }
+    let path = if Path::new(file).is_absolute() {
+        file.to_string()
+    } else {
+        vfs_join(ctx.cwd, file).to_string_lossy().into_owned()
+    };
+    read_text_file(&*ctx.fs, Path::new(&path), "tac").await
+}
+
+/// Split `raw` into records that end with (or, with `before`, start with) a
+/// separator, and append them in reverse order. An unterminated last record
+/// is kept as-is, so it joins the previous record without a separator.
+fn reverse_records(raw: &str, sep: &TacSep, before: bool, out: &mut String) {
+    let mut cuts = vec![0];
+    for (start, end) in sep.matches(raw) {
+        cuts.push(if before { start } else { end });
+    }
+    cuts.push(raw.len());
+    cuts.dedup();
+    for w in cuts.windows(2).rev() {
+        out.push_str(&raw[w[0]..w[1]]);
+    }
 }
 
 /// The rev builtin - reverse characters of each line.
@@ -254,5 +262,32 @@ mod tests {
         let result = run_rev(&["-Q"], Some("hello\n")).await;
         assert_eq!(result.exit_code, 1);
         assert!(result.stderr.contains("invalid option -- 'Q'"));
+    }
+
+    fn tac(raw: &str, sep: TacSep, before: bool) -> String {
+        let mut out = String::new();
+        reverse_records(raw, &sep, before, &mut out);
+        out
+    }
+
+    #[test]
+    fn test_tac_records_default_and_unterminated() {
+        let nl = || TacSep::Literal("\n".to_string());
+        assert_eq!(tac("a\nb\n", nl(), false), "b\na\n");
+        assert_eq!(tac("a\nb", nl(), false), "ba\n");
+        assert_eq!(tac("", nl(), false), "");
+    }
+
+    #[test]
+    fn test_tac_records_separator_and_before() {
+        let x = || TacSep::Literal("X".to_string());
+        assert_eq!(tac("aXbXcX", x(), false), "cXbXaX");
+        assert_eq!(tac("XaXb", x(), true), "XbXa");
+    }
+
+    #[test]
+    fn test_tac_records_regex() {
+        let re = regex::Regex::new("[0-9]").unwrap();
+        assert_eq!(tac("a1b22c", TacSep::Regex(re), false), "c2b2a1");
     }
 }

@@ -54,7 +54,6 @@ plain
 
 ### bashbox_printf_format_escapes
 # format escapes
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf '\101|\0101|\x41|\e|\t|\\|\q|\c\n'
 ### expect
 A|1|A||	|\|\q|\c
@@ -132,7 +131,6 @@ printf "[%'d]\n" 1234567
 
 ### bashbox_printf_bash_pads_b_and_q_itself_never_with_zeros
 # bash pads %b and %q itself, never with zeros
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf '[%05b|%05q|%05Q]\n' 'a\tb' 'c d' e
 ### expect
 [  a	b| c\ d|    e]
@@ -140,7 +138,6 @@ printf '[%05b|%05q|%05Q]\n' 'a\tb' 'c d' e
 
 ### bashbox_printf_q_and_q_with_width_and_precision
 # %q and %Q with width and precision
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf '[%10q|%-6q|%.2q|%.2Q|%5Q]\n' 'a b' x abc 'a bc' 'a b'
 ### expect
 [      a\ b|x     |ab|a\ | a\ b]
@@ -162,7 +159,6 @@ printf '%d %d %d %d %d %d %i %X\n' "'A" '"B' '+0x10' '-010' "'" ' 12' 0x7f 3054
 
 ### bashbox_printf_ends_options
 # -- ends options
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf -- '[%s]\n' a
 ### expect
 [a]

@@ -28,52 +28,84 @@ impl Builtin for Basename {
         ) {
             return Ok(r);
         }
-        if ctx.args.is_empty() {
+        let (parsed, operands) = match super::arg_parser::gnu_getopt(
+            "basename",
+            ctx.args,
+            "as:z",
+            &[
+                ("multiple", super::arg_parser::OptArg::No, 'a'),
+                ("suffix", super::arg_parser::OptArg::Required, 's'),
+                ("zero", super::arg_parser::OptArg::No, 'z'),
+            ],
+            true,
+            1,
+        ) {
+            Ok(v) => v,
+            Err(e) => return Ok(e),
+        };
+        let mut multiple = false;
+        let mut suffix: Option<String> = None;
+        let mut term = '\n';
+        for o in parsed {
+            match o.key {
+                'a' => multiple = true,
+                's' => {
+                    multiple = true;
+                    suffix = o.value;
+                }
+                _ => term = '\0',
+            }
+        }
+        if operands.is_empty() {
             return Ok(ExecResult::err(
                 "basename: missing operand\n".to_string(),
                 1,
             ));
         }
-
-        let mut output = String::new();
-        let mut args_iter = ctx.args.iter();
-
-        // Get the path argument
-        let path_arg = args_iter
-            .next()
-            .expect("args_iter.next() valid: guarded by is_empty() check above");
-        let path = Path::new(path_arg);
-
-        // Get the basename
-        let basename = path
-            .file_name()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_else(|| {
-                // Handle special cases like "/" or empty
-                if path_arg == "/" {
-                    "/".to_string()
-                } else if path_arg.is_empty() {
-                    String::new()
-                } else {
-                    path_arg.clone()
-                }
-            });
-
-        // Check for suffix argument
-        let result = if let Some(suffix) = args_iter.next() {
-            if let Some(stripped) = basename.strip_suffix(suffix.as_str()) {
-                stripped.to_string()
-            } else {
-                basename
-            }
+        let names: &[String] = if multiple {
+            &operands
         } else {
-            basename
+            match operands.len() {
+                1 => &operands,
+                2 => {
+                    suffix = Some(operands[1].clone());
+                    &operands[..1]
+                }
+                _ => {
+                    return Ok(ExecResult::err(
+                        format!("basename: extra operand '{}'\n", operands[2]),
+                        1,
+                    ));
+                }
+            }
         };
 
-        output.push_str(&result);
-        output.push('\n');
-
+        let mut output = String::new();
+        for name in names {
+            output.push_str(&gnu_basename(name, suffix.as_deref()));
+            output.push(term);
+        }
         Ok(ExecResult::ok(output))
+    }
+}
+
+/// GNU `basename`: drop trailing slashes, keep the last component, then
+/// strip SUFFIX unless it is the whole remaining name.
+fn gnu_basename(name: &str, suffix: Option<&str>) -> String {
+    let trimmed = name.trim_end_matches('/');
+    if trimmed.is_empty() {
+        return if name.is_empty() {
+            String::new()
+        } else {
+            "/".to_string()
+        };
+    }
+    let base = trimmed.rsplit('/').next().unwrap_or(trimmed);
+    match suffix {
+        Some(suf) if !suf.is_empty() && base != suf => {
+            base.strip_suffix(suf).unwrap_or(base).to_string()
+        }
+        _ => base.to_string(),
     }
 }
 
@@ -568,6 +600,21 @@ mod tests {
         let result = run_basename(&["/usr/bin/sort"]).await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, "sort\n");
+    }
+
+    #[tokio::test]
+    async fn test_basename_gnu_edge_cases() {
+        assert_eq!(gnu_basename(".txt", Some(".txt")), ".txt");
+        assert_eq!(gnu_basename("a/.", None), ".");
+        assert_eq!(gnu_basename("//", None), "/");
+        assert_eq!(gnu_basename("", None), "");
+        let result = run_basename(&["-a", "a/b", "c/d/"]).await;
+        assert_eq!(result.stdout, "b\nd\n");
+        let result = run_basename(&["-s", ".c", "x.c", "y.h"]).await;
+        assert_eq!(result.stdout, "x\ny.h\n");
+        let result = run_basename(&["a", "b", "c"]).await;
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("extra operand 'c'"));
     }
 
     #[tokio::test]

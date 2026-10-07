@@ -17,6 +17,9 @@
 
 mod exec;
 mod pattern;
+
+// Shared with `grep`: one POSIX BRE/ERE -> `regex` crate translator.
+pub(crate) use pattern::translate as translate_posix_regex;
 mod script;
 
 #[cfg(test)]

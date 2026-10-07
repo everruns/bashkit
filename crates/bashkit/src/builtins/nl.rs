@@ -1,7 +1,14 @@
 //! nl builtin command - number lines of files
+//!
+//! Decision: follows GNU nl's logical-page model. A line that is exactly the
+//! section delimiter repeated 3/2/1 times starts a header/body/footer section,
+//! prints as an empty line, and (unless `-p`) resets the line number. The `-l`
+//! blank-line counter is not reset by section changes, as in GNU.
 
 use async_trait::async_trait;
+use regex::Regex;
 
+use super::arg_parser::{OptArg, gnu_getopt};
 use super::{Builtin, Context, MAX_FORMAT_WIDTH, read_text_file};
 use crate::error::Result;
 use crate::fs::vfs_join;
@@ -9,22 +16,25 @@ use crate::interpreter::ExecResult;
 
 /// The nl builtin - number lines of files.
 ///
-/// Usage: nl [-b TYPE] [-n FORMAT] [-s SEP] [-i INCR] [-v START] [-w WIDTH] [FILE...]
+/// Usage: nl [OPTION]... [FILE...]
 ///
 /// Options:
-///   -b TYPE    Body numbering type: a (all), t (non-empty, default), n (none)
-///   -n FORMAT  Number format: ln (left-justified), rn (right-justified, default), rz (right-justified, zero-padded)
-///   -s SEP     Separator string between number and line (default: TAB)
-///   -i INCR    Line number increment (default: 1)
-///   -v START   Starting line number (default: 1)
-///   -w WIDTH   Number width (default: 6)
+///   -b/-h/-f STYLE  Body/header/footer numbering: a, t, n, or pBRE
+///   -d CC           Section delimiter (default `\:`)
+///   -i INCR         Line number increment (default: 1)
+///   -l NUMBER       Group of NUMBER empty lines counted as one
+///   -n FORMAT       Number format: ln, rn (default), rz
+///   -p              Do not reset line numbers at sections
+///   -s SEP          Separator string between number and line (default: TAB)
+///   -v START        Starting line number (default: 1)
+///   -w WIDTH        Number width (default: 6)
 pub struct Nl;
 
-#[derive(Clone, Copy, PartialEq)]
-enum BodyType {
+enum Style {
     All,
     NonEmpty,
     None,
+    Regex(Regex),
 }
 
 #[derive(Clone, Copy)]
@@ -34,127 +44,234 @@ enum NumberFormat {
     RightZero,
 }
 
+#[derive(Clone, Copy, PartialEq)]
+enum Section {
+    Header,
+    Body,
+    Footer,
+}
+
 struct NlOptions {
-    body_type: BodyType,
+    body: Style,
+    header: Style,
+    footer: Style,
+    delimiter: String,
     format: NumberFormat,
     separator: String,
-    increment: usize,
-    start: usize,
+    increment: i64,
+    start: i64,
     width: usize,
+    join_blank: u64,
+    renumber: bool,
 }
 
 impl Default for NlOptions {
     fn default() -> Self {
         Self {
-            body_type: BodyType::NonEmpty,
+            body: Style::NonEmpty,
+            header: Style::None,
+            footer: Style::None,
+            delimiter: "\\:".to_string(),
             format: NumberFormat::RightJustified,
             separator: "\t".to_string(),
             increment: 1,
             start: 1,
             width: 6,
+            join_blank: 1,
+            renumber: true,
         }
     }
 }
 
-fn parse_nl_args(args: &[String]) -> std::result::Result<(NlOptions, Vec<String>), String> {
-    let mut opts = NlOptions::default();
-    let mut files = Vec::new();
-    let mut p = super::arg_parser::ArgParser::new(args);
-
-    while !p.is_done() {
-        if let Some(val) = p.flag_value("-b", "nl")? {
-            opts.body_type = match val {
-                "a" => BodyType::All,
-                "t" => BodyType::NonEmpty,
-                "n" => BodyType::None,
-                other => return Err(format!("nl: invalid body numbering style: '{}'", other)),
-            };
-        } else if let Some(val) = p.flag_value("-n", "nl")? {
-            opts.format = match val {
-                "ln" => NumberFormat::LeftJustified,
-                "rn" => NumberFormat::RightJustified,
-                "rz" => NumberFormat::RightZero,
-                other => return Err(format!("nl: invalid line numbering format: '{}'", other)),
-            };
-        } else if let Some(val) = p.flag_value("-s", "nl")? {
-            opts.separator = val.to_string();
-        } else if let Some(val) = p.flag_value("-i", "nl")? {
-            opts.increment = val
-                .parse()
-                .map_err(|_| format!("nl: invalid line number increment: '{}'", val))?;
-        } else if let Some(val) = p.flag_value("-v", "nl")? {
-            opts.start = val
-                .parse()
-                .map_err(|_| format!("nl: invalid starting line number: '{}'", val))?;
-        } else if let Some(val) = p.flag_value("-w", "nl")? {
-            opts.width = val
-                .parse()
-                .map_err(|_| format!("nl: invalid line number field width: '{}'", val))?;
-            if opts.width > MAX_FORMAT_WIDTH {
-                return Err(format!(
-                    "nl: line number field width {} exceeds maximum ({})",
-                    opts.width, MAX_FORMAT_WIDTH
-                ));
+fn parse_style(val: &str, what: &str) -> std::result::Result<Style, String> {
+    match val {
+        "a" => Ok(Style::All),
+        "t" => Ok(Style::NonEmpty),
+        "n" => Ok(Style::None),
+        _ => {
+            if let Some(pat) = val.strip_prefix('p') {
+                let translated = super::sed::translate_posix_regex(pat, false);
+                return super::search_common::build_regex(&translated)
+                    .map(Style::Regex)
+                    .map_err(|_| format!("nl: invalid regular expression: '{pat}'"));
             }
-        } else if p.is_flag() && p.current() != Some("--") {
-            // Reject unknown options instead of treating them as files.
-            return Err(invalid_option_msg("nl", p.current().unwrap_or_default()));
-        } else if let Some(arg) = p.positional() {
-            files.push(arg.to_string());
+            Err(format!("nl: invalid {what} numbering style: '{val}'"))
         }
     }
+}
 
+fn parse_int(val: &str, what: &str) -> std::result::Result<i64, String> {
+    val.trim_start()
+        .parse()
+        .map_err(|_| format!("nl: invalid {what}: '{val}'"))
+}
+
+#[allow(clippy::result_large_err)]
+fn parse_nl_args(args: &[String]) -> std::result::Result<(NlOptions, Vec<String>), ExecResult> {
+    let (parsed, files) = gnu_getopt(
+        "nl",
+        args,
+        "b:d:f:h:i:l:n:ps:v:w:",
+        &[
+            ("body-numbering", OptArg::Required, 'b'),
+            ("section-delimiter", OptArg::Required, 'd'),
+            ("footer-numbering", OptArg::Required, 'f'),
+            ("header-numbering", OptArg::Required, 'h'),
+            ("line-increment", OptArg::Required, 'i'),
+            ("join-blank-lines", OptArg::Required, 'l'),
+            ("number-format", OptArg::Required, 'n'),
+            ("no-renumber", OptArg::No, 'p'),
+            ("number-separator", OptArg::Required, 's'),
+            ("starting-line-number", OptArg::Required, 'v'),
+            ("number-width", OptArg::Required, 'w'),
+        ],
+        true,
+        1,
+    )?;
+    let fail = |msg: String| ExecResult::err(format!("{msg}\n"), 1);
+    let mut opts = NlOptions::default();
+    for o in parsed {
+        let val = o.value.unwrap_or_default();
+        match o.key {
+            'b' => opts.body = parse_style(&val, "body").map_err(fail)?,
+            'h' => opts.header = parse_style(&val, "header").map_err(fail)?,
+            'f' => opts.footer = parse_style(&val, "footer").map_err(fail)?,
+            'd' => {
+                // A single character keeps the default second character `:`.
+                let mut chars = val.chars();
+                opts.delimiter = match (chars.next(), chars.next()) {
+                    (Some(c), None) => format!("{c}:"),
+                    _ => val,
+                };
+            }
+            'i' => opts.increment = parse_int(&val, "line number increment").map_err(fail)?,
+            'l' => {
+                opts.join_blank = match parse_int(&val, "line number of blank lines") {
+                    Ok(n) if n > 0 => n as u64,
+                    _ => {
+                        return Err(fail(format!(
+                            "nl: invalid line number of blank lines: '{val}'"
+                        )));
+                    }
+                }
+            }
+            'n' => {
+                opts.format = match val.as_str() {
+                    "ln" => NumberFormat::LeftJustified,
+                    "rn" => NumberFormat::RightJustified,
+                    "rz" => NumberFormat::RightZero,
+                    other => {
+                        return Err(fail(format!(
+                            "nl: invalid line numbering format: '{other}'"
+                        )));
+                    }
+                }
+            }
+            'p' => opts.renumber = false,
+            's' => opts.separator = val,
+            'v' => opts.start = parse_int(&val, "starting line number").map_err(fail)?,
+            _ => {
+                let width = match parse_int(&val, "line number field width") {
+                    Ok(n) if n > 0 => n as usize,
+                    _ => {
+                        return Err(fail(format!(
+                            "nl: invalid line number field width: '{val}'"
+                        )));
+                    }
+                };
+                if width > MAX_FORMAT_WIDTH {
+                    return Err(fail(format!(
+                        "nl: line number field width {width} exceeds maximum ({MAX_FORMAT_WIDTH})"
+                    )));
+                }
+                opts.width = width;
+            }
+        }
+    }
     Ok((opts, files))
 }
 
-/// Build an unrecognized-option message (no trailing newline; the caller
-/// appends it via `format!("{}\n", e)`). Mirrors `super::invalid_option`.
-fn invalid_option_msg(cmd: &str, arg: &str) -> String {
-    if let Some(long) = arg.strip_prefix("--") {
-        format!("{cmd}: unrecognized option '--{long}'")
-    } else {
-        let ch = arg
-            .strip_prefix('-')
-            .and_then(|s| s.chars().next())
-            .unwrap_or('-');
-        format!("{cmd}: invalid option -- '{ch}'")
-    }
-}
-
-fn format_number(num: usize, format: NumberFormat, width: usize) -> String {
+fn format_number(num: i64, format: NumberFormat, width: usize) -> String {
     match format {
         NumberFormat::LeftJustified => format!("{:<width$}", num, width = width),
         NumberFormat::RightJustified => format!("{:>width$}", num, width = width),
-        NumberFormat::RightZero => format!("{:0>width$}", num, width = width),
+        NumberFormat::RightZero => {
+            if num < 0 {
+                format!("-{:0>w$}", num.unsigned_abs(), w = width.saturating_sub(1))
+            } else {
+                format!("{:0>width$}", num, width = width)
+            }
+        }
     }
 }
 
-fn number_lines(text: &str, opts: &NlOptions, line_num: &mut usize) -> String {
-    let mut output = String::new();
+/// Numbering state carried across all input files.
+struct NlState {
+    section: Section,
+    line_no: i64,
+    blank_lines: u64,
+}
+
+fn number_lines(text: &str, opts: &NlOptions, st: &mut NlState, out: &mut String) {
+    let header = opts.delimiter.repeat(3);
+    let body = opts.delimiter.repeat(2);
+    let footer = &opts.delimiter;
+    let no_number = " ".repeat(opts.width + opts.separator.len());
 
     for line in text.lines() {
-        let should_number = match opts.body_type {
-            BodyType::All => true,
-            BodyType::NonEmpty => !line.is_empty(),
-            BodyType::None => false,
-        };
-
-        if should_number {
-            output.push_str(&format_number(*line_num, opts.format, opts.width));
-            output.push_str(&opts.separator);
-            output.push_str(line);
-            output.push('\n');
-            *line_num += opts.increment;
-        } else {
-            // No number: real nl uses spaces only (no separator) for unnumbered lines.
-            // The indent is width chars + 1 space (replacing the tab separator).
-            output.push_str(&" ".repeat(opts.width + 1));
-            output.push_str(line);
-            output.push('\n');
+        if !opts.delimiter.is_empty() {
+            let next = if line == header {
+                Some(Section::Header)
+            } else if line == body {
+                Some(Section::Body)
+            } else if line == footer {
+                Some(Section::Footer)
+            } else {
+                None
+            };
+            if let Some(section) = next {
+                st.section = section;
+                if opts.renumber {
+                    st.line_no = opts.start;
+                }
+                out.push('\n');
+                continue;
+            }
         }
+        let style = match st.section {
+            Section::Header => &opts.header,
+            Section::Body => &opts.body,
+            Section::Footer => &opts.footer,
+        };
+        let number = match style {
+            Style::All => {
+                if opts.join_blank > 1 && line.is_empty() {
+                    st.blank_lines += 1;
+                    if st.blank_lines == opts.join_blank {
+                        st.blank_lines = 0;
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    st.blank_lines = 0;
+                    true
+                }
+            }
+            Style::NonEmpty => !line.is_empty(),
+            Style::None => false,
+            Style::Regex(re) => re.is_match(line),
+        };
+        if number {
+            out.push_str(&format_number(st.line_no, opts.format, opts.width));
+            out.push_str(&opts.separator);
+            st.line_no = st.line_no.saturating_add(opts.increment);
+        } else {
+            out.push_str(&no_number);
+        }
+        out.push_str(line);
+        out.push('\n');
     }
-
-    output
 }
 
 #[async_trait]
@@ -162,44 +279,42 @@ impl Builtin for Nl {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
         if let Some(r) = super::check_help_version(
             ctx.args,
-            "Usage: nl [OPTION]... [FILE]...\nNumber lines of files.\n\n  -b TYPE\tuse TYPE for numbering body lines (a=all, t=non-empty, n=none)\n  -i NUMBER\tline number increment\n  -n FORMAT\tinsert line numbers according to FORMAT (ln, rn, rz)\n  -s STRING\tadd STRING after line number\n  -v NUMBER\tfirst line number\n  -w NUMBER\tuse NUMBER columns for line numbers\n  --help\t\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            "Usage: nl [OPTION]... [FILE]...\nNumber lines of files.\n\n  -b, --body-numbering=STYLE\tuse STYLE for numbering body lines\n  -d, --section-delimiter=CC\tuse CC for logical page delimiters\n  -f, --footer-numbering=STYLE\tuse STYLE for numbering footer lines\n  -h, --header-numbering=STYLE\tuse STYLE for numbering header lines\n  -i, --line-increment=NUMBER\tline number increment at each line\n  -l, --join-blank-lines=NUMBER\tgroup of NUMBER empty lines counted as one\n  -n, --number-format=FORMAT\tinsert line numbers according to FORMAT (ln, rn, rz)\n  -p, --no-renumber\tdo not reset line numbers for each section\n  -s, --number-separator=STRING\tadd STRING after (possible) line number\n  -v, --starting-line-number=NUMBER\tfirst line number for each section\n  -w, --number-width=NUMBER\tuse NUMBER columns for line numbers\n  --help\t\tdisplay this help and exit\n  --version\toutput version information and exit\n\nSTYLE is one of: a (all lines), t (nonempty lines), n (no lines), pBRE (lines matching BRE)\n",
             Some("nl (bashkit) 0.1"),
         ) {
             return Ok(r);
         }
-        let (opts, files) = match parse_nl_args(ctx.args) {
+        let (opts, mut files) = match parse_nl_args(ctx.args) {
             Ok(v) => v,
-            Err(e) => return Ok(ExecResult::err(format!("{}\n", e), 1)),
+            Err(e) => return Ok(e),
         };
+        if files.is_empty() {
+            files.push("-".to_string());
+        }
 
         let mut output = String::new();
-        let mut line_num = opts.start;
-
-        if files.is_empty() {
-            // Read from stdin
-            if let Some(stdin) = ctx.stdin {
-                output.push_str(&number_lines(stdin, &opts, &mut line_num));
-            }
-        } else {
-            for file in &files {
-                if file == "-" {
-                    if let Some(stdin) = ctx.stdin {
-                        output.push_str(&number_lines(stdin, &opts, &mut line_num));
-                    }
-                } else {
-                    let path = if file.starts_with('/') {
-                        std::path::PathBuf::from(file)
-                    } else {
-                        vfs_join(ctx.cwd, file)
-                    };
-
-                    let text = match read_text_file(&*ctx.fs, &path, "nl").await {
-                        Ok(t) => t,
-                        Err(e) => return Ok(e),
-                    };
-                    output.push_str(&number_lines(&text, &opts, &mut line_num));
+        let mut state = NlState {
+            section: Section::Body,
+            line_no: opts.start,
+            blank_lines: 0,
+        };
+        for file in &files {
+            if file == "-" {
+                if let Some(stdin) = ctx.stdin {
+                    number_lines(stdin, &opts, &mut state, &mut output);
                 }
+                continue;
             }
+            let path = if file.starts_with('/') {
+                std::path::PathBuf::from(file)
+            } else {
+                vfs_join(ctx.cwd, file)
+            };
+            let text = match read_text_file(&*ctx.fs, &path, "nl").await {
+                Ok(t) => t,
+                Err(e) => return Ok(e),
+            };
+            number_lines(&text, &opts, &mut state, &mut output);
         }
 
         Ok(ExecResult::ok(output))
@@ -453,5 +568,41 @@ mod tests {
         let result = run_nl(&["-Q"], Some("a\n")).await;
         assert_eq!(result.exit_code, 1);
         assert!(result.stderr.contains("invalid option -- 'Q'"));
+    }
+
+    #[tokio::test]
+    async fn test_nl_sections_reset_numbers() {
+        let input = "\\:\\:\\:\nh\n\\:\\:\nb1\nb2\n\\:\nf\n";
+        let result = run_nl(&["-ha", "-fa"], Some(input)).await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(
+            result.stdout,
+            "\n     1\th\n\n     1\tb1\n     2\tb2\n\n     1\tf\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_nl_no_renumber() {
+        let result = run_nl(&["-p"], Some("a\n\\:\\:\nb\n")).await;
+        assert_eq!(result.stdout, "     1\ta\n\n     2\tb\n");
+    }
+
+    #[tokio::test]
+    async fn test_nl_regex_style() {
+        let result = run_nl(&["-bp^x"], Some("xa\nb\nxc\n")).await;
+        assert_eq!(result.stdout, "     1\txa\n       b\n     2\txc\n");
+    }
+
+    #[tokio::test]
+    async fn test_nl_join_blank_lines() {
+        let result = run_nl(&["-ba", "-l2"], Some("\n\n\n")).await;
+        assert_eq!(result.stdout, "       \n     1\t\n       \n");
+    }
+
+    #[tokio::test]
+    async fn test_nl_invalid_join_count() {
+        let result = run_nl(&["-l", "0"], Some("a\n")).await;
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("invalid line number of blank lines"));
     }
 }

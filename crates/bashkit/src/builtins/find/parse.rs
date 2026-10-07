@@ -111,6 +111,12 @@ pub(super) enum Expr {
     Printf(String),
     /// `-ls`: GNU's `ls -dils` style line.
     Ls,
+    /// `-fprint`/`-fprint0`/`-fprintf`/`-fls`: the inner print action, with
+    /// its output redirected to `Parsed::out_files[file]`.
+    ToFile {
+        file: usize,
+        action: Box<Expr>,
+    },
     Delete {
         id: usize,
     },
@@ -137,7 +143,7 @@ impl Expr {
                 a.walk(f);
                 b.walk(f);
             }
-            Expr::Not(a) => a.walk(f),
+            Expr::Not(a) | Expr::ToFile { action: a, .. } => a.walk(f),
             _ => {}
         }
     }
@@ -149,7 +155,7 @@ impl Expr {
                 a.walk_mut(f);
                 b.walk_mut(f);
             }
-            Expr::Not(a) => a.walk_mut(f),
+            Expr::Not(a) | Expr::ToFile { action: a, .. } => a.walk_mut(f),
             _ => {}
         }
     }
@@ -179,6 +185,9 @@ pub(super) struct Parsed {
     pub expr: Expr,
     pub opts: Options,
     pub has_exec: bool,
+    /// `-fprint*`/`-fls` targets, truncated before the walk (as GNU opens
+    /// them while parsing). Repeated names share one entry.
+    pub out_files: Vec<String>,
 }
 
 /// Identity the ownership tests compare against (the single virtual user).
@@ -204,6 +213,7 @@ struct Parser<'a> {
     has_exec: bool,
     next_id: usize,
     ident: &'a Identity<'a>,
+    out_files: Vec<String>,
 }
 
 type PResult<T> = std::result::Result<T, String>;
@@ -245,6 +255,7 @@ pub(super) fn parse(args: &[String], ident: &Identity<'_>) -> PResult<Parsed> {
         has_exec: false,
         next_id: 0,
         ident,
+        out_files: Vec::new(),
     };
     let expr = if p.toks.is_empty() {
         None
@@ -269,6 +280,7 @@ pub(super) fn parse(args: &[String], ident: &Identity<'_>) -> PResult<Parsed> {
         expr,
         opts: p.opts,
         has_exec: p.has_exec,
+        out_files: p.out_files,
     })
 }
 
@@ -761,6 +773,28 @@ impl Parser<'_> {
             "-ls" => {
                 self.has_action = true;
                 Expr::Ls
+            }
+            "-fprint" | "-fprint0" | "-fprintf" | "-fls" => {
+                self.has_action = true;
+                let name = self.arg(tok)?;
+                let action = match tok {
+                    "-fprintf" => Expr::Printf(self.arg(tok)?),
+                    "-fls" => Expr::Ls,
+                    _ => Expr::Print {
+                        nul: tok == "-fprint0",
+                    },
+                };
+                let file = match self.out_files.iter().position(|f| *f == name) {
+                    Some(i) => i,
+                    None => {
+                        self.out_files.push(name);
+                        self.out_files.len() - 1
+                    }
+                };
+                Expr::ToFile {
+                    file,
+                    action: Box::new(action),
+                }
             }
             "-delete" => {
                 self.has_action = true;

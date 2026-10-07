@@ -20,7 +20,7 @@
 //!   so those read the modification time.
 //! - THREAT[TM-DOS-121]: `-L` loop detection, budget-charged listings, capped
 //!   output, bounded `{} +` batches.
-//! - `-ok`/`-okdir`, `-ls`, `-fprint*`, `-samefile`, `-inum`, `-links`,
+//! - `-ok`/`-okdir`, `-samefile`, `-inum`, `-links`,
 //!   `-fstype`, `-context` are not implemented (L-FIND-001).
 
 mod parse;
@@ -262,6 +262,7 @@ struct Pending {
 
 enum Effect {
     Out(String),
+    FileOut(usize, String),
     ExecOut(usize),
     DeleteMsg(usize),
     Batch {
@@ -315,7 +316,13 @@ type EvalFuture<'a> = std::pin::Pin<
 
 fn exec_path(entry: &Entry, dir: bool) -> String {
     if dir {
-        format!("./{}", entry.name())
+        // GNU leaves the root `/` unprefixed (its base name is absolute).
+        let name = entry.name();
+        if name.starts_with('/') {
+            name.to_string()
+        } else {
+            format!("./{name}")
+        }
     } else {
         entry.display.clone()
     }
@@ -447,6 +454,16 @@ fn eval<'a, 'b: 'a>(e: &'a Expr, cx: &'a mut Cx<'b>) -> EvalFuture<'a> {
                     .push(Effect::Out(printf::render(fmt, entry, start, &cx.cfg.fmt)));
                 true
             }
+            Expr::ToFile { file, action } => {
+                let first = cx.effects.len();
+                let ok = eval(action, cx).await?;
+                for effect in &mut cx.effects[first..] {
+                    if let Effect::Out(text) = effect {
+                        *effect = Effect::FileOut(*file, std::mem::take(text));
+                    }
+                }
+                ok
+            }
             Expr::Ls => {
                 // GNU find's -ls layout (inode, 1K blocks, mode, links, owner,
                 // group, size, mtime, path, `-> target` for symlinks).
@@ -544,6 +561,8 @@ pub(super) struct FindRun {
     quit: bool,
     stdout: StreamData,
     stderr: StreamData,
+    /// `-fprint*`/`-fls` targets and the text buffered for each.
+    out_files: Vec<(PathBuf, String)>,
     own_bytes: usize,
     output_cap: usize,
     failed: bool,
@@ -560,8 +579,18 @@ impl FindRun {
             paths,
             mut expr,
             opts,
+            out_files: out_names,
             ..
         } = parsed;
+        // GNU opens (creating/truncating) -fprint targets before the walk.
+        let mut out_files = Vec::with_capacity(out_names.len());
+        for name in out_names {
+            let path = resolve_path(ctx.cwd, &name);
+            if let Err(e) = ctx.fs.write_file(&path, b"").await {
+                return Err(format!("find: '{name}': {e}\n"));
+            }
+            out_files.push((path, String::new()));
+        }
         // Resolve -newer reference files before traversal (GNU fails early).
         let mut refs: Vec<String> = Vec::new();
         expr.walk(&mut |e| {
@@ -655,6 +684,7 @@ impl FindRun {
             quit: false,
             stdout: StreamData::new(),
             stderr: StreamData::new(),
+            out_files,
             own_bytes: 0,
             output_cap: FIND_MAX_OUTPUT_BYTES,
             failed: false,
@@ -706,6 +736,17 @@ impl FindRun {
                     }
                     self.own_bytes += text.len();
                     self.stdout.push_str(&text);
+                }
+                Effect::FileOut(idx, text) => {
+                    if self.own_bytes + text.len() > self.output_cap {
+                        self.error(OUTPUT_CAP_MSG.to_string());
+                        self.quit = true;
+                        return;
+                    }
+                    self.own_bytes += text.len();
+                    if let Some((_, buf)) = self.out_files.get_mut(idx) {
+                        buf.push_str(&text);
+                    }
                 }
                 Effect::ExecOut(id) => {
                     if let Some(Cached::Exec { out, err, .. }) = cache.get(&id) {
@@ -1003,6 +1044,13 @@ impl PlanDriver for FindRun {
                     self.ready.push_back(cmd);
                 }
                 continue;
+            }
+            for (path, buf) in std::mem::take(&mut self.out_files) {
+                if !buf.is_empty()
+                    && let Err(e) = self.cfg.fs.write_file(&path, buf.as_bytes()).await
+                {
+                    self.error(format!("find: '{}': {e}\n", path.display()));
+                }
             }
             return Ok(PlanStep::Done(self.finish()));
         }

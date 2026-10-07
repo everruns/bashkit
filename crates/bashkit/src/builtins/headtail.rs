@@ -120,14 +120,24 @@ fn parse_selection(cmd: &str, val: &str, unit: Unit) -> std::result::Result<Sele
     })
 }
 
+/// When to print `==> NAME <==` headers.
+#[derive(Clone, Copy, PartialEq)]
+enum Headers {
+    Auto,
+    Never,
+    Always,
+}
+
 /// Parsed head/tail command line.
 struct Options {
     selection: Selection,
     unit: Unit,
+    headers: Headers,
     files: Vec<String>,
 }
 
-/// Parse head/tail arguments (`-n`, `-c`, obsolete `-NUM`, files).
+/// Parse head/tail arguments: GNU getopt surface (`-n`, `-c`, `-q`, `-v`,
+/// their long forms, bundles) plus the obsolete `-NUM` line count.
 #[allow(clippy::result_large_err)]
 fn parse_args(cmd: &str, args: &[String]) -> std::result::Result<Options, ExecResult> {
     let default = if cmd == "head" {
@@ -138,45 +148,68 @@ fn parse_args(cmd: &str, args: &[String]) -> std::result::Result<Options, ExecRe
     let mut opts = Options {
         selection: default,
         unit: Unit::Lines,
+        headers: Headers::Auto,
         files: Vec::new(),
     };
-    let mut p = super::arg_parser::ArgParser::new(args);
-
-    while !p.is_done() {
-        if let Some(val) = p.flag_value_opt("-n") {
-            opts.selection = parse_selection(cmd, val, Unit::Lines)?;
-            opts.unit = Unit::Lines;
-        } else if let Some(val) = p.flag_value_opt("-c") {
-            opts.selection = parse_selection(cmd, val, Unit::Bytes)?;
-            opts.unit = Unit::Bytes;
-        } else if let Some(arg) = p.current().filter(|a| a.starts_with('-')) {
-            if let Some(num_str) = arg.strip_prefix('-')
-                && let Ok(n) = num_str.parse::<usize>()
+    // Obsolete `-NUM` is rewritten to `-nNUM` before getopt sees it.
+    // A `-NUM` that is the value of a preceding `-n`/`-c` stays as is.
+    let wants_value = |prev: &str| {
+        matches!(prev, "--lines" | "--bytes")
+            || (prev.len() > 1
+                && !prev.starts_with("--")
+                && prev.starts_with('-')
+                && prev.ends_with(['n', 'c'])
+                && prev[1..].bytes().all(|b| b"cnqv".contains(&b)))
+    };
+    let mut normalized = Vec::with_capacity(args.len());
+    let mut ended = false;
+    for (i, arg) in args.iter().enumerate() {
+        if !ended && arg == "--" {
+            ended = true;
+        }
+        let is_value = i > 0 && wants_value(&args[i - 1]);
+        match arg.strip_prefix('-') {
+            Some(num)
+                if !ended
+                    && !is_value
+                    && !num.is_empty()
+                    && num.bytes().all(|b| b.is_ascii_digit()) =>
             {
-                // Obsolete `-NUM` line-count form.
-                opts.selection = if cmd == "head" {
-                    Selection::First(n)
-                } else {
-                    Selection::Last(n)
-                };
-                opts.unit = Unit::Lines;
-                p.advance();
-            } else if arg == "-" {
-                // "-" is the stdin operand.
-                opts.files.push(arg.to_string());
-                p.advance();
-            } else if arg == "--" {
-                // "--" ends options.
-                p.advance();
-            } else {
-                // Unknown option-shaped token (e.g. -Q) → reject like GNU.
-                return Err(super::invalid_option(cmd, arg, 1));
+                normalized.push(format!("-n{num}"));
             }
-        } else if let Some(arg) = p.positional() {
-            opts.files.push(arg.to_string());
+            _ => normalized.push(arg.clone()),
         }
     }
-
+    let (parsed, files) = super::arg_parser::gnu_getopt(
+        cmd,
+        &normalized,
+        "c:n:qv",
+        &[
+            ("bytes", super::arg_parser::OptArg::Required, 'c'),
+            ("lines", super::arg_parser::OptArg::Required, 'n'),
+            ("quiet", super::arg_parser::OptArg::No, 'q'),
+            ("silent", super::arg_parser::OptArg::No, 'q'),
+            ("verbose", super::arg_parser::OptArg::No, 'v'),
+        ],
+        true,
+        1,
+    )?;
+    for o in parsed {
+        match o.key {
+            'n' | 'c' => {
+                let unit = if o.key == 'n' {
+                    Unit::Lines
+                } else {
+                    Unit::Bytes
+                };
+                opts.selection = parse_selection(cmd, &o.value.unwrap_or_default(), unit)?;
+                opts.unit = unit;
+            }
+            'q' => opts.headers = Headers::Never,
+            _ => opts.headers = Headers::Always,
+        }
+    }
+    opts.files = files;
     Ok(opts)
 }
 
@@ -247,16 +280,18 @@ async fn run(cmd: &str, ctx: Context<'_>) -> Result<ExecResult> {
         Err(e) => return Ok(e),
     };
 
+    let mut opts = opts;
     if opts.files.is_empty() {
-        let data = ctx.stdin.map(|s| s.as_bytes().to_vec()).unwrap_or_default();
-        return Ok(ExecResult::ok_bytes(
-            select(&data, opts.selection, opts.unit).to_vec(),
-        ));
+        opts.files.push("-".to_string());
     }
 
     let mut out = Vec::new();
     let mut stderr = String::new();
-    let multiple_files = opts.files.len() > 1;
+    let multiple_files = match opts.headers {
+        Headers::Auto => opts.files.len() > 1,
+        Headers::Never => false,
+        Headers::Always => true,
+    };
     let mut printed_any = false;
     for file in &opts.files {
         let data = if file == "-" {
@@ -618,5 +653,24 @@ mod tests {
         let result = run_tail(&["-n", "+1"], Some(input)).await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, "a\nb\nc\n");
+    }
+
+    #[tokio::test]
+    async fn test_long_options_and_bundles() {
+        let result = run_tail(&["--bytes=2"], Some("a\nb\n")).await;
+        assert_eq!(result.stdout, "b\n");
+        let result = run_head(&["--lines", "1"], Some("a\nb\n")).await;
+        assert_eq!(result.stdout, "a\n");
+        let result = run_head(&["-vn1"], Some("a\nb\n")).await;
+        assert_eq!(result.stdout, "==> standard input <==\na\n");
+    }
+
+    #[tokio::test]
+    async fn test_obsolete_count_vs_option_value() {
+        let result = run_head(&["-2"], Some("a\nb\nc\n")).await;
+        assert_eq!(result.stdout, "a\nb\n");
+        // `-1` here is the value of `-n`, not an obsolete count.
+        let result = run_head(&["-n", "-1"], Some("a\nb\nc\n")).await;
+        assert_eq!(result.stdout, "a\nb\n");
     }
 }

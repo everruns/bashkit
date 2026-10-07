@@ -53,53 +53,46 @@ impl Builtin for Cut {
         let mut only_delimited = false;
         let mut zero_terminated = false;
         let mut output_delimiter: Option<String> = None;
-        let mut files = Vec::new();
 
-        // Parse arguments
-        let mut p = super::arg_parser::ArgParser::new(ctx.args);
-        while !p.is_done() {
-            if let Some(val) = p.flag_value_opt("-d") {
-                delimiter = val.chars().next().unwrap_or('\t');
-            } else if let Some(val) = p.flag_value_opt("-f") {
-                spec = val.to_string();
-                mode = CutMode::Fields;
-            } else if let Some(val) = p.flag_value_opt("-c") {
-                spec = val.to_string();
-                mode = CutMode::Chars;
-            } else if let Some(val) = p.flag_value_opt("-b") {
-                spec = val.to_string();
-                mode = CutMode::Chars;
-            } else if p.flag("-s") {
-                only_delimited = true;
-            } else if p.flag("-z") {
-                zero_terminated = true;
-            } else if p.flag("--complement") {
-                complement = true;
-            } else if let Some(val) = p
-                .current()
-                .and_then(|s| s.strip_prefix("--output-delimiter="))
-            {
-                output_delimiter = Some(val.to_string());
-                p.advance();
-            } else if p.flag("--output-delimiter") {
-                if let Some(val) = p.positional() {
-                    output_delimiter = Some(val.to_string());
+        use super::arg_parser::OptArg;
+        let (opts, files) = match super::arg_parser::gnu_getopt(
+            "cut",
+            ctx.args,
+            "b:c:d:f:nsz",
+            &[
+                ("bytes", OptArg::Required, 'b'),
+                ("characters", OptArg::Required, 'c'),
+                ("complement", OptArg::No, 'C'),
+                ("delimiter", OptArg::Required, 'd'),
+                ("fields", OptArg::Required, 'f'),
+                ("only-delimited", OptArg::No, 's'),
+                ("output-delimiter", OptArg::Required, 'O'),
+                ("zero-terminated", OptArg::No, 'z'),
+            ],
+            true,
+            1,
+        ) {
+            Ok(v) => v,
+            Err(e) => return Ok(e),
+        };
+        for o in opts {
+            let val = o.value.unwrap_or_default();
+            match o.key {
+                // An empty delimiter means NUL, as in GNU cut.
+                'd' => delimiter = val.chars().next().unwrap_or('\0'),
+                'f' => {
+                    spec = val;
+                    mode = CutMode::Fields;
                 }
-            } else if let Some(arg) = p.current().filter(|s| !s.starts_with('-')) {
-                files.push(arg.to_string());
-                p.advance();
-            } else if p.current() == Some("-") || p.current() == Some("--") {
-                // "-" stdin operand / "--" end-of-options: preserve handling.
-                p.advance();
-            } else if p.is_flag() {
-                // Reject unknown options instead of dropping them silently.
-                return Ok(super::invalid_option(
-                    "cut",
-                    p.current().unwrap_or_default(),
-                    1,
-                ));
-            } else {
-                p.advance();
+                'b' | 'c' => {
+                    spec = val;
+                    mode = CutMode::Chars;
+                }
+                's' => only_delimited = true,
+                'z' => zero_terminated = true,
+                'C' => complement = true,
+                'O' => output_delimiter = Some(val),
+                _ => {} // -n: no-op, as in GNU cut
             }
         }
 
@@ -133,9 +126,9 @@ impl Builtin for Cut {
                     Some(selected.into_iter().collect())
                 }
                 CutMode::Fields => {
-                    // -s: skip lines without delimiter
-                    if only_delimited && !line.contains(delimiter) {
-                        return None;
+                    // Lines without a delimiter print whole unless -s.
+                    if !line.contains(delimiter) {
+                        return (!only_delimited).then(|| line.to_string());
                     }
                     let parts: Vec<&str> = line.split(delimiter).collect();
                     let total = parts.len();
@@ -163,10 +156,11 @@ impl Builtin for Cut {
         let out_sep = if zero_terminated { "\0" } else { "\n" };
 
         let process_input = |text: &str, output: &mut String| {
-            for line in text.split(line_sep) {
-                if line.is_empty() {
-                    continue;
-                }
+            let body = text.strip_suffix(line_sep).unwrap_or(text);
+            if text.is_empty() {
+                return;
+            }
+            for line in body.split(line_sep) {
                 if let Some(result) = process_line(line) {
                     output.push_str(&result);
                     output.push_str(out_sep);
@@ -312,31 +306,31 @@ impl Builtin for Tr {
         let mut delete = false;
         let mut squeeze = false;
         let mut complement = false;
+        let mut truncate = false;
 
-        // Parse flags (can be combined like -ds, -cd)
-        let mut non_flag_args: Vec<String> = Vec::new();
-        let mut p = super::arg_parser::ArgParser::new(ctx.args);
-        while !p.is_done() {
-            let flags = p.bool_flags("dscC");
-            if !flags.is_empty() {
-                for ch in flags {
-                    match ch {
-                        'd' => delete = true,
-                        's' => squeeze = true,
-                        'c' | 'C' => complement = true,
-                        _ => {}
-                    }
-                }
-            } else if non_flag_args.is_empty() && p.is_flag() && p.current() != Some("--") {
-                // Reject unknown options only in the option phase (before any
-                // SET is read); once SETs are collected a leading `-` is an operand.
-                return Ok(super::invalid_option(
-                    "tr",
-                    p.current().unwrap_or_default(),
-                    1,
-                ));
-            } else if let Some(arg) = p.positional() {
-                non_flag_args.push(arg.to_string());
+        // GNU tr stops option parsing at the first operand ("+cCdst").
+        let (opts, non_flag_args) = match super::arg_parser::gnu_getopt(
+            "tr",
+            ctx.args,
+            "cCdst",
+            &[
+                ("complement", super::arg_parser::OptArg::No, 'c'),
+                ("delete", super::arg_parser::OptArg::No, 'd'),
+                ("squeeze-repeats", super::arg_parser::OptArg::No, 's'),
+                ("truncate-set1", super::arg_parser::OptArg::No, 't'),
+            ],
+            false,
+            1,
+        ) {
+            Ok(v) => v,
+            Err(e) => return Ok(e),
+        };
+        for o in opts {
+            match o.key {
+                'd' => delete = true,
+                's' => squeeze = true,
+                't' => truncate = true,
+                _ => complement = true,
             }
         }
 
@@ -355,6 +349,7 @@ impl Builtin for Tr {
             delete,
             squeeze,
             complement,
+            truncate,
             c_locale: ctx.env.get("LC_ALL").is_some_and(|locale| locale == "C"),
         };
 
@@ -397,6 +392,8 @@ struct TrSpec<'a> {
     delete: bool,
     squeeze: bool,
     complement: bool,
+    /// `-t`: truncate SET1 to the length of SET2 instead of extending SET2.
+    truncate: bool,
     /// `LC_ALL=C`: work on bytes, not characters.
     c_locale: bool,
 }
@@ -407,6 +404,9 @@ impl TrSpec<'_> {
         let (non_flag_args, delete, squeeze, complement) =
             (self.args, self.delete, self.squeeze, self.complement);
         let mut set1 = expand_char_set(&non_flag_args[0])?;
+        if self.truncate && !delete && !complement && non_flag_args.len() >= 2 {
+            set1.truncate(expand_char_set(&non_flag_args[1])?.len());
+        }
         let byte_mode = self.c_locale || stdin.text().is_err();
         if byte_mode && set1.iter().all(|c| (*c as u32) <= u8::MAX as u32) {
             let set2 = if non_flag_args.len() >= 2 {
@@ -548,130 +548,160 @@ fn squeeze_chars(s: &str, set: &[char]) -> String {
     result
 }
 
+/// Decode GNU `tr` backslash escapes into `(char, escaped)` tokens so an
+/// escaped `-`, `[` or `:` never acts as an operator.
+fn tokenize_tr_set(spec: &str) -> Vec<(char, bool)> {
+    let chars: Vec<char> = spec.chars().collect();
+    let mut out = Vec::with_capacity(chars.len());
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c != '\\' || i + 1 == chars.len() {
+            // A trailing backslash stands for itself.
+            out.push((c, c == '\\'));
+            i += 1;
+            continue;
+        }
+        let n = chars[i + 1];
+        i += 2;
+        let decoded = match n {
+            'a' => '\x07',
+            'b' => '\x08',
+            'f' => '\x0c',
+            'n' => '\n',
+            'r' => '\r',
+            't' => '\t',
+            'v' => '\x0b',
+            '0'..='7' => {
+                // Up to three octal digits, never exceeding \377.
+                let mut val = n.to_digit(8).unwrap_or(0);
+                let mut digits = 1;
+                while digits < 3 && i < chars.len() {
+                    let Some(d) = chars[i].to_digit(8) else { break };
+                    if val * 8 + d > 0o377 {
+                        break;
+                    }
+                    val = val * 8 + d;
+                    digits += 1;
+                    i += 1;
+                }
+                char::from_u32(val).unwrap_or('\0')
+            }
+            other => other,
+        };
+        out.push((decoded, true));
+    }
+    out
+}
+
 /// Expand a character set specification like "a-z" into a list of characters.
-/// Supports POSIX character classes: [:lower:], [:upper:], [:digit:], [:alpha:], [:alnum:], [:space:]
+/// Supports backslash escapes (`\n`, `\NNN` octal, ...), ranges, `[=c=]`
+/// and POSIX character classes like `[:lower:]`.
 fn expand_char_set(spec: &str) -> std::result::Result<Vec<char>, String> {
     let mut chars = Vec::new();
-    let char_vec: Vec<char> = spec.chars().collect();
-    let len = char_vec.len();
+    let toks = tokenize_tr_set(spec);
+    let len = toks.len();
+    let plain = |i: usize, c: char| i < len && toks[i] == (c, false);
     let mut i = 0;
 
     while i < len {
-        // Check for POSIX character class [:class:]
-        if char_vec[i] == '['
-            && i + 1 < len
-            && char_vec[i + 1] == ':'
-            && let Some(end) = spec[spec
-                .char_indices()
-                .nth(i + 2)
-                .map_or(spec.len(), |(pos, _)| pos)..]
-                .find(":]")
-        {
-            let class_start = spec
-                .char_indices()
-                .nth(i + 2)
-                .map_or(spec.len(), |(pos, _)| pos);
-            let class_name = &spec[class_start..class_start + end];
-            match class_name {
-                "lower" => push_char_range(&mut chars, 'a', 'z')?,
-                "upper" => push_char_range(&mut chars, 'A', 'Z')?,
-                "digit" => push_char_range(&mut chars, '0', '9')?,
-                "alpha" => {
-                    push_char_range(&mut chars, 'a', 'z')?;
-                    push_char_range(&mut chars, 'A', 'Z')?;
-                }
-                "alnum" => {
-                    push_char_range(&mut chars, 'a', 'z')?;
-                    push_char_range(&mut chars, 'A', 'Z')?;
-                    push_char_range(&mut chars, '0', '9')?;
-                }
-                "space" => push_chars(&mut chars, [' ', '\t', '\n', '\r', '\x0b', '\x0c'])?,
-                "blank" => push_chars(&mut chars, [' ', '\t'])?,
-                "punct" => {
-                    for code in 0x21u8..=0x7e {
-                        let c = code as char;
-                        if !c.is_ascii_alphanumeric() {
+        // POSIX character class [:class:] or equivalence class [=c=]
+        if plain(i, '[') && (plain(i + 1, ':') || plain(i + 1, '=')) {
+            let delim = toks[i + 1].0;
+            let close =
+                (i + 2..len.saturating_sub(1)).find(|&j| plain(j, delim) && plain(j + 1, ']'));
+            if let Some(close) = close {
+                let name: String = toks[i + 2..close].iter().map(|t| t.0).collect();
+                let known = if delim == '=' {
+                    let mut it = name.chars();
+                    match (it.next(), it.next()) {
+                        (Some(c), None) => {
                             push_char(&mut chars, c)?;
+                            true
                         }
+                        _ => false,
                     }
-                }
-                "xdigit" => {
-                    push_char_range(&mut chars, '0', '9')?;
-                    push_char_range(&mut chars, 'A', 'F')?;
-                    push_char_range(&mut chars, 'a', 'f')?;
-                }
-                "print" => {
-                    for code in 0x20u8..=0x7e {
-                        push_char(&mut chars, code as char)?;
-                    }
-                }
-                "graph" => {
-                    for code in 0x21u8..=0x7e {
-                        push_char(&mut chars, code as char)?;
-                    }
-                }
-                "cntrl" => {
-                    for code in 0u8..=0x1f {
-                        push_char(&mut chars, code as char)?;
-                    }
-                    push_char(&mut chars, 0x7f as char)?;
-                }
-                _ => {
-                    push_char(&mut chars, '[')?;
-                    i += 1;
+                } else {
+                    push_char_class(&mut chars, &name)?
+                };
+                if known {
+                    i = close + 2;
                     continue;
                 }
             }
-            // Count chars in the class spec to advance properly
-            let class_char_count = class_name.chars().count();
-            i += 2 + class_char_count + 2; // skip past [: + class + :]
-            continue;
         }
 
-        let c = char_vec[i];
-        // Check for range like a-z
-        if i + 2 < len && char_vec[i + 1] == '-' {
-            let end_char = char_vec[i + 2];
+        let c = toks[i].0;
+        // Range like a-z (endpoints may be escapes)
+        if i + 2 < len && plain(i + 1, '-') {
+            let end_char = toks[i + 2].0;
+            if (end_char as u32) < (c as u32) {
+                return Err(format!(
+                    "range-endpoints of '{}-{}' are in reverse collating sequence order",
+                    c.escape_default(),
+                    end_char.escape_default()
+                ));
+            }
             push_char_range(&mut chars, c, end_char)?;
             i += 3;
-        } else if i + 1 == len - 1 && char_vec[i + 1] == '-' {
-            // Trailing dash
-            push_char(&mut chars, c)?;
-            push_char(&mut chars, '-')?;
-            i += 2;
         } else {
-            // Handle escape sequences
-            if c == '\\' && i + 1 < len {
-                match char_vec[i + 1] {
-                    'n' => {
-                        push_char(&mut chars, '\n')?;
-                        i += 2;
-                        continue;
-                    }
-                    't' => {
-                        push_char(&mut chars, '\t')?;
-                        i += 2;
-                        continue;
-                    }
-                    '0' => {
-                        push_char(&mut chars, '\0')?;
-                        i += 2;
-                        continue;
-                    }
-                    '\\' => {
-                        push_char(&mut chars, '\\')?;
-                        i += 2;
-                        continue;
-                    }
-                    _ => {}
-                }
-            }
             push_char(&mut chars, c)?;
             i += 1;
         }
     }
 
     Ok(chars)
+}
+
+/// Push a POSIX class's members; `false` for an unknown class name.
+fn push_char_class(chars: &mut Vec<char>, class_name: &str) -> std::result::Result<bool, String> {
+    match class_name {
+        "lower" => push_char_range(chars, 'a', 'z')?,
+        "upper" => push_char_range(chars, 'A', 'Z')?,
+        "digit" => push_char_range(chars, '0', '9')?,
+        "alpha" => {
+            push_char_range(chars, 'a', 'z')?;
+            push_char_range(chars, 'A', 'Z')?;
+        }
+        "alnum" => {
+            push_char_range(chars, 'a', 'z')?;
+            push_char_range(chars, 'A', 'Z')?;
+            push_char_range(chars, '0', '9')?;
+        }
+        "space" => push_chars(chars, [' ', '\t', '\n', '\r', '\x0b', '\x0c'])?,
+        "blank" => push_chars(chars, [' ', '\t'])?,
+        "punct" => {
+            for code in 0x21u8..=0x7e {
+                let c = code as char;
+                if !c.is_ascii_alphanumeric() {
+                    push_char(chars, c)?;
+                }
+            }
+        }
+        "xdigit" => {
+            push_char_range(chars, '0', '9')?;
+            push_char_range(chars, 'A', 'F')?;
+            push_char_range(chars, 'a', 'f')?;
+        }
+        "print" => {
+            for code in 0x20u8..=0x7e {
+                push_char(chars, code as char)?;
+            }
+        }
+        "graph" => {
+            for code in 0x21u8..=0x7e {
+                push_char(chars, code as char)?;
+            }
+        }
+        "cntrl" => {
+            for code in 0u8..=0x1f {
+                push_char(chars, code as char)?;
+            }
+            push_char(chars, 0x7f as char)?;
+        }
+        _ => return Ok(false),
+    }
+    Ok(true)
 }
 
 fn push_char(chars: &mut Vec<char>, ch: char) -> std::result::Result<(), String> {
@@ -1088,5 +1118,39 @@ mod tests {
         let result = run_tr(&["-Q", "a", "b"], Some("a\n")).await;
         assert_eq!(result.exit_code, 1);
         assert!(result.stderr.contains("invalid option -- 'Q'"));
+    }
+
+    #[test]
+    fn test_expand_char_set_escapes() {
+        assert_eq!(expanded("\\101"), vec!['A']);
+        assert_eq!(expanded("\\1018"), vec!['A', '8']);
+        assert_eq!(expanded("\\0-\\2"), vec!['\0', '\x01', '\x02']);
+        assert_eq!(expanded("a\\-"), vec!['a', '-']);
+        assert_eq!(expanded("x\\"), vec!['x', '\\']);
+        assert_eq!(expanded("[=a=]"), vec!['a']);
+        assert!(expand_char_set("z-a").is_err());
+    }
+
+    #[tokio::test]
+    async fn test_tr_truncate_and_long_complement() {
+        let result = run_tr(&["-t", "abcd", "xy"], Some("abcd\n")).await;
+        assert_eq!(result.stdout, "xycd\n");
+        let result = run_tr(&["--complement", "-s", "a"], Some("aabbc\n")).await;
+        assert_eq!(result.stdout, "aabc\n");
+    }
+
+    #[tokio::test]
+    async fn test_cut_bundled_and_long_options() {
+        let result = run_cut(&["-sf1"], Some("a\tb\nc\n")).await;
+        assert_eq!(result.stdout, "a\n");
+        let result = run_cut(
+            &["--delimiter=:", "--fields=2", "--complement"],
+            Some("a:b\n"),
+        )
+        .await;
+        assert_eq!(result.stdout, "a\n");
+        // Lines without the delimiter print whole; empty lines are kept.
+        let result = run_cut(&["-d:", "-f2"], Some("abc\n\nx:y\n")).await;
+        assert_eq!(result.stdout, "abc\n\ny\n");
     }
 }

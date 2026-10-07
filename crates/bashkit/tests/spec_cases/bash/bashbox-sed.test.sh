@@ -231,7 +231,6 @@ aBC
 
 ### bashbox_sed_custom_delimiter_and_escaped_delimiter
 # custom delimiter and escaped delimiter
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 echo 'a|b' | sed 's|a\|b|X|'
 ### expect
 X
@@ -606,7 +605,6 @@ X
 
 ### bashbox_sed_a_with_nothing_after_the_backslash
 # a with nothing after the backslash
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 echo a | sed 'a\'
 ### expect
 a

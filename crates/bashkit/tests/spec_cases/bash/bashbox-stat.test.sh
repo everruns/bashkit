@@ -4,7 +4,6 @@
 
 ### bashbox_stat_name_needing_double_quotes
 # name needing double quotes
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf x > "a'b c"; stat -c %N "a'b c"
 ### expect
 "a'b c"

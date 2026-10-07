@@ -4,7 +4,6 @@
 
 ### bashbox_rmdir_removes_empty_directories
 # removes empty directories
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 rmdir -v a/b/c; ls a/b
 ### expect
 rmdir: removing directory, 'a/b/c'
