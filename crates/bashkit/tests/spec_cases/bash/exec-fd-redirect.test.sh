@@ -44,3 +44,45 @@ cat /tmp/test_fd.txt
 progress
 file content
 ### end
+
+### high_fd_file_redirect_keeps_stdout
+# `N>file` (N>=3) opens fd N only; stdout still reaches the terminal.
+d=$(mktemp -d); cd "$d"
+echo pre > g
+echo visible 4>g
+wc -c < g
+echo z 5>>h; [ -f h ] && echo created
+### expect
+visible
+0
+z
+created
+### end
+
+### compound_high_fd_file_redirect
+# Writes to fd N inside the block land in the file; stdout is untouched.
+d=$(mktemp -d); cd "$d"
+{ echo to-fd >&3; echo out; } 3>f
+cat f
+( echo sub ) 9>lk; [ -f lk ] && echo lock-created
+for i in 1; do echo loop; echo app >&3; done 3>>f
+cat f
+### expect
+out
+to-fd
+sub
+lock-created
+loop
+to-fd
+app
+### end
+
+### function_high_fd_file_redirect
+d=$(mktemp -d); cd "$d"
+f() { echo fn-out; echo fn-fd >&3; }
+f 3>a
+cat a
+### expect
+fn-out
+fn-fd
+### end

@@ -172,7 +172,7 @@ mounts and custom filesystems always win.
 - `/bin`, `/usr/bin`: one virtual stub per registered builtin that is not
   shell-only, answered from a shared name set on lookup and never stored as
   files (materializing them cost ~2 ms per `Bash` build). A stub's content starts with `STUB_MARKER`; executing it by
-  path (`/usr/bin/env`, `/bin/ls`) dispatches the builtin. `type`/`which`/
+  path (`/usr/bin/env`, `/bin/ls`) dispatches the builtin. `bash` and `sh` also get stubs (when script execution is enabled) so `/bin/sh -c ...` and `#!/bin/bash` re-enter the in-process interpreter. `type`/`which`/
   `command -v` report `/usr/bin/NAME` for non-bash builtins via a PATH search
   (`search_path`), and keep `builtin` for the bash 5.2 set
   (`BASH_BUILTIN_NAMES`).

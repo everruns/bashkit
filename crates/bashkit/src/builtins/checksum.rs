@@ -79,11 +79,20 @@ async fn read_operand(ctx: &Context<'_>, file: &str) -> std::result::Result<Vec<
 }
 
 async fn checksum_execute<D: Digest>(ctx: &Context<'_>, cmd: &str) -> Result<ExecResult> {
+    checksum_execute_args::<D>(ctx, cmd, ctx.args).await
+}
+
+/// [`checksum_execute`] over explicit arguments (`shasum` strips `-a N`).
+pub(super) async fn checksum_execute_args<D: Digest>(
+    ctx: &Context<'_>,
+    cmd: &str,
+    args: &[String],
+) -> Result<ExecResult> {
     let mut files: Vec<&str> = Vec::new();
     let mut end_of_options = false;
     let mut opts = CheckOpts::default();
 
-    for arg in ctx.args {
+    for arg in args {
         if end_of_options || arg == "-" || !arg.starts_with('-') {
             files.push(arg);
             continue;

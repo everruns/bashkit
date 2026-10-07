@@ -191,6 +191,21 @@ Chrono's validated strftime implementation, plus GNU `%N`, `%3N`, `%6N`, and
 | `mktemp` | `-d`, `-p`, `-t` | Create temporary files |
 | `realpath` | `PATH` | Resolve path |
 | `pushd`/`popd`/`dirs` | standard flags | Directory stack |
+| `arch` | (none) | Virtual machine name (`x86_64`) |
+| `sum` | `-r`, `-s` | BSD and System V checksums, GNU output format |
+| `shasum` | `-a 1/224/256/384/512` | Perl `shasum` front end over the `sha*sum` builtins |
+| `egrep`/`fgrep` | `grep` flags | `grep -E` / `grep -F` |
+| `link`/`unlink` | `FILE1 FILE2` / `FILE` | Single-file link (a symlink, L-FS-001) and remove |
+| `chgrp` | `GROUP FILE...` | Change group (virtual, like `chown`) |
+| `nohup`/`nice` | `COMMAND...`, `nice -n N` | Run the command; no signal or priority effect in a sandbox |
+| `flock` | `FILE CMD`, `FILE -c CMD`, `-n FD` | Creates the lock file and runs the command; locks are uncontended in one session |
+| `getconf` | `NAME`, `-a` | POSIX config values, consistent with `nproc` and `/proc/meminfo` |
+| `tty` | `-s` | "not a tty" unless the embedder sets `tty(0, true)`, like `[ -t 0 ]` |
+| `sync`/`hostid` | (none) | No-op / fixed virtual host id |
+| `groups`/`logname` | `[USER]` | Virtual user only |
+| `users`/`who` | (none) | Empty: no login sessions |
+| `uptime` | `-p`, `-s` | Derived from the virtual clock |
+| `free` | `-b`, `-k`, `-m`, `-g`, `-h`, `-t` | Fixed virtual memory, consistent with `/proc/meminfo` |
 
 ### Not Implemented
 
@@ -225,6 +240,7 @@ Chrono's validated strftime implementation, plus GNU `%N`, `%3N`, `%6N`, and
 | `2>` | ✅ | `cmd 2> file` | Stderr redirect |
 | `2>&1` | ✅ | `cmd 2>&1` | Stderr to stdout |
 | `&>` | ✅ | `cmd &> file` | Both to file |
+| `N>`/`N>>` (N≥3) | ✅ | `{ cmd >&3; } 3>file` | Opens fd N only; stdout untouched |
 
 ### Control Flow
 

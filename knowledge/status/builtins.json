@@ -19,6 +19,10 @@
     },
     {
       "feature": null,
+      "name": "arch"
+    },
+    {
+      "feature": null,
       "name": "assert"
     },
     {
@@ -92,6 +96,10 @@
     {
       "feature": null,
       "name": "cd"
+    },
+    {
+      "feature": null,
+      "name": "chgrp"
     },
     {
       "feature": null,
@@ -199,6 +207,10 @@
     },
     {
       "feature": null,
+      "name": "egrep"
+    },
+    {
+      "feature": null,
       "name": "enable"
     },
     {
@@ -251,6 +263,10 @@
     },
     {
       "feature": null,
+      "name": "fgrep"
+    },
+    {
+      "feature": null,
       "name": "file"
     },
     {
@@ -259,7 +275,19 @@
     },
     {
       "feature": null,
+      "name": "flock"
+    },
+    {
+      "feature": null,
       "name": "fold"
+    },
+    {
+      "feature": null,
+      "name": "free"
+    },
+    {
+      "feature": null,
+      "name": "getconf"
     },
     {
       "feature": null,
@@ -276,6 +304,10 @@
     {
       "feature": null,
       "name": "grep"
+    },
+    {
+      "feature": null,
+      "name": "groups"
     },
     {
       "feature": null,
@@ -304,6 +336,10 @@
     {
       "feature": null,
       "name": "history"
+    },
+    {
+      "feature": null,
+      "name": "hostid"
     },
     {
       "feature": null,
@@ -355,6 +391,10 @@
     },
     {
       "feature": null,
+      "name": "link"
+    },
+    {
+      "feature": null,
       "name": "ln"
     },
     {
@@ -368,6 +408,10 @@
     {
       "feature": null,
       "name": "log"
+    },
+    {
+      "feature": null,
+      "name": "logname"
     },
     {
       "feature": null,
@@ -411,11 +455,19 @@
     },
     {
       "feature": null,
+      "name": "nice"
+    },
+    {
+      "feature": null,
       "name": "nl"
     },
     {
       "feature": "typescript",
       "name": "node"
+    },
+    {
+      "feature": null,
+      "name": "nohup"
     },
     {
       "feature": null,
@@ -579,6 +631,10 @@
     },
     {
       "feature": null,
+      "name": "shasum"
+    },
+    {
+      "feature": null,
       "name": "shift"
     },
     {
@@ -624,6 +680,14 @@
     {
       "feature": null,
       "name": "strings"
+    },
+    {
+      "feature": null,
+      "name": "sum"
+    },
+    {
+      "feature": null,
+      "name": "sync"
     },
     {
       "feature": null,
@@ -695,6 +759,10 @@
     },
     {
       "feature": null,
+      "name": "tty"
+    },
+    {
+      "feature": null,
       "name": "type"
     },
     {
@@ -731,11 +799,23 @@
     },
     {
       "feature": null,
+      "name": "unlink"
+    },
+    {
+      "feature": null,
       "name": "unset"
     },
     {
       "feature": null,
       "name": "unzip"
+    },
+    {
+      "feature": null,
+      "name": "uptime"
+    },
+    {
+      "feature": null,
+      "name": "users"
     },
     {
       "feature": null,
@@ -771,6 +851,10 @@
     },
     {
       "feature": null,
+      "name": "who"
+    },
+    {
+      "feature": null,
       "name": "whoami"
     },
     {
@@ -794,5 +878,5 @@
       "name": "zip"
     }
   ],
-  "count": 198
+  "count": 219
 }

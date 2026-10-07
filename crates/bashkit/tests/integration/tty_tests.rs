@@ -63,3 +63,15 @@ async fn tty_false_overrides_env_true() {
     let result = bash.exec("[ -t 1 ] && echo yes || echo no").await.unwrap();
     assert_eq!(result.stdout.trim(), "no");
 }
+
+/// `tty` agrees with `[ -t 0 ]`.
+#[tokio::test]
+async fn tty_command_follows_builder() {
+    let mut bash = Bash::new();
+    let result = bash.exec("tty; echo rc=$?").await.unwrap();
+    assert_eq!(result.stdout, "not a tty\nrc=1\n");
+
+    let mut bash = Bash::builder().tty(0, true).build();
+    let result = bash.exec("tty; tty -s; echo rc=$?").await.unwrap();
+    assert_eq!(result.stdout, "/dev/pts/0\nrc=0\n");
+}
