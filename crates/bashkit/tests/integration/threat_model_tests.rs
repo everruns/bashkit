@@ -602,8 +602,11 @@ mod information_disclosure {
         let result = bash.exec("echo $ALLOWED_VAR").await.unwrap();
         assert_eq!(result.stdout.trim(), "allowed_value");
 
-        // But other vars aren't magically available
+        // But host vars aren't magically available: $PATH is the synthetic
+        // sandbox default, never the host's.
         let result = bash.exec("echo $PATH").await.unwrap();
+        assert_eq!(result.stdout.trim(), "/usr/local/bin:/usr/bin:/bin");
+        let result = bash.exec("echo $HOST_ONLY_SENTINEL_VAR").await.unwrap();
         assert!(result.stdout.trim().is_empty());
     }
 
@@ -4176,6 +4179,19 @@ mod tm_inf_018_date {
         let r = bash.exec("date +%s").await.unwrap();
         assert_eq!(r.exit_code, 0);
         assert_eq!(r.stdout.trim(), "1700000000");
+    }
+
+    /// TM-INF-018: printf `%(fmt)T` reads the same virtual clock as `date`,
+    /// so it can't bypass `fixed_epoch`, and it ignores host timezone state.
+    #[tokio::test]
+    async fn fixed_epoch_freezes_printf_time_directive() {
+        let mut bash = Bash::builder().fixed_epoch(1_700_000_000).build();
+        let r = bash
+            .exec("printf '%(%s %z)T|%(%s)T\\n' -1 ''")
+            .await
+            .unwrap();
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.stdout, "1700000000 +0000|1700000000\n");
     }
 
     /// TM-INF-018: `Bash::builder().epoch_offset(N)` keeps the clock

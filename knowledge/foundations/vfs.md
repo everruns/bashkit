@@ -164,8 +164,16 @@ Redirection targets resolved at the **interpreter level** (`dev_fd_alias` in
 target, so `2>&1 >/dev/stderr` sends both streams to stdout, as on Linux.
 These paths never reach the VFS: writing them as regular files silently
 swallowed agents' `echo err > /dev/stderr`. Same `..` normalization as
-`/dev/null`. Builtin file operands (`tee /dev/stderr`, `cat /dev/stdin`)
-are not aliased yet.
+`/dev/null`.
+
+Builtin file operands (`tee /dev/stderr`, `cat /dev/stdin`, `grep x
+/dev/fd/0`) go through `StdStreamsFs` (`fs/std_streams.rs`): when an argument
+names one of these paths, the builtin's VFS view is wrapped so reads of fd 0
+return the command's stdin and writes to fd 1/2 are captured and appended to
+the builtin's stdout/stderr. Writes land after the builtin's own output on the
+same stream (`tee /dev/stdout` prints its copies back to back, as through a
+pipe). Only fds 0-2: `/dev/fd/63` stays a real file for process
+substitution.
 
 #### /dev/urandom and /dev/random
 Handled at filesystem level: return 8192 bytes of random data per read

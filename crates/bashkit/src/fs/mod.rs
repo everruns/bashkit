@@ -411,6 +411,7 @@ mod readonly;
 #[cfg(feature = "realfs")]
 mod realfs;
 mod search;
+mod std_streams;
 mod traits;
 
 pub use backend::FsBackend;
@@ -427,6 +428,7 @@ pub use search::{
     SearchCapabilities, SearchCapable, SearchMatch, SearchProvider, SearchQuery, SearchResults,
 };
 #[allow(unused_imports)]
+pub(crate) use std_streams::{StdStreamsFs, args_name_std_stream};
 pub use traits::{DirEntry, FileSystem, FileSystemExt, FileType, Metadata, fs_errors};
 
 use crate::error::Result;

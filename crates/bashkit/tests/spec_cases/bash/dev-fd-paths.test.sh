@@ -54,3 +54,17 @@ echo piped | cat < /dev/stdin
 ### expect
 piped
 ### end
+
+### builtin_operand_dev_stdin
+echo hi | cat /dev/stdin
+echo w | grep w /dev/stdin
+### expect
+hi
+w
+### end
+
+### builtin_operand_tee_dev_stderr
+echo t | tee /dev/stderr 2>&1 >/dev/null
+### expect
+t
+### end

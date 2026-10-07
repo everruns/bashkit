@@ -52,6 +52,7 @@ use crate::interpreter::ExecResult;
 /// the real clock so callers can blind absolute wall-clock time without
 /// breaking elapsed-time logic. The two modes are mutually exclusive
 /// — `fixed_epoch` wins if both are set.
+#[derive(Clone, Copy, Default)]
 pub struct Date {
     /// Fixed UTC epoch for virtualized time. None = use real system clock.
     fixed_epoch: Option<DateTime<Utc>>,
@@ -170,6 +171,27 @@ impl Date {
             fixed_epoch: None,
             offset_seconds: offset,
         }
+    }
+
+    /// Format epoch `seconds` (or now, for `None`) with strftime `format`
+    /// in the sandbox `TZ`. Shared with printf's `%(fmt)T` so both builtins
+    /// see one virtual clock and one timezone policy.
+    pub(super) fn strftime(
+        &self,
+        tz: Option<&String>,
+        seconds: Option<i64>,
+        format: &str,
+    ) -> std::result::Result<String, String> {
+        let timezone =
+            SandboxTimezone::from_env(tz).map_err(|e| e.replacen("date:", "printf:", 1))?;
+        let dt = match seconds {
+            Some(s) => DateTime::from_timestamp(s, 0)
+                .ok_or_else(|| format!("printf: time out of range: {s}"))?,
+            None => self.now(),
+        };
+        let format = translate_gnu_format(format);
+        validate_format(&format).map_err(|e| format!("printf: {e}"))?;
+        Ok(timezone.format(&dt, &format))
     }
 
     fn now(&self) -> DateTime<Utc> {

@@ -93,6 +93,16 @@ impl GitClient {
     /// The path must be within the virtual filesystem. Path traversal
     /// attacks are blocked by the VFS layer.
     pub async fn init(&self, fs: &Arc<dyn FileSystem>, repo_path: &Path) -> Result<String> {
+        self.init_with_branch(fs, repo_path, "master").await
+    }
+
+    /// `git init -b <branch>`: HEAD points at `refs/heads/<branch>`.
+    pub async fn init_with_branch(
+        &self,
+        fs: &Arc<dyn FileSystem>,
+        repo_path: &Path,
+        initial_branch: &str,
+    ) -> Result<String> {
         let git_dir = vfs_join(repo_path, ".git");
 
         // Check if already initialized
@@ -110,9 +120,12 @@ impl GitClient {
         fs.mkdir(&vfs_join(&git_dir, "refs/heads"), true).await?;
         fs.mkdir(&vfs_join(&git_dir, "refs/tags"), true).await?;
 
-        // Create HEAD pointing to master
-        fs.write_file(&vfs_join(&git_dir, "HEAD"), b"ref: refs/heads/master\n")
-            .await?;
+        // Create HEAD pointing to the initial branch
+        fs.write_file(
+            &vfs_join(&git_dir, "HEAD"),
+            format!("ref: refs/heads/{initial_branch}\n").as_bytes(),
+        )
+        .await?;
 
         // Create config with author info
         let config_content = format!(

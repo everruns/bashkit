@@ -137,6 +137,7 @@ pass in CI); only divergences and boundaries are recorded here.
 | L-SED-006 | sed | Scripts that carry the stream past a range's end with `n`, `N` or `D` can still diverge from GNU's range bookkeeping in rare shapes (e.g. `sed '$!D;1,2!x'`). A randomized differential sweep of 18,000 generated scripts against GNU sed 4.9 finds 3 such cases; all combine a multi-line pattern space with a range address, a shape absent from ordinary scripts | `ranges_that_the_stream_skipped_past` |
 | L-CURL-001 | curl | Spec-test coverage for methods/headers/auth/redirects not ported (needs `http_client` + allowlist in harness); payload behavior has integration and real-curl differential coverage | stance |
 | L-CURL-002 | curl/wget | Unknown options are ignored for compatibility, not rejected (real curl/wget error); deliberate leniency | `curl.rs` |
+| L-PRINTF-001 | printf | `%(fmt)T` argument `-2` (bash: shell start time) formats the current time; the shell start instant is not tracked. GNU-only `%N` in the time format is expanded to nanoseconds, bash prints it literally | `printf.rs::expand_time_directives` |
 | L-STR-001 | strings | Accepts dash-prefixed filenames (e.g. `-data.bin`), so only a lone unknown short option (`-Q`) is rejected as invalid; GNU rejects `-data.bin` too | `strings.rs` |
 
 Safety boundaries (enforced, not bugs): printf width/precision caps,

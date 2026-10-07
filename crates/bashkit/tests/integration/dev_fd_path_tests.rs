@@ -105,3 +105,52 @@ async fn dot_dot_spelling_is_normalized() {
     assert_eq!(r.stderr, "err\n");
     assert!(!bash.fs().exists(Path::new("/dev/stderr")).await.unwrap());
 }
+
+// Builtin file operands: the builtin opens the path itself.
+
+#[tokio::test]
+async fn cat_dev_stdin_operand_reads_stdin() {
+    let (_, r) = run("echo hi | cat /dev/stdin; echo x | cat /dev/fd/0").await;
+    assert_eq!(r.stdout, "hi\nx\n");
+    assert_eq!(r.stderr, "");
+}
+
+#[tokio::test]
+async fn tee_dev_stderr_operand_copies_to_stderr() {
+    let (bash, r) = run("echo t | tee /dev/stderr").await;
+    assert_eq!(r.stdout, "t\n");
+    assert_eq!(r.stderr, "t\n");
+    assert!(!bash.fs().exists(Path::new("/dev/stderr")).await.unwrap());
+}
+
+#[tokio::test]
+async fn tee_dev_stderr_operand_follows_redirects() {
+    let (_, r) =
+        run("echo t | tee /dev/stderr 2>/dev/null; echo u | tee /dev/stderr 2>&1 >/dev/null").await;
+    assert_eq!(r.stdout, "t\nu\n");
+    assert_eq!(r.stderr, "");
+}
+
+#[tokio::test]
+async fn text_tools_read_dev_stdin_operand() {
+    let (_, r) = run("echo w | grep w /dev/stdin; echo json | sed s/j/J/ /dev/stdin; echo q | head -1 /dev/stdin").await;
+    assert_eq!(r.stdout, "w\nJson\nq\n");
+}
+
+#[tokio::test]
+async fn dev_stdin_exists_for_test_builtin() {
+    let (_, r) = run("[ -e /dev/stdin ] && echo yes").await;
+    assert_eq!(r.stdout, "yes\n");
+}
+
+#[tokio::test]
+async fn process_substitution_fds_still_work() {
+    let (_, r) = run("diff <(echo 1) <(echo 1) && echo same; cat <(echo p)").await;
+    assert_eq!(r.stdout, "same\np\n");
+}
+
+#[tokio::test]
+async fn literal_dev_stdin_argument_is_untouched() {
+    let (_, r) = run("echo /dev/stdin").await;
+    assert_eq!(r.stdout, "/dev/stdin\n");
+}
