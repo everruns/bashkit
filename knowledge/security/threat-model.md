@@ -420,7 +420,7 @@ execute permission (mode & 0o111); exit 127 missing / 126 non-executable; sheban
 
 | ID | Threat | Attack Vector | Mitigation | Status |
 |----|--------|--------------|------------|--------|
-| TM-ESC-009 | sudo/su | `sudo rm -rf /` | Not implemented | **MITIGATED** |
+| TM-ESC-009 | sudo/su | `sudo rm -rf /` | `sudo` runs the command as the same sandbox user (no identity or permission change, L-SUDO-001); `su`/`doas` not implemented | **MITIGATED** |
 | TM-ESC-010 | setuid | Permission changes | Virtual FS, no real perms | **MITIGATED** |
 | TM-ESC-011 | Capability abuse | Linux capabilities | Runs in-process | **MITIGATED** |
 

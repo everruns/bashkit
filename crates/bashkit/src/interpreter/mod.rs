@@ -740,7 +740,7 @@ fn unavailable_command_hint(name: &str) -> Option<&'static str> {
         "npm" | "yarn" | "pnpm" | "bun" => {
             Some("Package managers are not available in the sandbox.")
         }
-        "sudo" | "su" | "doas" => Some("All commands run without privilege restrictions."),
+        "su" | "doas" => Some("All commands run without privilege restrictions."),
         #[cfg(not(feature = "ssh"))]
         "ssh" | "scp" | "sftp" => {
             Some("SSH requires the 'ssh' feature. Enable with: features = [\"ssh\"]")
@@ -1826,6 +1826,8 @@ impl Interpreter {
         builtins.insert("nohup".to_string(), Arc::new(builtins::RunAs::nohup()));
         builtins.insert("nice".to_string(), Arc::new(builtins::RunAs::nice()));
         builtins.insert("flock".to_string(), Arc::new(builtins::RunAs::flock()));
+        builtins.insert("sudo".to_string(), Arc::new(builtins::RunAs::sudo()));
+        builtins.insert("busybox".to_string(), Arc::new(builtins::RunAs::busybox()));
         builtins.insert("egrep".to_string(), Arc::new(builtins::GrepAlias::egrep()));
         builtins.insert("fgrep".to_string(), Arc::new(builtins::GrepAlias::fgrep()));
         builtins.insert("link".to_string(), Arc::new(builtins::Link::hard()));
