@@ -12,7 +12,7 @@
 
 use crate::interpreter::ExecResult;
 
-use super::convert::{MAX_JQ_JSON_DEPTH, check_json_depth};
+use super::convert::{JqJson, JsonParseError, parse_json_value};
 use super::format::Indent;
 
 /// Maximum number of positional `--args` / `--jsonargs` values per call.
@@ -50,11 +50,11 @@ pub(super) struct JqArgs<'a> {
     pub indent: Indent,
     pub file_args: Vec<&'a str>,
     /// Named string/JSON variables: `(name_with_$, value)`.
-    pub var_bindings: Vec<(String, serde_json::Value)>,
+    pub var_bindings: Vec<(String, JqJson)>,
     /// `--args` positional (string) / `--jsonargs` positional (json).
-    pub positional_args: Vec<serde_json::Value>,
+    pub positional_args: Vec<JqJson>,
     /// Named args from `--arg`/`--argjson`, exposed via `$ARGS.named`.
-    pub named_args: Vec<(String, serde_json::Value)>,
+    pub named_args: Vec<(String, JqJson)>,
     /// `--slurpfile name file` and `--rawfile name file` requests, resolved
     /// after parsing.
     pub file_var_requests: Vec<FileVarRequest<'a>>,
@@ -243,19 +243,14 @@ pub(super) fn parse<'a>(args: &'a [String]) -> ParseOutcome<'a> {
                 (Some(name), Some(value)) => {
                     let var = format!("${name}");
                     let v = if arg == "--arg" {
-                        serde_json::Value::String(value.clone())
+                        JqJson::String(value.clone())
                     } else {
-                        match serde_json::from_str::<serde_json::Value>(value) {
-                            Ok(v) => {
-                                if let Err(e) = check_json_depth(&v, MAX_JQ_JSON_DEPTH) {
-                                    return ParseOutcome::Done(ExecResult::err(
-                                        format!("{e}\n"),
-                                        2,
-                                    ));
-                                }
-                                v
+                        match parse_json_value(value) {
+                            Ok(v) => v,
+                            Err(JsonParseError::TooDeep(e)) => {
+                                return ParseOutcome::Done(ExecResult::err(format!("{e}\n"), 2));
                             }
-                            Err(e) => {
+                            Err(JsonParseError::Invalid(e)) => {
                                 return ParseOutcome::Done(usage_error(format!(
                                     "jq: invalid JSON for --argjson: {e}"
                                 )));
@@ -396,17 +391,14 @@ fn push_positional(
     }
     match mode {
         PositionalMode::Strings => {
-            out.positional_args
-                .push(serde_json::Value::String(arg.to_owned()));
+            out.positional_args.push(JqJson::String(arg.to_owned()));
         }
-        PositionalMode::Json => match serde_json::from_str::<serde_json::Value>(arg) {
-            Ok(v) => {
-                if let Err(e) = check_json_depth(&v, MAX_JQ_JSON_DEPTH) {
-                    return Err(Box::new(ExecResult::err(format!("{e}\n"), 2)));
-                }
-                out.positional_args.push(v);
+        PositionalMode::Json => match parse_json_value(arg) {
+            Ok(v) => out.positional_args.push(v),
+            Err(JsonParseError::TooDeep(e)) => {
+                return Err(Box::new(ExecResult::err(format!("{e}\n"), 2)));
             }
-            Err(e) => {
+            Err(JsonParseError::Invalid(e)) => {
                 return Err(Box::new(usage_error(format!(
                     "jq: invalid JSON for --jsonargs: {e}"
                 ))));
@@ -436,6 +428,10 @@ fn unknown_option(opt: &str) -> ExecResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn json(s: &str) -> JqJson {
+        parse_json_value(s).unwrap()
+    }
 
     fn parse_strs(args: &[&str]) -> ParseOutcome<'static> {
         let v: Vec<String> = args.iter().map(|s| (*s).to_string()).collect();
@@ -537,7 +533,7 @@ mod tests {
             ParseOutcome::Args(a) => {
                 assert_eq!(a.var_bindings.len(), 1);
                 assert_eq!(a.var_bindings[0].0, "$x");
-                assert_eq!(a.var_bindings[0].1, serde_json::Value::String("hi".into()));
+                assert_eq!(a.var_bindings[0].1, JqJson::String("hi".into()));
             }
             _ => panic!("expected Args"),
         }
@@ -548,7 +544,7 @@ mod tests {
         match parse_strs(&["--argjson", "n", "42", "."]) {
             ParseOutcome::Args(a) => {
                 assert_eq!(a.var_bindings[0].0, "$n");
-                assert_eq!(a.var_bindings[0].1, serde_json::json!(42));
+                assert_eq!(a.var_bindings[0].1, json("42"));
             }
             _ => panic!("expected Args"),
         }
@@ -616,8 +612,8 @@ mod tests {
             ParseOutcome::Args(a) => {
                 assert!(a.null_input);
                 assert_eq!(a.positional_args.len(), 3);
-                assert_eq!(a.positional_args[0], serde_json::json!("a"));
-                assert_eq!(a.positional_args[2], serde_json::json!("c"));
+                assert_eq!(a.positional_args[0], json(r#""a""#));
+                assert_eq!(a.positional_args[2], json(r#""c""#));
                 assert!(a.file_args.is_empty());
             }
             _ => panic!("expected Args"),
@@ -628,9 +624,9 @@ mod tests {
     fn jsonargs_become_positional_json() {
         match parse_strs(&["-n", ".", "--jsonargs", "1", "true", r#"{"a":1}"#]) {
             ParseOutcome::Args(a) => {
-                assert_eq!(a.positional_args[0], serde_json::json!(1));
-                assert_eq!(a.positional_args[1], serde_json::json!(true));
-                assert_eq!(a.positional_args[2], serde_json::json!({"a":1}));
+                assert_eq!(a.positional_args[0], json("1"));
+                assert_eq!(a.positional_args[1], json("true"));
+                assert_eq!(a.positional_args[2], json(r#"{"a":1}"#));
             }
             _ => panic!("expected Args"),
         }
