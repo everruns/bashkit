@@ -1801,6 +1801,16 @@ impl<'a> Parser<'a> {
                     words.push(Word::literal(")"));
                     self.advance();
                 }
+                // Inside `[[ ]]` these are string comparison operators, not
+                // redirections (bash's conditional grammar has no redirects).
+                Some(tokens::Token::RedirectIn) => {
+                    words.push(Word::literal("<"));
+                    self.advance();
+                }
+                Some(tokens::Token::RedirectOut) => {
+                    words.push(Word::literal(">"));
+                    self.advance();
+                }
                 None => {
                     return Err(crate::error::Error::parse(
                         "unexpected end of input in [[ ]]".to_string(),
