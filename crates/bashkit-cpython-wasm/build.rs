@@ -5,7 +5,6 @@
 //! product feature). Set `BASHKIT_CPYTHON_CWASM=/path/python.cwasm` to reuse a
 //! module precompiled by the same wasmtime version and configuration.
 
-use std::io::Read;
 use std::path::PathBuf;
 
 include!("src/config.rs");
@@ -13,7 +12,7 @@ include!("src/config.rs");
 fn main() {
     let manifest = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap());
     let out = PathBuf::from(std::env::var_os("OUT_DIR").unwrap()).join("python.cwasm");
-    let snapshot = manifest.join("artifacts/python.wasm.gz");
+    let snapshot = manifest.join("artifacts/python.wasm.xz");
     println!("cargo:rerun-if-changed={}", snapshot.display());
     println!("cargo:rerun-if-changed=src/config.rs");
     println!("cargo:rerun-if-env-changed=BASHKIT_CPYTHON_CWASM");
@@ -23,9 +22,11 @@ fn main() {
         return;
     }
 
+    // xz, not gzip: ~30% smaller, which keeps the crate under crates.io's
+    // 10 MiB cap with more modules preloaded. Decoded here only.
     let mut wasm = Vec::new();
-    flate2::read::GzDecoder::new(std::fs::File::open(&snapshot).expect("open snapshot"))
-        .read_to_end(&mut wasm)
+    let file = std::fs::File::open(&snapshot).expect("open snapshot");
+    lzma_rs::xz_decompress(&mut std::io::BufReader::new(file), &mut wasm)
         .expect("decompress snapshot");
     // The build script's own cfg is the host's; read the crate feature and
     // the cross-compilation target from Cargo instead.

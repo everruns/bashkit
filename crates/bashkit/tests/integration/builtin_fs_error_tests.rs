@@ -22,7 +22,7 @@ const READERS: &[(&str, &str, i32)] = &[
     ("tail", "tail /nope", 1),
     ("strings", "strings /nope", 1),
     ("wc", "wc /nope", 1),
-    ("sort", "sort /nope", 1),
+    ("sort", "sort /nope", 2),
     ("uniq", "uniq /nope", 1),
     ("cut", "cut -c1 /nope", 1),
     ("nl", "nl /nope", 1),

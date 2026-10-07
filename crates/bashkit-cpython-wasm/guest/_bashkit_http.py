@@ -11,8 +11,11 @@ Decisions:
   http.client writes, sends the request through the host once it is
   complete, and serves the reply as an HTTP/1.1 byte stream that the real
   `HTTPResponse` parses. Status line, headers, chunked uploads, keep-alive
-  and HEAD behave as in CPython, and host errors surface from `request()`
-  so urllib wraps them in `URLError` like a failed connect.
+  and HEAD behave as in CPython. Where errors surface matches a real
+  socket: a refused or denied request fails in `request()` (urllib wraps it
+  in `URLError`, like a failed connect), while a timeout waiting for the
+  reply surfaces from `getresponse()` (a read timeout, which urllib3 and
+  requests report as `ReadTimeout`).
 - `HTTPSConnection` is defined although `ssl` is missing (context arguments
   are accepted and ignored), so urllib.request registers its https handler.
 - Proxies and CONNECT tunnels are not used: the bridge sends to the tunnel
@@ -123,7 +126,11 @@ class _BridgeSocket:
                 return
             method, target, headers, body, used = parsed
             del self._out[:used]
-            self._replies.append(self._exchange(method, target, headers, body))
+            try:
+                reply = self._exchange(method, target, headers, body)
+            except TimeoutError as e:
+                reply = e  # raised when the response is read
+            self._replies.append(reply)
 
     def send(self, data):
         self.sendall(data)
@@ -158,7 +165,10 @@ class _BridgeSocket:
             raise OSError("bridge socket is read-only")
         if not self._replies:
             raise ConnectionError("no HTTP request was sent")
-        return io.BytesIO(self._replies.pop(0))
+        reply = self._replies.pop(0)
+        if isinstance(reply, BaseException):
+            raise reply
+        return io.BytesIO(reply)
 
     def settimeout(self, timeout):
         self._timeout = timeout

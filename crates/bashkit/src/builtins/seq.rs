@@ -109,6 +109,9 @@ fn invalid_arg(arg: &str) -> ExecResult {
     )
 }
 
+/// Bytes per write when streaming into a pipeline (one pipe's capacity).
+const STREAM_CHUNK_BYTES: usize = 4 * 1024;
+
 #[async_trait]
 impl Builtin for Seq {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
@@ -268,6 +271,10 @@ impl Builtin for Seq {
         };
 
         let mut output = String::new();
+        // Pipeline producer: flush full chunks as they are made, so
+        // `seq 1000000 | head -1` stops early with SIGPIPE.
+        let stream = ctx.stdout_stream();
+        let mut flushed = 0usize;
         // THREAT[TM-DOS-058]: Limit iterations and output size to prevent memory
         // exhaustion; THREAT[TM-DOS-109]: hitting either cap is reported.
         let mut capped = None;
@@ -281,7 +288,17 @@ impl Builtin for Seq {
                 capped = Some(("line", SEQ_MAX_LINES));
                 break;
             }
-            if output.len() > SEQ_MAX_OUTPUT_BYTES {
+            if let Some(stream) = &stream
+                && output.len() >= STREAM_CHUNK_BYTES
+            {
+                ctx.consume_budget_work(1)?;
+                if !stream.write(output.as_bytes()).await {
+                    return Ok(ExecResult::with_code("", 141));
+                }
+                flushed += output.len();
+                output.clear();
+            }
+            if flushed + output.len() > SEQ_MAX_OUTPUT_BYTES {
                 capped = Some(("output byte", SEQ_MAX_OUTPUT_BYTES));
                 break;
             }
@@ -300,6 +317,12 @@ impl Builtin for Seq {
 
         if i > 0 {
             output.push('\n');
+        }
+        if let Some(stream) = &stream {
+            if !stream.write(output.as_bytes()).await {
+                return Ok(ExecResult::with_code("", 141));
+            }
+            output.clear();
         }
 
         if let Some((what, limit)) = capped {

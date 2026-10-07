@@ -349,10 +349,10 @@ impl fmt::Display for Word {
                         pattern,
                         replacement,
                     } => write!(f, "${{{}///{}/{}}}", name, pattern, replacement)?,
-                    ParameterOp::UpperFirst => write!(f, "${{{}^}}", name)?,
-                    ParameterOp::UpperAll => write!(f, "${{{}^^}}", name)?,
-                    ParameterOp::LowerFirst => write!(f, "{}{{,}}", name)?,
-                    ParameterOp::LowerAll => write!(f, "${{{},,}}", name)?,
+                    ParameterOp::UpperFirst => write!(f, "${{{}^{}}}", name, operand)?,
+                    ParameterOp::UpperAll => write!(f, "${{{}^^{}}}", name, operand)?,
+                    ParameterOp::LowerFirst => write!(f, "${{{},{}}}", name, operand)?,
+                    ParameterOp::LowerAll => write!(f, "${{{},,{}}}", name, operand)?,
                 },
                 WordPart::Length(name) => write!(f, "${{#{}}}", name)?,
                 WordPart::ArrayAccess { name, index } => write!(f, "${{{}[{}]}}", name, index)?,
@@ -982,6 +982,7 @@ mod tests {
         };
         check(ParameterOp::UpperFirst, "${var^}");
         check(ParameterOp::UpperAll, "${var^^}");
+        check(ParameterOp::LowerFirst, "${var,}");
         check(ParameterOp::LowerAll, "${var,,}");
     }
 

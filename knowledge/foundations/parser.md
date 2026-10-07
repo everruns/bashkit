@@ -72,6 +72,17 @@ the closing side; both word readers (`read_word`, `read_word_starting_with`)
 keep a `}` that has no opener inside the word. `for`/`select` `in` lists apply
 the same distinction to `do`/`done`/`in` — see `for_in_reserved_word_tests`.
 
+**Brace expansion.** Braces are ordinary word characters to the lexer (a
+word may start with `{` unless it is the `{` reserved word). Expansion runs
+first, on the parsed word (`brace_expand_word`): unquoted literal text is
+expanded, every other part (variables, substitutions, quoted segments) is an
+opaque atom carried through as a private-use placeholder. So text produced by
+an expansion never brace-expands (`y='{a,b}'; echo $y` prints `{a,b}`) and
+`{1..$n}` stays literal. Quoted or backslash-escaped `{`, `}` and `,` in a
+`QuotedGlobWord` arrive backslash-escaped and stay literal. An invalid group
+keeps its `{` and later groups still expand (`{x}{a,b}`). Gap: bash expands
+raw text, so `$v{1,2}` reads `$v1`; we keep the `$v` part.
+
 Treating `}` as a metacharacter is not just a cosmetic difference: it splits
 `v=a}b`, `for i in a}b`, and `case x}` at a point where the grammar expects a
 terminator, so they fail to parse rather than printing the wrong thing.
@@ -112,8 +123,15 @@ prefix.
 **End of `$(...)`.** `parser/subst_scan.rs` is the one scanner the lexer and
 `parse_word` share to find the closing `)`: it tracks quotes, escapes,
 backticks, nested `$(`, comments and heredoc bodies (`<<`, `<<-`, quoted
-delimiters; `<<<` and arithmetic `<<` excluded). Known gap: a bare `case`
-pattern `)` inside `$(...)` still closes early.
+delimiters; `<<<` and arithmetic `<<` excluded). It also follows `case`
+in command position (subject, `in`, pattern, body; `;;`/`;&`/`;;&` back to
+pattern), so a pattern's `)` and an optional leading `(` do not change the
+paren depth. Keywords are recognised only as whole unquoted words in command
+position, so `echo case)` still closes.
+
+**`[[` lexing.** `[[` is the keyword only when followed by a word break
+(space, tab, newline, `;`, `&`, `|`, `(`, `)`, or end); `[[:digit:]]*` is a
+bracket-expression word.
 
 ## Alternatives Considered
 

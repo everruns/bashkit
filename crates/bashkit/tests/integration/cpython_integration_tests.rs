@@ -529,23 +529,38 @@ async fn environ_is_replaced_each_call() {
 
 /// L-CPY-009: the stdlib is precompiled bytecode (importing a module outside
 /// the snapshot must not compile source on Pulley), and modules that can
-/// never work in the guest are not shipped.
+/// never work in the guest or are low-use for agent scripts are not shipped.
 #[tokio::test]
 async fn stdlib_is_bytecode_only() {
     let out = ok("python3 -c '
 import email.message, http.client, xml.dom.minidom, json
 print(json.__file__.endswith(\".pyc\"), email.message.__file__.endswith(\".pyc\"))
-for m in (\"ctypes\", \"ssl\", \"smtplib\", \"pdb\", \"pydoc\", \"_pydecimal\"):
+for m in (\"ctypes\", \"ssl\", \"smtplib\", \"bdb\", \"pydoc\", \"_pydecimal\", \"mailbox\",
+          \"unittest\", \"doctest\", \"cProfile\", \"dbm\", \"shelve\", \"bz2\", \"lzma\", \"tty\"):
     try:
         __import__(m)
         print(m, \"present\")
     except ModuleNotFoundError:
         pass
-import decimal, datetime
+import decimal, datetime, shutil, tarfile, zipfile, gzip
 print(decimal.Decimal(\"1.10\") + 1, datetime.datetime.strptime(\"2020\", \"%Y\").year)
 '")
     .await;
     assert_eq!(out, "True True\n2.10 2020\n");
+}
+
+/// The real debugger is not shipped; a stand-in makes `breakpoint()` print a
+/// notice and continue.
+#[tokio::test]
+async fn breakpoint_continues() {
+    let r = Bash::builder()
+        .cpython()
+        .build()
+        .exec("python3 -c 'breakpoint(); import pdb; pdb.set_trace(); print(\"after\")'")
+        .await
+        .unwrap();
+    assert_eq!(r.stdout, "after\n", "{}", r.stderr);
+    assert!(r.stderr.contains("debugger not available"), "{}", r.stderr);
 }
 
 #[tokio::test]

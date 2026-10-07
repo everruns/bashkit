@@ -41,5 +41,6 @@ native = []
 
 [build-dependencies]
 wasmtime = { workspace = true, features = ["cranelift", "parallel-compilation"] }
-flate2 = { workspace = true }
+# Decodes artifacts/python.wasm.xz (pure Rust, build time only).
+lzma-rs = "0.3"
 

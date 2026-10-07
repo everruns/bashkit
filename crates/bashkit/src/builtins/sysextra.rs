@@ -482,6 +482,8 @@ enum RunAsKind {
     Nohup,
     Nice,
     Flock,
+    Sudo,
+    Busybox,
 }
 
 impl RunAs {
@@ -504,11 +506,27 @@ impl RunAs {
         }
     }
 
+    /// `sudo [OPTIONS] [VAR=VALUE]... COMMAND [ARG]...`: the sandbox has
+    /// one user and no privilege boundary, so the command just runs.
+    pub fn sudo() -> Self {
+        Self {
+            kind: RunAsKind::Sudo,
+        }
+    }
+    /// `busybox APPLET [ARG]...`: run the builtin of that name.
+    pub fn busybox() -> Self {
+        Self {
+            kind: RunAsKind::Busybox,
+        }
+    }
+
     fn name(&self) -> &'static str {
         match self.kind {
             RunAsKind::Nohup => "nohup",
             RunAsKind::Nice => "nice",
             RunAsKind::Flock => "flock",
+            RunAsKind::Sudo => "sudo",
+            RunAsKind::Busybox => "busybox",
         }
     }
 }
@@ -526,6 +544,15 @@ enum Run {
 
 fn parse_runner(kind: RunAsKind, args: &[String]) -> Run {
     match kind {
+        RunAsKind::Sudo => parse_sudo(args),
+        RunAsKind::Busybox => match args.split_first() {
+            None => Run::Done(ExecResult::err(BUSYBOX_USAGE.to_string(), 1)),
+            Some((applet, rest)) => {
+                // `busybox /bin/ls` and `busybox ls` name the same applet.
+                let applet = applet.rsplit('/').next().unwrap_or(applet);
+                Run::Command(applet.to_string(), rest.to_vec())
+            }
+        },
         RunAsKind::Nohup => {
             let args = match args.first().map(String::as_str) {
                 Some("--") => &args[1..],
@@ -642,6 +669,96 @@ fn parse_runner(kind: RunAsKind, args: &[String]) -> Run {
     }
 }
 
+const BUSYBOX_USAGE: &str = "BusyBox v1.36.1 (bashkit) multi-call binary.\n\nUsage: busybox [function [arguments]...]\n   or: busybox --list\n   or: function [arguments]...\n\n\tBusyBox is a multi-call binary that combines many common Unix\n\tutilities into a single executable.  In bashkit every applet is\n\tthe sandbox's own builtin of the same name.\n";
+
+/// `sudo`: skip options (identity, environment, prompt and timestamp
+/// options have no meaning with one sandbox user), then run the command.
+/// Leading `VAR=VALUE` operands go through `env`, as sudo sets them for the
+/// command only.
+fn parse_sudo(args: &[String]) -> Run {
+    let mut i = 0;
+    let mut shell = false;
+    while i < args.len() {
+        let a = args[i].as_str();
+        match a {
+            "--" => {
+                i += 1;
+                break;
+            }
+            // Options with a value.
+            "-u" | "--user" | "-g" | "--group" | "-C" | "--close-from" | "-p" | "--prompt"
+            | "-h" | "--host" | "-r" | "--role" | "-t" | "--type" | "-U" | "--other-user"
+            | "-D" | "--chdir" | "-T" | "--command-timeout" => i += 2,
+            "-s" | "--shell" | "-i" | "--login" => {
+                shell = true;
+                i += 1;
+            }
+            // Validate/refresh/forget credentials: nothing to do.
+            "-v" | "--validate" | "-k" | "--reset-timestamp" | "-K" | "--remove-timestamp"
+                if args.len() == i + 1 =>
+            {
+                return Run::Done(ExecResult::ok(String::new()));
+            }
+            "-l" | "--list" => {
+                return Run::Done(ExecResult::ok(
+                    "User sandbox may run the following commands on bashkit-sandbox:\n    (ALL) NOPASSWD: ALL\n"
+                        .to_string(),
+                ));
+            }
+            _ if a.starts_with("--") && a.len() > 2 => i += 1,
+            _ if a.starts_with('-') && a.len() > 1 => {
+                // Clustered short flags (`-nE`); a value flag at the end of
+                // the cluster takes the next operand (`-nu root`).
+                if a[1..].contains(['s', 'i']) {
+                    shell = true;
+                }
+                let last = a.as_bytes()[a.len() - 1];
+                i += if b"ugCphrtUDT".contains(&last) { 2 } else { 1 };
+            }
+            _ => break,
+        }
+    }
+    let rest = args.get(i..).unwrap_or_default();
+    let assigns = rest
+        .iter()
+        .take_while(|a| a.split_once('=').is_some_and(|(k, _)| is_var_name(k)))
+        .count();
+    let (vars, command) = rest.split_at(assigns);
+    let Some((cmd, cmd_args)) = command.split_first() else {
+        if shell {
+            // An interactive root shell: nothing to read here.
+            return Run::Done(ExecResult::ok(String::new()));
+        }
+        return Run::Done(ExecResult::err(
+            "usage: sudo [-u user] [VAR=value] command [arg ...]\n".to_string(),
+            1,
+        ));
+    };
+    let (cmd, cmd_args) = if shell {
+        // `sudo -s cmd args` runs `$SHELL -c 'cmd args'`.
+        let script = command.join(" ");
+        ("bash".to_string(), vec!["-c".to_string(), script])
+    } else {
+        (cmd.clone(), cmd_args.to_vec())
+    };
+    if vars.is_empty() {
+        Run::Command(cmd, cmd_args)
+    } else {
+        let mut env_args = vars.to_vec();
+        env_args.push(cmd);
+        env_args.extend(cmd_args);
+        Run::Command("env".to_string(), env_args)
+    }
+}
+
+fn is_var_name(s: &str) -> bool {
+    let mut chars = s.chars();
+    chars
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
 async fn create_lock_file(ctx: &Context<'_>, file: &str) -> Result<()> {
     let path = super::resolve_path(ctx.cwd, file);
     if ctx.fs.exists(&path).await.unwrap_or(false) {
@@ -663,7 +780,24 @@ impl Builtin for RunAs {
             RunAsKind::Flock => {
                 "Usage: flock [options] <file>|<directory> <command> [<argument>...]\n       flock [options] <file>|<directory> -c <command>\n       flock [options] <file descriptor number>\nManage file locks from shell scripts.\n"
             }
+            RunAsKind::Sudo => {
+                "usage: sudo [-u user] [-E] [-n] [VAR=value] command [arg ...]\n       sudo -s|-i [command]\n       sudo -l | -v | -k\nThe sandbox has a single user; sudo runs the command as is.\n"
+            }
+            RunAsKind::Busybox => BUSYBOX_USAGE,
         };
+        if self.kind == RunAsKind::Busybox
+            && let Some(first) = ctx.args.first()
+            && matches!(first.as_str(), "--list" | "--list-full" | "-l")
+        {
+            let names = ctx
+                .shell
+                .as_ref()
+                .map(|shell| shell.builtin_names())
+                .unwrap_or_default();
+            let prefix = if first == "--list-full" { "bin/" } else { "" };
+            let list: String = names.iter().map(|n| format!("{prefix}{n}\n")).collect();
+            return Ok(ExecResult::ok(list));
+        }
         if let Some(r) = help(&ctx, self.name(), usage) {
             return Ok(r);
         }
@@ -683,7 +817,16 @@ impl Builtin for RunAs {
     }
 
     async fn execution_plan(&self, ctx: &Context<'_>) -> Result<Option<ExecutionPlan>> {
-        if ctx.args.iter().any(|a| a == "--help" || a == "--version") {
+        // Only the runner's own leading options: `nohup tar --help` runs tar.
+        if super::check_help_version(ctx.args, "", Some("")).is_some() {
+            return Ok(None);
+        }
+        if self.kind == RunAsKind::Busybox
+            && ctx
+                .args
+                .first()
+                .is_some_and(|a| matches!(a.as_str(), "--list" | "--list-full" | "-l"))
+        {
             return Ok(None);
         }
         let mut run = parse_runner(self.kind, ctx.args);

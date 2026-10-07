@@ -4121,7 +4121,8 @@ pub mod python_guide {}
 /// - Why CPython instead of Monty
 /// - Supported command line, stdio, environment and VFS behavior
 /// - Resource limits via [`CPythonLimits`]
-/// - Limitations (no subprocess, network, threads or third-party packages)
+/// - HTTP through the egress pipeline, including `requests` and `httpx`
+/// - Limitations (no subprocess, raw sockets, threads or other third-party packages)
 ///
 /// **Related:** [`BashBuilder::cpython`], [`CPythonLimits`], [`CPython`], [`threat_model`]
 #[cfg(feature = "cpython")]
