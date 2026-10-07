@@ -115,6 +115,7 @@ pub mod pipeline_tests;
 pub mod proptest_differential;
 pub mod python_integration_tests;
 pub mod python_security_tests;
+pub mod redirect_error_tests;
 pub mod regex_limit_tests;
 pub mod release_profile_tests;
 pub mod request_lifecycle_contract_tests;

@@ -105,7 +105,7 @@ async fn missing_input_redirect_matches_bash_wording() {
     let result = bash.exec("ls /tmp/ < /nope/missing").await.unwrap();
     assert_eq!(
         result.stderr.to_string(),
-        "bash: /nope/missing: No such file or directory\n"
+        "bash: line 1: /nope/missing: No such file or directory\n"
     );
     assert_eq!(result.exit_code, 1);
 }
@@ -119,7 +119,7 @@ async fn missing_output_redirect_dir_matches_bash_wording() {
     let result = bash.exec("echo hi > /nope/missing/out.txt").await.unwrap();
     assert_eq!(
         result.stderr.to_string(),
-        "bash: /nope/missing/out.txt: No such file or directory\n"
+        "bash: line 1: /nope/missing/out.txt: No such file or directory\n"
     );
     assert_eq!(result.exit_code, 1);
 }
@@ -137,7 +137,7 @@ async fn read_only_mount_keeps_its_specific_reason() {
     let result = bash.exec("echo hi > /tmp/nope.txt").await.unwrap();
     assert_eq!(
         result.stderr.to_string(),
-        "bash: /tmp/nope.txt: filesystem is read-only\n"
+        "bash: line 1: /tmp/nope.txt: filesystem is read-only\n"
     );
     assert!(!result.stderr.to_string().contains("io error:"));
 }

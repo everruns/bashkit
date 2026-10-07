@@ -106,7 +106,7 @@ async fn read_only_backend_reason_survives() {
     let result = bash.exec("echo hi > /nope.txt").await.unwrap();
     assert_eq!(
         result.stderr.to_string(),
-        "bash: /nope.txt: filesystem is read-only\n"
+        "bash: line 1: /nope.txt: filesystem is read-only\n"
     );
 }
 
