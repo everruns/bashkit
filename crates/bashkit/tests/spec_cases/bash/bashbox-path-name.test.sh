@@ -13,7 +13,6 @@ b.txt
 
 ### bashbox_path_name_basename_strips_a_suffix_unless_it_is_the_whole_name
 # basename strips a suffix unless it is the whole name
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 basename a/b.txt .txt; basename .txt .txt
 ### expect
 b
