@@ -12,6 +12,8 @@
 
 
 mod funs;
+// BASHKIT PATCH: jq's wording for math and index errors.
+mod jqmsg;
 // BASHKIT PATCH: live-memory meter (TM-DOS-110).
 pub mod meter;
 mod num;
@@ -526,6 +528,22 @@ impl Val {
                 let indices = iw.filter_map(|(i, w)| (w == ***y).then_some(i));
                 Some(indices.map(Val::from).collect())
             }
+            // BASHKIT PATCH: jq truncates a fractional array index.
+            (Val::Arr(a), Val::Num(n @ (Num::Float(_) | Num::Dec(_)))) => {
+                let f = n.as_f64();
+                if !f.is_finite() {
+                    None
+                } else {
+                    let i = Num::Int(f.trunc() as isize);
+                    i.as_pos_usize()
+                        .and_then(|i| abs_index(i, a.len()))
+                        .map(|i| a[i].clone())
+                }
+            }
+            // BASHKIT PATCH: jq objects have string keys only.
+            (s @ Val::Obj(_), i) if !matches!(i, Val::TStr(_) | Val::BStr(_)) => {
+                return Err(jqmsg::index(s, index.clone()))
+            }
             (Val::Obj(o), i) => o.get(i).cloned(),
             (v @ (Val::BStr(_) | Val::TStr(_) | Val::Arr(_)), Val::Obj(o)) => {
                 use jaq_core::ValT;
@@ -533,7 +551,7 @@ impl Val {
                 let end = o.get(&Val::utf8_str("end"));
                 return v.range(start..end).map(Some);
             }
-            (s, _) => return Err(Error::index(s, index.clone())),
+            (s, _) => return Err(jqmsg::index(s, index.clone())), // BASHKIT PATCH
         })
     }
 }
@@ -627,7 +645,7 @@ impl core::ops::Add for Val {
                 o.resync();
                 Ok(Obj(l))
             }
-            (l, r) => Err(Error::math(l, ops::Math::Add, r)),
+            (l, r) => Err(jqmsg::math(l, ops::Math::Add, r, false)), // BASHKIT PATCH
         }
     }
 }
@@ -645,7 +663,7 @@ impl core::ops::Sub for Val {
                 a.resync(); // BASHKIT PATCH (TM-DOS-110)
                 Ok(Self::Arr(l))
             }
-            (l, r) => Err(Error::math(l, ops::Math::Sub, r)),
+            (l, r) => Err(jqmsg::math(l, ops::Math::Sub, r, false)), // BASHKIT PATCH
         }
     }
 }
@@ -691,7 +709,7 @@ impl core::ops::Mul for Val {
                 obj_merge(&mut l, r);
                 Ok(Obj(l))
             }
-            (l, r) => Err(Error::math(l, ops::Math::Mul, r)),
+            (l, r) => Err(jqmsg::math(l, ops::Math::Mul, r, false)), // BASHKIT PATCH
         }
     }
 }
@@ -718,10 +736,14 @@ impl core::ops::Div for Val {
             split(&x, &y).map(|s| into(x.slice_ref(s))).collect()
         };
         match (self, rhs) {
+            // BASHKIT PATCH: jq refuses to divide by zero.
+            (l @ Self::Num(_), r @ Self::Num(_)) if jqmsg::is_zero(&r) => {
+                Err(jqmsg::math(l, ops::Math::Div, r, true))
+            }
             (Self::Num(x), Self::Num(y)) => Ok(Self::Num(x / y)),
             (Self::TStr(x), Self::TStr(y)) => Ok(fs(x.into_bytes(), y.into_bytes(), Val::utf8_str)),
             (Self::BStr(x), Self::BStr(y)) => Ok(fs(x.into_bytes(), y.into_bytes(), Val::byte_str)),
-            (l, r) => Err(Error::math(l, ops::Math::Div, r)),
+            (l, r) => Err(jqmsg::math(l, ops::Math::Div, r, false)), // BASHKIT PATCH
         }
     }
 }
@@ -731,10 +753,16 @@ impl core::ops::Rem for Val {
     fn rem(self, rhs: Self) -> Self::Output {
         meter::tick(); // BASHKIT PATCH (TM-DOS-110)
         match (self, rhs) {
-            (Self::Num(x), Self::Num(y)) if !(x.is_int() && y.is_int() && y == Num::Int(0)) => {
-                Ok(Self::Num(x % y))
+            // BASHKIT PATCH: jq truncates both operands to integers and
+            // refuses a zero divisor.
+            (Self::Num(x), Self::Num(y)) => {
+                let (l, r) = (jqmsg::trunc_int(&x), jqmsg::trunc_int(&y));
+                match (l, r) {
+                    (_, Num::Int(0)) => Err(jqmsg::math(Self::Num(x), ops::Math::Rem, Self::Num(y), true)),
+                    (l, r) => Ok(Self::Num(l % r)),
+                }
             }
-            (l, r) => Err(Error::math(l, ops::Math::Rem, r)),
+            (l, r) => Err(jqmsg::math(l, ops::Math::Rem, r, false)), // BASHKIT PATCH
         }
     }
 }

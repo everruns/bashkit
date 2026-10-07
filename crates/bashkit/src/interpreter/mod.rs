@@ -9334,31 +9334,30 @@ impl Interpreter {
 
         match mode {
             'v' => {
-                // command -v: print name/path if it's a known command
-                let registered = self.builtins.contains_key(cmd_name.as_str())
-                    || is_dispatch_only_builtin(cmd_name)
-                    || self.has_host_builtin(cmd_name);
-                let output = if self.scoped.functions.contains_key(cmd_name.as_str())
-                    || is_keyword(cmd_name)
-                    || (registered && builtins::BASH_BUILTIN_NAMES.contains(&cmd_name.as_str()))
-                {
-                    Some(cmd_name.to_string())
-                } else if let Some(path) = self.resolve_command_path(cmd_name).await {
-                    Some(path)
-                } else {
-                    registered.then(|| cmd_name.to_string())
-                };
-                let mut result = if let Some(name) = output {
-                    ExecResult::ok(format!("{}\n", name))
-                } else {
-                    ExecResult {
-                        stdout: crate::StreamData::new(),
-                        stderr: crate::StreamData::new(),
-                        exit_code: 1,
-                        control_flow: crate::interpreter::ControlFlow::None,
-                        ..Default::default()
+                // command -v: print the name/path of each known command;
+                // status 0 when any was found (bash).
+                let mut out = String::new();
+                for cmd_name in &args[cmd_args_start..] {
+                    let registered = self.builtins.contains_key(cmd_name.as_str())
+                        || is_dispatch_only_builtin(cmd_name)
+                        || self.has_host_builtin(cmd_name);
+                    let found = if self.scoped.functions.contains_key(cmd_name.as_str())
+                        || is_keyword(cmd_name)
+                        || (registered && builtins::BASH_BUILTIN_NAMES.contains(&cmd_name.as_str()))
+                    {
+                        Some(cmd_name.to_string())
+                    } else if let Some(path) = self.resolve_command_path(cmd_name).await {
+                        Some(path)
+                    } else {
+                        registered.then(|| cmd_name.to_string())
+                    };
+                    if let Some(name) = found {
+                        out.push_str(&name);
+                        out.push('\n');
                     }
-                };
+                }
+                let code = if out.is_empty() { 1 } else { 0 };
+                let mut result = ExecResult::with_code(out, code);
                 result = self.apply_redirections(result, redirects).await?;
                 Ok(result)
             }

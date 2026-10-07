@@ -1473,8 +1473,21 @@ impl Interpreter {
                 && word.parts.len() == 1
                 && matches!(&word.parts[0], WordPart::Variable(n) if n == "@");
         if is_unquoted_expansion {
+            // Split fields are pathname-expanded like command words:
+            // `p='*.txt'; a=($p)` holds the matching files.
             let expanded = self.expand_word(word).await?;
-            return self.ifs_split_limited(&expanded, limit);
+            let mut fields = Vec::new();
+            for field in self.ifs_split_limited(&expanded, limit)? {
+                match self.expand_glob_item(&field, false).await {
+                    Ok(items) => fields.extend(items),
+                    Err(_) => fields.push(field),
+                }
+                if fields.len() >= limit {
+                    break;
+                }
+            }
+            fields.truncate(limit);
+            return Ok(fields);
         }
         if is_splat {
             return self.expand_word_to_fields(word).await;
