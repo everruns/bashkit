@@ -97,6 +97,8 @@ for sandbox security reasons. See the compliance spec for details.
 | `ps` | `-f`, `aux`, `-o`, `-p` | Virtual process list (shell + jobs) |
 | `pgrep`/`pkill` | `-f`, `-l`, `-a`, `-c`, `-x`, `-SIGNAL` | Match jobs by command |
 | `disown`, `fg`, `bg` | `[JOBSPEC]` | `fg` waits; `bg` is a no-op (jobs already run) |
+| `uuidgen` | `-r` | Random (v4) UUID from the OS CSPRNG |
+| `openssl` | `rand [-hex\|-base64] [-out FILE] NUM` | Only `rand`; other subcommands fail with `Invalid command` |
 | `curl` | `-s`, `-o`, `-X`, `-d`/`--data`, `--data-raw`, `--data-binary`, `--data-urlencode`, `-G`/`--get`, `-H`, `-I`, `-f`, `-L`, `-w`, `--compressed`, `-u`, `-A`, `-e`, `-v`, `-m` | HTTP client (requires http_client feature) |
 | `wget` | `-q`, `-O`, `--spider`, `--header`, `-U`, `--post-data`, `-t` | Download files (requires http_client feature) |
 | `time` | `[-p] [-f FORMAT] [-o FILE] [-a] [-v] [--] PIPELINE` | Reserved-word timing; elapsed/status/Bashkit counters are truthful, host CPU/RSS fields say `unavailable` |
@@ -319,6 +321,7 @@ Chrono's validated strftime implementation, plus GNU `%N`, `%3N`, `%6N`, and
 | `$-` | ✅ | Current option flags (POSIX) |
 | `$_` | ❌ | Last argument |
 | `$RANDOM` | ✅ | Random number (0-32767) |
+| `$SRANDOM` | ✅ | 32-bit random number from the OS CSPRNG (bash 5.1); assignment ignored |
 | `$LINENO` | ✅ | Current line number |
 
 ---
