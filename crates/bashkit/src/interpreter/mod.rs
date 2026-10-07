@@ -8570,11 +8570,21 @@ impl Interpreter {
         let cmd = args.join(" ");
         let script = match self.parse_embedded_script(&cmd).await {
             Ok(script) => script,
-            Err(crate::error::Error::Parse { message, .. }) => {
-                return Ok(ExecResult::err(
-                    format!("eval: parse error: {}", message),
-                    1,
-                ));
+            Err(crate::error::Error::Parse { message, line, .. }) => {
+                // Like bash: status 2, line counted from the eval's own line, then
+                // the offending source line. Redirects still apply (`2>&1`).
+                let at = self.current_line + line.max(1) - 1;
+                let src = cmd.lines().nth(line.max(1) - 1).unwrap_or("");
+                let message = if message.starts_with("syntax error") {
+                    message
+                } else {
+                    format!("syntax error: {message}")
+                };
+                let result = ExecResult::err(
+                    format!("bash: eval: line {at}: {message}\nbash: eval: line {at}: `{src}'\n"),
+                    2,
+                );
+                return self.apply_redirections(result, redirects).await;
             }
             Err(e) => return Err(e),
         };

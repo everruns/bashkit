@@ -109,6 +109,13 @@ Besides the meter, a few `BASHKIT PATCH` hunks make values behave like jq
   (`string ("a") and number (1) cannot be added`, operands cut at 11 bytes).
 - `mod.rs`: division and `%` by zero fail, `%` truncates operands, a
   fractional array index truncates, an object indexed by a non-string fails.
+- `mod.rs` path updates: assigning through null creates the container
+  (`null | .a.b = 1`, `.[2] = 1`, slices), stays null when the update yields
+  nothing, an index past the end pads with null (capped like jq: `Array
+  index too large`), a negative index before the start fails, and `.[]` on a
+  scalar says `Cannot iterate over number (1)`.
+- `mod.rs` `from_map`: object keys must be strings
+  (`Cannot use null (null) as object key`).
 - `defs.jq`: `nan`/`infinite` without dividing by zero (and the jaq-std
   filters built on them), `gamma` as log-gamma.
 

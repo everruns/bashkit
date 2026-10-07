@@ -148,7 +148,15 @@ impl jaq_core::ValT for Val {
     }
 
     fn from_map<I: IntoIterator<Item = (Self, Self)>>(iter: I) -> ValR {
-        Ok(Self::obj(iter.into_iter().collect()))
+        // BASHKIT PATCH: jq object keys are strings only.
+        let mut m = Map::default();
+        for (k, v) in iter {
+            if !matches!(k, Val::TStr(_) | Val::BStr(_)) {
+                return Err(jqmsg::object_key(&k));
+            }
+            m.insert(k, v);
+        }
+        Ok(Self::obj(m))
     }
 
     fn key_values(self) -> Box<dyn Iterator<Item = Result<(Val, Val), Error>>> {
@@ -157,7 +165,7 @@ impl jaq_core::ValT for Val {
         match self {
             Self::Arr(a) => Box::new(rc_unwrap_or_clone(a).into_iter().enumerate().map(arr_idx)),
             Self::Obj(o) => Box::new(rc_unwrap_or_clone(o).into_iter().map(Ok)),
-            _ => box_once(Err(Error::typ(self, Type::Iter.as_str()))),
+            _ => box_once(Err(jqmsg::iter(self))), // BASHKIT PATCH
         }
     }
 
@@ -166,7 +174,7 @@ impl jaq_core::ValT for Val {
         match self {
             Self::Arr(a) => Box::new(rc_unwrap_or_clone(a).into_iter().map(Ok)),
             Self::Obj(o) => Box::new(rc_unwrap_or_clone(o).into_iter().map(|(_k, v)| Ok(v))),
-            _ => box_once(Err(Error::typ(self, Type::Iter.as_str()))),
+            _ => box_once(Err(jqmsg::iter(self))), // BASHKIT PATCH
         }
     }
 
@@ -207,109 +215,46 @@ impl jaq_core::ValT for Val {
                 let iter = iter.filter_map(|(k, v)| f(v).next().map(|v| Ok((k, v?))));
                 Ok(Self::obj(iter.collect::<Result<_, Exn<_>>>()?))
             }
-            v => opt.fail(v, |v| Exn::from(Error::typ(v, Type::Iter.as_str()))),
+            v => opt.fail(v, |v| Exn::from(jqmsg::iter(v))), // BASHKIT PATCH
         }
     }
 
     fn map_index<'a, I: Iterator<Item = ValX<'a>>>(
-        mut self,
+        self,
         index: &Self,
         opt: path::Opt,
         f: impl Fn(Self) -> I,
     ) -> ValX<'a> {
-        meter::tick(); // BASHKIT PATCH (TM-DOS-110)
-        if let (Val::BStr(_) | Val::TStr(_) | Val::Arr(_), Val::Obj(o)) = (&self, index) {
-            let range = o.get(&Val::utf8_str("start"))..o.get(&Val::utf8_str("end"));
-            return self.map_range(range, opt, f);
+        // BASHKIT PATCH: like jq, updating through null creates the
+        // container the index implies (`null | .a = 1`, `.[2] = 1`), and
+        // stays null when the update yields nothing (`.a |= empty`).
+        let empty = match (&self, index) {
+            (Val::Null, Val::TStr(_) | Val::BStr(_)) => Val::obj(Map::default()),
+            (Val::Null, Val::Num(_) | Val::Obj(_)) => core::iter::empty::<Val>().collect(),
+            _ => return self.map_index_inner(index, opt, f),
         };
-        match self {
-            Val::Obj(ref mut o) => {
-                use indexmap::map::Entry::{Occupied, Vacant};
-                match Rc::make_mut(o).entry(index.clone()) {
-                    Occupied(mut e) => {
-                        let v = core::mem::take(e.get_mut());
-                        match f(v).next().transpose()? {
-                            Some(y) => e.insert(y),
-                            // this runs in constant time, at the price of
-                            // changing the order of the elements
-                            None => e.swap_remove(),
-                        };
-                    }
-                    Vacant(e) => {
-                        if let Some(y) = f(Val::Null).next().transpose()? {
-                            e.insert(y);
-                        }
-                    }
-                }
-                // BASHKIT PATCH: charge in-place growth (TM-DOS-110).
-                Rc::make_mut(o).resync();
-                meter::check(0)?;
-                Ok(self)
-            }
-            Val::Arr(ref mut a) => {
-                let oob = || Error::str(format_args!("index {index} out of bounds"));
-                let abs_or = |i| abs_index(i, a.len()).ok_or_else(oob);
-                let i = match index.as_pos_usize().and_then(abs_or) {
-                    Ok(i) => i,
-                    Err(e) => return opt.fail(self, |_| Exn::from(e)),
-                };
-
-                let a = Rc::make_mut(a);
-                let x = core::mem::take(&mut a[i]);
-                if let Some(y) = f(x).next().transpose()? {
-                    a[i] = y;
-                } else {
-                    a.remove(i);
-                }
-                a.resync(); // BASHKIT PATCH (TM-DOS-110)
-                Ok(self)
-            }
-            _ => opt.fail(self, |v| Exn::from(Error::typ(v, Type::Iter.as_str()))),
-        }
+        let hit = core::cell::Cell::new(false);
+        let y = empty.map_index_inner(index, opt, |v| f(v).inspect(|_| hit.set(true)))?;
+        Ok(if hit.get() { y } else { Val::Null })
     }
 
+
     fn map_range<'a, I: Iterator<Item = ValX<'a>>>(
-        mut self,
+        self,
         range: val::Range<&Self>,
         opt: path::Opt,
         f: impl Fn(Self) -> I,
     ) -> ValX<'a> {
-        let fs = |b: Bytes, range, skip_take: SkipTakeFn, from: ValBytesFn, into: BytesValFn| {
-            let (skip, take) = match Self::range_int(range) {
-                Ok(range) => skip_take(range, &b),
-                Err(e) => return opt.fail(into(b), |_| Exn::from(e)),
-            };
-            let str = into(b.slice(skip..skip + take));
-            let y = f(str).map(|y| from(y?).map_err(Exn::from)).next();
-            let y = y.transpose()?.unwrap_or_default();
-            let mut b = BytesMut::from(b);
-            // BASHKIT PATCH: size-check and meter the result (TM-DOS-110).
-            meter::check(b.len() - take + y.len())?;
-            bytes_splice(&mut b, skip, take, &y);
-            Ok(into(b.freeze()))
-        };
-        let stb = skip_take_bytes;
-        let stc = skip_take_chars;
-        match self {
-            Val::Arr(ref mut a) => {
-                let (skip, take) = match Self::range_int(range) {
-                    Ok(range) => skip_take(range, a.len()),
-                    Err(e) => return opt.fail(self, |_| Exn::from(e)),
-                };
-                let arr = a.iter().skip(skip).take(take).cloned().collect();
-                let y = f(arr).map(|y| y?.into_arr().map_err(Exn::from)).next();
-                let y = y.transpose()?.unwrap_or_default();
-                meter::check((a.len() - take + y.len()) * core::mem::size_of::<Val>())?; // BASHKIT PATCH
-                let a = Rc::make_mut(a);
-                a.splice(skip..skip + take, (**y).clone());
-                a.resync(); // BASHKIT PATCH (TM-DOS-110)
-                Ok(self)
-            }
-            Val::BStr(b) => fs(b.into_bytes(), range, stb, Val::into_byte_str, Val::byte_str),
-            Val::TStr(b) => fs(b.into_bytes(), range, stc, Val::into_utf8_str, Val::utf8_str),
-            _ => opt.fail(self, |v| Exn::from(Error::typ(v, Type::Arr.as_str()))),
+        // BASHKIT PATCH: a slice update through null works on `[]`, like jq.
+        if !matches!(self, Val::Null) {
+            return self.map_range_inner(range, opt, f);
         }
+        let empty: Val = core::iter::empty::<Val>().collect();
+        let hit = core::cell::Cell::new(false);
+        let y = empty.map_range_inner(range, opt, |v| f(v).inspect(|_| hit.set(true)))?;
+        Ok(if hit.get() { y } else { Val::Null })
     }
+
 
     /// True if the value is neither null nor false.
     fn as_bool(&self) -> bool {
@@ -433,6 +378,144 @@ fn abs_index(i: num::PosUsize, len: usize) -> Option<usize> {
 }
 
 impl Val {
+    /// `map_index` for a value that is not null.
+    fn map_index_inner<'a, I: Iterator<Item = ValX<'a>>>(
+        mut self,
+        index: &Self,
+        opt: path::Opt,
+        f: impl Fn(Self) -> I,
+    ) -> ValX<'a> {
+        meter::tick(); // BASHKIT PATCH (TM-DOS-110)
+        if let (Val::BStr(_) | Val::TStr(_) | Val::Arr(_), Val::Obj(o)) = (&self, index) {
+            let range = o.get(&Val::utf8_str("start"))..o.get(&Val::utf8_str("end"));
+            return self.map_range_inner(range, opt, f);
+        };
+        match self {
+            // BASHKIT PATCH: jq objects have string keys only.
+            Val::Obj(_) if !matches!(index, Val::TStr(_) | Val::BStr(_)) => {
+                let e = jqmsg::index(self.clone(), index.clone());
+                opt.fail(self, |_| Exn::from(e))
+            }
+            Val::Obj(ref mut o) => {
+                use indexmap::map::Entry::{Occupied, Vacant};
+                match Rc::make_mut(o).entry(index.clone()) {
+                    Occupied(mut e) => {
+                        let v = core::mem::take(e.get_mut());
+                        match f(v).next().transpose()? {
+                            Some(y) => e.insert(y),
+                            // this runs in constant time, at the price of
+                            // changing the order of the elements
+                            None => e.swap_remove(),
+                        };
+                    }
+                    Vacant(e) => {
+                        if let Some(y) = f(Val::Null).next().transpose()? {
+                            e.insert(y);
+                        }
+                    }
+                }
+                // BASHKIT PATCH: charge in-place growth (TM-DOS-110).
+                Rc::make_mut(o).resync();
+                meter::check(0)?;
+                Ok(self)
+            }
+            Val::Arr(ref mut a) => {
+                // BASHKIT PATCH: jq truncates a fractional index, rejects a
+                // negative one before the start, and pads with null to grow
+                // the array for an index past the end.
+                let pos = match index {
+                    Val::Num(n) if n.as_f64().is_finite() => jqmsg::trunc_int(n).as_pos_usize(),
+                    _ => None,
+                };
+                let len = a.len();
+                let i = match pos {
+                    Some(p) => p.wrap(len),
+                    None => {
+                        let e = jqmsg::index(Val::Arr(a.clone()), index.clone());
+                        return opt.fail(self, |_| Exn::from(e));
+                    }
+                };
+                let Some(i) = i else {
+                    let e = Error::str("Out of bounds negative array index");
+                    return opt.fail(self, |_| Exn::from(e));
+                };
+                if i >= len {
+                    // jq's own cap on growing an array by index.
+                    if i > (i32::MAX >> 2) as usize {
+                        let e = Error::str("Array index too large");
+                        return opt.fail(self, |_| Exn::from(e));
+                    }
+                    let Some(y) = f(Val::Null).next().transpose()? else {
+                        return Ok(self);
+                    };
+                    let grow = (i + 1 - len).saturating_mul(core::mem::size_of::<Val>());
+                    meter::check(grow)?;
+                    let a = Rc::make_mut(a);
+                    a.resize(i, Val::Null);
+                    a.push(y);
+                    a.resync(); // BASHKIT PATCH (TM-DOS-110)
+                    meter::check(0)?;
+                    return Ok(self);
+                }
+
+                let a = Rc::make_mut(a);
+                let x = core::mem::take(&mut a[i]);
+                if let Some(y) = f(x).next().transpose()? {
+                    a[i] = y;
+                } else {
+                    a.remove(i);
+                }
+                a.resync(); // BASHKIT PATCH (TM-DOS-110)
+                Ok(self)
+            }
+            _ => opt.fail(self, |v| Exn::from(jqmsg::iter(v))), // BASHKIT PATCH
+        }
+    }
+
+    /// `map_range` for a value that is not null.
+    fn map_range_inner<'a, I: Iterator<Item = ValX<'a>>>(
+        mut self,
+        range: val::Range<&Self>,
+        opt: path::Opt,
+        f: impl Fn(Self) -> I,
+    ) -> ValX<'a> {
+        let fs = |b: Bytes, range, skip_take: SkipTakeFn, from: ValBytesFn, into: BytesValFn| {
+            let (skip, take) = match Self::range_int(range) {
+                Ok(range) => skip_take(range, &b),
+                Err(e) => return opt.fail(into(b), |_| Exn::from(e)),
+            };
+            let str = into(b.slice(skip..skip + take));
+            let y = f(str).map(|y| from(y?).map_err(Exn::from)).next();
+            let y = y.transpose()?.unwrap_or_default();
+            let mut b = BytesMut::from(b);
+            // BASHKIT PATCH: size-check and meter the result (TM-DOS-110).
+            meter::check(b.len() - take + y.len())?;
+            bytes_splice(&mut b, skip, take, &y);
+            Ok(into(b.freeze()))
+        };
+        let stb = skip_take_bytes;
+        let stc = skip_take_chars;
+        match self {
+            Val::Arr(ref mut a) => {
+                let (skip, take) = match Self::range_int(range) {
+                    Ok(range) => skip_take(range, a.len()),
+                    Err(e) => return opt.fail(self, |_| Exn::from(e)),
+                };
+                let arr = a.iter().skip(skip).take(take).cloned().collect();
+                let y = f(arr).map(|y| y?.into_arr().map_err(Exn::from)).next();
+                let y = y.transpose()?.unwrap_or_default();
+                meter::check((a.len() - take + y.len()) * core::mem::size_of::<Val>())?; // BASHKIT PATCH
+                let a = Rc::make_mut(a);
+                a.splice(skip..skip + take, (**y).clone());
+                a.resync(); // BASHKIT PATCH (TM-DOS-110)
+                Ok(self)
+            }
+            Val::BStr(b) => fs(b.into_bytes(), range, stb, Val::into_byte_str, Val::byte_str),
+            Val::TStr(b) => fs(b.into_bytes(), range, stc, Val::into_utf8_str, Val::utf8_str),
+            _ => opt.fail(self, |v| Exn::from(Error::typ(v, Type::Arr.as_str()))),
+        }
+    }
+
     /// Construct an object value.
     pub fn obj(m: Map) -> Self {
         Self::Obj(metered(m))

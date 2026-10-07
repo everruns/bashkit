@@ -64,6 +64,11 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    /// Move the line count forward by `by` (for input embedded at a later line).
+    pub(crate) fn shift_lines(&mut self, by: usize) {
+        self.position.line += by;
+    }
+
     /// Get the current position in the input.
     pub fn position(&self) -> Position {
         self.position

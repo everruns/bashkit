@@ -2035,3 +2035,109 @@ async fn gamma_is_log_gamma() {
         .unwrap();
     assert_eq!(out, "[8.525161361065413,1,3]\n");
 }
+
+#[tokio::test]
+async fn update_through_null_creates_containers() {
+    let out = run_jq_with_args(
+        &[
+            "-nc",
+            "(.a.b.c = 1), (.[2] = 1), (.[1:3] = [\"x\"]), (.a |= empty), \
+             ([1] | .[3] = 9), ([1] | .[1.7] = 2), ([1] | .[5] |= empty)",
+        ],
+        "",
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        out,
+        "{\"a\":{\"b\":{\"c\":1}}}\n[null,null,1]\n[\"x\"]\nnull\n[1,null,null,9]\n[1,2]\n[1]\n"
+    );
+}
+
+#[tokio::test]
+async fn update_index_errors_follow_jq() {
+    let out = run_jq_with_args(
+        &[
+            "-nc",
+            "(try (.[-1] = 1) catch .), (try ({} | .[1] = 2) catch .), \
+             (try (.[1e9] = 1) catch .), (try (.[] = 1) catch .)",
+        ],
+        "",
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        out,
+        "\"Out of bounds negative array index\"\n\"Cannot index object with number\"\n\
+         \"Array index too large\"\n\"Cannot iterate over null (null)\"\n"
+    );
+}
+
+#[tokio::test]
+async fn string_builtins_follow_jq() {
+    let out = run_jq_with_args(
+        &[
+            "-nc",
+            "([1, null, \"a\", true] | join(\"-\")), ([null] | join(\",\")), \
+             (try ([[1]] | join(\",\")) catch .), (1 | ltrimstr(\"a\")), \
+             (\"ab\" | rtrimstr(1)), (\"a1b2\" | [scan(\"([a-z])([0-9])\")]), \
+             (\"ab\" | capture(\"(?<x>a)(?<y>z)?\")), \"\\u007f\"",
+        ],
+        "",
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        out,
+        "\"1--a-true\"\n\"\"\n\"string (\\\"\\\") and array ([1]) cannot be added\"\n1\n\"ab\"\n\
+         [[\"a\",\"1\"],[\"b\",\"2\"]]\n{\"x\":\"a\",\"y\":null}\n\"\\u007f\"\n"
+    );
+}
+
+#[tokio::test]
+async fn unmatched_group_is_reported_like_jq() {
+    let out = run_jq_with_args(&["-c", "[match(\"(a)(z)?\").captures[]]"], "\"ab\"")
+        .await
+        .unwrap();
+    assert_eq!(
+        out,
+        "[{\"offset\":0,\"length\":1,\"string\":\"a\",\"name\":null},\
+         {\"offset\":-1,\"string\":null,\"length\":0,\"name\":null}]\n"
+    );
+}
+
+#[tokio::test]
+async fn from_entries_and_object_keys_follow_jq() {
+    let out = run_jq_with_args(
+        &["-c", "from_entries"],
+        r#"[{"key":"a","value":1},{"name":"c","value":3},{"Name":"N","value":4},{"key":"d"},{"name":"f","Value":6}]"#,
+    )
+    .await
+    .unwrap();
+    assert_eq!(out, "{\"a\":1,\"c\":3,\"N\":4,\"d\":null,\"f\":6}\n");
+    let result = run_jq_result_with_args(&["-c", "from_entries"], r#"[{"key":null,"value":4}]"#)
+        .await
+        .unwrap();
+    assert_eq!(
+        result.stderr,
+        "jq: error (at <stdin>:0): Cannot use null (null) as object key\n"
+    );
+    assert_eq!(result.exit_code, 5);
+}
+
+#[tokio::test]
+async fn tostream_round_trips() {
+    let out = run_jq_with_args(
+        &[
+            "-c",
+            "[tostream], fromstream(tostream), [1 | truncate_stream([[0], 1], [[1, 0], 2], [[1, 0]], [[1]])], IN(.[]; 1)",
+        ],
+        r#"[1,{"a":2},[]]"#,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        out,
+        "[[[0],1],[[1,\"a\"],2],[[1,\"a\"]],[[2],[]],[[2]]]\n[1,{\"a\":2},[]]\n[[[0],2],[[0]]]\ntrue\n"
+    );
+}

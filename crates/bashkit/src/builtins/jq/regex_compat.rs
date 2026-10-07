@@ -167,8 +167,17 @@ fn run_regex<V: ValT>(
             let mut match_objs: Vec<V> = Vec::with_capacity(names.len());
             for (idx, name) in names.into_iter().enumerate() {
                 let Some(m) = caps.get(idx) else {
-                    // Optional group that didn't match — skip, matching jaq's
-                    // filter_map behavior.
+                    // Optional group that didn't match: jq reports it with
+                    // offset -1 and a null string (`capture` gives null).
+                    // `string` is left out here; `.string` reads it as null.
+                    let mut fields: Vec<(V, V)> = vec![
+                        (V::from(String::from("offset")), V::from(-1isize)),
+                        (V::from(String::from("length")), V::from(0isize)),
+                    ];
+                    if let Some(n) = name {
+                        fields.push((V::from(String::from("name")), V::from(n.to_string())));
+                    }
+                    match_objs.push(V::from_map(fields)?);
                     continue;
                 };
                 let offset = bc.byte_to_char(m.start());
