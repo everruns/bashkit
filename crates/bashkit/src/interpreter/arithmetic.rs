@@ -681,6 +681,34 @@ impl Interpreter {
     /// Try to parse a binary operator at the current precedence level.
     /// Scans `chars`/`bo` for operators, splitting and recursing.
     /// Returns `Some(value)` if an operator was found, `None` to try next level.
+    /// Whether the `+`/`-` at `i` is a sign rather than a binary operator:
+    /// nothing but another operator precedes it (`3 - -1`, `2 * -x`). A
+    /// postfix `x++ - 1` still leaves the `-` binary.
+    fn arith_sign_is_unary(chars: &[char], i: usize) -> bool {
+        let operand_end = |c: char| c.is_ascii_alphanumeric() || matches!(c, '_' | ')' | ']');
+        let mut j = i;
+        while j > 0 && chars[j - 1].is_ascii_whitespace() {
+            j -= 1;
+        }
+        if j == 0 {
+            return true;
+        }
+        let p = chars[j - 1];
+        if operand_end(p) {
+            return false;
+        }
+        if matches!(p, '+' | '-') && j >= 2 && chars[j - 2] == p {
+            let mut k = j - 2;
+            while k > 0 && chars[k - 1].is_ascii_whitespace() {
+                k -= 1;
+            }
+            if k > 0 && operand_end(chars[k - 1]) {
+                return false;
+            }
+        }
+        true
+    }
+
     pub(super) fn try_parse_arith_addmul(
         &self,
         expr: &str,
@@ -706,6 +734,10 @@ impl Interpreter {
                         continue;
                     }
                     if chars[i] == '-' && i > 0 && chars[i - 1] == '-' {
+                        continue;
+                    }
+                    // `3 - -1`: a sign after another operator is unary.
+                    if Self::arith_sign_is_unary(chars, i) {
                         continue;
                     }
                     let left = self.parse_arithmetic_impl(&expr[..bo[i]], arith_depth + 1);
@@ -759,6 +791,11 @@ impl Interpreter {
                 '*' if depth == 0 && i + 1 < chars.len() && chars[i + 1] == '*' => {
                     let left = self.parse_arithmetic_impl(&expr[..bo[i]], arith_depth + 1);
                     let right = self.parse_arithmetic_impl(&expr[bo[i] + 2..], arith_depth + 1);
+                    // Negative exponent: bash errors; this evaluator's
+                    // error value is 0 (TM-DOS-029), not `x ** 0`.
+                    if right < 0 {
+                        return Some(0);
+                    }
                     let exp = right.clamp(0, 63) as u32;
                     return Some(left.wrapping_pow(exp));
                 }

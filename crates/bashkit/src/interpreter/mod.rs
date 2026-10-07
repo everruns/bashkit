@@ -483,6 +483,13 @@ impl ShellRef<'_> {
         self.functions.contains_key(name)
     }
 
+    /// A function's definition as bash prints it (`type`, `declare -f`).
+    pub(crate) fn function_text(&self, name: &str) -> Option<String> {
+        self.functions
+            .get(name)
+            .map(|f| crate::parser::function_string(name, &f.body))
+    }
+
     /// Check if a name is a shell keyword.
     pub(crate) fn is_keyword(&self, name: &str) -> bool {
         is_keyword(name)
@@ -1403,6 +1410,9 @@ pub struct Interpreter {
     jobs: SharedJobTable,
     /// Current line number for $LINENO
     current_line: usize,
+    /// `unset LINENO` makes it an ordinary variable for the rest of the
+    /// shell's life, like bash.
+    lineno_unset: bool,
     /// HTTP client for network builtins (curl, wget)
     #[cfg(feature = "http_client")]
     http_client: Option<Arc<crate::network::HttpClient>>,
@@ -1457,6 +1467,9 @@ pub struct Interpreter {
     output_stream_stderr_bytes: usize,
     /// Pending nounset (set -u) error message, consumed by execute_command.
     nounset_error: Option<String>,
+    /// Outputs of the `$(...)` parts of a `${x:-...}`-family operand, run
+    /// ahead (async) and consumed in order by the sync `expand_operand`.
+    operand_substs: std::collections::VecDeque<String>,
     /// PIPESTATUS: exit codes of the last pipeline's commands
     pipestatus: Vec<i32>,
     /// Aliases currently being expanded (prevents infinite recursion).
@@ -2001,6 +2014,7 @@ impl Interpreter {
             ),
             jobs: jobs::new_shared_job_table(),
             current_line: 1,
+            lineno_unset: false,
             #[cfg(feature = "http_client")]
             http_client: None,
             #[cfg(feature = "git")]
@@ -2024,6 +2038,7 @@ impl Interpreter {
             output_stream_stdout_bytes: 0,
             output_stream_stderr_bytes: 0,
             nounset_error: None,
+            operand_substs: std::collections::VecDeque::new(),
             pipestatus: Vec::new(),
             expanding_aliases: HashSet::new(),
             regex_cache: RuntimeRegexCache::default(),
@@ -2161,6 +2176,7 @@ impl Interpreter {
             execution_budget: self.execution_budget.clone(),
             jobs: self.jobs.fork(),
             current_line: self.current_line,
+            lineno_unset: self.lineno_unset,
             #[cfg(feature = "http_client")]
             http_client: self.http_client.clone(),
             #[cfg(feature = "git")]
@@ -2182,6 +2198,7 @@ impl Interpreter {
             output_stream_stdout_bytes: 0,
             output_stream_stderr_bytes: 0,
             nounset_error: None,
+            operand_substs: std::collections::VecDeque::new(),
             pipestatus: Vec::new(),
             expanding_aliases: HashSet::new(),
             regex_cache: RuntimeRegexCache::default(),
@@ -3655,7 +3672,10 @@ impl Interpreter {
             CompoundCommand::BraceGroup(commands) => self.execute_command_sequence(commands).await,
             CompoundCommand::Case(case_cmd) => self.execute_case(case_cmd).await,
             CompoundCommand::Select(select_cmd) => self.execute_select(select_cmd).await,
-            CompoundCommand::Arithmetic(expr) => self.execute_arithmetic_command(expr).await,
+            CompoundCommand::Arithmetic(expr) => {
+                self.execute_arithmetic_command(&crate::parser::arith_exec_text(expr))
+                    .await
+            }
             CompoundCommand::Time(time_cmd) => self.execute_time(time_cmd).await,
             CompoundCommand::Conditional(words) => self.execute_conditional(words).await,
             CompoundCommand::Coproc(coproc_cmd) => self.execute_coproc(coproc_cmd).await,
@@ -7993,14 +8013,27 @@ impl Interpreter {
         args: Vec<String>,
         stdin: Option<crate::StreamData>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecResult>> + Send + 'a>> {
-        Box::pin(async move {
-            // Check for functions first
-            if let Some(func_def) = self.scoped.functions.get(name).cloned() {
-                return self
-                    .execute_function_call(name, &func_def, args, stdin, &command.redirects)
-                    .await;
-            }
+        // Functions first, in their own small future: a function call is the
+        // recursion path, and the builtin/path-search arms below would
+        // otherwise add their large frame to every call level
+        // (THREAT[TM-DOS-020]: bounded recursion on a 2 MiB stack).
+        if let Some(func_def) = self.scoped.functions.get(name).cloned() {
+            return Box::pin(async move {
+                self.execute_function_call(name, &func_def, args, stdin, &command.redirects)
+                    .await
+            });
+        }
+        self.dispatch_non_function(name, command, args, stdin)
+    }
 
+    fn dispatch_non_function<'a>(
+        &'a mut self,
+        name: &'a str,
+        command: &'a SimpleCommand,
+        args: Vec<String>,
+        stdin: Option<crate::StreamData>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecResult>> + Send + 'a>> {
+        Box::pin(async move {
             // Interpreter-level special builtins
             if Self::is_special_builtin_name(name) {
                 return self
@@ -8335,6 +8368,8 @@ impl Interpreter {
         let saved_env = self.env.clone();
         let saved_memory_budget = self.memory_budget.clone();
         let saved_exec_fd_table = self.exec_fd_table.clone();
+        // The child process has its own working directory (`cd` stays there).
+        let saved_cwd = self.cwd.clone();
 
         // Child only sees exported variables (env), not all shell variables.
         // Reset last_exit_code so $? starts at 0 (matches real bash subprocess).
@@ -8373,9 +8408,13 @@ impl Interpreter {
 
         // Forward pipeline stdin so commands inside the script (cat, read, etc.) can consume it
         let prev_pipeline_stdin = self.pipeline_stdin.take();
+        // Stdin shared with the caller (no pipe or redirect of its own): what
+        // the child's `read` consumes is gone for the caller too.
+        let shares_caller_stdin = stdin.is_some() && stdin == prev_pipeline_stdin;
         self.pipeline_stdin = stdin;
 
         let result = self.execute_script_body(&script, true, false).await;
+        let child_stdin_left = self.pipeline_stdin.take();
 
         // Restore full parent state — child mutations don't propagate
         self.scoped.variables = saved_vars;
@@ -8394,7 +8433,12 @@ impl Interpreter {
         self.memory_budget = saved_memory_budget;
         self.exec_fd_table = saved_exec_fd_table;
         self.bash_source_stack = saved_source_stack;
-        self.pipeline_stdin = prev_pipeline_stdin;
+        self.cwd = saved_cwd;
+        self.pipeline_stdin = if shares_caller_stdin {
+            child_stdin_left
+        } else {
+            prev_pipeline_stdin
+        };
 
         match result {
             Ok(mut exec_result) => {
@@ -8485,7 +8529,7 @@ impl Interpreter {
             Err(crate::error::Error::Parse { message, .. }) => {
                 return Ok(ExecResult::err(
                     format!("source: {}: parse error: {}", filename, message),
-                    1,
+                    2,
                 ));
             }
             Err(e) => return Err(e),
@@ -9339,6 +9383,9 @@ impl Interpreter {
                     exit_code = 1;
                     continue;
                 }
+                if resolved == "LINENO" {
+                    self.lineno_unset = true;
+                }
                 self.vars_mut().remove(&resolved);
                 self.env.remove(&resolved);
                 // THREAT[TM-DOS-114]: `unset arr` must return the array's entry
@@ -9741,6 +9788,27 @@ impl Interpreter {
                         )
                         .await;
                 }
+                // `command ./script` / `command name-on-PATH`: run the file,
+                // like a plain command would.
+                if self.shell_features.has_script_execution() {
+                    let builtin_args = builtin_args.to_vec();
+                    if target.contains('/') {
+                        return self
+                            .try_execute_script_by_path(target, &builtin_args, _stdin, redirects)
+                            .await;
+                    }
+                    if let Some(result) = self
+                        .try_execute_script_via_path_search(
+                            target,
+                            &builtin_args,
+                            _stdin,
+                            redirects,
+                        )
+                        .await?
+                    {
+                        return Ok(result);
+                    }
+                }
                 Ok(ExecResult::err(
                     format!("bash: {}: command not found\n", remaining[0]),
                     127,
@@ -9782,6 +9850,7 @@ impl Interpreter {
         let mut is_readonly = false;
         let mut is_export = false;
         let mut is_function = false;
+        let mut function_names_only = false;
         let mut flags = DeclareFlags::default();
         let mut remove_nameref = false;
         let mut is_lowercase = false;
@@ -9797,6 +9866,10 @@ impl Interpreter {
                         'r' => is_readonly = true,
                         'x' => is_export = true,
                         'f' => is_function = true,
+                        'F' => {
+                            is_function = true;
+                            function_names_only = true;
+                        }
                         'l' => is_lowercase = true,
                         'u' => is_uppercase = true,
                         _ => {} // n, a, A, i handled by flags
@@ -9815,29 +9888,40 @@ impl Interpreter {
         }
 
         // declare -f: function display mode
+        // `-F` lists names (`declare -f NAME` for all), `-f` prints bodies
+        // the way bash's print_cmd lays them out; a missing name prints
+        // nothing and makes the status 1.
         if is_function {
             let mut output = String::new();
+            let mut exit_code = 0;
             if names.is_empty() {
-                // List all functions
                 let mut func_names: Vec<_> =
                     self.scoped.functions.keys().cloned().collect::<Vec<_>>();
                 func_names.sort();
                 for fname in &func_names {
-                    output.push_str(&format!("{} ()\n{{\n    ...\n}}\n", fname));
+                    if function_names_only {
+                        output.push_str(&format!("declare -f {fname}\n"));
+                    } else if let Some(f) = self.scoped.functions.get(fname) {
+                        output.push_str(&crate::parser::function_string(fname, &f.body));
+                        output.push('\n');
+                    }
                 }
             } else {
-                // Print specific functions — return 1 if any not found
                 for name in &names {
-                    if self.scoped.functions.contains_key(*name) {
-                        output.push_str(&format!("{} ()\n{{\n    ...\n}}\n", name));
-                    } else {
-                        let mut result = ExecResult::with_code(String::new(), 1);
-                        result = self.apply_redirections(result, redirects).await?;
-                        return Ok(result);
+                    match self.scoped.functions.get(*name) {
+                        Some(_) if function_names_only => {
+                            output.push_str(name);
+                            output.push('\n');
+                        }
+                        Some(f) => {
+                            output.push_str(&crate::parser::function_string(name, &f.body));
+                            output.push('\n');
+                        }
+                        None => exit_code = 1,
                     }
                 }
             }
-            let mut result = ExecResult::ok(output);
+            let mut result = ExecResult::with_code(output, exit_code);
             result = self.apply_redirections(result, redirects).await?;
             return Ok(result);
         }
@@ -11590,8 +11674,18 @@ impl Interpreter {
                 }
                 return u32::from_le_bytes(b).to_string();
             }
-            "LINENO" => {
-                // $LINENO - current line number from command span
+            // $LINENO - current line number from command span. Assignments
+            // do not stick, but a function's `local LINENO` holds its value
+            // and `unset LINENO` makes it ordinary.
+            "LINENO" if !self.lineno_unset => {
+                if let Some(v) = self
+                    .call_stack
+                    .iter()
+                    .rev()
+                    .find_map(|frame| frame.locals.get("LINENO"))
+                {
+                    return v.clone();
+                }
                 return self.current_line.to_string();
             }
             "PWD" => {
@@ -11653,6 +11747,9 @@ impl Interpreter {
         // Resolve nameref before checking — a nameref whose target exists is "set".
         let name = self.resolve_nameref(name);
 
+        if name == "LINENO" && !self.lineno_unset {
+            return true;
+        }
         // Special variables are always "set"
         if matches!(
             name,
@@ -11664,7 +11761,6 @@ impl Interpreter {
                 | "-"
                 | "RANDOM"
                 | "SRANDOM"
-                | "LINENO"
                 | "PWD"
                 | "OLDPWD"
                 | "HOSTNAME"
@@ -11827,6 +11923,7 @@ fn split_indexed_element(word: &Word) -> Option<(String, Word)> {
             quoted: true,
             has_unquoted_glob: false,
             part_quoted,
+            raw: None,
         },
     ))
 }

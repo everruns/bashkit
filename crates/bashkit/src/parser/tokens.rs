@@ -42,6 +42,9 @@ pub enum Token {
     /// Pipe (|)
     Pipe,
 
+    /// Pipe with stderr (|&), shorthand for `2>&1 |`
+    PipeBoth,
+
     /// And (&&)
     And,
 

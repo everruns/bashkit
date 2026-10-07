@@ -13,7 +13,6 @@ i=0; until [[ $i -ge 3 ]]; do echo $i; i=$((i+1)); done > /tmp/o; cat /tmp/o
 
 ### bashbox_parser_c_style_for_keeps_spacing_of_each_clause
 # C-style for keeps spacing of each clause
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 for ((i = 3; i > 0; i = i - -1 - 2)); do echo $i; done 2>/dev/null
 ### expect
 3
@@ -163,7 +162,6 @@ ab
 
 ### bashbox_parser_braces_brackets_and_bang_are_words_outside_command_position
 # braces, brackets and bang are words outside command position
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 echo } ]] !
 ### expect
 } ]] !

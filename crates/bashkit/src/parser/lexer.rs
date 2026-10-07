@@ -12,6 +12,9 @@ use super::tokens::Token;
 pub struct SpannedToken {
     pub token: Token,
     pub span: Span,
+    /// Source text of a word token, only while raw capture is on (function
+    /// bodies, for `type`/`declare -f` printing).
+    pub raw: Option<String>,
 }
 
 /// Maximum nesting depth for command substitution in the lexer.
@@ -32,6 +35,30 @@ struct ContinuationFlags {
     error: Option<String>,
 }
 
+/// Bash parses a backquoted command when it runs, so a syntax error there
+/// fails only that substitution (status 2), unlike `$(...)` which fails the
+/// whole command at parse time. A body that does not parse becomes
+/// `eval 'body'`, which reports the same error when (and only if) it runs.
+fn defer_backtick_syntax_error(buf: &mut String, body_start: usize) {
+    let Some(body) = buf.get(body_start..) else {
+        return;
+    };
+    if body.trim().is_empty() || super::Parser::new(body).parse().is_ok() {
+        return;
+    }
+    let deferred = format!("eval {}", super::raw::single_quote(body));
+    buf.truncate(body_start);
+    buf.push_str(&deferred);
+}
+
+/// Concrete (drop-free) type of [`Lexer::lookahead`], so borrows end early.
+type Lookahead<'s, 'a> = std::iter::Peekable<
+    std::iter::Chain<
+        std::iter::Copied<std::collections::vec_deque::Iter<'s, char>>,
+        std::iter::Peekable<std::str::Chars<'a>>,
+    >,
+>;
+
 /// Lexer for bash scripts.
 pub struct Lexer<'a> {
     #[allow(dead_code)] // Stored for error reporting in future
@@ -44,6 +71,11 @@ pub struct Lexer<'a> {
     reinject_buf: VecDeque<char>,
     /// Maximum allowed nesting depth for command substitution
     max_subst_depth: usize,
+    /// Record each word token's source text (see [`SpannedToken::raw`]).
+    /// Important decision: captured from consumed chars, not span offsets,
+    /// so text re-injected after a heredoc body still maps to its own token.
+    capture_raw: bool,
+    raw_buf: String,
 }
 
 impl<'a> Lexer<'a> {
@@ -61,6 +93,8 @@ impl<'a> Lexer<'a> {
             chars: input.chars().peekable(),
             reinject_buf: VecDeque::new(),
             max_subst_depth: max_depth,
+            capture_raw: false,
+            raw_buf: String::new(),
         }
     }
 
@@ -96,19 +130,53 @@ impl<'a> Lexer<'a> {
         };
         if let Some(c) = ch {
             self.position.advance(c);
+            if self.capture_raw {
+                self.raw_buf.push(c);
+            }
         }
         ch
+    }
+
+    /// Upcoming characters without consuming them: re-injected text first
+    /// (the rest of a heredoc line), then the input.
+    fn lookahead(&self) -> Lookahead<'_, 'a> {
+        self.reinject_buf
+            .iter()
+            .copied()
+            .chain(self.chars.clone())
+            .peekable()
+    }
+
+    /// Whether word-token source capture is on.
+    pub fn capture_raw(&self) -> bool {
+        self.capture_raw
+    }
+
+    /// Turn word-token source capture on or off.
+    pub fn set_capture_raw(&mut self, on: bool) {
+        self.capture_raw = on;
     }
 
     /// Get the next token with its source span.
     pub fn next_spanned_token(&mut self) -> Option<SpannedToken> {
         self.skip_whitespace();
         let start = self.position;
+        self.raw_buf.clear();
         let token = self.next_token_inner()?;
         let end = self.position;
+        let raw = (self.capture_raw
+            && matches!(
+                token,
+                Token::Word(_)
+                    | Token::LiteralWord(_)
+                    | Token::QuotedWord(_)
+                    | Token::QuotedGlobWord(_)
+            ))
+        .then(|| std::mem::take(&mut self.raw_buf));
         Some(SpannedToken {
             token,
             span: Span::from_positions(start, end),
+            raw,
         })
     }
 
@@ -143,6 +211,9 @@ impl<'a> Lexer<'a> {
                 if self.peek_char() == Some('|') {
                     self.advance();
                     Some(Token::Or)
+                } else if self.peek_char() == Some('&') {
+                    self.advance();
+                    Some(Token::PipeBoth)
                 } else {
                     Some(Token::Pipe)
                 }
@@ -256,7 +327,7 @@ impl<'a> Lexer<'a> {
                 self.advance();
                 // `[[` is the keyword only as a whole word; `[[:digit:]]*` is
                 // a glob bracket expression.
-                let mut lookahead = self.chars.clone();
+                let mut lookahead = self.lookahead();
                 let keyword = lookahead.next() == Some('[')
                     && matches!(
                         lookahead.next(),
@@ -288,12 +359,24 @@ impl<'a> Lexer<'a> {
                 }
             }
             ']' => {
+                // `]]` closes `[[` only as a whole word; `]]x` and `]x` are
+                // ordinary words, like bash.
+                let ends_word = |c: Option<char>| {
+                    matches!(
+                        c,
+                        None | Some(' ' | '\t' | '\n' | ';' | '|' | '&' | '(' | ')' | '<' | '>')
+                    )
+                };
                 self.advance();
-                if self.peek_char() == Some(']') {
+                let mut ahead = self.lookahead();
+                let double = ahead.next() == Some(']') && ends_word(ahead.next());
+                if double {
                     self.advance();
                     Some(Token::DoubleRightBracket)
-                } else {
+                } else if ends_word(self.peek_char()) {
                     Some(Token::Word("]".to_string()))
+                } else {
+                    self.read_word_starting_with("]")
                 }
             }
             '\'' => self.read_single_quoted_string(),
@@ -315,7 +398,7 @@ impl<'a> Lexer<'a> {
                 self.advance();
             } else if ch == '\\' {
                 // Check for backslash-newline (line continuation) between tokens
-                let mut lookahead = self.chars.clone();
+                let mut lookahead = self.lookahead();
                 lookahead.next(); // skip backslash
                 if lookahead.next() == Some('\n') {
                     self.advance(); // consume backslash
@@ -357,14 +440,7 @@ impl<'a> Lexer<'a> {
         // 2-char redirect operator (e.g. ">>", "<&", "<<") matter, so bound the
         // lookahead — collecting all remaining input here made every
         // digit-initial word O(n) and the whole lex O(n^2) (TM-DOS-024).
-        // Re-injected text (the rest of a heredoc line) comes first.
-        let input_remaining: String = self
-            .reinject_buf
-            .iter()
-            .copied()
-            .chain(self.chars.clone())
-            .take(4)
-            .collect();
+        let input_remaining: String = self.lookahead().take(4).collect();
 
         // Check patterns: "N>" "N>>" "N>&" "N<" "N<&"
         if fd_str.len() == 1
@@ -925,6 +1001,7 @@ impl<'a> Lexer<'a> {
                 has_unquoted_expansion = true;
                 self.advance(); // consume opening `
                 word.push_str("$(");
+                let body_start = word.len();
                 let mut closed = false;
                 while let Some(c) = self.peek_char() {
                     if c == '`' {
@@ -955,6 +1032,7 @@ impl<'a> Lexer<'a> {
                         "unterminated backtick substitution".to_string(),
                     ));
                 }
+                defer_backtick_syntax_error(&mut word, body_start);
                 word.push(')');
             } else if ch == '\\' {
                 self.advance();
@@ -1236,7 +1314,7 @@ impl<'a> Lexer<'a> {
                 }
                 Some('$') => {
                     // Check for $'...' ANSI-C quoting in continuation
-                    let mut lookahead = self.chars.clone();
+                    let mut lookahead = self.lookahead();
                     lookahead.next(); // skip $
                     if lookahead.next() == Some('\'') {
                         self.advance(); // consume $
@@ -1455,6 +1533,15 @@ impl<'a> Lexer<'a> {
                         return Err("parameter expansion nesting too deep".to_string());
                     }
                     depth += 1;
+                }
+                // `${x:-$(echo })}`: braces inside a command substitution
+                // belong to it.
+                '$' if self.peek_char() == Some('(') => {
+                    self.advance();
+                    word.push_str("$(");
+                    if !self.read_command_subst_body(word) {
+                        return Err("unterminated command substitution".to_string());
+                    }
                 }
                 '}' => {
                     word.push('}');
@@ -1681,6 +1768,7 @@ impl<'a> Lexer<'a> {
                     // Backtick command substitution inside double quotes
                     self.advance(); // consume opening `
                     content.push_str("$(");
+                    let body_start = content.len();
                     while let Some(c) = self.peek_char() {
                         if c == '`' {
                             self.advance();
@@ -1703,6 +1791,7 @@ impl<'a> Lexer<'a> {
                             self.advance();
                         }
                     }
+                    defer_backtick_syntax_error(&mut content, body_start);
                     content.push(')');
                 }
                 _ => {
@@ -1888,6 +1977,19 @@ impl<'a> Lexer<'a> {
         false
     }
 
+    /// Consume a `<(...)`/`>(...)` body after its opening token, through the
+    /// closing `)`, with the same scanner as `$(...)`. Nothing is copied; the
+    /// caller slices the source. Returns whether the `)` was found.
+    pub fn skip_subst_body(&mut self) -> bool {
+        let mut scanner = super::subst_scan::SubstScanner::new();
+        while let Some(c) = self.advance() {
+            if scanner.feed(c) == super::subst_scan::Step::Close {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Read parameter expansion content after `${`, handling nested braces and quotes.
     /// In bash, quotes inside `${...}` (e.g. `${arr["key"]}`) don't terminate the
     /// outer double-quoted string. Appends chars including closing `}` to `content`.
@@ -2006,7 +2108,7 @@ impl<'a> Lexer<'a> {
 
     /// Check if { is followed by whitespace (brace group start)
     fn is_brace_group_start(&self) -> bool {
-        let mut chars = self.chars.clone();
+        let mut chars = self.lookahead();
         // Skip the opening {
         if chars.next() != Some('{') {
             return false;
@@ -2023,7 +2125,7 @@ impl<'a> Lexer<'a> {
     /// and `>`; `}` is not among them, so it delimits a word only when a
     /// metacharacter or EOF already follows it.
     fn right_brace_stands_alone(&self) -> bool {
-        let mut chars = self.chars.clone();
+        let mut chars = self.lookahead();
         if chars.next() != Some('}') {
             return false;
         }
@@ -2071,7 +2173,7 @@ impl<'a> Lexer<'a> {
         // over leading whitespace made `x=(` followed by megabytes of spaces
         // O(n) per call (TM-DOS-024).
         const MAX_LOOKAHEAD: usize = 10_000;
-        let mut chars = self.chars.clone();
+        let mut chars = self.lookahead();
         // Skip the `(` we haven't consumed yet
         if chars.next() != Some('(') {
             return false;
@@ -2085,6 +2187,54 @@ impl<'a> Lexer<'a> {
             }
         }
         false
+    }
+
+    /// Read the body of `(( ... ))` as written, after the opening `((`,
+    /// through the matching `))` (consumed, not returned). Parentheses nest;
+    /// quoted text is kept verbatim. Bash reads the arithmetic command this
+    /// way, so `<<` is a shift and spacing survives for `type`. Returns
+    /// `None` when input ends first.
+    pub fn read_dparen_body(&mut self) -> Option<String> {
+        let mut body = String::new();
+        let mut depth = 0usize;
+        while let Some(c) = self.advance() {
+            match c {
+                '(' => depth += 1,
+                ')' if depth == 0 && self.peek_char() == Some(')') => {
+                    self.advance();
+                    return Some(body);
+                }
+                // An unbalanced `)` stays text.
+                ')' if depth == 0 => {}
+                ')' => depth -= 1,
+                '\\' => {
+                    body.push(c);
+                    if let Some(n) = self.advance() {
+                        body.push(n);
+                    }
+                    continue;
+                }
+                '\'' | '"' => {
+                    body.push(c);
+                    while let Some(n) = self.advance() {
+                        body.push(n);
+                        if n == c {
+                            break;
+                        }
+                        if n == '\\'
+                            && c == '"'
+                            && let Some(e) = self.advance()
+                        {
+                            body.push(e);
+                        }
+                    }
+                    continue;
+                }
+                _ => {}
+            }
+            body.push(c);
+        }
+        None
     }
 
     /// Read the raw source of a `[[ ... =~ REGEX ]]` operand, as bash does:
@@ -2109,7 +2259,7 @@ impl<'a> Lexer<'a> {
                 }
                 if ch == '|' {
                     // `||` ends the operand; a lone `|` is alternation.
-                    let mut ahead = self.chars.clone();
+                    let mut ahead = self.lookahead();
                     ahead.next();
                     if self.reinject_buf.is_empty() && ahead.peek() == Some(&'|') {
                         break;
