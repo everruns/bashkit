@@ -959,18 +959,21 @@ test("BB: arithmetic overflow (TM-DOS-029)", (t) => {
 test("BB: division by zero does not crash (TM-DOS-029)", (t) => {
   const bash = new Bash();
   const r = bash.executeSync("echo $((1 / 0)) 2>&1");
-  // Bashkit returns 0 for div-by-zero (differs from bash which errors).
-  // Key security property: interpreter must not crash or panic.
+  // Reports like bash. Key security property: no crash or panic.
   t.is(typeof r.exitCode, "number", "division by zero must not crash");
-  t.is(r.stdout.trim(), "0", "bashkit returns 0 for div-by-zero");
+  t.not(r.exitCode, 0, "division by zero fails");
+  t.is(r.stdout, "", "no value is printed");
+  t.true(r.stderr.includes("division by 0"), "the error is reported");
 });
 
 test("BB: modulo by zero does not crash (TM-DOS-029)", (t) => {
   const bash = new Bash();
   const r = bash.executeSync("echo $((1 % 0)) 2>&1");
-  // Same as div-by-zero: bashkit returns 0 instead of erroring.
+  // Same as div-by-zero: reports and fails.
   t.is(typeof r.exitCode, "number", "modulo by zero must not crash");
-  t.is(r.stdout.trim(), "0", "bashkit returns 0 for mod-by-zero");
+  t.not(r.exitCode, 0, "modulo by zero fails");
+  t.is(r.stdout, "", "no value is printed");
+  t.true(r.stderr.includes("division by 0"), "the error is reported");
 });
 
 test("BB: negative exponent", (t) => {
