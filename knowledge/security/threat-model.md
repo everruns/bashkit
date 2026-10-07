@@ -255,7 +255,7 @@ runaway scripts without permanently breaking the session.
 |----|--------|--------------|------------|--------|
 | TM-DOS-023 | Long computation | Complex awk/sed regex, including repeated evaluation of dynamic awk and `[[ =~ ]]` operands | Linear-time regex engine; runtime regex compilation cached per evaluator (64 entries / 1 MB retained pattern text, including invalid patterns); timeout (30s) | **MITIGATED** |
 | TM-DOS-024 | Parser hang | Malformed input | `parser_timeout` (5s) + `max_parser_operations` | **MITIGATED** |
-| TM-DOS-025 | Regex backtrack | `grep "a](*b)*c" file`; `grep -P '(a+)+$' file` | Default `regex` engine is linear-time; `grep -P`/`sed` fancy-regex paths capped by `FANCY_BACKTRACK_LIMIT` (1M steps), exceeding it yields "no match", not a hang | **MITIGATED** |
+| TM-DOS-025 | Regex backtrack | `grep "a](*b)*c" file`; `grep -P '(a+)+$' file` | Default `regex` engine is linear-time; `grep -P`, grep BRE/ERE back-references (`\(a\)\1`) and `sed` fancy-regex paths capped by `FANCY_BACKTRACK_LIMIT` (1M steps), exceeding it yields "no match", not a hang | **MITIGATED** |
 | TM-DOS-027 | Builtin parser recursion | Deeply nested awk/jq expressions | awk: `AWK_MAX_PARSER_DEPTH` (100 nested groupings/statements) plus 1,000 operators per expression tree (`builtins/awk/parser.rs`), so the evaluator's recursion is bounded too; jq: `MAX_JQ_JSON_DEPTH` (100) | **MITIGATED** |
 | TM-DOS-028 | Diff algorithm DoS | `diff` on two large unrelated files | LCS matrix capped at 10M cells; falls back to simple line-by-line output | **MITIGATED** |
 | TM-DOS-029 | Arithmetic overflow/panic | `$(( 2 ** -1 ))`, `$(( 1 << 64 ))`, `i64::MIN / -1` | `wrapping_*` / saturating ops; `wrapping_neg` for `i64::MIN / -1` and unary negate; `<<`/`>>` clamp shift amount | **MITIGATED** |
@@ -1391,7 +1391,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | Threat ID | Vulnerability | Impact | Rationale |
 |-----------|---------------|--------|-----------|
 | TM-CRY-002 | RSA timing sidechannel in `rsa` (RUSTSEC-2023-0071) | Private key recovery over the network | No upstream patch exists for any `rsa` version; reachable only via the opt-in `ssh` feature, and Ed25519 keys avoid the affected path |
-| TM-DOS-025 | Regex backtracking | CPU exhaustion | Linear-time `regex` engine by default; fancy-regex paths (`grep -P`, `sed`) capped by `FANCY_BACKTRACK_LIMIT` |
+| TM-DOS-025 | Regex backtracking | CPU exhaustion | Linear-time `regex` engine by default; fancy-regex paths (`grep -P`, grep back-references, `sed`) capped by `FANCY_BACKTRACK_LIMIT` |
 | TM-UNI-004 | Zero-width chars in variable names | Variable confusion | Matches Bash behavior |
 | TM-UNI-006 | Homoglyph filenames | Visual confusion | Impractical to fully detect |
 | TM-UNI-008 | Normalization bypass | Duplicate filenames | Matches Linux FS behavior |

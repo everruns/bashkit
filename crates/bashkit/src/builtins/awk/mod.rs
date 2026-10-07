@@ -32,7 +32,7 @@ mod io;
 mod lexer;
 mod order;
 mod parser;
-mod regex;
+pub(crate) mod regex;
 mod value;
 
 use std::future::Future;

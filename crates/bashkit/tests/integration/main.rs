@@ -75,6 +75,7 @@ pub mod git_remote_security_tests;
 pub mod git_security_tests;
 pub mod glob_fuzz_scaffold_tests;
 pub mod glob_intermediate_component_tests;
+pub mod grep_gnu_output_tests;
 pub mod grep_gnu_parity_tests;
 pub mod harness_example_tests;
 pub mod headtail_resource_tests;
