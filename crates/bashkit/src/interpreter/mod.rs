@@ -352,9 +352,58 @@ pub(crate) struct ShellRef<'a> {
 // interpreter state; others (e.g. `bash`, `command`, `exec`, `getopts`) live
 // only here. Listing every name guarantees inventory completeness regardless of
 // map membership.
+// Builtins that exist only inside a shell (no `/usr/bin` program of that
+// name), so `env NAME` cannot run them.
+const ENV_SHELL_ONLY_BUILTINS: &[&str] = &[
+    ".",
+    "alias",
+    "bg",
+    "break",
+    "builtin",
+    "caller",
+    "cd",
+    "compgen",
+    "continue",
+    "declare",
+    "dirs",
+    "enable",
+    "eval",
+    "exec",
+    "exit",
+    "export",
+    "fc",
+    "fg",
+    "getopts",
+    "hash",
+    "help",
+    "history",
+    "jobs",
+    "let",
+    "local",
+    "mapfile",
+    "popd",
+    "pushd",
+    "readarray",
+    "readonly",
+    "return",
+    "set",
+    "shift",
+    "shopt",
+    "source",
+    "times",
+    "trap",
+    "type",
+    "typeset",
+    "ulimit",
+    "umask",
+    "unalias",
+    "unset",
+    "wait",
+];
+
 const SPECIAL_BUILTIN_NAMES: &[&str] = &[
-    ".", "bash", "command", "declare", "eval", "exec", "getopts", "let", "local", "sh", "source",
-    "typeset", "unset",
+    ".", "bash", "builtin", "command", "declare", "eval", "exec", "getopts", "let", "local", "sh",
+    "source", "typeset", "unset",
 ];
 
 /// Sorted, deduped union of baked-in/custom builtins, interpreter-special
@@ -696,6 +745,8 @@ pub(crate) fn is_internal_variable(name: &str) -> bool {
         || name.starts_with("_LOWER_")
         || name.starts_with("_INTEGER_")
         || name.starts_with("_ARRAY_READ_")
+        || name == "_UMASK"
+        || name.starts_with("_ULIMIT_")
         || name == "_SHIFT_COUNT"
         || name == "_SET_POSITIONAL"
 }
@@ -1438,14 +1489,12 @@ impl Interpreter {
             "rm" => Rm,
             "cp" => Cp,
             "mv" => Mv,
-            "touch" => Touch,
             "chmod" => Chmod,
             "ln" => Ln,
             "chown" => Chown,
             "rmdir" => Rmdir,
             // Directory listing and search
             "ls" => Ls,
-            "find" => Find,
             "tree" => Tree,
             "truncate" => Truncate,
             "shuf" => Shuf,
@@ -1461,6 +1510,23 @@ impl Interpreter {
             "md5sum" => Md5sum,
             "sha1sum" => Sha1sum,
             "sha256sum" => Sha256sum,
+            "sha224sum" => Sha224sum,
+            "sha384sum" => Sha384sum,
+            "sha512sum" => Sha512sum,
+            "b2sum" => B2sum,
+            "cksum" => Cksum,
+            "base32" => Base32,
+            "basenc" => Basenc,
+            "cmp" => Cmp,
+            "factor" => Factor,
+            "tsort" => Tsort,
+            "nproc" => Nproc,
+            "dd" => Dd,
+            "install" => Install,
+            "umask" => Umask,
+            "ulimit" => Ulimit,
+            "locale" => Locale,
+            "enable" => Enable,
             // Archive operations
             "tar" => Tar,
             "gzip" => Gzip,
@@ -1571,6 +1637,10 @@ impl Interpreter {
             "printf".to_string(),
             Arc::new(builtins::Printf::with_clock(clock)),
         );
+        builtins.insert(
+            "touch".to_string(),
+            Arc::new(builtins::Touch::with_clock(clock)),
+        );
 
         // System info builtins (configurable virtual values)
         let hostname_val = hostname.unwrap_or_else(|| builtins::DEFAULT_HOSTNAME.to_string());
@@ -1586,6 +1656,10 @@ impl Interpreter {
         builtins.insert(
             "whoami".to_string(),
             Arc::new(builtins::Whoami::with_username(&username_val)),
+        );
+        builtins.insert(
+            "find".to_string(),
+            Arc::new(builtins::Find::new(clock, &username_val)),
         );
         builtins.insert(
             "id".to_string(),
@@ -6660,6 +6734,7 @@ impl Interpreter {
             "source" | "." => Some(self.execute_source(args, redirects).await),
             "eval" => Some(self.execute_eval(args, stdin, redirects).await),
             "command" => Some(self.execute_command_builtin(args, stdin, redirects).await),
+            "builtin" => Some(self.execute_builtin_builtin(args, stdin, redirects).await),
             "declare" | "typeset" => Some(self.execute_declare_builtin(args, redirects).await),
             "let" => Some(self.execute_let_builtin(args, redirects).await),
             "unset" => Some(self.execute_unset_builtin(args, redirects).await),
@@ -8173,6 +8248,37 @@ impl Interpreter {
         Ok(result)
     }
 
+    /// `builtin NAME [ARGS]`: run a shell builtin, bypassing functions.
+    async fn execute_builtin_builtin(
+        &mut self,
+        args: &[String],
+        stdin: Option<crate::StreamData>,
+        redirects: &[Redirect],
+    ) -> Result<ExecResult> {
+        let args = match args.first().map(String::as_str) {
+            Some("--") => &args[1..],
+            _ => args,
+        };
+        let Some(name) = args.first() else {
+            return Ok(ExecResult::ok(String::new()));
+        };
+        if !(Self::is_special_builtin_name(name)
+            || self.builtins.contains_key(name.as_str())
+            || self.has_host_builtin(name))
+        {
+            return Ok(ExecResult::err(
+                format!("bash: builtin: {name}: not a shell builtin\n"),
+                1,
+            ));
+        }
+        // `command NAME` already runs the builtin and skips functions; a
+        // leading `--` keeps a `-v`-named builtin from becoming a flag.
+        let mut command_args = Vec::with_capacity(args.len() + 1);
+        command_args.push("--".to_string());
+        command_args.extend(args.iter().cloned());
+        Box::pin(self.execute_command_builtin(&command_args, stdin, redirects)).await
+    }
+
     /// Execute the `command` builtin.
     ///
     /// - `command -v name` — print command path/name if found (exit 0) or nothing (exit 1)
@@ -8189,7 +8295,8 @@ impl Interpreter {
         }
 
         let mut mode = ' '; // default: run the command
-        let mut cmd_args_start = 0;
+        // Stays past the end when only flags were given (`command -v`).
+        let mut cmd_args_start = args.len();
 
         // Parse flags
         let mut i = 0;
@@ -8204,6 +8311,9 @@ impl Interpreter {
             } else if arg == "-p" {
                 // -p: use default PATH (ignore in sandboxed env)
                 i += 1;
+            } else if arg == "--" {
+                cmd_args_start = i + 1;
+                break;
             } else {
                 cmd_args_start = i;
                 break;
@@ -8700,6 +8810,33 @@ impl Interpreter {
                     }
                 }
             }
+            builtins::ExecutionPlan::Env {
+                command,
+                clear,
+                unset,
+                set,
+                chdir,
+            } => Box::pin(self.execute_env_plan(command, clear, unset, set, chdir)).await?,
+            builtins::ExecutionPlan::Driver(mut driver) => {
+                let mut last = None;
+                loop {
+                    match driver.next(last.take()).await? {
+                        builtins::PlanStep::Run { command, cwd } => {
+                            let inner_cmd = subcommand_to_command(&command);
+                            let saved_stdin = self.pipeline_stdin.take();
+                            self.pipeline_stdin = command.stdin;
+                            let saved_cwd = cwd.map(|dir| std::mem::replace(&mut self.cwd, dir));
+                            let result = self.execute_command(&inner_cmd).await;
+                            if let Some(dir) = saved_cwd {
+                                self.cwd = dir;
+                            }
+                            self.pipeline_stdin = saved_stdin;
+                            last = Some(result?);
+                        }
+                        builtins::PlanStep::Done(result) => break result,
+                    }
+                }
+            }
             builtins::ExecutionPlan::Batch { commands } => {
                 let mut combined_stdout = crate::StreamData::new();
                 let mut combined_stderr = crate::StreamData::new();
@@ -8763,6 +8900,77 @@ impl Interpreter {
         };
 
         self.apply_redirections(result, redirects).await
+    }
+
+    /// `env [-i] [-u NAME] [-C DIR] [NAME=VALUE]... CMD`: run CMD like a
+    /// child process. Shell state is snapshotted and restored, so neither the
+    /// environment edits nor anything CMD does leaks back to the caller.
+    async fn execute_env_plan(
+        &mut self,
+        command: builtins::SubCommand,
+        clear: bool,
+        unset: Vec<String>,
+        set: Vec<(String, String)>,
+        chdir: Option<String>,
+    ) -> Result<ExecResult> {
+        let snapshot = self.snapshot_subshell_state();
+        let saved_env = self.env.clone();
+        let saved_stdin = self.pipeline_stdin.take();
+        if clear {
+            // A child started with an empty environment sees no shell
+            // variables at all; internal option markers stay.
+            self.vars_mut().retain(|name, _| is_internal_variable(name));
+            self.env.clear();
+        }
+        for name in unset {
+            self.env.remove(&name);
+            self.vars_mut().remove(&name);
+        }
+        for (name, value) in set {
+            if is_internal_variable(&name) {
+                continue;
+            }
+            self.env.insert(name.clone(), value.clone());
+            self.vars_mut().insert(name, value);
+        }
+        let mut result = Ok(None);
+        if let Some(dir) = chdir {
+            let path = crate::builtins::resolve_path(&self.cwd, &dir);
+            if self
+                .fs
+                .stat(&path)
+                .await
+                .is_ok_and(|m| m.file_type.is_dir())
+            {
+                self.cwd = path;
+            } else {
+                result = Ok(Some(ExecResult::err(
+                    format!("env: cannot change directory to '{dir}': No such file or directory\n"),
+                    125,
+                )));
+            }
+        }
+        if matches!(result, Ok(None)) && ENV_SHELL_ONLY_BUILTINS.contains(&command.name.as_str()) {
+            // No program by this name exists on a real system.
+            result = Ok(Some(ExecResult::err(String::new(), 127)));
+        } else if matches!(result, Ok(None)) {
+            self.pipeline_stdin = command.stdin.clone();
+            let inner = subcommand_to_command(&command);
+            result = self.execute_command(&inner).await.map(Some);
+        }
+        self.pipeline_stdin = saved_stdin;
+        self.restore_subshell_state(snapshot);
+        self.env = saved_env;
+        let mut result = result?.unwrap_or_default();
+        // A child process can't break, return or exit the calling shell.
+        result.control_flow = ControlFlow::None;
+        if result.exit_code == 127
+            && (result.stderr.is_empty() || result.stderr.contains("command not found"))
+        {
+            // env execs a program, so a missing command reads like execvp's error.
+            result.stderr = format!("env: '{}': No such file or directory\n", command.name).into();
+        }
+        Ok(result)
     }
 
     /// Restore interpreter stacks/counters after an in-flight command future is cancelled.

@@ -29,6 +29,7 @@ Implemented:
 | `--tab` | Use tabs for indentation |
 | `--arg name value` | Bind `$name` to a string |
 | `--argjson name json` | Bind `$name` to a parsed JSON value |
+| `-f FILE`, `--from-file FILE` | Read the filter from FILE (VFS); all positionals become input files |
 | `-V`, `--version` | Print the version |
 | `-h`, `--help` | Print help |
 | Combined flags like `-snr` | Treated as the union of the individual flags |

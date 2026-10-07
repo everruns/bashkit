@@ -69,7 +69,7 @@ impl Builtin for Printf {
             Ok(v) => v,
             Err(err) => return Ok(ExecResult::err(format!("{err}\n"), 1)),
         };
-        let output = match render_printf(&format, &args) {
+        let output = match render_printf_bytes(&format, &args) {
             Ok(output) => output,
             Err(err) => return Ok(ExecResult::err(err, 1)),
         };
@@ -79,15 +79,23 @@ impl Builtin for Printf {
             if is_internal_variable(&name) {
                 return Ok(ExecResult::ok(String::new()));
             }
-            ctx.variables.insert(name, output);
+            // Variables are text; a non-UTF-8 byte is decoded lossily here.
+            ctx.variables
+                .insert(name, String::from_utf8_lossy(&output).into_owned());
             Ok(ExecResult::ok(String::new()))
         } else {
-            Ok(ExecResult::ok(output))
+            Ok(ExecResult::ok_bytes(output))
         }
     }
 }
 
+#[cfg(test)]
 fn render_printf(format: &str, args: &[String]) -> std::result::Result<String, String> {
+    render_printf_bytes(format, args).map(|b| String::from_utf8_lossy(&b).into_owned())
+}
+
+/// Bytes are canonical: `\xff` must reach stdout as one 0xff byte.
+fn render_printf_bytes(format: &str, args: &[String]) -> std::result::Result<Vec<u8>, String> {
     let format = strip_zero_hex_escapes(format);
     let format = format.as_ref();
     let values = format_arguments(args);
@@ -101,7 +109,7 @@ fn render_printf(format: &str, args: &[String]) -> std::result::Result<String, S
     fmt_args.start_next_batch();
 
     if stopped || !format_seen {
-        return Ok(bytes_to_stdout_string(out));
+        return Ok(out);
     }
 
     while !fmt_args.is_exhausted() {
@@ -111,7 +119,7 @@ fn render_printf(format: &str, args: &[String]) -> std::result::Result<String, S
         fmt_args.start_next_batch();
     }
 
-    Ok(bytes_to_stdout_string(out))
+    Ok(out)
 }
 
 /// One argument-consuming slot of a format pass.
@@ -224,10 +232,6 @@ fn expand_time_directives(
         }
     }
     Ok((out, args))
-}
-
-fn bytes_to_stdout_string(bytes: Vec<u8>) -> String {
-    String::from_utf8_lossy(&bytes).into_owned()
 }
 
 fn strip_zero_hex_escapes(input: &str) -> Cow<'_, str> {

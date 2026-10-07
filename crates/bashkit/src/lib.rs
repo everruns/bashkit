@@ -19,7 +19,7 @@
 //! - **Python (CPython)** - Real CPython 3.14 in a WebAssembly sandbox (`cpython` feature)
 //! - **Experimental: SQLite** - Embedded SQLite-compatible engine via [Turso](https://github.com/tursodatabase/turso) (`sqlite` feature)
 //!
-//! # Built-in Commands (164)
+//! # Built-in Commands (182)
 //!
 //! | Category | Commands |
 //! |----------|----------|
@@ -27,17 +27,17 @@
 //! | Navigation | `cd`, `pwd`, `ls`, `find`, `tree`, `pushd`, `popd`, `dirs` |
 //! | Flow control | `true`, `false`, `exit`, `return`, `break`, `continue`, `test`, `[`, `assert` |
 //! | Variables | `export`, `set`, `unset`, `local`, `shift`, `source`, `.`, `eval`, `readonly`, `times`, `declare`, `typeset`, `let`, `dotenv`, `envsubst` |
-//! | Shell | `bash`, `sh` (virtual re-invocation), `exec`, `:`, `trap`, `caller`, `getopts`, `shopt`, `command`, `type`, `which`, `hash`, `alias`, `unalias`, `compgen`, `fc`, `help` |
+//! | Shell | `bash`, `sh` (virtual re-invocation), `exec`, `:`, `trap`, `caller`, `getopts`, `shopt`, `command`, `builtin`, `enable`, `umask`, `ulimit`, `type`, `which`, `hash`, `alias`, `unalias`, `compgen`, `fc`, `help` |
 //! | Text processing | `grep`, `rg`, `sed`, `awk`, `jq` and `yq` (with `jq` feature), `head`, `tail`, `sort`, `uniq`, `cut`, `tr`, `wc`, `paste`, `column`, `diff`, `comm`, `strings`, `tac`, `rev`, `seq`, `expr`, `fold`, `expand`, `unexpand`, `join`, `split`, `iconv`, `shuf`, `template` |
-//! | File operations | `mkdir`, `mktemp`, `mkfifo`, `rm`, `cp`, `mv`, `touch`, `chmod`, `chown`, `ln`, `rmdir`, `realpath`, `readlink`, `truncate`, `glob`, `patch` |
+//! | File operations | `mkdir`, `mktemp`, `mkfifo`, `rm`, `cp`, `mv`, `touch`, `chmod`, `chown`, `ln`, `rmdir`, `realpath`, `readlink`, `truncate`, `install`, `dd`, `glob`, `patch` |
 //! | File inspection | `file`, `stat`, `less` |
 //! | Archives | `tar`, `gzip`, `gunzip`, `bzip2`, `bunzip2`, `bzcat`, `zip`, `unzip` |
-//! | Byte tools | `od`, `xxd`, `hexdump`, `base64` |
-//! | Checksums | `md5sum`, `sha1sum`, `sha256sum`, `verify` |
-//! | Utilities | `sleep`, `date`, `basename`, `dirname`, `timeout`, `wait`, `watch`, `yes`, `kill`, `clear`, `numfmt`, `retry`, `parallel` |
+//! | Byte tools | `od`, `xxd`, `hexdump`, `base64`, `base32`, `basenc`, `cmp` |
+//! | Checksums | `md5sum`, `sha1sum`, `sha224sum`, `sha256sum`, `sha384sum`, `sha512sum`, `b2sum`, `cksum`, `verify` |
+//! | Utilities | `sleep`, `date`, `basename`, `dirname`, `timeout`, `wait`, `watch`, `yes`, `kill`, `clear`, `numfmt`, `factor`, `tsort`, `retry`, `parallel` |
 //! | Disk | `df`, `du` |
 //! | Pipeline | `xargs`, `tee` |
-//! | System info | `whoami`, `hostname`, `uname`, `id`, `env`, `printenv`, `history` |
+//! | System info | `whoami`, `hostname`, `uname`, `id`, `nproc`, `locale`, `env`, `printenv`, `history` |
 //! | Structured data | `json`, `csv`, `tomlq`, `semver` |
 //! | Network | `curl`, `wget`, `http` (requires [`NetworkAllowlist`])
 //! | Arithmetic | `bc` |

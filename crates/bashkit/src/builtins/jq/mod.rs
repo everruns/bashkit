@@ -245,7 +245,25 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
 
     // Compose the filter: prepend compat defs, the env def, etc.
     let prefix = build_compat_prefix();
-    let compat_filter = format!("{prefix}\n{}", parsed.filter);
+    let filter_text = match parsed.filter_file {
+        Some(file) => {
+            let path = resolve_path(ctx.cwd, file);
+            match read_text_file(&*ctx.fs, &path, "jq").await {
+                Ok(t) => {
+                    ctx.consume_budget_input(t.len())?;
+                    std::borrow::Cow::Owned(t)
+                }
+                Err(_) => {
+                    return Ok(ExecResult::err(
+                        format!("jq: Could not open {file}: No such file or directory\n"),
+                        2,
+                    ));
+                }
+            }
+        }
+        None => std::borrow::Cow::Borrowed(parsed.filter),
+    };
+    let compat_filter = format!("{prefix}\n{filter_text}");
     let filter_src = compat_filter.as_str();
 
     // Set up loader.
