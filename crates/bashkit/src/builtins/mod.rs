@@ -67,6 +67,7 @@ mod fold;
 mod generated;
 mod glob_cmd;
 mod grep;
+mod grep_pattern;
 mod headtail;
 mod help;
 mod hextools;
