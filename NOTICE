@@ -58,6 +58,18 @@ Our jq builtin aims for compatibility with jq's query syntax and behavior.
 The implementation uses the jaq Rust crates (MIT licensed) rather than jq
 source code directly.
 
+--------------------------------------------------------------------------------
+BashBox
+--------------------------------------------------------------------------------
+Copyright (c) Pushpak Chhajed
+Licensed under the MIT License
+
+Repository: https://github.com/shipfastlabs/bashbox
+
+The spec cases in crates/bashkit/tests/spec_cases/bash/bashbox-*.test.sh are
+copied from BashBox's test suite (script and expected stdout, recorded from
+GNU bash). The full MIT license text is in THIRD_PARTY_LICENSES/MIT.txt.
+
 ================================================================================
 RUST DEPENDENCIES
 ================================================================================
