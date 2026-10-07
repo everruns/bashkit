@@ -35,6 +35,7 @@ mod convert;
 mod errors;
 mod format;
 mod input;
+mod loc;
 mod messages;
 // Vendored jaq-json (MIT, Michael Färber, https://github.com/01mf02/jaq),
 // see jaq_json/UPSTREAM_VERSION and knowledge/runtimes/jaq-json-vendor.md.
@@ -262,6 +263,7 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
         }
         None => std::borrow::Cow::Borrowed(parsed.filter),
     };
+    let filter_text = loc::expand_loc(&filter_text);
     let compat_filter = format!("{prefix}\n{filter_text}");
     let filter_src = compat_filter.as_str();
 

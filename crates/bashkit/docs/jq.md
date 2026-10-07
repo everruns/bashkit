@@ -102,6 +102,11 @@ The limit counts real in-memory size, which is several times the JSON text:
 a 5.6 MB array of 100,000 small objects fits the default, much larger inputs
 need a larger `max_live_intermediate_bytes`.
 
+## Location
+
+`$__loc__` is `{"file":"<top-level>","line":N}`, N being the filter line it
+appears on.
+
 ## Messages and halt
 
 `stderr`, `debug` and `halt_error` write to the jq command's stderr.
