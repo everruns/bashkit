@@ -11,7 +11,6 @@
 #![allow(clippy::unwrap_used)]
 
 mod arithmetic;
-use arithmetic::{arith_lvalue_end, is_arith_lvalue};
 mod brace_expansion;
 mod expansion;
 mod glob;
@@ -1520,40 +1519,10 @@ pub struct Interpreter {
     script_depth: usize,
     /// Nested `bash`/`sh` child shells (TM-DOS-125).
     child_shell_depth: usize,
-}
-
-struct ArithmeticExpansionState {
-    resolving_vars: Vec<String>,
-    fuel: usize,
-}
-
-impl ArithmeticExpansionState {
-    fn new(fuel: usize) -> Self {
-        Self {
-            resolving_vars: Vec::new(),
-            fuel,
-        }
-    }
-
-    fn spend(&mut self, amount: usize) -> bool {
-        if self.fuel < amount {
-            return false;
-        }
-        self.fuel -= amount;
-        true
-    }
-
-    fn enter_var(&mut self, name: &str) -> bool {
-        if self.resolving_vars.iter().any(|var| var == name) {
-            return false;
-        }
-        self.resolving_vars.push(name.to_string());
-        true
-    }
-
-    fn exit_var(&mut self) {
-        self.resolving_vars.pop();
-    }
+    /// First arithmetic error raised by a read-only evaluation site (array
+    /// subscripts, `declare -i` values, substring offsets). The command
+    /// boundary turns it into a line abort, as bash does.
+    arith_error: StdMutex<Option<String>>,
 }
 
 impl Interpreter {
@@ -2022,6 +1991,7 @@ impl Interpreter {
             concurrent_jobs: true,
             script_depth: 0,
             child_shell_depth: 0,
+            arith_error: StdMutex::new(None),
         }
     }
 
@@ -2176,6 +2146,7 @@ impl Interpreter {
             script_depth: 1,
             // Forks are polled on this task's stack, so they inherit its depth.
             child_shell_depth: self.child_shell_depth,
+            arith_error: StdMutex::new(None),
         }
     }
 
@@ -3158,7 +3129,14 @@ impl Interpreter {
 
         let mut stopped = false;
         let top_level = self.script_depth == 1;
+        // Line of a command that aborted (bash DISCARD): the rest of that
+        // line is skipped and the shell resumes at the next one.
+        let mut aborted_line: Option<usize> = None;
+        let mut propagate_abort = false;
         for command in &script.commands {
+            if aborted_line == Some(Self::command_line(command)) {
+                continue;
+            }
             self.check_cancelled()?;
             let emit_before = self.output_emit_count;
             let mut result = self.execute_command(command).await?;
@@ -3205,6 +3183,18 @@ impl Interpreter {
 
             exit_code = result.exit_code;
             self.last_exit_code = exit_code;
+
+            if result.control_flow == ControlFlow::Abort {
+                // A shell's top level (script, `bash -c`) resumes at the next
+                // line; `source`/`eval` bodies pass the abort to their caller.
+                if run_exit_trap {
+                    aborted_line = Some(Self::command_line(command));
+                    continue;
+                }
+                propagate_abort = true;
+                stopped = true;
+                break;
+            }
 
             // Stop on control flow (e.g. nounset error uses Return to abort)
             if result.control_flow != ControlFlow::None {
@@ -3337,7 +3327,11 @@ impl Interpreter {
             stdout,
             stderr,
             exit_code,
-            control_flow: ControlFlow::None,
+            control_flow: if propagate_abort {
+                ControlFlow::Abort
+            } else {
+                ControlFlow::None
+            },
             stdout_truncated,
             stderr_truncated,
             final_env,
@@ -3419,7 +3413,7 @@ impl Interpreter {
                 return Ok(killed);
             }
 
-            match command {
+            let result = match command {
                 Command::Simple(simple) => {
                     // One Result local (not `?` + a second ExecResult copy):
                     // this frame repeats per `$(...)` nesting level.
@@ -3470,8 +3464,43 @@ impl Interpreter {
                     }
                     Ok(ExecResult::ok(String::new()))
                 }
-            }
+            };
+            self.abort_line_on_error(result)
         })
+    }
+
+    /// Turn a line-abort error (or an arithmetic error recorded by a
+    /// read-only evaluation site) into `ControlFlow::Abort`, keeping the
+    /// output produced so far.
+    fn abort_line_on_error(&mut self, result: Result<ExecResult>) -> Result<ExecResult> {
+        match result {
+            Err(crate::error::Error::LineAbort(msg)) => {
+                self.take_arith_error();
+                Ok(ExecResult {
+                    stderr: msg.into(),
+                    exit_code: 1,
+                    control_flow: ControlFlow::Abort,
+                    ..Default::default()
+                })
+            }
+            Ok(mut r) => {
+                if let Some(msg) = self.take_arith_error() {
+                    r.stderr
+                        .append(&crate::StreamData::from(format!("bash: {msg}\n")));
+                    r.exit_code = 1;
+                    r.control_flow = ControlFlow::Abort;
+                }
+                Ok(r)
+            }
+            other => other,
+        }
+    }
+
+    /// Error for a pending arithmetic error, if any (checked after expansion
+    /// so the command does not run).
+    fn pending_arith_abort(&self) -> Option<crate::error::Error> {
+        self.take_arith_error()
+            .map(|msg| crate::error::Error::LineAbort(format!("bash: {msg}\n")))
     }
 
     /// Charge every executable AST command, including optimized command forms.
@@ -3551,10 +3580,16 @@ impl Interpreter {
                 // Also clear errexit_suppressed: inner AND/OR suppression must not
                 // escape the subshell boundary and prevent the parent set -e from
                 // firing on the subshell's non-zero exit code.
+                let mut result = self.abort_line_on_error(result);
                 if let Ok(ref mut res) = result {
                     match res.control_flow {
                         ControlFlow::Exit(code) | ControlFlow::Return(code) => {
                             res.exit_code = code;
+                            res.control_flow = ControlFlow::None;
+                        }
+                        // A line abort ends only the subshell, with status 1.
+                        ControlFlow::Abort => {
+                            res.exit_code = 1;
                             res.control_flow = ControlFlow::None;
                         }
                         _ => {}
@@ -3941,6 +3976,15 @@ impl Interpreter {
                             stderr,
                             exit_code: code,
                             control_flow: ControlFlow::Exit(code),
+                            ..Default::default()
+                        });
+                    }
+                    ControlFlow::Abort => {
+                        return Ok(ExecResult {
+                            stdout,
+                            stderr,
+                            exit_code: 1,
+                            control_flow: ControlFlow::Abort,
                             ..Default::default()
                         });
                     }
@@ -4373,155 +4417,25 @@ impl Interpreter {
     }
 
     async fn execute_arithmetic_command(&mut self, expr: &str) -> Result<ExecResult> {
-        let result = self.execute_arithmetic_with_side_effects(expr);
-        let exit_code = if result != 0 { 0 } else { 1 };
-
-        Ok(ExecResult {
-            stdout: crate::StreamData::new(),
-            stderr: crate::StreamData::new(),
-            exit_code,
-            control_flow: ControlFlow::None,
-            ..Default::default()
-        })
+        let expr = if expr.contains("$(") {
+            self.expand_command_subs_in_arithmetic(expr).await?
+        } else {
+            expr.to_string()
+        };
+        match self.try_evaluate_arithmetic_with_assign(&expr) {
+            Ok(v) => Ok(ExecResult {
+                exit_code: if v != 0 { 0 } else { 1 },
+                ..Default::default()
+            }),
+            // `((...))` reports an arithmetic error and fails with status 1;
+            // unlike `$((...))` it does not abandon the line.
+            Err(msg) => Ok(ExecResult::err(format!("bash: {msg}\n"), 1)),
+        }
     }
 
     /// Execute arithmetic expression with side effects (assignments, ++, --)
     fn execute_arithmetic_with_side_effects(&mut self, expr: &str) -> i64 {
-        let expr = expr.trim();
-
-        // Handle comma-separated expressions
-        if expr.contains(',') {
-            let parts: Vec<&str> = expr.split(',').collect();
-            let mut result = 0;
-            for part in parts {
-                result = self.execute_arithmetic_with_side_effects(part.trim());
-            }
-            return result;
-        }
-
-        // Handle assignment: var = expr or var op= expr
-        if let Some(eq_pos) = expr.find('=') {
-            // Check it's not ==, !=, <=, >=
-            // eq_pos is a byte offset from find(), so use byte-safe slicing
-            let before_eq = &expr[..eq_pos];
-            let before = before_eq.chars().last();
-            let after = expr[eq_pos + 1..].chars().next();
-
-            if after != Some('=') && !matches!(before, Some('!' | '<' | '>' | '=')) {
-                // This is an assignment
-                let lhs = expr[..eq_pos].trim();
-                let rhs = expr[eq_pos + 1..].trim();
-
-                // Check for compound assignment (+=, -=, *=, /=, %=)
-                let (var_name, op, effective_rhs) = if lhs.ends_with('+')
-                    || lhs.ends_with('-')
-                    || lhs.ends_with('*')
-                    || lhs.ends_with('/')
-                    || lhs.ends_with('%')
-                {
-                    let op = lhs.chars().last().unwrap();
-                    let name = lhs[..lhs.len() - 1].trim();
-                    (name, Some(op), rhs)
-                } else {
-                    (lhs, None, rhs)
-                };
-
-                let rhs_value = self.execute_arithmetic_with_side_effects(effective_rhs);
-                let final_value = if let Some(op) = op {
-                    let current = self.arith_lvalue_value(var_name);
-                    // THREAT[TM-DOS-043]: wrapping to prevent overflow panic
-                    match op {
-                        '+' => current.wrapping_add(rhs_value),
-                        '-' => current.wrapping_sub(rhs_value),
-                        '*' => current.wrapping_mul(rhs_value),
-                        '/' => {
-                            if rhs_value != 0 && !(current == i64::MIN && rhs_value == -1) {
-                                current / rhs_value
-                            } else {
-                                0
-                            }
-                        }
-                        '%' => {
-                            if rhs_value != 0 && !(current == i64::MIN && rhs_value == -1) {
-                                current % rhs_value
-                            } else {
-                                0
-                            }
-                        }
-                        _ => rhs_value,
-                    }
-                } else {
-                    rhs_value
-                };
-
-                if !is_arith_lvalue(var_name) {
-                    return self.evaluate_arithmetic(expr);
-                }
-                self.set_arith_lvalue(var_name, final_value.to_string());
-                return final_value;
-            }
-        }
-
-        // Handle pre-increment/decrement: ++var or --var
-        if let Some(stripped) = expr.strip_prefix("++") {
-            let trimmed = stripped.trim_start();
-            // Extract the variable name (leading identifier chars)
-            let var_end = arith_lvalue_end(trimmed);
-            let var_name = &trimmed[..var_end];
-            if !var_name.is_empty() && is_arith_lvalue(var_name) {
-                let current = self.arith_lvalue_value(var_name);
-                // THREAT[TM-DOS-043]: Bash integer side effects wrap at i64 bounds.
-                let new_value = current.wrapping_add(1);
-                self.set_arith_lvalue(var_name, new_value.to_string());
-                let rest = trimmed[var_end..].trim();
-                if rest.is_empty() {
-                    return new_value;
-                }
-                // Complex expression: substitute the incremented value and evaluate
-                // e.g. "++i > 3" → increment i, then evaluate "1 > 3"
-                let full_expr = format!("{new_value}{rest}");
-                return self.evaluate_arithmetic(&full_expr);
-            }
-        }
-        if let Some(stripped) = expr.strip_prefix("--") {
-            let trimmed = stripped.trim_start();
-            let var_end = arith_lvalue_end(trimmed);
-            let var_name = &trimmed[..var_end];
-            if !var_name.is_empty() && is_arith_lvalue(var_name) {
-                let current = self.arith_lvalue_value(var_name);
-                let new_value = current.wrapping_sub(1);
-                self.set_arith_lvalue(var_name, new_value.to_string());
-                let rest = trimmed[var_end..].trim();
-                if rest.is_empty() {
-                    return new_value;
-                }
-                let full_expr = format!("{new_value}{rest}");
-                return self.evaluate_arithmetic(&full_expr);
-            }
-        }
-
-        // Handle post-increment/decrement: var++ or var--
-        if let Some(stripped) = expr.strip_suffix("++") {
-            let var_name = stripped.trim();
-            if is_arith_lvalue(var_name) {
-                let current = self.arith_lvalue_value(var_name);
-                let new_value = current.wrapping_add(1);
-                self.set_arith_lvalue(var_name, new_value.to_string());
-                return current; // Return old value for post-increment
-            }
-        }
-        if let Some(stripped) = expr.strip_suffix("--") {
-            let var_name = stripped.trim();
-            if is_arith_lvalue(var_name) {
-                let current = self.arith_lvalue_value(var_name);
-                let new_value = current.wrapping_sub(1);
-                self.set_arith_lvalue(var_name, new_value.to_string());
-                return current; // Return old value for post-decrement
-            }
-        }
-
-        // No side effects, just evaluate
-        self.evaluate_arithmetic(expr)
+        self.evaluate_arithmetic_with_assign(expr)
     }
 
     /// Execute a while loop
@@ -6048,9 +5962,12 @@ impl Interpreter {
         self.restore_subshell_state(snap);
         self.call_stack = call_stack;
         self.coproc_buffers = coproc;
-        let mut result = result?;
+        let mut result = self.abort_line_on_error(result)?;
         if let ControlFlow::Exit(code) | ControlFlow::Return(code) = result.control_flow {
             result.exit_code = code;
+            result.control_flow = ControlFlow::None;
+        }
+        if result.control_flow == ControlFlow::Abort {
             result.control_flow = ControlFlow::None;
         }
         result.errexit_suppressed = false;
@@ -6753,6 +6670,11 @@ impl Interpreter {
                 None
             };
 
+            if let Some(err) = self.pending_arith_abort() {
+                self.discard_deferred_proc_subs_from(deferred_proc_sub_start);
+                return Err(err);
+            }
+
             let var_saves: Vec<(String, Option<String>)> = command
                 .assignments
                 .iter()
@@ -6762,6 +6684,11 @@ impl Interpreter {
             let pre_assign_subst_gen = self.subst_generation;
 
             if let Err(err) = self.process_command_assignments(&command.assignments).await {
+                self.discard_deferred_proc_subs_from(deferred_proc_sub_start);
+                return Err(err);
+            }
+            if let Some(err) = self.pending_arith_abort() {
+                self.restore_variables(var_saves);
                 self.discard_deferred_proc_subs_from(deferred_proc_sub_start);
                 return Err(err);
             }
@@ -8862,16 +8789,24 @@ impl Interpreter {
         args: &[String],
         redirects: &[Redirect],
     ) -> Result<ExecResult> {
+        if args.is_empty() {
+            let result = ExecResult::err("bash: let: expression expected\n", 1);
+            return self.apply_redirections(result, redirects).await;
+        }
         let mut last_val = 0i64;
         for arg in args {
-            last_val = self.evaluate_arithmetic_with_assign(arg);
+            match self.try_evaluate_arithmetic_with_assign(arg) {
+                Ok(v) => last_val = v,
+                // An error stops `let` at that expression with status 1.
+                Err(msg) => {
+                    let result = ExecResult::err(format!("bash: let: {msg}\n"), 1);
+                    return self.apply_redirections(result, redirects).await;
+                }
+            }
         }
         let exit_code = if last_val == 0 { 1 } else { 0 };
         let result = ExecResult {
-            stdout: crate::StreamData::new(),
-            stderr: crate::StreamData::new(),
             exit_code,
-            control_flow: ControlFlow::None,
             ..Default::default()
         };
         self.apply_redirections(result, redirects).await
@@ -10327,7 +10262,10 @@ impl Interpreter {
                 let cmd_result = self.execute_command(cmd).await?;
                 stdout.try_push_str(&cmd_result.stdout.command_substitution_text())?;
                 self.last_exit_code = cmd_result.exit_code;
-                if matches!(cmd_result.control_flow, ControlFlow::Exit(_)) {
+                if matches!(
+                    cmd_result.control_flow,
+                    ControlFlow::Exit(_) | ControlFlow::Abort
+                ) {
                     break;
                 }
             }
@@ -12930,8 +12868,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_arithmetic_exponent_negative_no_panic() {
+        // bash: "exponent less than 0" aborts the line with status 1
         let result = run_script("echo $(( 2 ** -1 ))").await;
-        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("exponent less than 0"));
     }
 
     #[tokio::test]
@@ -12997,9 +12937,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_arithmetic_base_gt_36_invalid_digit() {
-        // Invalid char for base — should return 0
+        // bash: base > 64 is an invalid arithmetic base, the line aborts
         let result = run_script("echo $(( 37#! ))").await;
-        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stdout.is_empty());
     }
 
     #[tokio::test]
@@ -13024,8 +12965,9 @@ mod tests {
         }
         let script = format!("arr[0]=0; arr[1]=1; echo $(({expr}))");
         let result = run_script(&script).await;
-        assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout.trim(), "0");
+        // bash: "expression recursion level exceeded", status 1, no panic
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("recursion level exceeded"));
     }
 
     #[tokio::test]
@@ -13037,7 +12979,8 @@ mod tests {
         .await
         .expect("self-referential arithmetic expression should be bounded");
 
-        assert_eq!(result.exit_code, 0);
+        // bash reports "expression recursion level exceeded" (status 1)
+        assert_eq!(result.exit_code, 1);
     }
 
     #[tokio::test]
@@ -13049,7 +12992,8 @@ mod tests {
         .await
         .expect("self-referential arithmetic array index should be bounded");
 
-        assert_eq!(result.exit_code, 0);
+        // bash reports "expression recursion level exceeded" (status 1)
+        assert_eq!(result.exit_code, 1);
     }
 
     #[tokio::test]

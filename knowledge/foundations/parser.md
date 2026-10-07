@@ -80,8 +80,22 @@ against GNU bash 5.2.
 
 ### Arithmetic Expressions
 
-`$((expr))` supports: `+`, `-`, `*`, `/`, `%`, comparisons, logical `&&`/`||`
-(short-circuit), bitwise operators, ternary `?:`, variable references.
+`interpreter/arithmetic.rs` tokenizes the expression, then evaluates it with a
+precedence-climbing parser following bash's `expr.c` grammar (comma, assignment
+ops, `?:`, `||`, `&&`, bitwise, equality, relational, shifts, `+ -`, `* / %`,
+right-associative `**`, unary, pre/post `++ --`). Numbers take `0x`, octal and
+`base#digits` (bases 2..64). Short-circuit branches parse without evaluating
+(`noeval`); writes are collected and applied after a successful evaluation.
+
+The body of a `(( ... ))` command is read from source as raw text
+(`Lexer::read_arith_raw`), so `<<=` or `>>` never become redirect tokens.
+
+Errors follow bash: `division by 0`, `syntax error`, `bad array subscript`,
+`exponent less than 0`, `expression recursion level exceeded`, invalid base.
+In `$((...))` or an arithmetic subscript the error aborts the rest of the
+current line (`ControlFlow::Abort` / `Error::LineAbort`): at the top level the
+shell continues with the next line, inside a function or subshell the whole
+compound stops, status 1. `((...))` and `let` just return status 1.
 
 ### Error Recovery
 

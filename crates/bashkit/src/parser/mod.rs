@@ -1852,6 +1852,18 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_arithmetic_command(&mut self) -> Result<CompoundCommand> {
+        // Read the body as raw text when no token was looked ahead, so
+        // operators like `<<=` or `>>` are not lexed as redirections.
+        if self.peeked_token.is_none()
+            && let Some(raw) = self.lexer.read_arith_raw()
+        {
+            self.advance();
+            let expr: String = raw
+                .chars()
+                .map(|c| if c == '\n' { ' ' } else { c })
+                .collect();
+            return Ok(CompoundCommand::Arithmetic(expr.trim().to_string()));
+        }
         self.advance(); // consume '(('
 
         // Read expression until we find ))

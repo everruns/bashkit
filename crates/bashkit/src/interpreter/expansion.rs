@@ -265,7 +265,9 @@ impl Interpreter {
                     } else {
                         expr.to_string()
                     };
-                    let value = self.evaluate_arithmetic_with_assign(&expanded_expr);
+                    let value = self
+                        .try_evaluate_arithmetic_with_assign(&expanded_expr)
+                        .map_err(|msg| crate::error::Error::LineAbort(format!("bash: {msg}\n")))?;
                     Self::append_expansion_for_word(&mut result, word, &value.to_string());
                 }
                 WordPart::Length(name) => {

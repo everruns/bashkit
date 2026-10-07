@@ -13,6 +13,11 @@ pub enum ControlFlow {
     Return(i32),
     /// Exit the shell (with exit code)
     Exit(i32),
+    /// Abandon the rest of the current command line (bash `DISCARD`): an
+    /// arithmetic error in `$((...))`, a failed compound declaration, ...
+    /// Unwinds through functions, `eval` and `source`; a subshell turns it
+    /// into status 1; the shell's top level resumes at the next line.
+    Abort,
 }
 
 /// Structured side-effect channel for builtins that need to communicate
@@ -193,6 +198,7 @@ impl LoopAccumulator {
             ControlFlow::Exit(code) => {
                 LoopAction::Exit(Box::new(self.build_exit(ControlFlow::Exit(code))))
             }
+            ControlFlow::Abort => LoopAction::Exit(Box::new(self.build_exit(ControlFlow::Abort))),
             ControlFlow::None => LoopAction::None,
         }
     }

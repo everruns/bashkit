@@ -2216,6 +2216,63 @@ impl<'a> Lexer<'a> {
         false
     }
 
+    /// Read the raw body of a `(( ... ))` arithmetic command, right after
+    /// the `((` token, up to the matching `))` (consumed). Operators such as
+    /// `<<=` or `>>` stay text instead of becoming redirect tokens. Returns
+    /// `None` when no matching `))` follows (caller falls back to tokens).
+    pub fn read_arith_raw(&mut self) -> Option<String> {
+        if !self.reinject_buf.is_empty() {
+            return None;
+        }
+        let mut raw = String::new();
+        let mut depth = 0usize;
+        // Scan on a clone first so a failed scan leaves the lexer untouched.
+        let mut ahead = self.chars.clone();
+        let mut closed = false;
+        while let Some(ch) = ahead.next() {
+            match ch {
+                '(' => depth += 1,
+                ')' => {
+                    if depth == 0 {
+                        if ahead.peek() == Some(&')') {
+                            closed = true;
+                            break;
+                        }
+                        return None;
+                    }
+                    depth -= 1;
+                }
+                '\\' => {
+                    raw.push(ch);
+                    if let Some(next) = ahead.next() {
+                        raw.push(next);
+                    }
+                    continue;
+                }
+                '\'' | '"' => {
+                    raw.push(ch);
+                    for c in ahead.by_ref() {
+                        raw.push(c);
+                        if c == ch {
+                            break;
+                        }
+                    }
+                    continue;
+                }
+                _ => {}
+            }
+            raw.push(ch);
+        }
+        if !closed {
+            return None;
+        }
+        // Commit: consume the raw text plus the closing `))`.
+        for _ in 0..raw.chars().count() + 2 {
+            self.advance();
+        }
+        Some(raw)
+    }
+
     /// Read the raw source of a `[[ ... =~ REGEX ]]` operand, as bash does:
     /// one word that ends at unquoted whitespace or `;&<>` outside
     /// parentheses. Inside parentheses spaces belong to the regex; `|` and

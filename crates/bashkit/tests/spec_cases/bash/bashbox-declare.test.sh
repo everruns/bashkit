@@ -40,7 +40,6 @@ declare -i x; (read x <<< 1/0); (printf -v x 1/0); echo $?
 
 ### bashbox_declare_a_subshell_ends_with_status_1
 # a subshell ends with status 1
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 (declare -i x; x=1/0; echo in); echo out $?
 ### expect
 out 1
