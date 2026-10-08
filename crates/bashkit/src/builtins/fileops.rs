@@ -100,7 +100,11 @@ impl Builtin for Mkdir {
 
             if let Err(e) = ctx.fs.mkdir(&path, recursive).await {
                 return Ok(ExecResult::err(
-                    format!("mkdir: cannot create directory '{}': {}\n", dir, e),
+                    format!(
+                        "mkdir: cannot create directory '{}': {}\n",
+                        dir,
+                        crate::error::io_error_reason(&e)
+                    ),
                     1,
                 ));
             }
@@ -772,12 +776,20 @@ impl Builtin for Touch {
                     continue;
                 }
                 if let Err(e) = ctx.fs.write_file(&path, &[]).await {
-                    return fail(format!("touch: cannot touch '{}': {}\n", file, e));
+                    return fail(format!(
+                        "touch: cannot touch '{}': {}\n",
+                        file,
+                        crate::error::io_error_reason(&e)
+                    ));
                 }
             }
 
             if let Err(e) = ctx.fs.set_modified_time(&path, target_time).await {
-                return fail(format!("touch: cannot touch '{}': {}\n", file, e));
+                return fail(format!(
+                    "touch: cannot touch '{}': {}\n",
+                    file,
+                    crate::error::io_error_reason(&e)
+                ));
             }
         }
 

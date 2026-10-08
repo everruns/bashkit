@@ -44,17 +44,34 @@ impl Builtin for False {
 
 /// The exit builtin - exit the shell with a status code.
 /// Bash truncates exit codes to 8-bit unsigned range (0-255) via `& 0xFF`.
+/// Without an argument it exits with `$?`; a non-numeric argument is
+/// reported and exits 2; more than one argument is an error (status 1) that
+/// abandons the rest of the line instead of exiting.
 pub struct Exit;
 
 #[async_trait]
 impl Builtin for Exit {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        let exit_code = ctx
-            .args
-            .first()
-            .and_then(|s| s.parse::<i32>().ok())
-            .unwrap_or(0)
-            & 0xFF;
+        let exit_code = match ctx.args.first() {
+            None => ctx.shell.as_ref().map_or(0, |s| s.last_exit_code),
+            Some(arg) => match arg.trim().parse::<i64>() {
+                Ok(n) => (n & 0xFF) as i32,
+                Err(_) => {
+                    let mut result = ExecResult::with_control_flow(ControlFlow::Exit(2));
+                    result.exit_code = 2;
+                    result.stderr =
+                        format!("bash: exit: {arg}: numeric argument required\n").into();
+                    return Ok(result);
+                }
+            },
+        };
+        if ctx.args.len() > 1 {
+            // bash discards the rest of the line (`jump_to_top_level(DISCARD)`):
+            // the script resumes at the next line, a subshell ends.
+            let mut result = ExecResult::err("bash: exit: too many arguments\n", 1);
+            result.control_flow = ControlFlow::Abort;
+            return Ok(result);
+        }
 
         Ok(ExecResult {
             exit_code,
@@ -286,13 +303,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn exit_non_numeric_defaults_zero() {
+    async fn exit_non_numeric_is_usage_error() {
         let (fs, mut cwd, mut variables) = setup().await;
         let env = HashMap::new();
         let args = vec!["abc".to_string()];
         let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
         let result = Exit.execute(ctx).await.unwrap();
-        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.exit_code, 2);
+        assert_eq!(result.control_flow, ControlFlow::Exit(2));
+        assert!(
+            result
+                .stderr
+                .contains("exit: abc: numeric argument required")
+        );
+    }
+
+    #[tokio::test]
+    async fn exit_too_many_args_aborts_the_line() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["1".to_string(), "2".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Exit.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 1);
+        assert_eq!(result.control_flow, ControlFlow::Abort);
     }
 
     // ==================== break ====================
