@@ -107,6 +107,39 @@ mod resource_exhaustion {
         assert!(rows <= 512, "hash table grew to {rows}");
     }
 
+    /// TM-DOS-130: `$((` nested inside arithmetic recurses only 32 levels,
+    /// one command's `bad array subscript` reports are capped, and an
+    /// invalid `${!r}` target is echoed truncated.
+    #[tokio::test]
+    async fn array_and_arith_reports_are_bounded() {
+        let mut bash = Bash::new();
+        let mut expr = String::from("1");
+        for _ in 0..40 {
+            expr = format!("$(( {expr} + 1 ))");
+        }
+        let result = bash
+            .exec(&format!("echo $(( {expr} )); echo next"))
+            .await
+            .unwrap();
+        assert!(!result.stdout.contains("41"), "got: {}", result.stdout);
+        assert!(result.stderr.contains("recursion level exceeded"));
+
+        let reads = "${a[-9]}".repeat(5000);
+        let result = bash
+            .exec(&format!("a=(1); x={reads}; echo done"))
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "done\n");
+        assert!(result.stderr.len() <= 65 * 1024, "{}", result.stderr.len());
+
+        let result = bash
+            .exec("r=$(printf '%5000s' | tr ' ' '-')\necho ${!r}\necho status=$?")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "status=1\n");
+        assert!(result.stderr.len() < 1024, "{}", result.stderr.len());
+    }
+
     /// TM-DOS-100: archive growth must consume live bytes before allocation.
     #[tokio::test]
     async fn archive_growth_is_admitted_by_shared_live_budget() {
@@ -3832,11 +3865,15 @@ echo ${#big}
 big2=$(printf '%0500s' | tr ' ' 'B')
 echo ${#big2}
 "#;
-        let result = bash.exec(script).await.unwrap();
-        // First variable should succeed, second may be rejected
-        assert_eq!(result.exit_code, 0);
-        let lines: Vec<&str> = result.stdout.trim().lines().collect();
-        assert!(!lines.is_empty(), "should have produced some output");
+        // First variable fits; the second one crosses the 1000-byte budget
+        // and is rejected as a resource limit, not stored.
+        let err = bash.exec(script).await.unwrap_err().to_string();
+        assert!(err.contains("variable byte limit (1000)"), "got: {err}");
+        let result = bash
+            .exec("big=$(printf '%0500s' | tr ' ' 'A'); echo ${#big}")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "500\n");
     }
 
     /// TM-DOS-060: declaration builtin assignments must honor variable count

@@ -122,8 +122,10 @@ impl Interpreter {
                 result.push_str(value);
             }
         } else if let Some(arr) = self.scoped.arrays.get(arr_name) {
-            let idx = self.resolve_indexed_array_subscript(arr_name, index);
-            if let Some(value) = arr.get(&idx) {
+            if let Some(value) = self
+                .read_indexed_array_subscript(arr_name, index)
+                .and_then(|idx| arr.get(&idx))
+            {
                 result.push_str(value);
             }
         } else if let Some(value) = self.scalar_element(arr_name, index) {
@@ -307,6 +309,11 @@ impl Interpreter {
     }
 
     pub(super) async fn expand_word_inner(&mut self, word: &Word) -> Result<String> {
+        if Self::has_indirect_part(word)
+            && let Some(desugared) = self.desugar_indirect(word)?
+        {
+            return Box::pin(self.expand_word_inner(&desugared)).await;
+        }
         let mut result = String::new();
         // Keep command-substitution bytes charged until the complete word has
         // been consumed; sibling substitutions otherwise evade live-byte caps.
@@ -514,45 +521,11 @@ impl Interpreter {
                     name,
                     offset,
                     length,
-                } if name == "@" || name == "*" => {
-                    let items = self
-                        .positional_slice(offset, length.as_deref())
-                        .map_err(crate::error::Error::LineAbort)?;
-                    let sep = if name == "*" {
-                        self.get_ifs_separator()
-                    } else {
-                        " ".to_string()
-                    };
-                    Self::append_expansion_for_word(&mut result, word, &items.join(&sep));
-                }
-                WordPart::Substring {
-                    name,
-                    offset,
-                    length,
                 } => {
-                    let value = self.expand_variable(name);
-                    let (start, end) = self
-                        .slice_range(value.chars().count(), offset, length.as_deref(), true)
+                    let value = self
+                        .substring_part(name, offset, length.as_deref())
                         .map_err(crate::error::Error::LineAbort)?;
-                    let substr: String = value.chars().skip(start).take(end - start).collect();
-                    Self::append_expansion_for_word(&mut result, word, &substr);
-                }
-                WordPart::ArraySlice {
-                    name,
-                    offset,
-                    length,
-                } => {
-                    if let Some(items) = self.array_view(name) {
-                        let values: Vec<String> = items.into_iter().map(|(_, v)| v).collect();
-                        let (start, end) = self
-                            .slice_range(values.len(), offset, length.as_deref(), false)
-                            .map_err(crate::error::Error::LineAbort)?;
-                        Self::append_expansion_for_word(
-                            &mut result,
-                            word,
-                            &values[start..end].join(" "),
-                        );
-                    }
+                    Self::append_expansion_for_word(&mut result, word, &value);
                 }
                 WordPart::IndirectExpansion {
                     name,
@@ -601,6 +574,12 @@ impl Interpreter {
                             }
                         }
                     }
+                }
+                WordPart::IndirectSuffix { name, suffix } => {
+                    // Rewritten by `desugar_indirect` before this loop.
+                    return Err(crate::error::Error::LineAbort(
+                        self.diag(format!("${{!{name}{suffix}}}: bad substitution\n")),
+                    ));
                 }
                 WordPart::PrefixMatch { prefix, star } => {
                     let names = self.prefix_names(prefix);
@@ -831,6 +810,11 @@ impl Interpreter {
         word: &'a Word,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<String>>> + Send + 'a>> {
         Box::pin(async move {
+            if Self::has_indirect_part(word)
+                && let Some(desugared) = self.desugar_indirect(word)?
+            {
+                return self.expand_word_to_fields(&desugared).await;
+            }
             // Taken at once so nested command substitutions never see it.
             let decl_operand = std::mem::take(&mut self.decl_operand_fields);
             // Check if the word contains only an array expansion or $@/$*
@@ -875,13 +859,22 @@ impl Interpreter {
                     && (index == "@" || index == "*")
                 {
                     let Some(items) = self.array_view(name) else {
-                        return Ok(Vec::new());
+                        // `"${unset[*]}"` is one empty field.
+                        return Ok(if word.quoted && index == "*" {
+                            vec![String::new()]
+                        } else {
+                            Vec::new()
+                        });
                     };
                     let values: Vec<String> = items.into_iter().map(|(_, v)| v).collect();
                     // "${arr[*]}" joins into single field with IFS; "${arr[@]}" keeps separate
                     if word.quoted && index == "*" {
                         let sep = self.get_ifs_separator();
                         return Ok(vec![values.join(&sep)]);
+                    }
+                    if !word.quoted {
+                        // Unquoted, the elements split like `$@`.
+                        return self.unquoted_positional_fields(&values);
                     }
                     return Ok(values);
                 }
@@ -1361,7 +1354,7 @@ impl Interpreter {
                 Self::is_elementwise_op(operator) && (name == "@" || name.ends_with("[@]"))
             }
             WordPart::Transformation { name, .. } => name == "@" || name.ends_with("[@]"),
-            WordPart::Substring { name, .. } => name == "@",
+            WordPart::Substring { name, .. } => name == "@" || name.ends_with("[@]"),
             WordPart::ArrayIndices { star, .. } | WordPart::PrefixMatch { star, .. } => !star,
             _ => false,
         }
@@ -1384,7 +1377,12 @@ impl Interpreter {
             ParameterOp::UseReplacement => true,
             _ => return None,
         };
-        (operand.contains("$@") || operand.contains("${@") || operand.contains("[@]}")).then_some((
+        // `${!r}` may name an array slice (`r='a[@]'`).
+        (operand.contains("$@")
+            || operand.contains("${@")
+            || operand.contains("[@]}")
+            || operand.contains("${!"))
+        .then_some((
             name.as_str(),
             operand.as_str(),
             *colon_variant,
@@ -1496,10 +1494,10 @@ impl Interpreter {
                 | WordPart::ParameterExpansion { .. }
                 | WordPart::ArrayAccess { .. }
                 | WordPart::IndirectExpansion { .. }
+                | WordPart::IndirectSuffix { .. }
                 | WordPart::PrefixMatch { .. }
                 | WordPart::ArrayIndices { .. }
                 | WordPart::Substring { .. }
-                | WordPart::ArraySlice { .. }
                 | WordPart::Transformation { .. }
         )
     }
@@ -1540,8 +1538,10 @@ impl Interpreter {
                 };
             }
             if let Some(arr) = self.scoped.arrays.get(resolved_arr_name) {
-                let idx = self.resolve_indexed_array_subscript(resolved_arr_name, key);
-                return match arr.get(&idx) {
+                return match self
+                    .read_indexed_array_subscript(resolved_arr_name, key)
+                    .and_then(|idx| arr.get(&idx))
+                {
                     Some(v) => (true, v.clone()),
                     None => (false, String::new()),
                 };
@@ -2180,6 +2180,33 @@ impl Interpreter {
     /// Sync so the async field expansion keeps its small state machine.
     fn elementwise_fields(&mut self, part: &WordPart) -> Option<(Vec<String>, bool)> {
         let (name, results) = match part {
+            // `"${a[@]+x}"` on an unset array: no field, like `"$@"`.
+            WordPart::ParameterExpansion {
+                name,
+                operator: ParameterOp::UseReplacement,
+                colon_variant,
+                ..
+            } if name == "@" || name.ends_with("[@]") => {
+                let (is_set, value) = self.resolve_param_expansion_name(name);
+                if is_set && !(*colon_variant && value.is_empty()) {
+                    return None;
+                }
+                (name, Vec::new())
+            }
+            // `"${a[@]-x}"`, `"${@:=x}"` whose test passes: the elements.
+            WordPart::ParameterExpansion {
+                name,
+                operator: ParameterOp::UseDefault | ParameterOp::AssignDefault | ParameterOp::Error,
+                colon_variant,
+                ..
+            } if Self::is_multi_substring(name) => {
+                let (is_set, value) = self.resolve_param_expansion_name(name);
+                if !is_set || (*colon_variant && value.is_empty()) {
+                    return None;
+                }
+                let elems = self.resolve_param_expansion_elements(name)?;
+                (name, elems)
+            }
             WordPart::ParameterExpansion {
                 name,
                 operator,
@@ -2208,6 +2235,23 @@ impl Interpreter {
                 }
                 (name, out)
             }
+            // `"${a[@]@a}"`: the attribute letters once per element.
+            WordPart::Transformation {
+                name,
+                operator: 'a',
+            } if name.ends_with("[@]") || name.ends_with("[*]") => {
+                let joined = self.apply_transformation(name, 'a');
+                let out = if joined.is_empty()
+                    && self
+                        .resolve_param_expansion_elements(name)
+                        .is_none_or(|e| e.is_empty())
+                {
+                    Vec::new()
+                } else {
+                    joined.split(' ').map(str::to_string).collect()
+                };
+                (name, out)
+            }
             WordPart::Transformation { name, operator }
                 if matches!(operator, 'Q' | 'E' | 'P' | 'u' | 'U' | 'L') =>
             {
@@ -2228,9 +2272,9 @@ impl Interpreter {
                 name,
                 offset,
                 length,
-            } if name == "@" || name == "*" => {
+            } if Self::is_multi_substring(name) => {
                 // A range error is raised by the plain expansion path.
-                let items = self.positional_slice(offset, length.as_deref()).ok()?;
+                let items = self.slice_items(name, offset, length.as_deref()).ok()?;
                 (name, items)
             }
             _ => return None,
@@ -2256,6 +2300,235 @@ impl Interpreter {
         let (start, end) = self.slice_range(all.len(), offset, length, false)?;
         all.truncate(end);
         Ok(all.split_off(start))
+    }
+
+    fn has_indirect_part(word: &Word) -> bool {
+        word.parts.iter().any(|p| {
+            matches!(
+                p,
+                WordPart::IndirectSuffix { .. } | WordPart::IndirectExpansion { .. }
+            )
+        })
+    }
+
+    /// The parameter `${!name...}` refers to: the value of `name` (an
+    /// element when it carries a subscript). bash rejects an unset `name`
+    /// ("invalid indirect expansion") and a value that is not a parameter
+    /// name ("invalid variable name"); both abandon the line.
+    ///
+    /// L-ARITH-001: a value with a command or process substitution in its
+    /// subscript is refused, never re-parsed into code.
+    fn indirect_target(&mut self, name: &str) -> Result<Option<String>> {
+        let is_array = !name.contains('[') && self.array_view(name).is_some() && {
+            let resolved = self.resolve_nameref(name);
+            self.scoped.arrays.contains_key(resolved)
+                || self.scoped.assoc_arrays.contains_key(resolved)
+        };
+        let (is_set, value) = if name.contains('[') {
+            self.resolve_param_expansion_name(name)
+        } else if is_array {
+            // `${!a}` on an array reads element 0.
+            self.resolve_param_expansion_name(&format!("{name}[0]"))
+        } else {
+            (self.is_variable_set(name), self.expand_variable(name))
+        };
+        if is_array && value.is_empty() {
+            // An array with no element 0 expands to nothing.
+            return Ok(None);
+        }
+        if !is_set {
+            return Err(crate::error::Error::LineAbort(
+                self.diag(format!("{name}: invalid indirect expansion\n")),
+            ));
+        }
+        let ident = |t: &str| {
+            let mut c = t.chars();
+            c.next()
+                .is_some_and(|f| f.is_ascii_alphabetic() || f == '_')
+                && c.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+        };
+        let valid = ident(&value)
+            || (!value.is_empty() && value.bytes().all(|b| b.is_ascii_digit()))
+            || matches!(value.as_str(), "@" | "*" | "#" | "?" | "$" | "!" | "-")
+            || value.find('[').is_some_and(|open| {
+                ident(&value[..open])
+                    && value.ends_with(']')
+                    && value.len() > open + 2
+                    && !value.contains("$(")
+                    && !value.contains('`')
+                    && !value.contains("<(")
+                    && !value.contains(">(")
+            });
+        if !valid {
+            // THREAT[TM-DOS-130]: echo a bounded prefix of the bad target.
+            let shown: String = value.chars().take(256).collect();
+            return Err(crate::error::Error::LineAbort(
+                self.diag(format!("{shown}: invalid variable name\n")),
+            ));
+        }
+        Ok(Some(value))
+    }
+
+    /// Rewrite the `${!...}` parts of `word` whose target is not a plain
+    /// name (`ref='a[@]'`, `${!r:1}`, `${!a[1]}`) into the expansion the
+    /// target spells, `${<target><suffix>}`, parsed under the interpreter's
+    /// parser limits. `None` when nothing needs rewriting. Out of line to
+    /// keep the expansion frames small.
+    #[inline(never)]
+    fn desugar_indirect(&mut self, word: &Word) -> Result<Option<Word>> {
+        let mut out: Option<Word> = None;
+        for (idx, part) in word.parts.iter().enumerate() {
+            let (name, suffix) = match part {
+                WordPart::IndirectSuffix { name, suffix } => (name.as_str(), suffix.clone()),
+                WordPart::IndirectExpansion {
+                    name,
+                    operator,
+                    operand,
+                    colon_variant,
+                } if !self.scoped.namerefs.contains_key(name) => {
+                    let op = match operator {
+                        None => String::new(),
+                        Some(ParameterOp::UseDefault) => "-".to_string(),
+                        Some(ParameterOp::AssignDefault) => "=".to_string(),
+                        Some(ParameterOp::UseReplacement) => "+".to_string(),
+                        Some(ParameterOp::Error) => "?".to_string(),
+                        Some(_) => continue,
+                    };
+                    let colon = if *colon_variant && operator.is_some() {
+                        ":"
+                    } else {
+                        ""
+                    };
+                    (name.as_str(), format!("{colon}{op}{operand}"))
+                }
+                _ => continue,
+            };
+            let Some(target) = self.indirect_target(name)? else {
+                // An expansion of nothing: no field unquoted, `''` quoted.
+                out.get_or_insert_with(|| word.clone()).parts[idx] =
+                    WordPart::Variable(String::new());
+                continue;
+            };
+            // bash tests `${!ref:-x}` with `ref='a[@]'` for set-ness only:
+            // `a=("")` keeps its empty element.
+            let suffix = if (target.ends_with("[@]") || target.ends_with("[*]"))
+                && matches!(
+                    part,
+                    WordPart::IndirectExpansion {
+                        colon_variant: true,
+                        ..
+                    }
+                ) {
+                suffix.strip_prefix(':').unwrap_or(&suffix).to_string()
+            } else {
+                suffix
+            };
+            let text = format!("${{{target}{suffix}}}");
+            let parsed = Parser::parse_word_string_with_limits(
+                &text,
+                self.limits.max_ast_depth,
+                self.limits.max_parser_operations,
+            );
+            let [new_part] = <[WordPart; 1]>::try_from(parsed.parts).map_err(|_| {
+                crate::error::Error::LineAbort(self.diag(format!("{text}: bad substitution\n")))
+            })?;
+            if matches!(
+                new_part,
+                WordPart::IndirectSuffix { .. } | WordPart::IndirectExpansion { .. }
+            ) {
+                // `${!...}` again would recurse: bash allows one level.
+                return Err(crate::error::Error::LineAbort(
+                    self.diag(format!("{text}: bad substitution\n")),
+                ));
+            }
+            out.get_or_insert_with(|| word.clone()).parts[idx] = new_part;
+        }
+        Ok(out)
+    }
+
+    /// `${v:o:l}` on `@`, `*`, `a[@]` or `a[*]`: a slice of elements.
+    fn is_multi_substring(name: &str) -> bool {
+        matches!(name, "@" | "*") || name.ends_with("[@]") || name.ends_with("[*]")
+    }
+
+    /// `${v:offset:length}` as one string: elements of a slice joined
+    /// (`*` forms with the first IFS character), else a substring of the
+    /// value (`${a[1]:1}` takes it from the element).
+    #[inline(never)]
+    fn substring_part(
+        &mut self,
+        name: &str,
+        offset: &str,
+        length: Option<&str>,
+    ) -> std::result::Result<String, String> {
+        if Self::is_multi_substring(name) {
+            let items = self.slice_items(name, offset, length)?;
+            let sep = if name.ends_with('*') {
+                self.get_ifs_separator()
+            } else {
+                " ".to_string()
+            };
+            return Ok(items.join(&sep));
+        }
+        let value = if name.contains('[') {
+            self.resolve_param_expansion_name(name).1
+        } else {
+            self.expand_variable(name)
+        };
+        let (start, end) = self.slice_range(value.chars().count(), offset, length, true)?;
+        Ok(value.chars().skip(start).take(end - start).collect())
+    }
+
+    /// Elements selected by `${@:o:l}` or `${a[@]:o:l}`. An indexed array
+    /// is sliced by index, not position (bash): `${a[@]:15:2}` on keys 33,
+    /// 66, 99 is the first two; a negative offset counts back from the
+    /// highest index plus one.
+    fn slice_items(
+        &mut self,
+        name: &str,
+        offset: &str,
+        length: Option<&str>,
+    ) -> std::result::Result<Vec<String>, String> {
+        if matches!(name, "@" | "*") {
+            return self.positional_slice(offset, length);
+        }
+        let base = &name[..name.len() - 3];
+        let resolved = self.resolve_nameref(base).to_string();
+        let Some(arr) = self.scoped.arrays.get(&resolved) else {
+            let values = self.array_values(&resolved);
+            let (start, end) = self.slice_range(values.len(), offset, length, false)?;
+            return Ok(values[start..end].to_vec());
+        };
+        let mut items: Vec<(usize, String)> = arr.iter().map(|(k, v)| (*k, v.clone())).collect();
+        items.sort_unstable_by_key(|(k, _)| *k);
+        let off = i128::from(self.evaluate_arithmetic(offset));
+        let take = match length {
+            Some(expr) => {
+                let n = self.evaluate_arithmetic(expr);
+                if n < 0 {
+                    return Err(
+                        self.arith_diag("", &format!("{}: substring expression < 0", expr.trim()))
+                    );
+                }
+                usize::try_from(n).unwrap_or(usize::MAX)
+            }
+            None => usize::MAX,
+        };
+        let start = if off < 0 {
+            let top = items.last().map_or(0, |(k, _)| *k as i128 + 1);
+            top + off
+        } else {
+            off
+        };
+        if start < 0 {
+            return Ok(Vec::new());
+        }
+        Ok(items
+            .into_iter()
+            .filter(|(k, _)| *k as i128 >= start)
+            .take(take)
+            .map(|(_, v)| v)
+            .collect())
     }
 
     /// `[start, end)` of `${v:offset:length}` over `count` items. A negative

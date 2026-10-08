@@ -591,7 +591,12 @@ impl<'a> ArithEval<'a> {
                 {
                     return Ok(0);
                 }
-                let lv = self.lvalue(&name, sub.as_deref())?;
+                // A plain read of `a[-9]` past the start reports and reads 0
+                // (bash); `a[-9]++` stays an error.
+                let soft = !matches!(p.peek(), Tok::Op("++" | "--"));
+                let Some(lv) = self.lvalue_mode(&name, sub.as_deref(), soft)? else {
+                    return Ok(0);
+                };
                 let cur = self.read_lvalue_int(&lv)?;
                 match p.peek() {
                     Tok::Op(o @ ("++" | "--")) => {
@@ -660,6 +665,22 @@ impl<'a> ArithEval<'a> {
 
     /// Resolve `name` / `name[sub]` to a concrete storage slot.
     fn lvalue(&mut self, name: &str, sub: Option<&str>) -> ArithResult<LValue> {
+        self.lvalue_mode(name, sub, false).map(|lv| {
+            lv.unwrap_or_else(|| LValue {
+                name: String::new(),
+                key: None,
+            })
+        })
+    }
+
+    /// [`Self::lvalue`]; with `soft_oob` a negative index before element 0
+    /// is reported as a warning and gives `None` instead of an error.
+    fn lvalue_mode(
+        &mut self,
+        name: &str,
+        sub: Option<&str>,
+        soft_oob: bool,
+    ) -> ArithResult<Option<LValue>> {
         let resolved = self.interp.resolve_nameref(name).to_string();
         let (name, sub): (String, Option<String>) = match sub {
             Some(s) => (resolved, Some(s.to_string())),
@@ -669,14 +690,14 @@ impl<'a> ArithEval<'a> {
             },
         };
         let Some(sub) = sub else {
-            return Ok(LValue { name, key: None });
+            return Ok(Some(LValue { name, key: None }));
         };
         if self.interp.is_assoc_array(&name) {
             let key = strip_subscript_quotes(&sub).to_string();
-            return Ok(LValue {
+            return Ok(Some(LValue {
                 name,
                 key: Some(key),
-            });
+            }));
         }
         if sub.trim().is_empty() {
             return Err(format!("{name}[]: bad array subscript"));
@@ -686,13 +707,17 @@ impl<'a> ArithEval<'a> {
             let len = self.interp.indexed_len_for_subscript(&name);
             idx += len;
             if idx < 0 && self.noeval == 0 {
+                if soft_oob {
+                    self.interp.warn_bad_subscript(&name);
+                    return Ok(None);
+                }
                 return Err(format!("{name}[{sub}]: bad array subscript"));
             }
         }
-        Ok(LValue {
+        Ok(Some(LValue {
             name,
             key: Some(idx.max(0).to_string()),
-        })
+        }))
     }
 
     fn read_lvalue_str(&self, lv: &LValue) -> String {
@@ -853,7 +878,33 @@ impl Interpreter {
                 result.push(ch);
                 continue;
             }
-            if chars.peek() == Some(&'{') {
+            if chars.peek() == Some(&'(') && chars.clone().nth(1) == Some('(') {
+                // `$((...))` inside arithmetic (`a[$((i/3))]=x`,
+                // `$((1 + $((2)) ))`): its value, evaluated here.
+                chars.next();
+                chars.next();
+                let mut inner = String::new();
+                let mut depth = 0i32;
+                while let Some(c) = chars.next() {
+                    match c {
+                        '(' => depth += 1,
+                        ')' if depth == 0 && chars.peek() == Some(&')') => {
+                            chars.next();
+                            break;
+                        }
+                        ')' => depth -= 1,
+                        _ => {}
+                    }
+                    inner.push(c);
+                }
+                // THREAT[TM-DOS-130]: nesting recurses; bash-like scripts need few levels.
+                if inner.matches("$((").count() > 32 {
+                    self.record_arith_error("expression recursion level exceeded".to_string());
+                    result.push('0');
+                } else {
+                    result.push_str(&self.evaluate_arithmetic(&inner).to_string());
+                }
+            } else if chars.peek() == Some(&'{') {
                 chars.next();
                 let mut brace_content = String::new();
                 let mut brace_depth = 1i32;

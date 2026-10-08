@@ -17,10 +17,10 @@ Implemented. Harness: `scripts/oils-spec/run.py` (`just oils-spec`).
 
 ## Headline
 
-**86.0%**: bashkit passes 2316 of the 2693 Oils spec cases real bash 5.2.21
-passes (2759 cases in 132 spec files; bashkit passes 2322 of all cases,
-84.2%). Oils `57d3f0d088c3`, 2026-10-08. Report:
-`scripts/oils-spec/results/oils-spec-linux-x86_64-20261008T173631Z.md`.
+**89.0%**: bashkit passes 2395 of the 2692 Oils spec cases real bash 5.2.21
+passes (2759 cases in 132 spec files; bashkit passes 2402 of all cases,
+87.1%). Oils `57d3f0d088c3`, 2026-10-08. Report:
+`scripts/oils-spec/results/oils-spec-linux-x86_64-20261008T193817Z.md`.
 The first run (74.2%, `...T103235Z.md`) missed 16 cases each in
 `globignore` and `word-split`, 14 in `builtin-cd`, 13 in `alias` and
 `dbracket`; those files now miss 1, 0, 2, 7 and 1. The run at 78.8%
@@ -39,10 +39,19 @@ on job specs, `kill` delivery, `ulimit -n`), or listed in
 FIFOs, `<>` offsets, `-v` echo, `/dev/full`, `$(...)` read from a value
 into arithmetic (L-ARITH-001), aliases applied per command, the empty
 startup environment, `$LINENO` in a top-level `(( ))`).
+The run before this one (86.0%, `...T173631Z.md`) missed 20 in `array`,
+19 in `builtin-trap-bash`, 15 in `var-ref`, 10 in `array-assign`, 8 in
+`array-sparse` and `arith`, 5 in `builtin-printf`, `ble-idioms`,
+`array-assoc` and `builtin-trap`; they now miss 4, 4, 3, 4, 1, 7, 1, 2, 4
+and 4. What is left there is mostly L-ARITH-001 (`$(...)` in an indirect
+target or a subscript read from data), quotes inside subscripts
+(`a['2']`), arrays bound in a command's environment, nameref corner cases,
+signals, and `$LINENO` of `(( ))`/`[[ ]]` seen from a DEBUG handler.
 
 Spec files with the most misses at the latest run: `builtin-completion`
-(33), `prompt` (25), `array` (20), `builtin-trap-bash` (19), `var-ref` (15).
-45 of the 132 files pass completely.
+(33), `prompt` (25), `builtin-history` and `builtin-fc` (12),
+`interactive` (11), all interactive-only. 50 of the 132 files pass
+completely.
 
 ## Why
 

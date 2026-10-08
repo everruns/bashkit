@@ -84,6 +84,10 @@ pub struct Lexer<'a> {
     /// so text re-injected after a heredoc body still maps to its own token.
     capture_raw: bool,
     raw_buf: String,
+    /// The next word may be an assignment (it follows an operator, a
+    /// reserved word or an assignment): `a[1 + 2]=x` keeps the blanks
+    /// inside its subscript.
+    spaced_subscript: bool,
 }
 
 impl<'a> Lexer<'a> {
@@ -103,6 +107,7 @@ impl<'a> Lexer<'a> {
             max_subst_depth: max_depth,
             capture_raw: false,
             raw_buf: String::new(),
+            spaced_subscript: true,
         }
     }
 
@@ -160,6 +165,100 @@ impl<'a> Lexer<'a> {
             .peekable()
     }
 
+    /// After `w`, is the next word still in assignment position? Yes after
+    /// a reserved word or an assignment word (`a=1 b[1 + 2]=x`).
+    fn keeps_assignment_position(w: &str) -> bool {
+        if matches!(
+            w,
+            "if" | "then" | "else" | "elif" | "do" | "while" | "until" | "!" | "{" | "time"
+        ) {
+            return true;
+        }
+        let Some(eq) = w.find('=') else {
+            return false;
+        };
+        let lhs = w[..eq].strip_suffix('+').unwrap_or(&w[..eq]);
+        let name = match lhs.find('[') {
+            Some(open) if lhs.ends_with(']') => &lhs[..open],
+            Some(_) => return false,
+            None => lhs,
+        };
+        let mut chars = name.chars();
+        chars
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+            && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+    }
+
+    /// `word` is `name[` with the subscript still open, and the input
+    /// ahead closes it on this line followed by `=` or `+=`: bash reads
+    /// `a[1 + 2]=x` and `a[5&3]=x` as one assignment word, blanks and
+    /// operator characters included.
+    fn spaced_subscript_continues(&self, word: &str) -> bool {
+        let mut depth = Self::open_subscript_depth(word);
+        if depth <= 0 {
+            return false;
+        }
+        let mut ahead = self.lookahead();
+        let mut quote: Option<char> = None;
+        // Bounded scan: a subscript is short; never walk the whole script.
+        for _ in 0..4096 {
+            let Some(c) = ahead.next() else {
+                return false;
+            };
+            if let Some(q) = quote {
+                if c == q {
+                    quote = None;
+                }
+                continue;
+            }
+            match c {
+                '\'' | '"' => quote = Some(c),
+                '\\' => {
+                    ahead.next();
+                }
+                '\n' | ';' => return false,
+                '[' => depth += 1,
+                ']' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return match ahead.next() {
+                            Some('=') => true,
+                            Some('+') => ahead.next() == Some('='),
+                            _ => false,
+                        };
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
+    /// Unclosed `[` count of a word that starts `name[`; 0 otherwise.
+    fn open_subscript_depth(word: &str) -> i32 {
+        let Some(open) = word.find('[') else {
+            return 0;
+        };
+        let mut chars = word[..open].chars();
+        if !chars
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+            || !chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+        {
+            return 0;
+        }
+        let mut depth = 0i32;
+        for c in word[open..].chars() {
+            match c {
+                '[' => depth += 1,
+                ']' => depth -= 1,
+                _ => {}
+            }
+        }
+        depth
+    }
+
     /// Whether word-token source capture is on.
     pub fn capture_raw(&self) -> bool {
         self.capture_raw
@@ -176,6 +275,15 @@ impl<'a> Lexer<'a> {
         let start = self.position;
         self.raw_buf.clear();
         let token = self.next_token_inner()?;
+        // A word is lexed in assignment position after an operator, a
+        // reserved word or another assignment, never after a command name.
+        self.spaced_subscript = match &token {
+            Token::Word(w)
+            | Token::LiteralWord(w)
+            | Token::QuotedWord(w)
+            | Token::QuotedGlobWord(w) => Self::keeps_assignment_position(w),
+            _ => true,
+        };
         let end = self.position;
         let raw = (self.capture_raw
             && matches!(
@@ -804,6 +912,8 @@ impl<'a> Lexer<'a> {
         // quoted glob characters stay literal (see the end of this function).
         let mut quoted_ranges: Vec<(usize, usize)> = Vec::new();
         let mut has_unquoted_expansion = false;
+        // A blank inside `name[...]` was checked to close with `]=` ahead.
+        let mut spaced_ok = false;
 
         while let Some(ch) = self.peek_char() {
             // Handle quoted strings within words (e.g., a="Hello" or VAR="value")
@@ -1224,6 +1334,17 @@ impl<'a> Lexer<'a> {
                 }
                 word.push(ch);
                 self.advance();
+            } else if matches!(ch, ' ' | '\t' | '&' | '|' | '<' | '>' | '(' | ')')
+                && self.spaced_subscript
+                && (if spaced_ok {
+                    Self::open_subscript_depth(&word) > 0
+                } else {
+                    spaced_ok = self.spaced_subscript_continues(&word);
+                    spaced_ok
+                })
+            {
+                word.push(ch);
+                self.advance();
             } else {
                 break;
             }
@@ -1300,12 +1421,22 @@ impl<'a> Lexer<'a> {
             return Some(Token::Error(error));
         }
         // `'a'"$1"`: the double-quoted continuation still expands; the
-        // markers keep every segment quoted (and `''"$@"` keeps its empty
-        // quoted part, so no positional parameters still make one field).
-        if flags.has_unquoted_expansion || flags.has_quoted_expansion {
+        // markers keep every segment quoted and end `$1` at its quote.
+        // With an unquoted glob the QuotedGlobWord path below keeps quoted
+        // results literal.
+        if flags.has_unquoted_expansion || (flags.has_quoted_expansion && !flags.has_unquoted_glob)
+        {
+            // `''"$@"` keeps its empty quoted part as a field of its own.
+            let has_empty_quoted =
+                quoted_prefix_len == 0 || flags.quoted_ranges.iter().any(|(s, e)| s == e);
             let mut ranges = flags.quoted_ranges;
             ranges.push((0, quoted_prefix_len));
             Self::apply_quote_markers(&mut content, ranges);
+            if !flags.has_unquoted_expansion && !flags.has_unquoted_glob && !has_empty_quoted {
+                // Nothing in it splits or globs: a quoted word whose
+                // markers only end names at quote boundaries.
+                return Some(Token::QuotedWord(content));
+            }
             return Some(Token::Word(content));
         }
         if flags.has_unquoted_glob {
@@ -1356,49 +1487,20 @@ impl<'a> Lexer<'a> {
                 Some('"') => {
                     self.advance(); // opening "
                     let start = content.len();
-                    let mut closed = false;
-                    while let Some(ch) = self.peek_char() {
-                        if ch == '"' {
-                            self.advance(); // closing "
-                            closed = true;
+                    match self.read_dquote_body(content) {
+                        Ok(true) => {}
+                        Ok(false) => {
+                            flags.error = Some("unterminated double quote".to_string());
                             break;
                         }
-                        if ch == '\\' {
-                            self.advance();
-                            if let Some(next) = self.peek_char() {
-                                match next {
-                                    '$' => {
-                                        content.push('\x00');
-                                        content.push('$');
-                                        self.advance();
-                                    }
-                                    '"' | '\\' | '`' => {
-                                        content.push(next);
-                                        self.advance();
-                                    }
-                                    _ => {
-                                        content.push('\\');
-                                        content.push(next);
-                                        self.advance();
-                                    }
-                                }
-                                continue;
-                            }
+                        Err(msg) => {
+                            flags.error = Some(msg);
+                            break;
                         }
-                        if ch == '`' {
-                            flags.has_quoted_expansion = true;
-                            self.read_dquote_backtick_into(content);
-                            continue;
-                        }
-                        if ch == '$' {
-                            flags.has_quoted_expansion = true;
-                        }
-                        content.push(ch);
-                        self.advance();
                     }
-                    if !closed {
-                        flags.error = Some("unterminated double quote".to_string());
-                        break;
+                    // `'a'"$x"`: the double-quoted segment still expands.
+                    if Self::has_unescaped_dollar(&content[start..]) {
+                        flags.has_quoted_expansion = true;
                     }
                     flags.quoted_ranges.push((start, content.len()));
                 }
@@ -1512,15 +1614,15 @@ impl<'a> Lexer<'a> {
 
         let mut merged: Vec<(usize, usize)> = Vec::with_capacity(ranges.len());
         for (start, end) in ranges {
-            // Touching ranges merge, but an empty one never does: `"$@"""`
-            // and `''"$@"` keep their empty quoted part. Repeated empty
-            // ranges at one spot (`""""`) collapse to one marker pair.
+            // Touching non-empty segments stay apart: `"$x"'c'` must end
+            // `$x` at the boundary between them. An empty one never merges
+            // (`"$@"""` and `''"$@"` keep their empty quoted part); repeated
+            // empty ranges at one spot (`""""`) collapse to one marker pair.
             if start == end && merged.last() == Some(&(start, end)) {
                 continue;
             }
-            if let Some((last_start, last_end)) = merged.last_mut()
-                && (start < *last_end
-                    || (start == *last_end && start != end && *last_start != *last_end))
+            if let Some((_, last_end)) = merged.last_mut()
+                && start < *last_end
             {
                 *last_end = (*last_end).max(end);
                 continue;
@@ -1992,11 +2094,11 @@ impl<'a> Lexer<'a> {
         content.push(')');
     }
 
-    fn read_double_quoted_string(&mut self) -> Option<Token> {
-        self.advance(); // consume opening "
-        let mut content = String::new();
+    /// Read a double-quoted body after the opening `"` (consumed) up to
+    /// and including the closing `"`, appending it to `content` in the
+    /// form `parse_word` expands. Returns whether the quote closed.
+    fn read_dquote_body(&mut self, content: &mut String) -> std::result::Result<bool, String> {
         let mut closed = false;
-
         while let Some(ch) = self.peek_char() {
             match ch {
                 '"' => {
@@ -2034,33 +2136,42 @@ impl<'a> Lexer<'a> {
                 }
                 '$' => {
                     self.advance();
-                    if self.take_dquote_dollar(&mut content) {
+                    if self.take_dquote_dollar(content) {
                         continue;
                     }
                     if self.peek_char() == Some('[') {
-                        self.read_dollar_bracket_arith(&mut content);
+                        self.read_dollar_bracket_arith(content);
                     } else if self.peek_char() == Some('(') {
                         // $(...) command substitution — track paren depth
                         content.push('(');
                         self.advance();
-                        self.read_command_subst_into(&mut content);
+                        self.read_command_subst_into(content);
                     } else if self.peek_char() == Some('{') {
                         // ${...} parameter expansion — track brace depth so
                         // inner quotes (e.g. ${arr["key"]}) don't end the string
                         content.push('{');
                         self.advance();
-                        if let Err(msg) = self.read_param_expansion_into(&mut content) {
-                            return Some(Token::Error(msg));
-                        }
+                        self.read_param_expansion_into(content)?;
                     }
                 }
-                '`' => self.read_dquote_backtick_into(&mut content),
+                '`' => self.read_dquote_backtick_into(content),
                 _ => {
                     content.push(ch);
                     self.advance();
                 }
             }
         }
+
+        Ok(closed)
+    }
+
+    fn read_double_quoted_string(&mut self) -> Option<Token> {
+        self.advance(); // consume opening "
+        let mut content = String::new();
+        let closed = match self.read_dquote_body(&mut content) {
+            Ok(closed) => closed,
+            Err(msg) => return Some(Token::Error(msg)),
+        };
 
         if !closed {
             return Some(Token::Error("unterminated double quote".to_string()));
@@ -2085,12 +2196,27 @@ impl<'a> Lexer<'a> {
             // must stay separate parts (markers) instead of one QuotedWord.
             let empty_quoted_beside_expansion = Self::has_unescaped_dollar(&content)
                 && (quoted_prefix_len == 0 || flags.quoted_ranges.iter().any(|(s, e)| s == e));
-            if flags.has_unquoted_expansion || empty_quoted_beside_expansion {
+            // `"$x"c`, `"a"'b'"$x"`: an expansion in a quoted segment needs
+            // the markers too, or `$x` would read on into `$xc`. With an
+            // unquoted glob and no unquoted expansion the QuotedGlobWord
+            // path below keeps quoted results literal.
+            if flags.has_unquoted_expansion
+                || empty_quoted_beside_expansion
+                || (!flags.has_unquoted_glob
+                    && (flags.has_quoted_expansion
+                        || Self::has_unescaped_dollar(&content[..quoted_prefix_len])))
+            {
                 let mut ranges = flags.quoted_ranges;
                 ranges.push((0, quoted_prefix_len));
                 // Build marker-delimited quoted spans in one pass so hostile
                 // many-continuation words cannot trigger quadratic insertion work.
                 Self::apply_quote_markers(&mut content, ranges);
+                if !flags.has_unquoted_expansion
+                    && !flags.has_unquoted_glob
+                    && !empty_quoted_beside_expansion
+                {
+                    return Some(Token::QuotedWord(content));
+                }
                 return Some(Token::Word(content));
             }
             if flags.has_unquoted_glob {
@@ -2759,7 +2885,9 @@ mod tests {
         let mut lexer = Lexer::new("'a\\b'\"$1\"");
         assert_eq!(
             lexer.next_token(),
-            Some(Token::Word("\u{1e}a\\b$1\u{1f}".to_string()))
+            Some(Token::QuotedWord(
+                "\u{1e}a\\b\u{1f}\u{1e}$1\u{1f}".to_string()
+            ))
         );
         // No expansion: still one literal word.
         let mut lexer = Lexer::new("'a$'\"b\"");

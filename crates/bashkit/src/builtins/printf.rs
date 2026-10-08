@@ -197,6 +197,7 @@ pub(super) fn render_printf_bytes(
     args: &[String],
 ) -> std::result::Result<Vec<u8>, String> {
     let format = strip_zero_hex_escapes(format);
+    let format = drop_zero_flag_on_strings(format.as_ref());
     let format = format.as_ref();
     let values = format_arguments(args);
     validate_format_caps(format.as_bytes(), args)?;
@@ -220,6 +221,51 @@ pub(super) fn render_printf_bytes(
     }
 
     Ok(out)
+}
+
+/// bash ignores the `0` flag on `%s` (`%06s` pads with blanks); the uutils
+/// formatter rejects it, so drop it from string directives.
+fn drop_zero_flag_on_strings(format: &str) -> Cow<'_, str> {
+    let bytes = format.as_bytes();
+    let mut out = String::with_capacity(format.len());
+    let mut changed = false;
+    let mut i = 0;
+    let mut copied = 0;
+    while i < bytes.len() {
+        if bytes[i] != b'%' {
+            i += 1;
+            continue;
+        }
+        if bytes.get(i + 1) == Some(&b'%') {
+            i += 2;
+            continue;
+        }
+        let flags_start = i + 1;
+        let mut j = flags_start;
+        while j < bytes.len() && matches!(bytes[j], b'-' | b'+' | b' ' | b'#' | b'0') {
+            j += 1;
+        }
+        let flags_end = j;
+        while j < bytes.len() && (bytes[j].is_ascii_digit() || bytes[j] == b'.') {
+            j += 1;
+        }
+        if bytes.get(j) == Some(&b's') && bytes[flags_start..flags_end].contains(&b'0') {
+            out.push_str(&format[copied..flags_start]);
+            for &b in &bytes[flags_start..flags_end] {
+                if b != b'0' {
+                    out.push(b as char);
+                }
+            }
+            copied = flags_end;
+            changed = true;
+        }
+        i = j.max(i + 1);
+    }
+    if !changed {
+        return Cow::Borrowed(format);
+    }
+    out.push_str(&format[copied..]);
+    Cow::Owned(out)
 }
 
 /// In a printf FORMAT (unlike a `%b` argument) bash prints `\c` literally;
@@ -459,6 +505,11 @@ fn expand_time_directives(
                 s => Some(parse_leading_i64(s)),
             };
             *arg = strftime(seconds, fmt)?;
+            // bash formats into a 128-byte buffer: a longer result
+            // (strftime reports overflow) prints nothing.
+            if arg.len() >= 128 {
+                arg.clear();
+            }
         }
     }
     Ok((out, args))
