@@ -1040,7 +1040,7 @@ security threats related to git operations and their mitigations.
 | TM-GIT-002 | Host identity leak | Commit reveals real name/email | Configurable virtual identity | **MITIGATED** |
 | TM-GIT-003 | Host git config access | Read ~/.gitconfig | No host filesystem access | **MITIGATED** |
 | TM-GIT-004 | Credential theft | Access git credential store | No host filesystem access | **MITIGATED** |
-| TM-GIT-005 | Repository escape | `git clone` outside VFS | All paths in VFS | **MITIGATED** |
+| TM-GIT-005 | Repository escape | `git clone` outside VFS | All paths in VFS; a local clone source (`PATH`, `file://PATH`) resolves in the VFS and is copied with the budgeted `cp -R` walker, bounded by FS limits | **MITIGATED** |
 
 **Current Risk**: LOW. Implementation: `git/client.rs`, author identity (`[user]` name/email)
 is built from configurable `self.config` values, never read from host `~/.gitconfig` (TM-GIT-002).
