@@ -4,7 +4,6 @@
 
 ### bashbox_marker_bytes_values_holding_the_bytes_the_expander_uses_internally_surviv
 # values holding the bytes the expander uses internally survive expansion
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 v=$(printf 'a\001b\002c\003d\004e\005f\006g\177h'); show() { printf '%s' "$1" | tr '\001\002\003\004\005\006\177' '1234567'; echo; }
 show "$v"; echo ${#v}
 for w in $v; do show "[$w]"; done
@@ -30,7 +29,6 @@ same
 
 ### bashbox_marker_bytes_a_byte_used_as_ifs_splits_and_an_escaped_one_in_a_pattern_ma
 # a byte used as IFS splits, and an escaped one in a pattern matches itself
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 v=$(printf 'a\001b\002c'); show() { printf '%s' "$1" | tr '\001\002' '12'; echo; }
 IFS=$(printf '\001'); for w in $v; do show "($w)"; done
 unset IFS; w=$(printf 'x\001 y'); for q in $w; do show "{$q}"; done; : ${u:=$v}; show "$u"; k=$(printf '\004'); echo "${k:+set}" "${#k}"

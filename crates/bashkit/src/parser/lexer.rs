@@ -21,11 +21,15 @@ pub struct SpannedToken {
 /// THREAT[TM-DOS-044]: Prevents stack overflow from deeply nested $() patterns.
 const DEFAULT_MAX_SUBST_DEPTH: usize = 50;
 
-// Important decision: markers preserve quoted segments only until expansion.
-// They let later unquoted continuations split without splitting the quoted prefix.
-// Marker insertion is one-pass, never repeated String::insert, to avoid parser DoS.
-const QUOTED_SEGMENT_START: char = '\x01';
-const QUOTED_SEGMENT_END: char = '\x02';
+// Important decision: a word that starts quoted and continues with an
+// unquoted expansion marks its quoted spans with the parser's quote-boundary
+// markers (`\u{1e}`/`\u{1f}`), which `parse_word` turns into per-part
+// quotedness (`Word::part_quoted`), so later unquoted continuations split
+// without splitting the quoted prefix. No in-band marker survives into
+// expansion, so data bytes like `\x01` stay data. Marker insertion is
+// one-pass, never repeated String::insert, to avoid parser DoS.
+const QUOTED_SEGMENT_START: char = '\u{1e}';
+const QUOTED_SEGMENT_END: char = '\u{1f}';
 
 #[derive(Default)]
 struct ContinuationFlags {
@@ -2522,7 +2526,7 @@ mod tests {
         let mut lexer = Lexer::new(&script);
         assert_eq!(
             lexer.next_token(),
-            Some(Token::Word("\x01a\x02$x".to_string()))
+            Some(Token::Word("\u{1e}a\u{1f}$x".to_string()))
         );
         assert_eq!(lexer.next_token(), None);
     }

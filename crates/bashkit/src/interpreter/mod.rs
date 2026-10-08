@@ -43,11 +43,6 @@ static TIME_REPORT_COUNTER: AtomicU64 = AtomicU64::new(0);
 // bashkit crate semver so scripts that gate on Bash features keep working.
 const COMPAT_BASH_VERSION: &str = "5.2.15(1)-release";
 const COMPAT_BASH_VERSINFO: [&str; 6] = ["5", "2", "15", "1", "release", "virtual"];
-// Important decision: lexer emits these only for mixed words where an initial
-// quoted segment is followed by an unquoted expansion. Keep them internal and
-// strip before observable output.
-const QUOTED_SEGMENT_START: char = '\x01';
-const QUOTED_SEGMENT_END: char = '\x02';
 
 // Important decision: operand quote sentinels must be selected from a small,
 // parser-inert set. Exhaustive Unicode probing is attacker-amplifiable CPU work.

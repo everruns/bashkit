@@ -216,7 +216,6 @@ impl Interpreter {
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String>> + Send + 'a>> {
         Box::pin(async move {
             let expanded = self.expand_word_inner(word).await?;
-            let expanded = Self::strip_quote_markers(&expanded);
             // A `QuotedGlobWord` carries glob escapes for its quoted text;
             // contexts that do not glob (command names, redirect targets,
             // operands) want the text itself.
@@ -283,7 +282,6 @@ impl Interpreter {
     /// quoted expansions from `append_expansion_for_word`.
     pub(super) async fn expand_pattern_word(&mut self, word: &Word) -> Result<String> {
         let expanded = Box::pin(self.expand_word_inner(word)).await?;
-        let expanded = Self::strip_quote_markers(&expanded);
         if word.quoted && !word.has_unquoted_glob {
             Ok(Self::quote_expansion_for_quoted_glob(&expanded))
         } else {
@@ -813,25 +811,40 @@ impl Interpreter {
                     })
                     .flatten();
 
+                // Protected-span markers, likewise chosen absent from the
+                // data so a value holding any byte (`\x01` included) stays data.
+                let mut free_marks = OPERAND_QUOTE_MARK_CANDIDATES.iter().copied().filter(|c| {
+                    Some(*c) != empty_field_sentinel && !sentinel_haystack.contains(*c)
+                });
+                let marks = free_marks.next().zip(free_marks.next());
+
                 let mut expanded_for_split = String::new();
                 for (value, is_protected, preserves_empty_field) in segments {
                     if is_protected {
                         // Field splitting scans the whole expanded word. Mark literal and
                         // quoted segments as protected so unquoted expansion delimiters can
                         // still create boundaries between adjacent protected segments.
-                        expanded_for_split.push(QUOTED_SEGMENT_START);
+                        if let Some((start, _)) = marks {
+                            expanded_for_split.push(start);
+                        }
                         if preserves_empty_field
                             && let Some(empty_field_sentinel) = empty_field_sentinel
                         {
                             expanded_for_split.push(empty_field_sentinel);
                         }
                         expanded_for_split.push_str(&value);
-                        expanded_for_split.push(QUOTED_SEGMENT_END);
+                        if let Some((_, end)) = marks {
+                            expanded_for_split.push(end);
+                        }
                     } else {
                         expanded_for_split.push_str(&value);
                     }
                 }
-                let mut fields = self.ifs_split(&expanded_for_split)?;
+                let mut fields = self.ifs_split_marked(
+                    &expanded_for_split,
+                    self.limits.max_word_split_fields,
+                    marks,
+                )?;
                 if let Some(empty_field_sentinel) = empty_field_sentinel {
                     for field in &mut fields {
                         field.retain(|ch| ch != empty_field_sentinel);
@@ -859,7 +872,7 @@ impl Interpreter {
             if has_expansion {
                 self.ifs_split(&expanded)
             } else {
-                Ok(vec![Self::strip_quote_markers(&expanded)])
+                Ok(vec![expanded])
             }
         })
     }
@@ -967,19 +980,15 @@ impl Interpreter {
         None
     }
 
-    pub(super) fn strip_quote_markers(s: &str) -> String {
-        s.chars()
-            .filter(|&c| c != QUOTED_SEGMENT_START && c != QUOTED_SEGMENT_END)
-            .collect()
-    }
-
-    pub(super) fn quote_marker_chars(s: &str) -> Vec<(char, bool)> {
+    /// `s` as (char, protected) pairs: text between the `marks` pair is
+    /// protected from splitting; the marks themselves are dropped.
+    fn quote_marker_chars(s: &str, marks: Option<(char, char)>) -> Vec<(char, bool)> {
         let mut quoted = false;
         let mut chars = Vec::new();
         for c in s.chars() {
-            match c {
-                QUOTED_SEGMENT_START => quoted = true,
-                QUOTED_SEGMENT_END => quoted = false,
+            match marks {
+                Some((start, _)) if c == start => quoted = true,
+                Some((_, end)) if c == end => quoted = false,
                 _ => chars.push((c, quoted)),
             }
         }
@@ -999,6 +1008,17 @@ impl Interpreter {
 
     /// Split a string on IFS characters, returning an error if resource caps are exceeded.
     pub(super) fn ifs_split_limited(&self, s: &str, limit: usize) -> Result<Vec<String>> {
+        self.ifs_split_marked(s, limit, None)
+    }
+
+    /// `ifs_split_limited` where text between the `marks` pair is protected
+    /// from splitting (the marks are removed).
+    fn ifs_split_marked(
+        &self,
+        s: &str,
+        limit: usize,
+        marks: Option<(char, char)>,
+    ) -> Result<Vec<String>> {
         // Clamp so callers passing a larger value (e.g. remaining array capacity)
         // cannot bypass the configured max_word_split_fields cap.
         let limit = limit.min(self.limits.max_word_split_fields);
@@ -1014,7 +1034,10 @@ impl Interpreter {
             .unwrap_or_else(|| " \t\n".to_string());
 
         if ifs.is_empty() {
-            let field = Self::strip_quote_markers(s);
+            let field: String = Self::quote_marker_chars(s, marks)
+                .into_iter()
+                .map(|(c, _)| c)
+                .collect();
             let bytes = field.len();
             return self.push_ifs_field(Vec::new(), field, limit, bytes);
         }
@@ -1023,7 +1046,7 @@ impl Interpreter {
         let is_ifs_ws = |c: char, quoted: bool| !quoted && ifs.contains(c) && " \t\n".contains(c);
         let is_ifs_nws = |c: char, quoted: bool| !quoted && ifs.contains(c) && !" \t\n".contains(c);
         let all_whitespace_ifs = ifs.chars().all(|c| " \t\n".contains(c));
-        let chars = Self::quote_marker_chars(s);
+        let chars = Self::quote_marker_chars(s, marks);
 
         if all_whitespace_ifs {
             // IFS is only whitespace: split on unquoted runs, elide empties.
