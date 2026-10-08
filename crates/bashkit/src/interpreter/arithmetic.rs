@@ -918,14 +918,11 @@ impl Interpreter {
                     }
                     return "0".to_string();
                 }
-                return self
-                    .expand_name_or_array_element(&rest[..=end])
-                    .chars()
-                    .count()
-                    .to_string();
+                let val = self.expand_name_or_array_element(&rest[..=end]);
+                return self.shell_length(&val).to_string();
             }
             let val = self.expand_variable(rest);
-            return val.chars().count().to_string();
+            return self.shell_length(&val).to_string();
         }
 
         if let Some(bracket) = inner.find('[')

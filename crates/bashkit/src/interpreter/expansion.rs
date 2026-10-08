@@ -120,6 +120,21 @@ impl Interpreter {
         result
     }
 
+    /// `${#v}`: characters, or bytes when the shell's locale is C/POSIX.
+    /// The locale comes from `LC_ALL`, then `LC_CTYPE`, then `LANG`, the first
+    /// one set and non-empty. With none set bashkit stays UTF-8 (bash would
+    /// fall back to C), so only an explicit `C`/`POSIX` switches to bytes.
+    pub(super) fn shell_length(&self, value: &str) -> usize {
+        let locale = ["LC_ALL", "LC_CTYPE", "LANG"]
+            .iter()
+            .map(|name| self.expand_variable(name))
+            .find(|v| !v.is_empty());
+        match locale.as_deref() {
+            Some("C" | "POSIX") => value.len(),
+            _ => value.chars().count(),
+        }
+    }
+
     /// Apply a `${var@operator}` transformation.
     pub(super) fn apply_transformation(&self, name: &str, operator: char) -> String {
         // `${v@a}`: the variable's attribute letters, the same ones
@@ -414,7 +429,7 @@ impl Interpreter {
                     } else {
                         self.expand_variable(name)
                     };
-                    result.push_str(&value.chars().count().to_string());
+                    result.push_str(&self.shell_length(&value).to_string());
                 }
                 WordPart::ParameterExpansion {
                     name,
@@ -1240,7 +1255,7 @@ impl Interpreter {
                     Self::push_operand_expansion(&mut result, &expanded, in_marked || force_quoted);
                 }
                 WordPart::Length(name) => {
-                    let value = self.expand_variable(name).len().to_string();
+                    let value = self.shell_length(&self.expand_variable(name)).to_string();
                     Self::push_operand_expansion(&mut result, &value, in_marked || force_quoted);
                 }
                 // Run ahead by `prefetch_operand_substs` (default-family
