@@ -833,9 +833,11 @@ impl Interpreter {
         let dotglob = self.is_dotglob();
         let nocase = self.is_nocaseglob();
         let is_absolute = pattern.starts_with('/');
+        // A trailing `/` (`*/`) matches directories only and stays on each
+        // match (`d1/`), as in bash.
+        let trailing_slash = pattern.ends_with('/');
 
-        // Empty components collapse `//` and drop a trailing `/`, matching the
-        // previous `Path::file_name()` behaviour for patterns like `/dir/*/`.
+        // Empty components collapse `//`; a trailing `/` is re-added below.
         let components: Vec<&str> = pattern.split('/').filter(|s| !s.is_empty()).collect();
         if components.is_empty() {
             return Ok(Vec::new());
@@ -863,6 +865,7 @@ impl Interpreter {
 
         for (idx, component) in components.iter().enumerate() {
             let is_last = idx + 1 == components.len();
+            let dirs_only = !is_last || trailing_slash;
             let mut next: Vec<(PathBuf, String)> = Vec::new();
 
             if self.contains_glob_chars(component) || self.contains_extglob(component) {
@@ -881,13 +884,23 @@ impl Interpreter {
                         if entry.name.starts_with('.') && !dotglob && !component_starts_with_dot {
                             continue;
                         }
-                        // Only a directory can carry the rest of the pattern.
-                        if !is_last && !entry.metadata.file_type.is_dir() {
+                        if !self.glob_match_impl(&entry.name, component, nocase, 0) {
                             continue;
                         }
-                        if self.glob_match_impl(&entry.name, component, nocase, 0) {
-                            matched.push(entry.name);
+                        // Only a directory can carry the rest of the pattern.
+                        // A symlink to a directory counts as one (bash's `*/`).
+                        if dirs_only
+                            && !entry.metadata.file_type.is_dir()
+                            && !(entry.metadata.file_type.is_symlink()
+                                && self
+                                    .fs
+                                    .stat(&vfs_join(dir, &entry.name))
+                                    .await
+                                    .is_ok_and(|m| m.file_type.is_dir()))
+                        {
+                            continue;
                         }
+                        matched.push(entry.name);
                     }
 
                     // Looks redundant next to the final sort, but is not: `read_dir`
@@ -911,6 +924,16 @@ impl Interpreter {
                     if is_last && !self.fs.exists(&path).await.unwrap_or(false) {
                         continue;
                     }
+                    if is_last
+                        && trailing_slash
+                        && !self
+                            .fs
+                            .stat(&path)
+                            .await
+                            .is_ok_and(|m| m.file_type.is_dir())
+                    {
+                        continue;
+                    }
                     let output = Self::glob_join_output(out, &literal, is_absolute);
                     next.push((path, output));
                 }
@@ -926,7 +949,10 @@ impl Interpreter {
         }
 
         // Sort matches alphabetically (bash behavior)
-        let mut matches: Vec<String> = candidates.into_iter().map(|(_, out)| out).collect();
+        let mut matches: Vec<String> = candidates
+            .into_iter()
+            .map(|(_, out)| if trailing_slash { out + "/" } else { out })
+            .collect();
         matches.sort();
         Ok(matches)
     }
