@@ -1438,6 +1438,9 @@ pub struct Interpreter {
     /// `unset LINENO` makes it an ordinary variable for the rest of the
     /// shell's life, like bash.
     lineno_unset: bool,
+    /// The `Return(1)` just produced came from a failed `$(( ))`, which ends a
+    /// subshell but not the script itself.
+    arith_failure_pending: bool,
     /// HTTP client for network builtins (curl, wget)
     #[cfg(feature = "http_client")]
     http_client: Option<Arc<crate::network::HttpClient>>,
@@ -2046,6 +2049,7 @@ impl Interpreter {
             jobs: jobs::new_shared_job_table(),
             current_line: 1,
             lineno_unset: false,
+            arith_failure_pending: false,
             #[cfg(feature = "http_client")]
             http_client: None,
             #[cfg(feature = "git")]
@@ -2189,6 +2193,7 @@ impl Interpreter {
             fs: Arc::clone(&self.fs),
             env: self.env.clone(),
             scoped: self.scoped.clone(),
+            arith_failure_pending: self.arith_failure_pending,
             flags: self.flags,
             cwd: self.cwd.clone(),
             last_exit_code: self.last_exit_code,
@@ -3354,6 +3359,14 @@ impl Interpreter {
                         break;
                     }
                 } else {
+                    // A failed `$(( ))` fails its command and nothing more:
+                    // the script keeps going, as it does in bash.
+                    if top_level
+                        && result.control_flow == ControlFlow::Return(1)
+                        && std::mem::take(&mut self.arith_failure_pending)
+                    {
+                        continue;
+                    }
                     stopped = true;
                     break;
                 }
@@ -4174,12 +4187,12 @@ impl Interpreter {
         // the right side must NOT be expanded (to avoid set -u errors).
         let result = self.evaluate_conditional_words(words).await?;
         // If a nounset error occurred during evaluation, propagate it.
-        if let Some(err_msg) = self.take_expansion_error() {
+        if let Some((err_msg, control_flow)) = self.take_expansion_failure() {
             self.last_exit_code = 1;
             return Ok(ExecResult {
                 stderr: err_msg.into(),
                 exit_code: 1,
-                control_flow: ControlFlow::Return(1),
+                control_flow,
                 ..Default::default()
             });
         }
@@ -6777,10 +6790,21 @@ impl Interpreter {
 
     /// The pending expansion error, if any: an arithmetic failure first, then a
     /// `set -u` failure. Clears both.
-    fn take_expansion_error(&mut self) -> Option<String> {
-        let arith = self.take_arith_error("");
-        let nounset = self.nounset_error.take();
-        arith.or(nounset)
+    ///
+    /// Both abort the enclosing subshell, as bash does — `( echo a; echo
+    /// $((1/0)); echo b )` stops after `a`. They differ at the outermost
+    /// level of a script: `set -u` ends it, while an arithmetic failure only
+    /// fails its own command and the script runs on. `arith_failure_pending`
+    /// tells the two apart there.
+    fn take_expansion_failure(&mut self) -> Option<(String, ControlFlow)> {
+        if let Some(msg) = self.take_arith_error("") {
+            self.nounset_error = None;
+            self.arith_failure_pending = true;
+            return Some((msg, ControlFlow::Return(1)));
+        }
+        self.nounset_error
+            .take()
+            .map(|msg| (msg, ControlFlow::Return(1)))
     }
 
     /// Take the pending arithmetic error, formatted with `prefix`.
@@ -7023,14 +7047,14 @@ impl Interpreter {
                 }
             };
 
-            if let Some(err_msg) = self.take_expansion_error() {
+            if let Some((err_msg, control_flow)) = self.take_expansion_failure() {
                 self.last_exit_code = 1;
                 self.discard_deferred_proc_subs_from(deferred_proc_sub_start);
                 return Ok(ExecResult {
                     stdout: crate::StreamData::new(),
                     stderr: err_msg.into(),
                     exit_code: 1,
-                    control_flow: ControlFlow::Return(1),
+                    control_flow,
                     ..Default::default()
                 });
             }
@@ -7275,14 +7299,14 @@ impl Interpreter {
                 self.insert_variable_checked("_".to_string(), name.to_string());
             }
 
-            // Check for nounset error from argument expansion
-            if let Some(err_msg) = self.take_expansion_error() {
+            // Check for an arithmetic or `set -u` failure during expansion.
+            if let Some((err_msg, control_flow)) = self.take_expansion_failure() {
                 self.last_exit_code = 1;
                 return Ok(ExecResult {
                     stdout: crate::StreamData::new(),
                     stderr: err_msg.into(),
                     exit_code: 1,
-                    control_flow: ControlFlow::Return(1),
+                    control_flow,
                     ..Default::default()
                 });
             }

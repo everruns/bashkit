@@ -1,3 +1,14 @@
+### arith_division_by_zero_aborts_the_subshell_but_not_the_script
+echo before
+echo $((1/0)) 2>/dev/null
+echo "rc=$?"
+echo after
+### expect
+before
+rc=1
+after
+### end
+
 ### arith_division_by_zero_aborts_and_fails
 ( echo before; echo $((1/0)); echo never ) 2>/dev/null
 echo "rc=$?"
