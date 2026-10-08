@@ -651,7 +651,7 @@ fn assignment_text(a: &Assignment) -> String {
 
 /// A word as written: its source text without line continuations, or a
 /// reconstruction when the parser did not record the source.
-fn word_text(w: &Word) -> String {
+pub(crate) fn word_text(w: &Word) -> String {
     match &w.raw {
         Some(raw) => normalize_raw_word(raw),
         None => reconstruct_word(w),

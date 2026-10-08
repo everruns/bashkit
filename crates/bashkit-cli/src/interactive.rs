@@ -34,6 +34,7 @@ fn is_incomplete_input(err_msg: &str) -> bool {
     lower.contains("unterminated")
         || lower.contains("unexpected end of input")
         || lower.contains("unexpected eof")
+        || lower.contains("unexpected end of file")
         || lower.contains("syntax error: empty")
         || lower.contains("expected 'fi'")
         || lower.contains("expected 'done'")
@@ -625,6 +626,14 @@ mod tests {
         assert!(is_incomplete_input("syntax error: empty else clause"));
         assert!(is_incomplete_input("syntax error: empty while loop body"));
         assert!(is_incomplete_input("syntax error: empty brace group"));
+    }
+
+    #[test]
+    fn incomplete_unexpected_end_of_file() {
+        // The parser's bash wording for input that ran out mid-construct.
+        assert!(is_incomplete_input(
+            "parse error at line 2, column 1: syntax error: unexpected end of file"
+        ));
     }
 
     #[test]
