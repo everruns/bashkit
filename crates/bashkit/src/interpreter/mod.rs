@@ -370,6 +370,12 @@ pub(crate) struct ShellRef<'a> {
     pub(crate) stdout_pipe: Option<Arc<pipe::Pipe>>,
     /// Stdin of a streaming filter stage (see `Context::stdin_stream`).
     pub(crate) stdin_pipe: Option<Arc<pipe::Pipe>>,
+    /// Enclosing loops in the current function (`break`/`continue`).
+    pub(crate) loop_depth: usize,
+    /// Active function calls and `source`s (`return` is valid when > 0).
+    pub(crate) return_depth: usize,
+    /// `$?` when the builtin started (`return` without an argument).
+    pub(crate) last_exit_code: i32,
 }
 
 // Interpreter-dispatched "special" builtins, listed here so the public
@@ -889,18 +895,6 @@ fn normalize_dev_path(path: &Path) -> PathBuf {
 /// THREAT[TM-INJ-009,TM-INJ-016]: Check if a variable name is an internal marker.
 /// Used by builtins and interpreter to block user assignment to internal prefixes.
 /// Note: `_TTY_` is intentionally excluded — it is user-configurable (bashkit extension).
-/// A name `unset -v` accepts: an identifier, optionally with a subscript.
-fn is_unset_target_name(name: &str) -> bool {
-    let base = match name.find('[') {
-        Some(i) if name.ends_with(']') => &name[..i],
-        Some(_) => return false,
-        None => name,
-    };
-    let mut chars = base.chars();
-    matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_')
-        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
-}
-
 pub(crate) fn is_internal_variable(name: &str) -> bool {
     name.starts_with("SHOPT_")
         || name.starts_with("_NAMEREF_")
@@ -1233,6 +1227,7 @@ bitflags::bitflags! {
         const NOCLOBBER    = 0b0000_0000_1000_0000; // set -C / SHOPT_C
         const PIPEFAIL     = 0b0000_0001_0000_0000; // set -o pipefail / SHOPT_pipefail
         const EXPAND_ALIAS = 0b0000_0010_0000_0000; // shopt expand_aliases
+        const KEYWORD      = 0b0000_0100_0000_0000; // set -k / SHOPT_k
     }
 }
 
@@ -1250,6 +1245,7 @@ impl BashFlags {
             "SHOPT_C" => Some(Self::NOCLOBBER),
             "SHOPT_pipefail" => Some(Self::PIPEFAIL),
             "SHOPT_expand_aliases" => Some(Self::EXPAND_ALIAS),
+            "SHOPT_k" => Some(Self::KEYWORD),
             _ => None,
         }
     }
@@ -1553,6 +1549,17 @@ pub struct Interpreter {
     script_depth: usize,
     /// Nested `bash`/`sh` child shells (TM-DOS-125).
     child_shell_depth: usize,
+    /// Enclosing `for`/`while`/`until`/`select` loops in the current
+    /// function (bash `loop_level`). A function call starts at 0, so
+    /// `break`/`continue` never leave the caller's loop.
+    loop_depth: usize,
+    /// Active function calls and `source`s: `return` is valid only when > 0.
+    return_depth: usize,
+    /// The last `[[ ]]` leaf was an invalid `=~` regex (status 2 if it
+    /// decides the result).
+    cond_regex_error: bool,
+    /// Diagnostics from `[[ ]]` leaves (arithmetic operand errors).
+    cond_stderr: String,
     /// First arithmetic error raised by a read-only evaluation site (array
     /// subscripts, `declare -i` values, substring offsets). The command
     /// boundary turns it into a line abort, as bash does.
@@ -1944,6 +1951,8 @@ impl Interpreter {
         variables.insert("OSTYPE".to_string(), "linux-gnu".to_string());
         variables.insert("HOSTTYPE".to_string(), "x86_64".to_string());
         variables.insert("MACHTYPE".to_string(), "x86_64-pc-linux-gnu".to_string());
+        // bash starts every shell with OPTIND=1 (getopts state).
+        variables.insert("OPTIND".to_string(), "1".to_string());
 
         // BASH_VERSINFO array: (major minor patch build status machine)
         let mut arrays = HashMap::new();
@@ -2044,6 +2053,10 @@ impl Interpreter {
             concurrent_jobs: true,
             script_depth: 0,
             child_shell_depth: 0,
+            loop_depth: 0,
+            return_depth: 0,
+            cond_regex_error: false,
+            cond_stderr: String::new(),
             arith_error: StdMutex::new(None),
             pending_compound_args: Vec::new(),
             assign_raw: false,
@@ -2211,6 +2224,10 @@ impl Interpreter {
             script_depth: 1,
             // Forks are polled on this task's stack, so they inherit its depth.
             child_shell_depth: self.child_shell_depth,
+            loop_depth: self.loop_depth,
+            return_depth: self.return_depth,
+            cond_regex_error: false,
+            cond_stderr: String::new(),
             arith_error: StdMutex::new(None),
             pending_compound_args: Vec::new(),
             assign_raw: false,
@@ -2454,6 +2471,8 @@ impl Interpreter {
         // one cancelled script cannot suppress traps in the next script.
         self.in_trap = false;
         self.condition_sequence_depth = 0;
+        self.loop_depth = 0;
+        self.return_depth = 0;
         self.deferred_proc_subs.clear();
         self.clear_pending_fd_redirect_state();
         // Top-level timeouts drop the interpreter future at await points, so
@@ -3232,6 +3251,7 @@ impl Interpreter {
         // line is skipped and the shell resumes at the next one.
         let mut aborted_line: Option<usize> = None;
         let mut propagate_abort = false;
+        let mut propagated_flow = ControlFlow::None;
         for command in &script.commands {
             if aborted_line == Some(Self::command_line(command)) {
                 continue;
@@ -3309,6 +3329,15 @@ impl Interpreter {
             // Stop on control flow (e.g. nounset error uses Return to abort)
             if result.control_flow != ControlFlow::None {
                 if let ControlFlow::Exit(code) = result.control_flow {
+                    if !run_exit_trap {
+                        // `exit` in a `source`/`eval` body ends the shell:
+                        // the caller's top level runs the exit hooks.
+                        propagated_flow = ControlFlow::Exit(code);
+                        exit_code = code;
+                        self.last_exit_code = code;
+                        stopped = true;
+                        break;
+                    }
                     if fire_exit_hook {
                         if !self.hooks.on_exit.is_empty() {
                             self.execution_budget.consume_work(100)?;
@@ -3327,12 +3356,15 @@ impl Interpreter {
                         break;
                     }
                 } else {
-                    // `return N` carries its status in the control flow, not
-                    // in `exit_code`, so a sourced script's `return 4` is
-                    // `source`'s status.
+                    // `return` ends a sourced file with its status;
+                    // `break`/`continue`/`return` in a `source`/`eval`
+                    // body act on the caller's loop or function.
                     if let ControlFlow::Return(code) = result.control_flow {
                         exit_code = code;
                         self.last_exit_code = code;
+                    }
+                    if !run_exit_trap {
+                        propagated_flow = result.control_flow;
                     }
                     stopped = true;
                     break;
@@ -3447,7 +3479,7 @@ impl Interpreter {
             control_flow: if propagate_abort {
                 ControlFlow::Abort
             } else {
-                ControlFlow::None
+                propagated_flow
             },
             stdout_truncated,
             stderr_truncated,
@@ -3670,12 +3702,25 @@ impl Interpreter {
     async fn execute_compound(&mut self, compound: &CompoundCommand) -> Result<ExecResult> {
         match compound {
             CompoundCommand::If(if_cmd) => self.execute_if(if_cmd).await,
-            CompoundCommand::For(for_cmd) => self.execute_for(for_cmd).await,
-            CompoundCommand::ArithmeticFor(arith_for) => {
-                self.execute_arithmetic_for(arith_for).await
+            CompoundCommand::For(_)
+            | CompoundCommand::ArithmeticFor(_)
+            | CompoundCommand::While(_)
+            | CompoundCommand::Until(_)
+            | CompoundCommand::Select(_) => {
+                self.loop_depth += 1;
+                let result = match compound {
+                    CompoundCommand::For(for_cmd) => self.execute_for(for_cmd).await,
+                    CompoundCommand::ArithmeticFor(arith_for) => {
+                        self.execute_arithmetic_for(arith_for).await
+                    }
+                    CompoundCommand::While(while_cmd) => self.execute_while(while_cmd).await,
+                    CompoundCommand::Until(until_cmd) => self.execute_until(until_cmd).await,
+                    CompoundCommand::Select(select_cmd) => self.execute_select(select_cmd).await,
+                    _ => unreachable!("loop compound matched above"),
+                };
+                self.loop_depth -= 1;
+                result
             }
-            CompoundCommand::While(while_cmd) => self.execute_while(while_cmd).await,
-            CompoundCommand::Until(until_cmd) => self.execute_until(until_cmd).await,
             CompoundCommand::Subshell(commands) => {
                 self.counters.push_subshell(&self.limits)?;
                 // Subshells run in fully isolated scope: variables, arrays,
@@ -3755,7 +3800,6 @@ impl Interpreter {
             }
             CompoundCommand::BraceGroup(commands) => self.execute_command_sequence(commands).await,
             CompoundCommand::Case(case_cmd) => self.execute_case(case_cmd).await,
-            CompoundCommand::Select(select_cmd) => self.execute_select(select_cmd).await,
             CompoundCommand::Arithmetic(expr) => {
                 self.execute_arithmetic_command(&crate::parser::arith_exec_text(expr))
                     .await
@@ -4240,7 +4284,12 @@ impl Interpreter {
         // Evaluate with lazy expansion to support short-circuit semantics.
         // In `[[ -n "${X:-}" && "$X" != "off" ]]`, if the left side is false,
         // the right side must NOT be expanded (to avoid set -u errors).
-        let result = self.evaluate_conditional_words(words).await?;
+        self.cond_regex_error = false;
+        self.cond_stderr.clear();
+        let result = self.evaluate_conditional_words(words).await;
+        let regex_error = std::mem::take(&mut self.cond_regex_error);
+        let cond_stderr = std::mem::take(&mut self.cond_stderr);
+        let result = result?;
         // If a nounset error occurred during evaluation, propagate it.
         if let Some(err_msg) = self.nounset_error.take() {
             self.last_exit_code = 1;
@@ -4251,12 +4300,17 @@ impl Interpreter {
                 ..Default::default()
             });
         }
-        let exit_code = if result { 0 } else { 1 };
+        // An invalid regex that decides the result gives status 2.
+        let exit_code = match (result, regex_error) {
+            (true, _) => 0,
+            (false, true) => 2,
+            (false, false) => 1,
+        };
         self.last_exit_code = exit_code;
 
         Ok(ExecResult {
             stdout: crate::StreamData::new(),
-            stderr: crate::StreamData::new(),
+            stderr: cond_stderr.into(),
             exit_code,
             control_flow: ControlFlow::None,
             ..Default::default()
@@ -4366,7 +4420,9 @@ impl Interpreter {
 
             // Handle negation
             if Self::conditional_word_literal(&words[0]) == Some("!") {
-                return Ok(!self.evaluate_conditional_words(&words[1..]).await?);
+                let negated = !self.evaluate_conditional_words(&words[1..]).await?;
+                self.cond_regex_error = false;
+                return Ok(negated);
             }
 
             // Handle parentheses only when they wrap the whole expression.
@@ -4409,6 +4465,7 @@ impl Interpreter {
                     self.expand_word(word).await?
                 });
             }
+            self.cond_regex_error = false;
             Ok(self.evaluate_conditional(&expanded).await)
         })
     }
@@ -4501,30 +4558,12 @@ impl Interpreter {
                         "!=" => !self.pattern_matches(&args[0], &args[2]),
                         "<" => args[0] < args[2],
                         ">" => args[0] > args[2],
-                        "-eq" => {
-                            args[0].parse::<i64>().unwrap_or(0)
-                                == args[2].parse::<i64>().unwrap_or(0)
-                        }
-                        "-ne" => {
-                            args[0].parse::<i64>().unwrap_or(0)
-                                != args[2].parse::<i64>().unwrap_or(0)
-                        }
-                        "-lt" => {
-                            args[0].parse::<i64>().unwrap_or(0)
-                                < args[2].parse::<i64>().unwrap_or(0)
-                        }
-                        "-le" => {
-                            args[0].parse::<i64>().unwrap_or(0)
-                                <= args[2].parse::<i64>().unwrap_or(0)
-                        }
-                        "-gt" => {
-                            args[0].parse::<i64>().unwrap_or(0)
-                                > args[2].parse::<i64>().unwrap_or(0)
-                        }
-                        "-ge" => {
-                            args[0].parse::<i64>().unwrap_or(0)
-                                >= args[2].parse::<i64>().unwrap_or(0)
-                        }
+                        "-eq" => self.cond_int_cmp(&args[0], &args[2], |a, b| a == b),
+                        "-ne" => self.cond_int_cmp(&args[0], &args[2], |a, b| a != b),
+                        "-lt" => self.cond_int_cmp(&args[0], &args[2], |a, b| a < b),
+                        "-le" => self.cond_int_cmp(&args[0], &args[2], |a, b| a <= b),
+                        "-gt" => self.cond_int_cmp(&args[0], &args[2], |a, b| a > b),
+                        "-ge" => self.cond_int_cmp(&args[0], &args[2], |a, b| a >= b),
                         "=~" => self.regex_match(&args[0], &args[2]),
                         "-nt" => {
                             let lm = self.fs.stat(std::path::Path::new(&args[0])).await;
@@ -4580,9 +4619,39 @@ impl Interpreter {
         self.is_variable_set(name)
     }
 
+    /// `[[ a -eq b ]]` and friends: both operands are arithmetic
+    /// expressions, evaluated as they stand (no second `$` expansion). An
+    /// invalid operand is reported and makes the test false.
+    fn cond_int_cmp(&mut self, left: &str, right: &str, cmp: fn(i64, i64) -> bool) -> bool {
+        let mut values = [0i64; 2];
+        for (slot, operand) in values.iter_mut().zip([left, right]) {
+            let mut ev = arithmetic::ArithEval::new(self);
+            let r = ev.eval_str(operand);
+            let writes = std::mem::take(&mut ev.writes);
+            self.apply_arith_writes(writes);
+            match r {
+                Ok(v) => *slot = v,
+                Err(msg) => {
+                    let msg = format!("{}: {msg}", operand.trim());
+                    let diag = self.arith_diag("[[: ", &msg);
+                    self.cond_stderr.push_str(&diag);
+                    return false;
+                }
+            }
+        }
+        cmp(values[0], values[1])
+    }
+
     /// Perform regex match and set BASH_REMATCH array.
     fn regex_match(&mut self, string: &str, pattern: &str) -> bool {
-        match self.regex_cache.get_or_compile(pattern) {
+        // POSIX ERE rejects unknown `[:class:]` names; the Rust engine would
+        // read them as plain bracket members.
+        let compiled = if ere_has_invalid_char_class(pattern) {
+            None
+        } else {
+            self.regex_cache.get_or_compile(pattern)
+        };
+        match compiled {
             Some(re) => {
                 if let Some(captures) = re.captures(string) {
                     // Set BASH_REMATCH array
@@ -4599,6 +4668,8 @@ impl Interpreter {
                 }
             }
             None => {
+                // Invalid regex: status 2 when it decides `[[ ]]`.
+                self.cond_regex_error = true;
                 self.arrays_mut().remove("BASH_REMATCH");
                 false
             }
@@ -5470,7 +5541,12 @@ impl Interpreter {
             self.update_bash_source();
         }
 
+        // A new shell is outside any loop, function or sourced file.
+        let saved_loop_depth = std::mem::replace(&mut self.loop_depth, 0);
+        let saved_return_depth = std::mem::replace(&mut self.return_depth, 0);
         let result = self.execute_script_body(&script, true, false).await;
+        self.loop_depth = saved_loop_depth;
+        self.return_depth = saved_return_depth;
 
         // Restore BASH_SOURCE
         if script_file.is_some() {
@@ -5542,6 +5618,8 @@ impl Interpreter {
                 next_vars.insert(name.to_string(), val.clone());
             }
         }
+        // A new shell starts getopts afresh.
+        next_vars.insert("OPTIND".to_string(), "1".to_string());
         *self.vars_mut() = next_vars;
         self.arrays_mut().clear();
         self.assoc_arrays_mut().clear();
@@ -6772,6 +6850,17 @@ impl Interpreter {
         stdin: Option<crate::StreamData>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecResult>> + Send + 'a>> {
         Box::pin(async move {
+            // `set -k`: assignment words anywhere in the command go to its
+            // environment, not its arguments.
+            let hoisted;
+            let command = if self.flags.contains(BashFlags::KEYWORD)
+                && command.args.iter().any(|w| keyword_assignment(w).is_some())
+            {
+                hoisted = hoist_keyword_assignments(command);
+                &hoisted
+            } else {
+                command
+            };
             let deferred_proc_sub_start = self.deferred_proc_subs.len();
             let (_debug_stdout, _debug_stderr) = self.run_debug_trap().await;
 
@@ -7583,6 +7672,9 @@ impl Interpreter {
                     execution_extensions,
                     stdout_pipe: None,
                     stdin_pipe: None,
+                    loop_depth: self.loop_depth,
+                    return_depth: self.return_depth,
+                    last_exit_code: self.last_exit_code,
                 };
                 let plan_ctx = builtins::Context {
                     args,
@@ -7650,6 +7742,9 @@ impl Interpreter {
                 execution_extensions,
                 stdout_pipe: self.builtin_stdout_pipe.take(),
                 stdin_pipe: self.builtin_stdin_pipe.take(),
+                loop_depth: self.loop_depth,
+                return_depth: self.return_depth,
+                last_exit_code: self.last_exit_code,
             };
             let ctx = builtins::Context {
                 args,
@@ -7846,6 +7941,11 @@ impl Interpreter {
             "let" => Some(self.execute_let_builtin(args, redirects).await),
             "unset" => Some(self.execute_unset_builtin(args, redirects).await),
             "getopts" => Some(self.execute_getopts(args, redirects).await),
+            // Bare `set`: the same sorted, quoted listing as `declare`.
+            "set" if args.is_empty() => {
+                let result = ExecResult::ok(self.format_set_listing());
+                Some(self.apply_redirections(result, redirects).await)
+            }
             _ => None,
         }
     }
@@ -7894,8 +7994,9 @@ impl Interpreter {
         stdin: Option<crate::StreamData>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecResult>> + Send + 'a>> {
         Box::pin(async move {
-            // Interpreter-level special builtins
-            if Self::is_special_builtin_name(name) {
+            // Interpreter-level special builtins. A bare `set` lists every
+            // variable (arrays included), which needs interpreter state.
+            if Self::is_special_builtin_name(name) || (name == "set" && args.is_empty()) {
                 return self
                     .execute_special_builtin_with_hooks(
                         name,
@@ -8278,7 +8379,12 @@ impl Interpreter {
         let shares_caller_stdin = stdin.is_some() && stdin == prev_pipeline_stdin;
         self.pipeline_stdin = stdin;
 
+        // A new process is outside any loop, function or sourced file.
+        let saved_loop_depth = std::mem::replace(&mut self.loop_depth, 0);
+        let saved_return_depth = std::mem::replace(&mut self.return_depth, 0);
         let result = self.execute_script_body(&script, true, false).await;
+        self.loop_depth = saved_loop_depth;
+        self.return_depth = saved_return_depth;
         let child_stdin_left = self.pipeline_stdin.take();
 
         // Restore full parent state — child mutations don't propagate
@@ -8334,7 +8440,10 @@ impl Interpreter {
         let filename = match args.first() {
             Some(f) => f,
             None => {
-                return Ok(ExecResult::err("source: filename argument required", 1));
+                return Ok(ExecResult::err(
+                    "bash: source: filename argument required\nsource: usage: source filename [arguments]\n",
+                    2,
+                ));
             }
         };
 
@@ -8441,8 +8550,10 @@ impl Interpreter {
 
         // Execute the script commands in the current shell context.
         // Use execute_script_body (not execute) to preserve depth counters.
+        self.return_depth += 1;
         self.source_depth += 1;
         let exec_result = self.execute_script_body(&script, false, true).await;
+        self.return_depth -= 1;
         self.source_depth -= 1;
 
         // Pop source depth and BASH_SOURCE (always, even on error)
@@ -8451,6 +8562,11 @@ impl Interpreter {
         self.update_bash_source();
 
         let mut result = exec_result?;
+        // `return` ends the sourced file with its status.
+        if let ControlFlow::Return(code) = result.control_flow {
+            result.exit_code = code;
+            result.control_flow = ControlFlow::None;
+        }
 
         // `return N` inside a sourced script is the status of `source`, and
         // stops the sourced file only, not the script that sourced it.
@@ -8697,6 +8813,7 @@ impl Interpreter {
                 out.push_str(&word.to_string());
             }
             WordPart::Literal(s) => Self::push_alias_reparse_literal(out, s, false),
+            WordPart::BadSubstitution(text) => out.push_str(text),
             WordPart::Variable(name) => out.push_str(&format!("${}", name)),
             WordPart::CommandSubstitution(cmd) => out.push_str(&format!("$({:?})", cmd)),
             WordPart::ArithmeticExpansion(expr) => out.push_str(&format!("$(({}))", expr)),
@@ -8911,7 +9028,12 @@ impl Interpreter {
         };
 
         // Execute function body. Always restore call state even on error.
+        // The body starts outside any loop (bash resets `loop_level`).
+        let saved_loop_depth = std::mem::replace(&mut self.loop_depth, 0);
+        self.return_depth += 1;
         let result = self.execute_command(&func_def.body).await;
+        self.return_depth -= 1;
+        self.loop_depth = saved_loop_depth;
         if let Some(cb) = saved_callback {
             self.output_callback = Some(cb);
         }
@@ -9002,40 +9124,46 @@ impl Interpreter {
         args: &[String],
         redirects: &[Redirect],
     ) -> Result<ExecResult> {
+        // Options come first (clusters like `-fn`, `--` ends them); the
+        // first operand ends option parsing (`unset x -n` unsets `-n`).
         let mut unset_nameref = false;
         let mut unset_function = false;
-        let mut explicit_variable = false;
-        let mut var_args: Vec<&String> = Vec::new();
-        for arg in args {
-            if arg == "-n" {
-                unset_nameref = true;
-            } else if arg == "-f" {
-                unset_function = true;
-            } else if arg == "-v" {
-                explicit_variable = true;
-            } else {
-                var_args.push(arg);
+        let mut unset_var = false;
+        let mut operands_start = args.len();
+        for (i, arg) in args.iter().enumerate() {
+            if arg == "--" {
+                operands_start = i + 1;
+                break;
             }
-        }
-
-        // With an explicit `-v` bash insists the name is one it could have
-        // assigned; without it, and under `-f`, any word is accepted and a
-        // name that does not exist is simply skipped.
-        if explicit_variable && !unset_function {
-            for arg in &var_args {
-                if !is_unset_target_name(arg) {
-                    return self
-                        .apply_redirections(
-                            ExecResult::err(
-                                format!("bash: unset: `{arg}': not a valid identifier\n"),
-                                1,
+            let Some(flags) = arg.strip_prefix('-').filter(|f| !f.is_empty()) else {
+                operands_start = i;
+                break;
+            };
+            for flag in flags.chars() {
+                match flag {
+                    'n' => unset_nameref = true,
+                    'f' => unset_function = true,
+                    'v' => unset_var = true,
+                    _ => {
+                        let result = ExecResult::err(
+                            format!(
+                                "bash: unset: -{flag}: invalid option\nunset: usage: unset [-f] [-v] [-n] [name ...]\n"
                             ),
-                            redirects,
-                        )
-                        .await;
+                            2,
+                        );
+                        return self.apply_redirections(result, redirects).await;
+                    }
                 }
             }
         }
+        if unset_function && unset_var {
+            let result = ExecResult::err(
+                "bash: unset: cannot simultaneously unset a function and a variable\n",
+                1,
+            );
+            return self.apply_redirections(result, redirects).await;
+        }
+        let var_args: Vec<&String> = args[operands_start..].iter().collect();
 
         let mut stderr = String::new();
         let mut exit_code: i32 = 0;
@@ -9045,6 +9173,12 @@ impl Interpreter {
                 self.functions_mut().remove(arg.as_str());
                 continue;
             }
+            // Only an explicit `-v` checks the name (bash).
+            if unset_var && !is_valid_var_name(arg) && !Self::is_array_reference(arg) {
+                stderr.push_str(&format!("bash: unset: `{arg}': not a valid identifier\n"));
+                exit_code = 1;
+                continue;
+            }
             if let Some(bracket) = arg.find('[')
                 && arg.ends_with(']')
             {
@@ -9052,6 +9186,13 @@ impl Interpreter {
                 let key = &arg[bracket + 1..arg.len() - 1];
                 let expanded_key = self.expand_variable_or_literal(key);
                 let resolved_name = self.resolve_nameref(arr_name).to_string();
+                if self.is_var_readonly(&resolved_name) {
+                    stderr.push_str(&format!(
+                        "bash: unset: {resolved_name}: cannot unset: readonly variable\n"
+                    ));
+                    exit_code = 1;
+                    continue;
+                }
                 // THREAT[TM-DOS-114]: releasing one element must give back both
                 // its entry slot and its bytes, or repeated set/unset cycles
                 // drift the budget until a healthy script is refused.
@@ -9071,10 +9212,16 @@ impl Interpreter {
                 }
                 continue;
             }
-            if unset_nameref {
+            if unset_nameref && self.scoped.namerefs.contains_key(arg.as_str()) {
                 self.remove_nameref(arg);
             } else {
-                let resolved = self.resolve_nameref(arg).to_string();
+                // `-n` on a plain variable unsets it without following
+                // namerefs.
+                let resolved = if unset_nameref {
+                    arg.to_string()
+                } else {
+                    self.resolve_nameref(arg).to_string()
+                };
                 // THREAT[TM-INJ-009]: Block unset of internal marker variables
                 if is_internal_variable(&resolved) {
                     stderr.push_str(&format!(
@@ -9104,6 +9251,12 @@ impl Interpreter {
             ..Default::default()
         };
         self.apply_redirections(result, redirects).await
+    }
+
+    /// `name[subscript]` with a valid name (`unset -v 'a[1]'`).
+    fn is_array_reference(arg: &str) -> bool {
+        arg.find('[')
+            .is_some_and(|b| b > 0 && arg.ends_with(']') && is_valid_var_name(&arg[..b]))
     }
 
     /// Remove every live binding of `name`: scalar value, arrays,
@@ -9203,9 +9356,14 @@ impl Interpreter {
         // function); an empty or unset OPTIND starts over at 1.
         let optind: usize = self.expand_variable("OPTIND").parse().unwrap_or(1);
 
-        // Check if we're past the end
+        // Check if we're past the end (bash leaves OPTIND just past the
+        // last argument).
         if optind < 1 || optind > parse_args.len() {
             self.set_variable(varname.clone(), "?".to_string());
+            self.set_variable(
+                "OPTIND".to_string(),
+                optind.clamp(1, parse_args.len() + 1).to_string(),
+            );
             return Ok(ExecResult {
                 stdout: crate::StreamData::new(),
                 stderr: crate::StreamData::new(),
@@ -9220,9 +9378,14 @@ impl Interpreter {
         // Check if this is an option (starts with -)
         if !current_arg.starts_with('-') || current_arg == "-" || current_arg == "--" {
             self.set_variable(varname.clone(), "?".to_string());
-            if current_arg == "--" {
-                self.set_variable("OPTIND".to_string(), (optind + 1).to_string());
-            }
+            // OPTIND stays on the first operand (past a `--`), and getopts
+            // writes it back even when it was unset.
+            let next = if current_arg == "--" {
+                optind + 1
+            } else {
+                optind
+            };
+            self.set_variable("OPTIND".to_string(), next.to_string());
             return Ok(ExecResult {
                 stdout: crate::StreamData::new(),
                 stderr: crate::StreamData::new(),
@@ -9350,10 +9513,17 @@ impl Interpreter {
         let Some(name) = args.first() else {
             return Ok(ExecResult::ok(String::new()));
         };
-        if !(Self::is_special_builtin_name(name)
+        let registered = Self::is_special_builtin_name(name)
             || self.builtins.contains_key(name.as_str())
-            || self.has_host_builtin(name))
-        {
+            || self.has_host_builtin(name);
+        // Same rule as `type`/`command -v`: a registered command that real
+        // bash runs from PATH (`cat`, `ls`) is a file, not a shell builtin,
+        // when the root filesystem provides it.
+        let is_shell_builtin = registered
+            && (Self::is_special_builtin_name(name)
+                || builtins::BASH_BUILTIN_NAMES.contains(&name.as_str())
+                || self.resolve_command_path(name).await.is_none());
+        if !is_shell_builtin {
             return Ok(ExecResult::err(
                 format!("bash: builtin: {name}: not a shell builtin\n"),
                 1,
@@ -10533,6 +10703,31 @@ impl Interpreter {
         }
     }
 
+    /// Subscript for a write to an indexed array: a negative index counts
+    /// back from the end, and one before the start is an error
+    /// (`a[-5]=x` on three elements: "bad array subscript").
+    fn indexed_write_subscript(
+        &self,
+        arr_name: &str,
+        key: &str,
+    ) -> std::result::Result<usize, String> {
+        let raw_idx = self.evaluate_arithmetic(key);
+        if raw_idx >= 0 {
+            return Ok(raw_idx as usize);
+        }
+        let len = self
+            .scoped
+            .arrays
+            .get(arr_name)
+            .and_then(|a| a.keys().max().map(|m| m.saturating_add(1) as i128))
+            .unwrap_or(0);
+        let idx = len + raw_idx as i128;
+        if idx < 0 {
+            return Err(format!("bash: {arr_name}[{key}]: bad array subscript\n"));
+        }
+        Ok(idx as usize)
+    }
+
     /// Resolve an indexed-array subscript the same way for read-before-write and write paths.
     fn resolve_indexed_array_subscript(&self, arr_name: &str, key: &str) -> usize {
         let raw_idx = self.evaluate_arithmetic(key);
@@ -11329,10 +11524,14 @@ impl Interpreter {
             .with_execution_budget(self.execution_budget.clone())
             .parse()
             {
+                // The handler runs with `$?` of the trapping command and the
+                // shell keeps that status afterwards (bash restores it).
+                let saved_exit = self.last_exit_code;
                 self.in_trap = true;
                 let emit_before = self.output_emit_count;
                 let result = self.execute_command_sequence(&trap_script.commands).await;
                 self.in_trap = false;
+                self.last_exit_code = saved_exit;
                 if let Ok(trap_result) = result {
                     self.maybe_emit_output(&trap_result.stdout, &trap_result.stderr, emit_before);
                     return (trap_result.stdout, trap_result.stderr);
@@ -11400,9 +11599,112 @@ impl Interpreter {
             return;
         }
         if let Some(trap_cmd) = self.scoped.traps.get("ERR").cloned() {
+            // The handler runs with `$?` of the trapping command and the
+            // shell keeps that status afterwards (bash restores it).
+            let saved_exit = self.last_exit_code;
             let _ = self.run_trap_command(&trap_cmd, stdout, stderr).await;
+            self.last_exit_code = saved_exit;
         }
     }
+}
+
+/// `name=value` / `name+=value` argument with an unquoted, literal name:
+/// an assignment under `set -k`. Returns the assignment.
+fn keyword_assignment(word: &Word) -> Option<Assignment> {
+    let Some(WordPart::Literal(first)) = word.parts.first() else {
+        return None;
+    };
+    // A quoted word without per-part flags was quoted as a whole.
+    let first_quoted = if word.part_quoted.iter().any(|q| *q) {
+        word.part_quoted[0]
+    } else {
+        word.quoted
+    };
+    if first_quoted {
+        return None;
+    }
+    let eq = first.find('=')?;
+    let (name, append) = match first[..eq].strip_suffix('+') {
+        Some(n) => (n, true),
+        None => (&first[..eq], false),
+    };
+    if !is_valid_var_name(name) {
+        return None;
+    }
+    let mut value = word.clone();
+    value.raw = None;
+    value.parts[0] = WordPart::Literal(first[eq + 1..].to_string());
+    Some(Assignment {
+        name: name.to_string(),
+        index: None,
+        value: AssignmentValue::Scalar(value),
+        append,
+    })
+}
+
+/// `set -k`: move assignment arguments into the command's assignments.
+fn hoist_keyword_assignments(command: &SimpleCommand) -> SimpleCommand {
+    let mut hoisted = command.clone();
+    hoisted.args.clear();
+    for word in &command.args {
+        match keyword_assignment(word) {
+            Some(assignment) => hoisted.assignments.push(assignment),
+            None => hoisted.args.push(word.clone()),
+        }
+    }
+    hoisted
+}
+
+/// Whether an ERE uses a `[:name:]` character class POSIX does not define
+/// (`[[:foo:]]`), which regcomp rejects.
+fn ere_has_invalid_char_class(pattern: &str) -> bool {
+    const CLASSES: [&str; 12] = [
+        "alnum", "alpha", "blank", "cntrl", "digit", "graph", "lower", "print", "punct", "space",
+        "upper", "xdigit",
+    ];
+    let chars: Vec<char> = pattern.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        match chars[i] {
+            '\\' => i += 2,
+            '[' => {
+                // Bracket expression: a leading `^` and a first `]` are members.
+                i += 1;
+                if chars.get(i) == Some(&'^') {
+                    i += 1;
+                }
+                if chars.get(i) == Some(&']') {
+                    i += 1;
+                }
+                while i < chars.len() && chars[i] != ']' {
+                    if chars[i] == '['
+                        && let Some(&kind @ (':' | '.' | '=')) = chars.get(i + 1)
+                    {
+                        let start = i + 2;
+                        let mut end = start;
+                        while end + 1 < chars.len()
+                            && !(chars[end] == kind && chars[end + 1] == ']')
+                        {
+                            end += 1;
+                        }
+                        if end + 1 >= chars.len() {
+                            return false;
+                        }
+                        let name: String = chars[start..end].iter().collect();
+                        if kind == ':' && !CLASSES.contains(&name.as_str()) {
+                            return true;
+                        }
+                        i = end + 2;
+                    } else {
+                        i += 1;
+                    }
+                }
+                i += 1;
+            }
+            _ => i += 1,
+        }
+    }
+    false
 }
 
 /// Turn a builtin's usage error into a failed command (exit 2) instead of

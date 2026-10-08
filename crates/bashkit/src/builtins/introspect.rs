@@ -189,16 +189,53 @@ impl Builtin for Which {
     }
 }
 
-/// `hash` builtin — no-op in sandboxed environment.
+/// `hash` builtin.
 ///
-/// In real bash, `hash` manages the command hash table for PATH lookups.
-/// In bashkit's sandboxed environment there is no real PATH search cache,
-/// so this is a no-op that always succeeds.
+/// Bashkit keeps no command hash table (every lookup walks the virtual
+/// PATH), so the table always reads as empty: a bare `hash` reports that,
+/// `hash -r` succeeds, and `hash NAME` only checks that NAME resolves.
 pub struct Hash;
 
 #[async_trait]
 impl Builtin for Hash {
-    async fn execute(&self, _ctx: Context<'_>) -> Result<ExecResult> {
-        Ok(ExecResult::ok(String::new()))
+    async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        let mut names = Vec::new();
+        let mut list_only = true;
+        let mut options_done = false;
+        for arg in ctx.args.iter() {
+            if !options_done && arg == "--" {
+                options_done = true;
+            } else if !options_done && arg.starts_with('-') && arg.len() > 1 {
+                // -r clears the (empty) table; -l/-t/-d/-p act on entries.
+                if arg.contains(['r', 'd', 'p', 't']) {
+                    list_only = false;
+                }
+            } else {
+                names.push(arg.as_str());
+            }
+        }
+        if names.is_empty() {
+            return Ok(if list_only {
+                ExecResult::ok("hash: hash table empty\n".to_string())
+            } else {
+                ExecResult::ok(String::new())
+            });
+        }
+        let mut errors = String::new();
+        for name in names {
+            let builtin = ctx
+                .shell
+                .as_ref()
+                .is_some_and(|s| s.has_builtin(name) || s.has_function(name));
+            if !builtin && search_path(&ctx, name).await.is_none() {
+                errors.push_str(&format!("bash: hash: {name}: not found\n"));
+            }
+        }
+        let code = i32::from(!errors.is_empty());
+        Ok(ExecResult {
+            stderr: errors.into(),
+            exit_code: code,
+            ..Default::default()
+        })
     }
 }

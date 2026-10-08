@@ -4,6 +4,7 @@
 
 use async_trait::async_trait;
 
+use super::helpers::single_quote;
 use super::{Builtin, Context};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
@@ -29,7 +30,7 @@ impl Builtin for Alias {
             sorted.sort_by_key(|(k, _)| (*k).clone());
             let mut output = String::new();
             for (name, value) in sorted {
-                output.push_str(&format!("alias {}='{}'\n", name, value));
+                output.push_str(&format!("alias {name}={}\n", single_quote(value)));
             }
             return Ok(ExecResult::ok(output));
         }
@@ -47,7 +48,7 @@ impl Builtin for Alias {
             } else {
                 // alias name — show the alias
                 if let Some(value) = shell.aliases.get(arg.as_str()) {
-                    output.push_str(&format!("alias {}='{}'\n", arg, value));
+                    output.push_str(&format!("alias {arg}={}\n", single_quote(value)));
                 } else {
                     stderr.push_str(&format!("bash: alias: {}: not found\n", arg));
                     exit_code = 1;

@@ -122,12 +122,11 @@ count=3
 ### end
 
 ### source_missing_filename
-# Source without filename argument returns non-zero
-### bash_diff: error message wording differs
+# Source without filename argument is a usage error (status 2)
 source
 echo $?
 ### expect
-1
+2
 ### end
 
 ### source_nonexistent_file

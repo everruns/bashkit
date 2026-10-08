@@ -323,6 +323,7 @@ impl fmt::Display for Word {
             match part {
                 WordPart::Literal(s) => write!(f, "{}", s)?,
                 WordPart::Variable(name) => write!(f, "${}", name)?,
+                WordPart::BadSubstitution(text) => write!(f, "{}", text)?,
                 WordPart::CommandSubstitution(cmd) => write!(f, "$({:?})", cmd)?,
                 WordPart::ArithmeticExpansion(expr) => write!(f, "$(({}))", expr)?,
                 WordPart::ParameterExpansion {
@@ -511,6 +512,10 @@ pub enum WordPart {
     },
     /// Parameter transformation `${var@op}` where op is Q, E, P, A, K, a, u, U, L
     Transformation { name: String, operator: char },
+    /// A `${...}` bash cannot expand (`${x!}`, `${}`): parsing succeeds and
+    /// expanding it reports "bad substitution" and abandons the line.
+    /// Holds the source text, `${` and `}` included.
+    BadSubstitution(String),
 }
 
 /// Parameter expansion operators

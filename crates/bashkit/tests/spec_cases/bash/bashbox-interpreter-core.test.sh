@@ -56,7 +56,6 @@ true || echo no; echo $?
 
 ### bashbox_interpreter_core_err_trap_fires_for_a_failing_command
 # ERR trap fires for a failing command
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 trap "echo caught \$?" ERR; false; echo next $?
 ### expect
 caught 1
@@ -79,7 +78,6 @@ yes
 
 ### bashbox_interpreter_core_set_e_ignores_a_negated_pipeline
 # set -e ignores a negated pipeline
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 set -e; ! true; echo yes
 ### expect
 yes
@@ -117,7 +115,6 @@ set -o pipefail; false | true; echo $?; set +o pipefail; false | true; echo $?
 
 ### bashbox_interpreter_core_pipes_stderr_too
 # |& pipes stderr too
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 { echo out; echo err >&2; } |& cat
 ### expect
 out
@@ -176,7 +173,6 @@ end
 
 ### bashbox_interpreter_core_break_and_continue_outside_a_loop
 # break and continue outside a loop
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 break; continue 2; echo $?
 ### expect
 0
@@ -184,7 +180,6 @@ break; continue 2; echo $?
 
 ### bashbox_interpreter_core_break_inside_a_function_cannot_leave_the_caller_loop
 # break inside a function cannot leave the caller loop
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 f() { break; }; for i in 1; do f; echo no; done
 ### expect
 no
@@ -260,7 +255,6 @@ set -x; x=1 printenv x; y=2
 
 ### bashbox_interpreter_core_bad_substitution_fails_only_its_command
 # bad substitution fails only its command
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 echo ${x!}
 echo after $?
 ### expect
@@ -269,7 +263,6 @@ after 1
 
 ### bashbox_interpreter_core_expansion_error_abandons_the_rest_of_its_line
 # expansion error abandons the rest of its line
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 f() { echo ${x!}; echo in; }
 f; echo same
 echo next
@@ -279,7 +272,6 @@ next
 
 ### bashbox_interpreter_core_cannot_assign_fails_only_its_command
 # cannot assign fails only its command
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 echo ${1:=x}
 echo after $?
 ### expect
@@ -295,7 +287,6 @@ f() { return -1; }; f; echo $?
 
 ### bashbox_interpreter_core_return_outside_a_function
 # return outside a function
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 return; echo $?
 ### expect
 2
@@ -303,7 +294,6 @@ return; echo $?
 
 ### bashbox_interpreter_core_export_tracks_later_assignments
 # export tracks later assignments
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 export X=1; X=2; printenv X; export Y; Y=3; printenv Y; export -n Z=4; echo $Z
 ### expect
 2
@@ -320,8 +310,7 @@ readonly R=1; export R=2; echo $?
 
 ### bashbox_interpreter_core_export_lists_variables
 # export lists variables
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
-export B=2 A=1; export | grep "[AB]="
+export B=2 A=1; export | grep -E "^declare -x [AB]="
 ### expect
 declare -x A="1"
 declare -x B="2"
@@ -357,7 +346,6 @@ readonly r=1; unset r; echo $?
 
 ### bashbox_interpreter_core_local_outside_a_function
 # local outside a function
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 local x=1; echo $?
 ### expect
 1
@@ -373,7 +361,6 @@ f() { local a=1 b; b=2; echo $a$b; }; f; echo "[$a$b]"
 
 ### bashbox_interpreter_core_local_of_a_readonly_variable
 # local of a readonly variable
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 readonly r=1; f() { local r=2; }; f; echo $?
 ### expect
 1
@@ -381,7 +368,6 @@ readonly r=1; f() { local r=2; }; f; echo $?
 
 ### bashbox_interpreter_core_set_lists_variables_quoting_when_needed
 # set lists variables, quoting when needed
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 a=1; b="x y"; c=""; d="it's"; set | grep "^[abcd]="
 ### expect
 a=1
@@ -444,7 +430,6 @@ shopt -s nullglob; echo $?
 
 ### bashbox_interpreter_core_source_without_a_file
 # source without a file
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 source; echo $?
 ### expect
 2
@@ -475,7 +460,6 @@ z
 
 ### bashbox_interpreter_core_return_ends_a_sourced_file
 # return ends a sourced file
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 echo "return 4; echo no" > s.sh; source s.sh; echo $?
 ### expect
 4
@@ -483,7 +467,6 @@ echo "return 4; echo no" > s.sh; source s.sh; echo $?
 
 ### bashbox_interpreter_core_return_in_a_file_sourced_by_a_function
 # return in a file sourced by a function
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 echo "x=1; return 5; x=2" > s; f() { source ./s; echo "s=$? x=$x"; }; f
 ### expect
 s=5 x=1
@@ -507,7 +490,6 @@ b
 
 ### bashbox_interpreter_core_declare_without_a_value_keeps_the_variable
 # declare without a value keeps the variable
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 x=1; declare x; echo $x; declare -p x nope; echo $?
 ### expect
 1
@@ -525,7 +507,6 @@ declare -a a=([0]="1" [1]="b c")
 
 ### bashbox_interpreter_core_declare_in_a_function_is_local_unless_g
 # declare in a function is local unless -g
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 f() { declare x=1; declare -g g=2; }; f; echo "[$x][$g]"
 ### expect
 [][2]
@@ -533,7 +514,6 @@ f() { declare x=1; declare -g g=2; }; f; echo "[$x][$g]"
 
 ### bashbox_interpreter_core_declare_a
 # declare -a
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 declare -a arr; arr[0]=x; echo ${arr[0]}; declare -a b=v; echo ${b[0]}
 ### expect
 x
@@ -556,7 +536,6 @@ declare -x E=1; printenv E
 
 ### bashbox_interpreter_core_declare_alone_lists_variables
 # declare alone lists variables
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 q=1; declare | grep "^q="
 ### expect
 q=1
@@ -579,7 +558,6 @@ let x=0; echo $?; let y=2 z=3; echo $y$z $?
 
 ### bashbox_interpreter_core_shift
 # shift
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 set -- a b c; shift; echo $*; shift 2; echo $# $?; shift; echo $?
 ### expect
 b c
@@ -589,7 +567,6 @@ b c
 
 ### bashbox_interpreter_core_getopts_walks_grouped_options_and_arguments
 # getopts walks grouped options and arguments
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 set -- -ac -bval -- -z rest1; while getopts "ab:c" o; do echo "$o ${OPTARG-unset} $OPTIND"; done; shift $((OPTIND-1)); echo "rest: $*"
 ### expect
 a unset 1
@@ -625,7 +602,6 @@ a 0
 
 ### bashbox_interpreter_core_getopts_restarts_when_optind_is_reset
 # getopts restarts when OPTIND is reset
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 getopts ab o -ab; echo $o; OPTIND=1; getopts xy o -x; echo $o
 ### expect
 a
@@ -634,7 +610,6 @@ x
 
 ### bashbox_interpreter_core_getopts_stops_at_a_non_option
 # getopts stops at a non-option
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 set -- a -b; getopts b o; echo "$? $o $OPTIND"
 ### expect
 1 ? 1
@@ -667,7 +642,6 @@ builtin
 
 ### bashbox_interpreter_core_type_describes_each_name
 # type describes each name
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 type nope cd ls; echo $?
 ### expect
 cd is a shell builtin
@@ -677,7 +651,6 @@ ls is /usr/bin/ls
 
 ### bashbox_interpreter_core_command_v
 # command -v
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 f(){ :; }; command -v cd ls f nope; echo $?; command -v nope; echo $?
 ### expect
 cd
@@ -705,7 +678,6 @@ command cd /tmp; pwd
 
 ### bashbox_interpreter_core_builtin
 # builtin
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 builtin cd /tmp && pwd; builtin echo hi; builtin cat; echo $?; builtin; echo $?
 ### expect
 /tmp
@@ -730,7 +702,6 @@ still
 
 ### bashbox_interpreter_core_alias_define_list_and_query
 # alias define, list and query
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 alias a=b c="it's"; alias; alias a; alias zz; echo $?
 ### expect
 alias a='b'
@@ -748,7 +719,6 @@ alias a=b; unalias a zz; echo $?; alias x=y; unalias -a; alias
 
 ### bashbox_interpreter_core_trap_listing_order_and_quoting
 # trap listing order and quoting
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 trap "echo b" ERR; trap "echo a" EXIT; trap "" INT; trap "it's" SIGTERM; trap
 ### expect
 trap -- 'echo a' EXIT
@@ -760,7 +730,6 @@ a
 
 ### bashbox_interpreter_core_trap_with_a_lone_signal_resets_it
 # trap with a lone signal resets it
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 trap "echo x" 0; trap; trap EXIT; trap; echo done
 ### expect
 trap -- 'echo x' EXIT
@@ -769,7 +738,6 @@ done
 
 ### bashbox_interpreter_core_err_trap_keeps
 # ERR trap keeps $?
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 trap "true" ERR; false; echo $?
 ### expect
 1
@@ -803,7 +771,6 @@ pushd /nope; echo $?
 
 ### bashbox_interpreter_core_pushd_abbreviates_home
 # pushd abbreviates HOME
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 cd /tmp; pushd ~
 ### expect
 ~ /tmp
@@ -811,7 +778,6 @@ cd /tmp; pushd ~
 
 ### bashbox_interpreter_core_hash
 # hash
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 hash; hash -r; : a b; echo $?
 ### expect
 hash: hash table empty
@@ -834,7 +800,6 @@ echo "a:b:c:d" | { IFS=: read x y; echo "[$x][$y]"; }
 
 ### bashbox_interpreter_core_adjacent_separators_make_empty_fields
 # adjacent separators make empty fields
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 echo "a::b" | { IFS=: read -a x; echo "${#x[@]} [${x[1]}]"; }
 ### expect
 3 []
@@ -842,7 +807,6 @@ echo "a::b" | { IFS=: read -a x; echo "${#x[@]} [${x[1]}]"; }
 
 ### bashbox_interpreter_core_unterminated_line_assigns_but_fails
 # unterminated line assigns but fails
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf "a b" | { read x; echo "$? [$x]"; }
 ### expect
 1 [a b]
@@ -850,7 +814,6 @@ printf "a b" | { read x; echo "$? [$x]"; }
 
 ### bashbox_interpreter_core_escaped_separator_stays_in_the_field
 # escaped separator stays in the field
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 echo "a\\ b c" | { read x y; echo "[$x][$y]"; }
 ### expect
 [a b][c]
@@ -865,7 +828,6 @@ printf "x y" | { IFS= read -r v; echo "[$v]"; }
 
 ### bashbox_interpreter_core_nul_delimited_records
 # NUL delimited records
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf "a\0b\0" | while read -r -d "" v; do echo "[$v]"; done
 ### expect
 [a]
@@ -908,7 +870,6 @@ time -p true
 
 ### bashbox_interpreter_core_an_invalid_regex_fails_with_status_2
 # an invalid regex fails [[ with status 2
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 re='('; [[ a =~ $re ]]; echo $?; re='[[:foo:]]'; [[ a =~ $re ]]; echo $?; [[ abc =~ b(c) ]]; echo $? ${BASH_REMATCH[@]}
 ### expect
 2
@@ -918,7 +879,6 @@ re='('; [[ a =~ $re ]]; echo $?; re='[[:foo:]]'; [[ a =~ $re ]]; echo $?; [[ abc
 
 ### bashbox_interpreter_core_evaluates_integer_operands_without_expanding_them_again
 # [[ ]] evaluates integer operands without expanding them again
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 x='$(echo hi >&2; echo 1)'; [[ $x -eq 1 ]]; echo $?; x='1+1'; [[ $x -eq 2 ]]; echo $?; [[ 08 -eq 1 ]]; echo $?
 ### expect
 1
@@ -928,7 +888,6 @@ x='$(echo hi >&2; echo 1)'; [[ $x -eq 1 ]]; echo $?; x='1+1'; [[ $x -eq 2 ]]; ec
 
 ### bashbox_interpreter_core_assignment_subscripts_are_expanded_and_arithmetic_for_indexe
 # assignment subscripts are expanded, and arithmetic for indexed arrays
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 i=3; a[$i]=x; a[i+1]=y; a[-1]=z; b=([i+1]=p [6]=q); read 'c[1+1]' <<< r; declare -p a b c
 ### expect
 declare -a a=([3]="x" [4]="z")
@@ -945,7 +904,6 @@ declare -A m; k='a b'; m[$k]=1; m[1+1]=2; echo "${m[a b]} ${m[1+1]}"
 
 ### bashbox_interpreter_core_a_negative_subscript_counts_back_from_the_end
 # a negative subscript counts back from the end
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 a=(1 2 3); a[-1]+=x; declare -p a; a[-5]=q; echo same
 echo next $?
 ### expect
@@ -955,7 +913,6 @@ next 1
 
 ### bashbox_interpreter_core_unset_takes_options_first
 # unset takes options first
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 unset -v x -n y; echo $?; unset -z; echo $?; unset -fn; echo $?; unset -n; echo $?; unset 'a b'; echo $?
 ### expect
 1
@@ -967,7 +924,6 @@ unset -v x -n y; echo $?; unset -z; echo $?; unset -fn; echo $?; unset -n; echo 
 
 ### bashbox_interpreter_core_unset_of_an_element_and_of_a_readonly_variable
 # unset of an element and of a readonly variable
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 a=(1 2 3); unset 'a[1]'; declare -p a; readonly r; unset -n r; echo $?; readonly -a ra=(1); unset 'ra[0]'; echo $?
 ### expect
 declare -a a=([0]="1" [2]="3")
@@ -990,7 +946,6 @@ set -o noexec; echo hi
 
 ### bashbox_interpreter_core_set_k_takes_assignments_from_anywhere_in_a_command
 # set -k takes assignments from anywhere in a command
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 f() { echo "$x"; }; set -k; echo a=b c; f x=5; echo $-; set +k; echo a=b
 ### expect
 c
@@ -1001,7 +956,6 @@ a=b
 
 ### bashbox_interpreter_core_a_subscript_may_quote_or_escape_a
 # a subscript may quote or escape a ]
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 declare -A a b c; a["x]"]=1; b[\]]=2; c['y z']=3; declare -p a b c
 ### expect
 declare -A a=(["x]"]="1" )
@@ -1018,7 +972,7 @@ x=1; unset -- x; echo $? ${x-unset}
 
 ### bashbox_interpreter_core_redirections_report_why_a_file_can_t_be_opened
 # redirections report why a file can't be opened
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
+### skip: TODO `<>` (read-write open) redirect is not parsed yet, and InMemoryFs lets `f/x` be created under a regular file `f` instead of failing with ENOTDIR
 true <> /tmp; echo $?; touch f; echo hi > f/x; echo $?; cat < f/x; echo $?; ln -s loop loop; echo hi > loop; echo $?
 ### expect
 1
@@ -1043,7 +997,6 @@ source /tmp; echo $?
 
 ### bashbox_interpreter_core_set_o_keyword_shows_as_k
 # set -o keyword shows as k
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 set -o keyword; echo $-; set -o | grep -E '^(keyword|noexec) '
 ### expect
 hkBc

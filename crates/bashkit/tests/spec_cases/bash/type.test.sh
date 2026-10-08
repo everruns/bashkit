@@ -123,11 +123,11 @@ cat is /usr/bin/cat
 ### end
 
 ### hash_noop
-### bash_diff: real bash prints hash table contents
-# hash is a no-op in sandboxed env
+# bashkit keeps no hash table, so it always reads as empty
 hash
 echo "ok"
 ### expect
+hash: hash table empty
 ok
 ### end
 
