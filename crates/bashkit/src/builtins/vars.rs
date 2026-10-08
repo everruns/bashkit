@@ -106,6 +106,63 @@ pub(crate) const SET_O_OPTIONS: &[(&str, Option<char>, &str, bool)] = &[
     ("xtrace", Some('x'), "SHOPT_x", false),
 ];
 
+/// Record one `set -o` option. The `emacs` and `vi` editing modes exclude
+/// each other: turning one on turns the other off.
+fn set_o_store(variables: &mut std::collections::HashMap<String, String>, var: &str, on: bool) {
+    if on {
+        match var {
+            "SHOPT_vi" => {
+                variables.insert("SHOPT_emacs".to_string(), "0".to_string());
+            }
+            "SHOPT_emacs" => {
+                variables.insert("SHOPT_vi".to_string(), "0".to_string());
+            }
+            _ => {}
+        }
+    }
+    variables.insert(var.to_string(), if on { "1" } else { "0" }.to_string());
+}
+
+/// Whether `set -o` option `name` is on (`test -o name`); `None` when
+/// bash has no such option.
+pub(crate) fn set_o_option_on(
+    variables: &std::collections::HashMap<String, String>,
+    name: &str,
+) -> Option<bool> {
+    let (_, _, var, default) = set_option_by_name(name)?;
+    Some(set_option_on(variables, var, *default))
+}
+
+/// The variable behind `set -o NAME` (`bash -o NAME`).
+pub(crate) fn set_o_var_by_name(name: &str) -> Option<&'static str> {
+    set_option_by_name(name).map(|o| o.2)
+}
+
+/// The variable behind `set -X` (`bash -X`).
+pub(crate) fn set_o_var_by_letter(c: char) -> Option<&'static str> {
+    set_option_by_letter(c).map(|o| o.2)
+}
+
+/// `$SHELLOPTS`: the `set -o` options that are on, colon-separated.
+pub(crate) fn shellopts_value(variables: &std::collections::HashMap<String, String>) -> String {
+    SET_O_OPTIONS
+        .iter()
+        .filter(|(_, _, var, default)| set_option_on(variables, var, *default))
+        .map(|(name, ..)| *name)
+        .collect::<Vec<_>>()
+        .join(":")
+}
+
+/// `$BASHOPTS`: the `shopt` options that are on, colon-separated.
+pub(crate) fn bashopts_value(variables: &std::collections::HashMap<String, String>) -> String {
+    SHOPT_OPTIONS
+        .iter()
+        .filter(|(name, _)| shopt_on(variables, name))
+        .map(|(name, _)| *name)
+        .collect::<Vec<_>>()
+        .join(":")
+}
+
 /// Letters in the order bash prints them in `$-`.
 const DOLLAR_DASH_ORDER: &str = "abefhikmnptuvxBCEHPT";
 
@@ -268,8 +325,7 @@ impl Builtin for Set {
         }
 
         for (var, on) in changes {
-            ctx.variables
-                .insert(var.to_string(), if on { "1" } else { "0" }.to_string());
+            set_o_store(ctx.variables, var, on);
         }
         let mut result = match listing {
             Some(dash) => ExecResult::ok(format_set_o(ctx.variables, dash)),
@@ -465,59 +521,86 @@ impl Builtin for Eval {
     }
 }
 
-/// Known shopt option names. Maps to SHOPT_* variables.
-const SHOPT_OPTIONS: &[&str] = &[
-    "autocd",
-    "cdspell",
-    "checkhash",
-    "checkjobs",
-    "checkwinsize",
-    "cmdhist",
-    "compat31",
-    "compat32",
-    "compat40",
-    "compat41",
-    "compat42",
-    "compat43",
-    "compat44",
-    "direxpand",
-    "dirspell",
-    "dotglob",
-    "execfail",
-    "expand_aliases",
-    "extdebug",
-    "extglob",
-    "extquote",
-    "failglob",
-    "force_fignore",
-    "globasciiranges",
-    "globstar",
-    "gnu_errfmt",
-    "histappend",
-    "histreedit",
-    "histverify",
-    "hostcomplete",
-    "huponexit",
-    "inherit_errexit",
-    "interactive_comments",
-    "lastpipe",
-    "lithist",
-    "localvar_inherit",
-    "localvar_unset",
-    "login_shell",
-    "mailwarn",
-    "no_empty_cmd_completion",
-    "nocaseglob",
-    "nocasematch",
-    "nullglob",
-    "progcomp",
-    "progcomp_alias",
-    "promptvars",
-    "restricted_shell",
-    "shift_verbose",
-    "sourcepath",
-    "xpg_echo",
+/// Every `shopt` option in bash 5.2's listing order, with its default for a
+/// non-interactive shell. Stored as `SHOPT_<name>`: "1" on, "0" off, absent
+/// means the default. Options with no effect in the sandbox (`checkwinsize`,
+/// `cdable_vars`, ...) are still recorded and reported like bash.
+const SHOPT_OPTIONS: &[(&str, bool)] = &[
+    ("autocd", false),
+    ("assoc_expand_once", false),
+    ("cdable_vars", false),
+    ("cdspell", false),
+    ("checkhash", false),
+    ("checkjobs", false),
+    ("checkwinsize", true),
+    ("cmdhist", true),
+    ("compat31", false),
+    ("compat32", false),
+    ("compat40", false),
+    ("compat41", false),
+    ("compat42", false),
+    ("compat43", false),
+    ("compat44", false),
+    ("complete_fullquote", true),
+    ("direxpand", false),
+    ("dirspell", false),
+    ("dotglob", false),
+    ("execfail", false),
+    ("expand_aliases", false),
+    ("extdebug", false),
+    ("extglob", false),
+    ("extquote", true),
+    ("failglob", false),
+    ("force_fignore", true),
+    ("globasciiranges", true),
+    ("globskipdots", true),
+    ("globstar", false),
+    ("gnu_errfmt", false),
+    ("histappend", false),
+    ("histreedit", false),
+    ("histverify", false),
+    ("hostcomplete", true),
+    ("huponexit", false),
+    ("inherit_errexit", false),
+    ("interactive_comments", true),
+    ("lastpipe", false),
+    ("lithist", false),
+    ("localvar_inherit", false),
+    ("localvar_unset", false),
+    ("login_shell", false),
+    ("mailwarn", false),
+    ("no_empty_cmd_completion", false),
+    ("nocaseglob", false),
+    ("nocasematch", false),
+    ("noexpand_translation", false),
+    ("nullglob", false),
+    ("patsub_replacement", true),
+    ("progcomp", true),
+    ("progcomp_alias", false),
+    ("promptvars", true),
+    ("restricted_shell", false),
+    ("shift_verbose", false),
+    ("sourcepath", true),
+    ("varredir_close", false),
+    ("xpg_echo", false),
 ];
+
+pub(crate) fn shopt_known(name: &str) -> bool {
+    SHOPT_OPTIONS.iter().any(|(n, _)| *n == name)
+}
+
+/// Whether shopt option `name` is on (its default when never set).
+pub(crate) fn shopt_on(variables: &std::collections::HashMap<String, String>, name: &str) -> bool {
+    let default = SHOPT_OPTIONS
+        .iter()
+        .find(|(n, _)| *n == name)
+        .is_some_and(|(_, d)| *d);
+    match variables.get(&format!("SHOPT_{name}")).map(String::as_str) {
+        Some("1") => true,
+        Some("0") => false,
+        _ => default,
+    }
+}
 
 /// `shopt -o`: the same verbs applied to `set -o` options.
 fn shopt_set_o(
@@ -544,12 +627,8 @@ fn shopt_set_o(
             continue;
         };
         match mode {
-            Some('s') => {
-                variables.insert(var.to_string(), "1".to_string());
-            }
-            Some('u') => {
-                variables.insert(var.to_string(), "0".to_string());
-            }
+            Some('s') => set_o_store(variables, var, true),
+            Some('u') => set_o_store(variables, var, false),
             Some('q') => {
                 if !set_option_on(variables, var, *default) {
                     status = 1;
@@ -587,32 +666,24 @@ pub struct Shopt;
 #[async_trait]
 impl Builtin for Shopt {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        if ctx.args.is_empty() {
-            // List all options with their status
-            let mut output = String::new();
-            for opt in SHOPT_OPTIONS {
-                let key = format!("SHOPT_{}", opt);
-                let on = ctx.variables.get(&key).map(|v| v == "1").unwrap_or(false);
-                output.push_str(&format!("{:<15}\t{}\n", opt, if on { "on" } else { "off" }));
-            }
-            return Ok(ExecResult::ok(output));
-        }
-
         let mut mode: Option<char> = None; // 's'=set, 'u'=unset, 'q'=query, 'p'=print
+        let mut print = false; // -p alongside -s/-u: list those options
         let mut opts: Vec<String> = Vec::new();
         let mut set_o = false; // -o: operate on `set -o` options
 
         for arg in ctx.args {
-            if arg.starts_with('-') && opts.is_empty() {
+            if arg.starts_with('-') && arg.len() > 1 && opts.is_empty() {
                 for ch in arg.chars().skip(1) {
                     match ch {
                         'o' => set_o = true,
-                        // -p combines with -s/-u/-q as a print request.
-                        'p' if mode.is_some() => {}
-                        's' | 'u' | 'q' | 'p' => mode = Some(ch),
+                        'p' => print = true,
+                        's' | 'u' | 'q' => mode = Some(ch),
                         _ => {
                             return Ok(ExecResult::err(
-                                format!("bash: shopt: -{}: invalid option\n", ch),
+                                format!(
+                                    "bash: shopt: -{}: invalid option\nshopt: usage: shopt [-pqsu] [-o] [optname ...]\n",
+                                    ch
+                                ),
                                 2,
                             ));
                         }
@@ -622,111 +693,87 @@ impl Builtin for Shopt {
                 opts.push(arg.to_string());
             }
         }
+        if mode.is_none() && print {
+            mode = Some('p');
+        }
 
         if set_o {
             return Ok(shopt_set_o(ctx.variables, mode, &opts));
         }
 
+        // `shopt -s`/`-u` with no names lists the options that are on/off.
+        if opts.is_empty() && matches!(mode, Some('s' | 'u')) {
+            let want = mode == Some('s');
+            let mut out = String::new();
+            for (opt, _) in SHOPT_OPTIONS {
+                let on = shopt_on(ctx.variables, opt);
+                if on == want {
+                    out.push_str(&Self::line(opt, on, print));
+                }
+            }
+            return Ok(ExecResult::ok(out));
+        }
+
         // Each unknown name is reported and skipped (status 1); the
         // valid names around it still apply.
         let mut err = String::new();
-        if !opts.is_empty() {
-            opts.retain(|opt| {
-                let known = SHOPT_OPTIONS.contains(&opt.as_str());
-                if !known {
-                    err.push_str(&format!("bash: shopt: {opt}: invalid shell option name\n"));
-                }
-                known
-            });
-            if !err.is_empty() {
-                let mut result = if opts.is_empty() {
-                    ExecResult::ok(String::new())
-                } else {
-                    Self::run_valid(ctx, mode, opts)
-                };
-                result.stderr = err.into();
-                result.exit_code = 1;
-                return Ok(result);
+        opts.retain(|opt| {
+            let known = shopt_known(opt);
+            if !known {
+                err.push_str(&format!("bash: shopt: {opt}: invalid shell option name\n"));
             }
+            known
+        });
+        let mut result = Self::run_valid(ctx, mode, opts);
+        if !err.is_empty() {
+            result.stderr = err.into();
+            result.exit_code = 1;
         }
-        Ok(Self::run_valid(ctx, mode, opts))
+        Ok(result)
     }
 }
 
 impl Shopt {
+    fn line(opt: &str, on: bool, reusable: bool) -> String {
+        if reusable {
+            format!("shopt {} {}\n", if on { "-s" } else { "-u" }, opt)
+        } else {
+            format!("{:<15}\t{}\n", opt, if on { "on" } else { "off" })
+        }
+    }
+
     /// Run `shopt` on names already checked against `SHOPT_OPTIONS`.
+    /// Listing or querying named options fails (status 1) when any of
+    /// them is off, as in bash.
     fn run_valid(ctx: Context<'_>, mode: Option<char>, opts: Vec<String>) -> ExecResult {
         match mode {
-            Some('s') => {
+            Some(c @ ('s' | 'u')) => {
                 for opt in &opts {
-                    ctx.variables
-                        .insert(format!("SHOPT_{}", opt), "1".to_string());
+                    ctx.variables.insert(
+                        format!("SHOPT_{}", opt),
+                        if c == 's' { "1" } else { "0" }.to_string(),
+                    );
                 }
                 ExecResult::ok(String::new())
             }
-            Some('u') => {
-                for opt in &opts {
-                    ctx.variables.remove(&format!("SHOPT_{}", opt));
-                }
-                ExecResult::ok(String::new())
-            }
-            Some('q') => {
-                // Query: exit 0 if all named options are on, 1 otherwise
-                let all_on = opts.iter().all(|opt| {
-                    let key = format!("SHOPT_{}", opt);
-                    ctx.variables.get(&key).map(|v| v == "1").unwrap_or(false)
-                });
-                ExecResult {
-                    stdout: crate::StreamData::new(),
-                    stderr: crate::StreamData::new(),
-                    exit_code: if all_on { 0 } else { 1 },
-                    control_flow: crate::interpreter::ControlFlow::None,
-                    ..Default::default()
-                }
-            }
-            Some('p') => {
-                // Print in reusable format
-                let mut output = String::new();
-                let list = if opts.is_empty() {
-                    SHOPT_OPTIONS
-                        .iter()
-                        .map(|s| s.to_string())
-                        .collect::<Vec<_>>()
+            _ => {
+                let names: Vec<&str> = if opts.is_empty() {
+                    SHOPT_OPTIONS.iter().map(|(n, _)| *n).collect()
                 } else {
-                    opts.clone()
+                    opts.iter().map(String::as_str).collect()
                 };
-                for opt in &list {
-                    let key = format!("SHOPT_{}", opt);
-                    let on = ctx.variables.get(&key).map(|v| v == "1").unwrap_or(false);
-                    output.push_str(&format!("shopt {} {}\n", if on { "-s" } else { "-u" }, opt));
-                }
-                ExecResult::ok(output)
-            }
-            None => {
-                // No flag: show status of named options
-                if opts.is_empty() {
-                    // Same as listing all
-                    let mut output = String::new();
-                    for opt in SHOPT_OPTIONS {
-                        let key = format!("SHOPT_{}", opt);
-                        let on = ctx.variables.get(&key).map(|v| v == "1").unwrap_or(false);
-                        output.push_str(&format!(
-                            "{:<15}\t{}\n",
-                            opt,
-                            if on { "on" } else { "off" }
-                        ));
-                    }
-                    return ExecResult::ok(output);
-                }
                 let mut output = String::new();
-                for opt in &opts {
-                    let key = format!("SHOPT_{}", opt);
-                    let on = ctx.variables.get(&key).map(|v| v == "1").unwrap_or(false);
-                    output.push_str(&format!("{:<15}\t{}\n", opt, if on { "on" } else { "off" }));
+                let mut all_on = true;
+                for opt in names {
+                    let on = shopt_on(ctx.variables, opt);
+                    all_on &= on;
+                    if mode != Some('q') {
+                        output.push_str(&Self::line(opt, on, mode == Some('p')));
+                    }
                 }
-                ExecResult::ok(output)
+                let code = if opts.is_empty() || all_on { 0 } else { 1 };
+                ExecResult::with_code(output, code)
             }
-            _ => ExecResult::ok(String::new()),
         }
     }
 }

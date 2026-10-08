@@ -871,6 +871,8 @@ pub(super) fn apply_symbolic_mode(mode_str: &str, current_mode: u32) -> Option<u
 
         // Parse permissions: r, w, x, X, s, t
         let mut perm_bits: u32 = 0;
+        let mut set_id = false;
+        let mut sticky = false;
         for c in chars {
             match c {
                 'r' => perm_bits |= 0o4,
@@ -882,7 +884,8 @@ pub(super) fn apply_symbolic_mode(mode_str: &str, current_mode: u32) -> Option<u
                         perm_bits |= 0o1;
                     }
                 }
-                's' | 't' => {} // setuid/setgid/sticky: accept but ignore for VFS
+                's' => set_id = true,
+                't' => sticky = true,
                 _ => return None,
             }
         }
@@ -901,6 +904,25 @@ pub(super) fn apply_symbolic_mode(mode_str: &str, current_mode: u32) -> Option<u
         if who_o {
             mask |= 0o007;
             bits |= perm_bits;
+        }
+        // `u+s` setuid, `g+s` setgid, `+t` sticky.
+        if who_u {
+            mask |= 0o4000;
+            if set_id {
+                bits |= 0o4000;
+            }
+        }
+        if who_g {
+            mask |= 0o2000;
+            if set_id {
+                bits |= 0o2000;
+            }
+        }
+        if who_o {
+            mask |= 0o1000;
+        }
+        if sticky {
+            bits |= 0o1000;
         }
 
         match op {

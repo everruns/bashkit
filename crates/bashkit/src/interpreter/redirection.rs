@@ -21,7 +21,188 @@
 use super::*;
 use crate::error::io_error_reason;
 
+/// A redirect target that brace expansion, word splitting or pathname
+/// expansion could turn into other than one word (`> $f`, `> out-*`,
+/// `> a-{1,2}`). Plain and quoted words skip the field pass.
+fn redirect_target_may_split(redirect: &Redirect) -> bool {
+    if !matches!(
+        redirect.kind,
+        RedirectKind::Output
+            | RedirectKind::Clobber
+            | RedirectKind::Append
+            | RedirectKind::OutputBoth
+            | RedirectKind::Input
+            | RedirectKind::ReadWrite
+            | RedirectKind::DupOutput
+            | RedirectKind::DupInput
+    ) || redirect.fd_var.is_some()
+    {
+        return false;
+    }
+    let word = &redirect.target;
+    if word.quoted && !word.has_unquoted_glob {
+        return false;
+    }
+    word.parts.iter().any(|part| match part {
+        WordPart::Literal(text) => text.contains(['*', '?', '[', '{', '(', '\\']),
+        _ => true,
+    })
+}
+
+/// `N<<EOF` / `N<<<word` with N >= 3: a readable fd for the command's body.
+fn high_fd_here(redirect: &Redirect) -> bool {
+    matches!(
+        redirect.kind,
+        RedirectKind::HereDoc | RedirectKind::HereDocStrip | RedirectKind::HereString
+    ) && redirect.fd_var.is_none()
+        && redirect.fd.is_some_and(|fd| fd >= 3)
+}
+
+/// A boxed interpreter future (kept off the caller's poll stack).
+type BoxedFuture<'a, T> =
+    std::pin::Pin<Box<dyn std::future::Future<Output = Result<T>> + Send + 'a>>;
+
+/// Readable fds a command's here-documents opened, and what they replaced.
+pub(super) struct HereFdScope {
+    saved: Vec<(i32, Option<coproc::InputFd>)>,
+}
+
+/// Whether a simple command's redirects need resolving before it runs:
+/// a target that may split, `1<&M`, or (except for `exec`) a here-doc fd.
+pub(super) fn needs_redirect_prep(name: &str, redirects: &[Redirect]) -> bool {
+    redirects.iter().any(|r| {
+        redirect_target_may_split(r) || output_dup_input(r) || (name != "exec" && high_fd_here(r))
+    })
+}
+
+/// `1<&M` / `2<&M`: a dup written with the input arrow on an output fd.
+fn output_dup_input(redirect: &Redirect) -> bool {
+    redirect.kind == RedirectKind::DupInput
+        && redirect.fd_var.is_none()
+        && matches!(redirect.fd, Some(1 | 2))
+}
+
 impl Interpreter {
+    /// Open the `N<<EOF` / `N<<<w` (N >= 3) fds of `redirects` for the
+    /// command's duration, so a function, script or group body reads them
+    /// with `<&N` (`f 3<<E`, `read_from_fd.py 8 8<<EOF`). Returns the scope
+    /// to close and the redirects left to apply, or `None` when there are
+    /// none.
+    pub(super) fn open_here_fds<'a>(
+        &'a mut self,
+        redirects: &'a [Redirect],
+    ) -> BoxedFuture<'a, Option<(HereFdScope, Vec<Redirect>)>> {
+        Box::pin(async move {
+            if !redirects.iter().any(high_fd_here) {
+                return Ok(None);
+            }
+            let mut saved = Vec::new();
+            let mut remaining = Vec::with_capacity(redirects.len());
+            for redirect in redirects {
+                let Some(fd) = redirect.fd.filter(|_| high_fd_here(redirect)) else {
+                    remaining.push(redirect.clone());
+                    continue;
+                };
+                // A failure closes what this command already opened.
+                let opened = match self.expand_word(&redirect.target).await {
+                    Ok(content) => self.ensure_persistent_fd_capacity(fd).map(|()| content),
+                    Err(e) => Err(e),
+                };
+                let mut content = match opened {
+                    Ok(content) => content,
+                    Err(e) => {
+                        self.close_here_fds(HereFdScope { saved });
+                        return Err(e);
+                    }
+                };
+                if redirect.kind == RedirectKind::HereString {
+                    content.push('\n');
+                }
+                let lines = coproc::InputFd::Lines(reversed_lines(&content));
+                saved.push((fd, self.coproc_buffers.insert(fd, lines)));
+            }
+            Ok(Some((HereFdScope { saved }, remaining)))
+        })
+    }
+
+    /// Close the fds `open_here_fds` opened, restoring what they shadowed.
+    pub(super) fn close_here_fds(&mut self, scope: HereFdScope) {
+        for (fd, previous) in scope.saved.into_iter().rev() {
+            match previous {
+                Some(buf) => {
+                    self.coproc_buffers.insert(fd, buf);
+                }
+                None => {
+                    self.coproc_buffers.remove(&fd);
+                }
+            }
+        }
+    }
+
+    /// bash expands a redirect target like a command word (braces, splitting,
+    /// globbing) and needs exactly one word back: none or several is an
+    /// "ambiguous redirect", an unmatched glob under `failglob` is "no match".
+    /// Either way the command does not run (`Err` carries its result).
+    /// Targets that may split are expanded here once and replaced by the
+    /// resulting literal, so later stages do not expand them again.
+    pub(super) fn resolve_split_redirect_targets<'a>(
+        &'a mut self,
+        redirects: &'a [Redirect],
+    ) -> BoxedFuture<'a, std::result::Result<Option<Vec<Redirect>>, ExecResult>> {
+        Box::pin(async move {
+            if !redirects
+                .iter()
+                .any(|r| redirect_target_may_split(r) || output_dup_input(r))
+            {
+                return Ok(Ok(None));
+            }
+            let mut resolved = redirects.to_vec();
+            for redirect in resolved.iter_mut() {
+                // `1<&2` duplicates like `1>&2` (bash's dup2 does not care
+                // about the arrow on an output fd).
+                if output_dup_input(redirect) {
+                    redirect.kind = RedirectKind::DupOutput;
+                }
+                if !redirect_target_may_split(redirect) {
+                    continue;
+                }
+                let word = redirect.target.clone();
+                let mut words = Vec::new();
+                let braced = self.brace_expand_word(&word);
+                for part in braced.as_deref().unwrap_or(std::slice::from_ref(&word)) {
+                    let fields = self.expand_word_to_fields(part).await?;
+                    if part.quoted && !part.has_unquoted_glob {
+                        words.extend(fields);
+                        continue;
+                    }
+                    for field in fields {
+                        match self
+                            .expand_glob_item(&field, part.quoted && part.has_unquoted_glob)
+                            .await
+                        {
+                            Ok(items) => words.extend(items),
+                            Err(pat) => {
+                                return Ok(Err(ExecResult::err(
+                                    self.diag(format!("no match: {pat}\n")),
+                                    1,
+                                )));
+                            }
+                        }
+                    }
+                }
+                if words.len() != 1 {
+                    let label = redirect_target_label(&word);
+                    return Ok(Err(ExecResult::err(
+                        self.redirect_error(&label, "ambiguous redirect"),
+                        1,
+                    )));
+                }
+                redirect.target = Word::quoted_literal(words.pop().unwrap_or_default());
+            }
+            Ok(Ok(Some(resolved)))
+        })
+    }
+
     /// A target written with a trailing slash names a directory, so an
     /// output redirect to it fails without creating anything. `resolve_path`
     /// drops the slash, so the check has to run on the word as written.
@@ -177,16 +358,36 @@ impl Interpreter {
                     // command reads of a coproc's output.
                     match self.coproc_buffers.get_mut(&src) {
                         Some(coproc::InputFd::Lines(buf)) => {
-                            stdin = Some(
-                                buf.pop()
-                                    .map(|line| format!("{line}\n"))
-                                    .unwrap_or_default()
-                                    .into(),
-                            );
+                            // As much as the command reads: `read` a line,
+                            // `cat` the rest, `true` nothing.
+                            let take = match demand {
+                                StdinDemand::Nothing => 0,
+                                StdinDemand::Line => 1,
+                                StdinDemand::Lines(n) => n,
+                                StdinDemand::Bytes(_) | StdinDemand::All => buf.len(),
+                            };
+                            let mut text = String::new();
+                            for _ in 0..take.min(buf.len()) {
+                                if let Some(line) = buf.pop() {
+                                    text.push_str(&line);
+                                    text.push('\n');
+                                }
+                            }
+                            stdin = Some(text.into());
                         }
                         Some(coproc::InputFd::Pipe(end)) => {
                             let pipe = Arc::clone(&end.0);
                             stdin = Some(Box::pin(coproc::read_coproc_input(pipe, demand)).await);
+                        }
+                        // `<&5` with fd 5 never opened (or closed): bash
+                        // reports it and does not run the command.
+                        None if src >= 3
+                            && !self.exec_fd_table.contains_key(&src)
+                            && !self.exec_input_fds.contains(&src) =>
+                        {
+                            return Err(crate::error::Error::CommandFailure(
+                                self.redirect_error(&target, "Bad file descriptor"),
+                            ));
                         }
                         None => {}
                     }
@@ -439,6 +640,13 @@ impl Interpreter {
         } else if is_dev_null(&path) {
             result.stdout = crate::StreamData::new();
             result.stderr = crate::StreamData::new();
+        } else if self.clobber_refused(&path).await {
+            result.stdout = crate::StreamData::new();
+            result.stderr = self
+                .redirect_error(target_path, "cannot overwrite existing file")
+                .into();
+            result.exit_code = 1;
+            return Ok(false);
         } else {
             let mut combined = result.stdout.as_bytes().to_vec();
             combined.extend_from_slice(result.stderr.as_bytes());
@@ -454,6 +662,12 @@ impl Interpreter {
             result.stderr = crate::StreamData::new();
         }
         Ok(true)
+    }
+
+    /// `set -C`: `&>file` (like `>file`) may not truncate an existing file.
+    async fn clobber_refused(&self, path: &Path) -> bool {
+        self.scoped.variables.get("SHOPT_C").map(String::as_str) == Some("1")
+            && self.fs.stat(path).await.is_ok_and(clobber_protected)
     }
 
     /// `N>&-` on the fast path: fd N is closed for the command. Writes to
@@ -668,6 +882,15 @@ impl Interpreter {
                         self.dup_output_fd_table(2, 1, &mut fd1, &mut fd2);
                         continue;
                     }
+                    if self.clobber_refused(&path).await {
+                        result.stdout = crate::StreamData::new();
+                        result.stderr = self
+                            .redirect_error(&target_path, "cannot overwrite existing file")
+                            .into();
+                        result.exit_code = 1;
+                        self.clear_pending_fd_redirect_state();
+                        return Ok(result);
+                    }
                     let target = if is_dev_null(&path) {
                         FdTarget::DevNull
                     } else {
@@ -811,6 +1034,66 @@ impl Interpreter {
 }
 
 /// Whether any redirect opens a file on fd 3 or above (`3>f`, `9>>lock`).
+/// Whether `redirects` leave fd 1 and fd 2 writing to the same place
+/// (`2>&1`, `>f 2>&1`, `&>f`, `>&f`), worked out in order on the words as
+/// written. `None` when none of them touches fd 1 or 2 (the caller's state
+/// stands); a target only known after expansion (`>&$fd`) counts as apart.
+pub(super) fn stdout_stderr_joined(redirects: &[Redirect]) -> Option<bool> {
+    #[derive(Clone, Copy, PartialEq)]
+    enum Dest {
+        Fd(i32),
+        Opened(usize),
+        Unknown,
+    }
+    let mut fds = [Dest::Fd(1), Dest::Fd(2)];
+    let mut touched = false;
+    for (i, r) in redirects.iter().enumerate() {
+        if r.fd_var.is_some() {
+            continue;
+        }
+        let literal = match r.target.parts.as_slice() {
+            [WordPart::Literal(t)] => Some(t.as_str()),
+            _ => None,
+        };
+        let (fd, dest) = match r.kind {
+            RedirectKind::Output | RedirectKind::Clobber | RedirectKind::Append => {
+                (r.fd.unwrap_or(1), Dest::Opened(i))
+            }
+            RedirectKind::ReadWrite => (r.fd.unwrap_or(0), Dest::Opened(i)),
+            RedirectKind::OutputBoth => {
+                fds = [Dest::Opened(i); 2];
+                touched = true;
+                continue;
+            }
+            RedirectKind::DupOutput | RedirectKind::DupInput => {
+                let default = if r.kind == RedirectKind::DupOutput {
+                    1
+                } else {
+                    0
+                };
+                let fd = r.fd.unwrap_or(default);
+                let dest = match literal.map(DupTarget::parse) {
+                    Some(DupTarget::Fd(n @ (1 | 2))) => fds[(n - 1) as usize],
+                    Some(DupTarget::Fd(n)) => Dest::Fd(n),
+                    Some(DupTarget::File) if fd == 1 && r.kind == RedirectKind::DupOutput => {
+                        fds = [Dest::Opened(i); 2];
+                        touched = true;
+                        continue;
+                    }
+                    _ => Dest::Unknown,
+                };
+                (fd, dest)
+            }
+            _ => continue,
+        };
+        if let 1 | 2 = fd {
+            fds[(fd - 1) as usize] = dest;
+            touched = true;
+        }
+    }
+    touched.then(|| fds[0] == fds[1] && fds[0] != Dest::Unknown)
+}
+
 pub(super) fn has_high_fd_file_redirect(redirects: &[Redirect]) -> bool {
     redirects.iter().any(|r| {
         matches!(
@@ -875,6 +1158,12 @@ enum DupTarget {
 
 impl DupTarget {
     fn parse(word: &str) -> Self {
+        // `N>&M-` moves M: for one command that is a plain dup of M (the
+        // close only lasts as long as the command).
+        let word = match word.strip_suffix('-') {
+            Some(fd) if !fd.is_empty() => fd,
+            _ => word,
+        };
         if word == "-" {
             Self::Close
         } else if !word.is_empty() && word.bytes().all(|b| b.is_ascii_digit()) {
@@ -1125,7 +1414,16 @@ impl Interpreter {
                 }
             }
             RedirectKind::DupInput | RedirectKind::DupOutput => {
-                let target = self.expand_word(&redirect.target).await?;
+                let mut target = self.expand_word(&redirect.target).await?;
+                // `exec N>&M-` moves fd M to N: dup, then close M.
+                let moved = target.len() > 1
+                    && target.ends_with('-')
+                    && target[..target.len() - 1]
+                        .bytes()
+                        .all(|b| b.is_ascii_digit());
+                if moved {
+                    target.pop();
+                }
                 let default_fd = i32::from(redirect.kind == RedirectKind::DupOutput);
                 let n = fd.unwrap_or(default_fd);
                 if target == "-" || target == "&-" {
@@ -1174,6 +1472,13 @@ impl Interpreter {
                     _ => {
                         self.ensure_persistent_fd_capacity(n)?;
                         self.dup_fd(n, m);
+                    }
+                }
+                if moved && m != n {
+                    if matches!(m, 1 | 2) {
+                        self.exec_fd_table.insert(m, FdTarget::Closed);
+                    } else if m >= 3 {
+                        self.close_fd(m);
                     }
                 }
             }

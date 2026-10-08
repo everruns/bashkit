@@ -489,6 +489,12 @@ impl<'a> Lexer<'a> {
             // N>&M - duplicate fd
             consume(self, 2);
 
+            // `N>&M-` moves M: leave `M-` to be read as the target word.
+            let digits = self.lookahead().take_while(|c| c.is_ascii_digit()).count();
+            if digits > 0 && self.lookahead().nth(digits) == Some('-') {
+                return Some(Token::DupFdWord(fd));
+            }
+
             // Read the target fd number or '-'
             let mut target_str = String::new();
             while let Some(c) = self.peek_char() {
@@ -1076,6 +1082,9 @@ impl<'a> Lexer<'a> {
                             ));
                         }
                     }
+                } else if self.peek_char() == Some('[') {
+                    // `$[expr]`: bash's old synonym for `$((expr))`.
+                    self.read_dollar_bracket_arith(&mut word);
                 } else if self.peek_char() == Some('{') {
                     // ${VAR} format — track nested braces so ${a[${#b[@]}]}
                     // doesn't stop at the inner }.
@@ -1807,6 +1816,11 @@ impl<'a> Lexer<'a> {
             self.advance();
         }
         Self::flush_escape_bytes(&mut out, &mut bytes);
+        // bash strings are C strings: a decoded NUL ends the text
+        // (`$'x\0y'` is `x`).
+        if let Some(nul) = out.find('\0') {
+            out.truncate(nul);
+        }
         (out, closed)
     }
 
@@ -1855,6 +1869,30 @@ impl<'a> Lexer<'a> {
     /// NUL sentinel and stays a literal `$` even when quoted text follows
     /// (`"$"'q'`). `$$` is consumed whole (returns true) so its second `$`
     /// is not mistaken for a lone one before `"`.
+    /// After `$` (already in `word`) at `[`: read `[expr]` up to the
+    /// matching `]` and append it as `((expr))`, so `$[i + 1]` is the
+    /// arithmetic expansion `$((i + 1))` (bash's deprecated synonym).
+    fn read_dollar_bracket_arith(&mut self, word: &mut String) {
+        self.advance(); // '['
+        word.push_str("((");
+        let mut depth = 1usize;
+        while let Some(c) = self.peek_char() {
+            self.advance();
+            match c {
+                '[' => depth += 1,
+                ']' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                _ => {}
+            }
+            word.push(c);
+        }
+        word.push_str("))");
+    }
+
     fn take_dquote_dollar(&mut self, word: &mut String) -> bool {
         let next = self.peek_char();
         if matches!(next, Some('\'' | '"') | None) {
@@ -1999,7 +2037,9 @@ impl<'a> Lexer<'a> {
                     if self.take_dquote_dollar(&mut content) {
                         continue;
                     }
-                    if self.peek_char() == Some('(') {
+                    if self.peek_char() == Some('[') {
+                        self.read_dollar_bracket_arith(&mut content);
+                    } else if self.peek_char() == Some('(') {
                         // $(...) command substitution — track paren depth
                         content.push('(');
                         self.advance();
@@ -2586,8 +2626,13 @@ impl<'a> Lexer<'a> {
                 in_double_quote = !in_double_quote;
             } else if ch == '\'' && !in_double_quote {
                 in_single_quote = !in_single_quote;
-            } else if ch == '\\' && in_double_quote {
-                // Escaped char inside double quotes — skip the next char too
+            } else if ch == '\\' && !in_single_quote && self.peek_char() == Some('\n') {
+                // `\<newline>` continues the command line: the body starts
+                // after the logical line (`cat <<EOF \` / `; echo two`).
+                self.advance();
+                continue;
+            } else if ch == '\\' && !in_single_quote {
+                // Escaped char (outside single quotes) — skip the next char too
                 rest_of_line.push(ch);
                 if let Some(next) = self.peek_char() {
                     rest_of_line.push(next);

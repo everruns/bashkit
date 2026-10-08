@@ -74,6 +74,39 @@ mod resource_exhaustion {
         assert_eq!(result.stdout.trim(), "ok");
     }
 
+    /// TM-DOS-063: `cmd 3<<E` opens fd 3 for the command only; it counts
+    /// against the fd cap and a refused open closes what it already opened.
+    #[tokio::test]
+    async fn here_doc_fds_count_against_fd_cap_and_close() {
+        let limits = ExecutionLimits::new().max_file_descriptors(1);
+        let mut bash = Bash::builder().limits(limits).build();
+
+        let err = bash
+            .exec("cat 3<<<a 4<<<b <&3")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("file descriptors"), "got: {err}");
+        // Nothing stayed open: the next command gets its slot back.
+        let result = bash.exec("cat 5<<<ok <&5").await.unwrap();
+        assert_eq!(result.stdout, "ok\n");
+        let result = bash.exec("cat <&5").await.unwrap();
+        assert_ne!(result.exit_code, 0);
+    }
+
+    /// TM-DOS-129: the command hash table is bounded however many names a
+    /// script hashes.
+    #[tokio::test]
+    async fn command_hash_table_is_bounded() {
+        let mut bash = Bash::new();
+        let result = bash
+            .exec("for i in $(seq 700); do hash -p /bin/true c$i; done; hash -l | wc -l")
+            .await
+            .unwrap();
+        let rows: usize = result.stdout.trim().parse().unwrap();
+        assert!(rows <= 512, "hash table grew to {rows}");
+    }
+
     /// TM-DOS-100: archive growth must consume live bytes before allocation.
     #[tokio::test]
     async fn archive_growth_is_admitted_by_shared_live_budget() {
@@ -428,6 +461,24 @@ mod sandbox_escape {
 
 mod injection_attacks {
     use super::*;
+
+    /// TM-INJ-026: a redirect target is expanded once. A value holding
+    /// shell syntax names a file, it is never run, and a glob matching
+    /// several files is an ambiguous redirect that writes nothing.
+    #[tokio::test]
+    async fn redirect_target_expanded_once() {
+        let mut bash = Bash::new();
+        let result = bash
+            .exec(
+                r#"cd /tmp; v='$(touch${IFS}pwned)'; echo x > $v; [ -e pwned ] && echo RAN
+cat ./'$(touch${IFS}pwned)'
+: > a1; : > a2; echo y > a*; echo s=$?; cat a1 a2"#,
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "x\ns=1\n");
+        assert!(result.stderr.contains("ambiguous redirect"));
+    }
 
     /// Test that variable content with semicolons doesn't execute as separate command
     /// Security: Variables should expand to strings, not be re-parsed as code
@@ -3809,7 +3860,9 @@ printf "%s\n" "${a:-unset}" "${b:-unset}" "${c:-unset}"
     /// TM-DOS-060: local builtin assignments in functions must honor variable count budget.
     #[tokio::test]
     async fn tm_dos_060_function_local_assignment_respects_budget() {
-        let mem = MemoryLimits::new().max_variable_count(2);
+        // `$_` exists from startup (uncounted), so only the locals count:
+        // the second one is over a budget of one.
+        let mem = MemoryLimits::new().max_variable_count(1);
         let mut bash = Bash::builder()
             .memory_limits(mem)
             .session_limits(SessionLimits::unlimited())
@@ -3823,7 +3876,7 @@ f() {
 f
 "#;
         let error = bash.exec(script).await.unwrap_err();
-        assert!(error.to_string().contains("variable count limit (2)"));
+        assert!(error.to_string().contains("variable count limit (1)"));
     }
 
     /// TM-DOS-060: local compound array assignments must honor array entry budget.

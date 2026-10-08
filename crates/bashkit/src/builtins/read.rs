@@ -132,6 +132,10 @@ impl Builtin for Read {
         {
             return Ok(ExecResult::err(invalid_name(name), 1));
         }
+        // `read -t 0` only polls: input (even EOF) is ready, nothing is read.
+        if timeout == Some(0.0) {
+            return Ok(ExecResult::ok(String::new()));
+        }
         #[cfg(feature = "terminal")]
         if input.is_none()
             && let Some(tty) = ctx.execution_extension::<crate::terminal::Tty>()
@@ -231,6 +235,9 @@ impl Builtin for Read {
                     start: 0,
                 }]
             }
+        } else if ifs.is_empty() && line.is_empty() {
+            // An empty line is no field, even unsplit (`read -a` gets `()`).
+            Vec::new()
         } else if ifs.is_empty() {
             // Empty IFS means no word splitting
             vec![ReadField {
@@ -445,6 +452,7 @@ fn invalid_name(name: &str) -> String {
 pub(crate) fn consumed_len(input: &[u8], args: &[String]) -> usize {
     let mut raw = false;
     let mut delim = '\n';
+    let mut exact = false;
     let mut limit = None::<usize>;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
@@ -469,12 +477,17 @@ pub(crate) fn consumed_len(input: &[u8], args: &[String]) -> usize {
                 }
                 'n' | 'N' => {
                     limit = value().parse().ok();
-                    if flag == 'N' {
-                        delim = '\0';
+                    exact = flag == 'N';
+                    break;
+                }
+                't' => {
+                    // `-t 0` polls without consuming anything.
+                    if value().parse::<f64>().is_ok_and(|t| t == 0.0) {
+                        return 0;
                     }
                     break;
                 }
-                'p' | 't' | 'u' => {
+                'p' | 'u' => {
                     value();
                     break;
                 }
@@ -485,7 +498,8 @@ pub(crate) fn consumed_len(input: &[u8], args: &[String]) -> usize {
     // Byte scan: keeps non-UTF-8 input intact. A multi-byte delimiter
     // matches on its first byte.
     let mut delim_buf = [0u8; 4];
-    let delim = delim.encode_utf8(&mut delim_buf).as_bytes()[0];
+    // `-N` ignores the delimiter wherever `-d` appears.
+    let delim = (!exact).then(|| delim.encode_utf8(&mut delim_buf).as_bytes()[0]);
     let mut count = 0usize;
     let mut i = 0usize;
     while i < input.len() {
@@ -495,7 +509,7 @@ pub(crate) fn consumed_len(input: &[u8], args: &[String]) -> usize {
         if starts_char && limit.is_some_and(|n| count >= n) {
             return i;
         }
-        if b == delim {
+        if Some(b) == delim {
             return i + 1;
         }
         if b == b'\\' && !raw {
@@ -565,6 +579,11 @@ fn read_record(
         };
         if c == delim {
             return (out, true);
+        }
+        if c == '\0' {
+            // bash drops NUL bytes from what `read` stores.
+            count += 1;
+            continue;
         }
         if c == '\\' && !raw {
             match chars.next() {
