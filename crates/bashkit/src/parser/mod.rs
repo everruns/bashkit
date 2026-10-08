@@ -1835,6 +1835,8 @@ impl<'a> Parser<'a> {
         self.advance(); // consume '[['
 
         let mut words = Vec::new();
+        // Token shapes for the grammar check below, one per word.
+        let mut kinds: Vec<CondTok> = Vec::new();
         let mut saw_regex_op = false;
 
         loop {
@@ -1854,6 +1856,11 @@ impl<'a> Parser<'a> {
                     );
                     let is_literal =
                         matches!(self.current_token, Some(tokens::Token::LiteralWord(_)));
+                    // Only a bare unquoted word can be an operator (`'!'` and
+                    // `$op` are operands).
+                    let op_text = (matches!(self.current_token, Some(tokens::Token::Word(_)))
+                        && !w_clone.contains(['$', '`', '\\', '\x00', '\u{1e}', '\u{1f}']))
+                    .then(|| w_clone.clone());
 
                     // After =~, handle regex pattern.
                     // If the pattern contains $ (variable reference), parse it as a
@@ -1869,6 +1876,7 @@ impl<'a> Parser<'a> {
                             let pattern = self.collect_conditional_regex_pattern(&w_clone);
                             words.push(Word::literal(&pattern));
                         }
+                        kinds.push(CondTok::Word(None));
                         saw_regex_op = false;
                         continue;
                     }
@@ -1878,6 +1886,7 @@ impl<'a> Parser<'a> {
                         // regex word, where `#`, `|` and spaces in groups are
                         // pattern text, not comments or operators.
                         words.push(Word::literal("=~"));
+                        kinds.push(CondTok::Word(Some("=~".to_string())));
                         let (raw, unclosed) = self.lexer.read_cond_regex_checked();
                         if unclosed {
                             // bash reads the group to end of input, then the
@@ -1898,6 +1907,7 @@ impl<'a> Parser<'a> {
                             let mut word = self.cond_regex_word(raw.clone());
                             word.raw = Some(raw.trim().to_string());
                             words.push(word);
+                            kinds.push(CondTok::Word(None));
                         }
                         self.advance();
                         continue;
@@ -1925,15 +1935,18 @@ impl<'a> Parser<'a> {
                         parsed
                     };
                     words.push(self.with_raw(word));
+                    kinds.push(CondTok::Word(op_text));
                     self.advance();
                 }
                 // Operators that the lexer tokenizes separately
                 Some(tokens::Token::And) => {
                     words.push(Word::literal("&&"));
+                    kinds.push(CondTok::Op("&&"));
                     self.advance();
                 }
                 Some(tokens::Token::Or) => {
                     words.push(Word::literal("||"));
+                    kinds.push(CondTok::Op("||"));
                     self.advance();
                 }
                 Some(tokens::Token::LeftParen) => {
@@ -1941,24 +1954,33 @@ impl<'a> Parser<'a> {
                         // Regex pattern starts with '(' — collect it
                         let pattern = self.collect_conditional_regex_pattern("(");
                         words.push(Word::literal(&pattern));
+                        kinds.push(CondTok::Word(None));
                         saw_regex_op = false;
                         continue;
                     }
                     words.push(Word::literal("("));
+                    kinds.push(CondTok::Op("("));
                     self.advance();
                 }
                 Some(tokens::Token::RightParen) => {
                     words.push(Word::literal(")"));
+                    kinds.push(CondTok::Op(")"));
                     self.advance();
                 }
                 // Inside `[[ ]]` these are string comparison operators, not
                 // redirections (bash's conditional grammar has no redirects).
                 Some(tokens::Token::RedirectIn) => {
                     words.push(Word::literal("<"));
+                    kinds.push(CondTok::Op("<"));
                     self.advance();
                 }
                 Some(tokens::Token::RedirectOut) => {
                     words.push(Word::literal(">"));
+                    kinds.push(CondTok::Op(">"));
+                    self.advance();
+                }
+                // `[[ a\n&& b\n]]`: newlines inside are blanks.
+                Some(tokens::Token::Newline) => {
                     self.advance();
                 }
                 None => {
@@ -1967,12 +1989,21 @@ impl<'a> Parser<'a> {
                     ));
                 }
                 _ => {
-                    // Skip unknown tokens
+                    // Any other token (`;`, `3<`, `|`) is outside the
+                    // conditional grammar.
+                    kinds.push(CondTok::Op("token"));
                     self.advance();
                 }
             }
         }
 
+        if let Err(msg) = check_conditional(&kinds) {
+            return Err(Error::parse_at(
+                msg,
+                self.current_span.start.line,
+                self.current_span.start.column,
+            ));
+        }
         Ok(CompoundCommand::Conditional(words))
     }
 
@@ -3020,6 +3051,14 @@ impl<'a> Parser<'a> {
                     words.push(Word::literal(sym));
                     self.advance();
                 }
+                // After an assignment `[[` is no longer a reserved word:
+                // `FOO=bar [[ x ]]` runs a command named `[[` (bash: 127).
+                Some(tokens::Token::DoubleLeftBracket)
+                    if !words.is_empty() || !assignments.is_empty() =>
+                {
+                    words.push(Word::literal("[["));
+                    self.advance();
+                }
                 Some(tokens::Token::Newline)
                 | Some(tokens::Token::Semicolon)
                 | Some(tokens::Token::Pipe)
@@ -3603,6 +3642,9 @@ impl<'a> Parser<'a> {
         let mut chars = s.chars().peekable();
         let mut current = String::new();
         let mut in_quoted_segment = false;
+        // Parts count when the current quoted segment opened, to spot `""`.
+        let mut segment_start = 0usize;
+        let mut has_empty_quoted = false;
         macro_rules! push_part {
             ($part:expr) => {{
                 parts.push($part);
@@ -3623,6 +3665,14 @@ impl<'a> Parser<'a> {
                 let quoted = ch == '\u{1e}';
                 if quoted != in_quoted_segment && !current.is_empty() {
                     push_part!(WordPart::Literal(std::mem::take(&mut current)));
+                } else if !quoted && in_quoted_segment && parts.len() == segment_start {
+                    // An empty quoted segment (`$x""`): keep it as an empty
+                    // quoted part so field splitting can still make a field.
+                    push_part!(WordPart::Literal(String::new()));
+                    has_empty_quoted = true;
+                }
+                if quoted && !in_quoted_segment {
+                    segment_start = parts.len();
                 }
                 in_quoted_segment = quoted;
             } else if ch == '$' {
@@ -3808,7 +3858,10 @@ impl<'a> Parser<'a> {
                                 chars.next();
                             }
                             if index == "@" || index == "*" {
-                                push_part!(WordPart::ArrayIndices(var_name));
+                                push_part!(WordPart::ArrayIndices {
+                                    name: var_name,
+                                    star: index == "*",
+                                });
                             } else {
                                 // ${!arr[n]} - not standard, treat as variable
                                 push_part!(WordPart::Variable(format!("!{}[{}]", var_name, index)));
@@ -3892,7 +3945,10 @@ impl<'a> Parser<'a> {
                             if suffix.ends_with('*') || suffix.ends_with('@') {
                                 let full_prefix =
                                     format!("{}{}", var_name, &suffix[..suffix.len() - 1]);
-                                push_part!(WordPart::PrefixMatch(full_prefix));
+                                push_part!(WordPart::PrefixMatch {
+                                    prefix: full_prefix,
+                                    star: suffix.ends_with('*'),
+                                });
                             } else {
                                 push_part!(WordPart::Variable(format!("!{}{}", var_name, suffix)));
                             }
@@ -4411,6 +4467,28 @@ impl<'a> Parser<'a> {
             push_part!(WordPart::Literal(current));
         }
 
+        // Empty quoted parts only matter next to an unquoted expansion
+        // (`""$x""` keeps empty fields); elsewhere drop them so the word
+        // keeps its plain shape.
+        if has_empty_quoted {
+            let unquoted_expansion = parts
+                .iter()
+                .zip(&part_quoted)
+                .any(|(p, q)| !*q && !matches!(p, WordPart::Literal(_)));
+            if !unquoted_expansion {
+                let mut kept_parts = Vec::with_capacity(parts.len());
+                let mut kept_quoted = Vec::with_capacity(parts.len());
+                for (p, q) in parts.into_iter().zip(part_quoted) {
+                    if !matches!(&p, WordPart::Literal(s) if s.is_empty()) {
+                        kept_parts.push(p);
+                        kept_quoted.push(q);
+                    }
+                }
+                parts = kept_parts;
+                part_quoted = kept_quoted;
+            }
+        }
+
         // If no parts, create an empty literal
         if parts.is_empty() {
             push_part!(WordPart::Literal(String::new()));
@@ -4812,6 +4890,137 @@ fn heredoc_body_escapes(content: &str) -> String {
         }
     }
     out
+}
+
+/// One `[[ ]]` token for [`check_conditional`]: a word (with its text when
+/// it is a bare unquoted word that may act as an operator) or an operator
+/// token the lexer split off (`&&`, `||`, `(`, `)`, `<`, `>`, other).
+enum CondTok {
+    Word(Option<String>),
+    Op(&'static str),
+}
+
+/// bash's `[[ ]]` grammar (parse.y `cond_expr`), checked at parse time so
+/// `[[ a $op b ]]`, `[[ -z ]]` or `[[ '(' x ]]` are syntax errors (status
+/// 2) as in bash, not runtime tests. Evaluation still runs on the words.
+fn check_conditional(toks: &[CondTok]) -> std::result::Result<(), String> {
+    let mut pos = 0;
+    cond_or(toks, &mut pos, 0)?;
+    if pos < toks.len() {
+        return Err(format!(
+            "syntax error in conditional expression: unexpected token `{}'",
+            cond_shown(toks.get(pos))
+        ));
+    }
+    Ok(())
+}
+
+const COND_UNARY: &[&str] = &[
+    "-a", "-b", "-c", "-d", "-e", "-f", "-g", "-h", "-k", "-n", "-o", "-p", "-r", "-s", "-t", "-u",
+    "-v", "-w", "-x", "-z", "-G", "-L", "-N", "-O", "-R", "-S",
+];
+const COND_BINARY: &[&str] = &[
+    "=", "==", "!=", "=~", "-nt", "-ot", "-ef", "-eq", "-ne", "-lt", "-le", "-gt", "-ge",
+];
+/// THREAT[TM-DOS-044]: bound recursion on `(((...` / `! ! ! ...`.
+const COND_MAX_DEPTH: usize = 256;
+
+fn cond_shown(tok: Option<&CondTok>) -> String {
+    match tok {
+        None => "]]".to_string(),
+        Some(CondTok::Op(op)) => op.to_string(),
+        Some(CondTok::Word(Some(text))) => text.clone(),
+        Some(CondTok::Word(None)) => "word".to_string(),
+    }
+}
+
+fn cond_word_text(tok: Option<&CondTok>) -> Option<&str> {
+    match tok {
+        Some(CondTok::Word(Some(text))) => Some(text),
+        _ => None,
+    }
+}
+
+fn cond_or(t: &[CondTok], pos: &mut usize, depth: usize) -> std::result::Result<(), String> {
+    if depth > COND_MAX_DEPTH {
+        return Err("conditional expression nested too deeply".to_string());
+    }
+    cond_and(t, pos, depth)?;
+    while matches!(t.get(*pos), Some(CondTok::Op("||"))) {
+        *pos += 1;
+        cond_and(t, pos, depth)?;
+    }
+    Ok(())
+}
+
+fn cond_and(t: &[CondTok], pos: &mut usize, depth: usize) -> std::result::Result<(), String> {
+    cond_term(t, pos, depth)?;
+    while matches!(t.get(*pos), Some(CondTok::Op("&&"))) {
+        *pos += 1;
+        cond_term(t, pos, depth)?;
+    }
+    Ok(())
+}
+
+fn cond_term(t: &[CondTok], pos: &mut usize, depth: usize) -> std::result::Result<(), String> {
+    if depth > COND_MAX_DEPTH {
+        return Err("conditional expression nested too deeply".to_string());
+    }
+    match t.get(*pos) {
+        None => Err("syntax error in conditional expression".to_string()),
+        Some(CondTok::Op("(")) => {
+            *pos += 1;
+            if matches!(t.get(*pos), Some(CondTok::Op(")"))) {
+                return Err("unexpected token `)' in conditional command".to_string());
+            }
+            cond_or(t, pos, depth + 1)?;
+            if !matches!(t.get(*pos), Some(CondTok::Op(")"))) {
+                return Err(format!(
+                    "unexpected token `{}', expected `)'",
+                    cond_shown(t.get(*pos))
+                ));
+            }
+            *pos += 1;
+            Ok(())
+        }
+        Some(CondTok::Word(_)) if cond_word_text(t.get(*pos)) == Some("!") => {
+            *pos += 1;
+            cond_term(t, pos, depth + 1)
+        }
+        Some(CondTok::Word(_)) => {
+            let first = cond_word_text(t.get(*pos));
+            *pos += 1;
+            if first.is_some_and(|w| COND_UNARY.contains(&w)) {
+                if !matches!(t.get(*pos), Some(CondTok::Word(_))) {
+                    return Err(format!(
+                        "unexpected argument `{}' to conditional unary operator",
+                        cond_shown(t.get(*pos))
+                    ));
+                }
+                *pos += 1;
+                return Ok(());
+            }
+            let binary = match t.get(*pos) {
+                Some(CondTok::Op("<" | ">")) => true,
+                Some(CondTok::Word(Some(op))) => COND_BINARY.contains(&op.as_str()),
+                None | Some(CondTok::Op("&&" | "||" | ")")) => return Ok(()),
+                _ => false,
+            };
+            if !binary {
+                return Err("conditional binary operator expected".to_string());
+            }
+            *pos += 1;
+            if !matches!(t.get(*pos), Some(CondTok::Word(_))) {
+                return Err(format!(
+                    "unexpected argument `{}' to conditional binary operator",
+                    cond_shown(t.get(*pos))
+                ));
+            }
+            *pos += 1;
+            Ok(())
+        }
+        Some(CondTok::Op(op)) => Err(format!("unexpected token `{op}' in conditional command")),
+    }
 }
 
 #[cfg(test)]

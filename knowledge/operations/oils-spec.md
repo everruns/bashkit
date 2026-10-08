@@ -17,15 +17,17 @@ Implemented. Harness: `scripts/oils-spec/run.py` (`just oils-spec`).
 
 ## Headline
 
-**74.2%**: bashkit passes 1997 of the 2693 Oils spec cases real bash 5.2.21
-passes (2759 cases in 132 spec files; bashkit passes 2003 of all cases,
-72.6%). Oils `57d3f0d088c3`, bashkit `f86bd7c81ae3`, 2026-10-08, 27 s with 4
-jobs. Report: `scripts/oils-spec/results/oils-spec-linux-x86_64-20261008T103235Z.md`.
+**77.3%**: bashkit passes 2080 of the 2692 Oils spec cases real bash 5.2.21
+passes (2759 cases in 132 spec files; bashkit passes 2086 of all cases,
+75.6%). Oils `57d3f0d088c3`, 2026-10-08. Report:
+`scripts/oils-spec/results/oils-spec-linux-x86_64-20261008T115238Z.md`.
+The first run (74.2%, `...T103235Z.md`) missed 16 cases each in
+`globignore` and `word-split`, 14 in `builtin-cd`, 13 in `alias` and
+`dbracket`; those files now miss 1, 0, 5, 7 and 1.
 
-Spec files with the most misses at that run: `builtin-completion` (34),
-`array` (25), `prompt` (25), `builtin-trap-bash` (19), `globignore` (16),
-`word-split` (16), `var-ref` (15), `builtin-cd` (14), `alias` (13),
-`dbracket` (13). 22 of the 132 files pass completely.
+Spec files with the most misses at the latest run: `builtin-completion`
+(34), `array` (25), `prompt` (25), `builtin-trap-bash` (19), `var-ref` (15).
+24 of the 132 files pass completely.
 
 ## Why
 

@@ -5,6 +5,12 @@
 //! (`${x:-y}`, `${x/a/b}`, `${x#p}`, ...), IFS field splitting, operand
 //! quoting, and pattern matching helpers. Command-substitution and
 //! subshell-snapshot machinery stay in the parent module.
+//!
+//! Important decision: an unquoted word with more than one part is split
+//! part by part (`split_word_segments`): literal and quoted parts are
+//! protected, only expansion results split, and a used `${v:-"..."}`
+//! operand contributes its own quoted/unquoted parts. A lone expansion
+//! keeps the cheaper whole-string `ifs_split` path.
 
 use super::*;
 
@@ -510,9 +516,14 @@ impl Interpreter {
                         &self.expand_array_access_part(name, index),
                     );
                 }
-                WordPart::ArrayIndices(name) => {
+                WordPart::ArrayIndices { name, star } => {
                     let keys = self.array_keys(name);
-                    Self::append_expansion_for_word(&mut result, word, &keys.join(" "));
+                    let sep = if *star {
+                        self.get_ifs_separator()
+                    } else {
+                        " ".to_string()
+                    };
+                    Self::append_expansion_for_word(&mut result, word, &keys.join(&sep));
                 }
                 WordPart::Substring {
                     name,
@@ -606,27 +617,14 @@ impl Interpreter {
                         }
                     }
                 }
-                WordPart::PrefixMatch(prefix) => {
-                    let mut names: Vec<String> = self
-                        .scoped
-                        .variables
-                        .keys()
-                        .filter(|k| k.starts_with(prefix.as_str()))
-                        // THREAT[TM-INF-017]: Hide internal/hidden marker variables
-                        .filter(|k| !Self::is_hidden_variable(k))
-                        .cloned()
-                        .collect();
-                    for k in self.env.keys() {
-                        if k.starts_with(prefix.as_str())
-                            && !names.contains(k)
-                            // THREAT[TM-INF-017]: Hide internal/hidden marker variables
-                            && !Self::is_hidden_variable(k)
-                        {
-                            names.push(k.clone());
-                        }
-                    }
-                    names.sort();
-                    Self::append_expansion_for_word(&mut result, word, &names.join(" "));
+                WordPart::PrefixMatch { prefix, star } => {
+                    let names = self.prefix_names(prefix);
+                    let sep = if *star {
+                        self.get_ifs_separator()
+                    } else {
+                        " ".to_string()
+                    };
+                    Self::append_expansion_for_word(&mut result, word, &names.join(&sep));
                 }
                 WordPart::ArrayLength(name) => {
                     let resolved = self.resolve_nameref(name);
@@ -684,12 +682,7 @@ impl Interpreter {
                             // "$@" preserves individual positional params
                             return Ok(positional);
                         }
-                        // $@ unquoted: each param is subject to further IFS splitting
-                        let mut fields = Vec::new();
-                        for p in &positional {
-                            fields.extend(self.ifs_split(p)?);
-                        }
-                        return Ok(fields);
+                        return self.unquoted_positional_fields(&positional);
                     }
                     if name == "*" {
                         let positional = self
@@ -710,12 +703,7 @@ impl Interpreter {
                             };
                             return Ok(vec![positional.join(&sep)]);
                         }
-                        // $* unquoted: each param is subject to IFS splitting
-                        let mut fields = Vec::new();
-                        for p in &positional {
-                            fields.extend(self.ifs_split(p)?);
-                        }
-                        return Ok(fields);
+                        return self.unquoted_positional_fields(&positional);
                     }
                 }
                 if let WordPart::ArrayAccess { name, index } = &word.parts[0]
@@ -746,9 +734,30 @@ impl Interpreter {
                     }
                     return Ok(fields);
                 }
-                // "${!arr[@]}" - array keys/indices as separate fields
-                if let WordPart::ArrayIndices(name) = &word.parts[0] {
-                    return Ok(self.array_keys(name));
+                // `${!arr[@]}` / `${!prefix@}` and their `*` forms.
+                if let Some((names, star)) = self.name_list_part(&word.parts[0]) {
+                    if word.quoted {
+                        if star {
+                            return Ok(vec![names.join(&self.get_ifs_separator())]);
+                        }
+                        return Ok(names);
+                    }
+                    if star && matches!(self.scoped.variables.get("IFS"), Some(v) if v.is_empty()) {
+                        // bash: a null IFS joins the `*` form into one field,
+                        // keys with a space, names with nothing.
+                        let sep = if matches!(word.parts[0], WordPart::ArrayIndices { .. }) {
+                            " "
+                        } else {
+                            ""
+                        };
+                        let joined = names.join(sep);
+                        return Ok(if joined.is_empty() {
+                            Vec::new()
+                        } else {
+                            vec![joined]
+                        });
+                    }
+                    return self.unquoted_positional_fields(&names);
                 }
             }
 
@@ -762,39 +771,233 @@ impl Interpreter {
             let has_mixed_part_quotes =
                 word.part_quoted.iter().any(|q| *q) && word.part_quoted.iter().any(|q| !*q);
             if has_mixed_part_quotes {
-                let mut segments = Vec::new();
-                for (idx, part) in word.parts.iter().enumerate() {
-                    let part_is_quoted = word.part_quoted.get(idx).copied().unwrap_or(word.quoted);
-                    segments.push(
-                        self.mixed_word_segment(word, idx, part, part_is_quoted)
-                            .await?,
-                    );
-                }
-                return self.split_marked_segments(segments);
+                return self.split_word_segments(word).await;
             }
 
             // For other words, expand to a single field then apply IFS word splitting
             // when the word is unquoted and contains an expansion.
             // Per POSIX, unquoted variable/command/arithmetic expansion results undergo
             // field splitting on IFS.
-            let expanded = self.expand_word_inner(word).await?;
-
             // IFS splitting applies to unquoted expansions only.
             // Skip splitting for assignment-like words (e.g., result="$1") where
             // the lexer stripped quotes from a mixed-quoted word (produces Token::Word
             // with quoted: false even though the expansion was inside double quotes).
-            let is_assignment_word =
-                matches!(word.parts.first(), Some(WordPart::Literal(s)) if s.contains('='));
+            let is_assignment_word = matches!(
+                word.parts.first(),
+                Some(WordPart::Literal(s)) if Self::is_assignment_prefix(s)
+            );
             let has_expansion = !word.quoted
                 && !is_assignment_word
                 && word.parts.iter().any(Self::is_field_split_expansion);
 
+            // Only expansion results split: literal text next to them
+            // (`${w}:b` with IFS=:) and quoted text inside an operand
+            // (`${v:-"a b"}`) stay whole.
+            if has_expansion && (word.parts.len() > 1 || self.quoted_operand_used(&word.parts[0])) {
+                return self.split_word_segments(word).await;
+            }
+
+            let expanded = self.expand_word_inner(word).await?;
             if has_expansion {
                 self.ifs_split(&expanded)
             } else {
                 Ok(vec![expanded])
             }
         })
+    }
+
+    /// `name=` / `name+=` / `name[i]=` at the start of a word: the
+    /// assignment-looking argument whose value is not field-split.
+    fn is_assignment_prefix(s: &str) -> bool {
+        let Some(eq) = s.find('=') else {
+            return false;
+        };
+        let lhs = s[..eq].strip_suffix('+').unwrap_or(&s[..eq]);
+        let name = match lhs.find('[') {
+            Some(open) if lhs.ends_with(']') => &lhs[..open],
+            Some(_) => return false,
+            None => lhs,
+        };
+        let mut chars = name.chars();
+        chars
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+            && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+    }
+
+    /// Unquoted `$@` / `$*` alone: bash joins the parameters with the first
+    /// IFS character and splits the result, so a non-whitespace IFS keeps
+    /// empty parameters as empty fields; a null IFS keeps each non-empty
+    /// parameter as its own field.
+    fn unquoted_positional_fields(&self, positional: &[String]) -> Result<Vec<String>> {
+        match self.scoped.variables.get("IFS") {
+            Some(ifs) if ifs.is_empty() => Ok(positional
+                .iter()
+                .filter(|p| !p.is_empty())
+                .cloned()
+                .collect()),
+            ifs => {
+                let sep = ifs.and_then(|v| v.chars().next()).unwrap_or(' ');
+                self.ifs_split(&positional.join(sep.encode_utf8(&mut [0; 4])))
+            }
+        }
+    }
+
+    /// Names listed by `${!arr[@]}` (keys) or `${!prefix@}` (variable
+    /// names), with whether it is the `*` form.
+    fn name_list_part(&self, part: &WordPart) -> Option<(Vec<String>, bool)> {
+        match part {
+            WordPart::ArrayIndices { name, star } => Some((self.array_keys(name), *star)),
+            WordPart::PrefixMatch { prefix, star } => Some((self.prefix_names(prefix), *star)),
+            _ => None,
+        }
+    }
+
+    /// Sorted names of set variables starting with `prefix`.
+    fn prefix_names(&self, prefix: &str) -> Vec<String> {
+        let mut names: Vec<String> = self
+            .scoped
+            .variables
+            .keys()
+            .filter(|k| k.starts_with(prefix))
+            // THREAT[TM-INF-017]: Hide internal/hidden marker variables
+            .filter(|k| !Self::is_hidden_variable(k))
+            .cloned()
+            .collect();
+        for k in self.env.keys() {
+            if k.starts_with(prefix)
+                && !names.contains(k)
+                // THREAT[TM-INF-017]: Hide internal/hidden marker variables
+                && !Self::is_hidden_variable(k)
+            {
+                names.push(k.clone());
+            }
+        }
+        names.sort();
+        names
+    }
+
+    /// `${v:-"a b"}` / `${v:+...}` whose operand holds double quotes and will
+    /// be used: its quoted text must be kept out of field splitting.
+    fn quoted_operand_used(&self, part: &WordPart) -> bool {
+        let WordPart::ParameterExpansion {
+            name,
+            operator,
+            operand,
+            colon_variant,
+        } = part
+        else {
+            return false;
+        };
+        let use_when_set = match operator {
+            ParameterOp::UseDefault => false,
+            ParameterOp::UseReplacement => true,
+            _ => return false,
+        };
+        if !operand.contains('"') {
+            return false;
+        }
+        let (is_set, value) = self.resolve_param_expansion_name(name);
+        let unset_or_null = !is_set || (*colon_variant && value.is_empty());
+        use_when_set != unset_or_null
+    }
+
+    /// Field-split a word part by part: literal and quoted parts are
+    /// protected, unquoted expansion results split, and the fields they
+    /// make join the text around them (`1${u:-"2 3" "4 5"}6` gives
+    /// `12 3` and `4 56`).
+    async fn split_word_segments(&mut self, word: &Word) -> Result<Vec<String>> {
+        let ifs_null = matches!(self.scoped.variables.get("IFS"), Some(v) if v.is_empty());
+        // A null IFS never splits, but unquoted `$@`/`$*` still yield one
+        // field per parameter: each starts a new group of segments.
+        let mut groups: Vec<Vec<(String, bool, bool)>> = vec![Vec::new()];
+        for (idx, part) in word.parts.iter().enumerate() {
+            let quoted = word.part_quoted.get(idx).copied().unwrap_or(word.quoted);
+            let elements = match part {
+                WordPart::Variable(name) if !quoted && (name == "@" || name == "*") => Some((
+                    self.call_stack
+                        .last()
+                        .map(|f| f.positional.clone())
+                        .unwrap_or_default(),
+                    None,
+                )),
+                // bash joins the `*` forms under a null IFS: keys with a
+                // space, names with nothing.
+                WordPart::ArrayIndices { star, .. } | WordPart::PrefixMatch { star, .. }
+                    if !quoted =>
+                {
+                    let sep = match part {
+                        WordPart::ArrayIndices { .. } => " ",
+                        _ => "",
+                    };
+                    self.name_list_part(part)
+                        .map(|(names, _)| (names, star.then_some(sep)))
+                }
+                _ => None,
+            };
+            if let Some((positional, null_ifs_join)) = elements {
+                if ifs_null && let Some(sep) = null_ifs_join {
+                    if let Some(group) = groups.last_mut() {
+                        group.push((positional.join(sep), false, false));
+                    }
+                } else if ifs_null {
+                    for (i, p) in positional.into_iter().enumerate() {
+                        if i > 0 {
+                            groups.push(Vec::new());
+                        }
+                        if let Some(group) = groups.last_mut() {
+                            group.push((p, false, false));
+                        }
+                    }
+                } else {
+                    let sep = self
+                        .scoped
+                        .variables
+                        .get("IFS")
+                        .and_then(|v| v.chars().next())
+                        .unwrap_or(' ');
+                    let joined = positional.join(sep.encode_utf8(&mut [0; 4]));
+                    if let Some(group) = groups.last_mut() {
+                        group.push((joined, false, false));
+                    }
+                }
+                continue;
+            }
+            if !quoted && self.quoted_operand_used(part) {
+                let WordPart::ParameterExpansion { operand, .. } = part else {
+                    continue;
+                };
+                let inner = self.operand_word(operand, false);
+                for (i, p) in inner.parts.iter().enumerate() {
+                    let q = inner.part_quoted.get(i).copied().unwrap_or(false);
+                    let segment = match p {
+                        // Unquoted operand text is expansion output: it splits.
+                        WordPart::Literal(s) if !q => (s.clone(), false, false),
+                        _ => self.mixed_word_segment(&inner, i, p, q).await?,
+                    };
+                    if let Some(group) = groups.last_mut() {
+                        group.push(segment);
+                    }
+                }
+                continue;
+            }
+            let segment = self.mixed_word_segment(word, idx, part, quoted).await?;
+            if let Some(group) = groups.last_mut() {
+                group.push(segment);
+            }
+        }
+        if groups.len() == 1 {
+            return self.split_marked_segments(groups.pop().unwrap_or_default());
+        }
+        let mut out = Vec::new();
+        for group in groups {
+            out.extend(self.split_marked_segments(group)?);
+            if out.len() > self.limits.max_word_split_fields {
+                out.truncate(self.limits.max_word_split_fields);
+                break;
+            }
+        }
+        Ok(out)
     }
 
     /// One part of a mixed-quote word as `(value, protected, keeps_empty)`:
@@ -978,6 +1181,7 @@ impl Interpreter {
             }
             WordPart::Transformation { name, .. } => name == "@" || name.ends_with("[@]"),
             WordPart::Substring { name, .. } => name == "@",
+            WordPart::ArrayIndices { star, .. } | WordPart::PrefixMatch { star, .. } => !star,
             _ => false,
         }
     }
@@ -1042,6 +1246,10 @@ impl Interpreter {
                 .array_view(name)
                 .map(|items| items.into_iter().map(|(_, v)| v).collect())
                 .unwrap_or_default(),
+            WordPart::ArrayIndices { .. } | WordPart::PrefixMatch { .. } => self
+                .name_list_part(part)
+                .map(|(n, _)| n)
+                .unwrap_or_default(),
             _ => match self.elementwise_fields(part) {
                 Some((elems, _)) => elems,
                 None => return Ok(None),
@@ -1102,10 +1310,13 @@ impl Interpreter {
             WordPart::Variable(_)
                 | WordPart::CommandSubstitution(_)
                 | WordPart::ArithmeticExpansion(_)
+                | WordPart::Length(_)
+                | WordPart::ArrayLength(_)
                 | WordPart::ParameterExpansion { .. }
                 | WordPart::ArrayAccess { .. }
                 | WordPart::IndirectExpansion { .. }
-                | WordPart::PrefixMatch(_)
+                | WordPart::PrefixMatch { .. }
+                | WordPart::ArrayIndices { .. }
                 | WordPart::Substring { .. }
                 | WordPart::ArraySlice { .. }
                 | WordPart::Transformation { .. }
@@ -1256,6 +1467,10 @@ impl Interpreter {
                 .into_iter()
                 .map(|(c, _)| c)
                 .collect();
+            // An empty unquoted result makes no field (`IFS=; $empty`).
+            if field.is_empty() {
+                return Ok(Vec::new());
+            }
             let bytes = field.len();
             return self.push_ifs_field(Vec::new(), field, limit, bytes);
         }

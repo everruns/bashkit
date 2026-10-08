@@ -154,3 +154,32 @@ echo /tmp/gs_dot/**/*.txt
 ### expect
 /tmp/gs_dot/sub/visible.txt
 ### end
+
+### globignore_filters_matches
+# GLOBIGNORE drops matches; `*` does not cross `/`; an emptied list is literal
+d=/tmp/bk_globignore_$$; mkdir -p $d/foo && cd $d
+touch one.md one.txt foo/two.md foo/two.txt hello.c hello.h hello.o
+GLOBIGNORE=*.txt; echo *.* foo/*.*
+GLOBIGNORE='*.o:*.h'; echo hello*
+GLOBIGNORE='*'; echo *
+GLOBIGNORE=; echo hello.*
+cd /; rm -rf $d
+### expect
+hello.c hello.h hello.o one.md foo/two.md foo/two.txt
+hello.c
+*
+hello.c hello.h hello.o
+### end
+
+### globignore_enables_dotglob_and_classes
+d=/tmp/bk_globignore2_$$; mkdir -p $d && cd $d
+touch .env _t.py 2023.log a.txt
+GLOBIGNORE='[[:alnum:]]*'; echo *
+GLOBIGNORE='[[:digit:]_]*:a*'; echo *
+shopt -s nullglob; GLOBIGNORE='*'; echo none *
+cd /; rm -rf $d
+### expect
+.env _t.py
+.env
+none
+### end

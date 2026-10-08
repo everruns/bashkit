@@ -818,7 +818,8 @@ impl Interpreter {
         if !(self.contains_glob_chars(item) || self.contains_extglob(item)) || self.is_noglob() {
             return Ok(vec![literal(item)]);
         }
-        let glob_matches = self.expand_glob(item).await.unwrap_or_default();
+        let mut glob_matches = self.expand_glob(item).await.unwrap_or_default();
+        self.apply_globignore(&mut glob_matches);
         if glob_matches.is_empty() {
             if self.is_failglob() {
                 return Err(literal(item));
@@ -837,6 +838,103 @@ impl Interpreter {
         } else {
             Ok(glob_matches)
         }
+    }
+
+    /// Non-empty `GLOBIGNORE`, if set. Bash treats an empty value as unset.
+    fn globignore(&self) -> Option<&str> {
+        self.scoped
+            .variables
+            .get("GLOBIGNORE")
+            .map(String::as_str)
+            .filter(|v| !v.is_empty())
+    }
+
+    /// Drop matches named by `GLOBIGNORE` (colon-separated patterns), the way
+    /// bash's `glob_name_is_acceptable` does: `.` and `..` always go, and each
+    /// pattern matches the whole match string with `FNM_PATHNAME` (a `*`
+    /// never crosses `/`), so `*.txt` keeps `foo/two.txt`. An emptied list
+    /// then falls back to the no-match rules (literal word, nullglob, failglob).
+    fn apply_globignore(&self, matches: &mut Vec<String>) {
+        let Some(ignore) = self.globignore() else {
+            return;
+        };
+        let opts = self.glob_opts();
+        let patterns = Self::split_globignore(ignore);
+        matches.retain(|name| {
+            let last = name
+                .trim_end_matches('/')
+                .rsplit('/')
+                .next()
+                .unwrap_or(name);
+            if last == "." || last == ".." {
+                return false;
+            }
+            !patterns
+                .iter()
+                .any(|pat| self.glob_match_pathname(name, pat, opts))
+        });
+    }
+
+    /// Split `GLOBIGNORE` on `:` outside bracket expressions and escapes,
+    /// so `[[:alnum:]]*` stays one pattern (bash `split_ignorespec`).
+    fn split_globignore(spec: &str) -> Vec<&str> {
+        let bytes = spec.as_bytes();
+        let mut patterns = Vec::new();
+        let mut start = 0;
+        let mut i = 0;
+        while i < bytes.len() {
+            match bytes[i] {
+                b'\\' => i += 1,
+                b'[' => {
+                    // Find the closing `]`: a leading `!`/`^` and `]` are
+                    // members, and `[:class:]` may hold a `]`-free name.
+                    let mut j = i + 1;
+                    if j < bytes.len() && matches!(bytes[j], b'!' | b'^') {
+                        j += 1;
+                    }
+                    if j < bytes.len() && bytes[j] == b']' {
+                        j += 1;
+                    }
+                    while j < bytes.len() && bytes[j] != b']' {
+                        if bytes[j] == b'['
+                            && bytes.get(j + 1) == Some(&b':')
+                            && let Some(end) = spec[j + 2..].find(":]")
+                        {
+                            j += end + 4;
+                            continue;
+                        }
+                        j += 1;
+                    }
+                    if j < bytes.len() {
+                        i = j;
+                    }
+                }
+                b':' => {
+                    if i > start {
+                        patterns.push(&spec[start..i]);
+                    }
+                    start = i + 1;
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        if start < spec.len() {
+            patterns.push(&spec[start..]);
+        }
+        patterns
+    }
+
+    /// `fnmatch(FNM_PATHNAME)`: match component by component so wildcards
+    /// stay inside one path segment.
+    fn glob_match_pathname(&self, name: &str, pattern: &str, opts: PatternOpts) -> bool {
+        let names: Vec<&str> = name.split('/').collect();
+        let pats: Vec<&str> = pattern.split('/').collect();
+        names.len() == pats.len()
+            && names
+                .iter()
+                .zip(&pats)
+                .all(|(n, p)| self.glob_match_impl(n, p, opts, 0))
     }
 
     /// Strip only parser-inserted glob metacharacter escapes from a path string.
@@ -910,7 +1008,8 @@ impl Interpreter {
     /// (`d/*/` gives `d/e/`). Under `shopt -s globstar` a `**` component
     /// matches zero or more directories, and files too when it is last.
     pub(crate) async fn expand_glob(&self, pattern: &str) -> Result<Vec<String>> {
-        let dotglob = self.is_dotglob();
+        // A non-empty GLOBIGNORE turns dotglob on (bash `setup_glob_ignore`).
+        let dotglob = self.is_dotglob() || self.globignore().is_some();
         let globstar = self.is_globstar();
         let opts = self.glob_opts();
         let is_absolute = pattern.starts_with('/');

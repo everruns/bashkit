@@ -283,3 +283,48 @@ q6
 q7
 q8
 ### end
+
+### dbracket_grammar_errors_are_syntax_errors
+# Operators must be bare words at parse time: status 2, nothing runs
+for c in '[[ a $op a ]]' '[[ -z ]]' "[[ '(' x ]]" '[[ -f < ]]' '[[ ]]' '[[ && ]]' '[[ a == b c ]]' '[[ ( a ]]'; do
+  op='=='; bash -c "$c; echo ran" 2>/dev/null; echo "$? $c"
+done
+### expect
+2 [[ a $op a ]]
+2 [[ -z ]]
+2 [[ '(' x ]]
+2 [[ -f < ]]
+2 [[ ]]
+2 [[ && ]]
+2 [[ a == b c ]]
+2 [[ ( a ]]
+### end
+
+### dbracket_quoted_operator_text_is_operand
+[[ '!' == ! ]] && echo bang
+[[ -n ! ]] && echo n
+[[ x == x
+&& y == y
+]] && echo multiline
+[[ 'foo()' == *\(\) ]] && echo m1
+[[ 'foo()' == *'()' ]] && echo m2
+### expect
+bang
+n
+multiline
+m1
+m2
+### end
+
+### dbracket_after_assignment_is_a_command
+FOO=bar [[ a == a ]] 2>/dev/null
+echo $?
+### expect
+127
+### end
+
+### dbracket_redirect_catches_subst_stderr
+[[ $(echo err >&2; echo x) == x ]] 2>/dev/null; echo $?
+### expect
+0
+### end

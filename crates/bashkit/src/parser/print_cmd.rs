@@ -742,7 +742,7 @@ fn reconstruct_word(w: &Word) -> String {
 }
 
 /// Commands printed on one line (inside `$(...)` reconstructions).
-fn inline_commands(cmds: &[Command]) -> String {
+pub(crate) fn inline_commands(cmds: &[Command]) -> String {
     let mut p = Printer::default();
     p.print_list(cmds);
     p.print_deferred_if_any("");
