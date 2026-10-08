@@ -612,6 +612,7 @@ fn redirection_text(r: &Redirect) -> String {
         RedirectKind::Append => format!("{}>> {target}", redirector(r, 1)),
         RedirectKind::Input => format!("{}< {target}", redirector(r, 0)),
         RedirectKind::HereString => format!("{}<<< {target}", redirector(r, 0)),
+        RedirectKind::ReadWrite => format!("{}<> {target}", redirector(r, 0)),
         RedirectKind::OutputBoth => format!("&> {target}"),
         RedirectKind::DupOutput => {
             let fd_is_default = r.fd_var.is_none() && r.fd.is_none_or(|fd| fd == 1);

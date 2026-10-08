@@ -76,6 +76,15 @@ pub enum Token {
     /// Here string (<<<)
     HereString,
 
+    /// Here string on a numbered descriptor (`3<<<word`)
+    HereStringFd(i32),
+
+    /// Open read-write (`<>`)
+    RedirectReadWrite,
+
+    /// Open read-write on a numbered descriptor (`4<>file`)
+    RedirectFdReadWrite(i32),
+
     /// Left parenthesis (()
     LeftParen,
 

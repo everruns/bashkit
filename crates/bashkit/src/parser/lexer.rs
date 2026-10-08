@@ -272,6 +272,9 @@ impl<'a> Lexer<'a> {
                 } else if self.peek_char() == Some('&') {
                     self.advance();
                     Some(Token::DupInput)
+                } else if self.peek_char() == Some('>') {
+                    self.advance();
+                    Some(Token::RedirectReadWrite)
                 } else {
                     Some(Token::RedirectIn)
                 }
@@ -421,121 +424,114 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    /// Check if this is a file descriptor redirect (e.g., 2>, 2>>, 2>&1)
-    /// or just a regular word starting with a digit
+    /// Check if this is a file descriptor redirect (e.g., 2>, 2>>, 2>&1,
+    /// 10>file, 3<<<word, 4<>file) or just a regular word starting with a
+    /// digit. Bash accepts any decimal fd number; more than
+    /// `MAX_FD_PREFIX_DIGITS` digits (out of `int` range) is a plain word.
     fn read_word_or_fd_redirect(&mut self) -> Option<Token> {
-        // We need to look ahead to see if this is a fd redirect pattern
-        // Collect the leading digits
-        let mut fd_str = String::new();
-
-        // Peek at the first digit - we know it's a digit from the match
-        if let Some(ch) = self.peek_char()
-            && ch.is_ascii_digit()
-        {
-            fd_str.push(ch);
+        const MAX_FD_PREFIX_DIGITS: usize = 9;
+        // Only the digits plus a 3-char redirect operator (e.g. "<<<", ">>")
+        // matter, so bound the lookahead: collecting all remaining input here
+        // made every digit-initial word O(n) and the whole lex O(n^2)
+        // (TM-DOS-024).
+        let input_remaining: String = self.lookahead().take(MAX_FD_PREFIX_DIGITS + 4).collect();
+        let ndigits = input_remaining
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .count();
+        if ndigits == 0 || ndigits > MAX_FD_PREFIX_DIGITS {
+            return self.read_word();
         }
-
-        // Check if it's a single digit followed by > or <
-        // We need to peek further without consuming. Only the digit plus a
-        // 2-char redirect operator (e.g. ">>", "<&", "<<") matter, so bound the
-        // lookahead — collecting all remaining input here made every
-        // digit-initial word O(n) and the whole lex O(n^2) (TM-DOS-024).
-        let input_remaining: String = self.lookahead().take(4).collect();
-
-        // Check patterns: "N>" "N>>" "N>&" "N<" "N<&"
-        if fd_str.len() == 1
-            && let Some(first_digit) = fd_str.chars().next()
-        {
-            let rest = input_remaining.get(1..).unwrap_or(""); // Skip the digit we already matched
-
-            if rest.starts_with(">>") {
-                // N>> - append redirect with fd
-                let fd: i32 = first_digit.to_digit(10).unwrap() as i32;
-                self.advance(); // consume digit
-                self.advance(); // consume >
-                self.advance(); // consume >
-                return Some(Token::RedirectFdAppend(fd));
-            } else if rest.starts_with(">&") {
-                // N>&M - duplicate fd
-                let fd: i32 = first_digit.to_digit(10).unwrap() as i32;
-                self.advance(); // consume digit
-                self.advance(); // consume >
-                self.advance(); // consume &
-
-                // Read the target fd number or '-'
-                let mut target_str = String::new();
-                while let Some(c) = self.peek_char() {
-                    if c.is_ascii_digit() || c == '-' {
-                        target_str.push(c);
-                        self.advance();
-                        if c == '-' {
-                            break;
-                        }
-                    } else {
-                        break;
-                    }
-                }
-
-                if target_str == "-" {
-                    return Some(Token::DupFdCloseOut(fd));
-                }
-                if target_str.is_empty() {
-                    // Just N>& without target - treat as DupOutput with fd
-                    return Some(Token::RedirectFd(fd));
-                }
-
-                let target_fd: i32 = target_str.parse().unwrap_or(1);
-                return Some(Token::DupFd(fd, target_fd));
-            } else if rest.starts_with('>') {
-                // N> - redirect with fd
-                let fd: i32 = first_digit.to_digit(10).unwrap() as i32;
-                self.advance(); // consume digit
-                self.advance(); // consume >
-                return Some(Token::RedirectFd(fd));
-            } else if rest.starts_with("<&") {
-                // N<&M or N<&- - duplicate input fd
-                let fd: i32 = first_digit.to_digit(10).unwrap() as i32;
-                self.advance(); // consume digit
-                self.advance(); // consume <
-                self.advance(); // consume &
-
-                // Read the target fd number or '-'
-                let mut target_str = String::new();
-                while let Some(c) = self.peek_char() {
-                    if c.is_ascii_digit() || c == '-' {
-                        target_str.push(c);
-                        self.advance();
-                        if c == '-' {
-                            break;
-                        }
-                    } else {
-                        break;
-                    }
-                }
-
-                if target_str == "-" {
-                    return Some(Token::DupFdClose(fd));
-                }
-                let target_fd: i32 = target_str.parse().unwrap_or(0);
-                return Some(Token::DupFdIn(fd, target_fd));
-            } else if rest.starts_with("<<") && !rest.starts_with("<<<") {
-                // N<<EOF / N<<-EOF - here document on fd N
-                let fd: i32 = first_digit.to_digit(10).unwrap() as i32;
-                self.advance(); // consume digit
-                self.advance(); // consume <
-                self.advance(); // consume <
-                let strip = self.peek_char() == Some('-');
-                if strip {
-                    self.advance();
-                }
-                return Some(Token::HereDocFd(fd, strip));
-            } else if rest.starts_with('<') && !rest.starts_with("<<") {
-                // N< - input redirect with fd
-                let fd: i32 = first_digit.to_digit(10).unwrap() as i32;
-                self.advance(); // consume digit
-                self.advance(); // consume <
-                return Some(Token::RedirectFdIn(fd));
+        let Ok(fd) = input_remaining[..ndigits].parse::<i32>() else {
+            return self.read_word();
+        };
+        let rest = &input_remaining[ndigits..];
+        // Consume the fd digits plus `op_len` operator chars.
+        let consume = |lexer: &mut Self, op_len: usize| {
+            for _ in 0..ndigits + op_len {
+                lexer.advance();
             }
+        };
+
+        if rest.starts_with(">>") {
+            // N>> - append redirect with fd
+            consume(self, 2);
+            return Some(Token::RedirectFdAppend(fd));
+        } else if rest.starts_with(">&") {
+            // N>&M - duplicate fd
+            consume(self, 2);
+
+            // Read the target fd number or '-'
+            let mut target_str = String::new();
+            while let Some(c) = self.peek_char() {
+                if c.is_ascii_digit() || c == '-' {
+                    target_str.push(c);
+                    self.advance();
+                    if c == '-' {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            }
+
+            if target_str == "-" {
+                return Some(Token::DupFdCloseOut(fd));
+            }
+            if target_str.is_empty() {
+                // Just N>& without target - treat as DupOutput with fd
+                return Some(Token::RedirectFd(fd));
+            }
+
+            let target_fd: i32 = target_str.parse().unwrap_or(1);
+            return Some(Token::DupFd(fd, target_fd));
+        } else if rest.starts_with('>') {
+            // N> - redirect with fd
+            consume(self, 1);
+            return Some(Token::RedirectFd(fd));
+        } else if rest.starts_with("<&") {
+            // N<&M or N<&- - duplicate input fd
+            consume(self, 2);
+
+            // Read the target fd number or '-'
+            let mut target_str = String::new();
+            while let Some(c) = self.peek_char() {
+                if c.is_ascii_digit() || c == '-' {
+                    target_str.push(c);
+                    self.advance();
+                    if c == '-' {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            }
+
+            if target_str == "-" {
+                return Some(Token::DupFdClose(fd));
+            }
+            let target_fd: i32 = target_str.parse().unwrap_or(0);
+            return Some(Token::DupFdIn(fd, target_fd));
+        } else if rest.starts_with("<<<") {
+            // N<<<word - here string on fd N
+            consume(self, 3);
+            return Some(Token::HereStringFd(fd));
+        } else if rest.starts_with("<<") {
+            // N<<EOF / N<<-EOF - here document on fd N
+            consume(self, 2);
+            let strip = self.peek_char() == Some('-');
+            if strip {
+                self.advance();
+            }
+            return Some(Token::HereDocFd(fd, strip));
+        } else if rest.starts_with("<>") {
+            // N<>file - open file read-write on fd N
+            consume(self, 2);
+            return Some(Token::RedirectFdReadWrite(fd));
+        } else if rest.starts_with('<') {
+            // N< - input redirect with fd
+            consume(self, 1);
+            return Some(Token::RedirectFdIn(fd));
         }
 
         // Not a fd redirect pattern, read as regular word
