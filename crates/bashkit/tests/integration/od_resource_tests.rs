@@ -69,12 +69,16 @@ async fn od_width_boundary_needs_only_actual_field_storage() {
 #[tokio::test]
 async fn od_work_budget_bounds_rendering() {
     let mut bash = Bash::builder()
-        .limits(ExecutionLimits::new().max_work_units(50))
+        .limits(ExecutionLimits::new().max_work_units(1_000))
         .build();
     bash.fs()
-        .write_file(std::path::Path::new("/input"), &[b'x'; 64])
+        .write_file(std::path::Path::new("/input"), &[b'x'; 4096])
         .await
         .unwrap();
+    // The same file with one selected byte reaches and completes the builtin;
+    // the refusal below therefore measures scalable rendering work.
+    let small = bash.exec("od -An -tx1 -N1 /input").await.unwrap();
+    assert_eq!(small.stdout, " 78\n");
     assert!(matches!(
         bash.exec("od -An -tx1 /input").await,
         Err(Error::ResourceLimit(LimitExceeded::ExecutionBudget(_)))
