@@ -376,7 +376,7 @@ impl Interpreter {
     }
 
     /// Attribute letters of `name` in bash's order (`aAinrxlu`), or `-`.
-    fn attr_letters(&self, name: &str) -> String {
+    pub(super) fn attr_letters(&self, name: &str) -> String {
         let attrs = self.var_attrs_get(name);
         let mut s = String::new();
         match self.var_kind(name) {
