@@ -55,6 +55,9 @@ pub enum BuiltinSideEffect {
     /// The shell signalled itself (`kill -SIG $$`): run that signal's trap if
     /// one is set, otherwise end the script with status 128 + signal.
     SignalSelf(i32),
+    /// A builtin discarded the line (`exit 1 2`, `shift 1 2`): bash ends a
+    /// child `bash -c` string there, where an expansion error resumes.
+    DiscardCommandString,
 }
 
 /// Result of executing a bash script.

@@ -100,7 +100,9 @@ impl Builtin for Umask {
                         2,
                     ));
                 }
-                a => value = Some(a),
+                // bash uses the first operand and ignores the rest.
+                a if value.is_none() => value = Some(a),
+                _ => {}
             }
         }
         let mask = current_umask(&ctx);

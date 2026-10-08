@@ -75,9 +75,13 @@ impl Builtin for Cat {
 
         let mut raw = Vec::new();
         let mut stderr = String::new();
+        // Buffered stdin is read once: `cat - -` sees it at the first `-`.
+        let mut stdin_used = false;
         for file in &files {
             if file == "-" {
-                if let Some(stdin) = ctx.stdin {
+                if let Some(stdin) = ctx.stdin
+                    && !std::mem::replace(&mut stdin_used, true)
+                {
                     raw.extend_from_slice(stdin.as_bytes());
                 }
                 if let Some(input) = ctx.stdin_stream() {
@@ -140,11 +144,14 @@ async fn stream_plain(
     }
     let mut stderr = String::new();
     let mut code = 0;
+    let mut stdin_used = false;
     for file in files {
         let sent = if file == "-" {
             let mut ok = match ctx.stdin {
-                Some(stdin) => send(ctx, stream, stdin.as_bytes()).await?,
-                None => true,
+                Some(stdin) if !std::mem::replace(&mut stdin_used, true) => {
+                    send(ctx, stream, stdin.as_bytes()).await?
+                }
+                _ => true,
             };
             if let Some(input) = ctx.stdin_stream() {
                 while ok {

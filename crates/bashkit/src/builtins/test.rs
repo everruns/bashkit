@@ -112,66 +112,259 @@ struct Env<'a> {
     set_vars: &'a [String],
 }
 
+/// A parsed `test` expression. Parsing follows bash's `test.c`: the POSIX
+/// rules by argument count for up to four arguments, recursive descent
+/// (`-o` below `-a` below `!`/`(`/primaries) beyond that.
+enum Node {
+    Const(bool),
+    Unary(String, String),
+    Binary(String, String, String),
+    Not(Box<Node>),
+    And(Box<Node>, Box<Node>),
+    Or(Box<Node>, Box<Node>),
+}
+
+/// bash `test_unop`: the unary primaries.
+fn is_unop(s: &str) -> bool {
+    let b = s.as_bytes();
+    b.len() == 2 && b[0] == b'-' && b"abcdefghknoprstuvwxzGLNORS".contains(&b[1])
+}
+
+/// bash `test_binop`: the binary primaries (`-a`/`-o` are connectives).
+fn is_binop(s: &str) -> bool {
+    matches!(
+        s,
+        "=" | "=="
+            | "!="
+            | "<"
+            | ">"
+            | "-nt"
+            | "-ot"
+            | "-ef"
+            | "-eq"
+            | "-ne"
+            | "-lt"
+            | "-le"
+            | "-gt"
+            | "-ge"
+    )
+}
+
+struct Parser<'a> {
+    argv: &'a [String],
+    pos: usize,
+}
+
+fn syntax(msg: impl Into<String>) -> TestError {
+    TestError(msg.into())
+}
+
+impl<'a> Parser<'a> {
+    fn arg(&self, i: usize) -> &'a str {
+        self.argv[i].as_str()
+    }
+
+    /// Step past the current word; `need` means another word must follow.
+    fn advance(&mut self, need: bool) -> std::result::Result<(), TestError> {
+        self.pos += 1;
+        if need && self.pos >= self.argv.len() {
+            return Err(syntax("argument expected"));
+        }
+        Ok(())
+    }
+
+    fn one_arg(&mut self) -> Node {
+        let n = Node::Const(!self.arg(self.pos).is_empty());
+        self.pos += 1;
+        n
+    }
+
+    fn unary(&mut self) -> std::result::Result<Node, TestError> {
+        let op = self.arg(self.pos).to_string();
+        self.advance(true)?;
+        let arg = self.arg(self.pos).to_string();
+        self.pos += 1;
+        Ok(Node::Unary(op, arg))
+    }
+
+    fn binary(&mut self) -> std::result::Result<Node, TestError> {
+        let n = Node::Binary(
+            self.arg(self.pos).to_string(),
+            self.arg(self.pos + 1).to_string(),
+            self.arg(self.pos + 2).to_string(),
+        );
+        self.pos += 3;
+        Ok(n)
+    }
+
+    fn two_args(&mut self) -> std::result::Result<Node, TestError> {
+        let first = self.arg(self.pos);
+        if first == "!" {
+            let n = Node::Const(self.arg(self.pos + 1).is_empty());
+            self.pos += 2;
+            Ok(n)
+        } else if first.len() == 2 && first.starts_with('-') && is_unop(first) {
+            self.unary()
+        } else {
+            Err(syntax(format!("{first}: unary operator expected")))
+        }
+    }
+
+    fn three_args(&mut self) -> std::result::Result<Node, TestError> {
+        let (a, b, c) = (
+            self.arg(self.pos),
+            self.arg(self.pos + 1),
+            self.arg(self.pos + 2),
+        );
+        if is_binop(b) {
+            self.binary()
+        } else if b == "-a" || b == "-o" {
+            let (l, r) = (
+                Box::new(Node::Const(!a.is_empty())),
+                Box::new(Node::Const(!c.is_empty())),
+            );
+            self.pos += 3;
+            Ok(if b == "-a" {
+                Node::And(l, r)
+            } else {
+                Node::Or(l, r)
+            })
+        } else if a == "!" {
+            self.pos += 1;
+            Ok(Node::Not(Box::new(self.two_args()?)))
+        } else if a == "(" && c == ")" {
+            let n = Node::Const(!b.is_empty());
+            self.pos += 3;
+            Ok(n)
+        } else {
+            Err(syntax(format!("{b}: binary operator expected")))
+        }
+    }
+
+    fn expr(&mut self) -> std::result::Result<Node, TestError> {
+        if self.pos >= self.argv.len() {
+            return Err(syntax("argument expected"));
+        }
+        self.or()
+    }
+
+    fn or(&mut self) -> std::result::Result<Node, TestError> {
+        let left = self.and()?;
+        if self.pos < self.argv.len() && self.arg(self.pos) == "-o" {
+            self.advance(false)?;
+            let right = self.or()?;
+            return Ok(Node::Or(Box::new(left), Box::new(right)));
+        }
+        Ok(left)
+    }
+
+    fn and(&mut self) -> std::result::Result<Node, TestError> {
+        let left = self.term()?;
+        if self.pos < self.argv.len() && self.arg(self.pos) == "-a" {
+            self.advance(false)?;
+            let right = self.and()?;
+            return Ok(Node::And(Box::new(left), Box::new(right)));
+        }
+        Ok(left)
+    }
+
+    fn term(&mut self) -> std::result::Result<Node, TestError> {
+        let argc = self.argv.len();
+        if self.pos >= argc {
+            return Err(syntax("argument expected"));
+        }
+        if self.arg(self.pos) == "!" {
+            let mut negate = false;
+            while self.pos < argc && self.arg(self.pos) == "!" {
+                self.advance(true)?;
+                negate = !negate;
+            }
+            let t = self.term()?;
+            return Ok(if negate { Node::Not(Box::new(t)) } else { t });
+        }
+        if self.arg(self.pos) == "(" {
+            self.advance(true)?;
+            let value = self.expr()?;
+            if self.pos >= argc {
+                return Err(syntax("`)' expected"));
+            }
+            if self.arg(self.pos) != ")" {
+                return Err(syntax(format!(
+                    "`)' expected, found {}",
+                    self.arg(self.pos)
+                )));
+            }
+            self.advance(false)?;
+            return Ok(value);
+        }
+        if self.pos + 3 <= argc && is_binop(self.arg(self.pos + 1)) {
+            return self.binary();
+        }
+        if self.pos + 2 <= argc && is_unop(self.arg(self.pos)) {
+            return self.unary();
+        }
+        Ok(self.one_arg())
+    }
+
+    /// bash `posixtest`: the argument-count rules, then `expr`.
+    fn parse(&mut self) -> std::result::Result<Node, TestError> {
+        let argc = self.argv.len();
+        let node = match argc {
+            0 => Node::Const(false),
+            1 => self.one_arg(),
+            2 => self.two_args()?,
+            3 => self.three_args()?,
+            4 if self.arg(0) == "!" => {
+                self.pos = 1;
+                Node::Not(Box::new(self.three_args()?))
+            }
+            4 if self.arg(0) == "(" && self.arg(3) == ")" => {
+                self.pos = 1;
+                let n = self.two_args()?;
+                self.pos = argc;
+                n
+            }
+            _ => self.expr()?,
+        };
+        if self.pos != argc {
+            let next = self.arg(self.pos);
+            return Err(if next.starts_with('-') {
+                syntax(format!("syntax error: `{next}' unexpected"))
+            } else {
+                syntax("too many arguments")
+            });
+        }
+        Ok(node)
+    }
+}
+
 /// Evaluate a test expression
-fn evaluate_expression<'a>(
-    args: &'a [String],
+async fn evaluate_expression(args: &[String], env: &Env<'_>) -> TestResult {
+    let node = Parser { argv: args, pos: 0 }.parse()?;
+    eval_node(&node, env).await
+}
+
+/// Both sides of `-a`/`-o` are evaluated: bash's `test` connectives do not
+/// short-circuit, so a bad operand on the right is an error even when the
+/// left side already decides the answer.
+fn eval_node<'a>(
+    node: &'a Node,
     env: &'a Env<'a>,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = TestResult> + Send + 'a>> {
-    let (fs, cwd) = (env.fs, env.cwd);
     Box::pin(async move {
-        if args.is_empty() {
-            return Ok(false);
-        }
-
-        // Handle negation
-        if args[0] == "!" {
-            return Ok(!evaluate_expression(&args[1..], env).await?);
-        }
-
-        // Handle parentheses (basic support)
-        if args[0] == "(" && args.last().map(|s| s.as_str()) == Some(")") {
-            return evaluate_expression(&args[1..args.len() - 1], env).await;
-        }
-
-        // Look for logical operators: -o has lowest precedence, then -a.
-        // Scan for -o first (split at lowest precedence first). A connective
-        // in the last position is not one: `test x -a` is the two-argument
-        // form, which bash reads as an unary operator and rejects.
-        for (i, arg) in args.iter().enumerate() {
-            if arg == "-o" && i > 0 && i + 1 < args.len() {
-                // Both sides are evaluated: bash's `test` connectives do not
-                // short-circuit, so a bad operand on the right is an error
-                // even when the left side already decides the answer.
-                let left = evaluate_expression(&args[..i], env).await;
-                let right = evaluate_expression(&args[i + 1..], env).await;
-                let (left, right) = (left?, right?);
-                return Ok(left || right);
+        match node {
+            Node::Const(b) => Ok(*b),
+            Node::Unary(op, arg) => evaluate_unary(op, arg, env).await,
+            Node::Binary(l, op, r) => evaluate_binary(l, op, r, env.fs, env.cwd).await,
+            Node::Not(n) => Ok(!eval_node(n, env).await?),
+            Node::And(l, r) => {
+                let (l, r) = (eval_node(l, env).await?, eval_node(r, env).await?);
+                Ok(l && r)
             }
-        }
-        for (i, arg) in args.iter().enumerate() {
-            if arg == "-a" && i > 0 && i + 1 < args.len() {
-                let left = evaluate_expression(&args[..i], env).await;
-                let right = evaluate_expression(&args[i + 1..], env).await;
-                let (left, right) = (left?, right?);
-                return Ok(left && right);
+            Node::Or(l, r) => {
+                let (l, r) = (eval_node(l, env).await?, eval_node(r, env).await?);
+                Ok(l || r)
             }
-        }
-
-        // Now handle binary comparisons and unary tests
-        match args.len() {
-            1 => {
-                // Single arg: true if non-empty string
-                Ok(!args[0].is_empty())
-            }
-            2 => {
-                // Unary operators
-                evaluate_unary(&args[0], &args[1], env).await
-            }
-            3 => {
-                // Binary operators
-                evaluate_binary(&args[0], &args[1], &args[2], fs, cwd).await
-            }
-            _ => Err(TestError("too many arguments".to_string())),
         }
     })
 }

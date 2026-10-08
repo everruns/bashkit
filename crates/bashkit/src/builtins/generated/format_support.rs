@@ -156,12 +156,15 @@ fn shell_quote(s: &str) -> String {
             match ch {
                 '\'' => out.push_str("\\'"),
                 '\\' => out.push_str("\\\\"),
+                // bash `ansic_quote`: named escapes, octal for the rest.
+                '\x07' => out.push_str("\\a"),
+                '\x08' => out.push_str("\\b"),
+                '\x1b' => out.push_str("\\E"),
+                '\x0c' => out.push_str("\\f"),
                 '\n' => out.push_str("\\n"),
                 '\t' => out.push_str("\\t"),
                 '\r' => out.push_str("\\r"),
-                c if (c as u32) < 32 || c as u32 == 127 => {
-                    out.push_str(&format!("\\x{:02x}", c as u32));
-                }
+                '\x0b' => out.push_str("\\v"),
                 c if c.is_control() => {
                     let mut buf = [0u8; 4];
                     for b in c.encode_utf8(&mut buf).bytes() {

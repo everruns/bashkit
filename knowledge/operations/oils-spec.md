@@ -17,10 +17,19 @@ Implemented. Harness: `scripts/oils-spec/run.py` (`just oils-spec`).
 
 ## Headline
 
-**92.8%**: bashkit passes 2500 of the 2693 Oils spec cases real bash 5.2.21
-passes (2759 cases in 132 spec files; bashkit passes 2509 of all cases,
-90.9%). Oils `57d3f0d088c3`, 2026-10-08. Report:
-`scripts/oils-spec/results/oils-spec-linux-x86_64-20261008T211202Z.md`.
+**95.8%**: bashkit passes 2578 of the 2692 Oils spec cases real bash 5.2.21
+passes (2759 cases in 132 spec files; bashkit passes 2588 of all cases,
+93.8%). Oils `57d3f0d088c3`, 2026-10-08. Report:
+`scripts/oils-spec/results/oils-spec-linux-x86_64-20261008T225033Z.md`
+(bash missed one timing-dependent `builtin-kill` case in this run that
+bashkit passes, hence 2692).
+Every remaining miss is listed by cause under "Oils Spec Misses" in
+[Known Limitations](limitations.md).
+The run before this one (92.8%, `...T211202Z.md`) missed 9 in
+`ysh-builtin-private`, 7 in `arith` and `array-literal`, 5 in `nameref`, 4
+in `array`, `array-assoc`, `var-sub-quote` and `parse-errors`, 3 in
+`blog2`, `bool-parse`, `builtin-misc` and `func-parsing`; they now miss 1,
+1, 0, 2, 0, 1, 1, 2, 0, 0, 0 and 0.
 The first run (74.2%, `...T103235Z.md`) missed 16 cases each in
 `globignore` and `word-split`, 14 in `builtin-cd`, 13 in `alias` and
 `dbracket`; those files now miss 1, 0, 2, 7 and 1. The run at 78.8%
@@ -51,14 +60,13 @@ signals, and `$LINENO` of `(( ))`/`[[ ]]` seen from a DEBUG handler.
 The run before this one (89.0%, `...T193817Z.md`) missed 33 in
 `builtin-completion`, 25 in `prompt`, 12 in `builtin-history` and
 `builtin-fc`, 11 in `interactive` and 9 in `builtin-bind`; they now miss 2,
-0, 0, 0, 0 and 0. The two left are `compgen -e` (bashkit does not export
-`PWD`) and `compgen -A builtin` (bashkit lists its own builtin registry,
-`grep` included); see the "Interactive builtins" row of
+0, 0, 0, 0 and 0. The one left is `compgen -A builtin` (bashkit lists its
+own builtin registry, `grep` included); see the "Interactive builtins" row of
 [Known Limitations](limitations.md).
 
-Spec files with the most misses at the latest run: `ysh-builtin-private`
-(9), `alias`, `arith`, `array-literal` and `background` (7), `bugs` (6).
-56 of the 132 files pass completely.
+Spec files with the most misses at the latest run: `alias` and
+`background` (7), `bugs` (5), `builtin-trap` and `builtin-trap-bash` (4).
+72 of the 132 files pass every case bash passes.
 
 ## Why
 

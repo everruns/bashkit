@@ -1832,6 +1832,16 @@ impl<'a> Lexer<'a> {
                         '\'' => out.push('\''),
                         '"' => out.push('"'),
                         '?' => out.push('?'),
+                        // `\cX`: the control character, X's low five bits.
+                        'c' if self.peek_char().is_some_and(|c| c.is_ascii() && c != '\'') => {
+                            let ctl = self.peek_char().map_or(0, |c| c as u8);
+                            self.advance();
+                            // `\c\\` takes both backslashes.
+                            if ctl == b'\\' && self.peek_char() == Some('\\') {
+                                self.advance();
+                            }
+                            bytes.push(ctl & 0x1f);
+                        }
                         'x' => {
                             let mut hex = String::new();
                             for _ in 0..2 {
@@ -1863,7 +1873,10 @@ impl<'a> Lexer<'a> {
                                     }
                                 }
                             }
-                            if let Ok(val) = u32::from_str_radix(&hex, 16)
+                            if hex.is_empty() {
+                                // bash keeps `\u` with no hex digits as is.
+                                out.push_str("\\u");
+                            } else if let Ok(val) = u32::from_str_radix(&hex, 16)
                                 && let Some(c) = char::from_u32(val)
                             {
                                 out.push(c);
@@ -1881,7 +1894,10 @@ impl<'a> Lexer<'a> {
                                     }
                                 }
                             }
-                            if let Ok(val) = u32::from_str_radix(&hex, 16)
+                            if hex.is_empty() {
+                                // bash keeps `\U` with no hex digits as is.
+                                out.push_str("\\U");
+                            } else if let Ok(val) = u32::from_str_radix(&hex, 16)
                                 && let Some(c) = char::from_u32(val)
                             {
                                 out.push(c);
@@ -2408,9 +2424,42 @@ impl<'a> Lexer<'a> {
                     }
                 }
                 '"' => {
-                    // Quotes inside ${...} are part of the expansion, not string delimiters
+                    // Quotes inside ${...} are part of the expansion, not string
+                    // delimiters. Braces inside them are literal
+                    // (`"${v-"}"}"` is `}`) unless they belong to a nested `${`.
                     content.push('"');
                     self.advance();
+                    let mut inner = 0usize;
+                    while let Some(q) = self.peek_char() {
+                        self.advance();
+                        match q {
+                            '"' => {
+                                content.push('"');
+                                break;
+                            }
+                            '\\' => {
+                                content.push('\\');
+                                if let Some(n) = self.peek_char() {
+                                    self.advance();
+                                    content.push(n);
+                                }
+                            }
+                            '$' if self.peek_char() == Some('{') => {
+                                self.advance();
+                                content.push_str("${");
+                                inner += 1;
+                            }
+                            '}' if inner > 0 => {
+                                inner -= 1;
+                                content.push('}');
+                            }
+                            '{' | '}' => {
+                                content.push('\x00');
+                                content.push(q);
+                            }
+                            _ => content.push(q),
+                        }
+                    }
                 }
                 '\'' => {
                     // Bash keeps `'` literal in "${x:-'d'}" but still matches
@@ -2458,9 +2507,14 @@ impl<'a> Lexer<'a> {
                                 self.advance();
                             }
                             '}' => {
-                                // \} should be a literal } without closing the expansion
-                                content.push('\\');
+                                // \} is a literal } without closing the expansion
+                                // (`"${v-\}}"` is `}`, `"${v#\}}"` strips one).
+                                content.push('\x00');
                                 content.push('}');
+                                self.advance();
+                            }
+                            // Line continuation.
+                            '\n' => {
                                 self.advance();
                             }
                             _ => {

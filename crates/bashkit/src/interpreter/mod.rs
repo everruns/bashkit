@@ -1514,6 +1514,10 @@ struct SubshellSnapshot {
     line_base: isize,
 }
 
+/// The command name and remaining fields when `$empty cmd args` drops the
+/// name word; `None` when no argument yields a field either.
+type VanishedName = Option<(String, Vec<String>)>;
+
 /// Bits of `NoforkScope::subshell_env`, after bash's `subshell_environment`.
 /// Inside `( )`: `exec` does not lower `$SHLVL`.
 const SUBSHELL_PAREN: u8 = 1;
@@ -1912,6 +1916,18 @@ pub struct Interpreter {
     /// subscripts, `declare -i` values, substring offsets). The command
     /// boundary turns it into a line abort, as bash does.
     arith_error: StdMutex<Option<String>>,
+    /// `set -u` and an arithmetic read of an unset name: the full
+    /// `name: unbound variable` diagnostic. Fatal like any unbound
+    /// expansion (non-interactive shells exit 1), not a line abort.
+    arith_unbound: StdMutex<Option<String>>,
+    /// Script depth of a child `bash -c` string, 0 for none. bash runs a
+    /// `-c` string with `parse_and_execute`, where a discarded line
+    /// (`exit 1 2`, `shift 1 2`) ends the whole string with status 1; a
+    /// script file or stdin resumes at the next line.
+    c_string_depth: usize,
+    /// Set by `BuiltinSideEffect::DiscardCommandString`; read (and cleared)
+    /// where the abort reaches the script's top level.
+    builtin_discard: bool,
     /// Non-fatal "bad array subscript" reports from reads that hold only
     /// `&self` (`${a[-9]}`, `$((a[-9]))`); settled into the command's stderr.
     subscript_warnings: StdMutex<String>,
@@ -2317,6 +2333,8 @@ impl Interpreter {
         variables.insert("MACHTYPE".to_string(), "x86_64-pc-linux-gnu".to_string());
         // bash starts every shell with OPTIND=1 (getopts state).
         variables.insert("OPTIND".to_string(), "1".to_string());
+        // ... and PS4 set, so `unset PS4` turns the xtrace prefix off.
+        variables.insert("PS4".to_string(), "+ ".to_string());
 
         // BASH_VERSINFO array: (major minor patch build status machine)
         let mut arrays = HashMap::new();
@@ -2339,10 +2357,21 @@ impl Interpreter {
         for name in ["SHELLOPTS", "BASHOPTS"] {
             var_attrs.insert(name.to_string(), VarAttrs::READONLY);
         }
+        // bash exports PWD and OLDPWD at startup (OLDPWD stays unset until
+        // the first `cd`). Both hold virtual VFS paths, never host paths.
+        for name in ["PWD", "OLDPWD"] {
+            var_attrs.insert(name.to_string(), VarAttrs::EXPORT);
+        }
+        let initial_cwd = PathBuf::from("/home/user");
+        let mut initial_env = HashMap::new();
+        initial_env.insert(
+            "PWD".to_string(),
+            initial_cwd.to_string_lossy().into_owned(),
+        );
 
         Self {
             fs,
-            env: Arc::new(HashMap::new()),
+            env: Arc::new(initial_env),
             scoped: ScopedState {
                 variables: Arc::new(variables),
                 arrays: Arc::new(arrays),
@@ -2350,7 +2379,7 @@ impl Interpreter {
                 ..Default::default()
             },
             flags: BashFlags::empty(),
-            cwd: PathBuf::from("/home/user"),
+            cwd: initial_cwd,
             last_exit_code: 0,
             builtins,
             host_builtins,
@@ -2470,6 +2499,9 @@ impl Interpreter {
             subst_stderr: crate::StreamData::new(),
             subst_stderr_held: Vec::new(),
             arith_error: StdMutex::new(None),
+            arith_unbound: StdMutex::new(None),
+            c_string_depth: 0,
+            builtin_discard: false,
             subscript_warnings: StdMutex::new(String::new()),
             pending_compound_args: Vec::new(),
             assign_raw: false,
@@ -2686,6 +2718,9 @@ impl Interpreter {
             subst_stderr: crate::StreamData::new(),
             subst_stderr_held: Vec::new(),
             arith_error: StdMutex::new(None),
+            arith_unbound: StdMutex::new(None),
+            c_string_depth: 0,
+            builtin_discard: false,
             subscript_warnings: StdMutex::new(String::new()),
             pending_compound_args: Vec::new(),
             assign_raw: false,
@@ -3139,6 +3174,50 @@ impl Interpreter {
     /// Set the current working directory.
     pub fn set_cwd(&mut self, cwd: PathBuf) {
         self.cwd = cwd;
+        if self.env.contains_key("PWD") {
+            let pwd = self.cwd.to_string_lossy().into_owned();
+            self.env_mut().insert("PWD".to_string(), pwd);
+        }
+    }
+
+    /// `$empty cmd args`: the name word expanded to no fields, so the first
+    /// argument field is the command. Boxed so this rare path stays off
+    /// `execute_simple_command_body`'s frame (TM-DOS-089).
+    fn vanished_name_args<'a>(
+        &'a mut self,
+        command: &'a SimpleCommand,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<VanishedName>> + Send + 'a>>
+    {
+        Box::pin(async move {
+            let mut args = self.expand_command_args(command, false).await?.into_iter();
+            Ok(args.next().map(|first| (first, args.collect())))
+        })
+    }
+
+    /// Source text of an array binding's value, `(b b)`, for the
+    /// environment of the command it prefixes.
+    #[inline(never)]
+    fn array_binding_env_text(words: &[Word]) -> String {
+        let items: Vec<String> = words.iter().map(|w| w.to_string()).collect();
+        format!("({})", items.join(" "))
+    }
+
+    /// `cd`/`pushd`/`popd` write `PWD`/`OLDPWD` through `ctx.variables`;
+    /// mirror them into the environment while they stay exported.
+    #[inline(never)]
+    fn sync_dir_exports(&mut self) {
+        for name in ["PWD", "OLDPWD"] {
+            let Some(value) = self.scoped.variables.get(name) else {
+                continue;
+            };
+            if self.env.get(name) == Some(value)
+                || !self.var_attrs_get(name).contains(VarAttrs::EXPORT)
+            {
+                continue;
+            }
+            let value = value.clone();
+            self.env_mut().insert(name.to_string(), value);
+        }
     }
 
     /// Get the current working directory.
@@ -3890,6 +3969,12 @@ impl Interpreter {
                         .copied()
                         .unwrap_or_else(|| Self::command_start_line(command));
                     aborted_line = Some(end_line);
+                    if std::mem::take(&mut self.builtin_discard)
+                        && self.c_string_depth == self.script_depth
+                    {
+                        stopped = true;
+                        break;
+                    }
                     if top_level {
                         self.shift_lines_after_abort(end_line);
                     }
@@ -4424,6 +4509,11 @@ impl Interpreter {
     /// output produced so far.
     fn abort_line_on_error(&mut self, result: Result<ExecResult>) -> Result<ExecResult> {
         match result {
+            Err(crate::error::Error::LineAbort(_)) if self.has_arith_unbound() => {
+                self.take_arith_error();
+                let msg = self.take_arith_unbound().unwrap_or_default();
+                Ok(self.expansion_error_result(msg))
+            }
             Err(crate::error::Error::LineAbort(msg)) => {
                 self.take_arith_error();
                 // `readonly v; v=x` under `set -e` ends the shell (bash); other
@@ -4442,6 +4532,14 @@ impl Interpreter {
                 })
             }
             Ok(mut r) => {
+                if let Some(msg) = self.take_arith_unbound() {
+                    self.take_arith_error();
+                    let mut fatal = self.expansion_error_result(msg);
+                    r.stderr.append(&fatal.stderr);
+                    fatal.stdout = std::mem::take(&mut r.stdout);
+                    fatal.stderr = std::mem::take(&mut r.stderr);
+                    return Ok(fatal);
+                }
                 if let Some(msg) = self.take_arith_error() {
                     r.stderr
                         .append(&crate::StreamData::from(self.arith_diag("", &msg)));
@@ -5667,8 +5765,8 @@ impl Interpreter {
     }
 
     async fn execute_arithmetic_command(&mut self, expr: &str, raw: &str) -> Result<ExecResult> {
-        let expr = if expr.contains("$(") {
-            self.expand_command_subs_in_arithmetic(expr).await?
+        let expr = if expr.contains("$(") || expr.contains('`') {
+            Box::pin(self.expand_command_subs_in_arithmetic(expr)).await?
         } else {
             expr.to_string()
         };
@@ -5683,6 +5781,10 @@ impl Interpreter {
                 exit_code: if v != 0 { 0 } else { 1 },
                 ..Default::default()
             }),
+            Err(_) if self.has_arith_unbound() => {
+                let msg = self.take_arith_unbound().unwrap_or_default();
+                Ok(self.expansion_error_result(msg))
+            }
             // `((...))` reports an arithmetic error and fails with status 1;
             // unlike `$((...))` it does not abandon the line.
             Err(msg) => Ok(ExecResult::err(self.arith_diag("((: ", &msg), 1)),
@@ -5692,7 +5794,7 @@ impl Interpreter {
     /// A `for ((init; cond; step))` expression with its `$(...)` run, each
     /// time it is evaluated, as `((...))` does.
     async fn arith_for_expr<'e>(&mut self, expr: &'e str) -> Result<std::borrow::Cow<'e, str>> {
-        if expr.contains("$(") {
+        if expr.contains("$(") || expr.contains('`') {
             Ok(Box::pin(self.expand_command_subs_in_arithmetic(expr))
                 .await?
                 .into())
@@ -5906,11 +6008,15 @@ impl Interpreter {
         let loop_start = self.counters.total_loop_iterations;
         let work_start = self.execution_budget.work_units();
         let start = Instant::now();
+        let emit_start = self.output_emit_count;
         let mut result = if let Some(cmd) = &time_cmd.command {
             self.execute_command(cmd).await?
         } else {
             ExecResult::ok(String::new())
         };
+        // The report is streamed on its own below; stream the command's
+        // output first, or the caller would take the report for all of it.
+        self.maybe_emit_output(&result.stdout, &result.stderr, emit_start);
         let mut elapsed = start.elapsed();
         // THREAT[TM-INF-033]: Hardened mode exposes only a 100ms lower-bound
         // bucket, preventing `time` from becoming a high-resolution oracle.
@@ -6488,6 +6594,14 @@ impl Interpreter {
         self.update_bash_source();
         let saved_line = self.current_line;
         let saved_interactive = std::mem::replace(&mut self.interactive, invocation.interactive);
+        let saved_c_string_depth = std::mem::replace(
+            &mut self.c_string_depth,
+            if is_command_mode && !invocation.interactive {
+                self.script_depth + 1
+            } else {
+                0
+            },
+        );
 
         // A new shell is outside any loop, function or sourced file.
         let saved_loop_depth = std::mem::replace(&mut self.loop_depth, 0);
@@ -6542,6 +6656,7 @@ impl Interpreter {
         self.return_depth = saved_return_depth;
 
         self.interactive = saved_interactive;
+        self.c_string_depth = saved_c_string_depth;
         self.current_line = saved_line;
         self.bash_source_stack = saved_source_stack;
         self.update_bash_source();
@@ -7994,6 +8109,16 @@ impl Interpreter {
                                 ))));
                             }
                         };
+                        // `ref[0]=x` through `declare -n ref='a[0]'`: bash
+                        // refuses the element of an element.
+                        if assignment.index.is_some()
+                            && target.contains('[')
+                            && target != assignment.name
+                        {
+                            return Err(crate::error::Error::LineAbort(
+                                self.diag(format!("`{target}': not a valid identifier\n")),
+                            ));
+                        }
                         let base = target.split('[').next().unwrap_or(&target).to_string();
                         // THREAT[TM-INJ-019]: assignments to readonly variables fail
                         // visibly, as in bash.
@@ -8032,6 +8157,14 @@ impl Interpreter {
                                 assignment.name
                             ))));
                         }
+                        if has_command && !assignment.append {
+                            // `B=(b b) cmd`: bash binds the literal text as a
+                            // temporary scalar; the array (if any) is untouched
+                            // and the binding is undone after the command.
+                            let text = Self::array_binding_env_text(words);
+                            self.insert_variable_checked(assignment.name.clone(), text);
+                            continue;
+                        }
                         if self.is_xtrace_enabled() {
                             // bash traces the list as written, before
                             // expanding it: `+ a=(x 'y z' $(cmd))`.
@@ -8044,6 +8177,20 @@ impl Interpreter {
                                 list.join(" ")
                             );
                             self.queue_xtrace_line(&prefix, &body);
+                        }
+                        // `declare -n r; r=(x y)`: a reference with no target
+                        // stops being one and becomes the array.
+                        if self
+                            .scoped
+                            .namerefs
+                            .get(&assignment.name)
+                            .is_some_and(String::is_empty)
+                        {
+                            self.namerefs_mut().remove(&assignment.name);
+                            stderr.push_str(&self.diag(format!(
+                                "warning: {}: removing nameref attribute\n",
+                                assignment.name
+                            )));
                         }
                         let arr_name = match self.resolve_nameref_strict(&assignment.name) {
                             Ok(n) => n,
@@ -8310,15 +8457,13 @@ impl Interpreter {
         &'a mut self,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = String> + Send + 'a>> {
         Box::pin(async move {
-            // Never set: bash's default. (bash prints no prefix after an
-            // explicit `unset PS4`; bashkit does not seed PS4, so it cannot
-            // tell the two apart.)
+            // PS4 is seeded at startup; `unset PS4` means no prefix (bash).
             let ps4 = self
                 .scoped
                 .variables
                 .get("PS4")
                 .cloned()
-                .unwrap_or_else(|| "+ ".to_string());
+                .unwrap_or_default();
             let expanded = if ps4.contains(['$', '`']) {
                 let word = Parser::parse_word_string_with_limits(
                     &ps4,
@@ -8474,7 +8619,7 @@ impl Interpreter {
                 .parts
                 .iter()
                 .all(|p| matches!(p, WordPart::Literal(_)));
-            let (name, name_extra_args, name_vanished) = if name_is_literal {
+            let (mut name, mut name_extra_args, name_vanished) = if name_is_literal {
                 match self.expand_word(&command.name).await {
                     Ok(name) => (name, Vec::new(), false),
                     Err(err) => {
@@ -8503,7 +8648,27 @@ impl Interpreter {
                 return Ok(self.expansion_error_result(err_msg));
             }
 
-            let pre_expanded_args = if !name.is_empty() {
+            // `$empty cmd args`: the name word expanded to no fields, so
+            // the first argument word that yields a field is the command.
+            let mut args_consumed = false;
+            if name_vanished && !command.args.is_empty() {
+                match self.vanished_name_args(command).await {
+                    Ok(Some((first, rest))) => {
+                        name = first;
+                        name_extra_args = rest;
+                        args_consumed = true;
+                    }
+                    Ok(None) => {}
+                    Err(err) => {
+                        self.discard_deferred_proc_subs_from(deferred_proc_sub_start);
+                        return Err(err);
+                    }
+                }
+            }
+
+            let pre_expanded_args = if args_consumed {
+                Some(std::mem::take(&mut name_extra_args))
+            } else if !name.is_empty() {
                 let decl = Self::is_decl_keyword(&name, command);
                 match self.expand_command_args(command, decl).await {
                     Ok(args) if name_extra_args.is_empty() => Some(args),
@@ -11088,6 +11253,10 @@ impl Interpreter {
         for arg in args {
             match self.try_evaluate_arithmetic_with_assign(arg) {
                 Ok(v) => last_val = v,
+                Err(_) if self.has_arith_unbound() => {
+                    let msg = self.take_arith_unbound().unwrap_or_default();
+                    return Ok(self.expansion_error_result(msg));
+                }
                 // An error stops `let` at that expression with status 1.
                 Err(msg) => {
                     let result = ExecResult::err(self.arith_diag("let: ", &msg), 1);
@@ -11398,7 +11567,37 @@ impl Interpreter {
     /// Sets `name` variable to the found option letter.
     /// Sets `OPTARG` for options that take arguments (marked with `:` in optstring).
     /// Returns 0 while options remain, 1 when done.
+    /// `getopts optstring name [args]`. An invalid `name` still advances
+    /// OPTIND/OPTARG, as in bash, but fails with status 1.
     async fn execute_getopts(
+        &mut self,
+        args: &[String],
+        redirects: &[Redirect],
+    ) -> Result<ExecResult> {
+        let bad_name = args.get(1).filter(|n| !is_valid_var_name(n)).cloned();
+        let mut result = Box::pin(self.execute_getopts_inner(args, redirects)).await?;
+        if let Some(name) = bad_name
+            && result.exit_code != 2
+        {
+            let msg = self.diag(format!("getopts: `{name}': not a valid identifier\n"));
+            let err = self
+                .redirect_result(ExecResult::err(msg, 1), redirects)
+                .await?;
+            result.stderr.append(&err.stderr);
+            result.stdout.append(&err.stdout);
+            result.exit_code = 1;
+        }
+        Ok(result)
+    }
+
+    /// Assign getopts' option variable unless its name is invalid.
+    fn set_getopts_name(&mut self, name: &str, value: String) {
+        if is_valid_var_name(name) {
+            self.set_variable(name.to_string(), value);
+        }
+    }
+
+    async fn execute_getopts_inner(
         &mut self,
         args: &[String],
         redirects: &[Redirect],
@@ -11428,9 +11627,10 @@ impl Interpreter {
         let optind: usize = self.expand_variable("OPTIND").parse().unwrap_or(1);
 
         // Check if we're past the end (bash leaves OPTIND just past the
-        // last argument).
+        // last argument, and OPTARG unset).
         if optind < 1 || optind > parse_args.len() {
-            self.set_variable(varname.clone(), "?".to_string());
+            self.unset_optarg();
+            self.set_getopts_name(varname, "?".to_string());
             self.set_variable(
                 "OPTIND".to_string(),
                 optind.clamp(1, parse_args.len() + 1).to_string(),
@@ -11448,7 +11648,8 @@ impl Interpreter {
 
         // Check if this is an option (starts with -)
         if !current_arg.starts_with('-') || current_arg == "-" || current_arg == "--" {
-            self.set_variable(varname.clone(), "?".to_string());
+            self.unset_optarg();
+            self.set_getopts_name(varname, "?".to_string());
             // OPTIND stays on the first operand (past a `--`), and getopts
             // writes it back even when it was unset.
             let next = if current_arg == "--" {
@@ -11477,7 +11678,7 @@ impl Interpreter {
             // Should not happen, but advance
             self.set_variable("OPTIND".to_string(), (optind + 1).to_string());
             self.getopts_char_idx = 0;
-            self.set_variable(varname.clone(), "?".to_string());
+            self.set_getopts_name(varname, "?".to_string());
             return Ok(ExecResult {
                 stdout: crate::StreamData::new(),
                 stderr: crate::StreamData::new(),
@@ -11494,7 +11695,7 @@ impl Interpreter {
         // Check if this option is in the optstring
         if let Some(pos) = spec.find(opt_char) {
             let needs_arg = spec.get(pos + 1..pos + 2) == Some(":");
-            self.set_variable(varname.clone(), opt_char.to_string());
+            self.set_getopts_name(varname, opt_char.to_string());
 
             if needs_arg {
                 // Option needs an argument
@@ -11515,10 +11716,10 @@ impl Interpreter {
                     self.set_variable("OPTIND".to_string(), (optind + 1).to_string());
                     self.getopts_char_idx = 0;
                     if silent {
-                        self.set_variable(varname.clone(), ":".to_string());
+                        self.set_getopts_name(varname, ":".to_string());
                         self.set_variable("OPTARG".to_string(), opt_char.to_string());
                     } else {
-                        self.set_variable(varname.clone(), "?".to_string());
+                        self.set_getopts_name(varname, "?".to_string());
                         let mut result = ExecResult::ok(String::new());
                         result.stderr = self
                             .diag(format!(
@@ -11554,10 +11755,10 @@ impl Interpreter {
             }
 
             if silent {
-                self.set_variable(varname.clone(), "?".to_string());
+                self.set_getopts_name(varname, "?".to_string());
                 self.set_variable("OPTARG".to_string(), opt_char.to_string());
             } else {
-                self.set_variable(varname.clone(), "?".to_string());
+                self.set_getopts_name(varname, "?".to_string());
                 let mut result = ExecResult::ok(String::new());
                 result.stderr = self
                     .diag(format!("getopts: illegal option -- '{opt_char}'\n"))
@@ -12112,6 +12313,7 @@ impl Interpreter {
         // ~10 SHOPT_* entries — cheaper than threading a structured "shopt
         // changed" channel through every builtin.
         self.refresh_shopt_flags();
+        self.sync_dir_exports();
         let effects = std::mem::take(&mut result.side_effects);
         let mut shift_failed = false;
         let mut readonly_failed = false;
@@ -12137,6 +12339,9 @@ impl Interpreter {
                 }
                 builtins::BuiltinSideEffect::SignalSelf(signal) => {
                     pending_self_signal = Some(*signal);
+                }
+                builtins::BuiltinSideEffect::DiscardCommandString => {
+                    self.builtin_discard = true;
                 }
                 builtins::BuiltinSideEffect::RemoveArray(name) => {
                     self.arrays_mut().remove(name);
@@ -12791,12 +12996,85 @@ impl Interpreter {
     fn expand_variable_or_literal(&self, s: &str) -> String {
         // Handle $var and ${var} references in assoc array keys
         let trimmed = s.trim();
-        if let Some(var_name) = trimmed.strip_prefix('$') {
+        if !trimmed.contains(['"', '\'', '\\'])
+            && trimmed.matches('$').count() <= 1
+            && let Some(var_name) = trimmed.strip_prefix('$')
+        {
             let var_name = var_name.trim_start_matches('{').trim_end_matches('}');
             return self.expand_variable(var_name);
         }
-        // Bare names are literal string keys — do NOT look up as variables.
-        s.to_string()
+        if !s.contains(['$', '"', '\'', '\\']) {
+            // Bare names are literal string keys — do NOT look up as variables.
+            return s.to_string();
+        }
+        self.expand_key_text(s)
+    }
+
+    /// An assoc key with several references or quotes (`"$i$i"`, `'k'`,
+    /// `a$b`): quotes are removed and `$name`/`${name}` expand. `$(...)`
+    /// stays literal text here (no command runs from a read path).
+    #[inline(never)]
+    fn expand_key_text(&self, s: &str) -> String {
+        self.expand_key_text_with(s, false)
+    }
+
+    /// [`Self::expand_key_text`]; `plain` reads only plain scalar values
+    /// (no nameref, array or special-parameter resolution).
+    fn expand_key_text_with(&self, s: &str, plain: bool) -> String {
+        let lookup = |name: &str| -> String {
+            if plain {
+                self.scoped.variables.get(name).cloned().unwrap_or_default()
+            } else {
+                self.resolve_param_expansion_name(name).1
+            }
+        };
+        let mut out = String::new();
+        let mut chars = s.chars().peekable();
+        while let Some(c) = chars.next() {
+            match c {
+                '"' => {}
+                '\'' => {
+                    for q in chars.by_ref() {
+                        if q == '\'' {
+                            break;
+                        }
+                        out.push(q);
+                    }
+                }
+                '\\' => out.extend(chars.next()),
+                '$' if chars.peek() == Some(&'{') => {
+                    chars.next();
+                    let mut name = String::new();
+                    for n in chars.by_ref() {
+                        if n == '}' {
+                            break;
+                        }
+                        name.push(n);
+                    }
+                    out.push_str(&lookup(&name));
+                }
+                '$' if chars
+                    .peek()
+                    .is_some_and(|n| n.is_ascii_alphanumeric() || *n == '_') =>
+                {
+                    let mut name = String::new();
+                    while let Some(&n) = chars.peek() {
+                        if !(n.is_ascii_alphanumeric() || n == '_') {
+                            break;
+                        }
+                        name.push(n);
+                        chars.next();
+                    }
+                    out.push_str(&if plain {
+                        lookup(&name)
+                    } else {
+                        self.expand_variable(&name)
+                    });
+                }
+                _ => out.push(c),
+            }
+        }
+        out
     }
 
     /// Fully expand an associative array key using standard word expansion.
@@ -12854,6 +13132,19 @@ impl Interpreter {
         // non-interactive bash exits with status 2.
         if self.posix_special_builtin(&func_def.name) {
             return self.special_builtin_function_error(&func_def.name);
+        }
+        // `$foo-bar() {...}`, `foo-$(cmd)() {...}`: bash parses these but
+        // refuses the name when the definition runs.
+        if func_def
+            .name
+            .contains(['$', '`', '\u{1e}', '\u{1f}', '\x00'])
+        {
+            let shown: String = func_def
+                .name
+                .chars()
+                .filter(|c| !matches!(c, '\u{1e}' | '\u{1f}' | '\x00'))
+                .collect();
+            return ExecResult::err(self.diag(format!("`{shown}': not a valid identifier\n")), 1);
         }
         // THREAT[TM-DOS-060]: Check function count/size budget
         let body_bytes = function_storage_bytes(func_def);
@@ -13107,8 +13398,15 @@ impl Interpreter {
         arr_name: &str,
         key: &str,
     ) -> std::result::Result<usize, String> {
+        // `a[]=x`: no subscript at all (bash fails the assignment).
+        if key.trim().is_empty() {
+            return Err(self.diag(format!("{arr_name}[{key}]: bad array subscript\n")));
+        }
         // Evaluated once, with side effects: `a[i++]=x`, `a[a[0]=1]=X`.
-        let raw_idx = self.evaluate_arithmetic_with_assign(key);
+        // A bad subscript (`a['2']=x`) fails the assignment.
+        let raw_idx = self
+            .try_evaluate_arithmetic_with_assign(key)
+            .map_err(|msg| self.arith_diag("", &msg))?;
         if raw_idx >= 0 {
             return Ok(raw_idx as usize);
         }
@@ -13130,6 +13428,11 @@ impl Interpreter {
     /// "bad array subscript", which bash does without failing the command)
     /// when a negative index reaches before element 0.
     fn read_indexed_array_subscript(&self, arr_name: &str, key: &str) -> Option<usize> {
+        // `${a[]}`: an expansion error that abandons the line.
+        if key.trim().is_empty() {
+            self.record_arith_error(format!("{arr_name}[{key}]: bad array subscript"));
+            return None;
+        }
         let raw_idx = self.evaluate_arithmetic(key);
         if raw_idx >= 0 {
             return Some(raw_idx as usize);
@@ -13575,6 +13878,11 @@ impl Interpreter {
     /// Insert an array with memory budget checking.
     /// Returns true if the insert succeeded.
     fn insert_array_checked(&mut self, name: String, arr: HashMap<usize, String>) -> bool {
+        // An array is never exported (bash): `export P; P=(a)` drops `P`
+        // from the environment while keeping the export attribute.
+        if self.env.contains_key(&name) {
+            self.env_mut().remove(&name);
+        }
         let new_entries = arr.len();
         let (old_entries, old_bytes) = self
             .scoped
@@ -13670,6 +13978,34 @@ impl Interpreter {
         let mut result = String::new();
         let mut chars = expr.chars().peekable();
         while let Some(ch) = chars.next() {
+            if ch == '`' {
+                // `` `cmd` ``: the old-style form of `$(cmd)`; `\``, `\\`
+                // and `\$` lose their backslash.
+                let mut cmd = String::new();
+                while let Some(c) = chars.next() {
+                    match c {
+                        '`' => break,
+                        '\\' if matches!(chars.peek(), Some('`' | '\\' | '$')) => {
+                            cmd.extend(chars.next());
+                        }
+                        _ => cmd.push(c),
+                    }
+                }
+                let parser = Parser::with_limits(
+                    &cmd,
+                    self.limits.max_ast_depth,
+                    self.limits.max_parser_operations,
+                )
+                .with_execution_budget(self.execution_budget.clone());
+                let out = match parser.parse() {
+                    Ok(script) if self.counters.push_subst(&self.limits).is_ok() => {
+                        self.execute_cmd_subst(&script.commands).await?
+                    }
+                    _ => String::new(),
+                };
+                result.push_str(if out.is_empty() { "0" } else { &out });
+                continue;
+            }
             if ch == '$' && chars.peek() == Some(&'(') {
                 // Check it's not $(( ... )) (arithmetic)
                 let remaining: String = chars.clone().collect();
@@ -13773,6 +14109,12 @@ impl Interpreter {
             let arr_name = &name[..bracket];
             let idx_str = &name[bracket + 1..name.len() - 1];
             if let Some(arr) = self.scoped.assoc_arrays.get(arr_name) {
+                // `declare -n r='A["k"]'` / `'A[$k]'`: the key is shell text.
+                // Plain variable values only, so a reference cannot recurse.
+                if idx_str.contains(['$', '"', '\'', '\\']) {
+                    let key = self.expand_key_text_with(idx_str, true);
+                    return arr.get(&key).cloned().unwrap_or_default();
+                }
                 return arr.get(idx_str).cloned().unwrap_or_default();
             } else if let Some(arr) = self.scoped.arrays.get(arr_name) {
                 let idx: usize = self.evaluate_arithmetic(idx_str).try_into().unwrap_or(0);

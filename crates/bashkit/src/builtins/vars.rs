@@ -277,6 +277,11 @@ impl Builtin for Set {
                 positional = Some(&ctx.args[i + 1..]);
                 break;
             }
+            if arg == "+" {
+                // A lone `+` is an ignored flag (bash), not an operand.
+                i += 1;
+                continue;
+            }
             if arg == "-" {
                 // `set -` turns off -x and -v and ends the options.
                 changes.push(("SHOPT_x", false));
@@ -366,6 +371,15 @@ impl Builtin for Shift {
             },
         };
 
+        if ctx.args.len() > 1 {
+            // Like `exit 1 2`: bash discards the rest of the line.
+            let mut result = ExecResult::err("bash: shift: too many arguments\n", 1);
+            result.control_flow = crate::interpreter::ControlFlow::Abort;
+            result
+                .side_effects
+                .push(BuiltinSideEffect::DiscardCommandString);
+            return Ok(result);
+        }
         let mut result = ExecResult::ok(String::new());
         result
             .side_effects

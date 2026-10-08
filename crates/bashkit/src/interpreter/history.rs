@@ -438,10 +438,8 @@ impl Interpreter {
                 idx += 1;
                 break;
             }
-            if !arg.starts_with('-')
-                || arg.len() < 2
-                || arg[1..].starts_with(|c: char| c.is_ascii_digit())
-            {
+            // `history -5` is an invalid option in bash, not a count.
+            if !arg.starts_with('-') || arg.len() < 2 {
                 break;
             }
             for c in arg[1..].chars() {

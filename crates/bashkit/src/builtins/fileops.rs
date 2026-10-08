@@ -172,46 +172,49 @@ impl Builtin for Rm {
         }
 
         if files.is_empty() {
+            // GNU rm: `-f` with no operands is not an error.
+            if force {
+                return Ok(ExecResult::ok(String::new()));
+            }
             return Ok(ExecResult::err("rm: missing operand\n".to_string(), 1));
         }
 
+        // GNU rm reports each failing operand and goes on with the rest;
+        // the status is 1 if any operand failed.
+        let mut stderr = String::new();
         for file in files {
             let path = resolve_path(ctx.cwd, file);
 
             // lstat: rm acts on a link itself (dangling links included).
             let metadata = ctx.fs.lstat(&path).await;
-            if metadata.is_err() {
+            let Ok(meta) = metadata else {
                 if !force {
-                    return Ok(ExecResult::err(
-                        format!("rm: cannot remove '{}': No such file or directory\n", file),
-                        1,
+                    stderr.push_str(&format!(
+                        "rm: cannot remove '{}': No such file or directory\n",
+                        file
                     ));
                 }
                 continue;
-            }
+            };
 
-            // Check if it's a directory
-            if let Ok(meta) = metadata
-                && meta.file_type.is_dir()
-                && !recursive
-            {
-                return Ok(ExecResult::err(
-                    format!("rm: cannot remove '{}': Is a directory\n", file),
-                    1,
-                ));
+            // A directory needs -r, -f or not.
+            if meta.file_type.is_dir() && !recursive {
+                stderr.push_str(&format!("rm: cannot remove '{}': Is a directory\n", file));
+                continue;
             }
 
             if let Err(e) = ctx.fs.remove(&path, recursive).await
                 && !force
             {
-                return Ok(ExecResult::err(
-                    format!("rm: cannot remove '{}': {}\n", file, e),
-                    1,
-                ));
+                stderr.push_str(&format!("rm: cannot remove '{}': {}\n", file, e));
             }
         }
 
-        Ok(ExecResult::ok(String::new()))
+        if stderr.is_empty() {
+            Ok(ExecResult::ok(String::new()))
+        } else {
+            Ok(ExecResult::err(stderr, 1))
+        }
     }
 }
 

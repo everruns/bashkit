@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 
-use super::{Builtin, Context};
+use super::{Builtin, BuiltinSideEffect, Context};
 use crate::error::Result;
 use crate::interpreter::{ControlFlow, ExecResult};
 
@@ -70,6 +70,9 @@ impl Builtin for Exit {
             // the script resumes at the next line, a subshell ends.
             let mut result = ExecResult::err("bash: exit: too many arguments\n", 1);
             result.control_flow = ControlFlow::Abort;
+            result
+                .side_effects
+                .push(BuiltinSideEffect::DiscardCommandString);
             return Ok(result);
         }
 
@@ -106,6 +109,9 @@ fn loop_control(name: &str, ctx: &Context<'_>, make: fn(u32) -> ControlFlow) -> 
         // Like `exit`: bash discards the rest of the line.
         let mut result = ExecResult::err(format!("bash: {name}: too many arguments\n"), 1);
         result.control_flow = ControlFlow::Abort;
+        result
+            .side_effects
+            .push(BuiltinSideEffect::DiscardCommandString);
         return result;
     }
     let levels = match ctx.args.first() {
