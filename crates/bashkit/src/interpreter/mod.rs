@@ -3238,7 +3238,8 @@ impl Interpreter {
             }
             self.check_cancelled()?;
             if top_level {
-                self.route_exec_output(&mut result, emitted_before).await?;
+                self.route_exec_output(&mut result, emitted_before, Self::command_name(command))
+                    .await?;
             }
             self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
             if top_level {
@@ -3443,6 +3444,17 @@ impl Interpreter {
     }
 
     /// Get the source line number from a command's span
+    /// The name a simple command would report itself under in an error.
+    fn command_name(command: &Command) -> Option<&str> {
+        let Command::Simple(c) = command else {
+            return None;
+        };
+        match c.name.parts.first()? {
+            WordPart::Literal(name) => Some(name.as_str()),
+            _ => None,
+        }
+    }
+
     fn command_line(command: &Command) -> usize {
         match command {
             Command::Simple(c) => c.span.line(),
@@ -5546,6 +5558,8 @@ enum FdTarget {
     AppendFile(PathBuf, String),
     /// Discard (/dev/null).
     DevNull,
+    /// Closed by `exec N>&-`: a write to it fails.
+    Closed,
 }
 
 /// Route fd1/fd2/fd3+ content to their targets. Extracted from the async
@@ -5583,7 +5597,8 @@ fn route_fd_table_content(
                 err.append(data);
             }
         }
-        FdTarget::DevNull => {}
+        // A closed descriptor accepts nothing.
+        FdTarget::DevNull | FdTarget::Closed => {}
         FdTarget::WriteFile(p, d) => {
             let entry = fw
                 .entry(p.clone())
@@ -7355,8 +7370,15 @@ impl Interpreter {
                         continue;
                     };
                     if target == "-" || target == "&-" {
-                        // exec N>&- closes the fd
-                        self.exec_fd_table.remove(&fd);
+                        // `exec N>&-` closes the fd. For 1 and 2 the entry stays
+                        // so a later write reports a closed descriptor instead
+                        // of reaching the terminal.
+                        if fd == 1 || fd == 2 {
+                            self.ensure_persistent_fd_capacity(fd)?;
+                            self.exec_fd_table.insert(fd, FdTarget::Closed);
+                        } else {
+                            self.exec_fd_table.remove(&fd);
+                        }
                     } else if let Ok(target_fd) = target.parse::<i32>() {
                         // exec N>&M duplicates fd M to fd N
                         let target_entry = self.exec_fd_alias_target(target_fd);
@@ -7390,6 +7412,7 @@ impl Interpreter {
         &mut self,
         result: &mut ExecResult,
         emitted_before: (usize, usize),
+        command_name: Option<&str>,
     ) -> Result<()> {
         if !self.exec_fd_table.contains_key(&1) && !self.exec_fd_table.contains_key(&2) {
             return Ok(());
@@ -7409,6 +7432,7 @@ impl Interpreter {
         if let Some(target) = self.exec_fd_table.get(&2).cloned() {
             moved.push((take(&mut result.stderr, streamed_err), target));
         }
+        let mut write_failed = false;
         for (data, target) in moved {
             if data.is_empty() {
                 continue;
@@ -7417,10 +7441,26 @@ impl Interpreter {
                 FdTarget::Stdout => result.stdout.append(&data),
                 FdTarget::Stderr => result.stderr.append(&data),
                 FdTarget::DevNull => {}
+                FdTarget::Closed => write_failed = true,
                 FdTarget::WriteFile(path, _) | FdTarget::AppendFile(path, _) => {
                     self.fs.append_file(&path, data.as_bytes()).await?;
                 }
             }
+        }
+        if write_failed {
+            // bash: the write fails and the command reports it, naming itself.
+            let who = command_name.map(|n| format!("{n}: ")).unwrap_or_default();
+            let msg = format!(
+                "bash: line {}: {who}write error: Bad file descriptor\n",
+                self.current_line
+            );
+            if !matches!(self.exec_fd_table.get(&2), Some(FdTarget::Closed)) {
+                result
+                    .stderr
+                    .append(&crate::StreamData::from(msg.as_bytes()));
+            }
+            result.exit_code = 1;
+            self.last_exit_code = 1;
         }
         Ok(())
     }

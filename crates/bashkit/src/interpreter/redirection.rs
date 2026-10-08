@@ -308,7 +308,8 @@ impl Interpreter {
                 FdTarget::Stderr if passthrough => self.exec_passthrough.1.append(&data),
                 FdTarget::Stdout => result.stdout.append(&data),
                 FdTarget::Stderr => result.stderr.append(&data),
-                FdTarget::DevNull => {}
+                // A closed descriptor accepts nothing.
+                FdTarget::DevNull | FdTarget::Closed => {}
                 FdTarget::WriteFile(path, _) | FdTarget::AppendFile(path, _) => {
                     self.fs.append_file(path, data.as_bytes()).await?;
                 }
