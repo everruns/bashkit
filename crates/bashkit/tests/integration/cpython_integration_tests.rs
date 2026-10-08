@@ -686,3 +686,28 @@ async fn custom_limits_builder() {
         .unwrap();
     assert_eq!(r.stdout, "120\n");
 }
+
+/// Bashkit snapshots capture what Python left behind (VFS files, shell
+/// state); a restored session runs python3 against it. Interpreter state is
+/// per call, so nothing Python-side needs to be serialized.
+#[tokio::test]
+async fn bashkit_snapshot_round_trips_python_output() {
+    let mut bash = Bash::builder().cpython().build();
+    let r = bash
+        .exec(
+            "python3 -c 'import json; json.dump({\"n\": 41}, open(\"/tmp/s.json\", \"w\"))'; \
+             export STEP=1; cd /tmp",
+        )
+        .await
+        .unwrap();
+    assert_eq!(r.exit_code, 0, "{}", r.stderr);
+    let bytes = bash.snapshot().unwrap();
+
+    let mut restored = Bash::builder().cpython().build();
+    restored.restore_snapshot(&bytes).unwrap();
+    let r = restored
+        .exec("python3 -c 'import json, os; print(json.load(open(\"s.json\"))[\"n\"] + 1, os.environ[\"STEP\"], os.getcwd())'")
+        .await
+        .unwrap();
+    assert_eq!(r.stdout, "42 1 /tmp\n", "{}", r.stderr);
+}
