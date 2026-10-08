@@ -35,11 +35,10 @@ impl Interpreter {
         true
     }
 
-    /// `bash: line N: PATH: reason` — the shape bash uses for a redirection
-    /// that could not be opened. Bash names the script instead of `bash`
-    /// when running a file; the interpreter does not track a script path.
+    /// `$0: line N: PATH: reason` — the shape bash uses for a redirection
+    /// that could not be opened.
     fn redirect_error(&self, path: &str, reason: &str) -> String {
-        format!("bash: line {}: {path}: {reason}\n", self.current_line)
+        self.diag(format!("{path}: {reason}\n"))
     }
 
     /// Process input redirections (< file, <<< string)
@@ -63,10 +62,9 @@ impl Interpreter {
                     let content = if is_dev_null(&path) {
                         crate::StreamData::new()
                     } else if !self.shell_features.has_file_redirects() {
-                        return Err(crate::error::Error::Execution(format!(
-                            "bash: {}: filesystem redirection disabled",
-                            target_path
-                        )));
+                        return Err(crate::error::Error::Execution(
+                            self.diag(format!("{}: filesystem redirection disabled", target_path)),
+                        ));
                     } else {
                         let opened = match self.fs.append_file(&path, b"").await {
                             Ok(()) => self.fs.read_file(&path).await,
@@ -75,10 +73,9 @@ impl Interpreter {
                         match opened {
                             Ok(content) => content.into(),
                             Err(e) => {
-                                return Err(crate::error::Error::CommandFailure(format!(
-                                    "bash: {target_path}: {}\n",
-                                    io_error_reason(&e)
-                                )));
+                                return Err(crate::error::Error::CommandFailure(
+                                    self.diag(format!("{target_path}: {}\n", io_error_reason(&e))),
+                                ));
                             }
                         }
                     };
@@ -91,10 +88,10 @@ impl Interpreter {
                     if !self.shell_features.has_file_redirects()
                         && !word_is_literal_dev_null(&redirect.target)
                     {
-                        return Err(crate::error::Error::Execution(format!(
-                            "bash: {}: filesystem redirection disabled",
+                        return Err(crate::error::Error::Execution(self.diag(format!(
+                            "{}: filesystem redirection disabled",
                             redirect_target_label(&redirect.target)
-                        )));
+                        ))));
                     }
                     let target_path = self.expand_word(&redirect.target).await?;
                     let path = self.resolve_path(&target_path);
@@ -104,10 +101,9 @@ impl Interpreter {
                     } else if is_dev_null(&path) {
                         stdin = Some(crate::StreamData::new()); // EOF
                     } else if !self.shell_features.has_file_redirects() {
-                        return Err(crate::error::Error::Execution(format!(
-                            "bash: {}: filesystem redirection disabled",
-                            target_path
-                        )));
+                        return Err(crate::error::Error::Execution(
+                            self.diag(format!("{}: filesystem redirection disabled", target_path)),
+                        ));
                     } else {
                         match self.fs.read_file(&path).await {
                             Ok(content) => {
@@ -233,7 +229,7 @@ impl Interpreter {
             {
                 self.clear_pending_fd_redirect_state();
                 result.stdout = crate::StreamData::new();
-                result.stderr = format!("bash: {target}: Bad file descriptor\n").into();
+                result.stderr = self.diag(format!("{target}: Bad file descriptor\n")).into();
                 result.exit_code = 1;
                 return Ok(result);
             }
@@ -460,10 +456,7 @@ impl Interpreter {
     }
 
     fn closed_stdout_error(&self) -> String {
-        format!(
-            "bash: line {}: write error: Bad file descriptor\n",
-            self.current_line
-        )
+        self.diag("write error: Bad file descriptor\n")
     }
 
     /// `N>&word` with N other than 1 and a word that is neither a number
@@ -544,7 +537,7 @@ impl Interpreter {
             if !self.shell_features.has_process_substitution()
                 && word_has_process_substitution(&redirect.target)
             {
-                return Some("bash: process substitution disabled\n".to_string());
+                return Some(self.diag("process substitution disabled\n"));
             }
 
             if !self.shell_features.has_file_redirects()
@@ -558,10 +551,10 @@ impl Interpreter {
                 )
                 && !word_is_literal_dev_null(&redirect.target)
             {
-                return Some(format!(
-                    "bash: {}: filesystem redirection disabled\n",
+                return Some(self.diag(format!(
+                    "{}: filesystem redirection disabled\n",
                     redirect_target_label(&redirect.target)
-                ));
+                )));
             }
         }
         None
@@ -857,12 +850,12 @@ impl DupTarget {
     }
 }
 
-fn bad_fd_error(word: &str) -> ExecResult {
-    ExecResult::err(format!("bash: {word}: Bad file descriptor\n"), 1)
+fn bad_fd_error(prefix: &str, word: &str) -> ExecResult {
+    ExecResult::err(format!("{prefix}{word}: Bad file descriptor\n"), 1)
 }
 
-fn ambiguous_redirect_error(word: &str) -> ExecResult {
-    ExecResult::err(format!("bash: {word}: ambiguous redirect\n"), 1)
+fn ambiguous_redirect_error(prefix: &str, word: &str) -> ExecResult {
+    ExecResult::err(format!("{prefix}{word}: ambiguous redirect\n"), 1)
 }
 
 /// Remaining coproc-buffer lines (stored reversed) as stdin text.
@@ -972,7 +965,7 @@ impl Interpreter {
                 // `{var}>&-` closes the fd named by `$var`.
                 let value = self.expand_name_or_array_element(var);
                 if value.is_empty() {
-                    return Ok(Some(ambiguous_redirect_error(var)));
+                    return Ok(Some(ambiguous_redirect_error(&self.diag_prefix(), var)));
                 }
                 if let Ok(fd) = value.trim().parse::<i32>()
                     && fd >= 0
@@ -982,7 +975,7 @@ impl Interpreter {
                 return Ok(None);
             }
             if target.parse::<i32>().is_err() {
-                return Ok(Some(ambiguous_redirect_error(var)));
+                return Ok(Some(ambiguous_redirect_error(&self.diag_prefix(), var)));
             }
             dup = Redirect {
                 target: Word::quoted_literal(target),
@@ -1000,7 +993,8 @@ impl Interpreter {
             self.close_fd(fd);
             return Ok(Some(ExecResult::err(
                 format!(
-                    "bash: {base}: readonly variable\nbash: {var}: cannot assign fd to variable\n"
+                    "{p}{base}: readonly variable\n{p}{var}: cannot assign fd to variable\n",
+                    p = self.diag_prefix()
                 ),
                 1,
             )));
@@ -1039,7 +1033,7 @@ impl Interpreter {
                 }
                 if read_write && let Err(e) = self.fs.append_file(&path, b"").await {
                     return Ok(Some(ExecResult::err(
-                        format!("bash: {target_path}: {}\n", io_error_reason(&e)),
+                        self.diag(format!("{target_path}: {}\n", io_error_reason(&e))),
                         1,
                     )));
                 }
@@ -1047,7 +1041,7 @@ impl Interpreter {
                     Ok(c) => c,
                     Err(e) => {
                         return Ok(Some(ExecResult::err(
-                            format!("bash: {target_path}: {}\n", io_error_reason(&e)),
+                            self.diag(format!("{target_path}: {}\n", io_error_reason(&e))),
                             1,
                         )));
                     }
@@ -1099,14 +1093,14 @@ impl Interpreter {
                 }
                 let Ok(m) = target.parse::<i32>() else {
                     if redirect.kind == RedirectKind::DupInput {
-                        return Ok(Some(ambiguous_redirect_error(&target)));
+                        return Ok(Some(ambiguous_redirect_error(&self.diag_prefix(), &target)));
                     }
                     // WTF: `exec >&file` (bash: `exec &>file`) is not
                     // implemented; it is ignored.
                     return Ok(None);
                 };
                 if !self.fd_is_open(m) {
-                    return Ok(Some(bad_fd_error(&target)));
+                    return Ok(Some(bad_fd_error(&self.diag_prefix(), &target)));
                 }
                 match n {
                     0 => {
@@ -1146,7 +1140,7 @@ impl Interpreter {
                     };
                     if let Err(e) = opened {
                         return Ok(Some(ExecResult::err(
-                            format!("bash: {target_path}: {}\n", io_error_reason(&e)),
+                            self.diag(format!("{target_path}: {}\n", io_error_reason(&e))),
                             1,
                         )));
                     }

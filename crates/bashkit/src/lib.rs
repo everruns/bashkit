@@ -1489,6 +1489,26 @@ impl Bash {
         Arc::clone(&self.fs)
     }
 
+    /// Mark this shell interactive, as a REPL or terminal front end does.
+    ///
+    /// Shell diagnostics then read `bash: nocmd: command not found`, like
+    /// `bash -i`, instead of the non-interactive `bash: line 1: nocmd: ...`
+    /// (`$0: line N: `) form scripts get. Off by default.
+    ///
+    /// ```rust
+    /// # #[tokio::main]
+    /// # async fn main() -> bashkit::Result<()> {
+    /// let mut bash = bashkit::Bash::new();
+    /// assert_eq!(bash.exec("nocmd").await?.stderr, "bash: line 1: nocmd: command not found\n");
+    /// bash.set_interactive(true);
+    /// assert_eq!(bash.exec("nocmd").await?.stderr, "bash: nocmd: command not found\n");
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn set_interactive(&mut self, interactive: bool) {
+        self.interpreter.set_interactive(interactive);
+    }
+
     /// Mount a filesystem at `vfs_path` on a live interpreter.
     ///
     /// Unlike [`BashBuilder`] mount methods which configure mounts before build,

@@ -439,6 +439,9 @@ impl ExitState {
 }
 
 pub async fn run(mut bash: bashkit::Bash, exit_state: Arc<ExitState>) -> Result<i32> {
+    // Diagnostics as `bash -i` prints them: `bash: x: ...`, no `line N:`.
+    bash.set_interactive(true);
+
     // Set up interactive environment
     set_interactive_env(&mut bash).await;
 

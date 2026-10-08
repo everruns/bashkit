@@ -15,7 +15,7 @@ async fn return_outside_a_function_reports_and_keeps_going() {
     let r = run("return\necho \"rc=$?\"\necho after").await;
     assert_eq!(
         r.stderr.to_string(),
-        "bash: return: can only `return' from a function or sourced script\n"
+        "bash: line 1: return: can only `return' from a function or sourced script\n"
     );
     assert_eq!(r.stdout.to_string(), "rc=2\nafter\n");
 }
@@ -40,7 +40,7 @@ async fn unset_v_insists_on_an_identifier() {
         let r = run(&format!("unset -v '{name}'\necho \"rc=$?\"")).await;
         assert_eq!(
             r.stderr.to_string(),
-            format!("bash: unset: `{name}': not a valid identifier\n")
+            format!("bash: line 1: unset: `{name}': not a valid identifier\n")
         );
         assert_eq!(r.stdout.to_string(), "rc=1\n");
     }
@@ -67,7 +67,7 @@ async fn read_rejects_a_non_numeric_timeout() {
     let r = run("read -t abc x <<< ''\necho \"rc=$?\"").await;
     assert_eq!(
         r.stderr.to_string(),
-        "read: abc: invalid timeout specification\n"
+        "bash: line 1: read: abc: invalid timeout specification\n"
     );
     assert_eq!(r.stdout.to_string(), "rc=1\n");
 }
@@ -75,7 +75,10 @@ async fn read_rejects_a_non_numeric_timeout() {
 #[tokio::test]
 async fn read_rejects_a_non_numeric_count() {
     let r = run("read -n abc x <<< ''\necho \"rc=$?\"").await;
-    assert_eq!(r.stderr.to_string(), "read: abc: invalid number\n");
+    assert_eq!(
+        r.stderr.to_string(),
+        "bash: line 1: read: abc: invalid number\n"
+    );
     assert_eq!(r.stdout.to_string(), "rc=1\n");
 }
 

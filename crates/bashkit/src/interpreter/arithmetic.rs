@@ -831,7 +831,7 @@ impl Interpreter {
     /// `prefix` names the reporting builtin (`((: `, `let: `), empty for an
     /// expansion.
     pub(super) fn arith_diag(&self, prefix: &str, msg: &str) -> String {
-        format!("bash: line {}: {prefix}{msg}\n", self.current_line)
+        self.diag(format!("{prefix}{msg}\n"))
     }
 
     pub(super) fn take_arith_error(&self) -> Option<String> {
