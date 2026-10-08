@@ -53,8 +53,6 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 
-/// Monotonic counter for unique process substitution file paths
-static PROC_SUB_COUNTER: AtomicU64 = AtomicU64::new(0);
 static TIME_REPORT_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 // Important decision: report a bash-compatible version surface instead of the
@@ -1394,6 +1392,14 @@ struct NoforkScope {
     outer: Option<Arc<NoforkScope>>,
 }
 
+/// Where a simple command's process substitutions start: the deferred `>(...)`
+/// lists and the `/dev/fd/N` fds it opens are released from here when it ends.
+#[derive(Clone, Copy)]
+struct ProcSubMark {
+    deferred: usize,
+    fds: usize,
+}
+
 /// Interpreter state.
 pub struct Interpreter {
     fs: Arc<dyn FileSystem>,
@@ -1626,12 +1632,12 @@ pub struct Interpreter {
     /// final-command errexit behavior.
     condition_sequence_depth: usize,
     /// Deferred output process substitutions: after a command writes to the
-    /// virtual file path, run these commands with the file content as stdin.
-    /// Each entry is (virtual_path, commands_to_run).
-    deferred_proc_subs: Vec<(String, Vec<Command>)>,
-    /// Process substitution paths created by this interpreter instance.
-    /// Used to avoid deleting paths owned by other sessions sharing the same VFS.
-    proc_sub_paths: HashSet<String>,
+    /// substitution's fd, run these commands with what it wrote as stdin.
+    /// Each entry is (write buffer, commands_to_run).
+    deferred_proc_subs: Vec<(crate::fs::ProcSubBuffer, Vec<Command>)>,
+    /// This shell's `/dev/fd/N` namespace for process substitutions; `fs`
+    /// is this same wrapper (see `fs/proc_sub_fds.rs`, TM-ISO-028).
+    proc_subs: Arc<crate::fs::ProcSubFs>,
     /// PRNG state for $RANDOM (LCG seeded per-instance from OS entropy).
     /// NOT cryptographically secure — matches real bash behavior.
     /// Uses `AtomicU32` for interior mutability so $RANDOM can advance state
@@ -1729,6 +1735,10 @@ impl Interpreter {
         builtin_filter: Option<BuiltinFilter>,
         hardened_timing: bool,
     ) -> Self {
+        // Every VFS access of this shell (redirects, builtins, `source`,
+        // tests) resolves `/dev/fd/N` in its own fd namespace first.
+        let proc_subs = crate::fs::ProcSubFs::new(fs);
+        let fs: Arc<dyn FileSystem> = Arc::clone(&proc_subs) as Arc<dyn FileSystem>;
         // Macro to reduce boilerplate for simple zero-arg builtin registration.
         // Custom-construction builtins (date, source, hostname, etc.) are registered below.
         macro_rules! register_builtins {
@@ -2169,7 +2179,7 @@ impl Interpreter {
             err_trap_skip_stage: false,
             condition_sequence_depth: 0,
             deferred_proc_subs: Vec::new(),
-            proc_sub_paths: HashSet::new(),
+            proc_subs,
             random_state: AtomicU32::new(random_seed),
             shell_features,
             hardened_timing,
@@ -2270,8 +2280,10 @@ impl Interpreter {
             .load(Ordering::Relaxed)
             .wrapping_mul(1_103_515_245)
             .wrapping_add(12_345);
+        // The job inherits the open substitution fds, then owns its copy.
+        let job_proc_subs = self.proc_subs.fork();
         Interpreter {
-            fs: Arc::clone(&self.fs),
+            fs: Arc::clone(&job_proc_subs) as Arc<dyn FileSystem>,
             env: self.env.clone(),
             scoped: self.scoped.clone(),
             source_depth: self.source_depth,
@@ -2357,7 +2369,7 @@ impl Interpreter {
             err_trap_skip_stage: false,
             condition_sequence_depth: self.condition_sequence_depth,
             deferred_proc_subs: Vec::new(),
-            proc_sub_paths: HashSet::new(),
+            proc_subs: job_proc_subs,
             random_state: AtomicU32::new(random_seed),
             shell_features: self.shell_features,
             hardened_timing: self.hardened_timing,
@@ -2627,7 +2639,7 @@ impl Interpreter {
         self.condition_sequence_depth = 0;
         self.loop_depth = 0;
         self.return_depth = 0;
-        self.deferred_proc_subs.clear();
+        self.close_proc_sub_fds();
         self.clear_pending_fd_redirect_state();
         // Top-level timeouts drop the interpreter future at await points, so
         // BASH_SOURCE cleanup after script execution may not run. Reset both
@@ -3407,14 +3419,12 @@ impl Interpreter {
         result
     }
 
-    /// Clean up process substitution temp files (`/dev/fd/proc_sub_*`).
-    /// Called from Bash::exec() after execute() returns, outside the
-    /// recursive async call chain to avoid increasing stack frame size.
-    pub(crate) async fn cleanup_proc_sub_files(&mut self) {
-        let paths = std::mem::take(&mut self.proc_sub_paths);
-        for path in paths {
-            let _ = self.fs.remove(Path::new(&path), false).await;
-        }
+    /// Close every process substitution fd still open (one opened by a
+    /// compound command's words, or left by an aborted command).
+    /// Called from Bash::exec() after execute() returns.
+    pub(crate) fn close_proc_sub_fds(&mut self) {
+        self.proc_subs.close_from(0);
+        self.deferred_proc_subs.clear();
     }
 
     /// Inner script execution — runs commands without resetting counters.
@@ -3837,11 +3847,15 @@ impl Interpreter {
                 Command::Pipeline(pipeline) => self.execute_pipeline(pipeline).await,
                 Command::List(list) => self.execute_list(list).await,
                 Command::Compound(compound, redirects) => {
+                    // Substitutions in its words or redirects (`for x in
+                    // <(a)`, `done < <(b)`, `[[ -e <(c) ]]`) close with it.
+                    let proc_sub_fds = self.proc_subs.open_count();
                     // Own frame: keeps this arm's temporaries off the stack
                     // of every `$(...)`/function nesting level.
                     let result = self
                         .execute_compound_with_redirects(compound, redirects)
                         .await;
+                    self.proc_subs.close_from(proc_sub_fds);
                     // `( )`, `[[ ]]` and `(( ))` set PIPESTATUS to their own
                     // status like a simple command; other compounds leave
                     // the last inner command's (bash).
@@ -7463,9 +7477,19 @@ impl Interpreter {
         Some(result)
     }
 
-    /// Discard deferred output process substitutions queued by the current simple command.
-    fn discard_deferred_proc_subs_from(&mut self, start: usize) {
-        self.deferred_proc_subs.truncate(start);
+    /// Where the current simple command's process substitutions start.
+    fn proc_sub_mark(&self) -> ProcSubMark {
+        ProcSubMark {
+            deferred: self.deferred_proc_subs.len(),
+            fds: self.proc_subs.open_count(),
+        }
+    }
+
+    /// Discard deferred output process substitutions queued by the current
+    /// simple command and close the fds it opened.
+    fn discard_deferred_proc_subs_from(&mut self, start: ProcSubMark) {
+        self.deferred_proc_subs.truncate(start.deferred);
+        self.proc_subs.close_from(start.fds);
     }
 
     /// Execute deferred output process substitutions (`>(cmd)`) queued by the
@@ -7473,24 +7497,18 @@ impl Interpreter {
     /// and must not be drained by nested command substitutions.
     async fn run_deferred_proc_subs_from(
         &mut self,
-        start: usize,
+        start: ProcSubMark,
         result: &mut Result<ExecResult>,
     ) -> Result<()> {
-        if self.deferred_proc_subs.len() <= start {
+        // The command is done: its substitution fds close (bash reuses 63).
+        self.proc_subs.close_from(start.fds);
+        if self.deferred_proc_subs.len() <= start.deferred {
             return Ok(());
         }
-        let deferred = self.deferred_proc_subs.split_off(start);
-        for (path_str, commands) in deferred {
-            let path = Path::new(&path_str);
-            let stdin_data = if let Ok(bytes) = self.fs.read_file(path).await {
-                if bytes.is_empty() {
-                    None
-                } else {
-                    Some(bytes.into())
-                }
-            } else {
-                None
-            };
+        let deferred = self.deferred_proc_subs.split_off(start.deferred);
+        for (buf, commands) in deferred {
+            let bytes = std::mem::take(&mut *buf.lock().unwrap_or_else(|e| e.into_inner()));
+            let stdin_data: Option<crate::StreamData> = (!bytes.is_empty()).then(|| bytes.into());
             // `>(cmd)` runs in a subshell too (see expand_process_substitution).
             // Boxed: keeps this future (in every simple command's await chain)
             // small so deep `$(...)` nesting stays within the stack.
@@ -7647,7 +7665,7 @@ impl Interpreter {
             } else {
                 command
             };
-            let deferred_proc_sub_start = self.deferred_proc_subs.len();
+            let deferred_proc_sub_start = self.proc_sub_mark();
             let (_debug_stdout, _debug_stderr) = self.run_debug_trap().await;
 
             // The command word undergoes the same field splitting as args:
@@ -11059,12 +11077,6 @@ impl Interpreter {
             ));
         }
 
-        let path_str = format!(
-            "/dev/fd/proc_sub_{}",
-            PROC_SUB_COUNTER.fetch_add(1, Ordering::Relaxed)
-        );
-        let path = Path::new(&path_str);
-
         if is_input {
             let mut stdout = String::new();
             // The substituted list runs in a subshell: nothing it changes
@@ -11098,19 +11110,45 @@ impl Interpreter {
             if let Some(e) = failed {
                 return Err(e);
             }
-            if self.fs.write_file(path, stdout.as_bytes()).await.is_err() {
-                Ok(stdout)
-            } else {
-                self.proc_sub_paths.insert(path_str.clone());
-                Ok(path_str)
-            }
+            // Allocated after the list ran: in bash the child closes its own
+            // end, so a substitution nested inside sees the number free.
+            let fd = self.allocate_proc_sub_fd()?;
+            self.proc_subs.open(
+                fd,
+                crate::fs::ProcSubData::Input(Arc::from(stdout.into_bytes())),
+            );
+            Ok(format!("/dev/fd/{fd}"))
         } else {
-            let _ = self.fs.write_file(path, b"").await;
-            self.proc_sub_paths.insert(path_str.clone());
-            self.deferred_proc_subs
-                .push((path_str.clone(), commands.to_vec()));
-            Ok(path_str)
+            let fd = self.allocate_proc_sub_fd()?;
+            let buf = Arc::new(StdMutex::new(Vec::new()));
+            self.proc_subs
+                .open(fd, crate::fs::ProcSubData::Output(Arc::clone(&buf)));
+            self.deferred_proc_subs.push((buf, commands.to_vec()));
+            Ok(format!("/dev/fd/{fd}"))
         }
+    }
+
+    /// Fd for the next process substitution, as bash picks it: the highest
+    /// free one counting down from 63, then upwards from 64.
+    fn allocate_proc_sub_fd(&self) -> Result<i32> {
+        let open = self.proc_subs.open_count();
+        if open >= self.limits.max_file_descriptors {
+            return Err(crate::limits::LimitExceeded::MaxFileDescriptors(
+                self.limits.max_file_descriptors,
+            )
+            .into());
+        }
+        let first = crate::fs::PROC_SUB_FIRST_FD;
+        // At most `open` numbers are taken by substitutions, so the upward
+        // scan ends within `open + 64` steps.
+        (3..=first)
+            .rev()
+            .chain(first + 1..=first + 1 + open as i32 + 64)
+            .find(|&fd| !self.proc_subs.is_open(fd) && !self.fd_is_open(fd))
+            .ok_or_else(|| {
+                crate::limits::LimitExceeded::MaxFileDescriptors(self.limits.max_file_descriptors)
+                    .into()
+            })
     }
 
     // THREAT[TM-DOS-089]: Command substitution body extracted into a Box::pin-ed
@@ -15746,7 +15784,19 @@ cat /tmp/test_fd_exec_public.txt"#,
         assert_eq!(lines, vec!["count:2", "arg1:p", "arg2:q"]);
     }
 
-    /// Issue #1184: input process substitution temp files must be cleaned up
+    /// Fds left open (and VFS entries) after the commands ran.
+    async fn proc_sub_leftovers(interp: &Interpreter, fs: &Arc<dyn FileSystem>) -> Vec<String> {
+        let mut left: Vec<String> = Vec::new();
+        if interp.proc_subs.open_count() != 0 {
+            left.push(format!("{} open fds", interp.proc_subs.open_count()));
+        }
+        if let Ok(entries) = fs.read_dir(Path::new("/dev/fd")).await {
+            left.extend(entries.into_iter().map(|e| e.name));
+        }
+        left
+    }
+
+    /// Issue #1184: input process substitutions close with their command.
     #[tokio::test]
     async fn test_proc_sub_input_cleanup() {
         let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
@@ -15756,22 +15806,10 @@ cat /tmp/test_fd_exec_public.txt"#,
         let ast = parser.parse().unwrap();
         let result = interp.execute(&ast).await.unwrap();
         assert_eq!(result.exit_code, 0);
-        interp.cleanup_proc_sub_files().await;
-
-        if let Ok(entries) = fs.read_dir(Path::new("/dev/fd")).await {
-            let leaked: Vec<_> = entries
-                .iter()
-                .filter(|e| e.name.starts_with("proc_sub_"))
-                .collect();
-            assert!(
-                leaked.is_empty(),
-                "proc_sub files leaked in /dev/fd: {:?}",
-                leaked.iter().map(|e| &e.name).collect::<Vec<_>>()
-            );
-        }
+        assert_eq!(proc_sub_leftovers(&interp, &fs).await, Vec::<String>::new());
     }
 
-    /// Issue #1184: output process substitution temp files must be cleaned up
+    /// Issue #1184: output process substitutions close with their command.
     #[tokio::test]
     async fn test_proc_sub_output_cleanup() {
         let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
@@ -15781,19 +15819,8 @@ cat /tmp/test_fd_exec_public.txt"#,
         let ast = parser.parse().unwrap();
         let result = interp.execute(&ast).await.unwrap();
         assert_eq!(result.exit_code, 0);
-        interp.cleanup_proc_sub_files().await;
-
-        if let Ok(entries) = fs.read_dir(Path::new("/dev/fd")).await {
-            let leaked: Vec<_> = entries
-                .iter()
-                .filter(|e| e.name.starts_with("proc_sub_"))
-                .collect();
-            assert!(
-                leaked.is_empty(),
-                "proc_sub files leaked in /dev/fd: {:?}",
-                leaked.iter().map(|e| &e.name).collect::<Vec<_>>()
-            );
-        }
+        assert_eq!(result.stdout, "data 1\ndata 2\ndata 3\n");
+        assert_eq!(proc_sub_leftovers(&interp, &fs).await, Vec::<String>::new());
     }
 
     /// Issue #1184: cleanup happens even when command fails
@@ -15802,45 +15829,47 @@ cat /tmp/test_fd_exec_public.txt"#,
         let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
         let mut interp = Interpreter::new(Arc::clone(&fs));
 
-        let parser = Parser::new(r#"cat <(echo "data") && false; true"#);
+        let parser = Parser::new(r#"cat <(echo "data") && false; true; cat <(echo x) /nope"#);
         let ast = parser.parse().unwrap();
         let _result = interp.execute(&ast).await.unwrap();
-        interp.cleanup_proc_sub_files().await;
-
-        if let Ok(entries) = fs.read_dir(Path::new("/dev/fd")).await {
-            let leaked: Vec<_> = entries
-                .iter()
-                .filter(|e| e.name.starts_with("proc_sub_"))
-                .collect();
-            assert!(
-                leaked.is_empty(),
-                "proc_sub files leaked after failed command: {:?}",
-                leaked.iter().map(|e| &e.name).collect::<Vec<_>>()
-            );
-        }
+        assert_eq!(proc_sub_leftovers(&interp, &fs).await, Vec::<String>::new());
+        // Words of a compound command stay open until the exec ends.
+        let parser = Parser::new(r#"case <(true) in *) : ;; esac"#);
+        let ast = parser.parse().unwrap();
+        let _result = interp.execute(&ast).await.unwrap();
+        interp.close_proc_sub_fds();
+        assert_eq!(proc_sub_leftovers(&interp, &fs).await, Vec::<String>::new());
     }
 
-    /// Regression: cleanup must not remove process substitution paths owned by other sessions.
+    /// TM-ISO-028: a substitution is an fd of its own shell, never a file in
+    /// the shared VFS another interpreter could read.
     #[tokio::test]
-    async fn test_proc_sub_cleanup_does_not_delete_other_session_files() {
+    async fn test_proc_sub_fd_is_private_to_its_interpreter() {
         let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
         let mut owner = Interpreter::new(Arc::clone(&fs));
-        let mut other = Interpreter::new(Arc::clone(&fs));
+        let other = Interpreter::new(Arc::clone(&fs));
 
-        let parser = Parser::new(r#"echo <(echo "data")"#);
+        let parser = Parser::new(r#"f() { echo "$1"; cat "$1"; }; f <(echo data)"#);
         let ast = parser.parse().unwrap();
         let result = owner.execute(&ast).await.unwrap();
-        let proc_sub_path = result.stdout.trim().to_string();
-        assert!(proc_sub_path.starts_with("/dev/fd/proc_sub_"));
-        assert!(fs.read_file(Path::new(&proc_sub_path)).await.is_ok());
-
-        other.cleanup_proc_sub_files().await;
-
-        assert!(
-            fs.read_file(Path::new(&proc_sub_path)).await.is_ok(),
-            "cleanup from another interpreter removed {}",
-            proc_sub_path
+        assert_eq!(result.stdout, "/dev/fd/63\ndata\n");
+        // While open in `owner`, the fd exists only there.
+        owner
+            .proc_subs
+            .open(63, crate::fs::ProcSubData::Input(Arc::from(&b"secret"[..])));
+        assert_eq!(
+            owner.fs.read_file(Path::new("/dev/fd/63")).await.unwrap(),
+            b"secret"
         );
+        assert!(other.fs.read_file(Path::new("/dev/fd/63")).await.is_err());
+        assert!(
+            other
+                .fs
+                .write_file(Path::new("/dev/fd/63"), b"x")
+                .await
+                .is_err()
+        );
+        assert!(!fs.exists(Path::new("/dev/fd/63")).await.unwrap());
     }
 
     /// Regression: all known internal prefixes must be caught by is_internal_variable().

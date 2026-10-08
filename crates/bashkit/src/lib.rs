@@ -1257,10 +1257,9 @@ impl Bash {
         if installed_invocation {
             self.interpreter.truncate_call_stack(call_stack_baseline);
         }
-        // Issue #1184: clean up process substitution temp files after execution.
-        // Done here (outside Interpreter::execute) to avoid increasing the
-        // recursive async state machine size which causes stack overflow.
-        self.interpreter.cleanup_proc_sub_files().await;
+        // Issue #1184: close process substitution fds left open (a compound
+        // command's words, an aborted command) so the next exec starts at 63.
+        self.interpreter.close_proc_sub_fds();
         let duration_ms = exec_start.elapsed().as_millis() as u64;
 
         // Record history entry for each line of the script

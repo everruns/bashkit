@@ -7,7 +7,8 @@
 //! builtin's VFS view in [`StdStreamsFs`] only when an argument names one of
 //! these paths: reads of fd 0 return the command's stdin, writes to fd 1/2
 //! are captured and appended to the builtin's stdout/stderr afterwards.
-//! Only fds 0-2: `/dev/fd/63` etc. stay real VFS files (process substitution).
+//! Only fds 0-2: `/dev/fd/63` etc. are the shell's process substitutions,
+//! answered by `ProcSubFs` underneath.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};

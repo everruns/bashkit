@@ -408,6 +408,7 @@ mod mountable;
 mod namespace;
 mod overlay;
 mod posix;
+mod proc_sub_fds;
 mod readonly;
 #[cfg(feature = "realfs")]
 mod realfs;
@@ -425,6 +426,9 @@ pub use mountable::MountableFs;
 pub use namespace::{NamespaceAccess, NamespaceFs, NamespaceFsBuilder};
 pub use overlay::OverlayFs;
 pub use posix::PosixFs;
+pub(crate) use proc_sub_fds::{
+    PROC_SUB_FIRST_FD, ProcSubBuffer, ProcSubData, ProcSubFs, proc_sub_fd,
+};
 pub use readonly::ReadOnlyFs;
 #[cfg(feature = "realfs")]
 pub use realfs::{RealFs, RealFsMode};
