@@ -1084,8 +1084,41 @@ impl<'a> Lexer<'a> {
                         }
                         '\\' => {
                             if let Some(esc) = self.peek_char() {
-                                word.push(esc);
+                                if matches!(esc, '$' | '`') {
+                                    // Keep `\$` literal through parse_word.
+                                    word.pop();
+                                    Self::push_extglob_literal(&mut word, esc);
+                                } else {
+                                    word.push(esc);
+                                }
                                 self.advance();
+                            }
+                        }
+                        // Quotes inside a group make their text literal:
+                        // `@(a|'b)')` has the alternative `b)`.
+                        '\'' | '"' => {
+                            word.pop();
+                            let quote = c;
+                            while let Some(q) = self.peek_char() {
+                                self.advance();
+                                if q == quote {
+                                    break;
+                                }
+                                if quote == '"'
+                                    && q == '\\'
+                                    && let Some(esc) = self.peek_char()
+                                    && matches!(esc, '"' | '\\' | '$' | '`')
+                                {
+                                    self.advance();
+                                    Self::push_extglob_literal(&mut word, esc);
+                                    continue;
+                                }
+                                if quote == '"' && matches!(q, '$' | '`') {
+                                    // Expansions still run inside "...".
+                                    word.push(q);
+                                    continue;
+                                }
+                                Self::push_extglob_literal(&mut word, q);
                             }
                         }
                         _ => {}
@@ -1638,6 +1671,18 @@ impl<'a> Lexer<'a> {
     }
 
     /// Characters `escape_glob_metas_in_quoted_ranges` backslash-escapes.
+    /// Push one quoted character of an extglob group so it stays literal:
+    /// pattern metacharacters get a backslash, `$`/`` ` `` the NUL sentinel.
+    fn push_extglob_literal(word: &mut String, ch: char) {
+        if Self::is_glob_escape_char(ch) || matches!(ch, '"' | '\'') {
+            word.push('\\');
+        } else if matches!(ch, '$' | '`') {
+            word.push('\\');
+            word.push('\x00');
+        }
+        word.push(ch);
+    }
+
     fn is_glob_escape_char(ch: char) -> bool {
         matches!(
             ch,

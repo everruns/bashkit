@@ -1920,8 +1920,10 @@ impl Interpreter {
             || Self::find_unescaped_char(pat, '?').is_some()
             || Self::find_unescaped_char(pat, '[').is_some();
         let extglob = self.contains_unescaped_extglob(pat);
+        // `shopt -s nocasematch` folds case in `${v/pat/rep}` (not in removal).
+        let nocase = self.is_nocasematch();
 
-        if !has_glob && !extglob {
+        if !has_glob && !extglob && !nocase {
             let literal = Self::unescape_pattern_literal(pat);
             return Some(match anchor {
                 PatternAnchor::Start if value.starts_with(&literal) => vec![(0, literal.len())],
@@ -1943,7 +1945,7 @@ impl Interpreter {
             });
         }
 
-        if !extglob && let Some(re) = Self::glob_pattern_regex(pat, anchor) {
+        if !extglob && let Some(re) = Self::glob_pattern_regex(pat, anchor, nocase) {
             // THREAT[TM-DOS-127]: the regex crate matches in linear time and
             // the compiled program is size-capped, so a long value or pattern
             // cannot blow up the search.
@@ -1967,7 +1969,11 @@ impl Interpreter {
             return Some(ranges);
         }
 
-        self.find_pattern_matches_glob(value, pat, anchor, global)
+        let opts = glob::PatternOpts {
+            nocase,
+            ..self.shell_pattern_opts()
+        };
+        self.find_pattern_matches_glob(value, pat, anchor, global, opts)
     }
 
     /// Extglob fallback, bash's own scan: at each position take the longest
@@ -1980,6 +1986,7 @@ impl Interpreter {
         pat: &str,
         anchor: PatternAnchor,
         global: bool,
+        opts: glob::PatternOpts,
     ) -> Option<Vec<(usize, usize)>> {
         const MAX_GLOB_MATCH_CALLS: usize = 10_000;
         let bounds: Vec<usize> = value
@@ -1989,6 +1996,7 @@ impl Interpreter {
             .collect();
         let n = bounds.len() - 1;
         let mut calls = 0usize;
+        let steps = std::cell::Cell::new(Self::MAX_GLOB_STEPS);
         let mut ranges = Vec::new();
         let mut s = 0;
         loop {
@@ -2006,7 +2014,10 @@ impl Interpreter {
                 if calls > MAX_GLOB_MATCH_CALLS {
                     return None;
                 }
-                if self.glob_match(&value[bounds[s]..bounds[e]], pat) {
+                if steps.get() == 0 {
+                    return None;
+                }
+                if self.glob_match_steps(&value[bounds[s]..bounds[e]], pat, opts, 0, &steps) {
                     found = Some(e);
                     break;
                 }
@@ -2028,7 +2039,7 @@ impl Interpreter {
     /// Translate a bash glob (with `\\c` escapes) into an anchored-as-needed
     /// regex. `None` when it does not translate or compile; callers then use
     /// the glob fallback.
-    fn glob_pattern_regex(pat: &str, anchor: PatternAnchor) -> Option<regex::Regex> {
+    fn glob_pattern_regex(pat: &str, anchor: PatternAnchor, nocase: bool) -> Option<regex::Regex> {
         let chars: Vec<char> = pat.chars().collect();
         let mut re = String::from("(?s)");
         if anchor == PatternAnchor::Start {
@@ -2072,6 +2083,7 @@ impl Interpreter {
             re.push_str("\\z");
         }
         regex::RegexBuilder::new(&re)
+            .case_insensitive(nocase)
             .size_limit(1 << 20)
             .dfa_size_limit(1 << 20)
             .build()
@@ -2270,6 +2282,8 @@ impl Interpreter {
         const MAX_GLOB_MATCH_CALLS: usize = 10_000;
         let chars: Vec<char> = value.chars().collect();
         let mut calls = 0usize;
+        let steps = std::cell::Cell::new(Self::MAX_GLOB_STEPS);
+        let opts = self.shell_pattern_opts();
         if prefix {
             // Try each prefix length; shortest = first match, longest = last match
             let mut last_match = None;
@@ -2279,7 +2293,7 @@ impl Interpreter {
                     break;
                 }
                 let candidate: String = chars[..i].iter().collect();
-                if self.glob_match(&candidate, pattern) {
+                if self.glob_match_steps(&candidate, pattern, opts, 0, &steps) {
                     if !longest {
                         return chars[i..].iter().collect();
                     }
@@ -2298,7 +2312,7 @@ impl Interpreter {
                     break;
                 }
                 let candidate: String = chars[i..].iter().collect();
-                if self.glob_match(&candidate, pattern) {
+                if self.glob_match_steps(&candidate, pattern, opts, 0, &steps) {
                     if !longest {
                         return chars[..i].iter().collect();
                     }

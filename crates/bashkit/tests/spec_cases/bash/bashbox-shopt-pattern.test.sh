@@ -4,7 +4,6 @@
 
 ### bashbox_shopt_pattern_always_understands_extglob
 # [[ ]] always understands extglob
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 x=abc; [[ $x == @(a|b)* ]] && echo y1; [[ $x == +([a-c]) ]] && echo y2; [[ $x == !(a*) ]] || echo y3; [[ "" == !(x) ]] && echo y4; [[ "a|b" == @(a\|b) ]] && echo y5; [[ abab == +(ab|a) ]] && echo y6; [[ b == *(a)b ]] && echo y7; [[ ab == ?(a)b ]] && echo y8
 ### expect
 y1
@@ -19,7 +18,6 @@ y8
 
 ### bashbox_shopt_pattern_case_needs_shopt_s_extglob
 # case needs shopt -s extglob
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 p='@(abc)'; case abc in $p) echo no;; *) echo plain;; esac
 shopt -s extglob
 case abc in $p) echo yes;; esac; case abc in @(abc)) echo yes;; esac; case a in !(a)*) echo m1;; esac
@@ -60,7 +58,6 @@ q7
 
 ### bashbox_shopt_pattern_nocasematch_covers_case_and_substitution_not_removal
 # nocasematch covers case, [[ ]] and substitution, not removal
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 x=ABC; shopt -s nocasematch
 case ABC in a*) echo m1;; esac; [[ ABC == ab? ]] && echo m2; [[ ABC =~ ^ab ]] && echo m3; [[ ABC = abc ]] && echo m4; echo ${x#a} ${x/b/z} ${x%c} ${x//b/z} ${x/#a/q}; [[ $x != abc ]]; echo $?
 shopt -u nocasematch; [[ ABC == abc ]] || echo m5
@@ -83,7 +80,6 @@ BC A ABC ABC
 
 ### bashbox_shopt_pattern_array_and_positional_operations_apply_per_element
 # array and positional operations apply per element
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 set -- ab ac; echo "${@#a}" "${@/c/x}"; a=(xa ya); echo "${a[@]%a}" "${a[*]^^}"; x=aab; echo ${x/q/z} ${x/#/-} ${x/%/-} "${x//b/\$}"; declare -A m=([k1]=a [k2]=b); for k in "${!m[@]}"; do echo "<$k>"; done
 ### expect
 b c ab ax
@@ -95,7 +91,6 @@ aab -aab aab- aa$
 
 ### bashbox_shopt_pattern_quotes_inside_a_group
 # quotes inside a group
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 [[ "b)" == @(a|'b)') ]] && echo q1; [[ 'a"' == @("a\"") ]] && echo q2; [[ 'a|' == @(a\|) ]] && echo q3
 ### expect
 q1
@@ -112,7 +107,6 @@ lit
 
 ### bashbox_shopt_pattern_a_negation_nested_in_another_group
 # a negation nested in another group
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 [[ c == @(!(a)|b) ]] && echo y1; [[ a == @(!(a)) ]] || echo y2; [[ ab == !(x)? ]] && echo y3
 ### expect
 y1
@@ -122,7 +116,6 @@ y3
 
 ### bashbox_shopt_pattern_groups_next_to_a_negation
 # groups next to a negation
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 [[ abab == !(x)+(ab) ]] && echo y1; [[ ab == @(a)!(x) ]] && echo y2; [[ b == ?(a)!(z) ]] && echo y3; [[ aab == *(a)!(z) ]] && echo y4; [[ ab == +(a|ab)!(z) ]] && echo y5; [[ aaa == !(z)*(a|aa) ]] && echo y6; [[ x == !(z)+(a) ]] || echo y7; [[ ab == !(x)+(a|b) ]] && echo y8
 ### expect
 y1
