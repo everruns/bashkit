@@ -536,7 +536,10 @@ impl XargsOptions {
                 SubCommand {
                     name,
                     args: cmd,
-                    stdin: None,
+                    // GNU xargs gives each command /dev/null as stdin: the
+                    // items are already consumed (`printf '' | xargs wc -l`
+                    // prints 0).
+                    stdin: Some(crate::StreamData::new()),
                     assignments: match self.process_slot_var {
                         Some(ref var) => vec![(var.clone(), (idx % slot_count).to_string())],
                         None => Vec::new(),

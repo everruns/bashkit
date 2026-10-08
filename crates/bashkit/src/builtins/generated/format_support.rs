@@ -104,14 +104,17 @@ fn shell_quote(s: &str) -> String {
         return "''".to_string();
     }
 
-    let needs_quoting = s
-        .chars()
-        .any(|c| !c.is_ascii_alphanumeric() && !"_/.:-=+@,%^".contains(c));
+    // Under UTF-8, bash leaves printable non-ASCII characters as they are
+    // (`printf %q 'com espaço'` is `com\ espaço`).
+    let safe = |c: char| {
+        c.is_ascii_alphanumeric() || "_/.:-=+@,%^".contains(c) || (!c.is_ascii() && !c.is_control())
+    };
+    let needs_quoting = s.chars().any(|c| !safe(c));
     if !needs_quoting {
         return s.to_string();
     }
 
-    let has_control = s.chars().any(|c| (c as u32) < 32 || c as u32 == 127);
+    let has_control = s.chars().any(char::is_control);
     if has_control {
         let mut out = String::from("$'");
         for ch in s.chars() {
@@ -124,6 +127,12 @@ fn shell_quote(s: &str) -> String {
                 c if (c as u32) < 32 || c as u32 == 127 => {
                     out.push_str(&format!("\\x{:02x}", c as u32));
                 }
+                c if c.is_control() => {
+                    let mut buf = [0u8; 4];
+                    for b in c.encode_utf8(&mut buf).bytes() {
+                        out.push_str(&format!("\\{b:03o}"));
+                    }
+                }
                 c => out.push(c),
             }
         }
@@ -133,7 +142,7 @@ fn shell_quote(s: &str) -> String {
 
     let mut out = String::new();
     for ch in s.chars() {
-        if ch.is_ascii_alphanumeric() || "_/.:-=+@,%^".contains(ch) {
+        if safe(ch) {
             out.push(ch);
         } else {
             out.push('\\');

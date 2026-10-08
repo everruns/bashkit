@@ -20,3 +20,11 @@ echo "test input" | bash /tmp/read_test.sh
 ### expect
 line: test input
 ### end
+
+### empty_pipe_is_stdin_at_eof_for_compound_commands
+printf '' | { wc -l; }
+f() { wc -l; }; printf '' | f
+### expect
+0
+0
+### end

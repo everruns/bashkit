@@ -95,3 +95,13 @@ printf "x\n" | xargs -r echo got
 ### expect
 got x
 ### end
+
+### xargs_empty_input_runs_command_once_with_empty_stdin
+# GNU xargs without -r runs the command once; its stdin is at EOF
+printf '' | xargs wc -l
+printf '' | xargs -r wc -l
+echo done
+### expect
+0
+done
+### end
