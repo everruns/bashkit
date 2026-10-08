@@ -249,7 +249,6 @@ err
 
 ### bashbox_interpreter_builtins_closing_stderr
 # closing stderr
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 ls /nope 2>&-; echo y
 ### expect
 y
@@ -257,7 +256,6 @@ y
 
 ### bashbox_interpreter_builtins_file_sends_both_streams_to_the_file
 # >&file sends both streams to the file
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 { echo z; echo e >&2; } >& both.txt; cat both.txt
 ### expect
 z
@@ -289,7 +287,6 @@ echo a > /no/such/dir/f; echo $?
 
 ### bashbox_interpreter_builtins_a_missing_directory_fails_2
 # a missing directory fails >&
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 echo z >& /no/such/dir/f; echo $?
 ### expect
 1
@@ -413,7 +410,6 @@ declare -A m; m[foo]=5; echo $((m[foo]*2)); (( m[bar]=3 )); echo ${m[bar]}
 
 ### bashbox_interpreter_builtins_c_style_for_header_with_a_substitution
 # c-style for header with a substitution
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 for ((i=$(echo 1); i<3; i++)); do echo $i; done
 ### expect
 1

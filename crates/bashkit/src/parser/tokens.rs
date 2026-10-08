@@ -142,6 +142,10 @@ pub enum Token {
     /// Duplicate fd to another (e.g., 2>&1)
     DupFd(i32, i32),
 
+    /// `N>&` followed by a word that is not a digit or `-` (`2>&$fd`,
+    /// `1>&file`): the word decides at expansion time.
+    DupFdWord(i32),
+
     /// Close output fd (e.g., 4>&-)
     DupFdCloseOut(i32),
 

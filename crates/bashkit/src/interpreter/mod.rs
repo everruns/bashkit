@@ -4304,7 +4304,8 @@ impl Interpreter {
 
         // Execute initialization
         if !arith_for.init.is_empty() {
-            self.execute_arithmetic_with_side_effects(&arith_for.init);
+            let init = self.arith_for_expr(&arith_for.init).await?;
+            self.execute_arithmetic_with_side_effects(&init);
         }
 
         self.counters.enter_loop();
@@ -4315,7 +4316,8 @@ impl Interpreter {
 
                 // Check condition (if empty, always true)
                 if !arith_for.condition.is_empty() {
-                    let cond_result = self.evaluate_arithmetic(&arith_for.condition);
+                    let condition = self.arith_for_expr(&arith_for.condition).await?;
+                    let cond_result = self.evaluate_arithmetic(&condition);
                     if cond_result == 0 {
                         break;
                     }
@@ -4341,7 +4343,8 @@ impl Interpreter {
 
                 // Execute step
                 if !arith_for.step.is_empty() {
-                    self.execute_arithmetic_with_side_effects(&arith_for.step);
+                    let step = self.arith_for_expr(&arith_for.step).await?;
+                    self.execute_arithmetic_with_side_effects(&step);
                 }
             }
 
@@ -4765,6 +4768,18 @@ impl Interpreter {
             // `((...))` reports an arithmetic error and fails with status 1;
             // unlike `$((...))` it does not abandon the line.
             Err(msg) => Ok(ExecResult::err(self.arith_diag("((: ", &msg), 1)),
+        }
+    }
+
+    /// A `for ((init; cond; step))` expression with its `$(...)` run, each
+    /// time it is evaluated, as `((...))` does.
+    async fn arith_for_expr<'e>(&mut self, expr: &'e str) -> Result<std::borrow::Cow<'e, str>> {
+        if expr.contains("$(") {
+            Ok(Box::pin(self.expand_command_subs_in_arithmetic(expr))
+                .await?
+                .into())
+        } else {
+            Ok(expr.into())
         }
     }
 
@@ -11661,7 +11676,8 @@ impl Interpreter {
         };
         let was_in_trap = self.in_trap;
         self.in_trap = true;
-        let saved_line_base = std::mem::replace(&mut self.line_base, self.current_line.saturating_sub(1));
+        let saved_line_base =
+            std::mem::replace(&mut self.line_base, self.current_line.saturating_sub(1));
         let emit_before = self.output_emit_count;
         let result = self.execute_command_sequence(&trap_script.commands).await;
         self.line_base = saved_line_base;
