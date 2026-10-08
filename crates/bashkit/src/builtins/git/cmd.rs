@@ -290,7 +290,26 @@ async fn git_add(
         ));
     }
 
-    let paths: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    // `-A`/`--all`/`-u`/`--update` stage the whole tree (there is no content
+    // tracking, so "modified tracked files" is every file); other flags
+    // (`-v`, `-f`, ...) are accepted and ignored. `--` ends options.
+    let mut paths: Vec<&str> = Vec::new();
+    let mut opts_done = false;
+    for arg in args {
+        if opts_done || !arg.starts_with('-') || arg == "-" {
+            paths.push(arg);
+        } else if arg == "--" {
+            opts_done = true;
+        } else if matches!(arg.as_str(), "-A" | "--all" | "-u" | "--update") {
+            paths.push(".");
+        }
+    }
+    if paths.is_empty() {
+        return Ok(ExecResult::err(
+            "Nothing specified, nothing added.\n".to_string(),
+            0,
+        ));
+    }
 
     match git_client.add(&ctx.fs, ctx.cwd, &paths).await {
         Ok(()) => Ok(ExecResult::ok(String::new())),
@@ -304,21 +323,57 @@ async fn git_commit(
     git_client: &super::GitClient,
     args: &[String],
 ) -> Result<ExecResult> {
-    // Parse -m <message>
+    // Parse -m <message> and -a, including bundles like `-am <message>`.
     let mut message: Option<String> = None;
+    let mut all = false;
 
     let mut i = 0;
     while i < args.len() {
         let arg = &args[i];
-        if arg == "-m" {
+        if arg == "--all" {
+            all = true;
+        } else if let Some(msg) = arg.strip_prefix("--message=") {
+            message = Some(msg.to_string());
+        } else if arg == "--message" {
             if i + 1 < args.len() {
                 message = Some(args[i + 1].clone());
                 i += 1;
             }
-        } else if let Some(msg) = arg.strip_prefix("-m") {
-            message = Some(msg.to_string());
+        } else if arg.starts_with('-') && !arg.starts_with("--") && arg.len() > 1 {
+            // Short-flag bundle: letters until `m`, whose value is the rest
+            // of the bundle or the next argument.
+            for (pos, c) in arg[1..].char_indices() {
+                match c {
+                    'a' => all = true,
+                    'm' => {
+                        let rest = &arg[1 + pos + 1..];
+                        if !rest.is_empty() {
+                            message = Some(rest.to_string());
+                        } else if i + 1 < args.len() {
+                            message = Some(args[i + 1].clone());
+                            i += 1;
+                        }
+                        break;
+                    }
+                    _ => {}
+                }
+            }
         }
         i += 1;
+    }
+
+    // `-a`: stage every tracked file still present before committing.
+    if all {
+        let tracked = match git_client.ls_files(&ctx.fs, ctx.cwd).await {
+            Ok(files) => files,
+            Err(e) => return git_err(e),
+        };
+        let paths: Vec<&str> = tracked.iter().map(String::as_str).collect();
+        if !paths.is_empty()
+            && let Err(e) = git_client.add(&ctx.fs, ctx.cwd, &paths).await
+        {
+            return git_err(e);
+        }
     }
 
     let message = match message {
@@ -540,16 +595,33 @@ async fn git_clone(
     git_client: &super::GitClient,
     args: &[String],
 ) -> Result<ExecResult> {
-    if args.is_empty() {
+    // Positional operands; flags are accepted and ignored (`--depth N`,
+    // `-b BRANCH`, `--origin NAME` consume their value).
+    let mut operands: Vec<&String> = Vec::new();
+    let mut i = 0;
+    while i < args.len() {
+        let arg = &args[i];
+        match arg.as_str() {
+            "--depth" | "-b" | "--branch" | "-o" | "--origin" => i += 1,
+            a if a.starts_with('-') && a.len() > 1 => {}
+            _ => operands.push(arg),
+        }
+        i += 1;
+    }
+    if operands.is_empty() {
         return Ok(ExecResult::err(
             "usage: git clone <repository> [<directory>]\n".to_string(),
             129,
         ));
     }
 
-    let url = &args[0];
-    let dest = if args.len() > 1 {
-        resolve_path(ctx.cwd, &args[1])
+    let url = operands[0];
+    if let Some(src) = local_clone_source(url) {
+        let quiet = args.iter().any(|a| a == "-q" || a == "--quiet");
+        return git_clone_local(&ctx, src, operands.get(1).map(|s| s.as_str()), quiet).await;
+    }
+    let dest = if operands.len() > 1 {
+        resolve_path(ctx.cwd, operands[1])
     } else {
         // Extract repo name from URL
         let name = url
@@ -564,6 +636,102 @@ async fn git_clone(
         Ok(output) => Ok(ExecResult::ok(output)),
         Err(e) => git_err(e),
     }
+}
+
+/// A clone source that names a repository in the VFS: `file://PATH` or a
+/// plain path (anything without a URL scheme or an scp-style `host:`).
+#[cfg(feature = "git")]
+fn local_clone_source(url: &str) -> Option<&str> {
+    if let Some(path) = url.strip_prefix("file://") {
+        return Some(path);
+    }
+    if url.contains("://") {
+        return None;
+    }
+    let before_slash = url.split('/').next().unwrap_or(url);
+    (!before_slash.contains(':')).then_some(url)
+}
+
+/// `git clone <vfs path> [dir]`: copy a working tree plus its `.git` state.
+///
+/// Decision: the repository already lives in the VFS, so a local clone is a
+/// tree copy (symlinks recreated, budget-accounted via `copy_tree`) with
+/// `origin` pointed at the source path. No network, no host path: the source
+/// resolves in the VFS like any other path (TM-GIT-005), and FS limits bound
+/// the copy (TM-GIT-007/009). Only non-bare repos exist in this VFS format.
+#[cfg(feature = "git")]
+async fn git_clone_local(
+    ctx: &Context<'_>,
+    src_arg: &str,
+    dest_arg: Option<&str>,
+    quiet: bool,
+) -> Result<ExecResult> {
+    let src = resolve_path(ctx.cwd, src_arg);
+    let src_git = crate::fs::vfs_join(&src, ".git");
+    if !matches!(ctx.fs.stat(&src_git).await, Ok(m) if m.file_type.is_dir()) {
+        return Ok(ExecResult::err(
+            format!("fatal: repository '{src_arg}' does not exist\n"),
+            128,
+        ));
+    }
+
+    let default_name;
+    let dest_arg = match dest_arg {
+        Some(d) => d,
+        None => {
+            default_name = src_arg
+                .trim_end_matches('/')
+                .rsplit('/')
+                .next()
+                .unwrap_or("repo")
+                .trim_end_matches(".git")
+                .to_string();
+            default_name.as_str()
+        }
+    };
+    let dest = resolve_path(ctx.cwd, dest_arg);
+    if dest.starts_with(&src) {
+        return Ok(ExecResult::err(
+            format!("fatal: cannot clone '{src_arg}' into itself ('{dest_arg}')\n"),
+            128,
+        ));
+    }
+    if let Ok(meta) = ctx.fs.stat(&dest).await {
+        let empty_dir = meta.file_type.is_dir()
+            && ctx
+                .fs
+                .read_dir(&dest)
+                .await
+                .map(|e| e.is_empty())
+                .unwrap_or(false);
+        if !empty_dir {
+            return Ok(ExecResult::err(
+                format!(
+                    "fatal: destination path '{dest_arg}' already exists and is not an empty directory.\n"
+                ),
+                128,
+            ));
+        }
+    }
+    if let Some(parent) = dest.parent()
+        && !ctx.fs.exists(parent).await?
+    {
+        ctx.fs.mkdir(parent, true).await?;
+    }
+
+    if let Err(msg) = crate::builtins::fileops::copy_tree(ctx, &src, &dest, false).await? {
+        return Ok(ExecResult::err(format!("fatal: {msg}\n"), 128));
+    }
+    let remotes = crate::fs::vfs_join(&dest, ".git/remotes");
+    ctx.fs
+        .write_file(&remotes, format!("origin|{}\n", src.display()).as_bytes())
+        .await?;
+
+    let mut result = ExecResult::ok(String::new());
+    if !quiet {
+        result.stderr = format!("Cloning into '{dest_arg}'...\ndone.\n").into();
+    }
+    Ok(result)
 }
 
 #[cfg(feature = "git")]

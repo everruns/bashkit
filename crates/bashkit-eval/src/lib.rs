@@ -10,6 +10,7 @@ pub mod checks;
 pub mod dataset;
 pub mod mira_study;
 pub mod provider;
+pub mod reference;
 pub mod replay;
 pub mod scripting_agent;
 pub mod scripting_dataset;

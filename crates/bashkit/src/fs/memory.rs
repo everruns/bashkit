@@ -1492,10 +1492,12 @@ impl FileSystem for InMemoryFs {
                 }
             }
         } else {
-            // Check parent exists
+            // Parent must be a directory. A symlink parent is refused too, so
+            // the symlink-following layer resolves it and the entry lands in
+            // the link's target instead of under a literal `link/` key.
             if let Some(parent) = path.parent()
-                && !entries.contains_key(parent)
                 && parent != Path::new("/")
+                && !matches!(entries.get(parent), Some(FsEntry::Directory { .. }))
             {
                 return Err(IoError::new(ErrorKind::NotFound, "parent directory not found").into());
             }
@@ -1780,6 +1782,15 @@ impl FileSystem for InMemoryFs {
         let link = Self::normalize_path(link);
         let target_size = target.as_os_str().as_encoded_bytes().len();
         let mut entries = self.entries.write().unwrap();
+
+        // Parent must be a directory (see `mkdir`): a symlink parent is left to
+        // the following layer to resolve.
+        if let Some(parent) = link.parent()
+            && parent != Path::new("/")
+            && !matches!(entries.get(parent), Some(FsEntry::Directory { .. }))
+        {
+            return Err(IoError::new(ErrorKind::NotFound, "parent directory not found").into());
+        }
 
         // THREAT[TM-DOS-045]: Symlinks count toward file count.
         // THREAT[TM-DOS-013]: Symlink target bytes count toward filesystem usage.

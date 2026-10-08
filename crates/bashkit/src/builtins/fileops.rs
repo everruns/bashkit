@@ -395,14 +395,14 @@ impl Builtin for Cp {
 
 /// Future returned by [`copy_tree`]: outer `Err` aborts, inner `Err` is a
 /// user-facing message.
-type CopyTreeFuture<'a> = std::pin::Pin<
+pub(crate) type CopyTreeFuture<'a> = std::pin::Pin<
     Box<dyn std::future::Future<Output = Result<std::result::Result<(), String>>> + Send + 'a>,
 >;
 
 /// Recursively copy `src` to `dst` (GNU `cp -R` without `-L`: symlinks are
 /// recreated, not followed). The outer error is cancellation/budget; the
 /// inner one is a user-facing message for the first failed entry.
-fn copy_tree<'a>(
+pub(crate) fn copy_tree<'a>(
     ctx: &'a Context<'_>,
     src: &'a Path,
     dst: &'a Path,
@@ -976,47 +976,71 @@ impl Builtin for Chmod {
 
 /// The ln builtin - create links.
 ///
-/// Usage: ln [-s] [-f] TARGET LINK_NAME
-///        ln [-s] [-f] TARGET... DIRECTORY
+/// Usage: ln [-sfnTv] TARGET LINK_NAME
+///        ln [-sfnv] TARGET... DIRECTORY
 ///
 /// Options:
 ///   -s   Create symbolic link (default in Bashkit; hard links not supported in VFS)
 ///   -f   Force: remove existing destination files
+///   -n   Treat a symlink to a directory as the link to replace
+///   -T   Always treat LINK_NAME as the link itself
+///   -v   Print each link made
 ///
 /// Note: In Bashkit's virtual filesystem, all links are symbolic.
 /// Hard links are not supported; `-s` is implied.
 pub struct Ln;
 
+/// Decision: GNU `ln` destination rules, symbolic links only (L-FS-001).
+/// A destination that is a directory (following a symlink unless `-n`)
+/// receives `DIR/basename(TARGET)`; `-n` treats a symlink to a directory as
+/// the link to replace (the `ln -sfn releases/v2 current` idiom); `-T` always
+/// treats the destination as the link name. A real directory is never
+/// replaced, so `-f` cannot orphan its children (issue #1577).
 #[async_trait]
 impl Builtin for Ln {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
         if let Some(r) = super::check_help_version(
             ctx.args,
-            "Usage: ln [OPTION]... TARGET LINK_NAME\nCreate a link to TARGET with the name LINK_NAME.\n\n  -s\t\tmake symbolic links instead of hard links\n  -f\t\tremove existing destination files\n      --help\tdisplay this help and exit\n      --version\toutput version information and exit\n",
+            "Usage: ln [OPTION]... TARGET LINK_NAME\n  or:  ln [OPTION]... TARGET... DIRECTORY\nCreate a link to TARGET with the name LINK_NAME, or links in DIRECTORY.\n\n  -s, --symbolic\t\tmake symbolic links instead of hard links\n  -f, --force\t\t\tremove existing destination files\n  -n, --no-dereference\t\ttreat LINK_NAME as a normal file if it is a\n\t\t\t\tsymbolic link to a directory\n  -T, --no-target-directory\ttreat LINK_NAME as a normal file always\n  -v, --verbose\t\t\tprint name of each linked file\n      --help\tdisplay this help and exit\n      --version\toutput version information and exit\n",
             Some("ln (bashkit) 0.1"),
         ) {
             return Ok(r);
         }
 
         let mut force = false;
+        let mut no_deref = false;
+        let mut no_target_dir = false;
+        let mut verbose = false;
         let mut files: Vec<&str> = Vec::new();
+        let mut opts_done = false;
 
         for arg in ctx.args.iter() {
-            if arg.starts_with('-') && arg.len() > 1 {
-                for c in arg[1..].chars() {
-                    match c {
-                        's' => {} // symbolic — always symbolic in VFS
-                        'f' => force = true,
-                        _ => {
-                            return Ok(ExecResult::err(
-                                format!("ln: invalid option -- '{}'\n", c),
-                                1,
-                            ));
-                        }
-                    }
+            if opts_done || arg == "-" || !arg.starts_with('-') {
+                files.push(arg);
+            } else if arg == "--" {
+                opts_done = true;
+            } else if let Some(long) = arg.strip_prefix("--") {
+                match long {
+                    "symbolic" | "logical" | "physical" => {}
+                    "force" => force = true,
+                    "no-dereference" => no_deref = true,
+                    "no-target-directory" => no_target_dir = true,
+                    "verbose" => verbose = true,
+                    _ => return Ok(super::invalid_option("ln", arg, 1)),
                 }
             } else {
-                files.push(arg);
+                for c in arg[1..].chars() {
+                    match c {
+                        // symbolic: always symbolic in the VFS; -L/-P only
+                        // matter for hard links.
+                        's' | 'L' | 'P' => {}
+                        'f' => force = true,
+                        'n' => no_deref = true,
+                        'T' => no_target_dir = true,
+                        'v' => verbose = true,
+                        _ => return Ok(super::invalid_option("ln", &format!("-{c}"), 1)),
+                    }
+                }
             }
         }
 
@@ -1024,46 +1048,92 @@ impl Builtin for Ln {
             return Ok(ExecResult::err("ln: missing file operand\n".to_string(), 1));
         }
 
-        let target = files[0];
-        let link_name = files[1];
-        let link_path = resolve_path(ctx.cwd, link_name);
+        let (targets, dest) = files.split_at(files.len() - 1);
+        let dest = dest[0];
+        let dest_path = resolve_path(ctx.cwd, dest);
 
-        // If link already exists
-        if ctx.fs.exists(&link_path).await.unwrap_or(false) {
-            if force {
-                // Surface remove failures (e.g. non-empty directory) instead
-                // of falling through and overwriting via symlink, which on
-                // the in-memory VFS would orphan children and corrupt state
-                // (issue #1577).
-                if let Err(e) = ctx.fs.remove(&link_path, false).await {
-                    return Ok(ExecResult::err(
-                        format!("ln: cannot remove '{}': {}\n", link_name, e),
-                        1,
-                    ));
-                }
-            } else {
+        let into_dir = if no_target_dir {
+            if targets.len() > 1 {
                 return Ok(ExecResult::err(
-                    format!(
-                        "ln: failed to create symbolic link '{}': File exists\n",
-                        link_name
-                    ),
+                    format!("ln: extra operand '{}'\n", dest),
                     1,
                 ));
             }
-        }
-
-        let target_path = Path::new(target);
-        if let Err(e) = ctx.fs.symlink(target_path, &link_path).await {
+            false
+        } else {
+            let meta = if no_deref {
+                ctx.fs.lstat(&dest_path).await
+            } else {
+                ctx.fs.stat(&dest_path).await
+            };
+            matches!(meta, Ok(m) if m.file_type.is_dir())
+        };
+        if targets.len() > 1 && !into_dir {
             return Ok(ExecResult::err(
-                format!(
-                    "ln: failed to create symbolic link '{}': {}\n",
-                    link_name, e
-                ),
+                format!("ln: target '{}' is not a directory\n", dest),
                 1,
             ));
         }
 
-        Ok(ExecResult::ok(String::new()))
+        let mut out = String::new();
+        let mut errors = String::new();
+        for target in targets {
+            let (link_name, link_path) = if into_dir {
+                let base = target
+                    .trim_end_matches('/')
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or(target);
+                let shown = if dest.ends_with('/') {
+                    format!("{dest}{base}")
+                } else {
+                    format!("{dest}/{base}")
+                };
+                (shown, vfs_join(&dest_path, base))
+            } else {
+                (dest.to_string(), dest_path.clone())
+            };
+
+            if let Ok(meta) = ctx.fs.lstat(&link_path).await {
+                if !force {
+                    errors.push_str(&format!(
+                        "ln: failed to create symbolic link '{}': File exists\n",
+                        link_name
+                    ));
+                    continue;
+                }
+                if meta.file_type.is_dir() {
+                    errors.push_str(&format!(
+                        "ln: '{}': cannot overwrite directory\n",
+                        link_name
+                    ));
+                    continue;
+                }
+                if let Err(e) = ctx.fs.remove(&link_path, false).await {
+                    errors.push_str(&format!("ln: cannot remove '{}': {}\n", link_name, e));
+                    continue;
+                }
+            }
+
+            if let Err(e) = ctx.fs.symlink(Path::new(target), &link_path).await {
+                errors.push_str(&format!(
+                    "ln: failed to create symbolic link '{}': {}\n",
+                    link_name, e
+                ));
+                continue;
+            }
+            if verbose {
+                out.push_str(&format!("'{}' -> '{}'\n", link_name, target));
+            }
+        }
+
+        if errors.is_empty() {
+            Ok(ExecResult::ok(out))
+        } else {
+            let mut r = ExecResult::err(errors, 1);
+            r.stdout = out.into();
+            Ok(r)
+        }
     }
 }
 
@@ -1668,12 +1738,11 @@ mod tests {
         assert_eq!(meta.mode, 0o755);
     }
 
-    /// Regression: issue #1577. `ln -f` over a non-empty directory must
-    /// surface the underlying remove failure instead of silently
-    /// proceeding to symlink creation, which on the in-memory VFS would
-    /// orphan the directory's children.
+    /// Regression: issue #1577. `ln -f` must never replace a non-empty
+    /// directory (on the in-memory VFS that would orphan its children). Like
+    /// GNU ln, the link goes inside the directory; with `-T` ln refuses.
     #[tokio::test]
-    async fn test_ln_force_over_non_empty_dir_fails() {
+    async fn test_ln_force_over_non_empty_dir_keeps_children() {
         let (fs, mut cwd, mut variables) = create_test_ctx().await;
         let env = HashMap::new();
 
@@ -1686,37 +1755,36 @@ mod tests {
             .await
             .unwrap();
 
-        let args = vec![
-            "-sf".to_string(),
-            "target.txt".to_string(),
-            "destdir".to_string(),
-        ];
-        let ctx = Context {
-            args: &args,
-            env: &env,
-            variables: &mut variables,
-            cwd: &mut cwd,
-            fs: fs.clone(),
-            stdin: None,
-            #[cfg(feature = "http_client")]
-            http_client: None,
-            #[cfg(feature = "git")]
-            git_client: None,
-            #[cfg(feature = "ssh")]
-            ssh_client: None,
-            shell: None,
-        };
-
-        let result = Ln.execute(ctx).await.unwrap();
-        assert_ne!(
-            result.exit_code, 0,
-            "ln -sf must fail when destination is a non-empty directory"
-        );
-        // Child must still exist; ln must not have proceeded to symlink.
-        assert!(
-            fs.exists(&cwd.join("destdir/child.txt")).await.unwrap(),
-            "child file must not be orphaned"
-        );
+        for (flags, want_exit) in [("-sf", 0), ("-sfT", 1)] {
+            let args = vec![
+                flags.to_string(),
+                "target.txt".to_string(),
+                "destdir".to_string(),
+            ];
+            let ctx = Context {
+                args: &args,
+                env: &env,
+                variables: &mut variables,
+                cwd: &mut cwd,
+                fs: fs.clone(),
+                stdin: None,
+                #[cfg(feature = "http_client")]
+                http_client: None,
+                #[cfg(feature = "git")]
+                git_client: None,
+                #[cfg(feature = "ssh")]
+                ssh_client: None,
+                shell: None,
+            };
+            let result = Ln.execute(ctx).await.unwrap();
+            assert_eq!(result.exit_code, want_exit, "ln {flags}");
+            assert!(
+                fs.exists(&cwd.join("destdir/child.txt")).await.unwrap(),
+                "child file must not be orphaned (ln {flags})"
+            );
+        }
+        let link = fs.read_link(&cwd.join("destdir/target.txt")).await.unwrap();
+        assert_eq!(link, std::path::PathBuf::from("target.txt"));
     }
 
     #[test]

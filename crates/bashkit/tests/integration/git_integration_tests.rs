@@ -405,3 +405,122 @@ async fn git_init_options_are_parsed_not_taken_as_directory() {
     let r = bash.exec("git init -b 'a b' /y").await.unwrap();
     assert_eq!(r.exit_code, 128);
 }
+
+/// Stage-all shorthands agents reach for first (`add -A`, `commit -am`).
+mod stage_all {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_git_add_all_flags_stage_everything() {
+        for flag in ["-A", "--all"] {
+            let mut bash = create_git_bash();
+            let script = format!(
+                "mkdir -p /r/d && cd /r && git init -q && echo a > f && echo b > d/g && \
+                 git add {flag} && git commit -m init && git ls-files"
+            );
+            let result = bash.exec(&script).await.unwrap();
+            assert_eq!(result.exit_code, 0, "{flag}: {}", result.stderr);
+            assert!(result.stdout.contains("d/g"), "{flag}: {}", result.stdout);
+            assert!(result.stdout.contains("f\n"), "{flag}: {}", result.stdout);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_git_commit_am_stages_tracked_files_only() {
+        let mut bash = create_git_bash();
+        let result = bash
+            .exec(
+                "mkdir -p /r && cd /r && git init -q && echo a > f && git add . && \
+                 git commit -q -m init && echo b >> f && echo n > untracked && \
+                 git commit -am 'fix: y'",
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0, "{}", result.stderr);
+        assert!(result.stdout.contains("fix: y"), "{}", result.stdout);
+
+        let log = bash.exec("cd /r && git log").await.unwrap();
+        assert!(log.stdout.contains("fix: y"), "{}", log.stdout);
+        let files = bash.exec("cd /r && git ls-files").await.unwrap();
+        assert!(!files.stdout.contains("untracked"), "{}", files.stdout);
+
+        // Split flags work the same way.
+        let split = bash
+            .exec("cd /r && echo c >> f && git commit -a -m 'second'")
+            .await
+            .unwrap();
+        assert_eq!(split.exit_code, 0, "{}", split.stderr);
+    }
+}
+
+/// `git clone <local path>`: copy a repo that already lives in the VFS.
+mod clone_local {
+    use super::*;
+
+    const UPSTREAM: &str = "mkdir -p /srv/git/calc/lib && cd /srv/git/calc && git init -q && \
+         echo 'mul() { :; }' > lib/calc.sh && ln -s lib/calc.sh entry && \
+         git add . && git commit -q -m 'initial import' && cd /";
+
+    #[tokio::test]
+    async fn test_git_clone_local_path_copies_tree_and_history() {
+        let mut bash = create_git_bash();
+        bash.exec(UPSTREAM).await.unwrap();
+        let r = bash
+            .exec("mkdir -p /work && cd /work && git clone /srv/git/calc")
+            .await
+            .unwrap();
+        assert_eq!(r.exit_code, 0, "{}", r.stderr);
+        assert!(r.stderr.contains("Cloning into 'calc'"), "{}", r.stderr);
+
+        let r = bash
+            .exec("cd /work/calc && cat lib/calc.sh && readlink entry && git log && git remote -v")
+            .await
+            .unwrap();
+        assert_eq!(r.exit_code, 0, "{}", r.stderr);
+        assert!(r.stdout.contains("mul()"), "{}", r.stdout);
+        assert!(r.stdout.contains("lib/calc.sh\n"), "{}", r.stdout);
+        assert!(r.stdout.contains("initial import"), "{}", r.stdout);
+        assert!(r.stdout.contains("origin\t/srv/git/calc"), "{}", r.stdout);
+
+        // The clone is independent of upstream.
+        bash.exec("cd /work/calc && echo changed > lib/calc.sh")
+            .await
+            .unwrap();
+        let up = bash.exec("cat /srv/git/calc/lib/calc.sh").await.unwrap();
+        assert!(up.stdout.contains("mul()"), "{}", up.stdout);
+    }
+
+    #[tokio::test]
+    async fn test_git_clone_local_explicit_dest_and_file_url() {
+        let mut bash = create_git_bash();
+        bash.exec(UPSTREAM).await.unwrap();
+        let r = bash
+            .exec("git clone -q file:///srv/git/calc /w/c2 && cat /w/c2/lib/calc.sh")
+            .await
+            .unwrap();
+        assert_eq!(r.exit_code, 0, "{}", r.stderr);
+        assert!(r.stdout.contains("mul()"), "{}", r.stdout);
+    }
+
+    #[tokio::test]
+    async fn test_git_clone_local_errors() {
+        let mut bash = create_git_bash();
+        bash.exec(UPSTREAM).await.unwrap();
+        let r = bash.exec("git clone /srv/git/nope /w/x").await.unwrap();
+        assert_eq!(r.exit_code, 128);
+        assert!(r.stderr.contains("does not exist"), "{}", r.stderr);
+
+        let r = bash
+            .exec("mkdir -p /w/full && touch /w/full/f && git clone /srv/git/calc /w/full")
+            .await
+            .unwrap();
+        assert_eq!(r.exit_code, 128);
+        assert!(r.stderr.contains("already exists"), "{}", r.stderr);
+
+        let r = bash
+            .exec("git clone /srv/git/calc /srv/git/calc/inner")
+            .await
+            .unwrap();
+        assert_eq!(r.exit_code, 128, "{}", r.stderr);
+    }
+}

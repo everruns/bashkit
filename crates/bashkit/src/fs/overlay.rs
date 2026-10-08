@@ -183,6 +183,22 @@ pub struct OverlayFs {
 }
 
 impl OverlayFs {
+    /// Make sure `path`'s parent exists in the upper layer, copying the
+    /// directory chain up from the lower layer like `write_file` does. The
+    /// upper `InMemoryFs` refuses entries whose parent it does not hold.
+    async fn ensure_upper_parent(&self, path: &Path) -> Result<()> {
+        if let Some(parent) = path.parent()
+            && !self.upper.exists(parent).await.unwrap_or(false)
+        {
+            if self.lower.exists(parent).await.unwrap_or(false) {
+                self.upper.mkdir(parent, true).await?;
+            } else {
+                return Err(IoError::new(ErrorKind::NotFound, "parent directory not found").into());
+            }
+        }
+        Ok(())
+    }
+
     /// Create a new overlay filesystem with the given base layer and default limits.
     ///
     /// The `lower` filesystem is treated as read-only - all reads will first
@@ -912,14 +928,17 @@ impl FileSystem for OverlayFs {
             let target = self.read_link(&from).await?;
             self.check_write_limits(0)?;
             self.remove_whiteout(&to);
+            self.ensure_upper_parent(&to).await?;
             self.upper.symlink(&target, &to).await?;
             self.remove(&from, false).await?;
             return Ok(());
         }
 
-        // Regular file: read content and write to new location
+        // Regular file: read content and write to new location. A rename
+        // keeps the inode's mode (`sed -i` relies on it for scripts).
         let content = self.read_file(&from).await?;
         self.write_file(&to, &content).await?;
+        self.chmod(&to, meta.mode).await?;
         self.remove(&from, false).await?;
 
         Ok(())
@@ -942,6 +961,7 @@ impl FileSystem for OverlayFs {
             let target = self.read_link(&from).await?;
             self.check_write_limits(0)?;
             self.remove_whiteout(&to);
+            self.ensure_upper_parent(&to).await?;
             return self.upper.symlink(&target, &to).await;
         }
 
@@ -965,6 +985,7 @@ impl FileSystem for OverlayFs {
         self.remove_whiteout(&link);
 
         // Create symlink in upper
+        self.ensure_upper_parent(&link).await?;
         self.upper.symlink(target, &link).await
     }
 
@@ -1246,6 +1267,43 @@ mod tests {
 
         // Should NOT be in lower
         assert!(!lower.exists(Path::new("/tmp/new.txt")).await.unwrap());
+    }
+
+    /// `sed -i` replaces a file by renaming a chmod-ed temp over it; a plain
+    /// file rename must keep the source mode or an executable script loses
+    /// its exec bit (found by the eval repo_workflow reference solutions).
+    #[tokio::test]
+    async fn test_rename_file_preserves_mode() {
+        let lower = Arc::new(InMemoryFs::new());
+        lower
+            .write_file(Path::new("/tmp/lower.sh"), b"#!/bin/bash\n")
+            .await
+            .unwrap();
+        lower
+            .chmod(Path::new("/tmp/lower.sh"), 0o755)
+            .await
+            .unwrap();
+        let overlay = OverlayFs::new(lower);
+        overlay
+            .write_file(Path::new("/tmp/upper.sh"), b"#!/bin/bash\n")
+            .await
+            .unwrap();
+        overlay
+            .chmod(Path::new("/tmp/upper.sh"), 0o750)
+            .await
+            .unwrap();
+
+        for (from, to, mode) in [
+            ("/tmp/lower.sh", "/tmp/a.sh", 0o755),
+            ("/tmp/upper.sh", "/tmp/b.sh", 0o750),
+        ] {
+            overlay
+                .rename(Path::new(from), Path::new(to))
+                .await
+                .unwrap();
+            let meta = overlay.stat(Path::new(to)).await.unwrap();
+            assert_eq!(meta.mode & 0o777, mode, "{from} -> {to}");
+        }
     }
 
     #[tokio::test]

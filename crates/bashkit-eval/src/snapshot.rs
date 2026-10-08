@@ -36,6 +36,10 @@ pub struct Snapshot {
     pub last_exit_code: Option<i32>,
     /// Absolute paths of expectation-relevant directories in the VFS after the run.
     pub dirs: Vec<String>,
+    /// Expectation-relevant symlinks: link path -> raw `readlink` target.
+    /// Paths that are not symlinks are absent.
+    #[serde(default)]
+    pub links: BTreeMap<String, String>,
 }
 
 /// Metadata key under which the snapshot rides on the Transcript.
@@ -63,6 +67,7 @@ pub const MAX_SNAPSHOT_FILE_BYTES: usize = 1024 * 1024;
 pub struct SnapshotTargets {
     pub files: BTreeSet<String>,
     pub dirs: BTreeSet<String>,
+    pub links: BTreeSet<String>,
 }
 
 impl SnapshotTargets {
@@ -76,10 +81,15 @@ impl SnapshotTargets {
                     targets.files.insert(check_value.to_string());
                     targets.dirs.insert(check_value.to_string());
                 }
+                "symlink" => {
+                    if let Some((path, _)) = check_value.split_once(':') {
+                        targets.links.insert(path.to_string());
+                    }
+                }
                 "dir_exists" => {
                     targets.dirs.insert(check_value.to_string());
                 }
-                "file_contains" | "file_line_regex" => {
+                "file_contains" | "file_not_contains" | "file_line_regex" => {
                     if let Some((path, _)) = check_value.split_once(':') {
                         targets.files.insert(path.to_string());
                     }
@@ -124,6 +134,28 @@ pub async fn snapshot_fs(
     }
     dirs.sort();
     (files, dirs)
+}
+
+/// Read the raw target of each expectation-relevant symlink (`lstat`, so a
+/// link to a directory is reported as the link, not followed).
+pub async fn snapshot_links(
+    fs: &dyn FileSystem,
+    targets: &SnapshotTargets,
+) -> BTreeMap<String, String> {
+    let mut links = BTreeMap::new();
+    for path in &targets.links {
+        let path_buf = PathBuf::from(path);
+        let Ok(metadata) = fs.lstat(&path_buf).await else {
+            continue;
+        };
+        if metadata.file_type != FileType::Symlink {
+            continue;
+        }
+        if let Ok(target) = fs.read_link(&path_buf).await {
+            links.insert(path.clone(), target.to_string_lossy().into_owned());
+        }
+    }
+    links
 }
 
 fn lossy_truncated(bytes: &[u8]) -> String {

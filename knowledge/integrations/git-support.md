@@ -21,14 +21,26 @@ on the virtual filesystem only. Configure via
 
 ### Supported Commands
 
-- Phase 1 (local): `init`, `config`, `add`, `commit -m` (no `-m` opens `$EDITOR` inside a
-  terminal session, see [In-Process Terminal](in-process-terminal.md)), `status`, `log [-n N]`
+- Phase 1 (local): `init`, `config`, `add` (`-A`/`--all`/`-u` stage the whole
+  tree), `commit -m` (`-a`/`-am MSG` restage every tracked file first; no `-m`
+  opens `$EDITOR` inside a terminal session, see
+  [In-Process Terminal](in-process-terminal.md)), `status`, `log [-n N]`
+- Local clone: `git clone PATH|file://PATH [DIR]` copies a repo that already
+  lives in the VFS (tree + `.git`, symlinks kept, via `cp -R`'s budgeted
+  `copy_tree`) and points `origin` at the source path. Refuses a missing repo,
+  a non-empty destination, or a destination inside the source (exit 128).
 - Phase 2 (remote, virtual mode): `remote [-v]`, `remote add/remove` (fully
   functional); `clone`/`push`/`pull`/`fetch` validate URL against allowlist
   then return virtual-mode messages (no network in VFS-only mode)
 - Phase 3 (advanced): `branch [-d]`, `checkout [-b]`, `diff` (simplified),
   `reset [--soft|--mixed|--hard]`
 - Future: `merge`, `rebase`, `stash`
+- Known gaps (seen by the `repo_workflow` eval): no content tracking, so
+  `status` never shows modified files and `commit -a` always commits; commit
+  hashes derive from the timestamp (two commits in one second share a hash);
+  `commit` always advances `refs/heads/master` and prints `[master ...]`, even
+  on another branch; `log --oneline`/`--format` and `status --porcelain` are
+  ignored (full format); `commit -q` still prints; `show --stat` fails.
 
 ### Security
 

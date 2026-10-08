@@ -10,6 +10,10 @@
 //   exit_code:N           stdout_contains:text    stdout_regex:pattern
 //   stderr_empty          file_exists:/path       dir_exists:/path
 //   file_contains:/path:text   file_line_regex:/path:pattern   llm_judge:prompt
+//   file_not_contains:/path:text  (file must exist and not contain text)
+//   symlink:/path:target  (/path is a symlink whose target resolves to the
+//                          same absolute path as `target`; relative or absolute
+//                          spellings both pass)
 
 use std::collections::BTreeMap;
 
@@ -86,7 +90,9 @@ pub fn evaluate_check(
         "file_exists" => check_file_exists(check, weight, check_value, snap, files),
         "dir_exists" => check_dir_exists(check, weight, check_value, snap),
         "file_contains" => check_file_contains(check, weight, check_value, files),
+        "file_not_contains" => check_file_not_contains(check, weight, check_value, files),
         "file_line_regex" => check_file_line_regex(check, weight, check_value, files),
+        "symlink" => check_symlink(check, weight, check_value, snap),
         "llm_judge" => CheckResult {
             check: check.to_string(),
             passed: true,
@@ -251,6 +257,37 @@ fn check_file_contains(
     }
 }
 
+fn check_file_not_contains(
+    check: &str,
+    weight: f64,
+    value: &str,
+    files: &BTreeMap<String, String>,
+) -> CheckResult {
+    // Format: "file_not_contains:/path:text". A missing file fails: the check
+    // asserts an edit to a file that must still exist, not its deletion.
+    let Some((path_str, text)) = value.split_once(':') else {
+        return CheckResult {
+            check: check.to_string(),
+            passed: false,
+            detail: "invalid format, expected file_not_contains:/path:text".to_string(),
+            weight,
+        };
+    };
+    let (passed, detail) = match files.get(path_str) {
+        Some(content) if content.contains(text) => {
+            (false, format!("'{}' still present in {}", text, path_str))
+        }
+        Some(_) => (true, "absent from file".to_string()),
+        None => (false, format!("cannot read {}", path_str)),
+    };
+    CheckResult {
+        check: check.to_string(),
+        passed,
+        detail,
+        weight,
+    }
+}
+
 fn check_file_line_regex(
     check: &str,
     weight: f64,
@@ -309,6 +346,51 @@ fn check_file_line_regex(
     }
 }
 
+/// Lexically resolve `target` against the directory holding `link`
+/// (`.`/`..` folded, no filesystem access), the way `readlink -m` would.
+fn resolve_link_target(link: &str, target: &str) -> String {
+    let mut parts: Vec<&str> = Vec::new();
+    if !target.starts_with('/') {
+        let parent = link.rsplit_once('/').map(|(p, _)| p).unwrap_or("");
+        parts.extend(parent.split('/').filter(|p| !p.is_empty()));
+    }
+    for seg in target.split('/') {
+        match seg {
+            "" | "." => {}
+            ".." => {
+                parts.pop();
+            }
+            s => parts.push(s),
+        }
+    }
+    format!("/{}", parts.join("/"))
+}
+
+fn check_symlink(check: &str, weight: f64, value: &str, snap: &Snapshot) -> CheckResult {
+    // Format: "symlink:/link/path:target".
+    let Some((link, expected)) = value.split_once(':') else {
+        return CheckResult {
+            check: check.to_string(),
+            passed: false,
+            detail: "invalid format, expected symlink:/path:target".to_string(),
+            weight,
+        };
+    };
+    let (passed, detail) = match snap.links.get(link) {
+        None => (false, format!("{link} is not a symlink")),
+        Some(actual) => {
+            let ok = resolve_link_target(link, actual) == resolve_link_target(link, expected);
+            (ok, format!("{link} -> {actual}"))
+        }
+    };
+    CheckResult {
+        check: check.to_string(),
+        passed,
+        detail,
+        weight,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -320,6 +402,7 @@ mod tests {
             tool_outputs: outputs,
             last_exit_code,
             dirs: Vec::new(),
+            links: BTreeMap::new(),
         }
     }
 
@@ -379,6 +462,7 @@ mod tests {
             tool_outputs: vec![],
             last_exit_code: Some(0),
             dirs: vec!["/project/src".to_string()],
+            links: BTreeMap::new(),
         };
         assert!(check_dir_exists("dir_exists:/project/src", 1.0, "/project/src", &snap).passed);
         assert!(!check_dir_exists("dir_exists:/project/x", 1.0, "/project/x", &snap).passed);
@@ -390,6 +474,7 @@ mod tests {
             tool_outputs: vec![],
             last_exit_code: Some(0),
             dirs: vec!["/a/dir".to_string()],
+            links: BTreeMap::new(),
         };
         let files = files_with(&[("/a/file.txt", "x")]);
         assert!(
@@ -492,6 +577,42 @@ mod tests {
             let result = check_file_line_regex(check, 1.0, value, &files);
             assert!(!result.passed, "malformed CSV matched check: {check}");
         }
+    }
+
+    #[test]
+    fn file_not_contains_pass_fail_and_missing() {
+        let files = files_with(&[("/d/eu.csv", "order,amount\nB1,50\n")]);
+        let ok = "/d/eu.csv:n/a";
+        assert!(check_file_not_contains("c", 1.0, ok, &files).passed);
+        let present = "/d/eu.csv:B1,50";
+        assert!(!check_file_not_contains("c", 1.0, present, &files).passed);
+        let missing = "/d/gone.csv:n/a";
+        assert!(!check_file_not_contains("c", 1.0, missing, &files).passed);
+    }
+
+    #[test]
+    fn symlink_accepts_relative_or_absolute_target() {
+        let mut snap = snap_with(vec![]);
+        snap.links
+            .insert("/srv/app/current".into(), "releases/v2".into());
+        let v = "/srv/app/current:releases/v2";
+        assert!(check_symlink("symlink", 1.0, v, &snap).passed);
+        let v = "/srv/app/current:/srv/app/releases/v2";
+        assert!(check_symlink("symlink", 1.0, v, &snap).passed);
+        let v = "/srv/app/current:./releases/v2/";
+        assert!(check_symlink("symlink", 1.0, v, &snap).passed);
+    }
+
+    #[test]
+    fn symlink_rejects_wrong_target_or_non_link() {
+        let mut snap = snap_with(vec![]);
+        snap.links
+            .insert("/srv/app/current".into(), "releases/v1".into());
+        let v = "/srv/app/current:releases/v2";
+        assert!(!check_symlink("symlink", 1.0, v, &snap).passed);
+        // A copied directory (no symlink recorded) must not pass.
+        let v = "/srv/app/other:releases/v2";
+        assert!(!check_symlink("symlink", 1.0, v, &snap).passed);
     }
 
     #[test]
