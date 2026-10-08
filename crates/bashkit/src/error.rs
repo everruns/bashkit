@@ -166,7 +166,8 @@ impl Error {
 /// `filesystem is read-only`, a custom [`crate::FileSystem`] backend's own
 /// wording — tells the caller *why* in a way the bare errno cannot, and is
 /// kept verbatim.
-const ERRNO_RESTATING_MESSAGES: &[&str] = &["file not found", "parent directory not found"];
+const ERRNO_RESTATING_MESSAGES: &[&str] =
+    &["file not found", "not found", "parent directory not found"];
 
 /// Render a filesystem error the way a real shell tool renders it.
 ///
@@ -252,11 +253,10 @@ mod tests {
     /// depend on this to avoid printing the `io error: ` enum shape.
     #[test]
     fn io_error_reason_maps_errno_restating_messages() {
-        let err = Error::Io(std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            "file not found",
-        ));
-        assert_eq!(io_error_reason(&err), "No such file or directory");
+        for message in ["file not found", "not found", "parent directory not found"] {
+            let err = Error::Io(std::io::Error::new(std::io::ErrorKind::NotFound, message));
+            assert_eq!(io_error_reason(&err), "No such file or directory");
+        }
     }
 
     /// A backend reason richer than its errno survives: `read-only` is the

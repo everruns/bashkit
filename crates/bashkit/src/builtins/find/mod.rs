@@ -47,8 +47,6 @@ use crate::interpreter::ExecResult;
 
 const HELP: &str = "Usage: find [-H] [-L] [-P] [PATH...] [EXPRESSION]\nSearch for files in a directory hierarchy.\n\nOperators: ( EXPR ), ! EXPR, -not EXPR, EXPR -a EXPR, EXPR -o EXPR, EXPR , EXPR\nOptions: -maxdepth N -mindepth N -depth -follow -daystart -regextype TYPE -xdev\nTests: -name -iname -path -ipath -lname -regex -iregex -type -xtype -size -empty\n       -mtime -mmin -atime -amin -ctime -cmin -newer -newerXY -perm -readable\n       -writable -executable -user -group -uid -gid -nouser -nogroup -true -false\nActions: -print -print0 -printf FMT -delete -prune -quit\n         -exec CMD {} ; -exec CMD {} + -execdir CMD {} ; -execdir CMD {} +\n      --help\tdisplay this help and exit\n      --version\toutput version information and exit\n";
 
-/// Symlink hops before ELOOP, matching Linux.
-const MAX_SYMLINK_HOPS: usize = 40;
 /// Paths passed per `-exec ... {} +` invocation before a new one starts.
 const EXEC_BATCH_MAX: usize = 4096;
 const OUTPUT_CAP_MSG: &str = "find: output size limit exceeded\n";
@@ -173,53 +171,6 @@ fn type_matches(meta: &Metadata, types: &[char]) -> bool {
         'f'
     };
     types.contains(&c)
-}
-
-/// Resolve every symlink in `path` (realpath), with an ELOOP hop cap.
-async fn canonicalize(fs: &dyn FileSystem, path: &Path) -> std::result::Result<PathBuf, String> {
-    let mut rest: VecDeque<String> = path
-        .components()
-        .filter_map(|c| match c {
-            std::path::Component::Normal(s) => Some(s.to_string_lossy().into_owned()),
-            std::path::Component::ParentDir => Some("..".to_string()),
-            _ => None,
-        })
-        .collect();
-    let mut out = PathBuf::from("/");
-    let mut hops = 0;
-    while let Some(comp) = rest.pop_front() {
-        if comp == ".." {
-            out.pop();
-            continue;
-        }
-        let candidate = out.join(&comp);
-        match fs.lstat(&candidate).await {
-            Ok(m) if m.file_type.is_symlink() => {
-                hops += 1;
-                if hops > MAX_SYMLINK_HOPS {
-                    return Err("Too many levels of symbolic links".to_string());
-                }
-                let target = fs.read_link(&candidate).await.map_err(|e| e.to_string())?;
-                if target.is_absolute() {
-                    out = PathBuf::from("/");
-                }
-                let mut parts: Vec<String> = target
-                    .components()
-                    .filter_map(|c| match c {
-                        std::path::Component::Normal(s) => Some(s.to_string_lossy().into_owned()),
-                        std::path::Component::ParentDir => Some("..".to_string()),
-                        _ => None,
-                    })
-                    .collect();
-                while let Some(p) = parts.pop() {
-                    rest.push_front(p);
-                }
-            }
-            Ok(_) => out = candidate,
-            Err(e) => return Err(e.to_string()),
-        }
-    }
-    Ok(out)
 }
 
 /// A directory on the current path, for `-L` loop detection.
@@ -841,7 +792,7 @@ impl FindRun {
                 .await
                 .ok()
                 .map(|t| t.to_string_lossy().into_owned());
-            match canonicalize(fs.as_ref(), &abs).await {
+            match crate::fs::canonicalize(fs.as_ref(), &abs).await {
                 Ok(canon) => {
                     let m = fs.stat(&canon).await.ok();
                     (target, m, canon)

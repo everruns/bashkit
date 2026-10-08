@@ -24,6 +24,13 @@ bytes of stack padding; output capacity is admitted against
 `ExecutionLimits::max_live_intermediate_bytes` before fallible allocation.
 This memory budget applies to pipelines and redirected output too.
 
+Recursive `grep -R` skips directory symlinks that resolve to an ancestor and
+reports `warning: recursive directory loop` (suppressed by `-s`). Separate
+aliases of a non-ancestor directory remain searchable. Traversal uses the shared
+execution work and deadline budget; file contents are admitted against aggregate
+input and live intermediate limits and scanned one file at a time. `-q` stops
+at the first match, before further traversal.
+
 ## Threat model
 
 Bashkit maintains a living threat model in [`knowledge/security/threat-model.md`](../knowledge/security/threat-model.md)
