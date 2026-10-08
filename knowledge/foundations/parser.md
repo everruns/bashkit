@@ -63,6 +63,23 @@ globbing uses the escaped text and drops the escapes when nothing matches;
 script analysis unescape literal parts; `case` and `[[ == ]]` build patterns
 with `expand_pattern_word`, which escapes fully quoted words.
 
+**Quoted segments of mixed words.** A word that starts quoted and continues
+with an unquoted expansion (`'a b'$x`, `"$y"$x`) also wraps its quoted spans
+in `\x1e`/`\x1f`; `parse_word` turns them into `Word::part_quoted`, and field
+splitting protects quoted parts using markers it picks from characters absent
+from the data. No in-band marker reaches expansion, so a value holding any
+byte (`\x01`, `\x02` included) stays data.
+
+**`$` inside double quotes.** A `$` before `'` or before the closing `"` starts
+no expansion and is NUL-escaped, so `"$'q'"` is the text `$'q'` and `"$"'q'`
+is `$q`. Here-document bodies keep `$'...'` as written. Function listings
+(`type`, `declare -f`) print `$'...'` as the single-quoted text it decodes to
+and `$"..."` as `"..."`, as bash does (`normalize_raw_word`).
+
+**Extglob groups.** A group (`@(...)`, `!(...)`, ...) is read whole; quotes
+inside it make their text literal (`@(a|'b)')` has the alternative `b)`), and
+`\|` stays a literal bar. An unbalanced group is plain text.
+
 **Metacharacters vs reserved words.** Only space, tab, newline, `|`, `&`, `;`,
 `(`, `)`, `<` and `>` delimit a word. `{` and `}` do not: they are reserved
 words, recognized as such only when they stand alone. So `echo a}b` prints

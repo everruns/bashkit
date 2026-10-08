@@ -100,7 +100,7 @@ through configurable limits.
 | Diff DoS (TM-DOS-028) | `diff` on large unrelated files | LCS matrix cap (10M cells) | MITIGATED |
 | Parser limit bypass (TM-DOS-030) | eval/source ignore limits | `Parser::with_limits()` | **FIXED** |
 | Arithmetic overflow (TM-DOS-029) | `$(( 2 ** -1 ))` | Use wrapping arithmetic | **MITIGATED** |
-| ExtGlob blowup (TM-DOS-031) | `+(a\|aa)` exponential | Add depth limit | **MITIGATED** |
+| ExtGlob blowup (TM-DOS-031) | `+(a\|aa)` exponential | Depth limit plus a shared per-match step budget | **MITIGATED** |
 | Tokio runtime exhaustion (TM-DOS-032) | Rapid `execute_sync()` calls | Shared runtime | **MITIGATED** |
 | Brace range OOM (TM-DOS-041) | `{1..999999999}` | Cap range size | **MITIGATED** |
 | Brace combinatorial (TM-DOS-042) | `{1..100}{1..100}{1..100}` | Cap total expansion | **MITIGATED** |
