@@ -63,6 +63,10 @@
     },
     {
       "feature": null,
+      "name": "bind"
+    },
+    {
+      "feature": null,
       "name": "break"
     },
     {
@@ -140,6 +144,14 @@
     {
       "feature": null,
       "name": "compgen"
+    },
+    {
+      "feature": null,
+      "name": "complete"
+    },
+    {
+      "feature": null,
+      "name": "compopt"
     },
     {
       "feature": null,
@@ -910,5 +922,5 @@
       "name": "zip"
     }
   ],
-  "count": 227
+  "count": 230
 }

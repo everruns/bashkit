@@ -136,8 +136,32 @@ Reuses the existing sandbox. No new attack surface:
 |---------|-----------|
 | Job control (`bg`/`fg`/`jobs`) | No real processes, by design |
 | History expansion (`!!`, `!N`) | Complexity vs value tradeoff |
-| Persistent history file | Leaks info across sessions, breaks isolation |
+| Persistent history file on the host | Leaks info across sessions, breaks isolation; `HISTFILE` lives in the VFS only (see below) |
 | `exec` builtin | Excluded for security |
+
+### In-interpreter interactive builtins (`bash -i`, no feature flag)
+
+Separate from the REPL above: the interpreter itself models bash's
+interactive state for scripts and Oils spec cases, per interpreter, never
+global.
+
+- `bash -i` (and `--rcfile F`, `--norc`) starts a child with `$-` holding
+  `i`, `set -o history`, default `PS1` `\s-\v\$ `, `PS2`, `PS4`,
+  `HISTFILE=$HOME/.bash_history`, `HISTSIZE`/`HISTFILESIZE` 500, and sources
+  `~/.bashrc` when it is a regular VFS file. The parent's history state is
+  saved and restored around the child.
+- A `LineReader` (keyed by the top-level script) records one history entry
+  per input line before it runs; for `bash -i` reading a script from stdin it
+  also runs `PROMPT_COMMAND` (keeping `$?`), prints the decoded `PS1` to
+  stderr per line, and prints the prompt plus `exit` at end of input.
+- `history`/`fc` (`interpreter/history.rs`), `complete`/`compgen`/`compopt`
+  (`interpreter/completion.rs`), `bind` (`interpreter/readline_bind.rs`,
+  defaults generated from bash 5.2 in `readline_defaults.rs`) and prompt
+  decoding (`interpreter/prompt.rs`) are interpreter-dispatched so they can
+  keep shell state. Completion and binding state is allocated on first use.
+- Caps: TM-DOS-131 (history entries, `HISTFILE` read size) and TM-DOS-132
+  (completion specs, binding changes). Gaps: limitations "Interactive
+  builtins" row, L-HIST-001.
 
 ### Testing
 

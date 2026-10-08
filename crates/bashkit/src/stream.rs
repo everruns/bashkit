@@ -59,6 +59,10 @@ impl StreamData {
     pub(crate) fn prefix(&self, limit: usize) -> Self {
         Self::from(self.bytes[..self.bytes.len().min(limit)].to_vec())
     }
+    /// The bytes after the first `start`.
+    pub(crate) fn suffix_from(&self, start: usize) -> Self {
+        Self::from(self.bytes[self.bytes.len().min(start)..].to_vec())
+    }
     /// Shell variables cannot contain NUL. This is the command-substitution text boundary.
     pub(crate) fn command_substitution_text(&self) -> String {
         let bytes: Vec<u8> = self

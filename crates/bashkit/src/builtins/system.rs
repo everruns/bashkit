@@ -77,6 +77,27 @@ impl Builtin for Hostname {
             return Ok(r);
         }
 
+        // Display forms of the name; anything else would set it.
+        match ctx
+            .args
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            .as_slice()
+        {
+            ["-s" | "--short"] => {
+                let short = self.hostname.split('.').next().unwrap_or("");
+                return Ok(ExecResult::ok(format!("{short}\n")));
+            }
+            ["-f" | "--fqdn" | "--long" | "-A" | "--all-fqdns"] => {
+                return Ok(ExecResult::ok(format!("{}\n", self.hostname)));
+            }
+            ["-d" | "--domain"] => {
+                let domain = self.hostname.split_once('.').map_or("", |(_, d)| d);
+                return Ok(ExecResult::ok(format!("{domain}\n")));
+            }
+            _ => {}
+        }
         // Ignore any attempts to set hostname
         if !ctx.args.is_empty() {
             return Ok(ExecResult::err(

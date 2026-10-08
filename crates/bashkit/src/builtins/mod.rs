@@ -177,7 +177,7 @@ pub use clear::Clear;
 pub use cmp::Cmp;
 pub use column::Column;
 pub use comm::Comm;
-pub use compgen::Compgen;
+pub use compgen::{Compgen, ShellOnly};
 pub use csv::Csv;
 pub use curl::{Curl, Wget};
 pub use cuttr::{Cut, Tr};
@@ -269,8 +269,8 @@ pub use tree::Tree;
 pub use truncate::Truncate;
 pub use vars::{Eval, Local, Readonly, Set, Shift, Shopt, Times, Unset};
 pub(crate) use vars::{
-    SET_O_OPTIONS, bashopts_value, dollar_dash, set_o_var_by_letter, set_o_var_by_name,
-    shellopts_value, shopt_known,
+    SET_O_OPTIONS, SHOPT_OPTIONS, bashopts_value, dollar_dash, set_o_var_by_letter,
+    set_o_var_by_name, shellopts_value, shopt_known, shopt_on,
 };
 pub use verify::Verify;
 #[cfg(feature = "terminal")]

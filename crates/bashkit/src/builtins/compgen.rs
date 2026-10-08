@@ -244,6 +244,21 @@ impl Builtin for Compgen {
     }
 }
 
+/// `complete`, `compopt` and `bind`: run by the interpreter itself (they
+/// keep per-shell state); this entry makes them known builtins (`type`,
+/// `builtin_filter`) and answers contexts with no shell.
+pub struct ShellOnly(pub &'static str);
+
+#[async_trait]
+impl Builtin for ShellOnly {
+    async fn execute(&self, _ctx: Context<'_>) -> Result<ExecResult> {
+        Ok(ExecResult::err(
+            format!("{}: only available inside the shell\n", self.0),
+            1,
+        ))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1176,6 +1176,8 @@ impl Bash {
 
         // Load persisted history on first exec (no-op if already loaded)
         self.interpreter.load_history().await;
+        // The script's text, for bash's line-by-line history (`set -o history`).
+        self.interpreter.set_top_level_source(&ast, script);
 
         // Install per-invocation state (see `Invocation`): after
         // `reset_transient_state` cleared `pipeline_stdin`, and after every
@@ -1262,11 +1264,13 @@ impl Bash {
         self.interpreter.close_proc_sub_fds();
         let duration_ms = exec_start.elapsed().as_millis() as u64;
 
-        // Record history entry for each line of the script
+        // Record history entry for each line of the script, unless the
+        // script recorded its lines as it read them (`set -o history`).
+        let recorded_live = self.interpreter.take_history_recorded_live();
         if let Ok(ref exec_result) = result {
             let cwd = self.interpreter.cwd().to_string_lossy().to_string();
             let timestamp = crate::time_compat::now_utc().timestamp();
-            for line in script.lines() {
+            for line in script.lines().filter(|_| !recorded_live) {
                 let trimmed = line.trim();
                 if !trimmed.is_empty() && !trimmed.starts_with('#') {
                     self.interpreter.record_history(

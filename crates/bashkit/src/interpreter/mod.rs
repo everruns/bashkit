@@ -27,12 +27,17 @@
 
 mod arithmetic;
 mod brace_expansion;
+mod completion;
 mod coproc;
 mod declare;
 mod expansion;
 mod glob;
+mod history;
 mod jobs;
 pub(crate) mod pipe;
+mod prompt;
+mod readline_bind;
+mod readline_defaults;
 mod redirection;
 mod state;
 mod time_command;
@@ -457,6 +462,42 @@ const ENV_SHELL_ONLY_BUILTINS: &[&str] = &[
     "wait",
 ];
 
+/// Invocation-only settings `parse_shell_args` reports among the shell
+/// options. The NUL prefix keeps them from ever naming a variable.
+const SHELL_ARG_INTERACTIVE: &str = "\0i";
+const SHELL_ARG_NORC: &str = "\0norc";
+const SHELL_ARG_RCFILE: &str = "\0rcfile";
+
+/// `bash -i`, `--norc`, `--rcfile FILE`, taken out of the shell options.
+#[derive(Default)]
+struct ShellInvocation {
+    interactive: bool,
+    norc: bool,
+    rcfile: Option<String>,
+}
+
+impl ShellInvocation {
+    fn take_from(opts: &mut Vec<(String, String)>) -> Self {
+        let mut inv = Self::default();
+        opts.retain(|(name, value)| match name.as_str() {
+            SHELL_ARG_INTERACTIVE => {
+                inv.interactive = value == "1";
+                false
+            }
+            SHELL_ARG_NORC => {
+                inv.norc = true;
+                false
+            }
+            SHELL_ARG_RCFILE => {
+                inv.rcfile = Some(value.clone());
+                false
+            }
+            _ => true,
+        });
+        inv
+    }
+}
+
 /// Nested `bash`/`sh` cap (TM-DOS-125). Sized so the deepest nesting fits a
 /// 2 MiB debug-build stack with room for functions inside each level.
 const MAX_CHILD_SHELL_DEPTH: usize = 8;
@@ -465,6 +506,11 @@ const SPECIAL_BUILTIN_NAMES: &[&str] = &[
     ".", "bash", "builtin", "command", "declare", "eval", "exec", "export", "getopts", "let",
     "local", "readonly", "sh", "source", "typeset", "unset",
 ];
+
+/// Bash builtins the interpreter runs itself although they also have an
+/// entry in the builtin map (which `builtin_filter` can remove).
+const INTERPRETER_SHELL_BUILTINS: &[&str] =
+    &["history", "fc", "compgen", "complete", "compopt", "bind"];
 
 /// Interpreter-dispatched names that real bash reports as shell builtins
 /// (`type builtin`, `command -V let`) although they have no entry in the
@@ -1727,6 +1773,22 @@ pub struct Interpreter {
     history_file: Option<PathBuf>,
     /// Whether history has been loaded from VFS (to avoid re-loading on each exec).
     history_loaded: bool,
+    /// bash `history`/`fc` bookkeeping ($HISTFILE positions, numbering).
+    bash_hist: history::BashHistory,
+    /// Reader of the shell's own input (top-level script, `bash` child):
+    /// records history lines, runs PROMPT_COMMAND in `bash -i`.
+    line_reader: Option<Box<history::LineReader>>,
+    /// Top-level command lines read so far (prompt `\#`).
+    command_number: u64,
+    /// Sandbox identity for prompt escapes (`\u`, `\h`): the configured
+    /// user and hostname, never the host's.
+    prompt_user: String,
+    prompt_host: String,
+    /// The virtual `date` clock, for prompt time escapes (`\t`, `\d`).
+    date_clock: builtins::Date,
+    /// `complete`/`compopt`/`bind` state, built on first use (keeps startup
+    /// free of it). Per interpreter: never shared between tenants.
+    pub(super) completion: Option<Box<completion::CompletionState>>,
     /// Monotonic counter incremented on each command substitution execution.
     /// Used to detect whether assignment value expansion ran a command substitution
     /// (for correct exit code: plain assignment → 0, assignment with subst → subst's exit code).
@@ -2163,6 +2225,9 @@ impl Interpreter {
             Arc::new(builtins::Touch::with_clock(clock)),
         );
         builtins.insert("pr".to_string(), Arc::new(builtins::Pr::with_clock(clock)));
+        for name in ["complete", "compopt", "bind"] {
+            builtins.insert(name.to_string(), Arc::new(builtins::ShellOnly(name)));
+        }
         for name in ["awk", "gawk", "mawk", "nawk"] {
             builtins.insert(name.to_string(), Arc::new(builtins::Awk::with_clock(clock)));
         }
@@ -2361,6 +2426,13 @@ impl Interpreter {
             history_needs_rewrite: false,
             history_file: None,
             history_loaded: false,
+            bash_hist: history::BashHistory::default(),
+            line_reader: None,
+            command_number: 0,
+            prompt_user: username_val.clone(),
+            prompt_host: hostname_val.clone(),
+            date_clock: clock,
+            completion: None,
             subst_generation: 0,
             coproc_buffers: HashMap::new(),
             coprocs: Vec::new(),
@@ -2567,6 +2639,13 @@ impl Interpreter {
             history_needs_rewrite: false,
             history_file: None,
             history_loaded: true,
+            bash_hist: history::BashHistory::default(),
+            line_reader: None,
+            command_number: self.command_number,
+            prompt_user: self.prompt_user.clone(),
+            prompt_host: self.prompt_host.clone(),
+            date_clock: self.date_clock,
+            completion: self.completion.clone(),
             subst_generation: self.subst_generation,
             coproc_buffers: HashMap::new(),
             coprocs: Vec::new(),
@@ -3720,6 +3799,15 @@ impl Interpreter {
             if aborted_line == Some(Self::command_start_line(command)) {
                 continue;
             }
+            if run_exit_trap
+                && self.line_reader.is_some()
+                && let history::LineWork::Async =
+                    self.top_level_line(script, index, Self::command_start_line(command))
+            {
+                let (out, err) = self.top_level_line_async(false).await;
+                stdout.append(&out);
+                stderr.append(&err);
+            }
             self.check_cancelled()?;
             let emit_before = self.output_emit_count;
             let emitted_before = (
@@ -3872,6 +3960,19 @@ impl Interpreter {
                     break;
                 }
             }
+        }
+
+        // End of input of a `bash -i` child: one last PROMPT_COMMAND and prompt.
+        if !stopped
+            && run_exit_trap
+            && self
+                .line_reader
+                .as_ref()
+                .is_some_and(|r| r.interactive && r.reads(script))
+        {
+            let (out, err) = self.top_level_line_async(true).await;
+            stdout.append(&out);
+            stderr.append(&err);
         }
 
         // Syntax error after the commands that ran: bash reads and runs a
@@ -6023,12 +6124,15 @@ impl Interpreter {
                     match name {
                         "--verbose" => shell_opts.push(("SHOPT_v".to_string(), flag(true))),
                         // Accepted by Bash but not modelled here (no-op).
-                        "--login" | "--noprofile" | "--norc" | "--noediting" | "--posix"
-                        | "--restricted" | "--protected" | "--debugger" | "--debug"
-                        | "--dump-strings" | "--dump-po-strings" => {}
+                        "--norc" => shell_opts.push((SHELL_ARG_NORC.to_string(), flag(true))),
+                        "--login" | "--noprofile" | "--noediting" | "--posix" | "--restricted"
+                        | "--protected" | "--debugger" | "--debug" | "--dump-strings"
+                        | "--dump-po-strings" => {}
                         // These take an argument, as `--opt=VAL` or `--opt VAL`.
                         "--rcfile" | "--init-file" | "--wordexp" => {
-                            if !s.contains('=') {
+                            let value = if let Some((_, v)) = s.split_once('=') {
+                                v.to_string()
+                            } else {
                                 if idx >= args.len() {
                                     return Err(ExecResult::err(
                                         format!(
@@ -6038,6 +6142,10 @@ impl Interpreter {
                                     ));
                                 }
                                 idx += 1;
+                                args[idx - 1].clone()
+                            };
+                            if name != "--wordexp" {
+                                shell_opts.push((SHELL_ARG_RCFILE.to_string(), value));
                             }
                         }
                         _ => return Err(Self::shell_invalid_option(shell_name, s)),
@@ -6050,8 +6158,9 @@ impl Interpreter {
                         match c {
                             'c' => want_command = true,
                             'n' => noexec = on,
+                            'i' => shell_opts.push((SHELL_ARG_INTERACTIVE.to_string(), flag(on))),
                             // Accepted at invocation but not acted on here.
-                            'i' | 'l' | 'r' | 's' | 'D' => {}
+                            'l' | 'r' | 's' | 'D' => {}
                             'o' | 'O' => {
                                 let Some(name) = args.get(idx) else {
                                     return Err(ExecResult::err(
@@ -6143,11 +6252,12 @@ impl Interpreter {
         redirects: &[Redirect],
     ) -> Result<ExecResult> {
         // Parse arguments — Err means early-return result (--version, --help, errors)
-        let (command_string, script_file, script_args, noexec, shell_opts) =
+        let (command_string, script_file, script_args, noexec, mut shell_opts) =
             match Self::parse_shell_args(shell_name, args) {
                 Ok(parsed) => parsed,
                 Err(result) => return Ok(result),
             };
+        let invocation = ShellInvocation::take_from(&mut shell_opts);
 
         // Determine what to execute
         let is_command_mode = command_string.is_some();
@@ -6377,12 +6487,57 @@ impl Interpreter {
         );
         self.update_bash_source();
         let saved_line = self.current_line;
-        let saved_interactive = std::mem::replace(&mut self.interactive, false);
+        let saved_interactive = std::mem::replace(&mut self.interactive, invocation.interactive);
 
         // A new shell is outside any loop, function or sourced file.
         let saved_loop_depth = std::mem::replace(&mut self.loop_depth, 0);
         let saved_return_depth = std::mem::replace(&mut self.return_depth, 0);
-        let result = self.execute_script_body(&script, true, false).await;
+        // The child reads its own input: script file or stdin, line by line
+        // (`bash -c` strings are not recorded in the history).
+        let saved_reader = self.line_reader.take();
+        let (parent_history, rc_result) = if invocation.interactive {
+            let (parent, rc) = self
+                .enter_interactive_shell(invocation.rcfile.clone(), invocation.norc)
+                .await;
+            (Some(parent), rc)
+        } else {
+            (None, None)
+        };
+        let rc_exit = rc_result.as_ref().and_then(|r| match r.control_flow {
+            ControlFlow::Exit(code) => Some(code),
+            _ => None,
+        });
+        let result = if let Some(code) = rc_exit {
+            let mut r = rc_result.clone().unwrap_or_default();
+            r.exit_code = code;
+            r.control_flow = ControlFlow::None;
+            Ok(r)
+        } else {
+            if !is_command_mode {
+                self.line_reader = Some(Box::new(history::LineReader::new(
+                    &script,
+                    Arc::from(script_content.as_str()),
+                    invocation.interactive,
+                )));
+            }
+            let result = self.execute_script_body(&script, true, false).await;
+            match (rc_result, result) {
+                (Some(rc), Ok(mut r)) => {
+                    let mut out = rc.stdout;
+                    out.append(&r.stdout);
+                    r.stdout = out;
+                    let mut err = rc.stderr;
+                    err.append(&r.stderr);
+                    r.stderr = err;
+                    Ok(r)
+                }
+                (_, result) => result,
+            }
+        };
+        if let Some(parent) = parent_history {
+            self.leave_interactive_shell(parent).await;
+        }
+        self.line_reader = saved_reader;
         self.loop_depth = saved_loop_depth;
         self.return_depth = saved_return_depth;
 
@@ -9471,6 +9626,21 @@ impl Interpreter {
         SPECIAL_BUILTIN_NAMES.contains(&name)
     }
 
+    /// Whether the interpreter runs `name` itself: the special builtins, and
+    /// the history/completion/bind builtins (`history.rs`, `completion.rs`,
+    /// `readline_bind.rs`) unless filtered out of the builtin map. bashkit's
+    /// own `history --grep/--cwd/...` stays the registered builtin.
+    fn routes_to_interpreter(&self, name: &str, args: &[String]) -> bool {
+        Self::is_special_builtin_name(name)
+            || (INTERPRETER_SHELL_BUILTINS.contains(&name)
+                && self.builtins.contains_key(name)
+                && !(name == "history" && Self::history_extension_args(args)))
+    }
+
+    fn history_extension_args(args: &[String]) -> bool {
+        args.iter().any(|a| a.starts_with("--") && a.len() > 2)
+    }
+
     async fn execute_special_builtin_with_hooks(
         &mut self,
         name: &str,
@@ -9517,6 +9687,26 @@ impl Interpreter {
 
     /// Dispatch an interpreter-level (special) builtin by name.
     /// Returns `Some(result)` if handled, `None` if not a special builtin.
+    /// history/fc/completion/bind builtins, boxed out of line so
+    /// `dispatch_special_builtin` (on every command's path) holds one
+    /// pointer instead of each builtin's future (stack budget).
+    #[inline(never)]
+    fn run_interactive_builtin<'a>(
+        &'a mut self,
+        name: &'a str,
+        args: &'a [String],
+        redirects: &'a [Redirect],
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecResult>> + Send + 'a>> {
+        match name {
+            "history" => Box::pin(self.execute_history_builtin(args, redirects)),
+            "fc" => Box::pin(self.execute_fc_builtin(args, redirects)),
+            "compgen" => Box::pin(self.execute_compgen_builtin(args, redirects)),
+            "complete" => Box::pin(self.execute_complete_builtin(args, redirects)),
+            "compopt" => Box::pin(self.execute_compopt_builtin(args, redirects)),
+            _ => Box::pin(self.execute_bind_builtin(args, redirects)),
+        }
+    }
+
     async fn dispatch_special_builtin(
         &mut self,
         name: &str,
@@ -9562,6 +9752,12 @@ impl Interpreter {
                     .await,
             ),
             "let" => Some(self.execute_let_builtin(args, redirects).await),
+            // bashkit's own `history --grep/--cwd/...` stays the registered builtin.
+            "history" | "fc" | "compgen" | "complete" | "compopt" | "bind"
+                if !(name == "history" && Self::history_extension_args(args)) =>
+            {
+                Some(self.run_interactive_builtin(name, args, redirects).await)
+            }
             "unset" => Some(Box::pin(self.execute_unset_builtin(args, redirects)).await),
             "getopts" => Some(self.execute_getopts(args, redirects).await),
             // Bare `set`: the same sorted, quoted listing as `declare`.
@@ -9622,7 +9818,7 @@ impl Interpreter {
         Box::pin(async move {
             // Interpreter-level special builtins. A bare `set` lists every
             // variable (arrays included), which needs interpreter state.
-            if Self::is_special_builtin_name(name) || (name == "set" && args.is_empty()) {
+            if self.routes_to_interpreter(name, &args) || (name == "set" && args.is_empty()) {
                 return self
                     .execute_special_builtin_with_hooks(
                         name,
@@ -11541,7 +11737,7 @@ impl Interpreter {
                 // `command eval echo ok` behaves like `eval echo ok` rather
                 // than hitting a stub. `command` already bypasses functions,
                 // and specials outrank functions in normal dispatch anyway.
-                if Self::is_special_builtin_name(target) {
+                if self.routes_to_interpreter(target, builtin_args) {
                     // Box::pin: this can recurse (e.g. `command command eval ...`).
                     return Box::pin(self.execute_special_builtin_with_hooks(
                         target,
@@ -12836,6 +13032,11 @@ impl Interpreter {
                 .store(value.parse::<u32>().unwrap_or(0), Ordering::Relaxed);
             return;
         }
+        let hist_var: Option<&'static str> = match resolved {
+            "HISTSIZE" => Some("HISTSIZE"),
+            "HISTFILESIZE" => Some("HISTFILESIZE"),
+            _ => None,
+        };
         // SECONDS=N restarts the count from N (non-numbers count as 0).
         if resolved == "SECONDS" {
             let base = value.trim().parse::<i64>().unwrap_or(0);
@@ -12892,6 +13093,9 @@ impl Interpreter {
             }
         } else {
             self.insert_variable_checked(resolved_string, value);
+        }
+        if let Some(name) = hist_var {
+            self.history_variable_assigned(name);
         }
     }
 
@@ -13625,7 +13829,13 @@ impl Interpreter {
             }
             "-" => {
                 // $- - Current option flags, from the SHOPT_* variables.
-                return builtins::dollar_dash(&self.scoped.variables);
+                let flags = builtins::dollar_dash(&self.scoped.variables);
+                if !self.interactive {
+                    return flags;
+                }
+                // `bash -i`: `i` follows `h` (`himBHc` order).
+                let at = flags.find('h').map_or(0, |i| i + 1);
+                return format!("{}i{}", &flags[..at], &flags[at..]);
             }
             "RANDOM" => {
                 // $RANDOM - LCG matching bash behavior, seeded per-instance.
