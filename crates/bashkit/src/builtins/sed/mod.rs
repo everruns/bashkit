@@ -304,7 +304,15 @@ impl Builtin for Sed {
                     let path = resolve(ctx.cwd, name);
                     match ctx.fs.read_file(&path).await {
                         Ok(bytes) => {
-                            script.push_str(String::from_utf8_lossy(&bytes).trim_end_matches('\n'))
+                            let text = String::from_utf8_lossy(&bytes);
+                            let trimmed = text.trim_end_matches('\n');
+                            script.push_str(trimmed);
+                            // An escaped final newline (`i\` + newline) is
+                            // text, an empty line in GNU sed; keep it.
+                            let escapes = trimmed.chars().rev().take_while(|&c| c == '\\').count();
+                            if escapes % 2 == 1 && trimmed.len() < text.len() {
+                                script.push('\n');
+                            }
                         }
                         // GNU exits 4 when a script file cannot be opened.
                         Err(e) => {

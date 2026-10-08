@@ -809,6 +809,18 @@ async fn escaped_delimiter_in_a_regex_is_the_plain_character() {
 }
 
 #[tokio::test]
+async fn script_file_ending_in_backslash_newline_inserts_an_empty_line() {
+    // `i\` + newline as the last line of a script file is an empty text
+    // line in GNU sed; only a bare `i\` at the very end adds nothing.
+    let fs = Arc::new(InMemoryFs::new());
+    fs.write_file(std::path::Path::new("/in1"), b"/foo/i\\\n")
+        .await
+        .unwrap();
+    let r = run_with(fs, &["-f", "/in1"], Some("bar\nfoo\n")).await;
+    assert_eq!(r.stdout, "bar\n\nfoo\n");
+}
+
+#[tokio::test]
 async fn bare_append_backslash_adds_nothing() {
     assert_eq!(out(&["a\\"], "a\n").await, "a\n");
 }
