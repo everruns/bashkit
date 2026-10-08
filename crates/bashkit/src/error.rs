@@ -183,6 +183,11 @@ pub(crate) fn io_error_reason(e: &Error) -> String {
         other => return other.to_string(),
     };
     let message = io.to_string();
+    // The in-memory backend reports this with no errno, so the kind match
+    // below cannot reach it; bash prints the capitalized strerror.
+    if message == "is a directory" {
+        return "Is a directory".to_string();
+    }
     // Errors straight from the OS stringify as `<strerror> (os error N)`;
     // real tools print only the strerror half.
     let restates_errno =

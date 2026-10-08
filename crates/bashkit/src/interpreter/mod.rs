@@ -7316,7 +7316,9 @@ impl Interpreter {
             let stdin = if stdin.is_some() {
                 stdin
             } else if let Some(ref ps) = self.pipeline_stdin {
-                if !ps.is_empty() {
+                // An empty pipe is still stdin at EOF: `printf '' | { wc -l; }`
+                // prints 0, not nothing.
+                {
                     if name == "read" {
                         // Consume one record (line, `-d` delimiter, `-n` count,
                         // `\<newline>` continuation) from pipeline stdin.
@@ -7328,8 +7330,6 @@ impl Interpreter {
                     } else {
                         Some(ps.clone())
                     }
-                } else {
-                    None
                 }
             } else {
                 None

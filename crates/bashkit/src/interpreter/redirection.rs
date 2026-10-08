@@ -22,6 +22,26 @@ use super::*;
 use crate::error::io_error_reason;
 
 impl Interpreter {
+    /// A target written with a trailing slash names a directory, so an
+    /// output redirect to it fails without creating anything. `resolve_path`
+    /// drops the slash, so the check has to run on the word as written.
+    fn rejects_directory_target(&self, target: &str, result: &mut ExecResult) -> bool {
+        if !target.ends_with('/') {
+            return false;
+        }
+        result.stdout = crate::StreamData::new();
+        result.stderr = self.redirect_error(target, "Is a directory").into();
+        result.exit_code = 1;
+        true
+    }
+
+    /// `bash: line N: PATH: reason` — the shape bash uses for a redirection
+    /// that could not be opened. Bash names the script instead of `bash`
+    /// when running a file; the interpreter does not track a script path.
+    fn redirect_error(&self, path: &str, reason: &str) -> String {
+        format!("bash: line {}: {path}: {reason}\n", self.current_line)
+    }
+
     /// Process input redirections (< file, <<< string)
     pub(super) async fn process_input_redirections(
         &mut self,
@@ -101,10 +121,9 @@ impl Interpreter {
                                 stdin = Some(content);
                             }
                             Err(e) => {
-                                return Err(crate::error::Error::CommandFailure(format!(
-                                    "bash: {target_path}: {}\n",
-                                    io_error_reason(&e)
-                                )));
+                                return Err(crate::error::Error::CommandFailure(
+                                    self.redirect_error(&target_path, &io_error_reason(&e)),
+                                ));
                             }
                         }
                     }
@@ -231,6 +250,9 @@ impl Interpreter {
             match redirect.kind {
                 RedirectKind::Output | RedirectKind::Clobber => {
                     let target_path = self.expand_word(&redirect.target).await?;
+                    if self.rejects_directory_target(&target_path, &mut result) {
+                        return Ok(result);
+                    }
                     let path = self.resolve_path(&target_path);
                     if let Some(target_fd) = dev_fd_alias(&path) {
                         self.dup_output_fast(&mut result, redirect.fd.unwrap_or(1), target_fd)
@@ -246,9 +268,9 @@ impl Interpreter {
                             && self.fs.stat(&path).await.is_ok()
                         {
                             result.stdout = crate::StreamData::new();
-                            result.stderr =
-                                format!("bash: {}: cannot overwrite existing file\n", target_path)
-                                    .into();
+                            result.stderr = self
+                                .redirect_error(&target_path, "cannot overwrite existing file")
+                                .into();
                             result.exit_code = 1;
                             return Ok(result);
                         }
@@ -257,9 +279,9 @@ impl Interpreter {
                                 if let Err(e) =
                                     self.fs.write_file(&path, result.stderr.as_bytes()).await
                                 {
-                                    result.stderr =
-                                        format!("bash: {}: {}\n", target_path, io_error_reason(&e))
-                                            .into();
+                                    result.stderr = self
+                                        .redirect_error(&target_path, &io_error_reason(&e))
+                                        .into();
                                     result.exit_code = 1;
                                     return Ok(result);
                                 }
@@ -270,9 +292,9 @@ impl Interpreter {
                                     self.fs.write_file(&path, result.stdout.as_bytes()).await
                                 {
                                     result.stdout = crate::StreamData::new();
-                                    result.stderr =
-                                        format!("bash: {}: {}\n", target_path, io_error_reason(&e))
-                                            .into();
+                                    result.stderr = self
+                                        .redirect_error(&target_path, &io_error_reason(&e))
+                                        .into();
                                     result.exit_code = 1;
                                     return Ok(result);
                                 }
@@ -286,6 +308,9 @@ impl Interpreter {
                 // WTF: `1<>file` appends instead of writing at offset 0.
                 RedirectKind::Append | RedirectKind::ReadWrite => {
                     let target_path = self.expand_word(&redirect.target).await?;
+                    if self.rejects_directory_target(&target_path, &mut result) {
+                        return Ok(result);
+                    }
                     let path = self.resolve_path(&target_path);
                     if let Some(target_fd) = dev_fd_alias(&path) {
                         self.dup_output_fast(&mut result, redirect.fd.unwrap_or(1), target_fd)
@@ -301,9 +326,9 @@ impl Interpreter {
                                 if let Err(e) =
                                     self.fs.append_file(&path, result.stderr.as_bytes()).await
                                 {
-                                    result.stderr =
-                                        format!("bash: {}: {}\n", target_path, io_error_reason(&e))
-                                            .into();
+                                    result.stderr = self
+                                        .redirect_error(&target_path, &io_error_reason(&e))
+                                        .into();
                                     result.exit_code = 1;
                                     return Ok(result);
                                 }
@@ -314,9 +339,9 @@ impl Interpreter {
                                     self.fs.append_file(&path, result.stdout.as_bytes()).await
                                 {
                                     result.stdout = crate::StreamData::new();
-                                    result.stderr =
-                                        format!("bash: {}: {}\n", target_path, io_error_reason(&e))
-                                            .into();
+                                    result.stderr = self
+                                        .redirect_error(&target_path, &io_error_reason(&e))
+                                        .into();
                                     result.exit_code = 1;
                                     return Ok(result);
                                 }
@@ -346,8 +371,9 @@ impl Interpreter {
                         let mut combined = result.stdout.as_bytes().to_vec();
                         combined.extend_from_slice(result.stderr.as_bytes());
                         if let Err(e) = self.fs.write_file(&path, &combined).await {
-                            result.stderr =
-                                format!("bash: {}: {}\n", target_path, io_error_reason(&e)).into();
+                            result.stderr = self
+                                .redirect_error(&target_path, &io_error_reason(&e))
+                                .into();
                             result.exit_code = 1;
                             return Ok(result);
                         }
@@ -481,6 +507,9 @@ impl Interpreter {
             match redirect.kind {
                 RedirectKind::Output | RedirectKind::Clobber => {
                     let target_path = self.expand_word(&redirect.target).await?;
+                    if self.rejects_directory_target(&target_path, &mut result) {
+                        return Ok(result);
+                    }
                     let path = self.resolve_path(&target_path);
                     if let Some(target_fd) = dev_fd_alias(&path) {
                         let src_fd = redirect.fd.unwrap_or(1);
@@ -494,9 +523,9 @@ impl Interpreter {
                         && self.fs.stat(&path).await.is_ok()
                     {
                         result.stdout = crate::StreamData::new();
-                        result.stderr =
-                            format!("bash: {}: cannot overwrite existing file\n", target_path)
-                                .into();
+                        result.stderr = self
+                            .redirect_error(&target_path, "cannot overwrite existing file")
+                            .into();
                         result.exit_code = 1;
                         self.clear_pending_fd_redirect_state();
                         return Ok(result);
@@ -516,6 +545,9 @@ impl Interpreter {
                 RedirectKind::ReadWrite if matches!(redirect.fd, None | Some(0)) => {}
                 RedirectKind::Append | RedirectKind::ReadWrite => {
                     let target_path = self.expand_word(&redirect.target).await?;
+                    if self.rejects_directory_target(&target_path, &mut result) {
+                        return Ok(result);
+                    }
                     let path = self.resolve_path(&target_path);
                     if let Some(target_fd) = dev_fd_alias(&path) {
                         let src_fd = redirect.fd.unwrap_or(1);
@@ -584,7 +616,9 @@ impl Interpreter {
                 self.fs.write_file(path, content.as_bytes()).await
             };
             if let Err(e) = write_result {
-                new_stderr = format!("bash: {}: {}\n", display_path, io_error_reason(&e)).into();
+                new_stderr = self
+                    .redirect_error(display_path, &io_error_reason(&e))
+                    .into();
                 result.exit_code = 1;
                 result.stdout = new_stdout;
                 result.stderr = new_stderr;
