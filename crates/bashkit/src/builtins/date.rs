@@ -178,7 +178,7 @@ impl Date {
     /// Format epoch `seconds` (or now, for `None`) with strftime `format`
     /// in the sandbox `TZ`. Shared with printf's `%(fmt)T` so both builtins
     /// see one virtual clock and one timezone policy.
-    pub(super) fn strftime(
+    pub(crate) fn strftime(
         &self,
         tz: Option<&String>,
         seconds: Option<i64>,

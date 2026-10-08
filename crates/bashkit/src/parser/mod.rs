@@ -183,6 +183,14 @@ impl<'a> Parser<'a> {
         parser.parse_word(input.to_string())
     }
 
+    /// Parse `input` as an unquoted here-document body: expansions apply,
+    /// `"` is literal, and only `\$`, `` \` `` and `\\` are escapes. Used for
+    /// prompt strings (`${x@P}`, PS1), which bash expands the same way.
+    pub fn parse_heredoc_body_with_limits(input: &str, max_depth: usize, max_fuel: usize) -> Word {
+        let parser = Parser::with_limits(input, max_depth, max_fuel);
+        parser.parse_word(heredoc_body_escapes(input))
+    }
+
     /// Create a parse error with the current position. A grammar error
     /// (a construct that cannot continue with the current token) gets bash's
     /// wording instead of `message`; see [`Self::bash_grammar_error`].

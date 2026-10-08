@@ -450,7 +450,7 @@ impl Interpreter {
     }
 
     /// All variable names visible to listings, sorted, hidden ones dropped.
-    fn listable_names(&self) -> Vec<String> {
+    pub(super) fn listable_names(&self) -> Vec<String> {
         let mut names: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
         names.extend(self.scoped.variables.keys().cloned());
         names.extend(self.env.keys().cloned());

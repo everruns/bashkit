@@ -17,10 +17,10 @@ Implemented. Harness: `scripts/oils-spec/run.py` (`just oils-spec`).
 
 ## Headline
 
-**89.0%**: bashkit passes 2395 of the 2692 Oils spec cases real bash 5.2.21
-passes (2759 cases in 132 spec files; bashkit passes 2402 of all cases,
-87.1%). Oils `57d3f0d088c3`, 2026-10-08. Report:
-`scripts/oils-spec/results/oils-spec-linux-x86_64-20261008T193817Z.md`.
+**92.8%**: bashkit passes 2500 of the 2693 Oils spec cases real bash 5.2.21
+passes (2759 cases in 132 spec files; bashkit passes 2509 of all cases,
+90.9%). Oils `57d3f0d088c3`, 2026-10-08. Report:
+`scripts/oils-spec/results/oils-spec-linux-x86_64-20261008T211202Z.md`.
 The first run (74.2%, `...T103235Z.md`) missed 16 cases each in
 `globignore` and `word-split`, 14 in `builtin-cd`, 13 in `alias` and
 `dbracket`; those files now miss 1, 0, 2, 7 and 1. The run at 78.8%
@@ -48,10 +48,17 @@ target or a subscript read from data), quotes inside subscripts
 (`a['2']`), arrays bound in a command's environment, nameref corner cases,
 signals, and `$LINENO` of `(( ))`/`[[ ]]` seen from a DEBUG handler.
 
-Spec files with the most misses at the latest run: `builtin-completion`
-(33), `prompt` (25), `builtin-history` and `builtin-fc` (12),
-`interactive` (11), all interactive-only. 50 of the 132 files pass
-completely.
+The run before this one (89.0%, `...T193817Z.md`) missed 33 in
+`builtin-completion`, 25 in `prompt`, 12 in `builtin-history` and
+`builtin-fc`, 11 in `interactive` and 9 in `builtin-bind`; they now miss 2,
+0, 0, 0, 0 and 0. The two left are `compgen -e` (bashkit does not export
+`PWD`) and `compgen -A builtin` (bashkit lists its own builtin registry,
+`grep` included); see the "Interactive builtins" row of
+[Known Limitations](limitations.md).
+
+Spec files with the most misses at the latest run: `ysh-builtin-private`
+(9), `alias`, `arith`, `array-literal` and `background` (7), `bugs` (6).
+56 of the 132 files pass completely.
 
 ## Why
 

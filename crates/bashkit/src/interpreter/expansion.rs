@@ -234,7 +234,7 @@ impl Interpreter {
         word: &'a Word,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String>> + Send + 'a>> {
         Box::pin(async move {
-            let expanded = self.expand_word_inner(word).await?;
+            let expanded = self.expand_word_inner(word, None).await?;
             // A `QuotedGlobWord` carries glob escapes for its quoted text;
             // contexts that do not glob (command names, redirect targets,
             // operands) want the text itself.
@@ -300,7 +300,7 @@ impl Interpreter {
     /// carries escapes for its quoted literals from the lexer and for its
     /// quoted expansions from `append_expansion_for_word`.
     pub(super) async fn expand_pattern_word(&mut self, word: &Word) -> Result<String> {
-        let expanded = Box::pin(self.expand_word_inner(word)).await?;
+        let expanded = Box::pin(self.expand_word_inner(word, None)).await?;
         if word.quoted && !word.has_unquoted_glob {
             Ok(Self::quote_expansion_for_quoted_glob(&expanded))
         } else {
@@ -308,11 +308,19 @@ impl Interpreter {
         }
     }
 
-    pub(super) async fn expand_word_inner(&mut self, word: &Word) -> Result<String> {
-        if Self::has_indirect_part(word)
-            && let Some(desugared) = self.desugar_indirect(word)?
+    /// `prompts`: the `${x@P}` values of `word`, computed up front by
+    /// `expand_word_special` (last part first) so the `P` arm below needs no
+    /// await of its own (an await there cost ~12 KB of stack at depth 32).
+    pub(super) async fn expand_word_inner(
+        &mut self,
+        word: &Word,
+        mut prompts: Option<Vec<String>>,
+    ) -> Result<String> {
+        if prompts.is_none()
+            && (Self::has_indirect_part(word) || Self::has_prompt_part(word))
+            && let Some(expanded) = self.expand_word_special(word).await?
         {
-            return Box::pin(self.expand_word_inner(&desugared)).await;
+            return Ok(expanded);
         }
         let mut result = String::new();
         // Keep command-substitution bytes charged until the complete word has
@@ -608,13 +616,80 @@ impl Interpreter {
                     Self::append_expansion_for_word(&mut result, word, &expanded);
                 }
                 WordPart::Transformation { name, operator } => {
-                    let value = self.transformation_part(name, *operator);
+                    let value = match prompts.as_mut().and_then(Vec::pop) {
+                        Some(decoded) if *operator == 'P' => decoded,
+                        _ => self.transformation_part(name, *operator),
+                    };
                     Self::append_expansion_for_word(&mut result, word, &value);
                 }
             }
         }
 
         Ok(result)
+    }
+
+    fn has_prompt_part(word: &Word) -> bool {
+        word.parts
+            .iter()
+            .any(|p| matches!(p, WordPart::Transformation { operator: 'P', .. }))
+    }
+
+    /// Slow path of `expand_word_inner`: indirect parts (`${!r...}`) are
+    /// desugared, and `${x@P}` values are decoded and expanded before the
+    /// word's own pass. `None`: no indirect rewrite and no prompt part, so
+    /// the caller expands `word` as is.
+    #[inline(never)]
+    fn expand_word_special<'a>(
+        &'a mut self,
+        word: &'a Word,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Option<String>>> + Send + 'a>>
+    {
+        Box::pin(async move {
+            let desugared = if Self::has_indirect_part(word) {
+                self.desugar_indirect(word)?
+            } else {
+                None
+            };
+            let target = desugared.as_ref().unwrap_or(word);
+            if !Self::has_prompt_part(target) {
+                return match desugared {
+                    Some(d) => Ok(Some(self.expand_word_inner(&d, None).await?)),
+                    None => Ok(None),
+                };
+            }
+            if desugared.is_some() && Self::has_indirect_part(target) {
+                // Another rewrite round first, as the plain path recurses.
+                return Ok(Some(self.expand_word_inner(target, None).await?));
+            }
+            let mut values = Vec::new();
+            for part in &target.parts {
+                if let WordPart::Transformation {
+                    name,
+                    operator: 'P',
+                } = part
+                {
+                    values.push(self.prompt_transformation(name).await?);
+                }
+            }
+            values.reverse();
+            Ok(Some(self.expand_word_inner(target, Some(values)).await?))
+        })
+    }
+
+    /// `${v@P}`: the value decoded and expanded as a prompt string (not per
+    /// element for `@`/`*`/`a[@]`, which keep their plain values).
+    #[inline(never)]
+    fn prompt_transformation<'a>(
+        &'a mut self,
+        name: &'a str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String>> + Send + 'a>> {
+        Box::pin(async move {
+            let value = self.transformation_part(name, 'P');
+            if matches!(name, "@" | "*") || name.ends_with("[@]") || name.ends_with("[*]") {
+                return Ok(value);
+            }
+            self.expand_prompt_string(value).await
+        })
     }
 
     /// `${v@op}` / `${!ref@op}` (the variable `ref` names). Kept out of
@@ -958,7 +1033,7 @@ impl Interpreter {
                 return self.split_word_segments(word).await;
             }
 
-            let expanded = self.expand_word_inner(word).await?;
+            let expanded = self.expand_word_inner(word, None).await?;
             if has_expansion {
                 self.ifs_split(&expanded)
             } else {

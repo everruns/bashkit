@@ -525,7 +525,7 @@ impl Builtin for Eval {
 /// non-interactive shell. Stored as `SHOPT_<name>`: "1" on, "0" off, absent
 /// means the default. Options with no effect in the sandbox (`checkwinsize`,
 /// `cdable_vars`, ...) are still recorded and reported like bash.
-const SHOPT_OPTIONS: &[(&str, bool)] = &[
+pub(crate) const SHOPT_OPTIONS: &[(&str, bool)] = &[
     ("autocd", false),
     ("assoc_expand_once", false),
     ("cdable_vars", false),

@@ -79,6 +79,8 @@ through configurable limits.
 | awk commands (TM-DOS-128) | `system()`, `print \| cmd` or `cmd \| getline` in a loop | Each command runs as `sh -c` in the sandbox shell under the session's command budget and timeout; awk's loop, output and getline caps still apply | MITIGATED |
 | Command hash table growth (TM-DOS-129) | `hash -p /x nameN` or many distinct PATH commands | The table holds at most 512 entries and drops the oldest; assigning `PATH` empties it | MITIGATED |
 | Array and arithmetic reports (TM-DOS-130) | `$((` nested in arithmetic, many `${a[-9]}` reads, huge `${!r}` target | 32 nesting levels; warnings capped at 64 KiB per command; indirect target echoed truncated to 256 chars | MITIGATED |
+| History files (TM-DOS-131) | `history -a` loops, huge `$HISTSIZE`, giant `$HISTFILE` | History list bounded by `max_history_entries`/`max_history_bytes`; `$HISTFILE` reads refused past `max_input_bytes`; VFS only | MITIGATED |
+| Completion specs and bindings (TM-DOS-132) | `complete`/`bind` in a loop | 1024 specs (64 KiB each) and 1024 binding changes (4 KiB each) per interpreter; never shared between instances | MITIGATED |
 
 **Stack Overflow / Recursion:**
 
