@@ -157,14 +157,19 @@ impl Builtin for Trap {
         let mut stderr = String::new();
         for spec in specs {
             match canonical(spec) {
-                Some((_, key)) => match handler {
-                    Some(cmd) => {
-                        shell.traps.insert(key, cmd.clone());
+                Some((_, key)) => {
+                    if key == "ERR" {
+                        *shell.err_trap_dormant = false;
                     }
-                    None => {
-                        shell.traps.remove(&key);
+                    match handler {
+                        Some(cmd) => {
+                            shell.traps.insert(key, cmd.clone());
+                        }
+                        None => {
+                            shell.traps.remove(&key);
+                        }
                     }
-                },
+                }
                 None => stderr.push_str(&invalid_spec(spec)),
             }
         }
