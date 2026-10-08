@@ -35,12 +35,14 @@ pub(crate) mod pipe;
 mod redirection;
 mod state;
 mod time_command;
+mod xtrace;
 
 #[allow(unused_imports)]
 pub use jobs::{JobInfo, JobState, JobTable, SharedJobTable};
 pub use state::{BuiltinSideEffect, ControlFlow, ExecResult};
 use time_command::{
-    TimeUsage, render_time_format, sanitize_time_path, validate_time_format, verbose_time_report,
+    TimeUsage, render_time_format, render_timeformat, sanitize_time_path, validate_time_format,
+    verbose_time_report,
 };
 // Re-export snapshot type for public API
 
@@ -845,16 +847,23 @@ fn decode_file_bytes_for_path(_path: &Path, bytes: &[u8]) -> String {
 fn nested_partial_parse(
     (mut script, error): (Script, Option<crate::error::Error>),
     noexec: bool,
-    shell_name: &str,
+    who: &str,
+    source: &str,
 ) -> Result<Script> {
     match error {
         None => Ok(script),
         Some(e) if noexec || script.commands.is_empty() => Err(e),
         Some(e) => {
-            script.trailing_error = Some(format!("{shell_name}: syntax error: {e}\n"));
+            script.trailing_error = Some(nested_syntax_report(&e, who, source));
             Ok(script)
         }
     }
+}
+
+/// A child shell's syntax error as bash reports it (`bash: -c: line 1: ...`).
+fn nested_syntax_report(e: &crate::error::Error, who: &str, source: &str) -> String {
+    e.syntax_report(who, source)
+        .unwrap_or_else(|| format!("{who}: syntax error: {e}\n"))
 }
 
 /// Check if a path refers to /dev/null after normalization.
@@ -1340,6 +1349,7 @@ struct SubshellSnapshot {
     last_bg_pid: Option<String>,
     seconds_base: (crate::time_compat::Instant, i64),
     bash_subshell: u32,
+    xtrace_depth: usize,
     err_trap_dormant: bool,
     line_base: usize,
 }
@@ -1460,6 +1470,9 @@ pub struct Interpreter {
     builtin_stdin_pipe: Option<Arc<pipe::Pipe>>,
     /// `$BASH_SUBSHELL`: subshell nesting (`( )`, `$( )`, pipeline stages, jobs).
     bash_subshell: u32,
+    /// Extra `set -x` prefix levels: `$(...)`, `eval`, `source` and trap
+    /// handlers each repeat PS4's first character once more (`++ cmd`).
+    xtrace_depth: usize,
     /// Position within the current argument while `getopts` walks a clustered
     /// short-option group (e.g. `-abc`). Interpreter-internal working state for
     /// `execute_getopts`; `0` means "at the start of the next option group".
@@ -2071,6 +2084,7 @@ impl Interpreter {
             builtin_stdout_pipe: None,
             builtin_stdin_pipe: None,
             bash_subshell: 0,
+            xtrace_depth: 0,
             getopts_char_idx: 0,
             last_bg_pid: None,
             output_callback: None,
@@ -2252,6 +2266,7 @@ impl Interpreter {
             builtin_stdout_pipe: None,
             builtin_stdin_pipe: None,
             bash_subshell: self.bash_subshell + 1,
+            xtrace_depth: self.xtrace_depth,
             getopts_char_idx: self.getopts_char_idx,
             last_bg_pid: self.last_bg_pid.clone(),
             output_callback: None,
@@ -2549,6 +2564,7 @@ impl Interpreter {
         self.err_trap_dormant = false;
         self.err_trap_skip_stage = false;
         self.line_base = 0;
+        self.xtrace_depth = 0;
         // An exec that failed mid-command must not hand its queued `$(...)`
         // stderr to the next exec.
         self.subst_stderr = crate::StreamData::new();
@@ -3666,6 +3682,21 @@ impl Interpreter {
         }
     }
 
+    /// `$LINENO` for a command about to run. `(( ))` and `[[ ]]` carry no
+    /// position of their own: they keep the line of the list around them
+    /// (`[[ $LINENO -gt 1 ]] && ...`), not line 1.
+    fn set_command_lineno(&mut self, command: &Command) {
+        if !matches!(
+            command,
+            Command::Compound(
+                CompoundCommand::Arithmetic(_) | CompoundCommand::Conditional(_),
+                _
+            )
+        ) {
+            self.current_line = self.line_base + Self::command_line(command);
+        }
+    }
+
     fn execute_command<'a>(
         &'a mut self,
         command: &'a Command,
@@ -3679,7 +3710,7 @@ impl Interpreter {
             let emit_before = self.output_emit_count;
             self.check_cancelled()?;
             // Update current line for $LINENO
-            self.current_line = self.line_base + Self::command_line(command);
+            self.set_command_lineno(command);
             if let Some(name) = Self::command_name(command) {
                 self.last_command_name = name.to_string();
             }
@@ -3813,7 +3844,7 @@ impl Interpreter {
                 && !self.is_in_condition_sequence()
             {
                 // `$LINENO` in the handler is the failing command's line.
-                self.current_line = self.line_base + Self::command_line(command);
+                self.set_command_lineno(command);
                 Box::pin(self.run_err_trap_after(r, emit_before)).await;
             }
             result
@@ -4699,13 +4730,6 @@ impl Interpreter {
                 return Ok(false);
             }
 
-            // Handle negation
-            if Self::conditional_word_literal(&words[0]) == Some("!") {
-                let negated = !self.evaluate_conditional_words(&words[1..]).await?;
-                self.cond_regex_error = false;
-                return Ok(negated);
-            }
-
             // Handle parentheses only when they wrap the whole expression.
             if Self::conditional_words_wrapped(words) {
                 return self
@@ -4729,6 +4753,42 @@ impl Interpreter {
                 return self.evaluate_conditional_words(&words[i + 1..]).await;
             }
 
+            // `!` binds tighter than `&&`/`||`: `[[ ! -z x || y ]]` is
+            // `(! -z x) || y`.
+            if Self::conditional_word_literal(&words[0]) == Some("!") {
+                let rest = &words[1..];
+                if self.is_xtrace_enabled() && Self::conditional_words_leaf(rest) {
+                    // Traced as one primary: `+ [[ ! -z x ]]`.
+                    let negated = !self.evaluate_conditional_leaf(rest, true).await?;
+                    self.cond_regex_error = false;
+                    return Ok(negated);
+                }
+                let negated = !self.evaluate_conditional_words(rest).await?;
+                self.cond_regex_error = false;
+                return Ok(negated);
+            }
+
+            self.evaluate_conditional_leaf(words, false).await
+        })
+    }
+
+    /// A `[[ ]]` word list with no `!`, `&&`, `||` or wrapping parens on top.
+    fn conditional_words_leaf(words: &[Word]) -> bool {
+        !words.is_empty()
+            && Self::conditional_word_literal(&words[0]) != Some("!")
+            && !Self::conditional_words_wrapped(words)
+            && Self::find_top_level_conditional_word_operator(words, "||").is_none()
+            && Self::find_top_level_conditional_word_operator(words, "&&").is_none()
+    }
+
+    /// Evaluate one `[[ ]]` primary. `invert` only shapes its `set -x` line;
+    /// the caller negates.
+    fn evaluate_conditional_leaf<'a>(
+        &'a mut self,
+        words: &'a [Word],
+        invert: bool,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<bool>> + Send + 'a>> {
+        Box::pin(async move {
             // Leaf: expand words and evaluate as a simple condition. The
             // right side of `==`/`=`/`!=` is a pattern: its quoted parts
             // match literally.
@@ -4746,6 +4806,10 @@ impl Interpreter {
                     self.expand_word(word).await?
                 });
             }
+            if self.is_xtrace_enabled() {
+                let prefix = self.xtrace_prefix().await;
+                self.queue_xtrace_line(&prefix, &xtrace::cond_term(invert, &expanded));
+            }
             self.cond_regex_error = false;
             Ok(self.evaluate_conditional(&expanded).await)
         })
@@ -4761,11 +4825,6 @@ impl Interpreter {
                 return false;
             }
 
-            // Handle negation
-            if args[0] == "!" {
-                return !self.evaluate_conditional(&args[1..]).await;
-            }
-
             // Handle parentheses only when they wrap the whole expression.
             if Self::conditional_args_wrapped(args) {
                 return self.evaluate_conditional(&args[1..args.len() - 1]).await;
@@ -4779,6 +4838,11 @@ impl Interpreter {
             if let Some(i) = Self::find_top_level_conditional_arg_operator(args, "&&") {
                 return self.evaluate_conditional(&args[..i]).await
                     && self.evaluate_conditional(&args[i + 1..]).await;
+            }
+
+            // `!` binds tighter than `&&`/`||`.
+            if args[0] == "!" {
+                return !self.evaluate_conditional(&args[1..]).await;
             }
 
             match args.len() {
@@ -5237,6 +5301,13 @@ impl Interpreter {
             }
         } else if time_cmd.verbose {
             verbose_time_report(&usage)
+        } else if !time_cmd.posix_format
+            && let Some(timeformat) = self.scoped.variables.get("TIMEFORMAT")
+        {
+            match render_timeformat(timeformat, elapsed) {
+                Ok(report) => report,
+                Err(bad) => self.diag(format!("TIMEFORMAT: `{bad}': invalid format character\n")),
+            }
         } else if time_cmd.posix_format {
             format!(
                 "real {:.2}\nuser unavailable\nsys unavailable\n",
@@ -5656,7 +5727,23 @@ impl Interpreter {
         Ok((command_string, script_file, script_args, noexec, shell_opts))
     }
 
+    /// `bash`/`sh` as a command. Its redirects apply to everything it
+    /// reports, including a syntax error or a missing script file
+    /// (`bash -c 'if then fi' 2>/dev/null` is silent).
     async fn execute_shell(
+        &mut self,
+        shell_name: &str,
+        args: &[String],
+        stdin: Option<crate::StreamData>,
+        redirects: &[Redirect],
+    ) -> Result<ExecResult> {
+        let result = self
+            .execute_shell_unredirected(shell_name, args, stdin, redirects)
+            .await?;
+        self.apply_redirections(result, redirects).await
+    }
+
+    async fn execute_shell_unredirected(
         &mut self,
         shell_name: &str,
         args: &[String],
@@ -5703,6 +5790,22 @@ impl Interpreter {
             ));
         }
 
+        // Who reports a syntax error: `bash: -c` (or `$0: -c`), the script
+        // file, or the shell itself for stdin.
+        let who = if is_command_mode {
+            format!(
+                "{}: -c",
+                script_args
+                    .first()
+                    .map(String::as_str)
+                    .unwrap_or(shell_name)
+            )
+        } else if let Some(file) = &script_file {
+            file.clone()
+        } else {
+            shell_name.to_string()
+        };
+
         // THREAT[TM-DOS-021]: Propagate interpreter's parser limits to child shell
         let max_ast_depth = self.limits.max_ast_depth;
         let max_parser_operations = self.limits.max_parser_operations;
@@ -5725,11 +5828,11 @@ impl Interpreter {
                 Some(parser_timeout),
             )
             .with_execution_budget(self.execution_budget.clone());
-            match nested_partial_parse(parser.parse_recovering(), noexec, shell_name) {
+            match nested_partial_parse(parser.parse_recovering(), noexec, &who, &script_content) {
                 Ok(s) => s,
                 Err(e) => {
                     return Ok(ExecResult::err(
-                        format!("{}: syntax error: {}\n", shell_name, e),
+                        nested_syntax_report(&e, &who, &script_content),
                         2,
                     ));
                 }
@@ -5752,11 +5855,13 @@ impl Interpreter {
                 .await
             })
             .await;
-            match parse_result.map(|r| r.map(|p| nested_partial_parse(p, noexec, shell_name))) {
+            match parse_result
+                .map(|r| r.map(|p| nested_partial_parse(p, noexec, &who, &script_content)))
+            {
                 Ok(Ok(Ok(s))) => s,
                 Ok(Ok(Err(e))) => {
                     return Ok(ExecResult::err(
-                        format!("{}: syntax error: {}\n", shell_name, e),
+                        nested_syntax_report(&e, &who, &script_content),
                         2,
                     ));
                 }
@@ -5820,6 +5925,7 @@ impl Interpreter {
         let child_snapshot = self.snapshot_subshell_state();
         // A new shell starts at subshell level 0.
         self.bash_subshell = 0;
+        self.xtrace_depth = 0;
         let shlvl_warning = self.reset_state_for_child_shell();
         // Output the `bash` command's own redirects will route must not stream
         // from the child first (`bash -c 'echo x >&2' 2>/dev/null` printed x),
@@ -5917,7 +6023,7 @@ impl Interpreter {
                     exec_result.stderr =
                         crate::StreamData::from(warning + &exec_result.stderr.text_lossy());
                 }
-                self.apply_redirections(exec_result, redirects).await
+                Ok(exec_result)
             }
             Err(e) => Err(e),
         }
@@ -6990,6 +7096,16 @@ impl Interpreter {
                 match &assignment.value {
                     AssignmentValue::Scalar(word) => {
                         let value = self.expand_word(word).await?;
+                        if self.is_xtrace_enabled() {
+                            // `+ v=x`, `+ a[1]='a b'`, `+ v+=y`
+                            let prefix = self.xtrace_prefix().await;
+                            let body = format!(
+                                "{}={}",
+                                Self::xtrace_assignment_lhs(assignment),
+                                xtrace::quote_value(&value)
+                            );
+                            self.queue_xtrace_line(&prefix, &body);
+                        }
                         let target = match self.resolve_nameref_strict(&assignment.name) {
                             Ok(t) => t,
                             Err(()) => {
@@ -7029,6 +7145,19 @@ impl Interpreter {
                         }
                     }
                     AssignmentValue::Array(words) => {
+                        if self.is_xtrace_enabled() {
+                            // bash traces the list as written, before
+                            // expanding it: `+ a=(x 'y z' $(cmd))`.
+                            let prefix = self.xtrace_prefix().await;
+                            let list: Vec<String> =
+                                words.iter().map(crate::parser::word_text).collect();
+                            let body = format!(
+                                "{}=({})",
+                                Self::xtrace_assignment_lhs(assignment),
+                                list.join(" ")
+                            );
+                            self.queue_xtrace_line(&prefix, &body);
+                        }
                         let arr_name = match self.resolve_nameref_strict(&assignment.name) {
                             Ok(n) => n,
                             Err(()) => {
@@ -7052,6 +7181,20 @@ impl Interpreter {
             }
             Ok(stderr)
         })
+    }
+
+    /// `name`, `name[i]` or `name+` as an xtrace assignment line shows it.
+    fn xtrace_assignment_lhs(assignment: &Assignment) -> String {
+        let mut lhs = assignment.name.clone();
+        if let Some(index) = &assignment.index {
+            lhs.push('[');
+            lhs.push_str(index);
+            lhs.push(']');
+        }
+        if assignment.append {
+            lhs.push('+');
+        }
+        lhs
     }
 
     /// Try alias expansion. Returns `Some(result)` if alias was expanded, `None` otherwise.
@@ -7184,6 +7327,7 @@ impl Interpreter {
             let snapshot = Box::new(self.snapshot_subshell_state());
             let last_exit_code = self.last_exit_code;
             self.bash_subshell += 1;
+            self.xtrace_depth += 1;
             let mut run = Ok(());
             for cmd in &commands {
                 let prev_stdin = self.pipeline_stdin.take();
@@ -7229,31 +7373,85 @@ impl Interpreter {
         }
     }
 
-    /// Build an xtrace line for `set -x` output.
-    fn build_xtrace_line(&self, name: &str, args: &[String]) -> Option<String> {
-        if !self.is_xtrace_enabled() {
-            return None;
-        }
-        let ps4 = self
-            .scoped
-            .variables
-            .get("PS4")
-            .cloned()
-            .unwrap_or_else(|| "+ ".to_string());
-        let mut trace = ps4;
-        trace.push_str(name);
-        for expanded in args {
-            trace.push(' ');
-            if expanded.contains(' ') || expanded.contains('\t') || expanded.is_empty() {
-                trace.push('\'');
-                trace.push_str(&expanded.replace('\'', "'\\''"));
-                trace.push('\'');
+    /// `set -x` line prefix: PS4 expanded like bash's prompt strings
+    /// (double-quote rules, tracing off, `$?` kept), its first character
+    /// repeated once per nesting level. Boxed: callers include
+    /// `execute_simple_command`, whose frame must stay small (TM-DOS-089).
+    fn xtrace_prefix<'a>(
+        &'a mut self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = String> + Send + 'a>> {
+        Box::pin(async move {
+            // Never set: bash's default. (bash prints no prefix after an
+            // explicit `unset PS4`; bashkit does not seed PS4, so it cannot
+            // tell the two apart.)
+            let ps4 = self
+                .scoped
+                .variables
+                .get("PS4")
+                .cloned()
+                .unwrap_or_else(|| "+ ".to_string());
+            let expanded = if ps4.contains(['$', '`']) {
+                let word = Parser::parse_word_string_with_limits(
+                    &ps4,
+                    self.limits.max_ast_depth,
+                    self.limits.max_parser_operations,
+                );
+                let saved_exit = self.last_exit_code;
+                let saved_nounset = self.nounset_error.take();
+                let traced = self.flags.contains(BashFlags::XTRACE);
+                self.flags.remove(BashFlags::XTRACE);
+                let expanded = self.expand_word(&word).await;
+                self.flags.set(BashFlags::XTRACE, traced);
+                self.nounset_error = saved_nounset;
+                self.last_exit_code = saved_exit;
+                expanded.unwrap_or(ps4)
             } else {
-                trace.push_str(expanded);
+                ps4
+            };
+            xtrace::prefix(&expanded, self.xtrace_depth + 1)
+        })
+    }
+
+    /// Queue one `set -x` line with the pending `$(...)` stderr, so it is
+    /// written after the substitutions that built it and before the
+    /// command's own redirections apply.
+    fn queue_xtrace_line(&mut self, prefix: &str, body: &str) {
+        let line = format!("{prefix}{body}\n");
+        self.queue_subst_stderr(&line.into());
+    }
+
+    /// Trace a simple command's expanded words (`+ echo 'a b'`). Boxed for
+    /// `execute_simple_command`'s frame (TM-DOS-089).
+    fn trace_simple_command<'a>(
+        &'a mut self,
+        name: &'a str,
+        args: &'a [String],
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
+        Box::pin(async move {
+            let prefix = self.xtrace_prefix().await;
+            let mut body = String::from(xtrace::quote_word(name));
+            for arg in args {
+                body.push(' ');
+                // `declare -a a=(1 2)` operand placeholder: bash traces the
+                // declaration as `declare -a a`.
+                if arg.contains(declare::COMPOUND_MARK) {
+                    let name = arg.split('=').next().unwrap_or(arg);
+                    body.push_str(name.trim_end_matches('+'));
+                } else {
+                    body.push_str(&xtrace::quote_word(arg));
+                }
             }
-        }
-        trace.push('\n');
-        Some(trace)
+            self.queue_xtrace_line(&prefix, &body);
+            // A function body, `eval` and `source` stream their own output as
+            // they run, which makes the enclosing list skip streaming this
+            // command's result: write the queued lines now (they stay queued
+            // for the returned result).
+            if matches!(name, "eval" | "source" | ".") || self.scoped.functions.contains_key(name) {
+                let pending = self.subst_stderr.clone();
+                let before = self.output_emit_count;
+                self.maybe_emit_output(&crate::StreamData::new(), &pending, before);
+            }
+        })
     }
 
     // THREAT[TM-DOS-089]: Box the full simple-command path because nested
@@ -7469,7 +7667,9 @@ impl Interpreter {
                 return self.apply_redirections(result, &command.redirects).await;
             }
 
-            let xtrace_line = self.build_xtrace_line(&name, &args);
+            if self.is_xtrace_enabled() {
+                self.trace_simple_command(&name, &args).await;
+            }
 
             let result = self
                 .execute_dispatched_command(&name, args, command, stdin)
@@ -7501,17 +7701,7 @@ impl Interpreter {
                 })
             };
 
-            // Prepend xtrace to stderr
-            let mut result = if let Some(trace) = xtrace_line {
-                result.map(|mut r| {
-                    let mut stderr: crate::StreamData = trace.into();
-                    stderr.append(&r.stderr);
-                    r.stderr = stderr;
-                    r
-                })
-            } else {
-                result
-            };
+            let mut result = result;
 
             self.run_deferred_proc_subs_from(deferred_proc_sub_start, &mut result)
                 .await?;
@@ -8966,13 +9156,9 @@ impl Interpreter {
             Ok(script) => script,
             Err(crate::error::Error::Parse { message, line, .. }) => {
                 // Like bash: the sourced file names itself, with the line.
-                let message = if message.starts_with("syntax error") {
-                    message
-                } else {
-                    format!("syntax error: {message}")
-                };
-                let result =
-                    ExecResult::err(format!("{filename}: line {}: {message}\n", line.max(1)), 2);
+                let report =
+                    crate::error::syntax_report(filename, &content, &message, line.max(1), 0);
+                let result = ExecResult::err(report, 2);
                 return self.redirect_result(result, redirects).await;
             }
             Err(e) => return Err(e),
@@ -9021,7 +9207,9 @@ impl Interpreter {
         self.return_depth += 1;
         self.source_depth += 1;
         let emit_before = self.output_emit_count;
+        self.xtrace_depth += 1;
         let mut exec_result = self.execute_script_body(&script, false, true).await;
+        self.xtrace_depth -= 1;
         if let Ok(r) = &mut exec_result {
             Box::pin(self.run_return_trap(r, emit_before)).await;
         }
@@ -9081,18 +9269,10 @@ impl Interpreter {
             Err(crate::error::Error::Parse { message, line, .. }) => {
                 // Like bash: status 2, line counted from the eval's own line, then
                 // the offending source line. Redirects still apply (`2>&1`).
-                let at = self.current_line + line.max(1) - 1;
-                let src = cmd.lines().nth(line.max(1) - 1).unwrap_or("");
-                let message = if message.starts_with("syntax error") {
-                    message
-                } else {
-                    format!("syntax error: {message}")
-                };
-                let who = self.diag_name();
-                let result = ExecResult::err(
-                    format!("{who}: eval: line {at}: {message}\n{who}: eval: line {at}: `{src}'\n"),
-                    2,
-                );
+                let who = format!("{}: eval", self.diag_name());
+                let shift = self.current_line.saturating_sub(1);
+                let report = crate::error::syntax_report(&who, &cmd, &message, line.max(1), shift);
+                let result = ExecResult::err(report, 2);
                 return self.redirect_result(result, redirects).await;
             }
             Err(e) => return Err(e),
@@ -9113,7 +9293,9 @@ impl Interpreter {
         // (`$LINENO`, diagnostics), not from 1.
         let saved_line_base =
             std::mem::replace(&mut self.line_base, self.current_line.saturating_sub(1));
+        self.xtrace_depth += 1;
         let result = self.execute_script_body(&script, false, true).await;
+        self.xtrace_depth -= 1;
         self.line_base = saved_line_base;
         let mut result = result?;
 
@@ -10701,6 +10883,7 @@ impl Interpreter {
             let snapshot = Box::new(self.snapshot_subshell_state());
             let last_exit_code = self.last_exit_code;
             self.bash_subshell += 1;
+            self.xtrace_depth += 1;
             let mut failed = None;
             for cmd in commands {
                 match self.execute_command(cmd).await {
@@ -10762,6 +10945,7 @@ impl Interpreter {
             last_bg_pid: self.last_bg_pid.clone(),
             seconds_base: self.seconds_base,
             bash_subshell: self.bash_subshell,
+            xtrace_depth: self.xtrace_depth,
             err_trap_dormant: self.err_trap_dormant,
             line_base: self.line_base,
         }
@@ -10789,6 +10973,7 @@ impl Interpreter {
         self.last_bg_pid = snap.last_bg_pid;
         self.seconds_base = snap.seconds_base;
         self.bash_subshell = snap.bash_subshell;
+        self.xtrace_depth = snap.xtrace_depth;
         self.err_trap_dormant = snap.err_trap_dormant;
         self.line_base = snap.line_base;
     }
@@ -11005,6 +11190,7 @@ impl Interpreter {
             // mutable state so mutations don't leak to the parent.
             let snapshot = self.snapshot_subshell_state();
             self.bash_subshell += 1;
+            self.xtrace_depth += 1;
             self.enter_subshell_err_scope();
             // The outer command's queued stderr must not pass through the
             // substitution's own redirects (`$(cmd 2>&1)`).
@@ -12108,7 +12294,9 @@ impl Interpreter {
                 let saved_exit = self.last_exit_code;
                 self.in_trap = true;
                 let emit_before = self.output_emit_count;
+                self.xtrace_depth += 1;
                 let result = self.execute_command_sequence(&trap_script.commands).await;
+                self.xtrace_depth -= 1;
                 self.in_trap = false;
                 self.last_exit_code = saved_exit;
                 if let Ok(trap_result) = result {
@@ -12144,7 +12332,9 @@ impl Interpreter {
         let saved_line_base =
             std::mem::replace(&mut self.line_base, self.current_line.saturating_sub(1));
         let emit_before = self.output_emit_count;
+        self.xtrace_depth += 1;
         let result = self.execute_command_sequence(&trap_script.commands).await;
+        self.xtrace_depth -= 1;
         self.line_base = saved_line_base;
         self.in_trap = was_in_trap;
         let Ok(trap_result) = result else {

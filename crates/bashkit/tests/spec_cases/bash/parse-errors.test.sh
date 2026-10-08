@@ -147,3 +147,82 @@ echo status=$?
 ### expect
 status=2
 ### end
+
+### syntax_error_near_unexpected_token
+# bash names the token the parse stopped at, then the line
+bash -c 'if then fi' 2>&1; echo rc=$?
+bash -c 'echo a; fi' 2>&1
+bash -c 'while do done' 2>&1
+bash -c 'a && && b' 2>&1
+bash -c 'echo (' 2>&1
+### expect
+bash: -c: line 1: syntax error near unexpected token `then'
+bash: -c: line 1: `if then fi'
+rc=2
+bash: -c: line 1: syntax error near unexpected token `fi'
+bash: -c: line 1: `echo a; fi'
+bash: -c: line 1: syntax error near unexpected token `do'
+bash: -c: line 1: `while do done'
+bash: -c: line 1: syntax error near unexpected token `&&'
+bash: -c: line 1: `a && && b'
+bash: -c: line 1: syntax error near unexpected token `newline'
+bash: -c: line 1: `echo ('
+### end
+
+### syntax_error_unexpected_end_of_file
+# input ending inside a construct: reported on the line after the last
+bash -c 'for x in; do' 2>&1; echo rc=$?
+bash -c 'if true; then' 2>&1
+bash -c '{ echo' 2>&1
+bash -c 'case x in' 2>&1
+printf 'echo 1\nif true; then\n' | bash 2>&1
+### expect
+bash: -c: line 2: syntax error: unexpected end of file
+rc=2
+bash: -c: line 2: syntax error: unexpected end of file
+bash: -c: line 2: syntax error: unexpected end of file
+bash: -c: line 2: syntax error: unexpected end of file
+1
+bash: line 3: syntax error: unexpected end of file
+### end
+
+### syntax_error_partial_run_and_eval
+# commands before the error run; eval counts from its own line
+bash -c $'echo first\nfor x in; do' 2>&1; echo rc=$?
+bash -c $'echo x\neval "if then fi"' 2>&1
+### expect
+first
+bash: -c: line 3: syntax error: unexpected end of file
+rc=2
+x
+bash: eval: line 2: syntax error near unexpected token `then'
+bash: eval: line 2: `if then fi'
+### end
+
+### syntax_error_unterminated_quote
+# an unterminated quote names the quote it looked for
+bash -c 'echo "a' 2>&1
+bash -c "echo 'a" 2>&1
+### expect
+bash: -c: line 1: unexpected EOF while looking for matching `"'
+bash: -c: line 1: unexpected EOF while looking for matching `''
+### end
+
+### syntax_error_dbracket_regex_unclosed_group
+# [[ =~ ( ]] reads the group to end of input, then the operand is missing
+bash -c '[[ abc =~ ( ]]' 2>&1; echo rc=$?
+### expect
+bash: -c: line 1: unexpected EOF while looking for matching `)'
+bash: -c: line 2: unexpected argument to conditional binary operator
+rc=2
+### end
+
+### bash_child_errors_follow_its_redirects
+# a child shell's syntax error and missing script obey the command's redirects
+{ bash -c 'if then fi' 2>/dev/null; } 2>&1; echo rc=$?
+{ bash -c 'echo "a' 2>/dev/null; } 2>&1
+{ bash /no/such/file 2>/dev/null; } 2>&1; echo rc=$?
+### expect
+rc=2
+rc=127
+### end

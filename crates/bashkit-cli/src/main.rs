@@ -495,7 +495,16 @@ fn run_oneshot(args: Args, mode: CliMode) -> Result<i32> {
                 // reported on stderr and exits 2 (the partial-run case already
                 // returns exit 2 from the library).
                 Err(e @ bashkit::Error::Parse { .. }) => {
-                    eprintln!("bash: syntax error: {e}");
+                    // Named like bash: `bash: -c: line 1: ...` or `script.sh: line 1: ...`.
+                    let arg0 = args.script.as_ref().map(|p| p.display().to_string());
+                    let who = match (&args.command, arg0) {
+                        (None, Some(path)) => path,
+                        (_, arg0) => format!("{}: -c", arg0.as_deref().unwrap_or("bash")),
+                    };
+                    let report = e
+                        .syntax_report(&who, &script)
+                        .unwrap_or_else(|| format!("bash: syntax error: {e}\n"));
+                    eprint!("{report}");
                     return Ok(2);
                 }
                 Err(e) => return Err(anyhow::Error::new(e).context(context)),

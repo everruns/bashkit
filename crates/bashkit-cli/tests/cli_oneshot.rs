@@ -214,31 +214,36 @@ fn parse_error_reports_on_stderr_and_exits_nonzero() {
     let out = run(&["-c", "if ["]);
     // bash exits 2 on a syntax error.
     assert_eq!(code(&out), 2);
-    let err = stderr(&out);
-    assert!(
-        err.starts_with("bash: syntax error: parse error"),
-        "stderr: {err}"
+    // Worded and numbered like bash: input ran out, so the line after the last.
+    assert_eq!(
+        stderr(&out),
+        "bash: -c: line 2: syntax error: unexpected end of file\n"
     );
-    assert!(err.ends_with('\n'), "stderr: {err:?}");
     assert_eq!(stdout(&out), "", "parse errors must not write to stdout");
 }
 
 #[test]
 fn script_parse_error_exits_2_with_or_without_earlier_commands() {
     let dir = tempfile::tempdir().unwrap();
-    for (body, want_stdout) in [
-        ("[[ abc =~ ( ]]\n", ""),
-        ("echo ok\n[[ abc =~ ( ]]\n", "ok\n"),
+    for (body, want_stdout, line) in [
+        ("[[ abc =~ ( ]]\n", "", 1),
+        ("echo ok\n[[ abc =~ ( ]]\n", "ok\n", 2),
     ] {
         let script = dir.path().join("bad.sh");
         std::fs::write(&script, body).unwrap();
-        let out = run(&[script.to_str().unwrap()]);
+        let path = script.to_str().unwrap();
+        let out = run(&[path]);
         assert_eq!(code(&out), 2, "{body:?}");
         assert_eq!(stdout(&out), want_stdout, "{body:?}");
-        assert!(
-            stderr(&out).starts_with("bash: syntax error: "),
-            "{body:?}: {}",
-            stderr(&out)
+        // bash's two diagnostics, named by the script path.
+        assert_eq!(
+            stderr(&out),
+            format!(
+                "{path}: line {line}: unexpected EOF while looking for matching `)'\n\
+                 {path}: line {}: unexpected argument to conditional binary operator\n",
+                line + 1
+            ),
+            "{body:?}"
         );
     }
 }

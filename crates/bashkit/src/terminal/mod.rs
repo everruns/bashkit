@@ -565,6 +565,7 @@ fn is_incomplete_input(msg: &str) -> bool {
     lower.contains("unterminated")
         || lower.contains("unexpected end of input")
         || lower.contains("unexpected eof")
+        || lower.contains("unexpected end of file")
         || lower.contains("syntax error: empty")
         || lower.contains("expected 'fi'")
         || lower.contains("expected 'done'")

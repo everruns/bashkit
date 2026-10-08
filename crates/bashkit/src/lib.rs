@@ -1063,6 +1063,13 @@ impl Bash {
             "Parsing script"
         );
 
+        // A syntax error after runnable commands is reported as bash reports
+        // one in a script: `$0: line N: ...`.
+        let syntax_who = invocation
+            .arg0
+            .clone()
+            .unwrap_or_else(|| self.interpreter.diag_name());
+
         // Important decision: skip the tokio `spawn_blocking` + `time::timeout`
         // round-trip for small scripts. The parser already enforces a fuel
         // budget via `max_parser_operations`, so a runaway script still
@@ -1086,7 +1093,7 @@ impl Bash {
                 Some(parser_timeout),
             )
             .with_execution_budget(self.interpreter.execution_budget().clone());
-            recover_partial_parse(parser.parse_recovering())?
+            recover_partial_parse(parser.parse_recovering(), &syntax_who, script)?
         };
 
         // On native targets, parse inline for small scripts (avoid threadpool
@@ -1096,7 +1103,7 @@ impl Bash {
         let ast = if input_len <= SPAWN_BLOCKING_THRESHOLD {
             let parser = Parser::with_limits(script, max_ast_depth, max_parser_operations)
                 .with_execution_budget(self.interpreter.execution_budget().clone());
-            match recover_partial_parse(parser.parse_recovering()) {
+            match recover_partial_parse(parser.parse_recovering(), &syntax_who, script) {
                 Ok(ast) => {
                     #[cfg(feature = "logging")]
                     tracing::debug!(target: "bashkit::parser", "Parse completed (inline)");
@@ -1111,12 +1118,13 @@ impl Bash {
         } else {
             let script_owned = script.to_owned();
             let execution_budget = self.interpreter.execution_budget().clone();
+            let who = syntax_who.clone();
             let parse_result = tokio::time::timeout(parser_timeout, async {
                 tokio::task::spawn_blocking(move || {
                     let parser =
                         Parser::with_limits(&script_owned, max_ast_depth, max_parser_operations)
                             .with_execution_budget(execution_budget);
-                    recover_partial_parse(parser.parse_recovering())
+                    recover_partial_parse(parser.parse_recovering(), &who, &script_owned)
                 })
                 .await
             })
@@ -4244,12 +4252,17 @@ pub mod hooks_guide {}
 /// unaffected.
 fn recover_partial_parse(
     (mut script, error): (parser::Script, Option<Error>),
+    who: &str,
+    source: &str,
 ) -> Result<parser::Script> {
     match error {
         None => Ok(script),
         Some(e) if script.commands.is_empty() => Err(e),
         Some(e) => {
-            script.trailing_error = Some(format!("bash: syntax error: {e}\n"));
+            let report = e
+                .syntax_report(who, source)
+                .unwrap_or_else(|| format!("{who}: syntax error: {e}\n"));
+            script.trailing_error = Some(report);
             Ok(script)
         }
     }
@@ -7212,11 +7225,10 @@ echo missing fi"#,
         let result = result.unwrap();
         assert_eq!(result.stdout, "ok\n");
         assert_eq!(result.exit_code, 2);
-        // Error should mention line number
-        assert!(
-            result.stderr.contains("line") && result.stderr.contains("parse"),
-            "Error should be a parse error: {}",
-            result.stderr
+        // Reported like bash: on the line after the last.
+        assert_eq!(
+            result.stderr,
+            "bash: line 4: syntax error: unexpected end of file\n"
         );
     }
 
@@ -7792,6 +7804,13 @@ echo missing fi"#,
     #[tokio::test]
     async fn test_streaming_equivalence_stderr() {
         assert_streaming_equivalence("echo out; echo err >&2; echo out2").await;
+    }
+
+    #[tokio::test]
+    async fn test_streaming_equivalence_xtrace_function_and_eval() {
+        // The call's own trace line streams before the body's output; it
+        // used to vanish from the stream once the body emitted.
+        assert_streaming_equivalence("set -x; f() { echo in; }; f a; eval 'echo ev'; x=$(f)").await;
     }
 
     #[tokio::test]

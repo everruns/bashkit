@@ -2324,6 +2324,13 @@ impl<'a> Lexer<'a> {
     /// backslashes are kept verbatim for the caller to interpret. Returns
     /// `None` when no operand follows.
     pub fn read_cond_regex(&mut self) -> Option<String> {
+        self.read_cond_regex_checked().0
+    }
+
+    /// [`Self::read_cond_regex`], also telling whether input ran out inside
+    /// an unclosed `(` group (bash: `unexpected EOF while looking for
+    /// matching `)'`).
+    pub(crate) fn read_cond_regex_checked(&mut self) -> (Option<String>, bool) {
         while matches!(self.peek_char(), Some(' ' | '\t')) {
             self.advance();
         }
@@ -2384,7 +2391,7 @@ impl<'a> Lexer<'a> {
                 _ => {}
             }
         }
-        (!raw.is_empty()).then_some(raw)
+        ((!raw.is_empty()).then_some(raw), depth > 0)
     }
 
     fn is_word_char(&self, ch: char) -> bool {

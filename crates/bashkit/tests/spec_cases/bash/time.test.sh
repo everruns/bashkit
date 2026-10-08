@@ -82,3 +82,15 @@ echo $?
 ### expect
 1
 ### end
+
+### time_timeformat_precision
+# TIMEFORMAT picks the report; %0R has no decimals
+TIMEFORMAT='t=%0R%%'
+{ time true; } 2>&1
+TIMEFORMAT=
+{ time true; } 2>&1
+echo end
+### expect
+t=0%
+end
+### end

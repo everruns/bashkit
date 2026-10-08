@@ -148,8 +148,20 @@ the error; `Bash::exec` and child `bash`/`sh` run them and then report the
 error via `Script::trailing_error` (stderr + exit 2), unless `exit` or
 `set -e` stopped the script first. With nothing runnable before the error,
 `exec` still returns `Err(Parse)`; the `bashkit` CLI maps that to
-`bash: syntax error: ...` on stderr and exit 2, so both cases exit 2 like
+bash's report (`Error::syntax_report`: `bash: -c: line N: ...` or
+`script.sh: line N: ...`) on stderr and exit 2, so both cases exit 2 like
 bash. `bash -n` keeps whole-script rejection.
+
+**Error wording.** `Parser::error` rewrites grammar errors (empty bodies,
+missing keywords, stray tokens) the way bash's yacc parser words them, by the
+token the parse stopped at: `syntax error near unexpected token `T'` (a line
+end is `newline`; the report adds the offending source line), or, when input
+ran out inside a construct, `syntax error: unexpected end of file` on line
+`lines + 1`. An empty `if`/`elif`/`while`/`until` condition fails at
+`then`/`do`, like bash. An unclosed `(` group in a `[[ =~ ]]` operand is read
+to end of input and gives bash's two diagnostics; a further diagnostic is a
+`line N: text` line inside the message. The REPL treats `unexpected end of
+file` as incomplete input.
 Deferred `$(...)` errors carry no reliable position, so they never run a
 prefix.
 

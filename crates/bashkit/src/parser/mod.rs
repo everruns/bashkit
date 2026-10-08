@@ -8,6 +8,11 @@
 //! position - when they would start a command. In argument position, they are regular
 //! words. The termination of compound commands is handled by `parse_compound_list_until`
 //! which checks for terminators BEFORE parsing each command.
+//!
+//! Grammar errors are worded the way bash words them, by the token the parse
+//! stopped at (see `Parser::error`): `syntax error near unexpected token
+//! `fi'`, or `syntax error: unexpected end of file` reported on the line after
+//! the last when the input ran out inside a construct.
 
 // Parser uses chars().next().unwrap() after validating character presence.
 // This is safe because we check bounds before accessing.
@@ -26,6 +31,7 @@ pub use ast::*;
 pub use budget::{BudgetError, validate as validate_budget};
 pub use lexer::{Lexer, SpannedToken};
 pub use print_cmd::function_string;
+pub(crate) use print_cmd::word_text;
 pub use span::{Position, Span};
 
 use crate::error::{Error, Result};
@@ -177,13 +183,61 @@ impl<'a> Parser<'a> {
         parser.parse_word(input.to_string())
     }
 
-    /// Create a parse error with the current position.
+    /// Create a parse error with the current position. A grammar error
+    /// (a construct that cannot continue with the current token) gets bash's
+    /// wording instead of `message`; see [`Self::bash_grammar_error`].
     fn error(&self, message: impl Into<String>) -> Error {
+        let message = message.into();
+        if let Some(err) = self.bash_grammar_error(&message) {
+            return err;
+        }
         Error::parse_at(
             message,
             self.current_span.start.line,
             self.current_span.start.column,
         )
+    }
+
+    /// bash reports a grammar error by the token it stopped at: `syntax error
+    /// near unexpected token `T'` (a line end is `newline`), or, when input
+    /// ran out inside an unfinished construct, `syntax error: unexpected end
+    /// of file` on the line after the last one.
+    fn bash_grammar_error(&self, message: &str) -> Option<Error> {
+        // Constructs that may continue on later lines: running out of input
+        // is an unexpected end of file.
+        // (`f(` must close on its own line: bash stops at `newline`.)
+        let unfinished = message.starts_with("syntax error: empty ")
+            || (message.starts_with("expected '") && !message.ends_with("function definition"))
+            || message.starts_with("expected command after");
+        if !unfinished
+            && !message.starts_with("unexpected token")
+            && !message.starts_with("expected '")
+        {
+            return None;
+        }
+        let line = self.current_span.start.line;
+        let near = |token: &str| {
+            Some(Error::parse_at(
+                format!("syntax error near unexpected token `{token}'"),
+                line,
+                self.current_span.start.column,
+            ))
+        };
+        match &self.current_token {
+            None if unfinished => Some(Error::parse_at(
+                "syntax error: unexpected end of file",
+                self.input.lines().count() + 1,
+                1,
+            )),
+            None | Some(tokens::Token::Newline) => near("newline"),
+            Some(_) => {
+                let span = self.current_span;
+                match self.input.get(span.start.offset..span.end.offset) {
+                    Some(text) if !text.is_empty() => near(text),
+                    _ => None,
+                }
+            }
+        }
     }
 
     fn current_command_end_offset(&self) -> usize {
@@ -289,6 +343,17 @@ impl<'a> Parser<'a> {
     /// Check if current token is an error token and return the error if so
     fn check_error_token(&self) -> Result<()> {
         if let Some(tokens::Token::Error(msg)) = &self.current_token {
+            // bash: `unexpected EOF while looking for matching `"'`.
+            let close = match msg.as_str() {
+                "unterminated double quote" => Some('"'),
+                "unterminated single quote" => Some('\''),
+                _ => None,
+            };
+            if let Some(close) = close {
+                return Err(self.error(format!(
+                    "unexpected EOF while looking for matching `{close}'"
+                )));
+            }
             return Err(self.error(format!("syntax error: {}", msg)));
         }
         Ok(())
@@ -899,6 +964,11 @@ impl<'a> Parser<'a> {
 
         // Parse condition
         let condition = self.parse_compound_list("then")?;
+        if condition.is_empty() {
+            // bash: `if then` stops at `then`.
+            self.pop_depth();
+            return Err(self.error("syntax error: empty if condition"));
+        }
 
         // Expect 'then'
         self.expect_keyword("then")?;
@@ -920,6 +990,10 @@ impl<'a> Parser<'a> {
             self.skip_newlines()?;
 
             let elif_condition = self.parse_compound_list("then")?;
+            if elif_condition.is_empty() {
+                self.pop_depth();
+                return Err(self.error("syntax error: empty elif condition"));
+            }
             self.expect_keyword("then")?;
             self.skip_newlines()?;
 
@@ -1339,6 +1413,10 @@ impl<'a> Parser<'a> {
 
         // Parse condition
         let condition = self.parse_compound_list("do")?;
+        if condition.is_empty() {
+            self.pop_depth();
+            return Err(self.error("syntax error: empty while condition"));
+        }
 
         // Expect 'do'
         self.expect_keyword("do")?;
@@ -1373,6 +1451,10 @@ impl<'a> Parser<'a> {
 
         // Parse condition
         let condition = self.parse_compound_list("do")?;
+        if condition.is_empty() {
+            self.pop_depth();
+            return Err(self.error("syntax error: empty until condition"));
+        }
 
         // Expect 'do'
         self.expect_keyword("do")?;
@@ -1704,7 +1786,7 @@ impl<'a> Parser<'a> {
             self.current_token = Some(tokens::Token::RightParen);
         } else if !matches!(self.current_token, Some(tokens::Token::RightParen)) {
             self.pop_depth();
-            return Err(Error::parse("expected ')' to close subshell".to_string()));
+            return Err(self.error("expected ')' to close subshell"));
         } else {
             self.advance(); // consume ')'
         }
@@ -1732,9 +1814,7 @@ impl<'a> Parser<'a> {
 
         if !matches!(self.current_token, Some(tokens::Token::RightBrace)) {
             self.pop_depth();
-            return Err(Error::parse(
-                "expected '}' to close brace group".to_string(),
-            ));
+            return Err(self.error("expected '}' to close brace group"));
         }
 
         // Bash requires at least one command in a brace group
@@ -1798,7 +1878,23 @@ impl<'a> Parser<'a> {
                         // regex word, where `#`, `|` and spaces in groups are
                         // pattern text, not comments or operators.
                         words.push(Word::literal("=~"));
-                        if let Some(raw) = self.lexer.read_cond_regex() {
+                        let (raw, unclosed) = self.lexer.read_cond_regex_checked();
+                        if unclosed {
+                            // bash reads the group to end of input, then the
+                            // conditional grammar rejects the missing operand
+                            // there: two diagnostics, the second on the line
+                            // after the last.
+                            let eof_line = self.input.lines().count() + 1;
+                            return Err(Error::parse_at(
+                                format!(
+                                    "unexpected EOF while looking for matching `)'\n\
+                                     line {eof_line}: unexpected argument to conditional binary operator"
+                                ),
+                                self.current_span.start.line,
+                                self.current_span.start.column,
+                            ));
+                        }
+                        if let Some(raw) = raw {
                             let mut word = self.cond_regex_word(raw.clone());
                             word.raw = Some(raw.trim().to_string());
                             words.push(word);

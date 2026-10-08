@@ -138,6 +138,28 @@ impl Error {
         }
     }
 
+    /// bash's report of this syntax error in `source`, as read by `who`
+    /// (`bash: -c`, a script path): `who: line N: message`, followed by the
+    /// offending source line for a `near unexpected token` error. `None` for
+    /// errors other than [`Error::Parse`].
+    ///
+    /// ```
+    /// let err = bashkit::parser::Parser::new("if then fi").parse().unwrap_err();
+    /// assert_eq!(
+    ///     err.syntax_report("bash: -c", "if then fi").unwrap(),
+    ///     "bash: -c: line 1: syntax error near unexpected token `then'\n\
+    ///      bash: -c: line 1: `if then fi'\n"
+    /// );
+    /// ```
+    pub fn syntax_report(&self, who: &str, source: &str) -> Option<String> {
+        match self {
+            Self::Parse { message, line, .. } => {
+                Some(syntax_report(who, source, message, *line, 0))
+            }
+            _ => None,
+        }
+    }
+
     /// THREAT[TM-INF-016]: Create an I/O error with sanitized message.
     /// Strips host-internal paths from the error message to prevent information
     /// leakage to the sandbox guest.
@@ -249,6 +271,47 @@ fn sanitize_error_message(msg: &str) -> String {
     result = TLS_RE.replace_all(&result, "<tls-error>").to_string();
 
     result
+}
+
+/// See [`Error::syntax_report`]. `shift` moves the reported line number
+/// (eval'd text counts from the eval's own line). A message line after the
+/// first that reads `line N: text` is a further diagnostic bash prints for
+/// the same error, on its own line number.
+pub(crate) fn syntax_report(
+    who: &str,
+    source: &str,
+    message: &str,
+    line: usize,
+    shift: usize,
+) -> String {
+    let message = if message.starts_with("syntax error") || message.starts_with("unexpected EOF") {
+        message.to_string()
+    } else {
+        format!("syntax error: {message}")
+    };
+    if line == 0 {
+        return format!("{who}: {message}\n");
+    }
+    let at = line + shift;
+    let mut lines = message.lines();
+    let first = lines.next().unwrap_or_default();
+    let mut out = format!("{who}: line {at}: {first}\n");
+    if first.contains("near unexpected token")
+        && let Some(text) = source.lines().nth(line - 1)
+    {
+        out.push_str(&format!("{who}: line {at}: `{text}'\n"));
+    }
+    for more in lines {
+        let further = more.strip_prefix("line ").and_then(|rest| {
+            let (n, text) = rest.split_once(": ")?;
+            Some((n.parse::<usize>().ok()? + shift, text))
+        });
+        match further {
+            Some((n, text)) => out.push_str(&format!("{who}: line {n}: {text}\n")),
+            None => out.push_str(&format!("{who}: line {at}: {more}\n")),
+        }
+    }
+    out
 }
 
 #[cfg(test)]

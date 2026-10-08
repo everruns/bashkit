@@ -149,6 +149,64 @@ fn push_time_char(output: &mut String, value: char, max_bytes: usize) -> Result<
     Ok(())
 }
 
+/// The reserved word's report under `TIMEFORMAT` (bash
+/// `print_formatted_time`): `%[p][l]R` is the elapsed time with `p` (0-3,
+/// default 3) truncated decimals, `l` as `XmY.YYYs`; `%%` is `%`. Host CPU
+/// fields (`%U`, `%S`, `%P`) say `unavailable` like every other report. A
+/// newline follows; an empty format prints nothing. `Err` carries an
+/// invalid format character (bash warns and prints no report).
+pub(super) fn render_timeformat(
+    format: &str,
+    elapsed: std::time::Duration,
+) -> Result<String, char> {
+    if format.is_empty() {
+        return Ok(String::new());
+    }
+    let mut out = String::with_capacity(format.len() + 16);
+    let mut chars = format.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch != '%' || chars.peek().is_none() {
+            out.push(ch);
+            continue;
+        }
+        let mut prec = 3u32;
+        let mut long = false;
+        if let Some(d) = chars.peek().and_then(|c| c.to_digit(10)) {
+            prec = d.min(3);
+            chars.next();
+        }
+        if chars.peek() == Some(&'l') {
+            long = true;
+            chars.next();
+        }
+        match chars.next() {
+            Some('%') => out.push('%'),
+            Some('R') => {
+                let mut secs = elapsed.as_secs();
+                if long {
+                    out.push_str(&format!("{}m", secs / 60));
+                    secs %= 60;
+                }
+                out.push_str(&secs.to_string());
+                if prec > 0 {
+                    let millis = elapsed.subsec_millis();
+                    let digits = format!("{millis:03}");
+                    out.push('.');
+                    out.push_str(&digits[..prec as usize]);
+                }
+                if long {
+                    out.push('s');
+                }
+            }
+            Some('U' | 'S' | 'P') => out.push_str("unavailable"),
+            Some(other) => return Err(other),
+            None => return Err('%'),
+        }
+    }
+    out.push('\n');
+    Ok(out)
+}
+
 pub(super) fn verbose_time_report(usage: &TimeUsage) -> String {
     format!(
         "Elapsed (wall clock) time: {:.2}\n\
@@ -172,4 +230,24 @@ pub(super) fn sanitize_time_path(path: &str) -> String {
         .take(256)
         .map(|ch| if ch.is_control() { '?' } else { ch })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::render_timeformat;
+    use std::time::Duration;
+
+    #[test]
+    fn timeformat_precision_and_long_form() {
+        let d = Duration::from_millis(61_234);
+        assert_eq!(render_timeformat("%R", d).unwrap(), "61.234\n");
+        assert_eq!(render_timeformat("%0R", d).unwrap(), "61\n");
+        assert_eq!(render_timeformat("%2lR", d).unwrap(), "1m1.23s\n");
+        assert_eq!(
+            render_timeformat("%9R|%%|%U", d).unwrap(),
+            "61.234|%|unavailable\n"
+        );
+        assert_eq!(render_timeformat("", d).unwrap(), "");
+        assert_eq!(render_timeformat("%Q", d), Err('Q'));
+    }
 }
