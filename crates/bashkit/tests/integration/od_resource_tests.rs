@@ -98,19 +98,22 @@ async fn od_normal_layout_matches_gnu() {
                     && String::from_utf8_lossy(&out.stdout).contains("GNU coreutils")
             })
     }) else {
+        assert!(
+            !(cfg!(target_os = "linux") && std::env::var_os("CI").is_some()),
+            "GNU od is required for Linux CI"
+        );
         eprintln!("skip: GNU od is not installed");
         return;
     };
     // Include partial numeric fields, mixed-size alignment, endian, trailers,
-    // duplicate suppression, and GNU's zero/misaligned-width fallback.
+    // and duplicate suppression. Invalid widths are tested separately: some
+    // GNU versions abort on -w0, so they cannot be an oracle for that case.
     let mut bash = Bash::new();
     for args in [
         "-An -tx1 -w4",
         "-tx2z -w16",
         "-An -tx8 --endian=big",
         "-An -tc -tx8 -w32",
-        "-An -tx2 -w0",
-        "-An -tx2 -w3",
         "-An -v -tx1 -w4",
         "-An -tx8 -w65536",
         "-An -ta -td1 -w65536",
@@ -134,7 +137,13 @@ async fn od_normal_layout_matches_gnu() {
             let actual = bash.exec(&script).await.unwrap();
             assert_eq!(
                 actual.exit_code,
-                expected.status.code().unwrap(),
+                expected.status.code().unwrap_or_else(|| {
+                    panic!(
+                        "{script}: GNU od terminated as {}: {}",
+                        expected.status,
+                        String::from_utf8_lossy(&expected.stderr)
+                    )
+                }),
                 "{script}"
             );
             assert_eq!(actual.stdout.as_bytes(), expected.stdout, "{script}");
@@ -158,4 +167,19 @@ async fn od_pipeline_output_is_not_bounded_by_capture_cap() {
     assert_eq!(result.exit_code, 0);
     assert_eq!(result.stdout.trim(), "6150");
     assert!(result.stderr.is_empty());
+}
+
+#[tokio::test]
+async fn od_zero_and_misaligned_widths_use_type_size() {
+    let mut bash = Bash::builder()
+        .limits(ExecutionLimits::new().max_live_intermediate_bytes(4096))
+        .build();
+    for (format, expected) in [("x2", " 6261\n 0063\n"), ("x8", " 0000000000636261\n")] {
+        for width in [0, 3] {
+            let script = format!("printf abc | od -An -t{format} -w{width}");
+            let result = bash.exec(&script).await.unwrap();
+            assert_eq!(result.exit_code, 0, "{script}");
+            assert_eq!(result.stdout, expected, "{script}");
+        }
+    }
 }
