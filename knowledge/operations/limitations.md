@@ -54,6 +54,7 @@ execution model. Evidence is a threat-model ID, a test, or `stance`
 | L-ROOTFS-001 | Default rootfs is static and read-only: `/proc` has no `self`, pid dirs, `uptime` or live counters; `/etc/passwd` has no root entry; `/dev/zero` yields 1 MiB per read; `/bin`, `/usr/bin` are stubs that dispatch builtins | Host state must not leak (TM-INF-003, TM-ISO-018); fixed values keep runs deterministic | `rootfs_layout`, `threat_etc_passwd_blocked` |
 | L-FS-002 | No file permission enforcement in the VFS | Single-tenant virtual FS; permissions would be theater | `l_fs_002_no_permission_enforcement` |
 | L-FS-003 | On Windows, `RealFs::symlink()` validates the target but creates an empty host file rather than a symlink/reparse point; pre-existing host symlinks and junctions remain readable subject to containment checks | Windows requires choosing file-vs-directory link semantics and may require link privileges; the portable VFS symlink contract does not carry that host metadata | TM-ESC-033 |
+| L-FS-004 | File names cannot contain control characters (newline, tab, ESC, ...) or bidi overrides: creating `$'a\nb'` fails with `unsafe character U+000A in path component`, so tools never print the quoted forms (`stat -c %N` as `'a'$'\n''b'`, `md5sum`'s `\` escape) for such names | Control characters in names let output forge extra lines or terminal escapes (TM-DOS-015) | `bashbox-checksum.test.sh`, `bashbox-stat.test.sh` (skipped) |
 | L-NET-001 | No raw network sockets; HTTP only via `curl`/`wget`/`http` builtins | Allowlist-mediated egress is the only network surface | `l_net_001_no_raw_sockets` |
 | L-NET-002 | No DNS resolution; hosts must appear in the allowlist | Resolution would bypass allowlist intent | `l_net_002_default_deny_no_resolution` |
 | L-SIG-001 | No signal arrives from outside the sandbox, so a handler only runs for a signal the script sends itself (`kill -SIG $$`, plus EXIT, ERR and DEBUG). Without a handler, a self-sent signal ends the script with 128 + signal | No host signals exist inside the sandbox | `l_sig_001_signal_traps_not_delivered` |
@@ -196,7 +197,8 @@ pass in CI); only divergences and boundaries are recorded here.
 | L-MAKE-002 | make | No built-in implicit rules (as `make -r`), pattern rules do not chain through intermediate files, and `vpath`/`VPATH` are not searched | The sandbox has no compiler for built-in rules to call; chaining and directory search are the next steps if real makefiles need them | `l_make_002_no_builtin_or_chained_rules` |
 | L-MAKE-003 | make | Recipes always run in the sandbox shell one at a time: `SHELL` is ignored, `-j` is accepted but sequential, and `$(MAKE)` fails at MAKELEVEL 4 (`recursive make depth exceeds 4`; GNU has no cap) | Recipes must stay inside the interpreter; each nested make runs on the caller's stack (TM-DOS-126) | `l_make_003_sequential_sandbox_shell` |
 
-Safety boundaries (enforced, not bugs): printf width/precision caps,
+Safety boundaries (enforced, not bugs): printf width/precision caps (10,000;
+`printf "%10239s"` fails, so `bashbox_du_human_rounding` is skipped),
 output buffer caps, getline file-cache cap, shared regex size limit, runtime regex
 cache cap (64 entries and 1 MB retained pattern text per evaluator),
 curl/wget timeouts clamped to [1, 600] s, multipart field-name

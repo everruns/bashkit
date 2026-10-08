@@ -11,7 +11,7 @@ printf x > "a'b c"; stat -c %N "a'b c"
 
 ### bashbox_stat_name_needing_escapes
 # name needing escapes
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
+### skip: L-FS-004: file names cannot hold control characters, so $'a\nb' is rejected (TM-DOS-015)
 printf x > $'a\nb'; stat -c %N $'a\nb'
 ### expect
 'a'$'\n''b'

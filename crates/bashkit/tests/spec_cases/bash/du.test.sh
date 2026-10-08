@@ -33,3 +33,19 @@ ok
 du /nonexistent_du_path_xyz
 ### expect
 ### end
+
+### du_human_rounds_up
+# du -h rounds up to one decimal below 10 and to whole units above
+s=x; while [ ${#s} -lt 1048577 ]; do s=$s$s; done
+for n in 1023 1024 1025 10239 10241 1047552 1047553 1048576 1048577; do printf '%s' "${s:0:n}" > f; du -bh f; done
+### expect
+1023	f
+1.0K	f
+1.1K	f
+10K	f
+11K	f
+1023K	f
+1.0M	f
+1.0M	f
+1.1M	f
+### end
