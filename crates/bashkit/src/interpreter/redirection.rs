@@ -445,16 +445,16 @@ impl Interpreter {
     // redirect is applied after the command ran, so the name is not known.
     fn close_output_fast(&self, result: &mut ExecResult, src_fd: i32) {
         match src_fd {
-            1 => {
-                if !std::mem::take(&mut result.stdout).is_empty() {
-                    result
-                        .stderr
-                        .append(&crate::StreamData::from(self.closed_stdout_error()));
-                    result.exit_code = 1;
-                }
+            1 if !result.stdout.is_empty() => {
+                result.stdout = crate::StreamData::new();
+                result
+                    .stderr
+                    .append(&crate::StreamData::from(self.closed_stdout_error()));
+                result.exit_code = 1;
             }
             2 => result.stderr = crate::StreamData::new(),
-            // Closing fd 3+ for one command routes nothing.
+            // Nothing written to stdout; closing fd 3+ for one command
+            // routes nothing.
             _ => {}
         }
     }
