@@ -477,3 +477,17 @@ echo "[$4]"
 [def]
 []
 ### end
+
+### quoted_at_inside_word_splits_per_element
+# "x$@y" and x"${a[@]}"y: prefix joins the first element, suffix the last
+set -- "a b" c; a=(1 2); printf '[%s]' "x$@y" x"${a[@]}"y "${a[@]}z"; echo
+### expect
+[xa b][cy][x1][2y][1][2z]
+### end
+
+### alternate_operand_at_keeps_fields
+# ${1+"$@"} expands to the positional parameters, one field each
+set -- "a b" c; printf '[%s]' "${1+"$@"}" ${1+"$@"} "${zz-$@}"; echo
+### expect
+[a b][c][a b][c][a b][c]
+### end

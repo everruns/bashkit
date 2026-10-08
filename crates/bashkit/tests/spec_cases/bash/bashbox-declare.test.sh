@@ -30,7 +30,6 @@ declare -i x; let x=4; ((x=x+1)); echo $x; read x <<< 2+2; echo $x
 
 ### bashbox_declare_read_and_printf_name_themselves_too
 # read and printf name themselves too
-### skip: TODO printf -v into an integer variable does not evaluate arithmetic (printf builtin gap)
 declare -i x; (read x <<< 1/0); (printf -v x 1/0); echo $?
 ### expect
 1
@@ -301,7 +300,7 @@ declare -ar b=([0]="3")
 
 ### bashbox_declare_declare_p_quotes_control_characters_and_bytes_that_aren_t_ut
 # declare -p quotes control characters and bytes that aren't UTF-8 like bash
-### skip: TODO $'\x..' decodes each byte as a char (\x01 dropped, \xc3\xa9 not UTF-8) and non-UTF-8 bytes are not representable (L-STREAM-001)
+### skip: L-STREAM-001: words cannot hold the byte \x01 (internal quote-segment marker, dropped) or non-UTF-8 bytes like \xff
 x=$'a\x01b\e\'"\\c$`d\a\b\f\v\r\t\n\x7f'; declare -p x; y=$'\xc3\xa9\n'; z=$'\xff'; declare -p y z; a=($'x\ny' z); declare -p a
 ### expect
 declare -- x=$'a\001b\E\'"\\c$`d\a\b\f\v\r\t\n\177'
@@ -335,7 +334,6 @@ x=1
 
 ### bashbox_declare_printf_v_assigns_the_output_newlines_and_all
 # printf -v assigns the output, newlines and all
-### skip: TODO printf -v gaps (-vNAME, element targets) belong to the printf builtin
 printf -v x '%s-%s\n' a b; echo "[$x]"; printf -vy %s a; echo $y; printf -v 'a[1+1]' %s z; declare -p a
 ### expect
 [a-b
@@ -346,7 +344,6 @@ declare -a a=([2]="z")
 
 ### bashbox_declare_printf_v_takes_and_a_local
 # printf -v takes -- and a local
-### skip: TODO printf -v gaps (-- after -v) belong to the printf builtin
 printf -v x -- %s a; echo $x; f() { local y; printf -v y %s in; echo $y; }; f; echo ${y-unset}
 ### expect
 a
@@ -356,7 +353,6 @@ unset
 
 ### bashbox_declare_printf_v_errors
 # printf -v errors
-### skip: TODO printf -v gaps (usage errors, invalid names) belong to the printf builtin
 printf -v; echo $?; printf -v x; echo $? ${x-unset}; printf -v 1x %s a; echo $?; printf -v 'a[' %s x; echo $?
 ### expect
 2
@@ -367,7 +363,6 @@ printf -v; echo $?; printf -v x; echo $? ${x-unset}; printf -v 1x %s a; echo $?;
 
 ### bashbox_declare_printf_v_into_a_readonly_variable_fails
 # printf -v into a readonly variable fails
-### skip: TODO printf -v gaps (readonly target) belong to the printf builtin
 readonly r; printf -v r %s a; echo $?
 ### expect
 1
@@ -375,7 +370,6 @@ readonly r; printf -v r %s a; echo $?
 
 ### bashbox_declare_printf_without_v_is_the_printf_command
 # printf without -v is the printf command
-### skip: TODO printf -- handling belongs to the printf builtin
 printf -- -v; echo
 ### expect
 -v

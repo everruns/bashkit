@@ -165,13 +165,14 @@ async fn quoted_intermediate_glob_is_literal() {
 // and already affects the trailing component (`echo /skills/\*`), so it is
 // tracked separately rather than pinned to the wrong behaviour here.
 
+/// bash keeps the trailing `/` on each match and matches directories only.
 #[tokio::test]
 async fn trailing_slash_glob_still_lists_directories() {
     let mut bash = skills_shell().await;
 
     let result = bash.exec("echo /skills/*/").await.unwrap();
 
-    assert_eq!(result.stdout, "/skills/pdf /skills/xlsx\n");
+    assert_eq!(result.stdout, "/skills/pdf/ /skills/xlsx/\n");
 }
 
 /// Per-component expansion walks the VFS, so it must not become a traversal

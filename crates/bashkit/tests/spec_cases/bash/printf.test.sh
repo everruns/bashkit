@@ -289,3 +289,21 @@ printf '%q\n' 'com espaço' 'a€b'
 com\ espaço
 a€b
 ### end
+
+### printf_v_into_integer_and_element
+# printf -v assigns like read: declare -i evaluates, a[i] sets an element
+declare -i n; printf -v n '%s' '2+3'; echo $n; printf -v 'arr[1+1]' %s z; declare -p arr
+### expect
+5
+declare -a arr=([2]="z")
+### end
+
+### printf_usage_errors
+# bash's getopt: invalid option, missing -v argument, missing format
+printf -x 2>/dev/null; echo $?; printf -v 2>/dev/null; echo $?; printf 2>/dev/null; echo $?; printf - ; echo
+### expect
+2
+2
+2
+-
+### end

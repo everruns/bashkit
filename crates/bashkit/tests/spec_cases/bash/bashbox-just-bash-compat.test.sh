@@ -27,7 +27,6 @@ printf "1\n2\n" | { { read a; }; read b; echo $a$b; }
 
 ### bashbox_just_bash_compat_read_returns_1_on_unterminated_last_line
 # read returns 1 on unterminated last line
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf "x" | { read v; echo "$?:$v"; }
 ### expect
 1:x
@@ -128,7 +127,6 @@ set --; printf "[%s]" "$@" x; echo
 
 ### bashbox_just_bash_compat_joins_with_surrounding_text
 # $@ joins with surrounding text
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 set -- a b; printf "[%s]" "x$@y"; echo
 ### expect
 [xa][by]
@@ -143,7 +141,6 @@ a=("x y" z); printf "[%s]" "${a[@]}" "${a[*]}"; echo
 
 ### bashbox_just_bash_compat_1_idiom
 # ${1+"$@"} idiom
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 set -- "a b" c; for w in "${1+"$@"}"; do echo "[$w]"; done
 ### expect
 [a b]
@@ -201,14 +198,13 @@ unset u; e=; echo "[${u-d}][${u+a}][${e-d}][${e+a}][${e:-d}]"
 
 ### bashbox_just_bash_compat_cannot_assign_to_positional
 # cannot assign to positional
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 : ${1:=x}; echo after
 ### expect
 ### end
 
 ### bashbox_just_bash_compat_error_if_unset_stops_the_script
 # error-if-unset stops the script
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
+### bash_diff: only `bash -c` exits 127 on a fatal expansion error (run_one_command FORCE_EOF); a script file exits 1 like bashkit
 echo a; echo ${zz:?boom}; echo after
 ### expect
 a
@@ -216,7 +212,6 @@ a
 
 ### bashbox_just_bash_compat_glob_matches_directories_only_with
 # glob matches directories only with */
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 mkdir d1 d2; touch f1; for d in */; do echo $d; done
 ### expect
 d1/
@@ -325,7 +320,6 @@ printf "1\n2\n3\n" | head -2; printf "1\n2\n3\n" | tail -2
 
 ### bashbox_just_bash_compat_tr_octal_escapes
 # tr octal escapes
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 echo a | tr a "\101"
 ### expect
 A
@@ -333,7 +327,6 @@ A
 
 ### bashbox_just_bash_compat_cp_f_and_n
 # cp -f and -n
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 echo a > f; echo b > g; cp -f f h && cat h; cp -n g f; cat f
 ### expect
 a
@@ -381,7 +374,6 @@ f(){ local -A m=([a]=1 [b]="2 3"); echo "${m[a]}${m[b]}"; }; f
 
 ### bashbox_just_bash_compat_keyed_elements_in_an_indexed_array
 # keyed elements in an indexed array
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 a=(x [5]=y z); echo ${!a[@]} ${a[6]}
 ### expect
 0 5 6 z
@@ -396,7 +388,6 @@ v w
 
 ### bashbox_just_bash_compat_readonly_array_declaration
 # readonly array declaration
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 readonly -a r=(1 2); echo ${r[1]}
 ### expect
 2
