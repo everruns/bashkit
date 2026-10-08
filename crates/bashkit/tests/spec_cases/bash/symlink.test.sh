@@ -131,3 +131,18 @@ readlink -f l2
 deep
 /tmp/sl9/a/b/f
 ### end
+
+### symlink_parent_dir_mkdir_and_ln_land_in_target
+# mkdir and ln -s under a symlinked directory create entries in the link's target
+mkdir -p /tmp/slp/real
+cd /tmp/slp
+ln -s real via
+mkdir via/sub
+ln -s ../elsewhere via/lnk
+ls real
+readlink real/lnk
+### expect
+lnk
+sub
+../elsewhere
+### end
