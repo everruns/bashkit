@@ -169,6 +169,15 @@ impl JobTable {
         self.jobs.values().filter(|j| j.result.is_none()).count()
     }
 
+    /// Keys of the jobs still running.
+    pub fn running_ids(&self) -> Vec<usize> {
+        self.jobs
+            .iter()
+            .filter(|(_, j)| j.result.is_none())
+            .map(|(id, _)| *id)
+            .collect()
+    }
+
     /// Running jobs as `(number, key)`, oldest first.
     fn running_by_number(&self) -> Vec<(usize, usize)> {
         let mut v: Vec<(usize, usize)> = self

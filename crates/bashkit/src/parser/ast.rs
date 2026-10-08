@@ -127,8 +127,8 @@ pub enum CompoundCommand {
 
 /// Coprocess command - runs a command with bidirectional communication.
 ///
-/// In bashkit's sandboxed model, the coprocess runs synchronously and its
-/// stdout is buffered for later reading via the NAME array FDs.
+/// The body runs as a background job on a forked shell, its stdin and
+/// stdout connected to in-process pipes (`interpreter/coproc.rs`).
 /// `NAME[0]` = virtual read FD, `NAME[1]` = virtual write FD, `NAME_PID` = virtual PID.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CoprocCommand {

@@ -46,6 +46,37 @@ Implemented
   becomes 128+signal.
 - Limit: `max_background_jobs` (TM-DOS-122).
 
+## Coprocesses
+
+`coproc [NAME] cmd` is a background job whose stdin and stdout are two
+bounded in-process pipes (`interpreter/coproc.rs`, the same `pipe::Pipe` as
+pipeline stages).
+
+- `${NAME[1]}` is an `exec_fd_table` entry (`FdTarget::Coproc`), `${NAME[0]}`
+  a pipe read end in the readable-fd table. Both are `Arc`-shared ends, so
+  dups and subshell snapshots share them; the last copy closing is EOF for
+  the coproc (or SIGPIPE for its writes). The coproc's own fork drops every
+  coproc write end it would inherit (bash leaks other coprocs' fds there).
+- The body is polled with the foreground, so it runs whenever the shell
+  blocks: reading `${NAME[0]}` (a `read` pulls one line, other commands read
+  to end of input), writing past the pipe's 4 KiB (the writer waits), `wait`.
+  Request/response loops work line by line. A lone `cat`/`tr`/`grep` body
+  streams like a pipeline stage; other bodies see each command's output at
+  its end.
+- fds: bash's numbering, 63/60 for the first coproc, 62/58 for a second
+  while the first is open. A second coproc while one runs prints bash's
+  `warning: execute_coproc: coproc [PID:NAME] still exists` and starts.
+- Cleanup is deterministic: after `wait` reaps the job, the next command
+  boundary unsets NAME/NAME_PID and closes the fds. bash does this on
+  SIGCHLD, so whether a finished coproc's output can still be read there
+  depends on timing; here it can, until `wait`.
+- End of `exec()`: the shell's ends close and NAME is unset before
+  `finish_all`, so `coproc cat` without a close does not hang the call.
+- `concurrent_jobs(false)`: the body runs to completion at `coproc` with
+  stdin at end of input.
+- Limits: a job slot (TM-DOS-122), two persistent fds (TM-DOS-063). Gaps:
+  L-PROC-005.
+
 ## Pipelines
 
 - Every stage of a multi-command pipeline runs in a subshell: variables,

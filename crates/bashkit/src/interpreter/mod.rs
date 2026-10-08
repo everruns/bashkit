@@ -27,6 +27,7 @@
 
 mod arithmetic;
 mod brace_expansion;
+mod coproc;
 mod declare;
 mod expansion;
 mod glob;
@@ -1328,7 +1329,11 @@ struct PipelineAcc {
 }
 
 /// Subshell state a pipeline stage rolls back.
-type StageSnapshot = (SubshellSnapshot, Vec<CallFrame>, HashMap<i32, Vec<String>>);
+type StageSnapshot = (
+    SubshellSnapshot,
+    Vec<CallFrame>,
+    HashMap<i32, coproc::InputFd>,
+);
 
 /// State held across one pipeline stage (see `enter_pipeline_stage`).
 struct PipelineStageScope {
@@ -1566,12 +1571,11 @@ pub struct Interpreter {
     /// Used to detect whether assignment value expansion ran a command substitution
     /// (for correct exit code: plain assignment → 0, assignment with subst → subst's exit code).
     subst_generation: u64,
-    /// Coprocess read buffers: maps virtual FD number to remaining lines.
-    /// When a coproc runs, its stdout is split into lines and stored here
-    /// so `read -u FD` or `read <&FD` can consume them one at a time.
-    coproc_buffers: HashMap<i32, Vec<String>>,
-    /// Next virtual FD to assign for coproc read ends (starts at 63, like bash).
-    coproc_next_fd: i32,
+    /// Readable descriptors (fd >= 3): remaining lines of `exec 3<file` or
+    /// a here-doc, or a coproc's output pipe (`coproc.rs`).
+    coproc_buffers: HashMap<i32, coproc::InputFd>,
+    /// Live coprocs of this shell, for cleanup (`coproc.rs`). Not forked.
+    coprocs: Vec<coproc::CoprocEntry>,
     /// Persistent fd output table set by `exec N>/path` redirections.
     /// Maps fd number to its output target. Used by `>&N` redirections;
     /// entries for fd 1 and 2 (`exec >log 2>&1`) route the shell's own
@@ -2150,7 +2154,7 @@ impl Interpreter {
             history_loaded: false,
             subst_generation: 0,
             coproc_buffers: HashMap::new(),
-            coproc_next_fd: redirection::COPROC_FIRST_FD,
+            coprocs: Vec::new(),
             exec_fd_table: HashMap::new(),
             exec_input_fds: HashSet::new(),
             fd_redirect_scope: Vec::new(),
@@ -2336,7 +2340,7 @@ impl Interpreter {
             history_loaded: true,
             subst_generation: self.subst_generation,
             coproc_buffers: HashMap::new(),
-            coproc_next_fd: self.coproc_next_fd,
+            coprocs: Vec::new(),
             exec_fd_table: self.exec_fd_table.clone(),
             exec_input_fds: self.exec_input_fds.clone(),
             fd_redirect_scope: self.fd_redirect_scope.clone(),
@@ -3376,7 +3380,9 @@ impl Interpreter {
                 jobs::with_jobs(&jobs, self.execute_script_body(script, true, true)).await;
             // Script boundary: background jobs are scoped to a single exec()
             // call. Like a pipe reader waiting for EOF, the call waits for
-            // every job and delivers output not yet reported.
+            // every job and delivers output not yet reported. Coprocs first
+            // lose the shell's ends, as when a script exits.
+            self.close_coprocs();
             jobs.finish_all().await;
             let (out, err) = jobs.lock().take_finished_output();
             if let Ok(r) = &mut result {
@@ -3468,6 +3474,7 @@ impl Interpreter {
                 result.stdout.append(&out);
                 result.stderr.append(&err);
             }
+            self.reap_coprocs();
             self.check_cancelled()?;
             if top_level {
                 self.route_exec_output(
@@ -5436,81 +5443,6 @@ impl Interpreter {
         Ok(())
     }
 
-    /// Execute a coprocess command.
-    ///
-    /// Runs the command body synchronously (bashkit's deterministic model),
-    /// buffers its stdout for later reading via virtual FDs, sets the NAME
-    /// array with FD numbers, and stores a virtual PID in NAME_PID.
-    async fn execute_coproc(&mut self, coproc: &CoprocCommand) -> Result<ExecResult> {
-        let name = &coproc.name;
-
-        // Allocate virtual FD numbers (bash uses 63/60 by default)
-        let read_fd = self.coproc_next_fd;
-        let write_fd = self.coproc_next_fd - 1;
-        self.coproc_next_fd -= 2; // reserve pair for next coproc
-
-        // Execute the command body while suppressing streaming callbacks.
-        // Coproc output must stay internal and be consumed only via read -u / <&FD.
-        let saved_callback = self.output_callback.take();
-        let result = self.execute_command(&coproc.body).await;
-        if let Some(callback) = saved_callback {
-            self.output_callback = Some(callback);
-        }
-        let result = result?;
-
-        // Buffer stdout lines for reading via the virtual read FD.
-        // Lines are stored in reverse order so pop() yields the first line.
-        let mut lines: Vec<String> = result.stdout.lines().map(|l| l.to_string()).collect();
-        lines.reverse();
-        self.coproc_buffers.insert(read_fd, lines);
-
-        // Set NAME array: NAME[0] = read FD, NAME[1] = write FD
-        let mut arr = HashMap::new();
-        arr.insert(0, read_fd.to_string());
-        arr.insert(1, write_fd.to_string());
-        self.arrays_mut().insert(name.clone(), arr);
-
-        // Set NAME_PID to a virtual PID (use job table counter)
-        let virtual_pid = self.jobs.lock().alloc_pid();
-        self.vars_mut()
-            .insert(format!("{}_PID", name), virtual_pid.to_string());
-
-        // Also set $! (last background PID)
-        self.last_bg_pid = Some(virtual_pid.to_string());
-
-        // Coproc itself returns success with empty output (stdout was captured)
-        Ok(ExecResult::ok(String::new()))
-    }
-
-    /// Check if `read -u FD` args reference a coproc FD and return next line if so.
-    fn try_coproc_read_stdin(&mut self, args: &[String]) -> Option<String> {
-        let mut iter = args.iter();
-        while let Some(arg) = iter.next() {
-            if arg == "-u"
-                && let Some(fd_str) = iter.next()
-                && let Ok(fd) = fd_str.parse::<i32>()
-                && let Some(buf) = self.coproc_buffers.get_mut(&fd)
-            {
-                return if let Some(line) = buf.pop() {
-                    Some(format!("{}\n", line))
-                } else {
-                    Some(String::new()) // EOF
-                };
-            } else if arg.starts_with("-u")
-                && arg.len() > 2
-                && let Ok(fd) = arg[2..].parse::<i32>()
-                && let Some(buf) = self.coproc_buffers.get_mut(&fd)
-            {
-                return if let Some(line) = buf.pop() {
-                    Some(format!("{}\n", line))
-                } else {
-                    Some(String::new()) // EOF
-                };
-            }
-        }
-        None
-    }
-
     /// Execute `bash` or `sh` command - interpret scripts using this interpreter.
     ///
     /// Supports:
@@ -6376,6 +6308,8 @@ enum FdTarget {
     DevNull,
     /// Closed by `exec N>&-`: a write to it fails.
     Closed,
+    /// A coproc's stdin pipe (`${NAME[1]}`).
+    Coproc(coproc::CoprocWriter),
 }
 
 /// Route fd1/fd2/fd3+ content to their targets. Extracted from the async
@@ -6415,6 +6349,7 @@ fn route_fd_table_content(
         }
         // A closed descriptor accepts nothing.
         FdTarget::DevNull | FdTarget::Closed => {}
+        FdTarget::Coproc(w) => w.write(data.as_bytes()),
         FdTarget::WriteFile(p, d) => {
             let entry = fw
                 .entry(p.clone())
@@ -6524,6 +6459,7 @@ impl Interpreter {
             let emit_before = self.output_emit_count;
             self.sequence_accum = (stdout.len(), stderr.len());
             let result = self.execute_command(command).await?;
+            self.reap_coprocs();
             self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
             stdout.append(&result.stdout);
             stderr.append(&result.stderr);
@@ -8138,7 +8074,7 @@ impl Interpreter {
 
             // Handle input redirections first
             let stdin = match self
-                .process_input_redirections(stdin, &command.redirects)
+                .process_input_redirections(stdin, &command.redirects, stdin_demand(name, &args))
                 .await
             {
                 Ok(s) => s,
@@ -8148,11 +8084,17 @@ impl Interpreter {
                 Err(e) => return Err(e),
             };
 
-            // For `read -u FD`, check if FD is a coproc read FD and inject data as stdin
-            let stdin = if name == "read" && stdin.is_none() {
-                self.try_coproc_read_stdin(&args).map(Into::into).or(stdin)
-            } else {
-                stdin
+            // `read -u FD` on a readable fd (`exec 3<f`, a coproc): its
+            // next line is stdin.
+            let stdin = match (name == "read" && stdin.is_none())
+                .then(|| self.read_u_source(&args))
+                .flatten()
+            {
+                Some(coproc::ReadSource::Ready(line)) => Some(line.into()),
+                Some(coproc::ReadSource::Pipe(pipe)) => {
+                    Some(Box::pin(coproc::read_coproc_input(pipe, stdin_demand(name, &args))).await)
+                }
+                None => stdin,
             };
 
             if stdin.is_none() && self.pipe_in.is_some() {
@@ -8305,6 +8247,10 @@ impl Interpreter {
                 FdTarget::WriteFile(path, _) | FdTarget::AppendFile(path, _) => {
                     self.fs.append_file(&path, data.as_bytes()).await?;
                 }
+                FdTarget::Coproc(ref w) => {
+                    w.write(data.as_bytes());
+                    coproc::coproc_backpressure(w).await;
+                }
             }
         }
         if write_failed {
@@ -8362,6 +8308,14 @@ impl Interpreter {
         }
     }
 
+    /// Persistent descriptors open in this shell (TM-DOS-063).
+    fn persistent_fd_count(&self) -> usize {
+        let mut open_fds: HashSet<i32> = self.exec_fd_table.keys().copied().collect();
+        open_fds.extend(self.coproc_buffers.keys().copied());
+        open_fds.extend(self.exec_input_fds.iter().copied());
+        open_fds.len()
+    }
+
     fn ensure_persistent_fd_capacity(&self, fd: i32) -> Result<()> {
         if fd < 0 {
             return Err(crate::error::Error::Execution(format!(
@@ -8378,11 +8332,7 @@ impl Interpreter {
             return Ok(());
         }
 
-        let mut open_fds: HashSet<i32> = self.exec_fd_table.keys().copied().collect();
-        open_fds.extend(self.coproc_buffers.keys().copied());
-        open_fds.extend(self.exec_input_fds.iter().copied());
-
-        if open_fds.len() >= self.limits.max_file_descriptors {
+        if self.persistent_fd_count() >= self.limits.max_file_descriptors {
             return Err(crate::limits::LimitExceeded::MaxFileDescriptors(
                 self.limits.max_file_descriptors,
             )
@@ -11267,7 +11217,10 @@ impl Interpreter {
         } else {
             redirects
         };
-        match self.process_input_redirections(None, redirects).await {
+        match self
+            .process_input_redirections(None, redirects, StdinDemand::Nothing)
+            .await
+        {
             Ok(_) => {}
             Err(crate::error::Error::CommandFailure(msg)) => {
                 self.last_exit_code = 1;
@@ -11345,8 +11298,14 @@ impl Interpreter {
             if let Some(line) = end_line {
                 self.current_line = line;
             }
-            // Process input redirections before executing compound
-            let stdin = match self.process_input_redirections(None, redirects).await {
+            // Process input redirections before executing compound.
+            // WTF: a coproc fd as a compound's stdin (`while read l; do
+            // ...; done <&${C[0]}`) is read to end of input up front, not
+            // line by line as the loop runs.
+            let stdin = match self
+                .process_input_redirections(None, redirects, StdinDemand::All)
+                .await
+            {
                 Ok(s) => s,
                 Err(crate::error::Error::CommandFailure(msg)) => {
                     return Ok(ExecResult::err(msg, 1));
@@ -11449,7 +11408,8 @@ impl Interpreter {
                 let read = if self.disabled_redirect_error(redirects).is_some() {
                     Err(crate::error::Error::CommandFailure(String::new()))
                 } else {
-                    self.process_input_redirections(None, redirects).await
+                    self.process_input_redirections(None, redirects, StdinDemand::All)
+                        .await
                 };
                 match read {
                     Ok(content) => {
