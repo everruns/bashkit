@@ -16,7 +16,11 @@ Bashkit's design or whose test case formats have inspired our testing approach.
 
 2. **Test cases are original.** While our testing methodology was inspired by
    projects like Oils, the actual test cases are written specifically for
-   Bashkit.
+   Bashkit. `scripts/oils-spec/` additionally runs the upstream Oils spec suite
+   (Apache-2.0, Andy Chu and contributors, https://github.com/oils-for-unix/oils)
+   as a measurement; it is fetched at a pinned commit at run time, not
+   vendored. Its helper shims in `scripts/oils-spec/bin/` are bash
+   re-implementations of Oils' Python helpers, written for Bashkit.
 
 3. **Dependencies are via Cargo.** Rust dependencies (like jaq-core and
    jaq-std for jq support) are included via standard Cargo dependency

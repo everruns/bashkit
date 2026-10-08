@@ -7,4 +7,5 @@
 * [Release Process](release-process.md) - Versioning, validation, tagging, and publication to crates.io, PyPI, and npm.
 * [Performance Results](performance-results.md) - Benchmark harnesses, result locations, naming, and publication contract.
 * [Dependency Policy](dependencies.md) - Which third-party crates Bashkit keeps, which it trims, and which are deliberately not reimplemented in-house.
+* [Oils Spec Pass Rate](oils-spec.md) - Upstream Oils spec suite (bash column) run through bashkit and real bash, one headline pass rate per run.
 * [Evaluation Framework](eval.md) - LLM evaluation study design, dataset format, execution, and scoring.

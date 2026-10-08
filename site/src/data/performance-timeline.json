@@ -1,14 +1,15 @@
 {
-  "generatedAt": "2026-10-07T03:57:14.000Z",
+  "generatedAt": "2026-10-07T19:23:22.000Z",
   "sources": {
     "bench": "crates/bashkit-bench/results/*.json",
     "criterion": "crates/bashkit/benches/results/*.md",
     "evals": "crates/bashkit-eval/results/*.json",
-    "gaps": "crates/bashkit-eval/results/gaps/gaps-*.json"
+    "gaps": "crates/bashkit-eval/results/gaps/gaps-*.json",
+    "oilsSpec": "scripts/oils-spec/results/oils-spec-*.json"
   },
   "summary": {
     "benchRuns": 10,
-    "criterionRuns": 17,
+    "criterionRuns": 18,
     "evalRuns": 38,
     "latestBench": {
       "id": "bench-mykhailosmac-macos-aarch64-1788629833",
@@ -1872,6 +1873,27 @@
       "fastestCase": {
         "name": "python_call/monty/pass",
         "us": 16.35
+      },
+      "bestImprovement": null
+    },
+    {
+      "id": "criterion-parallel-vm-linux-x86_64-1791401002",
+      "kind": "criterion",
+      "family": "parallel",
+      "label": "Criterion Parallel Execution Benchmark",
+      "date": "2026-10-07",
+      "timestamp": "2026-10-07T19:23:22.000Z",
+      "source": "crates/bashkit/benches/results/criterion-parallel-vm-linux-x86_64-1791401002.md",
+      "reportSource": "crates/bashkit/benches/results/criterion-parallel-vm-linux-x86_64-1791401002.md",
+      "cases": 33,
+      "medianUs": 17490,
+      "p95Us": 247426,
+      "medianChangePct": null,
+      "meanChangePct": null,
+      "bestChangePct": null,
+      "fastestCase": {
+        "name": "single_bash_new",
+        "us": 68.29
       },
       "bestImprovement": null
     }
@@ -5152,6 +5174,126 @@
       ]
     }
   },
+  "oilsSpec": {
+    "runs": [
+      {
+        "id": "oils-spec-linux-x86_64-20261008T103235Z",
+        "date": "2026-10-08",
+        "timestamp": "2026-10-08T10:32:35Z",
+        "source": "scripts/oils-spec/results/oils-spec-linux-x86_64-20261008T103235Z.json",
+        "reportSource": "scripts/oils-spec/results/oils-spec-linux-x86_64-20261008T103235Z.md",
+        "oilsRev": "57d3f0d088c3",
+        "bashkitCommit": "f86bd7c81ae3",
+        "bashVersion": "5.2.21(1)-release",
+        "cases": 2759,
+        "bashPass": 2693,
+        "bashkitPass": 2003,
+        "bashkitPassOfBash": 1997,
+        "passRate": 74.2
+      }
+    ],
+    "latest": {
+      "id": "oils-spec-linux-x86_64-20261008T103235Z",
+      "date": "2026-10-08",
+      "timestamp": "2026-10-08T10:32:35Z",
+      "source": "scripts/oils-spec/results/oils-spec-linux-x86_64-20261008T103235Z.json",
+      "reportSource": "scripts/oils-spec/results/oils-spec-linux-x86_64-20261008T103235Z.md",
+      "oilsRev": "57d3f0d088c3",
+      "bashkitCommit": "f86bd7c81ae3",
+      "bashVersion": "5.2.21(1)-release",
+      "cases": 2759,
+      "bashPass": 2693,
+      "bashkitPass": 2003,
+      "bashkitPassOfBash": 1997,
+      "passRate": 74.2,
+      "topFiles": [
+        {
+          "name": "builtin-completion",
+          "cases": 51,
+          "bashPass": 51,
+          "bashkitPass": 17,
+          "passRate": 33.3
+        },
+        {
+          "name": "array",
+          "cases": 78,
+          "bashPass": 78,
+          "bashkitPass": 53,
+          "passRate": 67.9
+        },
+        {
+          "name": "prompt",
+          "cases": 33,
+          "bashPass": 29,
+          "bashkitPass": 4,
+          "passRate": 13.8
+        },
+        {
+          "name": "builtin-trap-bash",
+          "cases": 23,
+          "bashPass": 23,
+          "bashkitPass": 4,
+          "passRate": 17.4
+        },
+        {
+          "name": "globignore",
+          "cases": 18,
+          "bashPass": 18,
+          "bashkitPass": 2,
+          "passRate": 11.1
+        },
+        {
+          "name": "word-split",
+          "cases": 55,
+          "bashPass": 53,
+          "bashkitPass": 37,
+          "passRate": 69.8
+        },
+        {
+          "name": "var-ref",
+          "cases": 31,
+          "bashPass": 30,
+          "bashkitPass": 15,
+          "passRate": 50
+        },
+        {
+          "name": "builtin-cd",
+          "cases": 30,
+          "bashPass": 28,
+          "bashkitPass": 14,
+          "passRate": 50
+        },
+        {
+          "name": "alias",
+          "cases": 48,
+          "bashPass": 48,
+          "bashkitPass": 35,
+          "passRate": 72.9
+        },
+        {
+          "name": "dbracket",
+          "cases": 49,
+          "bashPass": 49,
+          "bashkitPass": 36,
+          "passRate": 73.5
+        },
+        {
+          "name": "builtin-fc",
+          "cases": 14,
+          "bashPass": 14,
+          "bashkitPass": 2,
+          "passRate": 14.3
+        },
+        {
+          "name": "builtin-history",
+          "cases": 17,
+          "bashPass": 17,
+          "bashkitPass": 5,
+          "passRate": 29.4
+        }
+      ]
+    }
+  },
   "modelTrends": [
     {
       "model": "anthropic/claude-haiku-4-5",
@@ -5983,6 +6125,15 @@
       "detail": "python_call/monty/pass at 16.35 us median",
       "metric": 5663.25,
       "source": "crates/bashkit/benches/results/criterion-python-vm-linux-x86_64-1791345434.md"
+    },
+    {
+      "date": "2026-10-07",
+      "timestamp": "2026-10-07T19:23:22.000Z",
+      "kind": "Criterion",
+      "title": "parallel",
+      "detail": "single_bash_new at 68.29 us median",
+      "metric": 17490,
+      "source": "crates/bashkit/benches/results/criterion-parallel-vm-linux-x86_64-1791401002.md"
     }
   ]
 }

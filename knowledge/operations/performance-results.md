@@ -28,6 +28,7 @@ directories:
 | Criterion benches | `crates/bashkit/benches/results/` | `criterion-*.md` |
 | `bashkit-eval` (archived) | `crates/bashkit-eval/results/` | `eval-*.json`, `scripting-eval-*.json`, plus matching `.md` reports |
 | `bashkit-replay` gap telemetry | `crates/bashkit-eval/results/gaps/` | `gaps-*.json` plus matching `gaps-*.md` |
+| Oils spec pass rate | `scripts/oils-spec/results/` | `oils-spec-*.json` plus matching `oils-spec-*.md` |
 
 Markdown files are the user-facing reports linked from `/benches`; JSON files
 are the aggregation input for benchmark and eval summaries.
@@ -43,7 +44,7 @@ are the aggregation input for benchmark and eval summaries.
 
 Default benchmark recipes that represent a real run MUST save artifacts in the
 directories above: `just bench`, `just bench-parallel`, `just bench-sqlite`, `just bench-python`,
-`just gaps`.
+`just gaps`, `just oils-spec`.
 
 The comparison harness resolves `bash` from `PATH` and requires Bash 4 or newer
 (case conversion and associative arrays are benchmarked). A missing or older
@@ -86,6 +87,12 @@ start table, warm `python_call/<runtime>/print`, and CPython
 `python_import/cpython/http_client` when present. `/benches` shows the latest
 point (CPython vs Monty) and the CPython history. `just bench-python` produces
 these reports.
+
+The transformer also emits `oilsSpec`: `runs` (one point per
+`oils-spec-*.json`: pass rate, bashkit passes among bash passes, Oils and
+bashkit revisions) and `latest` (that report plus its 12 spec files with the
+most misses). `/benches` renders both after the gap telemetry panels. See
+[Oils Spec Pass Rate](oils-spec.md).
 
 When changing result schemas, update the transformer and this spec in the same
 PR. Do not hand-edit `performance-timeline.json` except by running the script.

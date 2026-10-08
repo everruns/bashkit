@@ -224,6 +224,15 @@ bash-oracle *ARGS:
     cargo build -q -p bashkit-cli
     python3 scripts/bash-oracle/run.py {{ARGS}}
 
+# Oils spec pass rate: the upstream Oils spec suite (bash column, fetched at a
+# pinned commit) through bashkit and real bash. Saves JSON/Markdown under
+# scripts/oils-spec/results/ and refreshes /benches data. Ad-hoc subsets:
+# python3 scripts/oils-spec/run.py SPEC... --fails FILE (not saved).
+oils-spec:
+    cargo build -q -p bashkit-cli --features realfs
+    python3 scripts/oils-spec/run.py --save
+    pnpm --dir site run data:performance
+
 # Debian-oracle scoreboard (pseudo-linus bench, fetched at a pinned commit).
 # Fails on a regression below scripts/debian-oracle/floors.tsv; pass
 # --update-floors after a fix raises a score. Optional TOOL args narrow the run.
