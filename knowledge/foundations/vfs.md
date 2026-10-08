@@ -360,6 +360,9 @@ their `stat` is an `lstat`, and they refuse to read or write through a link.
 - Targets are VFS paths: absolute from the VFS root, relative to the link's
   directory, `..` clamped at `/` (TM-ESC-002). Writes through a dangling link
   create the target.
+- Recursive `find` and `grep` share `fs::canonicalize`, resolving links through
+  `lstat`/`read_link` with the same 40-hop cap. Walkers compare resolved ancestor
+  paths to reject directory cycles; the per-lookup cap alone cannot bound fan-out.
 - At most 40 links per lookup, then "Too many levels of symbolic links"
   (TM-DOS-011). `exists` is false for dangling and looping links.
 - Fast path: ops run on the inner fs first and resolve only on a

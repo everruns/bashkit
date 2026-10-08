@@ -1,0 +1,5 @@
+### status: 0
+### stdout
+a1	a2
+depois
+### stderr

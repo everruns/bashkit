@@ -1,0 +1,13 @@
+### status: 0
+### stdout
+if ok
+|| ok
+&& não sai
+! não sai
+while ok
+dentro da função após false (contexto de if)
+f ok
+dentro da função após false (contexto de if)
+pipe sem pipefail ok
+fim
+### stderr

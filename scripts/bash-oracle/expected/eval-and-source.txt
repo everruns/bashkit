@@ -1,0 +1,9 @@
+### status: 0
+### stdout
+eval: 3
+valor
+ 
+### stderr
+SCRIPT: line 4: ./lib.sh: No such file or directory
+SCRIPT: line 5: ./lib.sh: No such file or directory
+SCRIPT: line 6: helper: command not found

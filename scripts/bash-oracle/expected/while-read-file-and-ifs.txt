@@ -1,0 +1,7 @@
+### status: 0
+### stdout
+linhas: 0
+### stderr
+SCRIPT: line 3: pessoas.csv: No such file or directory
+SCRIPT: line 4: sem_nl_final.txt: No such file or directory
+SCRIPT: line 6: pessoas.csv: No such file or directory

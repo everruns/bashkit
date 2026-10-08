@@ -1,0 +1,5 @@
+### status: 5
+### stdout
+corpo
+EXIT com rc=5
+### stderr

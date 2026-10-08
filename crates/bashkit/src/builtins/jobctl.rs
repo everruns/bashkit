@@ -13,7 +13,7 @@
 
 use async_trait::async_trait;
 
-use super::{Builtin, Context};
+use super::{Builtin, BuiltinSideEffect, Context};
 use crate::error::Result;
 use crate::interpreter::{ExecResult, JobInfo, JobState};
 
@@ -49,7 +49,7 @@ fn parse_signal(spec: &str) -> Option<i32> {
     SIGNALS.iter().find(|(n, _)| *n == name).map(|(_, v)| *v)
 }
 
-fn signal_name(n: i32) -> Option<&'static str> {
+pub(crate) fn signal_name(n: i32) -> Option<&'static str> {
     SIGNALS.iter().find(|(_, v)| *v == n).map(|(name, _)| *name)
 }
 
@@ -135,8 +135,14 @@ impl Builtin for Kill {
 
         let mut stderr = String::new();
         let mut exit_code = 0;
+        let mut side_effects = Vec::new();
         for target in targets {
             if target.parse::<u32>() == Ok(SHELL_PID) {
+                // `kill -SIG $$`: the interpreter runs the trap, or ends the
+                // script with 128 + signal. `-0` only tests for the process.
+                if signal != 0 {
+                    side_effects.push(BuiltinSideEffect::SignalSelf(signal));
+                }
                 continue;
             }
             let resolved = ctx.shell.as_ref().and_then(|shell| {
@@ -174,6 +180,7 @@ impl Builtin for Kill {
         Ok(ExecResult {
             stderr: stderr.into(),
             exit_code,
+            side_effects,
             ..Default::default()
         })
     }

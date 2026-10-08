@@ -1,0 +1,8 @@
+### status: 0
+### stdout
+'it'\''s a "test"'
+'x' 'y z'
+n='5'
+i
+	|
+### stderr

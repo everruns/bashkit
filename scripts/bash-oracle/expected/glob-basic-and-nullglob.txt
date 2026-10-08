@@ -1,0 +1,9 @@
+### status: 0
+### stdout
+*.txt
+*.nada
+nullglob:[ ]
+0
+rc=1
+### stderr
+SCRIPT: line 8: no match: *.nada

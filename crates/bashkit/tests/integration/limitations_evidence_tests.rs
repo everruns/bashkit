@@ -97,16 +97,27 @@ async fn l_net_002_default_deny_no_resolution() {
 #[tokio::test]
 async fn l_sig_001_signal_traps_not_delivered() {
     let mut bash = Bash::new();
+    // `kill -SIG $$` is the shell signalling itself, which the shell delivers:
+    // the trap fires. No host signal can arrive from outside, so nothing else
+    // ever triggers a handler.
     let result = bash
         .exec(r#"trap 'echo TRAPPED' INT; kill -INT $$; echo after"#)
         .await
         .unwrap();
     assert!(
-        !result.stdout.contains("TRAPPED"),
-        "INT trap must not fire: {}",
+        result.stdout.contains("TRAPPED"),
+        "a self-sent INT must fire the trap: {}",
         result.stdout
     );
     assert!(result.stdout.contains("after"));
+
+    // Without a handler the default action ends the script with 128 + signal.
+    let result = bash
+        .exec(r#"echo body; kill -TERM $$; echo never"#)
+        .await
+        .unwrap();
+    assert_eq!(result.exit_code, 143);
+    assert!(!result.stdout.contains("never"), "{}", result.stdout);
 
     let result = bash
         .exec(r#"trap 'echo EXITED' EXIT; echo body"#)

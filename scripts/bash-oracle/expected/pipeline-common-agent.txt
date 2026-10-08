@@ -1,0 +1,7 @@
+### status: 0
+### stdout
+0
+### stderr
+cat: log.txt: No such file or directory
+grep: log.txt: No such file or directory
+grep: log.txt: No such file or directory

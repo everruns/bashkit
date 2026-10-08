@@ -1,0 +1,7 @@
+### status: 0
+### stdout
+w1=0
+w2=4
+bg1
+todos
+### stderr

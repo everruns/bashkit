@@ -1,0 +1,10 @@
+### status: 0
+### stdout
+*
+*
+**/*.rs
+!(*.rs)
+@(a|b).txt
++([0-9]).log
+?([a-z])x
+### stderr

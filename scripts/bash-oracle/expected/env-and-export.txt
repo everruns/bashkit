@@ -1,0 +1,9 @@
+### status: 0
+### stdout
+filho vê: sim nada
+só-no-comando
+depois: vazio
+env -i: 1 sem home
+/home/sandbox sandbox C.UTF-8 
+após unset: sumiu
+### stderr

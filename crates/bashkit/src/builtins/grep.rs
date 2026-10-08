@@ -29,6 +29,8 @@
 //!   `-d skip` ignores them, `-d recurse`/`-r` recurse (`-R` also follows
 //!   symlinks met during traversal). Traversal is in name order; GNU uses
 //!   readdir order, which bashkit cannot reproduce (L-GREP-003).
+//! - Recursive walks compare resolved ancestors, meter every entry, and scan
+//!   one admitted file at a time so quiet matches stop before further traversal.
 //! - A pipeline stage that prints matching lines streams them (see
 //!   L-PIPE-001); every path shares the same per-line engine (`FileScan`).
 
@@ -1077,73 +1079,68 @@ impl Builtin for Grep {
             used: false,
         };
 
-        'operands: for operand in &operands {
-            let mut sources: Vec<Source> = Vec::new();
-            let mut is_dir_walk = false;
-            if operand == "-" {
-                sources.push(Source::Stdin(stdin_name.clone()));
-            } else {
-                let path = resolve(ctx.cwd, operand);
-                let is_dir = matches!(ctx.fs.stat(&path).await, Ok(m) if m.file_type.is_dir());
-                if is_dir {
-                    match opts.directories {
-                        Directories::Skip => continue,
-                        Directories::Read => {
-                            read_failed = true;
-                            if !opts.suppress_errors {
-                                errors.push_str(&format!("grep: {operand}: Is a directory\n"));
-                            }
-                            continue;
-                        }
-                        Directories::Recurse => {
-                            is_dir_walk = true;
-                            let display = if implicit_root { "" } else { operand.as_str() };
-                            collect_recursive(
-                                &ctx,
-                                &opts,
-                                &matcher,
-                                display,
-                                &path,
-                                &mut sources,
-                                &mut errors,
-                                &mut read_failed,
-                            )
-                            .await;
-                        }
-                    }
-                } else {
-                    match ctx.fs.read_file(&path).await {
-                        Ok(bytes) => sources.push(Source::File(operand.clone(), bytes)),
-                        Err(e) => {
-                            read_failed = true;
-                            if !opts.suppress_errors {
-                                let reason = crate::error::io_error_reason(&e);
-                                errors.push_str(&format!("grep: {operand}: {reason}\n"));
-                            }
-                            continue;
-                        }
-                    }
-                }
-            }
-            sh.with_filename = opts.with_filename.unwrap_or(multiple || is_dir_walk);
-            for source in sources {
-                let (n, gone) = scan_input(
+        for operand in &operands {
+            let path = resolve(ctx.cwd, operand);
+            let is_dir =
+                operand != "-" && matches!(ctx.fs.stat(&path).await, Ok(m) if m.file_type.is_dir());
+            sh.with_filename = opts.with_filename.unwrap_or(multiple || is_dir);
+            let (n, gone) = if operand == "-" {
+                scan_input(
                     &ctx,
                     &mut sh,
-                    source,
+                    Source::Stdin(stdin_name.clone()),
                     &mut out,
                     &mut errors,
                     stream.as_ref(),
                 )
-                .await?;
-                if gone {
-                    return Ok(ExecResult::err(errors, 141));
-                }
-                if n > 0 {
-                    any_match = true;
-                    if opts.quiet {
-                        break 'operands;
+                .await?
+            } else if is_dir {
+                match opts.directories {
+                    Directories::Skip => continue,
+                    Directories::Read => {
+                        read_failed = true;
+                        if !opts.suppress_errors {
+                            errors.push_str(&format!("grep: {operand}: Is a directory\n"));
+                        }
+                        continue;
                     }
+                    Directories::Recurse => {
+                        let display = if implicit_root { "" } else { operand.as_str() };
+                        (
+                            scan_recursive(
+                                &ctx,
+                                &mut sh,
+                                display,
+                                &path,
+                                &mut out,
+                                &mut errors,
+                                &mut read_failed,
+                            )
+                            .await?,
+                            false,
+                        )
+                    }
+                }
+            } else {
+                scan_file(
+                    &ctx,
+                    &mut sh,
+                    operand,
+                    &path,
+                    &mut out,
+                    &mut errors,
+                    &mut read_failed,
+                    stream.as_ref(),
+                )
+                .await?
+            };
+            if gone {
+                return Ok(ExecResult::err(errors, 141));
+            }
+            if n > 0 {
+                any_match = true;
+                if opts.quiet {
+                    break;
                 }
             }
         }
@@ -1199,55 +1196,207 @@ async fn read_operand_file(ctx: &Context<'_>, name: &str) -> std::result::Result
         .map_err(|e| crate::error::io_error_reason(&e))
 }
 
-/// Collect the files under a recursive operand, in name order (files of a
-/// directory first, then its subdirectories depth-first).
-#[allow(clippy::too_many_arguments)]
-async fn collect_recursive(
-    ctx: &Context<'_>,
+/// A resolved directory ancestor. Sibling aliases remain independent searches.
+struct GrepAncestor {
+    path: std::path::PathBuf,
+    parent: Option<std::sync::Arc<GrepAncestor>>,
+    _lease: Option<crate::limits::ExecutionBudgetLease>,
+}
+
+struct GrepDirectory {
+    path: std::path::PathBuf,
+    ancestors: Option<std::sync::Arc<GrepAncestor>>,
+    _lease: Option<crate::limits::ExecutionBudgetLease>,
+}
+
+impl GrepDirectory {
+    fn new(
+        ctx: &Context<'_>,
+        path: &std::path::Path,
+        ancestors: Option<std::sync::Arc<GrepAncestor>>,
+    ) -> Result<Self> {
+        let lease = ctx.lease_budget_bytes(path.as_os_str().len())?;
+        Ok(Self {
+            path: path.to_path_buf(),
+            ancestors,
+            _lease: lease,
+        })
+    }
+}
+
+fn read_error(
     opts: &GrepOptions,
-    matcher: &PatternMatcher,
-    operand: &str,
-    root: &std::path::Path,
-    sources: &mut Vec<Source>,
+    name: &str,
+    error: &crate::Error,
+    errors: &mut String,
+    failed: &mut bool,
+) {
+    *failed = true;
+    if !opts.suppress_errors {
+        let reason = crate::error::io_error_reason(error);
+        errors.push_str(&super::cap_diagnostic(
+            format!("grep: {name}: {reason}\n"),
+            1024,
+        ));
+    }
+}
+
+fn budgeted_vec<T>(ctx: &Context<'_>) -> Result<crate::limits::BudgetedVec<T>> {
+    let budget = ctx
+        .execution_budget()
+        .map(|b| b.try_with(Clone::clone))
+        .transpose()
+        .map_err(|_| crate::Error::Cancelled)?;
+    Ok(crate::limits::BudgetedVec::new(budget.as_ref())?)
+}
+
+/// Admit the file before the VFS produces an owned copy, retaining the lease
+/// through scanning. Traversal never accumulates file-content buffers.
+#[allow(clippy::too_many_arguments)]
+async fn scan_file(
+    ctx: &Context<'_>,
+    sh: &mut Shared<'_>,
+    name: &str,
+    path: &std::path::Path,
+    out: &mut Vec<u8>,
     errors: &mut String,
     read_failed: &mut bool,
-) {
+    stream: Option<&super::StdoutStream>,
+) -> Result<(usize, bool)> {
+    ctx.consume_budget_work(1)?;
+    let meta = match ctx.fs.stat(path).await {
+        Ok(meta) => meta,
+        Err(e) => {
+            read_error(sh.opts, name, &e, errors, read_failed);
+            return Ok((0, false));
+        }
+    };
+    let size = usize::try_from(meta.size).unwrap_or(usize::MAX);
+    ctx.consume_budget_input(size)?;
+    let _lease = ctx.lease_budget_bytes(size)?;
+    let bytes = match ctx.fs.read_file(path).await {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            read_error(sh.opts, name, &e, errors, read_failed);
+            return Ok((0, false));
+        }
+    };
+    // A host-backed file may grow between metadata and read. Account for it
+    // before scanning; the backend owns admission of its read allocation.
+    ctx.consume_budget_input(bytes.len().saturating_sub(size))?;
+    let _extra = ctx.lease_budget_bytes(bytes.capacity().saturating_sub(size))?;
+    scan_input(
+        ctx,
+        sh,
+        Source::File(name.to_string(), bytes),
+        out,
+        errors,
+        stream,
+    )
+    .await
+}
+
+/// Files first, then subdirectories depth-first, preserving name order.
+#[allow(clippy::too_many_arguments)]
+async fn scan_recursive(
+    ctx: &Context<'_>,
+    sh: &mut Shared<'_>,
+    operand: &str,
+    root: &std::path::Path,
+    out: &mut Vec<u8>,
+    errors: &mut String,
+    read_failed: &mut bool,
+) -> Result<usize> {
+    let opts = sh.opts;
     let root = crate::fs::normalize_path(root);
-    // Indexed search via SearchCapable when the backend offers one. Skip it
-    // for -P and back-references: the backend's engine cannot express them.
-    if !matches!(matcher, PatternMatcher::Fancy(_))
-        && let Some(found) = try_indexed_search(&*ctx.fs, opts, &root, operand).await
+    let mut selected = 0usize;
+    if !matches!(sh.matcher, PatternMatcher::Fancy(_))
+        && let Some(found) = try_indexed_search(ctx, opts, &root).await?
     {
-        sources.extend(found);
-        return;
+        for path in found.paths.iter() {
+            let name = recursive_display(operand, &root, path);
+            let (n, _) = scan_file(ctx, sh, &name, path, out, errors, read_failed, None).await?;
+            selected = selected.saturating_add(n);
+            if n > 0 && opts.quiet {
+                break;
+            }
+        }
+        return Ok(selected);
     }
-    let mut stack: Vec<std::path::PathBuf> = vec![root.clone()];
+    let mut stack = budgeted_vec(ctx)?;
+    stack.try_push(GrepDirectory::new(ctx, &root, None)?)?;
+    // THREAT[TM-DOS-011,TM-DOS-096]: A hop cap bounds one lookup, not a
+    // branching walk. Reject ancestor cycles and meter synchronous VFS work.
     while let Some(dir) = stack.pop() {
-        let mut entries = match ctx.fs.read_dir(&dir).await {
-            Ok(e) => e,
+        ctx.consume_budget_work(1)?;
+        let canonical = match crate::fs::canonicalize(ctx.fs.as_ref(), &dir.path).await {
+            Ok(path) => path,
             Err(e) => {
-                *read_failed = true;
-                if !opts.suppress_errors {
-                    let shown = recursive_display(operand, &root, &dir);
-                    let reason = crate::error::io_error_reason(&e);
-                    errors.push_str(&format!("grep: {shown}: {reason}\n"));
-                }
+                let name = recursive_display(operand, &root, &dir.path);
+                read_error(opts, &name, &e, errors, read_failed);
                 continue;
             }
         };
-        // Name order keeps output stable across VFS backends.
+        let mut ancestor = dir.ancestors.as_deref();
+        let mut cycle = false;
+        while let Some(a) = ancestor {
+            ctx.consume_budget_work(1)?;
+            if a.path == canonical {
+                cycle = true;
+                break;
+            }
+            ancestor = a.parent.as_deref();
+        }
+        if cycle {
+            if !opts.suppress_errors {
+                let name = recursive_display(operand, &root, &dir.path);
+                errors.push_str(&super::cap_diagnostic(
+                    format!("grep: {name}: warning: recursive directory loop\n"),
+                    1024,
+                ));
+            }
+            continue;
+        }
+        let ancestor_lease = ctx.lease_budget_bytes(
+            canonical
+                .as_os_str()
+                .len()
+                .saturating_add(std::mem::size_of::<GrepAncestor>()),
+        )?;
+        let ancestors = std::sync::Arc::new(GrepAncestor {
+            path: canonical,
+            parent: dir.ancestors,
+            _lease: ancestor_lease,
+        });
+        let mut entries = match ctx.fs.read_dir(&dir.path).await {
+            Ok(entries) => entries,
+            Err(e) => {
+                let name = recursive_display(operand, &root, &dir.path);
+                read_error(opts, &name, &e, errors, read_failed);
+                continue;
+            }
+        };
+        ctx.consume_budget_work(entries.len() as u64)?;
+        let _listing = ctx.lease_budget_bytes(
+            entries.iter().fold(
+                entries
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<crate::fs::DirEntry>()),
+                |bytes, entry| bytes.saturating_add(entry.name.capacity()),
+            ),
+        )?;
         entries.sort_by(|a, b| a.name.cmp(&b.name));
-        let mut subdirs = Vec::new();
+        let mut subdirs = budgeted_vec(ctx)?;
         for entry in entries {
-            let entry_path = vfs_join(&dir, &entry.name);
+            ctx.consume_budget_work(1)?;
+            let entry_path = vfs_join(&dir.path, &entry.name);
             let mut ft = entry.metadata.file_type;
             if ft.is_symlink() {
-                // -r skips symlinks met while recursing; -R follows them.
                 if !opts.dereference {
                     continue;
                 }
                 match ctx.fs.stat(&entry_path).await {
-                    Ok(m) => ft = m.file_type,
+                    Ok(meta) => ft = meta.file_type,
                     Err(_) => continue,
                 }
             }
@@ -1259,28 +1408,29 @@ async fn collect_recursive(
                 {
                     continue;
                 }
-                subdirs.push(entry_path);
+                subdirs.try_push(GrepDirectory::new(
+                    ctx,
+                    &entry_path,
+                    Some(ancestors.clone()),
+                )?)?;
             } else if ft.is_file()
                 && should_include_file(&entry.name, &opts.include_patterns, &opts.exclude_patterns)
             {
-                match ctx.fs.read_file(&entry_path).await {
-                    Ok(bytes) => sources.push(Source::File(
-                        recursive_display(operand, &root, &entry_path),
-                        bytes,
-                    )),
-                    Err(e) => {
-                        *read_failed = true;
-                        if !opts.suppress_errors {
-                            let shown = recursive_display(operand, &root, &entry_path);
-                            let reason = crate::error::io_error_reason(&e);
-                            errors.push_str(&format!("grep: {shown}: {reason}\n"));
-                        }
-                    }
+                let name = recursive_display(operand, &root, &entry_path);
+                let (n, _) =
+                    scan_file(ctx, sh, &name, &entry_path, out, errors, read_failed, None).await?;
+                selected = selected.saturating_add(n);
+                if n > 0 && opts.quiet {
+                    return Ok(selected);
                 }
             }
         }
-        stack.extend(subdirs.into_iter().rev());
+        let (subdirs, _subdir_storage) = subdirs.into_parts();
+        for subdir in subdirs.into_iter().rev() {
+            stack.try_push(subdir)?;
+        }
     }
+    Ok(selected)
 }
 
 /// Name a file found under a recursive-grep operand the way GNU grep does:
@@ -1307,16 +1457,21 @@ fn recursive_display(operand: &str, root: &std::path::Path, path: &std::path::Pa
     format!("{base}/{rel}")
 }
 
+struct IndexedInputs {
+    paths: crate::limits::BudgetedVec<std::path::PathBuf>,
+    _leases: crate::limits::BudgetedVec<Option<crate::limits::ExecutionBudgetLease>>,
+}
+
 /// Try to use an indexed search provider for recursive grep.
 ///
 /// Returns `Some(inputs)` if a `SearchCapable` provider handled the search,
 /// `None` to fall back to linear scan.
 async fn try_indexed_search(
-    fs: &dyn crate::fs::FileSystem,
+    ctx: &Context<'_>,
     opts: &GrepOptions,
     root: &std::path::Path,
-    operand: &str,
-) -> Option<Vec<Source>> {
+) -> Result<Option<IndexedInputs>> {
+    let fs = ctx.fs.as_ref();
     if opts.invert_match
         || opts.files_without_match
         || opts.count_only
@@ -1324,21 +1479,25 @@ async fn try_indexed_search(
         || !opts.pattern_files.is_empty()
         || opts.patterns[0].contains('\n')
     {
-        return None;
+        return Ok(None);
     }
 
-    let sc = fs.as_search_capable()?;
-    let provider = sc.search_provider(root)?;
+    let Some(sc) = fs.as_search_capable() else {
+        return Ok(None);
+    };
+    let Some(provider) = sc.search_provider(root) else {
+        return Ok(None);
+    };
     let caps = provider.capabilities();
     if !caps.content_search {
-        return None;
+        return Ok(None);
     }
 
     let pattern = if opts.syntax == Syntax::Fixed {
         opts.patterns[0].clone()
     } else {
         if opts.syntax == Syntax::Perl || !caps.regex {
-            return None;
+            return Ok(None);
         }
         let dialect = if opts.syntax == Syntax::Extended {
             super::grep_pattern::Dialect::Extended
@@ -1347,9 +1506,12 @@ async fn try_indexed_search(
         };
         let t =
             super::grep_pattern::translate(&opts.patterns[0], dialect, opts.ignore_case, false, 0)
-                .ok()?;
+                .ok();
+        let Some(t) = t else {
+            return Ok(None);
+        };
         if t.backrefs {
-            return None;
+            return Ok(None);
         }
         let pattern = if opts.word_regex {
             format!(r"\b{{start-half}}(?:{})\b{{end-half}}", t.rust)
@@ -1376,19 +1538,36 @@ async fn try_indexed_search(
         max_results: opts.max_count,
     };
 
-    let results = provider.search(&query).ok()?;
+    ctx.consume_budget_work(1)?;
+    let Ok(results) = provider.search(&query) else {
+        return Ok(None);
+    };
     let mut seen_paths = std::collections::HashSet::new();
-    let mut inputs = Vec::new();
+    let mut inputs = budgeted_vec(ctx)?;
+    let mut path_leases = budgeted_vec(ctx)?;
     for m in &results.matches {
+        ctx.consume_budget_work(1)?;
         let candidate = if m.path.is_absolute() {
             crate::fs::normalize_path(&m.path)
         } else {
             crate::fs::normalize_path(&vfs_join(root, &m.path))
         };
 
-        if !candidate.starts_with(root) || !seen_paths.insert(candidate.clone()) {
+        if !candidate.starts_with(root) || seen_paths.contains(&candidate) {
             continue;
         }
+        // Both the deduplication set and the selected paths retain a copy.
+        // Include hash-table slack before cloning into the set.
+        path_leases.try_push(
+            ctx.lease_budget_bytes(
+                candidate
+                    .as_os_str()
+                    .len()
+                    .saturating_mul(2)
+                    .saturating_add(4 * std::mem::size_of::<std::path::PathBuf>()),
+            )?,
+        )?;
+        seen_paths.insert(candidate.clone());
 
         let Some(name) = candidate.file_name().and_then(|n| n.to_str()) else {
             continue;
@@ -1399,20 +1578,17 @@ async fn try_indexed_search(
             continue;
         }
 
-        if let Ok(content) = fs.read_file(&candidate).await {
-            inputs.push(Source::File(
-                recursive_display(operand, root, &candidate),
-                content,
-            ));
-        }
+        inputs.try_push(candidate)?;
     }
 
     if inputs.is_empty() {
-        return None;
+        return Ok(None);
     }
-    Some(inputs)
+    Ok(Some(IndexedInputs {
+        paths: inputs,
+        _leases: path_leases,
+    }))
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;

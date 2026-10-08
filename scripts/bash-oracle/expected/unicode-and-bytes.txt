@@ -1,0 +1,8 @@
+### status: 0
+### stdout
+9
+17
+ação
+AÇÃO Ñ 日本
+6
+### stderr

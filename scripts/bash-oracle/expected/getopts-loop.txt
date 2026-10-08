@@ -1,0 +1,8 @@
+### status: 0
+### stdout
+verbose=1 out=saida.txt resto=a b
+verbose=1 out=x resto=
+opção inválida -x
+faltou arg pra -o
+sem silêncio: a
+### stderr

@@ -1,0 +1,10 @@
+### status: 1
+### stdout
+check ok
+check passou ok
+check ruim
+check passou ruim
+não imprime
+continua: -e ignorado dentro de && 
+check ruim
+### stderr

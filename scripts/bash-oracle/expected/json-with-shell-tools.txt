@@ -1,0 +1,9 @@
+### status: 0
+### stdout
+a=1
+b=2
+total=3
+{
+  "chave": 3
+}
+### stderr

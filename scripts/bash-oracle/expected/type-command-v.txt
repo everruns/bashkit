@@ -1,0 +1,12 @@
+### status: 0
+### stdout
+echo
+cd
+/usr/bin/ls
+builtin
+file
+keyword
+function
+rc=1
+/usr/bin/sort
+### stderr

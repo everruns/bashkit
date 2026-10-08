@@ -1,0 +1,12 @@
+### status: 0
+### stdout
+rc=1
+c
+rc=1
+rc=1
+rc=1
+### stderr
+SCRIPT: line 3: f.txt: cannot overwrite existing file
+SCRIPT: line 6: naoexiste.txt: No such file or directory
+SCRIPT: line 7: dir/: Is a directory
+SCRIPT: line 8: /proc/naopode: No such file or directory

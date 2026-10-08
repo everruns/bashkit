@@ -601,6 +601,8 @@ pub enum RedirectKind {
     DupInput,
     /// &> - redirect both stdout and stderr
     OutputBoth,
+    /// <> - open for reading and writing (fd 0 by default)
+    ReadWrite,
 }
 
 /// Variable assignment.

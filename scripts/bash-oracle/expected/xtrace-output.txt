@@ -1,0 +1,13 @@
+### status: 0
+### stdout
+valor 1
+2
+fim
+### stderr
++ a=1
++ echo 'valor 1'
++ cat
++ f
++ local b=2
++ echo 2
++ set +x

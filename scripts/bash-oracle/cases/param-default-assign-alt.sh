@@ -1,0 +1,5 @@
+unset u; e=""; s="valor"
+echo "1:${u:-def} 2:${u-def} 3:${e:-def} 4:${e-def} 5:${s:-def}"
+echo "6:${u:+alt} 7:${e:+alt} 8:${e+alt} 9:${s:+alt}"
+echo "10:${u:=atribuído} depois:$u"
+: "${novo:=x}"; echo "11:$novo"

@@ -1317,6 +1317,7 @@ struct SubshellSnapshot {
     cwd: PathBuf,
     memory_budget: crate::limits::MemoryBudget,
     exec_fd_table: HashMap<i32, FdTarget>,
+    exec_input_fds: HashSet<i32>,
     random_state: u32,
     getopts_char_idx: usize,
     last_bg_pid: Option<String>,
@@ -1391,6 +1392,10 @@ pub struct Interpreter {
     /// `unset LINENO` makes it an ordinary variable for the rest of the
     /// shell's life, like bash.
     lineno_unset: bool,
+    /// How many `source`d scripts are running. `return` is only legal inside
+    /// a function or a sourced script, so it needs to tell the two apart from
+    /// a plain top-level command.
+    source_depth: usize,
     /// HTTP client for network builtins (curl, wget)
     #[cfg(feature = "http_client")]
     http_client: Option<Arc<crate::network::HttpClient>>,
@@ -1482,6 +1487,15 @@ pub struct Interpreter {
     /// entries for fd 1 and 2 (`exec >log 2>&1`) route the shell's own
     /// output at each top-level command (`route_exec_output`).
     exec_fd_table: HashMap<i32, FdTarget>,
+    /// Fds opened by `exec N<&0` (or a dup of such an fd): they read the
+    /// shell's stdin, which is what `<&N` falls back to, so only their
+    /// "open" state needs tracking (fd allocation, `Bad file descriptor`).
+    exec_input_fds: HashSet<i32>,
+    /// Fds (>= 3) that the redirections of the commands currently executing
+    /// (a function called as `f 3>&1`, `{ ...; } 3>file`) make available to
+    /// their bodies. Routing of those is done by the pending-fd machinery;
+    /// this only keeps `>&3` inside them from being a bad descriptor.
+    fd_redirect_scope: Vec<i32>,
     /// Output written to a saved copy of the original stdout/stderr
     /// (`exec 3>&1 >log; echo hi >&3`) while fd 1/2 are redirected by
     /// `exec`. It skips that routing and goes straight to the caller.
@@ -1982,6 +1996,7 @@ impl Interpreter {
             jobs: jobs::new_shared_job_table(),
             current_line: 1,
             lineno_unset: false,
+            source_depth: 0,
             #[cfg(feature = "http_client")]
             http_client: None,
             #[cfg(feature = "git")]
@@ -2017,8 +2032,10 @@ impl Interpreter {
             history_loaded: false,
             subst_generation: 0,
             coproc_buffers: HashMap::new(),
-            coproc_next_fd: 63,
+            coproc_next_fd: redirection::COPROC_FIRST_FD,
             exec_fd_table: HashMap::new(),
+            exec_input_fds: HashSet::new(),
+            fd_redirect_scope: Vec::new(),
             exec_passthrough: Default::default(),
             pending_fd_output: HashMap::new(),
             pending_fd_targets: Vec::new(),
@@ -2131,6 +2148,7 @@ impl Interpreter {
             fs: Arc::clone(&self.fs),
             env: self.env.clone(),
             scoped: self.scoped.clone(),
+            source_depth: self.source_depth,
             flags: self.flags,
             cwd: self.cwd.clone(),
             last_exit_code: self.last_exit_code,
@@ -2186,6 +2204,8 @@ impl Interpreter {
             coproc_buffers: HashMap::new(),
             coproc_next_fd: self.coproc_next_fd,
             exec_fd_table: self.exec_fd_table.clone(),
+            exec_input_fds: self.exec_input_fds.clone(),
+            fd_redirect_scope: self.fd_redirect_scope.clone(),
             exec_passthrough: Default::default(),
             pending_fd_output: HashMap::new(),
             pending_fd_targets: Vec::new(),
@@ -3252,7 +3272,8 @@ impl Interpreter {
             }
             self.check_cancelled()?;
             if top_level {
-                self.route_exec_output(&mut result, emitted_before).await?;
+                self.route_exec_output(&mut result, emitted_before, Self::command_name(command))
+                    .await?;
             }
             self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
             if top_level {
@@ -3469,6 +3490,17 @@ impl Interpreter {
     }
 
     /// Get the source line number from a command's span
+    /// The name a simple command would report itself under in an error.
+    fn command_name(command: &Command) -> Option<&str> {
+        let Command::Simple(c) = command else {
+            return None;
+        };
+        match c.name.parts.first()? {
+            WordPart::Literal(name) => Some(name.as_str()),
+            _ => None,
+        }
+    }
+
     fn command_line(command: &Command) -> usize {
         match command {
             Command::Simple(c) => c.span.line(),
@@ -5618,6 +5650,8 @@ enum FdTarget {
     AppendFile(PathBuf, String),
     /// Discard (/dev/null).
     DevNull,
+    /// Closed by `exec N>&-`: a write to it fails.
+    Closed,
 }
 
 /// Route fd1/fd2/fd3+ content to their targets. Extracted from the async
@@ -5655,7 +5689,8 @@ fn route_fd_table_content(
                 err.append(data);
             }
         }
-        FdTarget::DevNull => {}
+        // A closed descriptor accepts nothing.
+        FdTarget::DevNull | FdTarget::Closed => {}
         FdTarget::WriteFile(p, d) => {
             let entry = fw
                 .entry(p.clone())
@@ -7161,6 +7196,42 @@ impl Interpreter {
         stdin: Option<crate::StreamData>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecResult>> + Send + 'a>> {
         Box::pin(async move {
+            // `cmd {fd}>file`: bash never undoes a `{var}` redirection, so it
+            // opens a descriptor in the shell like `exec` would. `exec`
+            // itself applies its redirects in order.
+            if name != "exec" && command.redirects.iter().any(|r| r.fd_var.is_some()) {
+                let remaining = match self.apply_named_fd_redirects(&command.redirects).await? {
+                    Ok(remaining) => remaining,
+                    Err(err) => return Ok(err),
+                };
+                let command = SimpleCommand {
+                    redirects: remaining,
+                    ..command.clone()
+                };
+                return self
+                    .execute_dispatched_command(name, args, &command, stdin)
+                    .await;
+            }
+            // Fds this command's redirects open stay valid inside it
+            // (`f 3>&1` where `f` writes `>&3`).
+            let scope_len = self.fd_redirect_scope.len();
+            redirection::push_redirect_scope_fds(&mut self.fd_redirect_scope, &command.redirects);
+            let result = self
+                .execute_dispatched_command_inner(name, args, command, stdin)
+                .await;
+            self.fd_redirect_scope.truncate(scope_len);
+            result
+        })
+    }
+
+    fn execute_dispatched_command_inner<'a>(
+        &'a mut self,
+        name: &'a str,
+        args: Vec<String>,
+        command: &'a SimpleCommand,
+        stdin: Option<crate::StreamData>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecResult>> + Send + 'a>> {
+        Box::pin(async move {
             // The stage's own `yes`/`seq` writes straight into the pipe.
             self.builtin_stdout_pipe = if self.stream_stdout_command
                 == Some(command as *const SimpleCommand as usize)
@@ -7184,6 +7255,21 @@ impl Interpreter {
                 self.insert_variable_checked("_".to_string(), last.clone());
             } else {
                 self.insert_variable_checked("_".to_string(), name.to_string());
+            }
+
+            // `return` outside a function or a sourced script is a usage
+            // error in bash: it reports, exits 2 and the script carries on.
+            // `keeps_arg0` marks a function's frame; a frame that only carries
+            // top-level positional parameters (`bashkit script.sh a b`) does
+            // not make `return` legal.
+            let in_function = self.call_stack.iter().any(|f| f.keeps_arg0);
+            if name == "return" && !in_function && self.source_depth == 0 {
+                self.last_exit_code = 2;
+                return Ok(ExecResult::err(
+                    "bash: return: can only `return' from a function or sourced script\n"
+                        .to_string(),
+                    2,
+                ));
             }
 
             // Check for nounset error from argument expansion
@@ -7301,138 +7387,8 @@ impl Interpreter {
             });
         }
         for redirect in redirects {
-            // Resolve fd from either explicit fd or {var} fd-variable syntax
-            let resolved_fd_var: Option<i32> = redirect.fd_var.as_ref().and_then(|var_name| {
-                self.expand_name_or_array_element(var_name)
-                    .trim()
-                    .parse::<i32>()
-                    .ok()
-            });
-            match redirect.kind {
-                RedirectKind::Input => {
-                    let target_path = self.expand_word(&redirect.target).await?;
-                    let path = self.resolve_path(&target_path);
-                    let content = match self.fs.read_file(&path).await {
-                        Ok(c) => c,
-                        Err(e) => {
-                            return Ok(ExecResult::err(
-                                format!(
-                                    "bash: {target_path}: {}\n",
-                                    crate::error::io_error_reason(&e)
-                                ),
-                                1,
-                            ));
-                        }
-                    };
-                    let text = decode_file_bytes_for_path(&path, &content);
-                    let fd = redirect.fd.or(resolved_fd_var);
-                    if let Some(fd) = fd {
-                        self.ensure_persistent_fd_capacity(fd)?;
-                        let lines: Vec<String> =
-                            text.lines().rev().map(|l| l.to_string()).collect();
-                        self.coproc_buffers.insert(fd, lines);
-                    } else {
-                        // exec < file: redirect stdin for subsequent commands
-                        self.pipeline_stdin = Some(text.into());
-                    }
-                }
-                RedirectKind::DupInput => {
-                    let target = self.expand_word(&redirect.target).await?;
-                    let fd = redirect.fd.or(resolved_fd_var);
-                    if (target == "-" || target == "&-")
-                        && let Some(fd) = fd
-                    {
-                        self.coproc_buffers.remove(&fd);
-                    }
-                }
-                RedirectKind::Output | RedirectKind::Clobber => {
-                    // WTF: `exec {var}>file` (allocate a free fd into var) is not
-                    // implemented; an unset var must not fall back to fd 1.
-                    let Some(fd) = redirect
-                        .fd
-                        .or(resolved_fd_var)
-                        .or(redirect.fd_var.is_none().then_some(1))
-                    else {
-                        continue;
-                    };
-                    let target_path = self.expand_word(&redirect.target).await?;
-                    let path = self.resolve_path(&target_path);
-                    self.ensure_persistent_fd_capacity(fd)?;
-                    if let Some(target_fd) = dev_fd_alias(&path) {
-                        let entry = self.exec_fd_alias_target(target_fd);
-                        self.exec_fd_table.insert(fd, entry);
-                    } else if is_dev_null(&path) {
-                        self.exec_fd_table.insert(fd, FdTarget::DevNull);
-                    } else {
-                        // Truncate file on open (like real exec >file); a
-                        // failed open leaves the fd as it was.
-                        if let Err(e) = self.fs.write_file(&path, b"").await {
-                            return Ok(ExecResult::err(
-                                format!(
-                                    "bash: {target_path}: {}\n",
-                                    crate::error::io_error_reason(&e)
-                                ),
-                                1,
-                            ));
-                        }
-                        self.exec_fd_table
-                            .insert(fd, FdTarget::WriteFile(path, target_path));
-                    }
-                }
-                RedirectKind::Append => {
-                    // WTF: `exec {var}>file` (allocate a free fd into var) is not
-                    // implemented; an unset var must not fall back to fd 1.
-                    let Some(fd) = redirect
-                        .fd
-                        .or(resolved_fd_var)
-                        .or(redirect.fd_var.is_none().then_some(1))
-                    else {
-                        continue;
-                    };
-                    let target_path = self.expand_word(&redirect.target).await?;
-                    let path = self.resolve_path(&target_path);
-                    self.ensure_persistent_fd_capacity(fd)?;
-                    if let Some(target_fd) = dev_fd_alias(&path) {
-                        let entry = self.exec_fd_alias_target(target_fd);
-                        self.exec_fd_table.insert(fd, entry);
-                    } else if is_dev_null(&path) {
-                        self.exec_fd_table.insert(fd, FdTarget::DevNull);
-                    } else {
-                        if let Err(e) = self.fs.append_file(&path, b"").await {
-                            return Ok(ExecResult::err(
-                                format!(
-                                    "bash: {target_path}: {}\n",
-                                    crate::error::io_error_reason(&e)
-                                ),
-                                1,
-                            ));
-                        }
-                        self.exec_fd_table
-                            .insert(fd, FdTarget::AppendFile(path, target_path));
-                    }
-                }
-                RedirectKind::DupOutput => {
-                    let target = self.expand_word(&redirect.target).await?;
-                    // WTF: `exec {var}>file` (allocate a free fd into var) is not
-                    // implemented; an unset var must not fall back to fd 1.
-                    let Some(fd) = redirect
-                        .fd
-                        .or(resolved_fd_var)
-                        .or(redirect.fd_var.is_none().then_some(1))
-                    else {
-                        continue;
-                    };
-                    if target == "-" || target == "&-" {
-                        // exec N>&- closes the fd
-                        self.exec_fd_table.remove(&fd);
-                    } else if let Ok(target_fd) = target.parse::<i32>() {
-                        // exec N>&M duplicates fd M to fd N
-                        let target_entry = self.exec_fd_alias_target(target_fd);
-                        self.ensure_persistent_fd_capacity(fd)?;
-                        self.exec_fd_table.insert(fd, target_entry);
-                    }
-                }
-                _ => {}
+            if let Some(err) = self.apply_persistent_redirect(redirect).await? {
+                return Ok(err);
             }
         }
         // fd 1/2 pointed back at the original streams (`exec 1>&3`) is no
@@ -7443,8 +7399,10 @@ impl Interpreter {
         if matches!(self.exec_fd_table.get(&2), Some(FdTarget::Stderr)) {
             self.exec_fd_table.remove(&2);
         }
-        let result = ExecResult::default();
-        self.apply_redirections(result, redirects).await
+        // Every redirect was applied to the shell above (and validated
+        // there): re-applying them to `exec`'s empty output would check
+        // `1>&3` against the state after `3>&-`.
+        Ok(ExecResult::default())
     }
 
     /// Target for `exec N>&M` / `exec N>/dev/fd/M`.
@@ -7458,6 +7416,7 @@ impl Interpreter {
         &mut self,
         result: &mut ExecResult,
         emitted_before: (usize, usize),
+        command_name: Option<&str>,
     ) -> Result<()> {
         if !self.exec_fd_table.contains_key(&1) && !self.exec_fd_table.contains_key(&2) {
             return Ok(());
@@ -7477,6 +7436,7 @@ impl Interpreter {
         if let Some(target) = self.exec_fd_table.get(&2).cloned() {
             moved.push((take(&mut result.stderr, streamed_err), target));
         }
+        let mut write_failed = false;
         for (data, target) in moved {
             if data.is_empty() {
                 continue;
@@ -7485,10 +7445,26 @@ impl Interpreter {
                 FdTarget::Stdout => result.stdout.append(&data),
                 FdTarget::Stderr => result.stderr.append(&data),
                 FdTarget::DevNull => {}
+                FdTarget::Closed => write_failed = true,
                 FdTarget::WriteFile(path, _) | FdTarget::AppendFile(path, _) => {
                     self.fs.append_file(&path, data.as_bytes()).await?;
                 }
             }
+        }
+        if write_failed {
+            // bash: the write fails and the command reports it, naming itself.
+            let who = command_name.map(|n| format!("{n}: ")).unwrap_or_default();
+            let msg = format!(
+                "bash: line {}: {who}write error: Bad file descriptor\n",
+                self.current_line
+            );
+            if !matches!(self.exec_fd_table.get(&2), Some(FdTarget::Closed)) {
+                result
+                    .stderr
+                    .append(&crate::StreamData::from(msg.as_bytes()));
+            }
+            result.exit_code = 1;
+            self.last_exit_code = 1;
         }
         Ok(())
     }
@@ -7539,12 +7515,14 @@ impl Interpreter {
         if (0..=2).contains(&fd)
             || self.exec_fd_table.contains_key(&fd)
             || self.coproc_buffers.contains_key(&fd)
+            || self.exec_input_fds.contains(&fd)
         {
             return Ok(());
         }
 
         let mut open_fds: HashSet<i32> = self.exec_fd_table.keys().copied().collect();
         open_fds.extend(self.coproc_buffers.keys().copied());
+        open_fds.extend(self.exec_input_fds.iter().copied());
 
         if open_fds.len() >= self.limits.max_file_descriptors {
             return Err(crate::limits::LimitExceeded::MaxFileDescriptors(
@@ -8351,6 +8329,7 @@ impl Interpreter {
         let saved_env = self.env.clone();
         let saved_memory_budget = self.memory_budget.clone();
         let saved_exec_fd_table = self.exec_fd_table.clone();
+        let saved_exec_input_fds = self.exec_input_fds.clone();
         // The child process has its own working directory (`cd` stays there).
         let saved_cwd = self.cwd.clone();
 
@@ -8424,6 +8403,7 @@ impl Interpreter {
         self.env = saved_env;
         self.memory_budget = saved_memory_budget;
         self.exec_fd_table = saved_exec_fd_table;
+        self.exec_input_fds = saved_exec_input_fds;
         self.bash_source_stack = saved_source_stack;
         self.cwd = saved_cwd;
         self.pipeline_stdin = if shares_caller_stdin {
@@ -8571,8 +8551,10 @@ impl Interpreter {
         // Execute the script commands in the current shell context.
         // Use execute_script_body (not execute) to preserve depth counters.
         self.return_depth += 1;
+        self.source_depth += 1;
         let exec_result = self.execute_script_body(&script, false, true).await;
         self.return_depth -= 1;
+        self.source_depth -= 1;
 
         // Pop source depth and BASH_SOURCE (always, even on error)
         self.counters.pop_function();
@@ -8581,6 +8563,13 @@ impl Interpreter {
 
         let mut result = exec_result?;
         // `return` ends the sourced file with its status.
+        if let ControlFlow::Return(code) = result.control_flow {
+            result.exit_code = code;
+            result.control_flow = ControlFlow::None;
+        }
+
+        // `return N` inside a sourced script is the status of `source`, and
+        // stops the sourced file only, not the script that sourced it.
         if let ControlFlow::Return(code) = result.control_flow {
             result.exit_code = code;
             result.control_flow = ControlFlow::None;
@@ -8720,7 +8709,10 @@ impl Interpreter {
 
     /// Format a Redirect back to its textual representation for alias expansion.
     fn format_redirect(redir: &Redirect) -> String {
-        let fd_prefix = redir.fd.map(|fd| fd.to_string()).unwrap_or_default();
+        let fd_prefix = match &redir.fd_var {
+            Some(var) => format!("{{{var}}}"),
+            None => redir.fd.map(|fd| fd.to_string()).unwrap_or_default(),
+        };
         let op = match redir.kind {
             RedirectKind::Output => ">",
             RedirectKind::Append => ">>",
@@ -8732,6 +8724,7 @@ impl Interpreter {
             RedirectKind::DupOutput => ">&",
             RedirectKind::DupInput => "<&",
             RedirectKind::OutputBoth => "&>",
+            RedirectKind::ReadWrite => "<>",
         };
         format!(
             "{}{}{}",
@@ -10047,6 +10040,7 @@ impl Interpreter {
         self.refresh_shopt_flags();
         let effects = std::mem::take(&mut result.side_effects);
         let mut shift_failed = false;
+        let mut pending_self_signal = None;
         for effect in &effects {
             match effect {
                 builtins::BuiltinSideEffect::SetArray { name, elements } => {
@@ -10065,6 +10059,9 @@ impl Interpreter {
                     if !arr.is_empty() {
                         self.insert_array_checked(name.clone(), arr);
                     }
+                }
+                builtins::BuiltinSideEffect::SignalSelf(signal) => {
+                    pending_self_signal = Some(*signal);
                 }
                 builtins::BuiltinSideEffect::RemoveArray(name) => {
                     self.arrays_mut().remove(name);
@@ -10122,6 +10119,41 @@ impl Interpreter {
         if shift_failed {
             result.exit_code = 1;
         }
+        if let Some(signal) = pending_self_signal {
+            self.deliver_self_signal(signal, result).await;
+        }
+    }
+
+    /// `kill -SIG $$`: bash runs that signal's trap if one is set, and
+    /// otherwise lets the default action end the shell with status
+    /// 128 + signal. Signals whose default is to be ignored do neither.
+    async fn deliver_self_signal(&mut self, signal: i32, result: &mut ExecResult) {
+        if let Some(trap_cmd) = self.signal_trap(signal) {
+            let mut stdout = std::mem::take(&mut result.stdout);
+            let mut stderr = std::mem::take(&mut result.stderr);
+            let flow = self
+                .run_trap_command(&trap_cmd, &mut stdout, &mut stderr)
+                .await;
+            result.stdout = stdout;
+            result.stderr = stderr;
+            // An `exit` inside the handler ends the script, as it does in bash.
+            if let Some((ControlFlow::Exit(code), _)) = flow {
+                self.last_exit_code = code;
+                result.exit_code = code;
+                result.control_flow = ControlFlow::Exit(code);
+            }
+            return;
+        }
+        if matches!(
+            builtins::signal_name(signal),
+            Some("CHLD" | "URG" | "WINCH" | "CONT")
+        ) {
+            return;
+        }
+        let status = 128 + signal;
+        self.last_exit_code = status;
+        result.exit_code = status;
+        result.control_flow = ControlFlow::Exit(status);
     }
 
     /// Resolve a path relative to cwd, normalizing `.` and `..` components.
@@ -10204,6 +10236,7 @@ impl Interpreter {
             cwd: self.cwd.clone(),
             memory_budget: self.memory_budget.clone(),
             exec_fd_table: self.exec_fd_table.clone(),
+            exec_input_fds: self.exec_input_fds.clone(),
             random_state: self.random_state.load(Ordering::Relaxed),
             getopts_char_idx: self.getopts_char_idx,
             last_bg_pid: self.last_bg_pid.clone(),
@@ -10219,6 +10252,7 @@ impl Interpreter {
         self.cwd = snap.cwd;
         self.memory_budget = snap.memory_budget;
         self.exec_fd_table = snap.exec_fd_table;
+        self.exec_input_fds = snap.exec_input_fds;
         self.random_state
             .store(snap.random_state, Ordering::Relaxed);
         self.getopts_char_idx = snap.getopts_char_idx;
@@ -10238,6 +10272,19 @@ impl Interpreter {
             self.last_exit_code = 1;
             return Ok(ExecResult::err(stderr, 1));
         }
+        let named;
+        let redirects = if redirects.iter().any(|r| r.fd_var.is_some()) {
+            named = match self.apply_named_fd_redirects(redirects).await? {
+                Ok(remaining) => remaining,
+                Err(err) => {
+                    self.last_exit_code = err.exit_code;
+                    return Ok(err);
+                }
+            };
+            named.as_slice()
+        } else {
+            redirects
+        };
         match self.process_input_redirections(None, redirects).await {
             Ok(_) => {}
             Err(crate::error::Error::CommandFailure(msg)) => {
@@ -10285,7 +10332,31 @@ impl Interpreter {
             if let Some(stderr) = self.disabled_redirect_error(redirects) {
                 return Ok(ExecResult::err(stderr, 1));
             }
+            if redirects.iter().any(|r| r.fd_var.is_some()) {
+                let remaining = match self.apply_named_fd_redirects(redirects).await? {
+                    Ok(remaining) => remaining,
+                    Err(err) => return Ok(err),
+                };
+                return self
+                    .execute_compound_with_redirects(compound, &remaining)
+                    .await;
+            }
+            let scope_len = self.fd_redirect_scope.len();
+            redirection::push_redirect_scope_fds(&mut self.fd_redirect_scope, redirects);
+            let result = self
+                .execute_compound_with_redirects_inner(compound, redirects)
+                .await;
+            self.fd_redirect_scope.truncate(scope_len);
+            result
+        })
+    }
 
+    fn execute_compound_with_redirects_inner<'a>(
+        &'a mut self,
+        compound: &'a CompoundCommand,
+        redirects: &'a [Redirect],
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecResult>> + Send + 'a>> {
+        Box::pin(async move {
             // Process input redirections before executing compound
             let stdin = match self.process_input_redirections(None, redirects).await {
                 Ok(s) => s,
@@ -11470,6 +11541,53 @@ impl Interpreter {
         (crate::StreamData::new(), crate::StreamData::new())
     }
 
+    /// Run a trap handler's command, merging its output into the result the
+    /// caller is building.
+    /// Returns the handler's own control flow (an `exit` inside it), if any.
+    async fn run_trap_command(
+        &mut self,
+        trap_cmd: &str,
+        stdout: &mut crate::StreamData,
+        stderr: &mut crate::StreamData,
+    ) -> Option<(ControlFlow, i32)> {
+        // THREAT[TM-DOS-030]: Propagate interpreter parser limits.
+        let Ok(trap_script) = Parser::with_limits(
+            trap_cmd,
+            self.limits.max_ast_depth,
+            self.limits.max_parser_operations,
+        )
+        .with_execution_budget(self.execution_budget.clone())
+        .parse() else {
+            return None;
+        };
+        let was_in_trap = self.in_trap;
+        self.in_trap = true;
+        let emit_before = self.output_emit_count;
+        let result = self.execute_command_sequence(&trap_script.commands).await;
+        self.in_trap = was_in_trap;
+        let Ok(trap_result) = result else {
+            return None;
+        };
+        self.maybe_emit_output(&trap_result.stdout, &trap_result.stderr, emit_before);
+        stdout.append(&trap_result.stdout);
+        stderr.append(&trap_result.stderr);
+        Some((trap_result.control_flow, trap_result.exit_code))
+    }
+
+    /// The trap set for `signal`, under any of the spellings `trap` accepts
+    /// (`TERM`, `SIGTERM`, `15`).
+    fn signal_trap(&self, signal: i32) -> Option<String> {
+        let name = builtins::signal_name(signal);
+        let keys = [
+            name.map(str::to_string),
+            name.map(|n| format!("SIG{n}")),
+            Some(signal.to_string()),
+        ];
+        keys.into_iter()
+            .flatten()
+            .find_map(|key| self.scoped.traps.get(&key).cloned())
+    }
+
     async fn run_err_trap(
         &mut self,
         stdout: &mut crate::StreamData,
@@ -11481,29 +11599,11 @@ impl Interpreter {
             return;
         }
         if let Some(trap_cmd) = self.scoped.traps.get("ERR").cloned() {
-            // THREAT[TM-DOS-030]: Propagate interpreter parser limits
-            if let Ok(trap_script) = Parser::with_limits(
-                &trap_cmd,
-                self.limits.max_ast_depth,
-                self.limits.max_parser_operations,
-            )
-            .with_execution_budget(self.execution_budget.clone())
-            .parse()
-            {
-                // The handler runs with `$?` of the trapping command and the
-                // shell keeps that status afterwards (bash restores it).
-                let saved_exit = self.last_exit_code;
-                self.in_trap = true;
-                let emit_before = self.output_emit_count;
-                let result = self.execute_command_sequence(&trap_script.commands).await;
-                self.in_trap = false;
-                self.last_exit_code = saved_exit;
-                if let Ok(trap_result) = result {
-                    self.maybe_emit_output(&trap_result.stdout, &trap_result.stderr, emit_before);
-                    stdout.append(&trap_result.stdout);
-                    stderr.append(&trap_result.stderr);
-                }
-            }
+            // The handler runs with `$?` of the trapping command and the
+            // shell keeps that status afterwards (bash restores it).
+            let saved_exit = self.last_exit_code;
+            let _ = self.run_trap_command(&trap_cmd, stdout, stderr).await;
+            self.last_exit_code = saved_exit;
         }
     }
 }

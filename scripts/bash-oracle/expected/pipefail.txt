@@ -1,0 +1,9 @@
+### status: 1
+### stdout
+sem pipefail: 0
+com pipefail: 1
+último não-zero: 4
+y
+sigpipe com pipefail: 141 141 0
+pipefail       	off
+### stderr

@@ -341,6 +341,35 @@ filesystem and compares with the bench's own `harness::compare_outcome`.
   version-specific gaps (Bashkit targets jq 1.8) stay as failures rather than
   being special-cased.
 
+## Bash-Oracle Scoreboard
+
+`scripts/bash-oracle/run.py` (`just bash-oracle`) replays 108 whole-script
+cases through the bashkit CLI and diffs each with output recorded from real
+bash 5.2 in `scripts/bash-oracle/expected/`. Where the Debian-oracle
+scoreboard scores individual coreutils tools, this one scores shell behavior:
+redirection, traps, arithmetic, globbing, `set -euo pipefail`, xtrace,
+process substitution, parameter expansion errors.
+
+- **Recorded, not live.** The recordings are the oracle, so a run needs no bash
+  on the machine and does not drift with the runner's bash version.
+  `record.py` re-records; it keeps a case only when two runs in different empty
+  directories agree and the output carries neither a host path nor the working
+  directory, which keeps clock-, pid- and cwd-dependent cases out of the
+  corpus. The cwd rule also excludes sandbox identity: bashkit's virtual
+  filesystem starts in `/home/user` whatever the process cwd is, by design.
+  For the same reason the recordings are made with bashkit's sandbox identity
+  (`HOME=/home/sandbox`, `USER=sandbox`), so a gap is behavior, not identity.
+- **Two scores.** `match` is status plus stdout, what a script observes, and the
+  number the bash-parity work tracks (90/108 at the time of writing). `strict`
+  also requires bash's stderr text (69/108); it trails behind because most
+  builtin diagnostics still lack bash's `SCRIPT: line N:` prefix. `floor.txt` holds both as `<match> <strict>` and the
+  run fails when either drops.
+- **CI.** `.github/workflows/bash-oracle.yml` runs on PRs touching the
+  interpreter, parser, builtins or the scoreboard, and on pushes to main.
+- A case that newly matches raises the floor in the same change; a case
+  representing a documented gap stays a gap rather than being deleted, so the
+  corpus keeps measuring it (see [limitations](limitations.md)).
+
 ## SQLite CLI Differential Tests
 
 CSV comparisons explicitly set the host CLI row separator to LF. SQLite

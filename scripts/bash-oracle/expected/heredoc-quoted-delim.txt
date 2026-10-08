@@ -1,0 +1,6 @@
+### status: 0
+### stdout
+nada expande: $HOME $(whoami) `id` $((1+1))
+barra \n fica
+também $HOME
+### stderr

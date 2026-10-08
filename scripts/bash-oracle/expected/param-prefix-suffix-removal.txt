@@ -1,0 +1,6 @@
+### status: 0
+### stdout
+usr/local/lib/libfoo.so.1.2 libfoo.so.1.2 /usr/local/lib/libfoo.so.1 /usr/local/lib/libfoo
+arquivo.tar arquivo tar.gz gz
+example.com
+### stderr

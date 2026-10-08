@@ -1,0 +1,49 @@
+name: Bash Oracle Scoreboard
+
+# Replays scripts/bash-oracle/cases through the bashkit CLI and diffs against
+# output recorded from real bash, failing when either score drops below
+# scripts/bash-oracle/floor.txt. See knowledge/operations/testing.md
+# "Bash-Oracle Scoreboard".
+
+on:
+  pull_request:
+    paths:
+      - 'crates/bashkit/src/**'
+      - 'crates/bashkit-cli/src/**'
+      - 'scripts/bash-oracle/**'
+      - '.github/workflows/bash-oracle.yml'
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bash-oracle-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  scoreboard:
+    name: Bash oracle scoreboard
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+
+      - name: Build CLI
+        run: cargo build -p bashkit-cli
+
+      - name: Run scoreboard
+        run: python3 scripts/bash-oracle/run.py

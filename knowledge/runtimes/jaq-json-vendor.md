@@ -77,6 +77,12 @@ same rewrite applies to every release:
 - Growth operations check the meter *before* allocating and fail with the jq
   error `value size limit (N bytes) exceeded` (exit 5). The limit is
   `ExecutionLimits::max_live_intermediate_bytes` (default 32 MB).
+- `--stream` traverses the depth-bounded parsed tree incrementally inside
+  the metered evaluation. Ancestor keys are shared `Val` strings; cursor,
+  path, event arrays and `--slurp` retention are charged before capacity
+  growth. Each traversal step consumes shared execution work, checking
+  cancellation and deadlines even for `empty`. Parsed input trees remain
+  subject to the existing input and JSON-depth restrictions.
 - The meter is sticky: once tripped, `try ... catch` cannot keep a loop going.
 - Where there is no error channel (infallible `FromIterator`, `From<String>`)
   and for loops that never emit a value (`until(false; .)`), the run is

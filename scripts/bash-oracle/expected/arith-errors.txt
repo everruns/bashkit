@@ -1,0 +1,5 @@
+### status: 0
+### stdout
+rc=1
+### stderr
+SCRIPT: line 1: 1 / 0: division by 0 (error token is "0")

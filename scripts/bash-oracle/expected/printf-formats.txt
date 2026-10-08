@@ -1,0 +1,14 @@
+### status: 0
+### stdout
+   ab|cd   |00042|ff|10|1.234500e+03
+3.14 2 abc
+a	b
+c
+d
+a,b,c,
+1 2
+3 0
+hw
+007
+padrão
+### stderr

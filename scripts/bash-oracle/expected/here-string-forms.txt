@@ -1,0 +1,7 @@
+### status: 0
+### stdout
+MINúSCULAS ASCII
+primeiro|segundo terceiro
+1
+42
+### stderr

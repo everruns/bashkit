@@ -1,0 +1,10 @@
+### status: 0
+### stdout
+tab:	|
+nl:
+|
+hex:A
+oct:A
+uni:é
+a'b
+### stderr

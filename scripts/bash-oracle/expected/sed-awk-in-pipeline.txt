@@ -1,0 +1,9 @@
+### status: 0
+### stdout
+ana
+nome -> ana
+idade -> 30
+nome=ana
+idade=31
+16
+### stderr

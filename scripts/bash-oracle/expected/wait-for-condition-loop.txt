@@ -1,0 +1,4 @@
+### status: 0
+### stdout
+tentativas=2
+### stderr

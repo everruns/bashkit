@@ -1,0 +1,6 @@
+### status: 0
+### stdout
+X bar foo baz foo|X bar X baz X|X bar foo baz foo|foo bar foo baz X|f bar f baz f|foo_bar_foo_baz_foo
+a/b/c
+_amel_ase_ame
+### stderr

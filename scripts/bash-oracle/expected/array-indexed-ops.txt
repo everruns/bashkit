@@ -1,0 +1,10 @@
+### status: 0
+### stdout
+5 dois três dez 0 1 2 3 10
+zero dois três quatro dez
+[zero][dois três][quatro][dez]
+dois três quatro
+3
+zero dois três quatro dez -zero -dois três -quatro -dez
+1 2 3
+### stderr

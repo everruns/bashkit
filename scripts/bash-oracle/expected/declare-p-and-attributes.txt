@@ -1,0 +1,15 @@
+### status: 0
+### stdout
+declare -i n="10"
+declare -r ro="fixo"
+declare -x exp="sim"
+declare -a idx=([0]="a" [1]="b c" [5]="f")
+declare -A assoc=([chave]="valor" )
+declare -l lower="mixed"
+declare -u upper="MIXED"
+declare -- s="texto com 'aspas'"
+rc=1
+rc=1
+### stderr
+SCRIPT: line 10: ro: readonly variable
+SCRIPT: line 12: declare: naoexiste: not found

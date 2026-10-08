@@ -644,6 +644,53 @@ pub async fn verify_filesystem_requirements(fs: &dyn FileSystem) -> Result<()> {
     Ok(())
 }
 
+/// Resolve every symlink in `path` (realpath), with an ELOOP hop cap.
+pub(crate) async fn canonicalize(fs: &dyn FileSystem, path: &Path) -> crate::Result<PathBuf> {
+    let mut rest: std::collections::VecDeque<String> = path
+        .components()
+        .filter_map(|c| match c {
+            std::path::Component::Normal(s) => Some(s.to_string_lossy().into_owned()),
+            std::path::Component::ParentDir => Some("..".to_string()),
+            _ => None,
+        })
+        .collect();
+    let mut out = PathBuf::from("/");
+    let mut hops = 0;
+    while let Some(comp) = rest.pop_front() {
+        if comp == ".." {
+            out.pop();
+            continue;
+        }
+        let candidate = out.join(&comp);
+        match fs.lstat(&candidate).await {
+            Ok(m) if m.file_type.is_symlink() => {
+                hops += 1;
+                if hops > MAX_SYMLINK_HOPS {
+                    return Err(std::io::Error::other("Too many levels of symbolic links").into());
+                }
+                let target = fs.read_link(&candidate).await?;
+                if target.is_absolute() {
+                    out = PathBuf::from("/");
+                }
+                let mut parts: Vec<String> = target
+                    .components()
+                    .filter_map(|c| match c {
+                        std::path::Component::Normal(s) => Some(s.to_string_lossy().into_owned()),
+                        std::path::Component::ParentDir => Some("..".to_string()),
+                        _ => None,
+                    })
+                    .collect();
+                while let Some(p) = parts.pop() {
+                    rest.push_front(p);
+                }
+            }
+            Ok(_) => out = candidate,
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod vfs_join_tests {
     use super::*;

@@ -1,0 +1,11 @@
+### status: 0
+### stdout
+barra\invertida
+barrainvertida
+3 dois
+antes
+abc
+[  espaços  ]
+[espaços]
+rc=1 []
+### stderr
