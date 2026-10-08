@@ -67,74 +67,125 @@ impl Builtin for Unset {
 /// - `set --` - set positional parameters
 pub struct Set;
 
-/// Map long option names to their SHOPT_* variable names
-fn option_name_to_var(name: &str) -> Option<&'static str> {
-    match name {
-        "allexport" => Some("SHOPT_a"),
-        "errexit" => Some("SHOPT_e"),
-        "nounset" => Some("SHOPT_u"),
-        "xtrace" => Some("SHOPT_x"),
-        "verbose" => Some("SHOPT_v"),
-        "pipefail" => Some("SHOPT_pipefail"),
-        "noclobber" => Some("SHOPT_C"),
-        "noglob" => Some("SHOPT_f"),
-        "noexec" => Some("SHOPT_n"),
-        _ => None,
-    }
-}
-
-/// Map accepted short `set` option flags to their transient SHOPT_* variables.
-fn short_option_to_var(opt: char) -> Option<&'static str> {
-    match opt {
-        'a' => Some("SHOPT_a"),
-        'b' => Some("SHOPT_b"),
-        'e' => Some("SHOPT_e"),
-        'f' => Some("SHOPT_f"),
-        'h' => Some("SHOPT_h"),
-        'm' => Some("SHOPT_m"),
-        'n' => Some("SHOPT_n"),
-        'u' => Some("SHOPT_u"),
-        'v' => Some("SHOPT_v"),
-        'x' => Some("SHOPT_x"),
-        'C' => Some("SHOPT_C"),
-        _ => None,
-    }
-}
-
-/// All known `set -o` options with their variable names, in display order.
-const SET_O_OPTIONS: &[(&str, &str)] = &[
-    ("allexport", "SHOPT_a"),
-    ("errexit", "SHOPT_e"),
-    ("noglob", "SHOPT_f"),
-    ("noclobber", "SHOPT_C"),
-    ("noexec", "SHOPT_n"),
-    ("nounset", "SHOPT_u"),
-    ("pipefail", "SHOPT_pipefail"),
-    ("verbose", "SHOPT_v"),
-    ("xtrace", "SHOPT_x"),
+/// Every `set -o` option in bash's listing order: (name, letter, variable,
+/// on by default). Options with no effect in the sandbox (`hashall`,
+/// `keyword`, `monitor`, ...) are still recorded so `$-`, `set -o` and
+/// `shopt -o` report them like bash.
+pub(crate) const SET_O_OPTIONS: &[(&str, Option<char>, &str, bool)] = &[
+    ("allexport", Some('a'), "SHOPT_a", false),
+    ("braceexpand", Some('B'), "SHOPT_B", true),
+    ("emacs", None, "SHOPT_emacs", false),
+    ("errexit", Some('e'), "SHOPT_e", false),
+    ("errtrace", Some('E'), "SHOPT_E", false),
+    ("functrace", Some('T'), "SHOPT_T", false),
+    ("hashall", Some('h'), "SHOPT_h", true),
+    ("histexpand", Some('H'), "SHOPT_H", false),
+    ("history", None, "SHOPT_history", false),
+    ("ignoreeof", None, "SHOPT_ignoreeof", false),
+    (
+        "interactive-comments",
+        None,
+        "SHOPT_interactive_comments",
+        true,
+    ),
+    ("keyword", Some('k'), "SHOPT_k", false),
+    ("monitor", Some('m'), "SHOPT_m", false),
+    ("noclobber", Some('C'), "SHOPT_C", false),
+    ("noexec", Some('n'), "SHOPT_n", false),
+    ("noglob", Some('f'), "SHOPT_f", false),
+    ("nolog", None, "SHOPT_nolog", false),
+    ("notify", Some('b'), "SHOPT_b", false),
+    ("nounset", Some('u'), "SHOPT_u", false),
+    ("onecmd", Some('t'), "SHOPT_t", false),
+    ("physical", Some('P'), "SHOPT_P", false),
+    ("pipefail", None, "SHOPT_pipefail", false),
+    ("posix", None, "SHOPT_posix", false),
+    ("privileged", Some('p'), "SHOPT_p", false),
+    ("verbose", Some('v'), "SHOPT_v", false),
+    ("vi", None, "SHOPT_vi", false),
+    ("xtrace", Some('x'), "SHOPT_x", false),
 ];
 
-/// Format option display for `set -o` (human-readable).
-fn format_set_dash_o(variables: &std::collections::HashMap<String, String>) -> String {
-    let mut output = String::new();
-    for (name, var) in SET_O_OPTIONS {
-        let enabled = variables.get(*var).map(|v| v == "1").unwrap_or(false);
-        let state = if enabled { "on" } else { "off" };
-        output.push_str(&format!("{:<15}\t{}\n", name, state));
-    }
-    output
+/// Letters in the order bash prints them in `$-`.
+const DOLLAR_DASH_ORDER: &str = "abefhikmnptuvxBCEHPT";
+
+fn set_option_by_name(
+    name: &str,
+) -> Option<&'static (&'static str, Option<char>, &'static str, bool)> {
+    SET_O_OPTIONS.iter().find(|o| o.0 == name)
 }
 
-/// Format option display for `set +o` (re-executable).
-fn format_set_plus_o(variables: &std::collections::HashMap<String, String>) -> String {
-    let mut output = String::new();
-    for (name, var) in SET_O_OPTIONS {
-        let enabled = variables.get(*var).map(|v| v == "1").unwrap_or(false);
-        let flag = if enabled { "-o" } else { "+o" };
-        output.push_str(&format!("set {} {}\n", flag, name));
-    }
-    output
+fn set_option_by_letter(
+    c: char,
+) -> Option<&'static (&'static str, Option<char>, &'static str, bool)> {
+    SET_O_OPTIONS.iter().find(|o| o.1 == Some(c))
 }
+
+fn set_option_on(
+    variables: &std::collections::HashMap<String, String>,
+    var: &str,
+    default: bool,
+) -> bool {
+    match variables.get(var).map(String::as_str) {
+        Some("1") => true,
+        Some("0") => false,
+        _ => default,
+    }
+}
+
+/// The value of `$-`: set option letters in bash order, then `c` (every
+/// bashkit script runs like `bash -c`).
+pub(crate) fn dollar_dash(variables: &std::collections::HashMap<String, String>) -> String {
+    let mut out = String::new();
+    for c in DOLLAR_DASH_ORDER.chars() {
+        if let Some((_, _, var, default)) = set_option_by_letter(c)
+            && set_option_on(variables, var, *default)
+        {
+            out.push(c);
+        }
+    }
+    out.push('c');
+    out
+}
+
+/// One `set -o` listing line (human-readable).
+fn format_dash_o_line(variables: &std::collections::HashMap<String, String>, name: &str) -> String {
+    let (_, _, var, default) = set_option_by_name(name).expect("known option");
+    let state = if set_option_on(variables, var, *default) {
+        "on"
+    } else {
+        "off"
+    };
+    format!("{:<15}\t{}\n", name, state)
+}
+
+/// One `set +o` listing line (re-executable).
+fn format_plus_o_line(variables: &std::collections::HashMap<String, String>, name: &str) -> String {
+    let (_, _, var, default) = set_option_by_name(name).expect("known option");
+    let flag = if set_option_on(variables, var, *default) {
+        "-o"
+    } else {
+        "+o"
+    };
+    format!("set {} {}\n", flag, name)
+}
+
+/// Format option display for `set -o` / `set +o`.
+fn format_set_o(variables: &std::collections::HashMap<String, String>, dash: bool) -> String {
+    SET_O_OPTIONS
+        .iter()
+        .map(|(name, ..)| {
+            if dash {
+                format_dash_o_line(variables, name)
+            } else {
+                format_plus_o_line(variables, name)
+            }
+        })
+        .collect()
+}
+
+const SET_USAGE: &str =
+    "set: usage: set [-abefhkmnptuvxBCEHPT] [-o option-name] [--] [-] [arg ...]\n";
 
 impl Set {
     /// Create a SetPositional side effect.
@@ -157,84 +208,77 @@ impl Builtin for Set {
             return Ok(ExecResult::ok(output));
         }
 
-        let mut side_effects = Vec::new();
+        // Parse everything first: an invalid option changes nothing (bash).
+        let mut changes: Vec<(&'static str, bool)> = Vec::new();
+        let mut listing: Option<bool> = None;
+        let mut positional: Option<&[String]> = None;
         let mut i = 0;
         while i < ctx.args.len() {
             let arg = &ctx.args[i];
             if arg == "--" {
                 // Everything after `--` becomes positional parameters.
-                let positional: Vec<&str> = ctx.args[i + 1..].iter().map(|s| s.as_str()).collect();
-                side_effects.push(Self::positional_effect(&positional));
+                positional = Some(&ctx.args[i + 1..]);
                 break;
-            } else if (arg.starts_with('-') || arg.starts_with('+'))
-                && arg.len() > 1
-                && (arg.as_bytes()[1] == b'o' && arg.len() == 2)
-            {
-                // -o / +o: either display options or set/unset a named option
-                let enable = arg.starts_with('-');
+            }
+            if arg == "-" {
+                // `set -` turns off -x and -v and ends the options.
+                changes.push(("SHOPT_x", false));
+                changes.push(("SHOPT_v", false));
                 if i + 1 < ctx.args.len() {
-                    // -o option_name / +o option_name
-                    i += 1;
-                    if let Some(var) = option_name_to_var(&ctx.args[i]) {
-                        ctx.variables
-                            .insert(var.to_string(), if enable { "1" } else { "0" }.to_string());
-                    }
-                } else {
-                    // Bare -o or +o: display options
-                    let output = if enable {
-                        format_set_dash_o(ctx.variables)
-                    } else {
-                        format_set_plus_o(ctx.variables)
-                    };
-                    return Ok(ExecResult::ok(output));
+                    positional = Some(&ctx.args[i + 1..]);
                 }
-            } else if arg.starts_with('-') || arg.starts_with('+') {
-                let enable = arg.starts_with('-');
-                let mut need_o_arg = false;
-                for opt in arg.chars().skip(1) {
-                    if opt == 'o' {
-                        // -o within a combined flag (e.g. -euo): next arg is option name
-                        need_o_arg = true;
-                    } else if short_option_to_var(opt).is_none() {
-                        return Ok(ExecResult::err(
-                            format!(
-                                "bash: set: {}{}: invalid option\n",
-                                if enable { '-' } else { '+' },
-                                opt
-                            ),
-                            2,
-                        ));
-                    }
-                }
-                for opt in arg.chars().skip(1) {
-                    if opt == 'o' {
-                        continue;
-                    }
-                    if let Some(opt_name) = short_option_to_var(opt) {
-                        ctx.variables.insert(
-                            opt_name.to_string(),
-                            if enable { "1" } else { "0" }.to_string(),
-                        );
-                    }
-                }
-                if need_o_arg && i + 1 < ctx.args.len() {
-                    i += 1;
-                    if let Some(var) = option_name_to_var(&ctx.args[i]) {
-                        ctx.variables
-                            .insert(var.to_string(), if enable { "1" } else { "0" }.to_string());
-                    }
-                }
-            } else {
-                // Non-flag arg: this and everything after become positional params
-                let positional: Vec<&str> = ctx.args[i..].iter().map(|s| s.as_str()).collect();
-                side_effects.push(Self::positional_effect(&positional));
                 break;
+            }
+            if !(arg.starts_with('-') || arg.starts_with('+')) || arg.len() < 2 {
+                // Non-flag arg: this and everything after become positional params
+                positional = Some(&ctx.args[i..]);
+                break;
+            }
+            let enable = arg.starts_with('-');
+            let sign = if enable { '-' } else { '+' };
+            for opt in arg.chars().skip(1) {
+                if opt == 'o' {
+                    // `-o name`; a cluster's `o` takes the next argument, and
+                    // `-o` with nothing after it lists the options.
+                    if i + 1 < ctx.args.len() {
+                        i += 1;
+                        let name = &ctx.args[i];
+                        match set_option_by_name(name) {
+                            Some((_, _, var, _)) => changes.push((var, enable)),
+                            None => {
+                                return Ok(ExecResult::err(
+                                    format!("bash: set: {name}: invalid option name\n"),
+                                    2,
+                                ));
+                            }
+                        }
+                    } else {
+                        listing = Some(enable);
+                    }
+                } else if let Some((_, _, var, _)) = set_option_by_letter(opt) {
+                    changes.push((var, enable));
+                } else {
+                    return Ok(ExecResult::err(
+                        format!("bash: set: {sign}{opt}: invalid option\n{SET_USAGE}"),
+                        2,
+                    ));
+                }
             }
             i += 1;
         }
 
-        let mut result = ExecResult::ok(String::new());
-        result.side_effects = side_effects;
+        for (var, on) in changes {
+            ctx.variables
+                .insert(var.to_string(), if on { "1" } else { "0" }.to_string());
+        }
+        let mut result = match listing {
+            Some(dash) => ExecResult::ok(format_set_o(ctx.variables, dash)),
+            None => ExecResult::ok(String::new()),
+        };
+        if let Some(args) = positional {
+            let args: Vec<&str> = args.iter().map(String::as_str).collect();
+            result.side_effects.push(Self::positional_effect(&args));
+        }
         Ok(result)
     }
 }
@@ -271,62 +315,6 @@ impl Builtin for Shift {
             .side_effects
             .push(BuiltinSideEffect::ShiftPositional(n));
         Ok(result)
-    }
-}
-
-impl Shopt {
-    /// `shopt -o`: the same operations on `set -o` option names.
-    fn set_o_options(
-        variables: &mut std::collections::HashMap<String, String>,
-        mode: Option<char>,
-        opts: &[String],
-    ) -> ExecResult {
-        let mut names: Vec<(&str, &'static str)> = Vec::new();
-        if opts.is_empty() {
-            names.extend(SET_O_OPTIONS.iter().copied());
-        }
-        for opt in opts {
-            match option_name_to_var(opt) {
-                Some(var) => names.push((opt.as_str(), var)),
-                None => {
-                    return ExecResult::err(
-                        format!("bash: shopt: {opt}: invalid option name\n"),
-                        1,
-                    );
-                }
-            }
-        }
-        let on = |vars: &std::collections::HashMap<String, String>, var: &str| {
-            vars.get(var).is_some_and(|v| v == "1")
-        };
-        let mut output = String::new();
-        let mut all_on = true;
-        for (name, var) in names {
-            match mode {
-                Some('s') => {
-                    variables.insert(var.to_string(), "1".to_string());
-                }
-                Some('u') => {
-                    variables.remove(var);
-                }
-                Some('q') => all_on &= on(variables, var),
-                Some('p') => {
-                    let flag = if on(variables, var) { "-o" } else { "+o" };
-                    output.push_str(&format!("set {flag} {name}\n"));
-                }
-                _ => {
-                    let enabled = on(variables, var);
-                    all_on &= enabled;
-                    let state = if enabled { "on" } else { "off" };
-                    output.push_str(&format!("{name:<15}\t{state}\n"));
-                }
-            }
-        }
-        let mut result = ExecResult::ok(output);
-        if matches!(mode, Some('q')) || (mode.is_none() && !opts.is_empty()) {
-            result.exit_code = i32::from(!all_on);
-        }
-        result
     }
 }
 
@@ -531,6 +519,54 @@ const SHOPT_OPTIONS: &[&str] = &[
     "xpg_echo",
 ];
 
+/// `shopt -o`: the same verbs applied to `set -o` options.
+fn shopt_set_o(
+    variables: &mut std::collections::HashMap<String, String>,
+    mode: Option<char>,
+    opts: &[String],
+) -> ExecResult {
+    let names: Vec<&str> = if opts.is_empty() {
+        SET_O_OPTIONS.iter().map(|(name, ..)| *name).collect()
+    } else {
+        opts.iter().map(String::as_str).collect()
+    };
+    // An unknown name fails the whole command before anything changes.
+    if let Some(bad) = names.iter().find(|n| set_option_by_name(n).is_none()) {
+        return ExecResult::err(format!("bash: shopt: {bad}: invalid option name\n"), 1);
+    }
+    let mut out = String::new();
+    let mut status = 0;
+    for name in names {
+        let Some((_, _, var, default)) = set_option_by_name(name) else {
+            continue;
+        };
+        match mode {
+            Some('s') => {
+                variables.insert(var.to_string(), "1".to_string());
+            }
+            Some('u') => {
+                variables.insert(var.to_string(), "0".to_string());
+            }
+            Some('q') => {
+                if !set_option_on(variables, var, *default) {
+                    status = 1;
+                }
+            }
+            Some('p') => out.push_str(&format_plus_o_line(variables, name)),
+            _ => {
+                // Naming options reports their state in the status too.
+                if !opts.is_empty() && !set_option_on(variables, var, *default) {
+                    status = 1;
+                }
+                out.push_str(&format_dash_o_line(variables, name));
+            }
+        }
+    }
+    let mut result = ExecResult::ok(out);
+    result.exit_code = status;
+    result
+}
+
 /// shopt builtin - set/unset bash-specific shell options.
 ///
 /// Usage:
@@ -559,8 +595,8 @@ impl Builtin for Shopt {
         }
 
         let mut mode: Option<char> = None; // 's'=set, 'u'=unset, 'q'=query, 'p'=print
-        let mut set_o = false; // -o: act on `set -o` options
         let mut opts: Vec<String> = Vec::new();
+        let mut set_o = false; // -o: operate on `set -o` options
 
         for arg in ctx.args {
             if arg.starts_with('-') && opts.is_empty() {
@@ -584,7 +620,7 @@ impl Builtin for Shopt {
         }
 
         if set_o {
-            return Ok(Self::set_o_options(ctx.variables, mode, &opts));
+            return Ok(shopt_set_o(ctx.variables, mode, &opts));
         }
 
         match mode {

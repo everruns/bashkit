@@ -266,6 +266,7 @@ pub use trap::Trap;
 pub use tree::Tree;
 pub use truncate::Truncate;
 pub use vars::{Eval, Local, Readonly, Set, Shift, Shopt, Times, Unset};
+pub(crate) use vars::{SET_O_OPTIONS, dollar_dash};
 pub use verify::Verify;
 #[cfg(feature = "terminal")]
 pub use vi::Vi;

@@ -4,7 +4,6 @@
 
 ### bashbox_shell_variables_bash_subshell_counts_subshells_and
 # BASH_SUBSHELL counts subshells, $(...) and <(...)
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 echo $BASH_SUBSHELL; (echo $BASH_SUBSHELL; (echo $BASH_SUBSHELL)); echo $(echo $BASH_SUBSHELL); x=$( (echo $BASH_SUBSHELL) ); echo $x; cat <(echo $BASH_SUBSHELL)
 ### expect
 0
@@ -17,7 +16,6 @@ echo $BASH_SUBSHELL; (echo $BASH_SUBSHELL; (echo $BASH_SUBSHELL)); echo $(echo $
 
 ### bashbox_shell_variables_unsetting_them_works_like_bash
 # unsetting them works like bash
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 unset HOME USER PATH IFS; echo "[$HOME|$USER|$PATH|$IFS]" "${IFS-unset}"; cd; echo $?
 x="a b	c"; for w in $x; do echo "<$w>"; done; set -- p q; echo "$*"
 IFS=; for w in $x; do echo "<$w>"; done; echo "$*"
@@ -51,7 +49,6 @@ false; echo ${PIPESTATUS[@]}; ! true; echo ${PIPESTATUS[@]}; f() { return 3; }; 
 
 ### bashbox_shell_variables_an_assignment_and_a_subshell_each_set_it
 # an assignment, ((...)), [[...]] and a subshell each set it
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 false | true; x=$(false); echo ${PIPESTATUS[@]}; (( 0 )); echo ${PIPESTATUS[@]}; [[ a == a ]]; echo ${PIPESTATUS[@]}; (exit 3); echo ${PIPESTATUS[@]}
 ### expect
 1

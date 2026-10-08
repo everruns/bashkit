@@ -81,6 +81,13 @@ pub enum Error {
     #[error("snapshot capability mismatch: {0}")]
     SnapshotCapabilityMismatch(String),
 
+    /// Bash abandons the current command line (its `DISCARD` jump), e.g. an
+    /// arithmetic error inside `$((...))`. Converted to
+    /// `ControlFlow::Abort` at the command boundary;
+    /// the message is the diagnostic written to stderr.
+    #[error("{0}")]
+    LineAbort(String),
+
     /// Internal error for unexpected failures.
     ///
     /// THREAT[TM-INT-002]: Unexpected internal failures should not crash the interpreter.

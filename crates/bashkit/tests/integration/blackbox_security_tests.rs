@@ -591,14 +591,16 @@ mod finding_shell_options_leak {
     #[tokio::test]
     async fn set_short_flags_do_not_leak_between_exec() {
         let mut bash = tight_bash();
-        let result = bash.exec("set -bhm").await.unwrap();
-        assert_eq!(result.exit_code, 0, "set -bhm should succeed");
+        let result = bash.exec("set -bkm +hB; echo \"$-\"").await.unwrap();
+        assert_eq!(result.exit_code, 0, "set -bkm +hB should succeed");
+        assert_eq!(result.stdout.trim(), "bkmc");
+        // The next exec starts from bash's defaults again (hashall and
+        // braceexpand on, the `c` of `bash -c`).
         let result = bash.exec("echo \"$-\"").await.unwrap();
-        // Only the always-on defaults (hashall, braceexpand) remain.
         assert_eq!(
             result.stdout.trim(),
-            "hB",
-            "set -b/-m leaked across exec() calls through $-"
+            "hBc",
+            "set -b/-k/-m/+h/+B leaked across exec() calls through $-"
         );
     }
 

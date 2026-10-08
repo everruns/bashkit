@@ -235,6 +235,37 @@ Internal builtins that need interpreter state receive it via `Context.shell`:
 - `let`, arithmetic evaluation with assignment
 - `getopts`, complex variable + call stack interaction
 
+### Declaration builtins and variable scope
+
+`declare`/`typeset`, `local`, `export` and `readonly` share one engine
+(`interpreter/declare.rs`, `execute_declaration_builtin`); they differ only in
+the option letters they accept (declare/local `aAfFgiIlnprtux`, export `fnp`,
+readonly `aAfp`; others exit 2 with usage). Options are read only before the
+first operand. `declare -p`/`set` listings use bash's quoting (`$'...'` for
+control bytes) and print associative arrays in bash's hash-bucket order
+(FNV-1 32-bit, `h & 1023`), so listings diff cleanly against real bash.
+
+Locals use **shallow binding**, like bash: the live maps (`variables`,
+`var_attrs`, `namerefs`, arrays, `env`) always hold the visible binding;
+`local x` saves the caller's binding in the frame (`CallFrame::saved_vars`)
+and function return restores it. Lookups never walk frames. `unset` of a
+local belonging to a calling frame pops that local and uncovers the outer
+value (bash's dynamic-scope unset); `declare -g` writes the outermost saved
+binding when a local hides the global. Declared-but-unassigned variables carry
+`VarAttrs::NOVALUE` (`declare x; declare -p x` prints `declare -- x`).
+
+Compound operands of declaration builtins (`declare -A m=([k]=v)`) are kept
+as a `WordPart::CompoundAssignment` so their elements expand as array
+elements (no word splitting of the whole operand, keyed `[k]=v` split after
+expansion), and script analysis walks the substitutions inside them.
+
+Bash quirks emulated on purpose: `local` outside a function fails with
+status 1 but still assigns its compound operands as globals; prefix
+assignments (`x=v cmd`) ignore `-i/-l/-u`; assigning a readonly variable
+without a command abandons the rest of the line (`r=3 cmd` reports and still
+runs `cmd`); assigning through a circular nameref warns and abandons the
+line.
+
 `time` is deliberately absent from the builtin registry. Bash grammar makes it
 a reserved-word wrapper around a complete pipeline, so the interpreter measures
 the AST directly. This preserves groups, functions, pipeline status, redirects,

@@ -5048,9 +5048,14 @@ fn
     #[tokio::test]
     async fn test_local_basic() {
         let mut bash = Bash::new();
-        // Test that local command runs without error
-        let result = bash.exec("local X=test; echo $X").await.unwrap();
-        assert_eq!(result.stdout, "test\n");
+        // `local` declares inside a function; outside one it fails (bash).
+        let result = bash
+            .exec("f() { local X=test; echo $X; }; f; echo \"[$X]\"")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "test\n[]\n");
+        let result = bash.exec("local X=test; echo $?").await.unwrap();
+        assert_eq!(result.stdout, "1\n");
     }
 
     #[tokio::test]

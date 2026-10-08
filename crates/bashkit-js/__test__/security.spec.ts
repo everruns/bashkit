@@ -959,21 +959,20 @@ test("BB: arithmetic overflow (TM-DOS-029)", (t) => {
 test("BB: division by zero does not crash (TM-DOS-029)", (t) => {
   const bash = new Bash();
   const r = bash.executeSync("echo $((1 / 0)) 2>&1");
-  // Reports like bash. Key security property: no crash or panic.
-  t.is(typeof r.exitCode, "number", "division by zero must not crash");
-  t.not(r.exitCode, 0, "division by zero fails");
-  t.is(r.stdout, "", "no value is printed");
-  t.true(r.stderr.includes("division by 0"), "the error is reported");
+  // Like bash: an expansion error aborts the line with exit 1.
+  // Key security property: interpreter must not crash or panic.
+  t.is(r.exitCode, 1, "division by zero must fail, not crash");
+  t.is(r.stdout, "", "the aborted echo prints nothing");
+  t.true(r.stderr.includes("division by 0"));
 });
 
 test("BB: modulo by zero does not crash (TM-DOS-029)", (t) => {
   const bash = new Bash();
   const r = bash.executeSync("echo $((1 % 0)) 2>&1");
-  // Same as div-by-zero: reports and fails.
-  t.is(typeof r.exitCode, "number", "modulo by zero must not crash");
-  t.not(r.exitCode, 0, "modulo by zero fails");
-  t.is(r.stdout, "", "no value is printed");
-  t.true(r.stderr.includes("division by 0"), "the error is reported");
+  // Same as div-by-zero: the line aborts with exit 1, like bash.
+  t.is(r.exitCode, 1, "modulo by zero must fail, not crash");
+  t.is(r.stdout, "", "the aborted echo prints nothing");
+  t.true(r.stderr.includes("division by 0"));
 });
 
 test("BB: negative exponent", (t) => {

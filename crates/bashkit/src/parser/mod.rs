@@ -2417,8 +2417,13 @@ impl<'a> Parser<'a> {
                         &self.current_token,
                         Some(tokens::Token::QuotedWord(_)) | Some(tokens::Token::QuotedGlobWord(_))
                     ) {
+                        let glob_quoted =
+                            matches!(&self.current_token, Some(tokens::Token::QuotedGlobWord(_)));
                         let mut w = self.parse_word(elem_clone);
                         w.quoted = true;
+                        // Mixed words like `"x"{1,2}` or `"a"*` keep their unquoted
+                        // brace/glob text active, as for command arguments.
+                        w.has_unquoted_glob = glob_quoted;
                         w
                     } else {
                         self.parse_word(elem_clone)
@@ -2577,37 +2582,42 @@ impl<'a> Parser<'a> {
         if !matches!(self.current_token, Some(tokens::Token::LeftParen)) {
             return None;
         }
-        self.advance(); // consume '('
-        let mut compound = saved_w;
-        compound.push('(');
-        let mut raw_elems: Vec<String> = Vec::new();
-        loop {
-            match &self.current_token {
-                Some(tokens::Token::RightParen) => {
-                    compound.push(')');
-                    self.advance();
-                    break;
-                }
-                Some(tokens::Token::Word(elem))
-                | Some(tokens::Token::LiteralWord(elem))
-                | Some(tokens::Token::QuotedWord(elem))
-                | Some(tokens::Token::QuotedGlobWord(elem)) => {
-                    if !compound.ends_with('(') {
-                        compound.push(' ');
-                    }
-                    compound.push_str(elem);
-                    raw_elems.push(self.current_raw.clone().unwrap_or_default());
-                    self.advance();
-                }
-                None => break,
-                _ => {
-                    self.advance();
-                }
-            }
+        let lhs = saved_w.strip_suffix('=')?;
+        let (name, append) = match lhs.strip_suffix('+') {
+            Some(name) => (name, true),
+            None => (lhs, false),
+        };
+        let base = name.split('[').next().unwrap_or(name);
+        let valid = base
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+            && base.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+        if !valid {
+            return None;
         }
-        let mut word = self.parse_word(compound);
-        word.raw = saved_raw.map(|r| format!("{r}({})", raw_elems.join(" ")));
-        Some(word)
+        let name = name.to_string();
+        self.advance(); // consume '('
+        let elements = self.collect_array_elements();
+        // Source text as written, for `type`/`declare -f`.
+        let raw = saved_raw.map(|r| {
+            let elems: Vec<&str> = elements
+                .iter()
+                .map(|e| e.raw.as_deref().unwrap_or(""))
+                .collect();
+            format!("{r}({})", elems.join(" "))
+        });
+        Some(Word {
+            parts: vec![WordPart::CompoundAssignment {
+                name,
+                append,
+                elements,
+            }],
+            quoted: true,
+            has_unquoted_glob: false,
+            part_quoted: Vec::new(),
+            raw,
+        })
     }
 
     /// Parse a heredoc redirect (`<<` or `<<-`) and any trailing redirects on the same line.

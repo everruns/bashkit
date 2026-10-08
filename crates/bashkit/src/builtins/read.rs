@@ -4,12 +4,18 @@
 //! waits for a line typed on the terminal: `-p` prints the prompt there,
 //! `-s` turns echo off, `-n N` returns after N characters, `-t SECS` gives
 //! up with status 142. Outside a terminal no stdin is EOF (status 1).
+//!
+//! Options are read only before the first name (bash's getopt), so in
+//! `read a -r` the `-r` is a name. Names are checked as they are assigned:
+//! the ones before an invalid name get their fields, the rest are left
+//! alone, and read fails with status 1. `-N n` reads exactly n characters
+//! with no delimiter and no field splitting.
 
 use async_trait::async_trait;
 
 use super::{Builtin, BuiltinSideEffect, Context};
 use crate::error::Result;
-use crate::interpreter::{ExecResult, is_internal_variable};
+use crate::interpreter::{ExecResult, is_internal_variable, is_valid_var_name};
 
 /// read builtin - read a line of input into variables
 pub struct Read;
@@ -26,13 +32,17 @@ impl Builtin for Read {
         let mut array_mode = false; // -a: read into array
         let mut delimiter = None::<char>; // -d: custom delimiter
         let mut nchars = None::<usize>; // -n: read N chars
+        let mut exact_nchars = false; // -N: exactly N chars, no splitting
         let mut prompt = None::<String>; // -p prompt
         let mut silent = false; // -s: no echo (terminal input only)
         let mut timeout = None::<f64>; // -t SECS (terminal input only)
         let mut var_args = Vec::new();
         let mut args_iter = ctx.args.iter();
+        let mut names_started = false;
         while let Some(arg) = args_iter.next() {
-            if arg.starts_with('-') && arg.len() > 1 {
+            if !names_started && arg == "--" {
+                names_started = true;
+            } else if !names_started && arg.starts_with('-') && arg.len() > 1 {
                 let mut chars = arg[1..].chars();
                 while let Some(flag) = chars.next() {
                     match flag {
@@ -49,7 +59,8 @@ impl Builtin for Read {
                             delimiter = delim_str.chars().next();
                             break;
                         }
-                        'n' => {
+                        'n' | 'N' => {
+                            exact_nchars = flag == 'N';
                             let rest: String = chars.collect();
                             let n_str = if rest.is_empty() {
                                 args_iter.next().map(|s| s.as_str()).unwrap_or("0")
@@ -92,8 +103,15 @@ impl Builtin for Read {
                     }
                 }
             } else {
+                names_started = true;
                 var_args.push(arg.as_str());
             }
+        }
+        if array_mode
+            && let Some(name) = var_args.first()
+            && !valid_read_name(name, true)
+        {
+            return Ok(ExecResult::err(invalid_name(name), 1));
         }
         #[cfg(feature = "terminal")]
         if input.is_none()
@@ -150,6 +168,10 @@ impl Builtin for Read {
                 };
                 let mut result = ExecResult::err("", 1);
                 for var_name in &var_names {
+                    if !valid_read_name(var_name, false) {
+                        result.stderr = invalid_name(var_name).into();
+                        break;
+                    }
                     if is_internal_variable(var_name) {
                         continue;
                     }
@@ -165,8 +187,13 @@ impl Builtin for Read {
         // One record up to the delimiter (newline by default) or N chars.
         // Data that ends before the delimiter is still assigned, but the
         // status is 1, as in bash.
-        let (line, terminated) =
-            read_record(&input, delimiter.unwrap_or('\n'), nchars, raw_mode, ifs);
+        // -N ignores the delimiter (consumed_len uses NUL the same way).
+        let delim = if exact_nchars {
+            '\0'
+        } else {
+            delimiter.unwrap_or('\n')
+        };
+        let (line, terminated) = read_record(&input, delim, nchars, raw_mode, ifs);
         let status = if terminated { 0 } else { 1 };
 
         struct ReadField<'a> {
@@ -174,7 +201,18 @@ impl Builtin for Read {
             start: usize,
         }
 
-        let words: Vec<ReadField<'_>> = if ifs.is_empty() {
+        let words: Vec<ReadField<'_>> = if exact_nchars {
+            // -N: the characters read are one field, delimiters and IFS
+            // included.
+            if line.is_empty() {
+                Vec::new()
+            } else {
+                vec![ReadField {
+                    text: &line,
+                    start: 0,
+                }]
+            }
+        } else if ifs.is_empty() {
             // Empty IFS means no word splitting
             vec![ReadField {
                 text: &line,
@@ -325,6 +363,11 @@ impl Builtin for Read {
         let mut result = ExecResult::ok(String::new());
         result.exit_code = status;
         for (i, var_name) in var_names.iter().enumerate() {
+            if !valid_read_name(var_name, false) {
+                result.stderr = invalid_name(var_name).into();
+                result.exit_code = 1;
+                break;
+            }
             // THREAT[TM-INJ-009]: Block internal variable prefix injection via read
             if is_internal_variable(var_name) {
                 continue;
@@ -360,6 +403,21 @@ impl Builtin for Read {
 
         Ok(result)
     }
+}
+
+/// A name `read` can assign: an identifier, or `name[subscript]` unless
+/// reading into an array (`-a`).
+fn valid_read_name(name: &str, array: bool) -> bool {
+    match name.find('[') {
+        Some(b) if !array => {
+            is_valid_var_name(&name[..b]) && name.ends_with(']') && name.len() > b + 2
+        }
+        _ => is_valid_var_name(name),
+    }
+}
+
+fn invalid_name(name: &str) -> String {
+    format!("bash: read: `{name}': not a valid identifier\n")
 }
 
 /// Bytes of `input` one `read` with these `args` consumes from a shared

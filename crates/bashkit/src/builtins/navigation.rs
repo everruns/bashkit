@@ -13,13 +13,16 @@ pub struct Cd;
 #[async_trait]
 impl Builtin for Cd {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        let target = ctx
+        let Some(target) = ctx
             .args
             .first()
             .map(|s| s.as_str())
             .or_else(|| ctx.variables.get("HOME").map(|s| s.as_str()))
             .or_else(|| ctx.env.get("HOME").map(|s| s.as_str()))
-            .unwrap_or("/home/user");
+        else {
+            // Bare `cd` with HOME unset fails, as in bash.
+            return Ok(ExecResult::err("bash: cd: HOME not set\n", 1));
+        };
 
         let new_path = if target.starts_with('/') {
             PathBuf::from(target)
