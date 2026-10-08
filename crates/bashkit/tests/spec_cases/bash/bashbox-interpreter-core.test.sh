@@ -310,7 +310,7 @@ readonly R=1; export R=2; echo $?
 
 ### bashbox_interpreter_core_export_lists_variables
 # export lists variables
-export B=2 A=1; export | grep "[AB]="
+export B=2 A=1; export | grep -E "^declare -x [AB]="
 ### expect
 declare -x A="1"
 declare -x B="2"
