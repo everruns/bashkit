@@ -1354,6 +1354,41 @@ struct SubshellSnapshot {
     line_base: usize,
 }
 
+/// Bits of `NoforkScope::subshell_env`, after bash's `subshell_environment`.
+/// Inside `( )`: `exec` does not lower `$SHLVL`.
+const SUBSHELL_PAREN: u8 = 1;
+/// Inside a pipeline stage: a command run in place does not lower `$SHLVL`.
+const SUBSHELL_PIPE: u8 = 2;
+
+/// Fork suppression ("nofork"), modeled for `$SHLVL` only.
+///
+/// Important decision: bash execs some simple commands in place instead of
+/// forking: the last one of a `bash -c` string or of a `$( )` body (both
+/// parsed by `parse_and_execute`), the last one of a `( )` / `<( )` body,
+/// and any simple command run with `&`. A disk command run that way first
+/// lowers `$SHLVL` (`adjust_shell_level(-1)`), so a `bash` started there
+/// ends at the same level. bashkit never forks; the only observable effect
+/// is that level, so this records which command bash would run in place and
+/// `execute_shell` applies the decrement. `target` is that command's
+/// address: the AST outlives the scope that names it. Scopes form a chain
+/// (`outer`) entered and left at each boundary instead of riding in
+/// `SubshellSnapshot`: a snapshot field cost ~100 bytes of stack per
+/// `$(...)` level in debug builds (TM-DOS-089). `reset_transient_state`
+/// drops the chain, so a scope an error skipped leaving cannot outlive its
+/// AST into the next exec.
+#[derive(Clone, Default)]
+struct NoforkScope {
+    /// Address of the `SimpleCommand` bash would run in place, 0 for none.
+    target: usize,
+    /// Traps when this shell context began. A forked child resets the
+    /// handlers it inherits, so only traps set since then keep the fork.
+    trap_base: Option<Arc<HashMap<String, String>>>,
+    /// `SUBSHELL_PAREN` / `SUBSHELL_PIPE` bits.
+    subshell_env: u8,
+    /// The enclosing context's scope, restored by `leave_nofork_scope`.
+    outer: Option<Arc<NoforkScope>>,
+}
+
 /// Interpreter state.
 pub struct Interpreter {
     fs: Arc<dyn FileSystem>,
@@ -1464,6 +1499,12 @@ pub struct Interpreter {
     /// builtin (`yes`, `seq`): only that command writes straight into
     /// `pipe_out`, never a command run from its argument expansions.
     stream_stdout_command: Option<usize>,
+    /// Where this shell context would run a simple command without a fork
+    /// (see `NoforkScope`).
+    nofork: Arc<NoforkScope>,
+    /// Set just before a simple command dispatches: bash runs it in place
+    /// (no fork), so a `bash`/`sh` it starts keeps this shell's `$SHLVL`.
+    nofork_now: bool,
     /// Pipe handed to the next builtin's `Context` (taken at dispatch).
     builtin_stdout_pipe: Option<Arc<pipe::Pipe>>,
     /// Input pipe handed to a streaming filter's `Context` (taken at dispatch).
@@ -2081,6 +2122,8 @@ impl Interpreter {
             pipe_in: None,
             pipe_out: None,
             stream_stdout_command: None,
+            nofork: Arc::default(),
+            nofork_now: false,
             builtin_stdout_pipe: None,
             builtin_stdin_pipe: None,
             bash_subshell: 0,
@@ -2263,6 +2306,12 @@ impl Interpreter {
             pipe_in: None,
             pipe_out: None,
             stream_stdout_command: None,
+            // A job runs no command in place until told so (`spawn_in_background`).
+            nofork: Arc::new(NoforkScope {
+                subshell_env: self.nofork.subshell_env,
+                ..NoforkScope::default()
+            }),
+            nofork_now: false,
             builtin_stdout_pipe: None,
             builtin_stdin_pipe: None,
             bash_subshell: self.bash_subshell + 1,
@@ -2555,6 +2604,8 @@ impl Interpreter {
     /// preserved — they are persistent session configuration.
     pub fn reset_transient_state(&mut self) {
         self.memory_limit_error = None;
+        self.nofork = Arc::default();
+        self.nofork_now = false;
         self.traps_mut().clear();
         self.last_exit_code = 0;
         // THREAT[TM-DOS-035/057]: A timeout can drop execution while a trap
@@ -4025,6 +4076,7 @@ impl Interpreter {
                 let snap = self.snapshot_subshell_state();
                 let saved_call_stack = self.call_stack.clone();
                 self.bash_subshell += 1;
+                self.enter_nofork_scope(commands, true, SUBSHELL_PAREN);
                 self.enter_subshell_err_scope();
                 let saved_exit = self.last_exit_code;
                 let saved_coproc = self.coproc_buffers.clone();
@@ -4034,6 +4086,8 @@ impl Interpreter {
                     self.output_stream_stderr_bytes,
                 );
                 let mut result = self.execute_command_sequence(commands).await;
+                // Left here, before anything can return early.
+                self.leave_nofork_scope();
                 // An `exec` redirect set inside the subshell applies to the
                 // subshell's own output. It has to be routed here, while the
                 // subshell's fd table is still current: the outermost loop
@@ -5926,7 +5980,18 @@ impl Interpreter {
         // A new shell starts at subshell level 0.
         self.bash_subshell = 0;
         self.xtrace_depth = 0;
-        let shlvl_warning = self.reset_state_for_child_shell();
+        // Read, not taken: a builtin that starts several shells (`xargs`)
+        // starts each one in place; restored below.
+        let in_place = self.nofork_now;
+        let shlvl_warning = self.reset_state_for_child_shell(in_place);
+        // Only a `-c` string runs its last command in place (bash's
+        // `parse_and_execute`), and only when nothing follows it.
+        let target = if is_command_mode && script.trailing_error.is_none() {
+            Self::nofork_candidate(&script.commands, false)
+        } else {
+            0
+        };
+        self.push_nofork_scope(target, 0);
         // Output the `bash` command's own redirects will route must not stream
         // from the child first (`bash -c 'echo x >&2' 2>/dev/null` printed x),
         // as for functions and compounds.
@@ -6014,8 +6079,10 @@ impl Interpreter {
         // Restore parent state — full revert of the snapshot since the child
         // is process-isolated. This also undoes OPTIND/SHOPT_* writes above.
         self.restore_subshell_state(child_snapshot);
+        self.leave_nofork_scope();
         self.counters.pop_function();
         self.child_shell_depth -= 1;
+        self.nofork_now = in_place;
 
         match result {
             Ok(mut exec_result) => {
@@ -6034,28 +6101,170 @@ impl Interpreter {
     /// negative one lands on 0 rather than counting up from below, and a level
     /// that would pass 999 restarts at 1 with a warning (so a script that runs
     /// itself cannot drive the number up forever).
-    fn child_shell_level(parent: Option<&str>) -> (String, Option<String>) {
+    /// With `in_place` the parent runs the child without a fork (see
+    /// `NoforkScope`) and lowers its own level first, as bash does.
+    fn child_shell_level(parent: Option<&str>, in_place: bool) -> (String, Option<String>) {
         let parent: i64 = parent
             .map(str::trim)
             .and_then(|text| text.parse().ok())
             .unwrap_or(0);
-        let next = if parent < 0 { 0 } else { parent + 1 };
-        if next > 999 {
-            return (
-                "1".to_string(),
-                Some(format!(
-                    "bash: warning: shell level ({next}) too high, resetting to 1\n"
-                )),
-            );
+        let mut warning = None;
+        let parent = if in_place {
+            Self::adjust_shell_level(parent, -1, &mut warning)
+        } else {
+            parent
+        };
+        let level = Self::adjust_shell_level(parent, 1, &mut warning);
+        (level.to_string(), warning)
+    }
+
+    /// bash's `adjust_shell_level`: below 0 lands on 0, past 999 restarts at
+    /// 1 with a warning.
+    fn adjust_shell_level(level: i64, change: i64, warning: &mut Option<String>) -> i64 {
+        let next = level.saturating_add(change);
+        if next < 0 {
+            0
+        } else if next > 999 {
+            warning.get_or_insert_with(String::new).push_str(&format!(
+                "bash: warning: shell level ({next}) too high, resetting to 1\n"
+            ));
+            1
+        } else {
+            next
         }
-        (next.to_string(), None)
+    }
+
+    /// The simple command bash would run in place at the end of `commands`
+    /// (see `NoforkScope`), as an address; 0 for none. In `( )` and `<( )` a
+    /// sole command qualifies even with redirections (`sole_may_redirect`);
+    /// otherwise, and for the last of a list, it must have none.
+    fn nofork_candidate(commands: &[Command], sole_may_redirect: bool) -> usize {
+        let simple = match commands {
+            [Command::Simple(simple)] if sole_may_redirect => Some(simple),
+            [.., last] => {
+                Self::last_list_command(last).filter(|simple| simple.redirects.is_empty())
+            }
+            [] => None,
+        };
+        simple.map_or(0, |simple| simple as *const SimpleCommand as usize)
+    }
+
+    /// `command` itself when simple, else the simple command that ends it as
+    /// the right side of a trailing `&&`, `||` or `;`. None after `&` or when
+    /// run with `&`.
+    fn last_list_command(command: &Command) -> Option<&SimpleCommand> {
+        match command {
+            Command::Simple(simple) => Some(simple),
+            Command::List(list) => {
+                let mut rest = list.rest.iter().rev().peekable();
+                // `a;` and `a &` end in an empty sentinel after the terminator.
+                if let Some((op, cmd)) = rest.peek()
+                    && Self::is_empty_sentinel(cmd)
+                {
+                    if *op == ListOperator::Background {
+                        return None;
+                    }
+                    rest.next();
+                }
+                match rest.next() {
+                    Some((ListOperator::Background, _)) => None,
+                    Some((_, cmd)) => Self::last_list_command(cmd),
+                    None => Self::last_list_command(&list.first),
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Start a shell context (`( )`, `$( )`, `<( )`) whose last simple
+    /// command bash runs in place. A nonzero `subshell_env` replaces the
+    /// current `SUBSHELL_*` bits. Pair with `leave_nofork_scope`. Out of
+    /// line: it runs on every `$(...)` level.
+    #[inline(never)]
+    fn enter_nofork_scope(
+        &mut self,
+        commands: &[Command],
+        sole_may_redirect: bool,
+        subshell_env: u8,
+    ) {
+        let target = Self::nofork_candidate(commands, sole_may_redirect);
+        let subshell_env = if subshell_env == 0 {
+            self.nofork.subshell_env
+        } else {
+            subshell_env
+        };
+        self.push_nofork_scope(target, subshell_env);
+    }
+
+    /// Enter a scope with this target and `SUBSHELL_*` bits; traps set so
+    /// far count as inherited.
+    fn push_nofork_scope(&mut self, target: usize, subshell_env: u8) {
+        let outer = std::mem::take(&mut self.nofork);
+        self.nofork = Arc::new(NoforkScope {
+            target,
+            trap_base: Some(Arc::clone(&self.scoped.traps)),
+            subshell_env,
+            outer: Some(outer),
+        });
+    }
+
+    /// Back to the scope that was current before the matching enter.
+    #[inline(never)]
+    fn leave_nofork_scope(&mut self) {
+        if let Some(outer) = self.nofork.outer.clone() {
+            self.nofork = outer;
+        }
+    }
+
+    /// A job (`cmd &`) runs a simple command in place in its forked child.
+    fn enter_background_nofork(&mut self, command: &Command) {
+        self.nofork = Arc::new(NoforkScope {
+            target: match command {
+                Command::Simple(simple) => simple as *const SimpleCommand as usize,
+                _ => 0,
+            },
+            trap_base: Some(Arc::clone(&self.scoped.traps)),
+            subshell_env: 0,
+            outer: None,
+        });
+    }
+
+    /// Whether bash runs `command`, about to dispatch, without a fork and
+    /// lowers `$SHLVL` for it: it is this context's in-place command, not in
+    /// a pipeline stage, and no trap set here keeps the fork.
+    #[inline(never)]
+    fn nofork_eligible(&self, command: &SimpleCommand) -> bool {
+        self.nofork.target == command as *const SimpleCommand as usize
+            && self.nofork.subshell_env & SUBSHELL_PIPE == 0
+            && !self.traps_keep_fork()
+    }
+
+    /// A trap set in this shell context that makes bash fork anyway: any
+    /// EXIT or ERR trap, or a signal trap with a command. Ignored signals,
+    /// DEBUG and RETURN do not count, nor handlers inherited from a parent
+    /// (a forked child resets them).
+    fn traps_keep_fork(&self) -> bool {
+        let base = self.nofork.trap_base.as_ref();
+        if base.is_some_and(|base| Arc::ptr_eq(base, &self.scoped.traps)) {
+            return false;
+        }
+        self.scoped.traps.iter().any(|(name, action)| {
+            if base.and_then(|base| base.get(name)) == Some(action) {
+                return false;
+            }
+            match name.as_str() {
+                "EXIT" | "ERR" => true,
+                "DEBUG" | "RETURN" => false,
+                _ => !action.is_empty(),
+            }
+        })
     }
 
     /// Reset interpreter state to what a freshly-forked `bash`/`sh` child
     /// would see: drop arrays/assoc_arrays/functions/aliases/namerefs, and
     /// keep only exported scalars in `variables`. The caller is expected to
     /// have just taken a snapshot to undo this on return. See issue #1777.
-    fn reset_state_for_child_shell(&mut self) -> Option<String> {
+    fn reset_state_for_child_shell(&mut self, in_place: bool) -> Option<String> {
         self.line_base = 0;
         let exported_names: Vec<String> = self
             .scoped
@@ -6108,12 +6317,17 @@ impl Interpreter {
         // the parent's own level. bash exports SHLVL at startup; bashkit's
         // synthetic startup variables are not marked exported, so the parent's
         // plain variable stands in for that export.
-        let inherited = next_vars
-            .get("SHLVL")
-            .or_else(|| self.env.get("SHLVL"))
-            .or_else(|| self.scoped.variables.get("SHLVL"))
-            .map(String::as_str);
-        let (level, warning) = Self::child_shell_level(inherited);
+        // Run in place, bash lowers the shell's own variable, exported or not.
+        let inherited = if in_place {
+            self.scoped.variables.get("SHLVL")
+        } else {
+            next_vars
+                .get("SHLVL")
+                .or_else(|| self.env.get("SHLVL"))
+                .or_else(|| self.scoped.variables.get("SHLVL"))
+        }
+        .map(String::as_str);
+        let (level, warning) = Self::child_shell_level(inherited, in_place);
         next_vars.insert("SHLVL".to_string(), level.clone());
         *self.vars_mut() = next_vars;
         self.add_var_attr("SHLVL", VarAttrs::EXPORT);
@@ -6125,6 +6339,18 @@ impl Interpreter {
         // Aliases are parse-time anyway, but a fresh `bash -c` would not have
         // user-defined aliases — drop them for consistency.
         self.scoped.aliases = Arc::new(HashMap::new());
+        // A new shell has no trap handlers; signals ignored in the parent
+        // stay ignored (`trap '' INT` is inherited, `trap 'x' EXIT` is not).
+        let ignored: HashMap<String, String> = self
+            .scoped
+            .traps
+            .iter()
+            .filter(|(name, action)| {
+                action.is_empty() && !matches!(name.as_str(), "EXIT" | "ERR" | "DEBUG" | "RETURN")
+            })
+            .map(|(name, action)| (name.clone(), action.clone()))
+            .collect();
+        self.scoped.traps = Arc::new(ignored);
         // Reset SHOPT_* flag bitfield so options from the parent don't leak.
         self.flags = BashFlags::empty();
         warning
@@ -6573,6 +6799,7 @@ impl Interpreter {
             child.pipe_out = Some(Arc::clone(&pipe));
             // The pipeline as a whole fires ERR, not its stages.
             child.err_trap_skip_stage = true;
+            Arc::make_mut(&mut child.nofork).subshell_env = SUBSHELL_PIPE;
             let write_end = pipe::WriteEnd(Arc::clone(&pipe));
             let read_end = input.take().map(pipe::ReadEnd);
             let command = command.clone();
@@ -6764,6 +6991,7 @@ impl Interpreter {
         }
         if subshell {
             self.enter_subshell_err_scope();
+            self.push_nofork_scope(self.nofork.target, SUBSHELL_PIPE);
         }
         let mut scope = PipelineStageScope {
             saved,
@@ -6790,6 +7018,7 @@ impl Interpreter {
             return result;
         };
         self.restore_subshell_state(snap);
+        self.leave_nofork_scope();
         self.call_stack = call_stack;
         self.coproc_buffers = coproc;
         let mut result = self.abort_line_on_error(result)?;
@@ -6856,6 +7085,7 @@ impl Interpreter {
             let job_diag = self.diag_prefix();
             let mut fut: jobs::JobFuture = Box::pin(async move {
                 let _slot = slot;
+                child.enter_background_nofork(&cmd);
                 let jobs = Arc::clone(&child.jobs);
                 let result = jobs::with_jobs(&jobs, child.execute_command(&cmd)).await;
                 jobs.finish_all().await;
@@ -6882,7 +7112,11 @@ impl Interpreter {
                 }
             }
         } else {
-            Some(self.execute_command(cmd).await?)
+            let saved_nofork = std::mem::take(&mut self.nofork);
+            self.enter_background_nofork(cmd);
+            let result = self.execute_command(cmd).await;
+            self.nofork = saved_nofork;
+            Some(result?)
         };
 
         if let Some(result) = finished {
@@ -7328,6 +7562,7 @@ impl Interpreter {
             let last_exit_code = self.last_exit_code;
             self.bash_subshell += 1;
             self.xtrace_depth += 1;
+            self.enter_nofork_scope(&commands, true, 0);
             let mut run = Ok(());
             for cmd in &commands {
                 let prev_stdin = self.pipeline_stdin.take();
@@ -7353,6 +7588,7 @@ impl Interpreter {
                 }
             }
             self.restore_subshell_state(*snapshot);
+            self.leave_nofork_scope();
             self.last_exit_code = last_exit_code;
             run?;
         }
@@ -7671,6 +7907,7 @@ impl Interpreter {
                 self.trace_simple_command(&name, &args).await;
             }
 
+            self.nofork_now = self.nofork_eligible(command);
             let result = self
                 .execute_dispatched_command(&name, args, command, stdin)
                 .await;
@@ -7990,6 +8227,8 @@ impl Interpreter {
                 assignments: Vec::new(),
                 span: Span::new(),
             };
+            // bash's `exec` lowers `$SHLVL` first, except directly in `( )`.
+            self.nofork_now = self.nofork.subshell_env & SUBSHELL_PAREN == 0;
             let result = self
                 .execute_dispatched_command(&target_name, target_args, &target_command, None)
                 .await?;
@@ -10884,6 +11123,7 @@ impl Interpreter {
             let last_exit_code = self.last_exit_code;
             self.bash_subshell += 1;
             self.xtrace_depth += 1;
+            self.enter_nofork_scope(commands, true, 0);
             let mut failed = None;
             for cmd in commands {
                 match self.execute_command(cmd).await {
@@ -10903,6 +11143,7 @@ impl Interpreter {
                 }
             }
             self.restore_subshell_state(*snapshot);
+            self.leave_nofork_scope();
             self.last_exit_code = last_exit_code;
             if let Some(e) = failed {
                 return Err(e);
@@ -11245,6 +11486,9 @@ impl Interpreter {
             // commands (`case`, `{ }`, `if`) emit through it as they run.
             let saved_callback = self.output_callback.take();
             let mut run: Result<()> = Ok(());
+            // Entered and left around the loop alone, which never returns
+            // early, so an error cannot leave the scope current.
+            self.enter_nofork_scope(commands, false, 0);
             for cmd in commands {
                 let cmd_result = match self.execute_command(cmd).await {
                     Ok(r) => r,
@@ -11276,6 +11520,7 @@ impl Interpreter {
                     break;
                 }
             }
+            self.leave_nofork_scope();
             self.output_callback = saved_callback;
             if run.is_err() {
                 self.release_held_subst_stderr(held_stderr);
