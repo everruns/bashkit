@@ -107,6 +107,7 @@ pub mod mkfifo_tests;
 pub mod namespace_fs_tests;
 pub mod nested_subscript_tests;
 pub mod network_security_tests;
+pub mod od_resource_tests;
 pub mod output_truncation_tests;
 pub mod parallel_sessions_tests;
 pub mod partial_parse_tests;

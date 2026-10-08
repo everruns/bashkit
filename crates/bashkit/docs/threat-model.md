@@ -31,6 +31,7 @@ through configurable limits.
 |--------|---------------|------------|--------|
 | Large input (TM-DOS-001) | 1GB script | `max_input_bytes` limit (10MB) | MITIGATED |
 | Output flooding (TM-DOS-002) | `yes \| head -n 1000000000` | Command limit stops loop | MITIGATED |
+| Width-derived allocation (TM-DOS-103) | `printf x \| od -w1152921504606846976` | Reject widths above 65,536 bytes; stack-pad one numeric field; budget output capacity before fallible growth | MITIGATED |
 | Variable explosion (TM-DOS-003) | `x=$(cat /dev/urandom)` | /dev/urandom returns bounded 8KB | MITIGATED |
 | Array growth (TM-DOS-004) | `arr+=(element)` in loop | Command limit | MITIGATED |
 
