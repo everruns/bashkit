@@ -69,6 +69,13 @@ in `\x1e`/`\x1f`; `parse_word` turns them into `Word::part_quoted`, and field
 splitting protects quoted parts using markers it picks from characters absent
 from the data. No in-band marker reaches expansion, so a value holding any
 byte (`\x01`, `\x02` included) stays data.
+The same markers are used when a single-quoted word continues with a
+double-quoted expansion (`'a'"$1"`, otherwise kept as one literal word) and
+when an empty quoted segment sits beside an expansion (`"$@"""`, `''"$@"`).
+Empty ranges are never merged into a neighbour, and `parse_word` keeps the
+empty quoted part next to a quoted `@` expansion, so with no positional
+parameters those words still make one empty field. A word whose parts are
+all quoted is marked `Word::quoted` (no field splitting).
 
 **`$` inside double quotes.** A `$` before `'` or before the closing `"` starts
 no expansion and is NUL-escaped, so `"$'q'"` is the text `$'q'` and `"$"'q'`

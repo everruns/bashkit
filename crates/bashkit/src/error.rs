@@ -188,8 +188,12 @@ impl Error {
 /// `filesystem is read-only`, a custom [`crate::FileSystem`] backend's own
 /// wording — tells the caller *why* in a way the bare errno cannot, and is
 /// kept verbatim.
-const ERRNO_RESTATING_MESSAGES: &[&str] =
-    &["file not found", "not found", "parent directory not found"];
+const ERRNO_RESTATING_MESSAGES: &[&str] = &[
+    "file not found",
+    "not found",
+    "parent directory not found",
+    "not a directory",
+];
 
 /// Render a filesystem error the way a real shell tool renders it.
 ///

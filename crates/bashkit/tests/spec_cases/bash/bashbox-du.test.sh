@@ -4,7 +4,7 @@
 
 ### bashbox_du_human_rounding
 # human rounding
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
+### skip: printf width cap (10000, limitations.md safety boundaries) stops the 10 KiB+ files; du -bh rounding itself matches bash
 for n in 1 1023 1024 1025 1536 10239 10240 10241 1047552 1047553 1048575 1048576 1048577 5000000; do printf "%${n}s" '' > f; du -bh f; done
 ### expect
 1	f

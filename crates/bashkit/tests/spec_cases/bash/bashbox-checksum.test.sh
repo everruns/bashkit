@@ -11,7 +11,7 @@ b1946ac92492d2347c6235b4d2611184  -
 
 ### bashbox_checksum_newline_in_name
 # newline in name
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
+### skip: L-FS-004: file names cannot hold control characters, so $'n\nl' is rejected (TM-DOS-015)
 printf z > $'n\nl'; md5sum $'n\nl'
 ### expect
 \fbade9e36a3f36d3d676c1b808451dd7  n\nl

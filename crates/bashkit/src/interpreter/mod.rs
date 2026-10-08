@@ -1397,7 +1397,7 @@ struct SubshellSnapshot {
     bashpid: u32,
     xtrace_depth: usize,
     err_trap_dormant: bool,
-    line_base: usize,
+    line_base: isize,
 }
 
 /// Bits of `NoforkScope::subshell_env`, after bash's `subshell_environment`.
@@ -1528,8 +1528,9 @@ pub struct Interpreter {
     /// Current line number for $LINENO
     current_line: usize,
     /// Added to command line numbers: a trap handler counts its lines from
-    /// the line of the command that triggered it (bash).
-    line_base: usize,
+    /// the line of the command that triggered it (bash). Negative after a
+    /// top-level command aborts mid-way (see `shift_lines_after_abort`).
+    line_base: isize,
     /// Interactive shell (REPL / terminal): diagnostics name the shell but
     /// carry no `line N:`, like `bash -i`. See [`Self::diag_prefix`].
     interactive: bool,
@@ -1558,6 +1559,14 @@ pub struct Interpreter {
     /// `sequence_accum` as it was when `exec` last installed a target for
     /// fd 1 or 2: output written before that keeps going to the caller.
     exec_install_mark: (usize, usize),
+    /// Set by the top-level loop when the command it runs is a `;`/`&&`
+    /// list: `execute_list` then routes each element's output through the
+    /// `exec` fd table as it finishes, so `exec 2>&1; cmd1; cmd2` sends
+    /// `cmd1`'s stderr out before `cmd2` runs (not at the end of the line).
+    route_top_list: bool,
+    /// Lengths of the stdout/stderr a routed top-level list returned: the
+    /// top-level loop routes only what was appended after them.
+    top_list_routed: Option<(usize, usize)>,
     /// Name of the last simple command run, for a diagnostic raised after it
     /// returned: a write to a closed descriptor is reported at the subshell
     /// boundary, where the offending command is no longer in hand.
@@ -2239,6 +2248,8 @@ impl Interpreter {
             temp_path: false,
             test_set_vars: Vec::new(),
             exec_install_mark: (0, 0),
+            route_top_list: false,
+            top_list_routed: None,
             #[cfg(feature = "http_client")]
             http_client: None,
             #[cfg(feature = "git")]
@@ -2411,6 +2422,8 @@ impl Interpreter {
             temp_path: false,
             test_set_vars: Vec::new(),
             exec_install_mark: self.exec_install_mark,
+            route_top_list: false,
+            top_list_routed: None,
             flags: self.flags,
             cwd: self.cwd.clone(),
             last_exit_code: self.last_exit_code,
@@ -3624,8 +3637,8 @@ impl Interpreter {
         let mut aborted_line: Option<usize> = None;
         let mut propagate_abort = false;
         let mut propagated_flow = ControlFlow::None;
-        for command in &script.commands {
-            if aborted_line == Some(Self::command_line(command)) {
+        for (index, command) in script.commands.iter().enumerate() {
+            if aborted_line == Some(Self::command_start_line(command)) {
                 continue;
             }
             self.check_cancelled()?;
@@ -3634,7 +3647,12 @@ impl Interpreter {
                 self.output_stream_stdout_bytes,
                 self.output_stream_stderr_bytes,
             );
-            let mut result = self.execute_command(command).await?;
+            self.route_top_list = top_level && matches!(command, Command::List(_));
+            self.top_list_routed = None;
+            let result = self.execute_command(command).await;
+            self.route_top_list = false;
+            let list_routed = self.top_list_routed.take();
+            let mut result = result?;
             if top_level {
                 // Background jobs that finished meanwhile report here, as
                 // bash prints their output while the script continues.
@@ -3648,7 +3666,7 @@ impl Interpreter {
                 self.route_exec_output(
                     &mut result,
                     emitted_before,
-                    (0, 0),
+                    list_routed.unwrap_or((0, 0)),
                     Self::command_name(command),
                 )
                 .await?;
@@ -3699,7 +3717,15 @@ impl Interpreter {
                 // A shell's top level (script, `bash -c`) resumes at the next
                 // line; `source`/`eval` bodies pass the abort to their caller.
                 if run_exit_trap {
-                    aborted_line = Some(Self::command_line(command));
+                    let end_line = script
+                        .command_end_lines
+                        .get(index)
+                        .copied()
+                        .unwrap_or_else(|| Self::command_start_line(command));
+                    aborted_line = Some(end_line);
+                    if top_level {
+                        self.shift_lines_after_abort(end_line);
+                    }
                     continue;
                 }
                 propagate_abort = true;
@@ -3916,6 +3942,38 @@ impl Interpreter {
         }
     }
 
+    /// `$LINENO` of source line `line` under the current `line_base`.
+    fn line_at(&self, line: usize) -> usize {
+        usize::try_from(self.line_base.saturating_add_unsigned(line))
+            .unwrap_or(1)
+            .max(1)
+    }
+
+    /// bash quirk: a fatal error aborting a top-level command leaves the
+    /// shell's line counter at the failing command's line, and the parser
+    /// keeps counting from there. So every later line reads as
+    /// `failing_line + (line - end_line)`, where `end_line` is the line the
+    /// aborted command's terminator sits on (`for ...` / `echo $((1/0))` /
+    /// `done` on three lines shifts the rest of the script back one line).
+    // WTF: bash also shifts the lines of functions defined after the abort;
+    // bashkit runs function bodies with their parse-time lines.
+    fn shift_lines_after_abort(&mut self, end_line: usize) {
+        let shift = self.line_at(end_line).saturating_sub(self.current_line);
+        self.line_base = self.line_base.saturating_sub_unsigned(shift);
+    }
+
+    /// First source line of a command; `{ }` / `( )` record no span, so
+    /// they use their first inner command's line.
+    fn command_start_line(command: &Command) -> usize {
+        match command {
+            Command::Compound(
+                CompoundCommand::BraceGroup(body) | CompoundCommand::Subshell(body),
+                _,
+            ) => body.first().map_or(1, Self::command_start_line),
+            _ => Self::command_line(command),
+        }
+    }
+
     /// `$LINENO` for a command about to run. `(( ))` and `[[ ]]` carry no
     /// position of their own: they keep the line of the list around them
     /// (`[[ $LINENO -gt 1 ]] && ...`), not line 1.
@@ -3927,7 +3985,7 @@ impl Interpreter {
                 _
             )
         ) {
-            self.current_line = self.line_base + Self::command_line(command);
+            self.current_line = self.line_at(Self::command_line(command));
         }
     }
 
@@ -4011,7 +4069,14 @@ impl Interpreter {
                     })
                 }
                 Command::Pipeline(pipeline) => self.execute_pipeline(pipeline).await,
-                Command::List(list) => self.execute_list(list).await,
+                Command::List(list) => {
+                    let route = std::mem::take(&mut self.route_top_list);
+                    let result = self.execute_list(list, route).await;
+                    if route && let Ok(r) = &result {
+                        self.top_list_routed = Some((r.stdout.len(), r.stderr.len()));
+                    }
+                    result
+                }
                 Command::Compound(compound, redirects) => {
                     // Substitutions in its words or redirects (`for x in
                     // <(a)`, `done < <(b)`, `[[ -e <(c) ]]`) close with it.
@@ -4201,6 +4266,25 @@ impl Interpreter {
         }
     }
 
+    /// Result of a fatal expansion error (`set -u` unbound variable,
+    /// `${x?msg}`): a non-interactive bash exits the shell with status 1, even
+    /// from inside a function, `eval` or `source` (a subshell, `$(...)` or
+    /// pipeline stage only ends itself). An interactive shell abandons the
+    /// current command line instead.
+    fn expansion_error_result(&mut self, err_msg: String) -> ExecResult {
+        self.last_exit_code = 1;
+        ExecResult {
+            stderr: err_msg.into(),
+            exit_code: 1,
+            control_flow: if self.interactive {
+                ControlFlow::Abort
+            } else {
+                ControlFlow::Exit(1)
+            },
+            ..Default::default()
+        }
+    }
+
     /// Error for a pending arithmetic error, if any (checked after expansion
     /// so the command does not run).
     fn pending_arith_abort(&self) -> Option<crate::error::Error> {
@@ -4317,7 +4401,7 @@ impl Interpreter {
 
                 // Consume Exit and Return control flow at subshell boundary —
                 // they only terminate the subshell, not the parent shell.
-                // Return is used by ${var:?msg} error handling and nounset errors.
+                // Exit also carries fatal expansion errors (${var:?msg}, nounset).
                 // Also clear errexit_suppressed: inner AND/OR suppression must not
                 // escape the subshell boundary and prevent the parent set -e from
                 // firing on the subshell's non-zero exit code.
@@ -4362,6 +4446,17 @@ impl Interpreter {
         let condition_result = self.execute_condition_sequence(&if_cmd.condition).await?;
         cond_stdout.append(&condition_result.stdout);
         cond_stderr.append(&condition_result.stderr);
+        // `exit`/`return`/`break` (or a fatal expansion error) inside the
+        // condition ends the `if` with that control flow.
+        if condition_result.control_flow != ControlFlow::None {
+            return Ok(ExecResult {
+                stdout: cond_stdout,
+                stderr: cond_stderr,
+                exit_code: condition_result.exit_code,
+                control_flow: condition_result.control_flow,
+                ..Default::default()
+            });
+        }
 
         if condition_result.exit_code == 0 {
             // Condition succeeded, execute then branch
@@ -4376,6 +4471,15 @@ impl Interpreter {
             let elif_result = self.execute_condition_sequence(elif_condition).await?;
             cond_stdout.append(&elif_result.stdout);
             cond_stderr.append(&elif_result.stderr);
+            if elif_result.control_flow != ControlFlow::None {
+                return Ok(ExecResult {
+                    stdout: cond_stdout,
+                    stderr: cond_stderr,
+                    exit_code: elif_result.exit_code,
+                    control_flow: elif_result.control_flow,
+                    ..Default::default()
+                });
+            }
 
             if elif_result.exit_code == 0 {
                 let mut result = self.execute_command_sequence(elif_body).await?;
@@ -4783,7 +4887,7 @@ impl Interpreter {
 
                 // Check condition (if empty, always true)
                 // The clauses see the `for` line, not the body's last one.
-                let for_line = self.line_base + arith_for.span.line();
+                let for_line = self.line_at(arith_for.span.line());
                 self.current_line = for_line;
                 if !arith_for.condition.is_empty() {
                     let condition = self.arith_for_expr(&arith_for.condition).await?;
@@ -4841,13 +4945,7 @@ impl Interpreter {
         let result = result?;
         // If a nounset error occurred during evaluation, propagate it.
         if let Some(err_msg) = self.nounset_error.take() {
-            self.last_exit_code = 1;
-            return Ok(ExecResult {
-                stderr: err_msg.into(),
-                exit_code: 1,
-                control_flow: ControlFlow::Return(1),
-                ..Default::default()
-            });
+            return Ok(self.expansion_error_result(err_msg));
         }
         // An invalid regex that decides the result gives status 2.
         let exit_code = match (result, regex_error) {
@@ -7285,7 +7383,9 @@ impl Interpreter {
 
     /// Execute a command list (cmd1 && cmd2 || cmd3)
     #[allow(unused_assignments)] // control_flow may be set but overwritten
-    async fn execute_list(&mut self, list: &CommandList) -> Result<ExecResult> {
+    /// `route`: this list is a top-level command; route each element's output
+    /// through the `exec` fd table as it finishes (see `route_top_list`).
+    async fn execute_list(&mut self, list: &CommandList, route: bool) -> Result<ExecResult> {
         let mut stdout = crate::StreamData::new();
         let mut stderr = crate::StreamData::new();
         let mut exit_code;
@@ -7305,6 +7405,10 @@ impl Interpreter {
             exit_code_from_conditional_context = false;
         } else {
             let emit_before = self.output_emit_count;
+            let emitted_before = (
+                self.output_stream_stdout_bytes,
+                self.output_stream_stderr_bytes,
+            );
             self.sequence_accum = (0, 0);
             // A non-final `&&`/`||` element runs with errexit ignored.
             let conditional = list
@@ -7315,6 +7419,15 @@ impl Interpreter {
             let result = self.execute_command(&list.first).await;
             self.condition_sequence_depth -= usize::from(conditional);
             let mut result = result?;
+            if route {
+                Box::pin(self.route_exec_output(
+                    &mut result,
+                    emitted_before,
+                    (0, 0),
+                    Self::command_name(&list.first),
+                ))
+                .await?;
+            }
             if self.merge_stderr {
                 Self::merge_stderr_into_stdout(&mut result);
             }
@@ -7395,6 +7508,10 @@ impl Interpreter {
                     exit_code_from_conditional_context = false;
                 } else {
                     let emit_before = self.output_emit_count;
+                    let emitted_before = (
+                        self.output_stream_stdout_bytes,
+                        self.output_stream_stderr_bytes,
+                    );
                     self.sequence_accum = (stdout.len(), stderr.len());
                     let followed_by_conditional_op =
                         list.rest.get(i + 1).is_some_and(|(op, cmd)| {
@@ -7405,6 +7522,15 @@ impl Interpreter {
                     let result = self.execute_command(cmd).await;
                     self.condition_sequence_depth -= usize::from(followed_by_conditional_op);
                     let mut result = result?;
+                    if route {
+                        Box::pin(self.route_exec_output(
+                            &mut result,
+                            emitted_before,
+                            (0, 0),
+                            Self::command_name(cmd),
+                        ))
+                        .await?;
+                    }
                     if self.merge_stderr {
                         Self::merge_stderr_into_stdout(&mut result);
                     }
@@ -7980,15 +8106,8 @@ impl Interpreter {
             };
 
             if let Some(err_msg) = self.nounset_error.take() {
-                self.last_exit_code = 1;
                 self.discard_deferred_proc_subs_from(deferred_proc_sub_start);
-                return Ok(ExecResult {
-                    stdout: crate::StreamData::new(),
-                    stderr: err_msg.into(),
-                    exit_code: 1,
-                    control_flow: ControlFlow::Return(1),
-                    ..Default::default()
-                });
+                return Ok(self.expansion_error_result(err_msg));
             }
 
             let pre_expanded_args = if !name.is_empty() {
@@ -8436,14 +8555,7 @@ impl Interpreter {
 
             // Check for nounset error from argument expansion
             if let Some(err_msg) = self.nounset_error.take() {
-                self.last_exit_code = 1;
-                return Ok(ExecResult {
-                    stdout: crate::StreamData::new(),
-                    stderr: err_msg.into(),
-                    exit_code: 1,
-                    control_flow: ControlFlow::Return(1),
-                    ..Default::default()
-                });
+                return Ok(self.expansion_error_result(err_msg));
             }
 
             if let Some(stderr) = self.disabled_redirect_error(&command.redirects) {
@@ -8608,9 +8720,10 @@ impl Interpreter {
     /// Send a top-level command's output where `exec` pointed fd 1 and 2
     /// (`exec >log 2>&1`). Output a sub-call already streamed to the caller
     /// (before the `exec` ran) stays; the rest goes to the target.
-    // WTF: output written in the same top-level command before `exec >log`
-    // ran, and not streamed, also goes to the log; routing happens per
-    // top-level command, not per write.
+    // WTF: routing happens per top-level command (per element of a
+    // top-level `;`/`&&` list), not per write: output written earlier in the
+    // same compound command (`{ echo a; exec >log; }`) before `exec >log`
+    // ran, and not streamed, also goes to the log.
     async fn route_exec_output(
         &mut self,
         result: &mut ExecResult,
@@ -10047,8 +10160,10 @@ impl Interpreter {
         // command per level until the budget aborts, risking stack overflow.
         // Like bash, the eval'd text counts lines from the eval's own line
         // (`$LINENO`, diagnostics), not from 1.
-        let saved_line_base =
-            std::mem::replace(&mut self.line_base, self.current_line.saturating_sub(1));
+        let saved_line_base = std::mem::replace(
+            &mut self.line_base,
+            isize::try_from(self.current_line.saturating_sub(1)).unwrap_or(0),
+        );
         let tempenv_pushed = self.push_pending_tempenv(false);
         self.xtrace_depth += 1;
         let region = self.enter_output_region(redirects);
@@ -13405,8 +13520,10 @@ impl Interpreter {
         };
         let was_in_trap = self.in_trap;
         self.in_trap = true;
-        let saved_line_base =
-            std::mem::replace(&mut self.line_base, self.current_line.saturating_sub(1));
+        let saved_line_base = std::mem::replace(
+            &mut self.line_base,
+            isize::try_from(self.current_line.saturating_sub(1)).unwrap_or(0),
+        );
         let emit_before = self.output_emit_count;
         self.xtrace_depth += 1;
         let result = self.execute_command_sequence(&trap_script.commands).await;

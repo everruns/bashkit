@@ -397,6 +397,7 @@ mod tests {
             commands,
             span: Span::new(),
             trailing_error: None,
+            command_end_lines: Vec::new(),
         };
         let limits = ExecutionLimits::default();
         let err = validate(&ast, &limits).unwrap_err();

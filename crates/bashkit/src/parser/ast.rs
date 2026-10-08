@@ -20,6 +20,11 @@ pub struct Script {
     /// line-by-line read-then-execute model.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trailing_error: Option<String>,
+    /// Line of each top-level command's terminator (newline, `;`, `&` or
+    /// EOF), parallel to `commands`: where bash's reader stopped after
+    /// reading it. Empty when the script was not built by the parser.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub command_end_lines: Vec<usize>,
 }
 
 /// A single command in the script.
@@ -1392,6 +1397,7 @@ mod tests {
             commands: vec![],
             span: Span::new(),
             trailing_error: None,
+            command_end_lines: Vec::new(),
         };
         assert!(script.commands.is_empty());
     }

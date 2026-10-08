@@ -371,3 +371,48 @@ echo 'a'\
 ### expect
 ab
 ### end
+
+### quote_single_then_double_quoted_expansion
+# a single-quoted segment does not stop the double-quoted one after it
+# from expanding
+set -- p q
+x="1  2"
+c() { echo "$#:$(printf '[%s]' "$@")"; }
+c ''"$@"
+c 'a'"$1"
+c '$HOME'"$x"
+c 'a'"`echo q`"
+y=''"$x"; c "$y"
+### expect
+2:[p][q]
+1:[ap]
+1:[$HOME1  2]
+1:[aq]
+1:[1  2]
+### end
+
+### quote_empty_quoted_beside_empty_at
+# with no positional parameters, an empty quoted string next to "$@" still
+# makes one empty field
+c() { echo "$#:$(printf '[%s]' "$@")"; }
+set --
+c ""$@
+c "$@"""
+c ''"$@"
+c "${@}"''
+c "$@"
+a=()
+c "${a[@]}"""
+c "${a[@]}"
+e=
+c "$e"""
+### expect
+1:[]
+1:[]
+1:[]
+1:[]
+0:[]
+1:[]
+0:[]
+1:[]
+### end

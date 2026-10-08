@@ -48,7 +48,6 @@ echo "[$LINENO]"
 
 ### bashbox_line_number_an_expansion_error_drops_the_rest_of_the_line_it_ends_on
 # an expansion error drops the rest of the line it ends on
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 for i in 1; do
   echo $((1/0))
 done; echo same
@@ -67,4 +66,24 @@ same
 next
 a
 last
+### end
+
+### line_number_shift_after_multiline_abort
+# bash keeps counting lines from the failing command after a fatal error
+# aborts a multi-line top-level command
+exec 2>&1
+for i in 1; do
+  echo $((1/0))
+
+done; echo skipped
+echo $LINENO
+{
+echo ${y!}
+}
+echo $LINENO
+### expect
+bash: line 4: 1/0: division by 0 (error token is "0")
+5
+bash: line 7: ${y!}: bad substitution
+8
 ### end

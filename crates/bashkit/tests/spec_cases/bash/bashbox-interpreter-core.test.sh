@@ -972,7 +972,6 @@ x=1; unset -- x; echo $? ${x-unset}
 
 ### bashbox_interpreter_core_redirections_report_why_a_file_can_t_be_opened
 # redirections report why a file can't be opened
-### skip: TODO `<>` (read-write open) redirect is not parsed yet, and InMemoryFs lets `f/x` be created under a regular file `f` instead of failing with ENOTDIR
 true <> /tmp; echo $?; touch f; echo hi > f/x; echo $?; cat < f/x; echo $?; ln -s loop loop; echo hi > loop; echo $?
 ### expect
 1

@@ -61,3 +61,47 @@ echo "ok"
 
 ok
 ### end
+
+### nounset_error_in_function_exits_script
+# ${x?msg} inside a function exits the whole non-interactive shell
+# (a subshell only ends itself)
+### bash_diff: bash -c exits 127 after this error; a script file exits 1
+### exit_code:1
+f(){ : ${zz?y}; echo in; }
+(f; echo x); echo "status $?"
+g(){ f; echo g; }
+g
+echo after
+### expect
+status 1
+### end
+
+### nounset_unbound_in_function_exits_script
+# set -u: an unbound variable inside a function exits the script
+### bash_diff: bash -c exits 127 after this error; a script file exits 1
+### exit_code:1
+set -u
+f(){ x=$zz; echo in; }
+if f; then echo then; fi
+echo after
+### expect
+### end
+
+### nounset_error_inside_command_substitution_reported
+# the unbound-variable error raised inside $(...) reaches the shell's stderr
+set -u
+exec 2>&1
+x=$(echo $zz); echo "r=$?"
+: "$(echo $zz)"; echo "r=$?"
+y=$(: ${zz?inner}; echo no); echo "[$y]"
+ls /nonexistent-dir >/dev/null; echo after
+### expect
+bash: line 3: zz: unbound variable
+r=1
+bash: line 4: zz: unbound variable
+r=0
+bash: line 5: zz: inner
+[]
+ls: cannot access '/nonexistent-dir': No such file or directory
+after
+### end
