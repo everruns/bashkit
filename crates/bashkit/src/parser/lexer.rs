@@ -34,6 +34,9 @@ const QUOTED_SEGMENT_END: char = '\u{1f}';
 #[derive(Default)]
 struct ContinuationFlags {
     has_unquoted_expansion: bool,
+    /// A double-quoted continuation segment holds an expansion
+    /// (`'a'"$1"`): the word must still be parsed, not kept literal.
+    has_quoted_expansion: bool,
     has_unquoted_glob: bool,
     quoted_ranges: Vec<(usize, usize)>,
     error: Option<String>,
@@ -1287,7 +1290,10 @@ impl<'a> Lexer<'a> {
         if let Some(error) = flags.error {
             return Some(Token::Error(error));
         }
-        if flags.has_unquoted_expansion {
+        // `'a'"$1"`: the double-quoted continuation still expands; the
+        // markers keep every segment quoted (and `''"$@"` keeps its empty
+        // quoted part, so no positional parameters still make one field).
+        if flags.has_unquoted_expansion || flags.has_quoted_expansion {
             let mut ranges = flags.quoted_ranges;
             ranges.push((0, quoted_prefix_len));
             Self::apply_quote_markers(&mut content, ranges);
@@ -1369,6 +1375,14 @@ impl<'a> Lexer<'a> {
                                 }
                                 continue;
                             }
+                        }
+                        if ch == '`' {
+                            flags.has_quoted_expansion = true;
+                            self.read_dquote_backtick_into(content);
+                            continue;
+                        }
+                        if ch == '$' {
+                            flags.has_quoted_expansion = true;
                         }
                         content.push(ch);
                         self.advance();
@@ -1489,8 +1503,15 @@ impl<'a> Lexer<'a> {
 
         let mut merged: Vec<(usize, usize)> = Vec::with_capacity(ranges.len());
         for (start, end) in ranges {
-            if let Some((_, last_end)) = merged.last_mut()
-                && start <= *last_end
+            // Touching ranges merge, but an empty one never does: `"$@"""`
+            // and `''"$@"` keep their empty quoted part. Repeated empty
+            // ranges at one spot (`""""`) collapse to one marker pair.
+            if start == end && merged.last() == Some(&(start, end)) {
+                continue;
+            }
+            if let Some((last_start, last_end)) = merged.last_mut()
+                && (start < *last_end
+                    || (start == *last_end && start != end && *last_start != *last_end))
             {
                 *last_end = (*last_end).max(end);
                 continue;
@@ -1867,6 +1888,18 @@ impl<'a> Lexer<'a> {
         )
     }
 
+    /// Whether `content` holds a `$` not escaped by the NUL sentinel.
+    fn has_unescaped_dollar(content: &str) -> bool {
+        let mut prev = None;
+        for ch in content.chars() {
+            if ch == '$' && prev != Some('\x00') {
+                return true;
+            }
+            prev = Some(ch);
+        }
+        false
+    }
+
     /// Drop quote-boundary markers and decode NUL escape sentinels in one
     /// pass, so a NUL-escaped marker byte survives as data.
     fn strip_markers_decode_sentinels(segment: &str) -> String {
@@ -1884,6 +1917,41 @@ impl<'a> Lexer<'a> {
             }
         }
         out
+    }
+
+    /// Read a backquoted command inside double quotes (opening `` ` `` not
+    /// yet consumed) into `content` as `$(...)`.
+    fn read_dquote_backtick_into(&mut self, content: &mut String) {
+        self.advance(); // consume opening `
+        content.push_str("$(");
+        if self.peek_char() == Some('(') {
+            content.push(' ');
+        }
+        let body_start = content.len();
+        while let Some(c) = self.peek_char() {
+            if c == '`' {
+                self.advance();
+                break;
+            }
+            if c == '\\' {
+                self.advance();
+                if let Some(next) = self.peek_char() {
+                    if matches!(next, '$' | '`' | '\\' | '"') {
+                        content.push(next);
+                        self.advance();
+                    } else {
+                        content.push('\\');
+                        content.push(next);
+                        self.advance();
+                    }
+                }
+            } else {
+                content.push(c);
+                self.advance();
+            }
+        }
+        defer_backtick_syntax_error(content, body_start);
+        content.push(')');
     }
 
     fn read_double_quoted_string(&mut self) -> Option<Token> {
@@ -1946,39 +2014,7 @@ impl<'a> Lexer<'a> {
                         }
                     }
                 }
-                '`' => {
-                    // Backtick command substitution inside double quotes
-                    self.advance(); // consume opening `
-                    content.push_str("$(");
-                    if self.peek_char() == Some('(') {
-                        content.push(' ');
-                    }
-                    let body_start = content.len();
-                    while let Some(c) = self.peek_char() {
-                        if c == '`' {
-                            self.advance();
-                            break;
-                        }
-                        if c == '\\' {
-                            self.advance();
-                            if let Some(next) = self.peek_char() {
-                                if matches!(next, '$' | '`' | '\\' | '"') {
-                                    content.push(next);
-                                    self.advance();
-                                } else {
-                                    content.push('\\');
-                                    content.push(next);
-                                    self.advance();
-                                }
-                            }
-                        } else {
-                            content.push(c);
-                            self.advance();
-                        }
-                    }
-                    defer_backtick_syntax_error(&mut content, body_start);
-                    content.push(')');
-                }
+                '`' => self.read_dquote_backtick_into(&mut content),
                 _ => {
                     content.push(ch);
                     self.advance();
@@ -2004,7 +2040,12 @@ impl<'a> Lexer<'a> {
             if let Some(error) = flags.error {
                 return Some(Token::Error(error));
             }
-            if flags.has_unquoted_expansion {
+            // `"$@"""`: an empty quoted segment next to an expansion makes
+            // a field even when `"$@"` expands to nothing, so the segments
+            // must stay separate parts (markers) instead of one QuotedWord.
+            let empty_quoted_beside_expansion = Self::has_unescaped_dollar(&content)
+                && (quoted_prefix_len == 0 || flags.quoted_ranges.iter().any(|(s, e)| s == e));
+            if flags.has_unquoted_expansion || empty_quoted_beside_expansion {
                 let mut ranges = flags.quoted_ranges;
                 ranges.push((0, quoted_prefix_len));
                 // Build marker-delimited quoted spans in one pass so hostile
@@ -2662,9 +2703,42 @@ mod tests {
         let mut lexer = Lexer::new(&script);
         assert_eq!(
             lexer.next_token(),
-            Some(Token::Word("\u{1e}a\u{1f}$x".to_string()))
+            Some(Token::Word("\u{1e}a\u{1f}\u{1e}\u{1f}$x".to_string()))
         );
         assert_eq!(lexer.next_token(), None);
+    }
+
+    #[test]
+    fn test_single_quoted_then_double_quoted_expansion_is_parsed() {
+        // `'a'"$1"` must expand `$1`, not stay a literal word.
+        let mut lexer = Lexer::new("'a\\b'\"$1\"");
+        assert_eq!(
+            lexer.next_token(),
+            Some(Token::Word("\u{1e}a\\b$1\u{1f}".to_string()))
+        );
+        // No expansion: still one literal word.
+        let mut lexer = Lexer::new("'a$'\"b\"");
+        assert_eq!(
+            lexer.next_token(),
+            Some(Token::LiteralWord("a$b".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_empty_quoted_beside_at_keeps_marker_pair() {
+        let mut lexer = Lexer::new("\"$@\"\"\"");
+        assert_eq!(
+            lexer.next_token(),
+            Some(Token::Word("\u{1e}$@\u{1f}\u{1e}\u{1f}".to_string()))
+        );
+        let mut lexer = Lexer::new("''\"$@\"");
+        assert_eq!(
+            lexer.next_token(),
+            Some(Token::Word("\u{1e}\u{1f}\u{1e}$@\u{1f}".to_string()))
+        );
+        // No expansion: plain quoted word.
+        let mut lexer = Lexer::new("\"a\"\"\"");
+        assert_eq!(lexer.next_token(), Some(Token::QuotedWord("a".to_string())));
     }
 
     #[test]

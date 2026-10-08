@@ -3657,6 +3657,7 @@ impl<'a> Parser<'a> {
         // Parts count when the current quoted segment opened, to spot `""`.
         let mut segment_start = 0usize;
         let mut has_empty_quoted = false;
+        let mut saw_quote_marker = false;
         macro_rules! push_part {
             ($part:expr) => {{
                 parts.push($part);
@@ -3688,6 +3689,7 @@ impl<'a> Parser<'a> {
                 // records which literal text was quoted (brace expansion
                 // only sees unquoted literals).
                 let quoted = ch == '\u{1e}';
+                saw_quote_marker = true;
                 if quoted != in_quoted_segment && !current.is_empty() {
                     push_part!(WordPart::Literal(std::mem::take(&mut current)));
                 } else if !quoted && in_quoted_segment && parts.len() == segment_start {
@@ -4500,14 +4502,25 @@ impl<'a> Parser<'a> {
         }
 
         // Empty quoted parts only matter next to an unquoted expansion
-        // (`""$x""` keeps empty fields); elsewhere drop them so the word
-        // keeps its plain shape.
+        // (`""$x""` keeps empty fields) or a quoted `@` expansion (`"$@"""`
+        // is one empty field when there are no positional parameters);
+        // elsewhere drop them so the word keeps its plain shape.
         if has_empty_quoted {
             let unquoted_expansion = parts
                 .iter()
                 .zip(&part_quoted)
                 .any(|(p, q)| !*q && !matches!(p, WordPart::Literal(_)));
-            if !unquoted_expansion {
+            let quoted_at = parts.iter().zip(&part_quoted).any(|(p, q)| {
+                *q && match p {
+                    WordPart::Variable(name) => name == "@",
+                    WordPart::ArrayAccess { index, .. } => index == "@",
+                    WordPart::ParameterExpansion { name, .. }
+                    | WordPart::Transformation { name, .. }
+                    | WordPart::Substring { name, .. } => name == "@" || name.ends_with("[@]"),
+                    _ => false,
+                }
+            });
+            if !unquoted_expansion && !quoted_at {
                 let mut kept_parts = Vec::with_capacity(parts.len());
                 let mut kept_quoted = Vec::with_capacity(parts.len());
                 for (p, q) in parts.into_iter().zip(part_quoted) {
@@ -4526,9 +4539,12 @@ impl<'a> Parser<'a> {
             push_part!(WordPart::Literal(String::new()));
         }
 
+        // Every part quoted (`'a'"$x"`, `"$x"""`): the word is quoted, so its
+        // expansions are not field-split.
+        let quoted = saw_quote_marker && part_quoted.iter().all(|q| *q);
         Word {
             parts,
-            quoted: false,
+            quoted,
             has_unquoted_glob: false,
             part_quoted,
             raw: None,
