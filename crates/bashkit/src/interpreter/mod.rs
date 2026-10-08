@@ -1661,6 +1661,18 @@ pub struct Interpreter {
     /// function (bash `loop_level`). A function call starts at 0, so
     /// `break`/`continue` never leave the caller's loop.
     loop_depth: usize,
+    /// Sandbox login name: `~name` expands to `/home/name` (and `~root`
+    /// to `/root`); other `~user` forms stay literal.
+    tilde_user: Arc<str>,
+    /// The next `expand_operand` call tilde-expands a leading `~`
+    /// (consumed by it).
+    operand_tilde: bool,
+    /// The `${...}` being expanded is unquoted, so a `${x:-~}` operand
+    /// tilde-expands.
+    operand_outer_unquoted: bool,
+    /// The next `expand_operand` call expands a `${x/pat/rep}` replacement
+    /// (literal text, not a pattern; consumed by it).
+    operand_replacement: bool,
     /// Active function calls and `source`s: `return` is valid only when > 0.
     return_depth: usize,
     /// The last `[[ ]]` leaf was an invalid `=~` regex (status 2 if it
@@ -2188,6 +2200,10 @@ impl Interpreter {
             script_depth: 0,
             child_shell_depth: 0,
             loop_depth: 0,
+            tilde_user: Arc::from(username_val.as_str()),
+            operand_tilde: false,
+            operand_outer_unquoted: false,
+            operand_replacement: false,
             return_depth: 0,
             cond_regex_error: false,
             cond_stderr: String::new(),
@@ -2379,6 +2395,10 @@ impl Interpreter {
             // Forks are polled on this task's stack, so they inherit its depth.
             child_shell_depth: self.child_shell_depth,
             loop_depth: self.loop_depth,
+            tilde_user: self.tilde_user.clone(),
+            operand_tilde: false,
+            operand_outer_unquoted: false,
+            operand_replacement: false,
             return_depth: self.return_depth,
             cond_regex_error: false,
             cond_stderr: String::new(),
@@ -4106,7 +4126,10 @@ impl Interpreter {
                     self.output_stream_stdout_bytes,
                     self.output_stream_stderr_bytes,
                 );
+                // A subshell is outside any loop: `(continue)` only warns.
+                let saved_loop_depth = std::mem::replace(&mut self.loop_depth, 0);
                 let mut result = self.execute_command_sequence(commands).await;
+                self.loop_depth = saved_loop_depth;
                 // Left here, before anything can return early.
                 self.leave_nofork_scope();
                 // An `exec` redirect set inside the subshell applies to the
@@ -5217,6 +5240,19 @@ impl Interpreter {
                 );
                 acc.stdout.append(&condition_result.stdout);
                 acc.stderr.append(&condition_result.stderr);
+                // `while break; do` leaves the loop from its condition.
+                if condition_result.control_flow != ControlFlow::None {
+                    match acc.accumulate(ExecResult {
+                        exit_code: condition_result.exit_code,
+                        control_flow: condition_result.control_flow,
+                        ..Default::default()
+                    }) {
+                        state::LoopAction::None => {}
+                        state::LoopAction::Break => break,
+                        state::LoopAction::Continue => continue,
+                        state::LoopAction::Exit(r) => return Ok(*r),
+                    }
+                }
                 let should_break = if break_on_zero {
                     condition_result.exit_code == 0
                 } else {
@@ -7309,7 +7345,8 @@ impl Interpreter {
             for assignment in assignments {
                 match &assignment.value {
                     AssignmentValue::Scalar(word) => {
-                        let value = self.expand_word(word).await?;
+                        let word = self.tilde_assignment_value(word);
+                        let value = self.expand_word(&word).await?;
                         if self.is_xtrace_enabled() {
                             // `+ v=x`, `+ a[1]='a b'`, `+ v+=y`
                             let prefix = self.xtrace_prefix().await;

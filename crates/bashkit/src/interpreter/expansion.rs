@@ -11,6 +11,12 @@
 //! protected, only expansion results split, and a used `${v:-"..."}`
 //! operand contributes its own quoted/unquoted parts. A lone expansion
 //! keeps the cheaper whole-string `ifs_split` path.
+//!
+//! Important decision: tilde expansion is decided per unquoted literal part
+//! at expansion time (`tilde_expand_word_literal`): a prefix that runs into
+//! another part (`~"x"`, `~$v`) is not a tilde prefix. Assignment values
+//! are pre-resolved by `tilde_assignment_value` (after `=` and each `:`);
+//! `${...}` operands use the `operand_tilde` flag, set per operator.
 
 use super::*;
 
@@ -180,13 +186,18 @@ impl Interpreter {
             }
             return out;
         }
+        let (is_set, value) = self.resolve_param_expansion_name(name);
         let value = if name.contains('[') {
-            self.resolve_param_expansion_name(name).1
+            value
         } else {
             self.expand_variable(name)
         };
         match operator {
+            // An unset variable quotes to nothing, not `''`.
+            'Q' | 'K' | 'k' | 'A' if !is_set && value.is_empty() => String::new(),
             'A' => format!("{}='{}'", name, value.replace('\'', "'\\''")),
+            // On a scalar, `@K`/`@k` quote like `@Q`.
+            'K' | 'k' if !name.contains('[') => Self::transform_value(&value, 'Q'),
             _ => Self::transform_value(&value, operator),
         }
     }
@@ -300,9 +311,8 @@ impl Interpreter {
         // Keep command-substitution bytes charged until the complete word has
         // been consumed; sibling substitutions otherwise evade live-byte caps.
         let mut substitution_leases = Vec::new();
-        let mut is_first_part = true;
 
-        for part in &word.parts {
+        for (idx, part) in word.parts.iter().enumerate() {
             match part {
                 WordPart::BadSubstitution(text) => {
                     return Err(crate::error::Error::LineAbort(
@@ -323,47 +333,14 @@ impl Interpreter {
                     result.push_str(&text);
                 }
                 WordPart::Literal(s) => {
-                    // Tilde expansion: ~ at start of word expands to $HOME
-                    // A fully quoted word (`"~"`, `'~'`) keeps its tilde.
-                    let tilde_ok = !word.quoted
-                        || (word.has_unquoted_glob && word.part_quoted.first() == Some(&false));
-                    if is_first_part && tilde_ok && s.starts_with('~') {
-                        // Tilde prefix runs to the first `/`: `~` is HOME,
-                        // `~+` PWD, `~-` OLDPWD (literal when unset).
-                        let (prefix, rest) = match s.find('/') {
-                            Some(i) => (&s[1..i], &s[i..]),
-                            None => (&s[1..], ""),
-                        };
-                        let lookup = |name: &str| {
-                            self.scoped
-                                .variables
-                                .get(name)
-                                .or_else(|| self.env.get(name))
-                                .cloned()
-                        };
-                        let dir = match prefix {
-                            "" => Some(
-                                self.env
-                                    .get("HOME")
-                                    .or_else(|| self.scoped.variables.get("HOME"))
-                                    .cloned()
-                                    .unwrap_or_else(|| "/home/user".to_string()),
-                            ),
-                            "+" => Some(
-                                lookup("PWD").unwrap_or_else(|| self.cwd.display().to_string()),
-                            ),
-                            "-" => lookup("OLDPWD"),
-                            _ => None,
-                        };
-                        match dir {
-                            Some(dir) => {
-                                result.push_str(&dir);
-                                result.push_str(rest);
-                            }
-                            None => result.push_str(s),
-                        }
-                    } else {
-                        result.push_str(s);
+                    // Tilde expansion (`~`, `~/x`, `x=~:~`); quoted literals
+                    // keep their tilde.
+                    match (!Self::part_is_quoted(word, idx) && s.contains('~'))
+                        .then(|| self.tilde_expand_word_literal(word, idx, s))
+                        .flatten()
+                    {
+                        Some(expanded) => result.push_str(&expanded),
+                        None => result.push_str(s),
                     }
                 }
                 WordPart::Variable(name) => {
@@ -499,6 +476,7 @@ impl Interpreter {
                     // Delegate to sync helper to avoid bloating the async state
                     // machine with Vec<String> locals (causes stack overflow at
                     // depth 32 in debug builds — see stack_overflow_regression_tests).
+                    self.operand_outer_unquoted = !Self::part_is_quoted(word, idx);
                     let expanded = self.apply_param_op_maybe_per_element(
                         &value,
                         name,
@@ -507,6 +485,7 @@ impl Interpreter {
                         *colon_variant,
                         is_set,
                     );
+                    self.operand_outer_unquoted = false;
                     Self::append_expansion_for_word(&mut result, word, &expanded);
                 }
                 WordPart::ArrayAccess { name, index } => {
@@ -644,6 +623,9 @@ impl Interpreter {
                     Self::append_expansion_for_word(&mut result, word, &expanded);
                 }
                 WordPart::Transformation { name, operator } => {
+                    if self.is_nounset() && !name.contains('[') && !self.is_variable_set(name) {
+                        self.nounset_error = Some(self.unbound_variable_diag(name));
+                    }
                     Self::append_expansion_for_word(
                         &mut result,
                         word,
@@ -651,10 +633,159 @@ impl Interpreter {
                     );
                 }
             }
-            is_first_part = false;
         }
 
         Ok(result)
+    }
+
+    /// Whether part `idx` of `word` is quoted. Per-part flags count only
+    /// in a mixed word (some part quoted); otherwise the word's own
+    /// quoting applies to every part.
+    pub(super) fn part_is_quoted(word: &Word, idx: usize) -> bool {
+        if word.part_quoted.iter().any(|q| *q) {
+            word.part_quoted.get(idx).copied().unwrap_or(false)
+        } else {
+            word.quoted
+        }
+    }
+
+    /// Directory for the tilde prefix `~name`: `~` is `$HOME`, `~+` `$PWD`,
+    /// `~-` `$OLDPWD`; `~root` and `~<sandbox user>` are the fixed homes.
+    /// `None` keeps the text literal (unknown user, unset `OLDPWD`).
+    pub(super) fn tilde_dir(&self, prefix: &str) -> Option<String> {
+        let lookup = |name: &str| {
+            self.scoped
+                .variables
+                .get(name)
+                .or_else(|| self.env.get(name))
+                .cloned()
+        };
+        match prefix {
+            "" => Some(
+                self.env
+                    .get("HOME")
+                    .or_else(|| self.scoped.variables.get("HOME"))
+                    .cloned()
+                    .unwrap_or_else(|| format!("/home/{}", self.tilde_user)),
+            ),
+            "+" => Some(lookup("PWD").unwrap_or_else(|| self.cwd.display().to_string())),
+            "-" => lookup("OLDPWD"),
+            "root" => Some("/root".to_string()),
+            user if user == &*self.tilde_user => Some(format!("/home/{user}")),
+            _ => None,
+        }
+    }
+
+    /// Tilde-expand the eligible `~` positions of unquoted literal `s`:
+    /// `starts` lists the byte offsets where a tilde prefix may begin (word
+    /// start, after an assignment's `=`); with `after_colons`, every `:` at
+    /// or after the first start also begins one. A prefix ends at `/` or
+    /// `:`; one that runs to the end of `s` while more of the word follows
+    /// (`~"x"`, `~$v`) is not a tilde prefix. `None` when nothing changed.
+    fn tilde_expand_literal(
+        &self,
+        s: &str,
+        starts: &[usize],
+        after_colons: bool,
+        word_continues: bool,
+    ) -> Option<String> {
+        let first = *starts.first()?;
+        let mut out = String::new();
+        let mut copied = 0;
+        let mut pos = first;
+        let bytes = s.as_bytes();
+        while pos < s.len() {
+            let eligible =
+                starts.contains(&pos) || (after_colons && pos > first && bytes[pos - 1] == b':');
+            if eligible && bytes[pos] == b'~' {
+                let end = s[pos + 1..]
+                    .find(['/', ':'])
+                    .map(|i| pos + 1 + i)
+                    .unwrap_or(s.len());
+                if (end < s.len() || !word_continues)
+                    && let Some(dir) = self.tilde_dir(&s[pos + 1..end])
+                {
+                    out.push_str(&s[copied..pos]);
+                    out.push_str(&dir);
+                    copied = end;
+                    pos = end;
+                    continue;
+                }
+            }
+            pos += 1;
+        }
+        if copied == 0 {
+            return None;
+        }
+        out.push_str(&s[copied..]);
+        Some(out)
+    }
+
+    /// Tilde expansion for literal part `idx` of `word`: a leading `~`, and
+    /// in a word that looks like an assignment (`x=~:~`, as an argument to
+    /// `echo` or `local`) the `~` after its `=` and after each `:`.
+    fn tilde_expand_word_literal(&self, word: &Word, idx: usize, s: &str) -> Option<String> {
+        let word_continues = idx + 1 < word.parts.len();
+        let assign_eq = match word.parts.first() {
+            Some(WordPart::Literal(first)) if Self::is_assignment_prefix(first) => first.find('='),
+            _ => None,
+        };
+        if idx == 0 {
+            let mut starts = vec![0];
+            if let Some(eq) = assign_eq {
+                starts.push(eq + 1);
+            }
+            return self.tilde_expand_literal(s, &starts, assign_eq.is_some(), word_continues);
+        }
+        assign_eq?;
+        // Only `:` inside this part can start a prefix here.
+        let colon = s.find(':')?;
+        self.tilde_expand_literal(s, &[colon + 1], true, word_continues)
+    }
+
+    /// An assignment value (`x=~`, `PATH=~/bin:~root/bin`, `a[0]=b:~`) with
+    /// its tildes resolved: a leading `~` and the `~` after each `:` of an
+    /// unquoted literal. Literals holding a `~` become quoted, so later
+    /// expansion leaves them alone.
+    pub(super) fn tilde_assignment_value<'w>(&self, word: &'w Word) -> std::borrow::Cow<'w, Word> {
+        use std::borrow::Cow;
+        let quoted_at = |i: usize| Self::part_is_quoted(word, i);
+        let has_tilde =
+            word.parts.iter().enumerate().any(
+                |(i, p)| matches!(p, WordPart::Literal(s) if !quoted_at(i) && s.contains('~')),
+            );
+        if !has_tilde {
+            return Cow::Borrowed(word);
+        }
+        let mut out = word.clone();
+        out.part_quoted = (0..word.parts.len()).map(quoted_at).collect();
+        let n = word.parts.len();
+        for (i, part) in word.parts.iter().enumerate() {
+            let WordPart::Literal(s) = part else {
+                continue;
+            };
+            if quoted_at(i) || !s.contains('~') {
+                continue;
+            }
+            // A part after the first starts a prefix only after a `:` that
+            // ends the previous literal.
+            let mut starts = Vec::new();
+            if i == 0
+                || matches!(&word.parts[i - 1], WordPart::Literal(p) if !quoted_at(i - 1) && p.ends_with(':'))
+            {
+                starts.push(0);
+            }
+            if let Some(c) = s.find(':') {
+                starts.push(c + 1);
+            }
+            starts.sort_unstable();
+            if let Some(expanded) = self.tilde_expand_literal(s, &starts, true, i + 1 < n) {
+                out.parts[i] = WordPart::Literal(expanded);
+            }
+            // Done with this part's tildes (`x=a=~` keeps its `~`).
+            out.part_quoted[i] = true;
+        }
+        Cow::Owned(out)
     }
 
     /// Expand a word to multiple fields (for array iteration and command args)
@@ -864,6 +995,17 @@ impl Interpreter {
             .filter(|k| !Self::is_hidden_variable(k))
             .cloned()
             .collect();
+        // Array names count too, even an empty `hello=()`.
+        for k in self
+            .scoped
+            .arrays
+            .keys()
+            .chain(self.scoped.assoc_arrays.keys())
+        {
+            if k.starts_with(prefix) && !names.contains(k) && !Self::is_hidden_variable(k) {
+                names.push(k.clone());
+            }
+        }
         for k in self.env.keys() {
             if k.starts_with(prefix)
                 && !names.contains(k)
@@ -1011,10 +1153,12 @@ impl Interpreter {
         part_is_quoted: bool,
     ) -> Result<(String, bool, bool)> {
         let part_has_expansion = Self::is_field_split_expansion(part);
-        let value = if idx > 0
-            && let WordPart::Literal(s) = part
-        {
-            s.clone()
+        let value = if let WordPart::Literal(s) = part {
+            // A leading `~` sees the whole word (`~$v` stays literal).
+            (idx == 0 && !part_is_quoted && s.contains('~'))
+                .then(|| self.tilde_expand_word_literal(word, 0, s))
+                .flatten()
+                .unwrap_or_else(|| s.clone())
         } else {
             let single = Word {
                 parts: vec![part.clone()],
@@ -1647,6 +1791,8 @@ impl Interpreter {
     }
 
     pub(super) fn expand_operand(&mut self, operand: &str) -> String {
+        let tilde = std::mem::take(&mut self.operand_tilde);
+        let repl = std::mem::take(&mut self.operand_replacement);
         if operand.is_empty() {
             return String::new();
         }
@@ -1663,24 +1809,52 @@ impl Interpreter {
         );
         let mut result = String::new();
         let mut in_marked = false;
-        for part in &word.parts {
+        for (idx, part) in word.parts.iter().enumerate() {
             match part {
                 WordPart::Literal(s) => {
-                    Self::push_marked_literal(
-                        &mut result,
-                        s,
-                        quote_mark,
-                        &mut in_marked,
-                        force_quoted,
-                    );
+                    // `${x:-~}`, `${x#~/}`: a leading unquoted `~`.
+                    let tilde_expanded = (tilde && idx == 0 && !force_quoted)
+                        .then(|| {
+                            let seg_end = quote_mark.and_then(|m| s.find(m)).unwrap_or(s.len());
+                            let continues = seg_end < s.len() || word.parts.len() > 1;
+                            self.tilde_expand_literal(&s[..seg_end], &[0], false, continues)
+                                .map(|e| format!("{e}{}", &s[seg_end..]))
+                        })
+                        .flatten();
+                    let text = tilde_expanded.as_deref().unwrap_or(s);
+                    if repl {
+                        Self::push_replacement_literal(
+                            &mut result,
+                            text,
+                            quote_mark,
+                            &mut in_marked,
+                            force_quoted,
+                        );
+                    } else {
+                        Self::push_marked_literal(
+                            &mut result,
+                            text,
+                            quote_mark,
+                            &mut in_marked,
+                            force_quoted,
+                        );
+                    }
                 }
                 WordPart::Variable(name) => {
                     let expanded = self.expand_variable(name);
-                    Self::push_operand_expansion(&mut result, &expanded, in_marked || force_quoted);
+                    Self::push_operand_expansion(
+                        &mut result,
+                        &expanded,
+                        !repl && (in_marked || force_quoted),
+                    );
                 }
                 WordPart::ArithmeticExpansion(expr) => {
                     let val = self.evaluate_arithmetic_with_assign(expr).to_string();
-                    Self::push_operand_expansion(&mut result, &val, in_marked || force_quoted);
+                    Self::push_operand_expansion(
+                        &mut result,
+                        &val,
+                        !repl && (in_marked || force_quoted),
+                    );
                 }
                 WordPart::ParameterExpansion {
                     name,
@@ -1697,17 +1871,29 @@ impl Interpreter {
                         *colon_variant,
                         is_set,
                     );
-                    Self::push_operand_expansion(&mut result, &expanded, in_marked || force_quoted);
+                    Self::push_operand_expansion(
+                        &mut result,
+                        &expanded,
+                        !repl && (in_marked || force_quoted),
+                    );
                 }
                 WordPart::Length(name) => {
                     let value = self.shell_length(&self.expand_variable(name)).to_string();
-                    Self::push_operand_expansion(&mut result, &value, in_marked || force_quoted);
+                    Self::push_operand_expansion(
+                        &mut result,
+                        &value,
+                        !repl && (in_marked || force_quoted),
+                    );
                 }
                 // Run ahead by `prefetch_operand_substs` (default-family
                 // operators only); other operators leave the queue empty.
                 WordPart::CommandSubstitution(_) => {
                     if let Some(out) = self.operand_substs.pop_front() {
-                        Self::push_operand_expansion(&mut result, &out, in_marked || force_quoted);
+                        Self::push_operand_expansion(
+                            &mut result,
+                            &out,
+                            !repl && (in_marked || force_quoted),
+                        );
                     }
                 }
                 // TODO: process substitution in sync operand expansion
@@ -1833,6 +2019,36 @@ impl Interpreter {
         }
     }
 
+    /// Literal text of a `${x/pat/rep}` replacement: it is not a pattern,
+    /// so quoted text stays as is and an unquoted `\c` is `c`.
+    fn push_replacement_literal(
+        out: &mut String,
+        s: &str,
+        quote_mark: Option<char>,
+        in_marked: &mut bool,
+        force_quoted: bool,
+    ) {
+        let mut chars = s.chars();
+        while let Some(ch) = chars.next() {
+            if Some(ch) == quote_mark {
+                *in_marked = !*in_marked;
+                continue;
+            }
+            if ch == '\\' && !*in_marked && !force_quoted {
+                match chars.next() {
+                    Some(n) if Some(n) == quote_mark => {
+                        out.push('\\');
+                        *in_marked = !*in_marked;
+                    }
+                    Some(n) => out.push(n),
+                    None => out.push('\\'),
+                }
+                continue;
+            }
+            out.push(ch);
+        }
+    }
+
     pub(super) fn push_operand_expansion(out: &mut String, s: &str, in_marked: bool) {
         for ch in s.chars() {
             Self::push_operand_char(out, ch, in_marked);
@@ -1843,7 +2059,7 @@ impl Interpreter {
         if in_marked
             && matches!(
                 ch,
-                '*' | '?' | '[' | ']' | '(' | ')' | '|' | '+' | '@' | '!'
+                '\\' | '*' | '?' | '[' | ']' | '(' | ')' | '|' | '+' | '@' | '!'
             )
         {
             out.push('\\');
@@ -2119,6 +2335,7 @@ impl Interpreter {
         match operator {
             ParameterOp::UseDefault => {
                 if use_default {
+                    self.operand_tilde = self.operand_outer_unquoted;
                     self.expand_operand(operand)
                 } else {
                     value.to_string()
@@ -2126,6 +2343,7 @@ impl Interpreter {
             }
             ParameterOp::AssignDefault => {
                 if use_default {
+                    self.operand_tilde = self.operand_outer_unquoted;
                     let expanded = self.expand_operand(operand);
                     self.set_parameter_expansion_target(name, expanded.clone());
                     expanded
@@ -2135,6 +2353,7 @@ impl Interpreter {
             }
             ParameterOp::UseReplacement => {
                 if use_replacement {
+                    self.operand_tilde = self.operand_outer_unquoted;
                     self.expand_operand(operand)
                 } else {
                     String::new()
@@ -2142,6 +2361,7 @@ impl Interpreter {
             }
             ParameterOp::Error => {
                 if use_default {
+                    self.operand_tilde = self.operand_outer_unquoted;
                     let expanded = self.expand_operand(operand);
                     let msg = if expanded.is_empty() {
                         self.diag(format!("{}: parameter null or not set\n", name))
@@ -2241,6 +2461,8 @@ impl Interpreter {
     /// Expand a `#`/`%` pattern operand. Bash removes quotes there even in a
     /// double-quoted word, so `'...'` spans count as quoted (literal) text.
     pub(super) fn expand_pattern_operand(&mut self, operand: &str) -> String {
+        // A pattern tilde-expands even inside double quotes (`"${x#~}"`).
+        self.operand_tilde = true;
         self.expand_operand(&Self::single_quotes_as_quoted(operand))
     }
 
@@ -2248,6 +2470,8 @@ impl Interpreter {
     /// bash quote-removes `'...'` there even inside double quotes
     /// (`"${y/b/'}'}"` is `a}`).
     pub(super) fn expand_replacement_operand(&mut self, operand: &str) -> String {
+        self.operand_tilde = true;
+        self.operand_replacement = true;
         self.expand_operand(&Self::single_quotes_as_quoted(operand))
     }
 
@@ -2258,7 +2482,12 @@ impl Interpreter {
             Some(c @ ('#' | '%')) => (Some(c), &pattern[1..]),
             _ => (None, pattern),
         };
-        let expanded = self.expand_pattern_operand(raw);
+        // After a `#`/`%` anchor the `~` is not at the pattern's start.
+        let expanded = if anchor.is_some() {
+            self.expand_operand(&Self::single_quotes_as_quoted(raw))
+        } else {
+            self.expand_pattern_operand(raw)
+        };
         match anchor {
             Some(c) => format!("{c}{expanded}"),
             None if expanded.starts_with(['#', '%']) => format!("\\{expanded}"),
@@ -2607,17 +2836,35 @@ impl Interpreter {
             } else {
                 c
             };
-            if c == '-' && i > first && chars.get(i + 1).is_some_and(|n| *n != ']') {
-                out.push('-');
-            } else {
-                if matches!(c, '\\' | ']' | '[' | '^' | '-' | '&' | '~') {
-                    out.push('\\');
+            // `c-e` range: only an unescaped `-` between two members. A
+            // reversed range (`[z-a]`) matches nothing, as in bash.
+            if chars.get(i + 1) == Some(&'-') && chars.get(i + 2).is_some_and(|n| *n != ']') {
+                let mut j = i + 2;
+                let end = if chars[j] == '\\' && j + 1 < chars.len() {
+                    j += 1;
+                    chars[j]
+                } else {
+                    chars[j]
+                };
+                if c <= end {
+                    Self::push_regex_class_char(&mut out, c);
+                    out.push('-');
+                    Self::push_regex_class_char(&mut out, end);
                 }
-                out.push(c);
+                i = j + 1;
+                continue;
             }
+            Self::push_regex_class_char(&mut out, c);
             i += 1;
         }
         None
+    }
+
+    fn push_regex_class_char(out: &mut String, c: char) {
+        if matches!(c, '\\' | ']' | '[' | '^' | '-' | '&' | '~') {
+            out.push('\\');
+        }
+        out.push(c);
     }
 
     /// Remove prefix/suffix pattern from value

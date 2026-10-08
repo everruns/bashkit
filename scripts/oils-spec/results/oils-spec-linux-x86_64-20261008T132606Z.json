@@ -1,0 +1,5381 @@
+{
+ "schema": 1,
+ "oils_repo": "https://github.com/oils-for-unix/oils",
+ "oils_rev": "57d3f0d088c36340bc4b3038208e58ea02acf15c",
+ "bashkit_commit": "5f04b4810ec2",
+ "bash_version": "5.2.21(1)-release",
+ "timestamp": "2026-10-08T13:26:06Z",
+ "platform": "linux-x86_64",
+ "jobs": 4,
+ "timeout_secs": 10,
+ "elapsed_secs": 34.8,
+ "files_run": 132,
+ "files_skipped": 91,
+ "total": {
+  "cases": 2759,
+  "bashkit_pass": 2127,
+  "bashkit_pass_pct": 77.1,
+  "bash_pass": 2692,
+  "bash_pass_pct": 97.6,
+  "bashkit_pass_of_bash": 2120,
+  "pass_rate": 78.8
+ },
+ "failure_classes": {
+  "behavior": 410,
+  "host": 24,
+  "interactive": 110,
+  "processes": 18,
+  "signals": 10
+ },
+ "files": {
+  "builtin-completion": {
+   "summary": {
+    "cases": 51,
+    "bashkit_pass": 17,
+    "bashkit_pass_pct": 33.3,
+    "bash_pass": 51,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 17,
+    "pass_rate": 33.3
+   },
+   "missed": [
+    {
+     "case": 0,
+     "name": "complete with no args and complete -p both print completion spec",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 1,
+     "name": "complete -F f is usage error",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 2,
+     "name": "complete with nonexistent function",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 3,
+     "name": "complete with no action",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 5,
+     "name": "Invalid syntax",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 6,
+     "name": "how compgen calls completion functions",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 7,
+     "name": "complete -o -F (git)",
+     "class": "interactive",
+     "on": "status"
+    },
+    {
+     "case": 8,
+     "name": "compopt with invalid syntax",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 9,
+     "name": "compopt fails when not in completion function",
+     "class": "interactive",
+     "on": "status"
+    },
+    {
+     "case": 14,
+     "name": "compgen -v P",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 15,
+     "name": "compgen -e with global/local exported vars",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 18,
+     "name": "compgen -e P",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 19,
+     "name": "compgen with actions: function / variable / file",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 20,
+     "name": "compgen with actions: alias, setopt",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 21,
+     "name": "compgen with actions: shopt",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 22,
+     "name": "compgen with action and suffix: helptopic",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 25,
+     "name": "compgen -A user",
+     "class": "interactive",
+     "on": "status"
+    },
+    {
+     "case": 28,
+     "name": "compgen -A command completes builtins and keywords",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 29,
+     "name": "compgen -k shows the same keywords as bash",
+     "class": "processes",
+     "on": "stdout"
+    },
+    {
+     "case": 31,
+     "name": "compgen -k completes reserved shell keywords",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 32,
+     "name": "-o filenames and -o nospace have no effect with compgen",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 33,
+     "name": "-o plusdirs and -o dirnames with compgen",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 34,
+     "name": "compgen -o default completes files and dirs",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 35,
+     "name": "compgen doesn't respect -X for user-defined functions",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 36,
+     "name": "compgen -W words -X filter",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 37,
+     "name": "compgen -f -X filter -- $cur",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 39,
+     "name": "compgen -W 'one two three'",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 40,
+     "name": "compgen -W evaluates code in $()",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 41,
+     "name": "compgen -W uses IFS, and delimiters are escaped with \\",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 42,
+     "name": "Parse errors for compgen -W and complete -W",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 43,
+     "name": "Runtime errors for compgen -W",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 46,
+     "name": "compgen -A builtin",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 47,
+     "name": "complete -C vs. compgen -C",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 50,
+     "name": "compgen -F with scalar COMPREPLY",
+     "class": "interactive",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "array": {
+   "summary": {
+    "cases": 78,
+    "bashkit_pass": 53,
+    "bashkit_pass_pct": 67.9,
+    "bash_pass": 78,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 53,
+    "pass_rate": 67.9
+   },
+   "missed": [
+    {
+     "case": 3,
+     "name": "space before ( in array initialization",
+     "class": "behavior",
+     "on": "status"
+    },
+    {
+     "case": 5,
+     "name": "array with invalid token",
+     "class": "behavior",
+     "on": "status"
+    },
+    {
+     "case": 9,
+     "name": "Negative index",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 10,
+     "name": "Negative index and sparse array",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 11,
+     "name": "Negative index and sparse array",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 12,
+     "name": "Length after unset",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 15,
+     "name": "Retrieve index that is a command sub",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 18,
+     "name": "${!a[1]} is named ref in bash",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 20,
+     "name": "All elements unquoted",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 22,
+     "name": "$*",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 25,
+     "name": "Exporting array doesn't do anything, not even first element",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 27,
+     "name": "Arrays can't be used as env bindings",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 28,
+     "name": "Associative arrays can't be used as env bindings either",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 32,
+     "name": "Set array item to array",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 33,
+     "name": "Slice of array with [@]",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 34,
+     "name": "Negative slice begin",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 36,
+     "name": "Slice with arithmetic",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 59,
+     "name": "Slice of sparse array with [@]",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 63,
+     "name": "Dynamic parsing of LHS a[$code]=value",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 65,
+     "name": "Is element set?  test -v a[i]",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 67,
+     "name": "test -v a[i] with arith expressions",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 71,
+     "name": "Regression: Negative out-of-range index in [[ -v a[index] ]]",
+     "class": "behavior",
+     "on": "stderr"
+    },
+    {
+     "case": 73,
+     "name": "Regression: unset a[-2]: out-of-bound negative index should cause error",
+     "class": "behavior",
+     "on": "stderr"
+    },
+    {
+     "case": 75,
+     "name": "Regression: Array length after unset",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 77,
+     "name": "Regression: silent out-of-bound negative index in ${a[-2]} and $((a[-2]))",
+     "class": "behavior",
+     "on": "stderr"
+    }
+   ],
+   "bash_fails": []
+  },
+  "prompt": {
+   "summary": {
+    "cases": 33,
+    "bashkit_pass": 4,
+    "bashkit_pass_pct": 12.1,
+    "bash_pass": 29,
+    "bash_pass_pct": 87.9,
+    "bashkit_pass_of_bash": 4,
+    "pass_rate": 13.8
+   },
+   "missed": [
+    {
+     "case": 2,
+     "name": "literal escapes",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 4,
+     "name": "PS1 evaluation order",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 5,
+     "name": "PS1 evaluation order 2",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 6,
+     "name": "\\1004",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 7,
+     "name": "\\001 octal literals are supported",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 8,
+     "name": "\\555 is beyond max octal byte of \\377 and wrapped to m",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 11,
+     "name": "Escaped backslash",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 12,
+     "name": "\\0001 octal literals are not supported",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 13,
+     "name": "\\u0001 unicode literals not supported",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 15,
+     "name": "hostname",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 16,
+     "name": "username",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 17,
+     "name": "current working dir",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 18,
+     "name": "\\W is basename of working dir",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 19,
+     "name": "\\t for 24h time (HH:MM:SS)",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 20,
+     "name": "\\T for 12h time (HH:MM:SS)",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 21,
+     "name": "\\@ for 12h time (HH:MM AM/PM)",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 22,
+     "name": "\\A for 24h time (HH:MM)",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 23,
+     "name": "\\d for date",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 24,
+     "name": "\\D{%H:%M} for strftime",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 25,
+     "name": "\\D{} for locale specific strftime",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 26,
+     "name": "\\s for shell, \\v for major.minor version, and \\V for full version",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 27,
+     "name": "\\j for number of jobs",
+     "class": "signals",
+     "on": "stdout"
+    },
+    {
+     "case": 28,
+     "name": "\\l for TTY device basename",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 29,
+     "name": "\\! for history number",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 30,
+     "name": "\\# for command number",
+     "class": "interactive",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": [
+    0,
+    1,
+    3,
+    32
+   ]
+  },
+  "builtin-trap-bash": {
+   "summary": {
+    "cases": 23,
+    "bashkit_pass": 4,
+    "bashkit_pass_pct": 17.4,
+    "bash_pass": 23,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 4,
+    "pass_rate": 17.4
+   },
+   "missed": [
+    {
+     "case": 3,
+     "name": "trap DEBUG ignores $?",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 4,
+     "name": "but trap DEBUG respects errexit",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 5,
+     "name": "trap DEBUG with 'return'",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 6,
+     "name": "trap DEBUG with 'exit'",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 7,
+     "name": "trap DEBUG with non-compound commands",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 8,
+     "name": "trap DEBUG and control flow",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 9,
+     "name": "trap DEBUG and command sub / subshell",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 10,
+     "name": "trap DEBUG not run in forked interpreter for first pipeline part",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 11,
+     "name": "One 'echo' in first pipeline part - why does bash behave differently from case above?",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 12,
+     "name": "trap DEBUG and pipeline (lastpipe difference)",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 13,
+     "name": "trap DEBUG function call",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 14,
+     "name": "trap DEBUG case",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 15,
+     "name": "trap DEBUG for each",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 16,
+     "name": "trap DEBUG for expr",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 17,
+     "name": "trap DEBUG if while",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 19,
+     "name": "Compare trap DEBUG vs. trap ERR",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 20,
+     "name": "Combine DEBUG trap and USR1 trap",
+     "class": "signals",
+     "on": "stdout"
+    },
+    {
+     "case": 21,
+     "name": "Combine ERR trap and USR1 trap",
+     "class": "signals",
+     "on": "stdout"
+    },
+    {
+     "case": 22,
+     "name": "Combine DEBUG trap and ERR trap",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "var-ref": {
+   "summary": {
+    "cases": 31,
+    "bashkit_pass": 15,
+    "bashkit_pass_pct": 48.4,
+    "bash_pass": 30,
+    "bash_pass_pct": 96.8,
+    "bashkit_pass_of_bash": 15,
+    "pass_rate": 50.0
+   },
+   "missed": [
+    {
+     "case": 2,
+     "name": "${!undef:-}",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 4,
+     "name": "${!a[@]-'default'} is legal but fails with more than one element",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 7,
+     "name": "var ref: 1, @, *",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 16,
+     "name": "var ref TO array var",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 17,
+     "name": "var ref TO array var, with subscripts",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 18,
+     "name": "var ref TO assoc array a[key]",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 19,
+     "name": "var ref TO array with arbitrary subscripts",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 21,
+     "name": "Indirect expansion TO fancy expansion features bash disallows",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 22,
+     "name": "Bad var ref",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 23,
+     "name": "Bad var ref 2",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 26,
+     "name": "Var Ref Code Injection $(tee PWNED)",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 27,
+     "name": "${!array_ref:-set} and ${!array_ref:=assign}",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 28,
+     "name": "Array indirect expansion with suffix operators",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 29,
+     "name": "Array indirect expansion with replacements",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 30,
+     "name": "Array indirect expansion with @? conversion",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": [
+    12
+   ]
+  },
+  "builtin-fc": {
+   "summary": {
+    "cases": 14,
+    "bashkit_pass": 2,
+    "bashkit_pass_pct": 14.3,
+    "bash_pass": 14,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 2,
+    "pass_rate": 14.3
+   },
+   "missed": [
+    {
+     "case": 0,
+     "name": "fc -l lists history commands",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 1,
+     "name": "fc -ln lists history commands without numbers",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 2,
+     "name": "fc -lr lists history commands in reverse order",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 3,
+     "name": "fc -lnr lists history commands without numbers in reverse order",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 4,
+     "name": "fc -l lists history commands with default page size",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 5,
+     "name": "fc -l [first] where first is an index",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 6,
+     "name": "fc -l [first] where first is an offset from current command",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 7,
+     "name": "fc -l [first] [last] where first and last are indexes",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 8,
+     "name": "fc -l [first] [last] where first and last are offsets from current command",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 9,
+     "name": "fc -l [first] [last] where first and last are reversed indexes",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 10,
+     "name": "fc -lr [first] [last] where first and last are reversed indexes does not undo reverse",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 12,
+     "name": "fc errors out on too many args with strict_arg_parse",
+     "class": "interactive",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "builtin-history": {
+   "summary": {
+    "cases": 17,
+    "bashkit_pass": 5,
+    "bashkit_pass_pct": 29.4,
+    "bash_pass": 17,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 5,
+    "pass_rate": 29.4
+   },
+   "missed": [
+    {
+     "case": 0,
+     "name": "history -a",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 1,
+     "name": "history -w writes out the in-memory history to the history file",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 2,
+     "name": "history -r reads from the history file, and appends it to the current history",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 3,
+     "name": "history -n reads *new* commands from the history file, and appends them to the current history",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 4,
+     "name": "history -c clears in-memory history",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 6,
+     "name": "history -d to delete history from end",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 9,
+     "name": "HISTFILE set to array",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 11,
+     "name": "history usage",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 12,
+     "name": "HISTSIZE shrinks the in-memory history when changed",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 13,
+     "name": "HISTFILESIZE shrinks the history file when changed",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 14,
+     "name": "recording history can be toggled with set -o/+o history",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 16,
+     "name": "shopt histappend - osh ignores shopt and appends, bash sometimes overwrites",
+     "class": "interactive",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "builtin-type-bash": {
+   "summary": {
+    "cases": 31,
+    "bashkit_pass": 19,
+    "bashkit_pass_pct": 61.3,
+    "bash_pass": 31,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 19,
+    "pass_rate": 61.3
+   },
+   "missed": [
+    {
+     "case": 1,
+     "name": "type -t -> alias",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 6,
+     "name": "type -t doesn't find non-executable (like command -v)",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 9,
+     "name": "type -a -P gives multiple files",
+     "class": "host",
+     "on": "stdout"
+    },
+    {
+     "case": 14,
+     "name": "type -P builtin -> not a file but file found",
+     "class": "host",
+     "on": "stdout"
+    },
+    {
+     "case": 16,
+     "name": "type -f builtin -> function and file exists",
+     "class": "host",
+     "on": "stdout"
+    },
+    {
+     "case": 19,
+     "name": "type -a -> alias; prints alias definition",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 20,
+     "name": "type -ap -> alias",
+     "class": "behavior",
+     "on": "status"
+    },
+    {
+     "case": 24,
+     "name": "type -a -> file",
+     "class": "host",
+     "on": "stdout"
+    },
+    {
+     "case": 25,
+     "name": "type -ap -> file; abbreviated",
+     "class": "host",
+     "on": "stdout"
+    },
+    {
+     "case": 26,
+     "name": "type -a -> builtin and file",
+     "class": "host",
+     "on": "stdout"
+    },
+    {
+     "case": 27,
+     "name": "type -a -> builtin and file and shell function",
+     "class": "host",
+     "on": "stdout"
+    },
+    {
+     "case": 28,
+     "name": "type -ap -> builtin and file; doesn't print builtin or function",
+     "class": "host",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "interactive": {
+   "summary": {
+    "cases": 18,
+    "bashkit_pass": 7,
+    "bashkit_pass_pct": 38.9,
+    "bash_pass": 18,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 7,
+    "pass_rate": 38.9
+   },
+   "missed": [
+    {
+     "case": 0,
+     "name": "'exit' in oshrc (regression)",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 2,
+     "name": "interactive shell loads rcfile (when combined with -c)",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 7,
+     "name": "interactive shell runs PROMPT_COMMAND after each command",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 10,
+     "name": "Error message with bad oshrc file (currently ignored)",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 11,
+     "name": "PROMPT_COMMAND can see $?, like bash",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 12,
+     "name": "PROMPT_COMMAND that writes to BASH_REMATCH",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 13,
+     "name": "NO ASSERTIONS: Are startup files sourced before or after job control?",
+     "class": "processes",
+     "on": "status"
+    },
+    {
+     "case": 14,
+     "name": "HISTFILE is written in interactive shell",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 15,
+     "name": "HISTFILE default value",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 16,
+     "name": "HISTFILE=my-history loads history from that file, and writes back to it",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 17,
+     "name": "HISTFILE=my-history with history -a",
+     "class": "interactive",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "sh-options": {
+   "summary": {
+    "cases": 39,
+    "bashkit_pass": 28,
+    "bashkit_pass_pct": 71.8,
+    "bash_pass": 39,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 28,
+    "pass_rate": 71.8
+   },
+   "missed": [
+    {
+     "case": 1,
+     "name": "$- with pipefail",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 3,
+     "name": "$- with interactive shell",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 6,
+     "name": "pass shopt options like sh -O nullglob",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 8,
+     "name": "vi and emacs are mutually exclusive",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 9,
+     "name": "interactive shell starts with emacs mode on",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 17,
+     "name": "shopt with no flags prints options",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 20,
+     "name": "noclobber on <>",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 22,
+     "name": "noclobber on &> >",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 33,
+     "name": "stubbed out bash options",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 35,
+     "name": "Unimplemented options - print, query, set, unset",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 36,
+     "name": "Unimplemented options - OSH shopt -s ignore_shopt_not_impl",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "vars-special": {
+   "summary": {
+    "cases": 42,
+    "bashkit_pass": 29,
+    "bashkit_pass_pct": 69.0,
+    "bash_pass": 40,
+    "bash_pass_pct": 95.2,
+    "bashkit_pass_of_bash": 29,
+    "pass_rate": 72.5
+   },
+   "missed": [
+    {
+     "case": 1,
+     "name": "$PWD is not only set, but exported",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 2,
+     "name": "$PATH is set if unset at startup",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 3,
+     "name": "$HOME is NOT set",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 4,
+     "name": "Vars set interactively only: $HISTFILE",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 5,
+     "name": "Some vars are set, even without startup file, or env: PATH, PWD",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 6,
+     "name": "UID EUID PPID can't be changed",
+     "class": "processes",
+     "on": "stdout"
+    },
+    {
+     "case": 13,
+     "name": "$BASHPID DOES change with subshell and command sub",
+     "class": "processes",
+     "on": "stdout"
+    },
+    {
+     "case": 25,
+     "name": "$LINENO in ((",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 28,
+     "name": "$LINENO in for (( loop",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 37,
+     "name": "$_ with assignments, arrays, etc.",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 39,
+     "name": "$_ is not undefined on first use",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": [
+    34,
+    40
+   ]
+  },
+  "array-assign": {
+   "summary": {
+    "cases": 11,
+    "bashkit_pass": 1,
+    "bashkit_pass_pct": 9.1,
+    "bash_pass": 11,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 1,
+    "pass_rate": 9.1
+   },
+   "missed": [
+    {
+     "case": 1,
+     "name": "Indexed LHS with spaces",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 2,
+     "name": "Nested a[i[0]]=0",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 3,
+     "name": "Multiple LHS array words",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 4,
+     "name": "LHS array is protected with shopt -s eval_unsafe_arith, e.g. 'a[$(echo 2)]'",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 5,
+     "name": "file named a[ is  not executed",
+     "class": "host",
+     "on": "stdout"
+    },
+    {
+     "case": 6,
+     "name": "More fragments like a[  a[5  a[5 +  a[5 + 3]",
+     "class": "host",
+     "on": "stdout"
+    },
+    {
+     "case": 7,
+     "name": "Are quotes allowed?",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 8,
+     "name": "Tricky parsing - a[ a[0]=1 ]=X  a[ a[0]+=1 ]+=X",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 9,
+     "name": "argv.py a[1 + 2]=",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 10,
+     "name": "declare builtin doesn't allow spaces",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "array-sparse": {
+   "summary": {
+    "cases": 40,
+    "bashkit_pass": 30,
+    "bashkit_pass_pct": 75.0,
+    "bash_pass": 40,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 30,
+    "pass_rate": 75.0
+   },
+   "missed": [
+    {
+     "case": 11,
+     "name": "unset -v a[i] with out-of-bound negative index",
+     "class": "behavior",
+     "on": "stderr"
+    },
+    {
+     "case": 12,
+     "name": "unset -v a[i] for max index",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 14,
+     "name": "[[ -v a[i] ]] with invalid negative index",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 16,
+     "name": "((sp[i])) and ((sp[i]++)) with invalid negative index",
+     "class": "behavior",
+     "on": "stderr"
+    },
+    {
+     "case": 18,
+     "name": "${sp[i]} with negative invalid index",
+     "class": "behavior",
+     "on": "stderr"
+    },
+    {
+     "case": 19,
+     "name": "${a[@]:offset:length}",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 25,
+     "name": "${a[@]@P}, ${a[@]@Q}, and ${a[@]@a}",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 27,
+     "name": "${a-}",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 28,
+     "name": "${!a[0]}",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 31,
+     "name": "compgen -F _set_COMPREPLY",
+     "class": "interactive",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "builtin-bind": {
+   "summary": {
+    "cases": 9,
+    "bashkit_pass": 0,
+    "bashkit_pass_pct": 0.0,
+    "bash_pass": 9,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 0,
+    "pass_rate": 0.0
+   },
+   "missed": [
+    {
+     "case": 0,
+     "name": "bind -l should report readline functions",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 1,
+     "name": "bind -p -P to print function names and key bindings",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 2,
+     "name": "bind -s -S accepted",
+     "class": "interactive",
+     "on": "status"
+    },
+    {
+     "case": 3,
+     "name": "bind -v -V accepted",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 4,
+     "name": "bind -q",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 5,
+     "name": "bind -X",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 6,
+     "name": "bind -m with bind -x/-X",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 7,
+     "name": "bind -r",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 8,
+     "name": "bind -r of bind -x commands",
+     "class": "interactive",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "builtin-read": {
+   "summary": {
+    "cases": 64,
+    "bashkit_pass": 55,
+    "bashkit_pass_pct": 85.9,
+    "bash_pass": 64,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 55,
+    "pass_rate": 85.9
+   },
+   "missed": [
+    {
+     "case": 33,
+     "name": "read -t 0 tests if input is available",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 36,
+     "name": "read -u",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 38,
+     "name": "read -u -s",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 39,
+     "name": "read -u 3 -d 5",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 40,
+     "name": "read -u 3 -d b -N 6",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 41,
+     "name": "read -N doesn't respect delimiter, while read -n does",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 48,
+     "name": "mapfile from directory (bash doesn't handle errors)",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 54,
+     "name": "empty input and splitting",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 63,
+     "name": "read bash bug",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "builtin-trap": {
+   "summary": {
+    "cases": 33,
+    "bashkit_pass": 24,
+    "bashkit_pass_pct": 72.7,
+    "bash_pass": 33,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 24,
+    "pass_rate": 72.7
+   },
+   "missed": [
+    {
+     "case": 0,
+     "name": "traps are not active inside subshells $() ()  trap | cat",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 17,
+     "name": "trap EXIT calling exit",
+     "class": "behavior",
+     "on": "status"
+    },
+    {
+     "case": 20,
+     "name": "trap EXIT with PARSE error and explicit exit",
+     "class": "behavior",
+     "on": "status"
+    },
+    {
+     "case": 24,
+     "name": "exit codes for traps are isolated",
+     "class": "signals",
+     "on": "stdout"
+    },
+    {
+     "case": 25,
+     "name": "traps are cleared in subshell (started with &)",
+     "class": "signals",
+     "on": "stdout"
+    },
+    {
+     "case": 26,
+     "name": "trap USR1, sleep, SIGINT: non-interactively",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 28,
+     "name": "trap EXIT, sleep, SIGINT: non-interactively",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 29,
+     "name": "Remove trap with an unsigned integer",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 32,
+     "name": "trap with command.NoOp - check internal invariant",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "introspect": {
+   "summary": {
+    "cases": 13,
+    "bashkit_pass": 3,
+    "bashkit_pass_pct": 23.1,
+    "bash_pass": 12,
+    "bash_pass_pct": 92.3,
+    "bashkit_pass_of_bash": 3,
+    "pass_rate": 25.0
+   },
+   "missed": [
+    {
+     "case": 0,
+     "name": "${FUNCNAME[@]} array",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 1,
+     "name": "FUNCNAME with source (scalar or array)",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 2,
+     "name": "BASH_SOURCE and BASH_LINENO scalar or array (e.g. for virtualenv)",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 6,
+     "name": "$((BASH_LINENO)) (scalar form in arith)",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 7,
+     "name": "${BASH_SOURCE[@]} with source and function name",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 9,
+     "name": "${BASH_LINENO[@]} is a stack of line numbers for function calls",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 10,
+     "name": "Locations with temp frame",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 11,
+     "name": "Locations when sourcing",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 12,
+     "name": "Sourcing inside function grows the debug stack",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": [
+    8
+   ]
+  },
+  "nul-bytes": {
+   "summary": {
+    "cases": 16,
+    "bashkit_pass": 7,
+    "bashkit_pass_pct": 43.8,
+    "bash_pass": 16,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 7,
+    "pass_rate": 43.8
+   },
+   "missed": [
+    {
+     "case": 1,
+     "name": "printf - literal NUL in format string",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 3,
+     "name": "printf - NUL byte in value (OSH and zsh agree)",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 4,
+     "name": "NUL bytes with echo $'\\0' (OSH and zsh agree)",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 6,
+     "name": "NUL bytes with test -n",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 7,
+     "name": "NUL bytes with test -f",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 8,
+     "name": "NUL bytes with ${#s} (OSH and zsh agree)",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 10,
+     "name": "Compare \\x00 byte versus \\x01 byte - read builtin",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 11,
+     "name": "Compare \\x00 byte versus \\x01 byte - read -n",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 12,
+     "name": "Compare \\x00 byte versus \\x01 byte - mapfile builtin",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "redirect-multi": {
+   "summary": {
+    "cases": 13,
+    "bashkit_pass": 4,
+    "bashkit_pass_pct": 30.8,
+    "bash_pass": 13,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 4,
+    "pass_rate": 30.8
+   },
+   "missed": [
+    {
+     "case": 0,
+     "name": "File redirects with glob args (bash and zsh only)",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 3,
+     "name": "File redirect without matching any file, with failglob",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 6,
+     "name": "File redirect to $var with glob char",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 7,
+     "name": "File redirect that globs to more than one file (bash and zsh only)",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 8,
+     "name": "File redirect with extended glob",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 9,
+     "name": "Extended glob that doesn't match anything",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 10,
+     "name": "Non-file redirects don't respect glob args (we differe from bash)",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 11,
+     "name": "Redirect with brace expansion isn't allowed",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 12,
+     "name": "File redirects have word splitting too!",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "ysh-builtin-private": {
+   "summary": {
+    "cases": 23,
+    "bashkit_pass": 13,
+    "bashkit_pass_pct": 56.5,
+    "bash_pass": 22,
+    "bash_pass_pct": 95.7,
+    "bashkit_pass_of_bash": 13,
+    "pass_rate": 59.1
+   },
+   "missed": [
+    {
+     "case": 9,
+     "name": "builtin sleep behaves like external sleep",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 12,
+     "name": "builtin cat",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 13,
+     "name": "builtin cat usage",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 14,
+     "name": "builtin cat non nonexistent file",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 15,
+     "name": "builtin cat accept - for stdin",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 16,
+     "name": "builtin rm: usage, removing files",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 17,
+     "name": "builtin rm -f - ignores arguments that don't exist",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 20,
+     "name": "builtin rm always fails on directories (regardless of -f)",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 22,
+     "name": "compgen -A builtin doesn't find private builtins",
+     "class": "interactive",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": [
+    18
+   ]
+  },
+  "arith": {
+   "summary": {
+    "cases": 74,
+    "bashkit_pass": 66,
+    "bashkit_pass_pct": 89.2,
+    "bash_pass": 74,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 66,
+    "pass_rate": 89.2
+   },
+   "missed": [
+    {
+     "case": 0,
+     "name": "Side Effect in Array Indexing",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 8,
+     "name": "Arith sub within arith sub",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 9,
+     "name": "Backticks within arith sub",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 13,
+     "name": "Integer constant validation",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 20,
+     "name": "Increment undefined variables with nounset",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 40,
+     "name": "nounset with arithmetic",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 50,
+     "name": "Comment not allowed in the middle of multiline arithmetic",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 70,
+     "name": "undef[0] with nounset",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "array-assoc": {
+   "summary": {
+    "cases": 42,
+    "bashkit_pass": 28,
+    "bashkit_pass_pct": 66.7,
+    "bash_pass": 36,
+    "bash_pass_pct": 85.7,
+    "bashkit_pass_of_bash": 28,
+    "pass_rate": 77.8
+   },
+   "missed": [
+    {
+     "case": 15,
+     "name": "lookup with unquoted $key and quoted \"$i$i\"",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 19,
+     "name": "Indexed array as key of associative array coerces to string (without shopt -s strict_array)",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 30,
+     "name": "unset -v and assoc array",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 31,
+     "name": "nameref and assoc array",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 32,
+     "name": "${!ref} and assoc array",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 33,
+     "name": "printf -v and assoc array",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 36,
+     "name": "test -v assoc[key]",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 37,
+     "name": "test -v with dynamic parsing",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": [
+    1,
+    2,
+    21,
+    26,
+    34,
+    41
+   ]
+  },
+  "assign-extended": {
+   "summary": {
+    "cases": 39,
+    "bashkit_pass": 27,
+    "bashkit_pass_pct": 69.2,
+    "bash_pass": 35,
+    "bash_pass_pct": 89.7,
+    "bashkit_pass_of_bash": 27,
+    "pass_rate": 77.1
+   },
+   "missed": [
+    {
+     "case": 4,
+     "name": "declare -F with shopt -s extdebug prints more info",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 5,
+     "name": "declare -F with shopt -s extdebug and main file",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 18,
+     "name": "ble.sh: eval -- \"$(declare -p var arr)\"",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 20,
+     "name": "eval -- \"$(declare -p arr)\" (restore arrays w/ unset elements)",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 21,
+     "name": "declare -p UNDEF (and typeset) -- prints something to stderr",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 29,
+     "name": "syntax error in array assignment",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 31,
+     "name": "myvar=typeset (another form of dynamic assignment)",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 38,
+     "name": "unset and shell funcs",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": [
+    7,
+    8,
+    10,
+    11
+   ]
+  },
+  "bugs": {
+   "summary": {
+    "cases": 29,
+    "bashkit_pass": 21,
+    "bashkit_pass_pct": 72.4,
+    "bash_pass": 29,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 21,
+    "pass_rate": 72.4
+   },
+   "missed": [
+    {
+     "case": 5,
+     "name": "assign readonly -- multiple lines -- set -o posix",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 9,
+     "name": "Function names",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 10,
+     "name": "file with NUL byte",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 12,
+     "name": "'echo' and printf fail on writing to full disk",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 13,
+     "name": "other builtins fail on writing to full disk",
+     "class": "processes",
+     "on": "stdout"
+    },
+    {
+     "case": 19,
+     "name": "command execution $(echo 42 | tee PWNED) not allowed",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 21,
+     "name": "unset doesn't allow command execution",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 27,
+     "name": "Crash after changing $[] to be alias of $(( ))",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "var-op-test": {
+   "summary": {
+    "cases": 37,
+    "bashkit_pass": 29,
+    "bashkit_pass_pct": 78.4,
+    "bash_pass": 37,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 29,
+    "pass_rate": 78.4
+   },
+   "missed": [
+    {
+     "case": 15,
+     "name": "Nix idiom ${!hooksSlice+\"${!hooksSlice}\"} - was workaround for obsolete bash 4.3 bug",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 17,
+     "name": "array and - and +",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 20,
+     "name": "$@ (\"\" \"\") and - and +",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 21,
+     "name": "$* (\"\" \"\") and - and + (IFS=)",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 32,
+     "name": "op-test for ${a} and ${a[0]}",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 34,
+     "name": "op-test for ${!array} with array=\"a\" and array=\"a[0]\"",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 35,
+     "name": "op-test for ${!array} with array=\"a[@]\" or array=\"a[*]\"",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 36,
+     "name": "op-test for unquoted ${a[*]:-empty} with IFS=",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "alias": {
+   "summary": {
+    "cases": 48,
+    "bashkit_pass": 41,
+    "bashkit_pass_pct": 85.4,
+    "bash_pass": 48,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 41,
+    "pass_rate": 85.4
+   },
+   "missed": [
+    {
+     "case": 2,
+     "name": "define and use alias on a single line",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 23,
+     "name": "Loop split across alias in another way",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 24,
+     "name": "Loop split across both iterative and recursive aliases",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 30,
+     "name": "Alias can be defined and used on a single line",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 35,
+     "name": "alias for left brace",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 36,
+     "name": "alias for left paren",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 39,
+     "name": "here doc inside alias",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "array-literal": {
+   "summary": {
+    "cases": 19,
+    "bashkit_pass": 12,
+    "bashkit_pass_pct": 63.2,
+    "bash_pass": 19,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 12,
+    "pass_rate": 63.2
+   },
+   "missed": [
+    {
+     "case": 0,
+     "name": "Tilde expansions in RHS of [k]=v (BashArray)",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 1,
+     "name": "Tilde expansions in RHS of [k]=v (BashAssoc)",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 6,
+     "name": "append to element (BashAssoc)",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 7,
+     "name": "non-index forms of element (BashAssoc)",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 8,
+     "name": "Evaluation order (1)",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 9,
+     "name": "Evaluation order (2)",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 10,
+     "name": "Evaluation order (3)",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "background": {
+   "summary": {
+    "cases": 27,
+    "bashkit_pass": 20,
+    "bashkit_pass_pct": 74.1,
+    "bash_pass": 27,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 20,
+    "pass_rate": 74.1
+   },
+   "missed": [
+    {
+     "case": 1,
+     "name": "wait -n with arguments - arguments are respected",
+     "class": "processes",
+     "on": "stdout"
+    },
+    {
+     "case": 5,
+     "name": "wait with invalid arg",
+     "class": "processes",
+     "on": "status"
+    },
+    {
+     "case": 7,
+     "name": "wait for N parallel jobs and check failure",
+     "class": "processes",
+     "on": "stdout"
+    },
+    {
+     "case": 11,
+     "name": "Start background pipeline, wait %job_spec",
+     "class": "processes",
+     "on": "stdout"
+    },
+    {
+     "case": 12,
+     "name": "Wait for job and PIPESTATUS",
+     "class": "processes",
+     "on": "stdout"
+    },
+    {
+     "case": 13,
+     "name": "Wait for job and PIPESTATUS - cat",
+     "class": "processes",
+     "on": "stdout"
+    },
+    {
+     "case": 26,
+     "name": "Signal message for killed background job",
+     "class": "signals",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "ble-idioms": {
+   "summary": {
+    "cases": 26,
+    "bashkit_pass": 19,
+    "bashkit_pass_pct": 73.1,
+    "bash_pass": 26,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 19,
+    "pass_rate": 73.1
+   },
+   "missed": [
+    {
+     "case": 5,
+     "name": "recursive arith: recursion",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 9,
+     "name": "dynamic arith varname: copy/add",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 10,
+     "name": "is-array with ${var@a}",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 12,
+     "name": "shift unshift reverse",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 13,
+     "name": "shopt -u expand_aliases and eval",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 19,
+     "name": "Issue #1069 [53] BUG: a[1 + 1]=2, etc. fails",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 20,
+     "name": "Issue #1069 [53] - LHS array parsing a[1 + 2]=3 (see spec/array-assign for more)",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "builtin-bracket": {
+   "summary": {
+    "cases": 52,
+    "bashkit_pass": 43,
+    "bashkit_pass_pct": 82.7,
+    "bash_pass": 50,
+    "bash_pass_pct": 96.2,
+    "bashkit_pass_of_bash": 43,
+    "pass_rate": 86.0
+   },
+   "missed": [
+    {
+     "case": 27,
+     "name": "-k for sticky bit",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 36,
+     "name": "-G and -O for effective user ID and group ID",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 37,
+     "name": "-u for setuid, -g too",
+     "class": "host",
+     "on": "stdout"
+    },
+    {
+     "case": 38,
+     "name": "-v to test variable (bash)",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 39,
+     "name": "test -o for options",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 41,
+     "name": "-ef",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 44,
+     "name": "test -c",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": [
+    25,
+    26
+   ]
+  },
+  "command_": {
+   "summary": {
+    "cases": 16,
+    "bashkit_pass": 9,
+    "bashkit_pass_pct": 56.2,
+    "bash_pass": 16,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 9,
+    "pass_rate": 56.2
+   },
+   "missed": [
+    {
+     "case": 3,
+     "name": "Name too long",
+     "class": "behavior",
+     "on": "status"
+    },
+    {
+     "case": 8,
+     "name": "$PATH lookup",
+     "class": "host",
+     "on": "stdout"
+    },
+    {
+     "case": 9,
+     "name": "filling $PATH cache, then insert the same command earlier in cache",
+     "class": "host",
+     "on": "stdout"
+    },
+    {
+     "case": 10,
+     "name": "filling $PATH cache, then deleting command",
+     "class": "host",
+     "on": "stdout"
+    },
+    {
+     "case": 11,
+     "name": "Non-executable on $PATH",
+     "class": "host",
+     "on": "stdout"
+    },
+    {
+     "case": 12,
+     "name": "hash without args prints the cache",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 13,
+     "name": "hash with args",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "redirect": {
+   "summary": {
+    "cases": 41,
+    "bashkit_pass": 34,
+    "bashkit_pass_pct": 82.9,
+    "bash_pass": 41,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 34,
+    "pass_rate": 82.9
+   },
+   "missed": [
+    {
+     "case": 0,
+     "name": ">& and <& are the same",
+     "class": "behavior",
+     "on": "stderr"
+    },
+    {
+     "case": 23,
+     "name": "&> redirects stdout and stderr",
+     "class": "processes",
+     "on": "stdout"
+    },
+    {
+     "case": 24,
+     "name": ">&word redirects stdout and stderr when word is not a number or -",
+     "class": "processes",
+     "on": "stdout"
+    },
+    {
+     "case": 26,
+     "name": "1>&2- to move file descriptor",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 27,
+     "name": "1>&2- (Bash bug: fail to restore closed fd)",
+     "class": "processes",
+     "on": "stdout"
+    },
+    {
+     "case": 29,
+     "name": "<> for read/write named pipes",
+     "class": "host",
+     "on": "stdout"
+    },
+    {
+     "case": 30,
+     "name": "&>> appends stdout and stderr",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "sh-usage": {
+   "summary": {
+    "cases": 24,
+    "bashkit_pass": 17,
+    "bashkit_pass_pct": 70.8,
+    "bash_pass": 24,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 17,
+    "pass_rate": 70.8
+   },
+   "missed": [
+    {
+     "case": 2,
+     "name": "sh +c is accepted",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 4,
+     "name": "sh - and sh -- stop flag processing",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 15,
+     "name": "Set LC_ALL LC_CTYPE LC_COLLATE LANG - affects glob ?",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 16,
+     "name": "LC_CTYPE=invalid",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 17,
+     "name": "sh -c -- 'echo hi' does not run anything (#2637)",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 22,
+     "name": "'sh -c -z' does not try to run -z",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 23,
+     "name": "sh -c -x 'echo hi' - order is reversed",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "builtin-process": {
+   "summary": {
+    "cases": 26,
+    "bashkit_pass": 19,
+    "bashkit_pass_pct": 73.1,
+    "bash_pass": 24,
+    "bash_pass_pct": 92.3,
+    "bashkit_pass_of_bash": 18,
+    "pass_rate": 75.0
+   },
+   "missed": [
+    {
+     "case": 3,
+     "name": "exec builtin accepts --",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 4,
+     "name": "exec -- 2>&1",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 5,
+     "name": "exec -a sets argv[0]",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 20,
+     "name": "arg that would overflow 64 bits is detected",
+     "class": "processes",
+     "on": "stdout"
+    },
+    {
+     "case": 21,
+     "name": "ulimit -f 1 prevents files larger 512 bytes",
+     "class": "processes",
+     "on": "stdout"
+    },
+    {
+     "case": 25,
+     "name": "ulimit -n limits file descriptors",
+     "class": "processes",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": [
+    9,
+    22
+   ]
+  },
+  "builtin-vars": {
+   "summary": {
+    "cases": 41,
+    "bashkit_pass": 33,
+    "bashkit_pass_pct": 80.5,
+    "bash_pass": 39,
+    "bash_pass_pct": 95.1,
+    "bashkit_pass_of_bash": 33,
+    "pass_rate": 84.6
+   },
+   "missed": [
+    {
+     "case": 16,
+     "name": "Make an existing local variable readonly",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 17,
+     "name": "assign to readonly variable - errexit",
+     "class": "behavior",
+     "on": "status"
+    },
+    {
+     "case": 22,
+     "name": "Unset a function without -f",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 33,
+     "name": "unset -v assoc (related to issue #661)",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 35,
+     "name": "Unset array member with dynamic parsing",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 39,
+     "name": "unset a[-1] (bf.bash regression)",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": [
+    26,
+    32
+   ]
+  },
+  "here-doc": {
+   "summary": {
+    "cases": 36,
+    "bashkit_pass": 30,
+    "bashkit_pass_pct": 83.3,
+    "bash_pass": 36,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 30,
+    "pass_rate": 83.3
+   },
+   "missed": [
+    {
+     "case": 3,
+     "name": "Here doc from another input file descriptor",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 4,
+     "name": "Multiple here docs with different descriptors",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 11,
+     "name": "Here doc line continuation",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 15,
+     "name": "Here doc with line continuation, then pipe.  Syntax error.",
+     "class": "behavior",
+     "on": "status"
+    },
+    {
+     "case": 32,
+     "name": "Multiple here docs in pipeline",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 33,
+     "name": "Multiple here docs in pipeline on multiple lines",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "sh-options-bash": {
+   "summary": {
+    "cases": 9,
+    "bashkit_pass": 3,
+    "bashkit_pass_pct": 33.3,
+    "bash_pass": 9,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 3,
+    "pass_rate": 33.3
+   },
+   "missed": [
+    {
+     "case": 0,
+     "name": "SHELLOPTS is updated when options are changed",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 1,
+     "name": "SHELLOPTS is readonly",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 2,
+     "name": "SHELLOPTS and BASHOPTS are non-empty",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 3,
+     "name": "SHELLOPTS reflects flags like sh -x",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 4,
+     "name": "export SHELLOPTS does cross-process tracing",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 5,
+     "name": "export SHELLOPTS does cross-process tracing with bash",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "xtrace": {
+   "summary": {
+    "cases": 19,
+    "bashkit_pass": 13,
+    "bashkit_pass_pct": 68.4,
+    "bash_pass": 19,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 13,
+    "pass_rate": 68.4
+   },
+   "missed": [
+    {
+     "case": 0,
+     "name": "unset PS4",
+     "class": "interactive",
+     "on": "stderr"
+    },
+    {
+     "case": 1,
+     "name": "set -o verbose prints unevaluated code",
+     "class": "behavior",
+     "on": "stderr"
+    },
+    {
+     "case": 2,
+     "name": "xtrace with unprintable chars",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 9,
+     "name": "Assignments and assign builtins",
+     "class": "behavior",
+     "on": "stderr"
+    },
+    {
+     "case": 10,
+     "name": "[[ ]]",
+     "class": "behavior",
+     "on": "stderr"
+    },
+    {
+     "case": 17,
+     "name": "Regression: xtrace for \"declare -a a+=(v)\"",
+     "class": "behavior",
+     "on": "stderr"
+    }
+   ],
+   "bash_fails": []
+  },
+  "arith-context": {
+   "summary": {
+    "cases": 16,
+    "bashkit_pass": 11,
+    "bashkit_pass_pct": 68.8,
+    "bash_pass": 16,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 11,
+    "pass_rate": 68.8
+   },
+   "missed": [
+    {
+     "case": 6,
+     "name": "Ambiguous colon in slice",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 9,
+     "name": "$[ is a synonym for $((",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 10,
+     "name": "$[$var is a synonym for $(($var (#2426)",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 11,
+     "name": "$[$undefined] is a synonym for $(($undefined (#2566)",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 15,
+     "name": "Empty expression a[]",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "assign": {
+   "summary": {
+    "cases": 48,
+    "bashkit_pass": 40,
+    "bashkit_pass_pct": 83.3,
+    "bash_pass": 45,
+    "bash_pass_pct": 93.8,
+    "bashkit_pass_of_bash": 40,
+    "pass_rate": 88.9
+   },
+   "missed": [
+    {
+     "case": 8,
+     "name": "Escaped = in command name",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 25,
+     "name": "Test above without 'local' (which is not POSIX)",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 30,
+     "name": "assignment using dynamic keyword (splits in most shells, not in zsh/osh)",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 32,
+     "name": "assign and glob",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 33,
+     "name": "declare and glob",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": [
+    24,
+    27,
+    46
+   ]
+  },
+  "blog1": {
+   "summary": {
+    "cases": 9,
+    "bashkit_pass": 4,
+    "bashkit_pass_pct": 44.4,
+    "bash_pass": 9,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 4,
+    "pass_rate": 44.4
+   },
+   "missed": [
+    {
+     "case": 1,
+     "name": "${###}",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 2,
+     "name": "${####}",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 3,
+     "name": "${##2}",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 4,
+     "name": "${###2}",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 7,
+     "name": "${#1#'###'}",
+     "class": "behavior",
+     "on": "status"
+    }
+   ],
+   "bash_fails": []
+  },
+  "builtin-cd": {
+   "summary": {
+    "cases": 30,
+    "bashkit_pass": 23,
+    "bashkit_pass_pct": 76.7,
+    "bash_pass": 28,
+    "bash_pass_pct": 93.3,
+    "bashkit_pass_of_bash": 23,
+    "pass_rate": 82.1
+   },
+   "missed": [
+    {
+     "case": 5,
+     "name": "$OLDPWD",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 9,
+     "name": "setting $PWD doesn't affect the value of 'pwd' builtin",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 10,
+     "name": "unset PWD; then pwd",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 14,
+     "name": "pwd in symlinked dir on shell initialization",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 26,
+     "name": "Survey of getcwd() syscall",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": [
+    24,
+    25
+   ]
+  },
+  "builtin-eval-source": {
+   "summary": {
+    "cases": 23,
+    "bashkit_pass": 16,
+    "bashkit_pass_pct": 69.6,
+    "bash_pass": 21,
+    "bash_pass_pct": 91.3,
+    "bashkit_pass_of_bash": 16,
+    "pass_rate": 76.2
+   },
+   "missed": [
+    {
+     "case": 1,
+     "name": "eval accepts/ignores --",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 2,
+     "name": "eval usage",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 8,
+     "name": "source accepts/ignores --",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 18,
+     "name": "source looks in PATH for files",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 19,
+     "name": "source finds files in PATH before current dir",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": [
+    13,
+    14
+   ]
+  },
+  "builtin-meta": {
+   "summary": {
+    "cases": 18,
+    "bashkit_pass": 13,
+    "bashkit_pass_pct": 72.2,
+    "bash_pass": 18,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 13,
+    "pass_rate": 72.2
+   },
+   "missed": [
+    {
+     "case": 3,
+     "name": "command -v doesn't find non-executable file",
+     "class": "host",
+     "on": "stdout"
+    },
+    {
+     "case": 5,
+     "name": "command -V",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 6,
+     "name": "command -V nonexistent",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 10,
+     "name": "command -p (override existing program)",
+     "class": "host",
+     "on": "stdout"
+    },
+    {
+     "case": 11,
+     "name": "command -p (hide tool in custom path)",
+     "class": "host",
+     "on": "status"
+    }
+   ],
+   "bash_fails": []
+  },
+  "builtin-meta-assign": {
+   "summary": {
+    "cases": 11,
+    "bashkit_pass": 6,
+    "bashkit_pass_pct": 54.5,
+    "bash_pass": 11,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 6,
+    "pass_rate": 54.5
+   },
+   "missed": [
+    {
+     "case": 0,
+     "name": "builtin declare a=(x y) is allowed",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 3,
+     "name": "export, builtin export",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 4,
+     "name": "\\builtin declare - ble.sh relies on it",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 5,
+     "name": "\\command readonly - similar issue",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 6,
+     "name": "Dynamic $c readonly - bash and dash change behavior, mksh bug",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "builtin-printf": {
+   "summary": {
+    "cases": 63,
+    "bashkit_pass": 56,
+    "bashkit_pass_pct": 88.9,
+    "bash_pass": 58,
+    "bash_pass_pct": 92.1,
+    "bashkit_pass_of_bash": 53,
+    "pass_rate": 91.4
+   },
+   "missed": [
+    {
+     "case": 16,
+     "name": "%06s is no-op",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 18,
+     "name": "printf %6.0s and %0.0s",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 19,
+     "name": "printf %6.s and %0.s",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 33,
+     "name": "printf octal backslash escapes",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 51,
+     "name": "bash truncates long strftime string at 128",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": [
+    26,
+    27,
+    46,
+    47,
+    48
+   ]
+  },
+  "nameref": {
+   "summary": {
+    "cases": 32,
+    "bashkit_pass": 27,
+    "bashkit_pass_pct": 84.4,
+    "bash_pass": 32,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 27,
+    "pass_rate": 84.4
+   },
+   "missed": [
+    {
+     "case": 15,
+     "name": "-n attribute on array is hard error, not a warning",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 16,
+     "name": "exported nameref",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 26,
+     "name": "a[expr] in nameref",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 27,
+     "name": "a[@] in nameref",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 29,
+     "name": "bad mutation through nameref: ref[0]= where ref is array[0]",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "ble-features": {
+   "summary": {
+    "cases": 9,
+    "bashkit_pass": 5,
+    "bashkit_pass_pct": 55.6,
+    "bash_pass": 9,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 5,
+    "pass_rate": 55.6
+   },
+   "missed": [
+    {
+     "case": 1,
+     "name": "[bash_unset] local-unset / dynamic-unset for localvar (mutated from tempenv)",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 2,
+     "name": "[bash_unset] local-unset / dynamic-unset for tempenv",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 3,
+     "name": "[bash_unset] function call with tempenv vs tempenv-eval",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 4,
+     "name": "[bash_unset] localvar-inherit from tempenv",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "ble-unset": {
+   "summary": {
+    "cases": 5,
+    "bashkit_pass": 1,
+    "bashkit_pass_pct": 20.0,
+    "bash_pass": 5,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 1,
+    "pass_rate": 20.0
+   },
+   "missed": [
+    {
+     "case": 1,
+     "name": "[bash_unset] local-unset / dynamic-unset for localvar on nested-context",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 2,
+     "name": "[bash_unset] dynamic-unset for nested localvars",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 3,
+     "name": "[bash_unset] dynamic-unset for nested tempenvs",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 4,
+     "name": "[bash_unset] local-unset for nested tempenvs",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "brace-expansion": {
+   "summary": {
+    "cases": 55,
+    "bashkit_pass": 51,
+    "bashkit_pass_pct": 92.7,
+    "bash_pass": 55,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 51,
+    "pass_rate": 92.7
+   },
+   "missed": [
+    {
+     "case": 11,
+     "name": "double expansion with simple var -- bash bug",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 13,
+     "name": "double expansion with literal and simple var",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 21,
+     "name": "Empty alternative with empty string suffix",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 42,
+     "name": "Mixed case char expansion is invalid",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "builtin-dirs": {
+   "summary": {
+    "cases": 18,
+    "bashkit_pass": 14,
+    "bashkit_pass_pct": 77.8,
+    "bash_pass": 18,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 14,
+    "pass_rate": 77.8
+   },
+   "missed": [
+    {
+     "case": 1,
+     "name": "pushd usage",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 2,
+     "name": "popd usage error",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 16,
+     "name": "pushd does not take more than one argument",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 17,
+     "name": "dirs does not take arguments",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "builtin-kill": {
+   "summary": {
+    "cases": 20,
+    "bashkit_pass": 16,
+    "bashkit_pass_pct": 80.0,
+    "bash_pass": 19,
+    "bash_pass_pct": 95.0,
+    "bashkit_pass_of_bash": 15,
+    "pass_rate": 78.9
+   },
+   "missed": [
+    {
+     "case": 8,
+     "name": "kill -l 10 TERM translates between names and numbers",
+     "class": "signals",
+     "on": "stdout"
+    },
+    {
+     "case": 9,
+     "name": "kill -L checks for invalid input",
+     "class": "signals",
+     "on": "stdout"
+    },
+    {
+     "case": 12,
+     "name": "kill -l 0 returns EXIT",
+     "class": "signals",
+     "on": "stdout"
+    },
+    {
+     "case": 13,
+     "name": "kill -l 0 INT lists both signals",
+     "class": "signals",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": [
+    16
+   ]
+  },
+  "builtin-special": {
+   "summary": {
+    "cases": 12,
+    "bashkit_pass": 8,
+    "bashkit_pass_pct": 66.7,
+    "bash_pass": 12,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 8,
+    "pass_rate": 66.7
+   },
+   "missed": [
+    {
+     "case": 1,
+     "name": "Prefix assignments persist after special builtins, like : (set -o posix)",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 2,
+     "name": "Prefix assignments persist after readonly, but NOT exported (set -o posix)",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 6,
+     "name": "Special builtins can't be redefined as shell functions (set -o posix)",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 10,
+     "name": "bash 'type' gets confused - says 'function', but runs builtin",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "parse-errors": {
+   "summary": {
+    "cases": 27,
+    "bashkit_pass": 21,
+    "bashkit_pass_pct": 77.8,
+    "bash_pass": 25,
+    "bash_pass_pct": 92.6,
+    "bashkit_pass_of_bash": 21,
+    "pass_rate": 84.0
+   },
+   "missed": [
+    {
+     "case": 11,
+     "name": "} on the second line",
+     "class": "behavior",
+     "on": "status"
+    },
+    {
+     "case": 16,
+     "name": "misplaced parentheses are not a subshell",
+     "class": "behavior",
+     "on": "status"
+    },
+    {
+     "case": 22,
+     "name": "array literal inside array is a parse error",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 25,
+     "name": "%foo=() is parse error (regression)",
+     "class": "behavior",
+     "on": "status"
+    }
+   ],
+   "bash_fails": [
+    0,
+    1
+   ]
+  },
+  "regex": {
+   "summary": {
+    "cases": 37,
+    "bashkit_pass": 33,
+    "bashkit_pass_pct": 89.2,
+    "bash_pass": 37,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 33,
+    "pass_rate": 89.2
+   },
+   "missed": [
+    {
+     "case": 16,
+     "name": "Unquoted { is a regex parse error",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 18,
+     "name": "Quoted { and +",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 32,
+     "name": "Quotes '' \"\" $'' $\"\" in pattern",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 35,
+     "name": "make a lisp example",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "var-sub-quote": {
+   "summary": {
+    "cases": 41,
+    "bashkit_pass": 37,
+    "bashkit_pass_pct": 90.2,
+    "bash_pass": 41,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 37,
+    "pass_rate": 90.2
+   },
+   "missed": [
+    {
+     "case": 18,
+     "name": "part_value tree with multiple words",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 19,
+     "name": "part_value tree on RHS",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 38,
+     "name": "Right Brace as argument (similar to #702)",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 39,
+     "name": "Var substitution with newlines (#2492)",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "assign-dialects": {
+   "summary": {
+    "cases": 4,
+    "bashkit_pass": 1,
+    "bashkit_pass_pct": 25.0,
+    "bash_pass": 4,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 1,
+    "pass_rate": 25.0
+   },
+   "missed": [
+    {
+     "case": 1,
+     "name": "test -v with strings",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 2,
+     "name": "test -v with arrays",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 3,
+     "name": "test -v with assoc arrays",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "blog2": {
+   "summary": {
+    "cases": 8,
+    "bashkit_pass": 5,
+    "bashkit_pass_pct": 62.5,
+    "bash_pass": 8,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 5,
+    "pass_rate": 62.5
+   },
+   "missed": [
+    {
+     "case": 4,
+     "name": "-a -a -a -a -a",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 5,
+     "name": "-a -a -a -a -a -a",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 6,
+     "name": "-a -a -a -a -a -a -a",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "bool-parse": {
+   "summary": {
+    "cases": 8,
+    "bashkit_pass": 5,
+    "bashkit_pass_pct": 62.5,
+    "bash_pass": 8,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 5,
+    "pass_rate": 62.5
+   },
+   "missed": [
+    {
+     "case": 0,
+     "name": "test builtin - Unexpected trailing word '--' (#2409)",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 1,
+     "name": "test builtin: ( = ) is confusing: equality test or non-empty string test",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 2,
+     "name": "test builtin: ( == ) is confusing: equality test or non-empty string test",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "builtin-bash": {
+   "summary": {
+    "cases": 13,
+    "bashkit_pass": 10,
+    "bashkit_pass_pct": 76.9,
+    "bash_pass": 13,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 10,
+    "pass_rate": 76.9
+   },
+   "missed": [
+    {
+     "case": 0,
+     "name": "help",
+     "class": "behavior",
+     "on": "stderr"
+    },
+    {
+     "case": 1,
+     "name": "bad help topic",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 6,
+     "name": "mapfile (delimiter): -d '' (null-separated)",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "builtin-misc": {
+   "summary": {
+    "cases": 7,
+    "bashkit_pass": 4,
+    "bashkit_pass_pct": 57.1,
+    "bash_pass": 7,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 4,
+    "pass_rate": 57.1
+   },
+   "missed": [
+    {
+     "case": 0,
+     "name": "history builtin usage",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 1,
+     "name": "Print shell strings with weird chars: set and printf %q and ${x@Q}",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 3,
+     "name": "time pipeline",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "builtin-set": {
+   "summary": {
+    "cases": 24,
+    "bashkit_pass": 21,
+    "bashkit_pass_pct": 87.5,
+    "bash_pass": 24,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 21,
+    "pass_rate": 87.5
+   },
+   "missed": [
+    {
+     "case": 6,
+     "name": "set -u with undefined var in interactive shell does NOT exit the interpreter",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 16,
+     "name": "A single + is an ignored flag; not an argument",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 17,
+     "name": "set - + and + -",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "builtin-trap-err": {
+   "summary": {
+    "cases": 23,
+    "bashkit_pass": 19,
+    "bashkit_pass_pct": 82.6,
+    "bash_pass": 22,
+    "bash_pass_pct": 95.7,
+    "bashkit_pass_of_bash": 19,
+    "pass_rate": 86.4
+   },
+   "missed": [
+    {
+     "case": 6,
+     "name": "trap ERR pipelines without simple commands",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 12,
+     "name": "set -o errtrace: trap ERR with &",
+     "class": "processes",
+     "on": "stdout"
+    },
+    {
+     "case": 16,
+     "name": "trap ERR with \"atoms\": assignment (( [[",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": [
+    18
+   ]
+  },
+  "builtin-umask": {
+   "summary": {
+    "cases": 24,
+    "bashkit_pass": 21,
+    "bashkit_pass_pct": 87.5,
+    "bash_pass": 24,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 21,
+    "pass_rate": 87.5
+   },
+   "missed": [
+    {
+     "case": 10,
+     "name": "'umask 0002' sets the umask",
+     "class": "host",
+     "on": "stdout"
+    },
+    {
+     "case": 11,
+     "name": "set umask with symbolic mode: g-w,o-w",
+     "class": "host",
+     "on": "stdout"
+    },
+    {
+     "case": 13,
+     "name": "umask with too many arguments (i.e. extra spaces)",
+     "class": "host",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "extglob-files": {
+   "summary": {
+    "cases": 23,
+    "bashkit_pass": 20,
+    "bashkit_pass_pct": 87.0,
+    "bash_pass": 23,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 20,
+    "pass_rate": 87.0
+   },
+   "missed": [
+    {
+     "case": 15,
+     "name": "Extended glob in same word as array",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 19,
+     "name": "no match",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 21,
+     "name": "noglob",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "fatal-errors": {
+   "summary": {
+    "cases": 5,
+    "bashkit_pass": 2,
+    "bashkit_pass_pct": 40.0,
+    "bash_pass": 5,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 2,
+    "pass_rate": 40.0
+   },
+   "missed": [
+    {
+     "case": 1,
+     "name": "Unrecoverable: divide by zero in conditional word",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 3,
+     "name": "Unrecoverable: ${undef?message}",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 4,
+     "name": "${undef} with nounset",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "func-parsing": {
+   "summary": {
+    "cases": 15,
+    "bashkit_pass": 12,
+    "bashkit_pass_pct": 80.0,
+    "bash_pass": 15,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 12,
+    "pass_rate": 80.0
+   },
+   "missed": [
+    {
+     "case": 8,
+     "name": "= in function name",
+     "class": "behavior",
+     "on": "status"
+    },
+    {
+     "case": 9,
+     "name": "Function name with $",
+     "class": "behavior",
+     "on": "status"
+    },
+    {
+     "case": 10,
+     "name": "Function name with command sub",
+     "class": "behavior",
+     "on": "status"
+    }
+   ],
+   "bash_fails": []
+  },
+  "glob": {
+   "summary": {
+    "cases": 39,
+    "bashkit_pass": 34,
+    "bashkit_pass_pct": 87.2,
+    "bash_pass": 37,
+    "bash_pass_pct": 94.9,
+    "bashkit_pass_of_bash": 34,
+    "pass_rate": 91.9
+   },
+   "missed": [
+    {
+     "case": 7,
+     "name": "glob can expand to command and arg",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 15,
+     "name": "glob with escaped - in char class",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 38,
+     "name": "shopt -u globskipdots shows . and ..",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": [
+    23,
+    31
+   ]
+  },
+  "nix-idioms": {
+   "summary": {
+    "cases": 6,
+    "bashkit_pass": 3,
+    "bashkit_pass_pct": 50.0,
+    "bash_pass": 6,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 3,
+    "pass_rate": 50.0
+   },
+   "missed": [
+    {
+     "case": 0,
+     "name": "var ref to array 'preHooks[@]'",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 1,
+     "name": "Similar to above with set -u",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 3,
+     "name": "${!ref} to undefined string var is fatal, INCONSISTENT with array",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "quote": {
+   "summary": {
+    "cases": 35,
+    "bashkit_pass": 32,
+    "bashkit_pass_pct": 91.4,
+    "bash_pass": 35,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 32,
+    "pass_rate": 91.4
+   },
+   "missed": [
+    {
+     "case": 27,
+     "name": "$'' octal escapes don't have leading 0",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 29,
+     "name": "OSH allows invalid backslashes",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 33,
+     "name": "$'' supports \\cA escape for Ctrl-A - mask with 0x1f",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "redirect-command": {
+   "summary": {
+    "cases": 23,
+    "bashkit_pass": 20,
+    "bashkit_pass_pct": 87.0,
+    "bash_pass": 23,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 20,
+    "pass_rate": 87.0
+   },
+   "missed": [
+    {
+     "case": 8,
+     "name": "Redirect in the middle of two assignments",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 11,
+     "name": "Redirect in function body is evaluated multiple times",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 13,
+     "name": "redirect bash extensions:   [[  ((  for ((",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "serialize": {
+   "summary": {
+    "cases": 10,
+    "bashkit_pass": 7,
+    "bashkit_pass_pct": 70.0,
+    "bash_pass": 10,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 7,
+    "pass_rate": 70.0
+   },
+   "missed": [
+    {
+     "case": 3,
+     "name": "printf %q unprintable",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 5,
+     "name": "printf %q invalid unicode",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 8,
+     "name": "${var@Q}",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "var-op-bash": {
+   "summary": {
+    "cases": 27,
+    "bashkit_pass": 23,
+    "bashkit_pass_pct": 85.2,
+    "bash_pass": 26,
+    "bash_pass_pct": 96.3,
+    "bashkit_pass_of_bash": 23,
+    "pass_rate": 88.5
+   },
+   "missed": [
+    {
+     "case": 19,
+     "name": "${!A@a} and ${!A[@]@a}",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 23,
+     "name": "${!r@a} with r='a[0]' (attribute for indirect expansion of an array element)",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 26,
+     "name": "Array expansion with nullary var op @a",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": [
+    3
+   ]
+  },
+  "var-op-len": {
+   "summary": {
+    "cases": 9,
+    "bashkit_pass": 6,
+    "bashkit_pass_pct": 66.7,
+    "bash_pass": 8,
+    "bash_pass_pct": 88.9,
+    "bashkit_pass_of_bash": 5,
+    "pass_rate": 62.5
+   },
+   "missed": [
+    {
+     "case": 3,
+     "name": "String length with incomplete utf-8",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 4,
+     "name": "String length with invalid utf-8 continuation bytes",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 6,
+     "name": "Length of undefined variable with nounset",
+     "class": "behavior",
+     "on": "status"
+    }
+   ],
+   "bash_fails": [
+    8
+   ]
+  },
+  "arg-parse": {
+   "summary": {
+    "cases": 3,
+    "bashkit_pass": 1,
+    "bashkit_pass_pct": 33.3,
+    "bash_pass": 3,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 1,
+    "pass_rate": 33.3
+   },
+   "missed": [
+    {
+     "case": 1,
+     "name": "shift 1 extra",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 2,
+     "name": "continue 1 extra, break, etc.",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "array-basic": {
+   "summary": {
+    "cases": 5,
+    "bashkit_pass": 3,
+    "bashkit_pass_pct": 60.0,
+    "bash_pass": 5,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 3,
+    "pass_rate": 60.0
+   },
+   "missed": [
+    {
+     "case": 1,
+     "name": "${a[@]} and ${a[*]}",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 2,
+     "name": "4 ways to interpolate empty array",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "assign-deferred": {
+   "summary": {
+    "cases": 9,
+    "bashkit_pass": 7,
+    "bashkit_pass_pct": 77.8,
+    "bash_pass": 9,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 7,
+    "pass_rate": 77.8
+   },
+   "missed": [
+    {
+     "case": 7,
+     "name": "is 'builtin' prefix and array allowed?  OSH is smarter",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 8,
+     "name": "is 'command' prefix and array allowed?  OSH is smarter",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "builtin-getopts": {
+   "summary": {
+    "cases": 31,
+    "bashkit_pass": 29,
+    "bashkit_pass_pct": 93.5,
+    "bash_pass": 31,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 29,
+    "pass_rate": 93.5
+   },
+   "missed": [
+    {
+     "case": 6,
+     "name": "getopts with invalid variable name",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 19,
+     "name": "flag and arg: -c10",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "builtin-type": {
+   "summary": {
+    "cases": 6,
+    "bashkit_pass": 4,
+    "bashkit_pass_pct": 66.7,
+    "bash_pass": 6,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 4,
+    "pass_rate": 66.7
+   },
+   "missed": [
+    {
+     "case": 1,
+     "name": "type -> alias external",
+     "class": "host",
+     "on": "stdout"
+    },
+    {
+     "case": 2,
+     "name": "type of relative path",
+     "class": "host",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "divergence": {
+   "summary": {
+    "cases": 4,
+    "bashkit_pass": 2,
+    "bashkit_pass_pct": 50.0,
+    "bash_pass": 4,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 2,
+    "pass_rate": 50.0
+   },
+   "missed": [
+    {
+     "case": 1,
+     "name": "!( as negation and subshell versus extended glob - #2463",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 3,
+     "name": "builtin cat crashes a subshell (#2530)",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "errexit": {
+   "summary": {
+    "cases": 35,
+    "bashkit_pass": 33,
+    "bashkit_pass_pct": 94.3,
+    "bash_pass": 35,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 33,
+    "pass_rate": 94.3
+   },
+   "missed": [
+    {
+     "case": 33,
+     "name": "set -e in function #2",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 34,
+     "name": "Command sub exit code is lost",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "exit-status": {
+   "summary": {
+    "cases": 11,
+    "bashkit_pass": 9,
+    "bashkit_pass_pct": 81.8,
+    "bash_pass": 11,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 9,
+    "pass_rate": 81.8
+   },
+   "missed": [
+    {
+     "case": 7,
+     "name": "If subshell true WITH ARGUMENT",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 10,
+     "name": "More test cases with empty argv",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "glob-bash": {
+   "summary": {
+    "cases": 8,
+    "bashkit_pass": 6,
+    "bashkit_pass_pct": 75.0,
+    "bash_pass": 8,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 6,
+    "pass_rate": 75.0
+   },
+   "missed": [
+    {
+     "case": 3,
+     "name": "shopt -s failglob in array literal context",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 6,
+     "name": "shopt -s failglob behavior on single line with semicolon",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "var-op-patsub": {
+   "summary": {
+    "cases": 28,
+    "bashkit_pass": 26,
+    "bashkit_pass_pct": 92.9,
+    "bash_pass": 28,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 26,
+    "pass_rate": 92.9
+   },
+   "missed": [
+    {
+     "case": 19,
+     "name": "When LC_ALL=C, pattern ? doesn't match multibyte character",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 23,
+     "name": "patsub with [^]]",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "var-op-slice": {
+   "summary": {
+    "cases": 22,
+    "bashkit_pass": 20,
+    "bashkit_pass_pct": 90.9,
+    "bash_pass": 22,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 20,
+    "pass_rate": 90.9
+   },
+   "missed": [
+    {
+     "case": 9,
+     "name": "Slice undefined",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 20,
+     "name": "${array[@]:} vs ${array[@]: }  - bash and zsh inconsistent",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "append": {
+   "summary": {
+    "cases": 20,
+    "bashkit_pass": 19,
+    "bashkit_pass_pct": 95.0,
+    "bash_pass": 20,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 19,
+    "pass_rate": 95.0
+   },
+   "missed": [
+    {
+     "case": 11,
+     "name": "Try to append list to element",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "dbracket": {
+   "summary": {
+    "cases": 49,
+    "bashkit_pass": 48,
+    "bashkit_pass_pct": 98.0,
+    "bash_pass": 49,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 48,
+    "pass_rate": 98.0
+   },
+   "missed": [
+    {
+     "case": 44,
+     "name": "tilde expansion with =~ (confusing)",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "dparen": {
+   "summary": {
+    "cases": 15,
+    "bashkit_pass": 13,
+    "bashkit_pass_pct": 86.7,
+    "bash_pass": 14,
+    "bash_pass_pct": 93.3,
+    "bashkit_pass_of_bash": 13,
+    "pass_rate": 92.9
+   },
+   "missed": [
+    {
+     "case": 11,
+     "name": "(( )) with redirect",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": [
+    10
+   ]
+  },
+  "errexit-osh": {
+   "summary": {
+    "cases": 35,
+    "bashkit_pass": 34,
+    "bashkit_pass_pct": 97.1,
+    "bash_pass": 35,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 34,
+    "pass_rate": 97.1
+   },
+   "missed": [
+    {
+     "case": 30,
+     "name": "command_sub_errexit and command sub in array",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "extglob-match": {
+   "summary": {
+    "cases": 29,
+    "bashkit_pass": 28,
+    "bashkit_pass_pct": 96.6,
+    "bash_pass": 29,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 28,
+    "pass_rate": 96.6
+   },
+   "missed": [
+    {
+     "case": 21,
+     "name": "Turning extglob on changes the meaning of [[ !(str) ]] in bash",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "for-expr": {
+   "summary": {
+    "cases": 9,
+    "bashkit_pass": 7,
+    "bashkit_pass_pct": 77.8,
+    "bash_pass": 8,
+    "bash_pass_pct": 88.9,
+    "bashkit_pass_of_bash": 7,
+    "pass_rate": 87.5
+   },
+   "missed": [
+    {
+     "case": 2,
+     "name": "Accepts { } syntax too",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": [
+    6
+   ]
+  },
+  "globignore": {
+   "summary": {
+    "cases": 18,
+    "bashkit_pass": 17,
+    "bashkit_pass_pct": 94.4,
+    "bash_pass": 18,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 17,
+    "pass_rate": 94.4
+   },
+   "missed": [
+    {
+     "case": 12,
+     "name": "Ignore .:..",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "history-expand": {
+   "summary": {
+    "cases": 1,
+    "bashkit_pass": 0,
+    "bashkit_pass_pct": 0.0,
+    "bash_pass": 1,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 0,
+    "pass_rate": 0.0
+   },
+   "missed": [
+    {
+     "case": 0,
+     "name": "!! expansion",
+     "class": "interactive",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "pipeline": {
+   "summary": {
+    "cases": 26,
+    "bashkit_pass": 24,
+    "bashkit_pass_pct": 92.3,
+    "bash_pass": 25,
+    "bash_pass_pct": 96.2,
+    "bashkit_pass_of_bash": 24,
+    "pass_rate": 96.0
+   },
+   "missed": [
+    {
+     "case": 6,
+     "name": "Initial value of PIPESTATUS is empty string",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": [
+    10
+   ]
+  },
+  "process-sub": {
+   "summary": {
+    "cases": 9,
+    "bashkit_pass": 8,
+    "bashkit_pass_pct": 88.9,
+    "bash_pass": 8,
+    "bash_pass_pct": 88.9,
+    "bashkit_pass_of_bash": 7,
+    "pass_rate": 87.5
+   },
+   "missed": [
+    {
+     "case": 2,
+     "name": "Process sub from shell to stdin",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": [
+    4
+   ]
+  },
+  "smoke": {
+   "summary": {
+    "cases": 18,
+    "bashkit_pass": 17,
+    "bashkit_pass_pct": 94.4,
+    "bash_pass": 18,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 17,
+    "pass_rate": 94.4
+   },
+   "missed": [
+    {
+     "case": 11,
+     "name": "Here doc with redirect",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "tilde": {
+   "summary": {
+    "cases": 14,
+    "bashkit_pass": 13,
+    "bashkit_pass_pct": 92.9,
+    "bash_pass": 14,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 13,
+    "pass_rate": 92.9
+   },
+   "missed": [
+    {
+     "case": 11,
+     "name": "x=${undef-~:~}",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "toysh": {
+   "summary": {
+    "cases": 8,
+    "bashkit_pass": 7,
+    "bashkit_pass_pct": 87.5,
+    "bash_pass": 8,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 7,
+    "pass_rate": 87.5
+   },
+   "missed": [
+    {
+     "case": 3,
+     "name": "char class / extglob",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "toysh-posix": {
+   "summary": {
+    "cases": 23,
+    "bashkit_pass": 22,
+    "bashkit_pass_pct": 95.7,
+    "bash_pass": 23,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 22,
+    "pass_rate": 95.7
+   },
+   "missed": [
+    {
+     "case": 13,
+     "name": "for loop parsing - http://landley.net/notes.html#04-03-2020",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "unicode": {
+   "summary": {
+    "cases": 7,
+    "bashkit_pass": 1,
+    "bashkit_pass_pct": 14.3,
+    "bash_pass": 2,
+    "bash_pass_pct": 28.6,
+    "bashkit_pass_of_bash": 1,
+    "pass_rate": 50.0
+   },
+   "missed": [
+    {
+     "case": 0,
+     "name": "OSH source code doesn't have to be valid Unicode (like other shells)",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": [
+    2,
+    3,
+    4,
+    5,
+    6
+   ]
+  },
+  "var-op-strip": {
+   "summary": {
+    "cases": 29,
+    "bashkit_pass": 28,
+    "bashkit_pass_pct": 96.6,
+    "bash_pass": 29,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 28,
+    "pass_rate": 96.6
+   },
+   "missed": [
+    {
+     "case": 26,
+     "name": "Strip Right Brace (#702)",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "var-sub": {
+   "summary": {
+    "cases": 6,
+    "bashkit_pass": 5,
+    "bashkit_pass_pct": 83.3,
+    "bash_pass": 6,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 5,
+    "pass_rate": 83.3
+   },
+   "missed": [
+    {
+     "case": 4,
+     "name": "Descriptor redirect to bad \"$@\"",
+     "class": "behavior",
+     "on": "status"
+    }
+   ],
+   "bash_fails": []
+  },
+  "vars-bash": {
+   "summary": {
+    "cases": 1,
+    "bashkit_pass": 0,
+    "bashkit_pass_pct": 0.0,
+    "bash_pass": 1,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 0,
+    "pass_rate": 0.0
+   },
+   "missed": [
+    {
+     "case": 0,
+     "name": "$SHELL is set to what is in /etc/passwd",
+     "class": "interactive",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "zsh-idioms": {
+   "summary": {
+    "cases": 3,
+    "bashkit_pass": 2,
+    "bashkit_pass_pct": 66.7,
+    "bash_pass": 3,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 2,
+    "pass_rate": 66.7
+   },
+   "missed": [
+    {
+     "case": 2,
+     "name": "zsh var sub is rejected at runtime",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "arith-dynamic": {
+   "summary": {
+    "cases": 4,
+    "bashkit_pass": 4,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 4,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 4,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "array-compat": {
+   "summary": {
+    "cases": 12,
+    "bashkit_pass": 12,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 12,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 12,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "builtin-echo": {
+   "summary": {
+    "cases": 27,
+    "bashkit_pass": 27,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 27,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 27,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "builtin-times": {
+   "summary": {
+    "cases": 1,
+    "bashkit_pass": 1,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 1,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 1,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "case_": {
+   "summary": {
+    "cases": 13,
+    "bashkit_pass": 13,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 13,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 13,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "command-parsing": {
+   "summary": {
+    "cases": 5,
+    "bashkit_pass": 5,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 5,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 5,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "command-sub": {
+   "summary": {
+    "cases": 30,
+    "bashkit_pass": 28,
+    "bashkit_pass_pct": 93.3,
+    "bash_pass": 28,
+    "bash_pass_pct": 93.3,
+    "bashkit_pass_of_bash": 28,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": [
+    11,
+    12
+   ]
+  },
+  "comments": {
+   "summary": {
+    "cases": 2,
+    "bashkit_pass": 2,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 2,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 2,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "empty-bodies": {
+   "summary": {
+    "cases": 3,
+    "bashkit_pass": 3,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 3,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 3,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "explore-parsing": {
+   "summary": {
+    "cases": 5,
+    "bashkit_pass": 5,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 5,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 5,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "globstar": {
+   "summary": {
+    "cases": 5,
+    "bashkit_pass": 5,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 5,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 5,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "if_": {
+   "summary": {
+    "cases": 5,
+    "bashkit_pass": 5,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 5,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 5,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "known-differences": {
+   "summary": {
+    "cases": 2,
+    "bashkit_pass": 2,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 2,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 2,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "let": {
+   "summary": {
+    "cases": 2,
+    "bashkit_pass": 2,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 2,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 2,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "loop": {
+   "summary": {
+    "cases": 29,
+    "bashkit_pass": 29,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 29,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 29,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "nocasematch-match": {
+   "summary": {
+    "cases": 6,
+    "bashkit_pass": 6,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 6,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 6,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "paren-ambiguity": {
+   "summary": {
+    "cases": 9,
+    "bashkit_pass": 9,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 9,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 9,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "posix": {
+   "summary": {
+    "cases": 15,
+    "bashkit_pass": 15,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 15,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 15,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "print-source-code": {
+   "summary": {
+    "cases": 4,
+    "bashkit_pass": 4,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 4,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 4,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "sh-func": {
+   "summary": {
+    "cases": 12,
+    "bashkit_pass": 12,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 12,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 12,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "strict-options": {
+   "summary": {
+    "cases": 17,
+    "bashkit_pass": 15,
+    "bashkit_pass_pct": 88.2,
+    "bash_pass": 15,
+    "bash_pass_pct": 88.2,
+    "bashkit_pass_of_bash": 15,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": [
+    3,
+    5
+   ]
+  },
+  "subshell": {
+   "summary": {
+    "cases": 2,
+    "bashkit_pass": 2,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 2,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 2,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "temp-binding": {
+   "summary": {
+    "cases": 4,
+    "bashkit_pass": 4,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 4,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 4,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "type-compat": {
+   "summary": {
+    "cases": 7,
+    "bashkit_pass": 5,
+    "bashkit_pass_pct": 71.4,
+    "bash_pass": 5,
+    "bash_pass_pct": 71.4,
+    "bashkit_pass_of_bash": 5,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": [
+    3,
+    5
+   ]
+  },
+  "var-num": {
+   "summary": {
+    "cases": 7,
+    "bashkit_pass": 7,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 7,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 7,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "whitespace": {
+   "summary": {
+    "cases": 5,
+    "bashkit_pass": 0,
+    "bashkit_pass_pct": 0.0,
+    "bash_pass": 0,
+    "bash_pass_pct": 0.0,
+    "bashkit_pass_of_bash": 0,
+    "pass_rate": 0.0
+   },
+   "missed": [],
+   "bash_fails": [
+    0,
+    1,
+    2,
+    3,
+    4
+   ]
+  },
+  "word-eval": {
+   "summary": {
+    "cases": 8,
+    "bashkit_pass": 8,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 8,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 8,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "word-split": {
+   "summary": {
+    "cases": 55,
+    "bashkit_pass": 53,
+    "bashkit_pass_pct": 96.4,
+    "bash_pass": 53,
+    "bash_pass_pct": 96.4,
+    "bashkit_pass_of_bash": 53,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": [
+    24,
+    25
+   ]
+  }
+ }
+}

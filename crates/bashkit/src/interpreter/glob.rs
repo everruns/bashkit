@@ -607,6 +607,9 @@ impl Interpreter {
 
     /// Match a bracket expression [abc], [a-z], [!abc], [^abc]
     /// Returns Some(true) if matched, Some(false) if not matched, None if invalid
+    ///
+    /// `\x` is a literal `x` (`[C\-D]` holds a literal `-`). A reversed
+    /// range (`[z-a]`) matches nothing, its endpoints included, as in bash.
     pub(crate) fn match_bracket_expr(
         &self,
         pattern_chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
@@ -614,9 +617,10 @@ impl Interpreter {
         nocase: bool,
     ) -> Option<bool> {
         // Security: stream range/class checks; avoid unbounded range materialization.
+        let fold = |c: char| if nocase { c.to_ascii_lowercase() } else { c };
+        let probe = fold(value_char);
         let mut matched = false;
-        let mut saw_class_char = false;
-        let mut prev_char: Option<char> = None;
+        let mut first = true;
         let mut negate = false;
 
         // Check for negation
@@ -625,20 +629,10 @@ impl Interpreter {
             pattern_chars.next();
         }
 
-        // Collect all characters in the bracket expression
         loop {
-            match pattern_chars.next() {
-                Some(']') if saw_class_char => break,
-                Some(']') if !saw_class_char => {
-                    // ] as first char is literal
-                    saw_class_char = true;
-                    prev_char = Some(']');
-                    matched |= if nocase {
-                        ']'.eq_ignore_ascii_case(&value_char)
-                    } else {
-                        value_char == ']'
-                    };
-                }
+            let c = match pattern_chars.next() {
+                // `]` first is a literal member.
+                Some(']') if !first => break,
                 Some('[') if matches!(pattern_chars.peek(), Some(':')) => {
                     // POSIX character class [:name:]
                     pattern_chars.next(); // consume ':'
@@ -655,67 +649,32 @@ impl Interpreter {
                     }
                     let mut class_chars = Vec::new();
                     expand_posix_class(&class_name, &mut class_chars);
-                    if !class_chars.is_empty() {
-                        saw_class_char = true;
-                        prev_char = class_chars.last().copied();
-                    }
-                    matched |= if nocase {
-                        let lc = value_char.to_ascii_lowercase();
-                        class_chars.iter().any(|c| c.to_ascii_lowercase() == lc)
-                    } else {
-                        class_chars.contains(&value_char)
-                    };
+                    first = false;
+                    matched |= class_chars.iter().any(|c| fold(*c) == probe);
+                    continue;
                 }
-                Some('-') if saw_class_char => {
-                    // Could be a range
-                    if let Some(&next) = pattern_chars.peek() {
-                        if next == ']' {
-                            // - at end is literal
-                            saw_class_char = true;
-                            prev_char = Some('-');
-                            matched |= if nocase {
-                                '-'.eq_ignore_ascii_case(&value_char)
-                            } else {
-                                value_char == '-'
-                            };
-                        } else {
-                            // Range: prev-next
-                            pattern_chars.next();
-                            if let Some(prev) = prev_char {
-                                let (start, end) = if prev <= next {
-                                    (prev, next)
-                                } else {
-                                    (next, prev)
-                                };
-                                let probe = if nocase {
-                                    value_char.to_ascii_lowercase()
-                                } else {
-                                    value_char
-                                };
-                                let (start_cmp, end_cmp) = if nocase {
-                                    (start.to_ascii_lowercase(), end.to_ascii_lowercase())
-                                } else {
-                                    (start, end)
-                                };
-                                matched |= probe >= start_cmp && probe <= end_cmp;
-                                saw_class_char = true;
-                                prev_char = Some(next);
-                            }
-                        }
-                    } else {
-                        return None; // Unclosed bracket
-                    }
-                }
-                Some(c) => {
-                    saw_class_char = true;
-                    prev_char = Some(c);
-                    matched |= if nocase {
-                        c.eq_ignore_ascii_case(&value_char)
-                    } else {
-                        c == value_char
-                    };
-                }
+                Some('\\') => pattern_chars.next()?,
+                Some(c) => c,
                 None => return None, // Unclosed bracket
+            };
+            first = false;
+            // `c-e` is a range unless the `-` is last (`[a-]`).
+            let mut ahead = pattern_chars.clone();
+            let is_range = ahead.next() == Some('-') && !matches!(ahead.next(), Some(']') | None);
+            if !is_range {
+                matched |= fold(c) == probe;
+                continue;
+            }
+            pattern_chars.next(); // consume '-'
+            let end = match pattern_chars.next() {
+                Some('\\') => pattern_chars.next()?,
+                Some(e) => e,
+                None => return None,
+            };
+            if c <= end {
+                let (start_cmp, end_cmp) = (fold(c), fold(end));
+                matched |= (probe >= start_cmp && probe <= end_cmp)
+                    || (value_char >= c && value_char <= end);
             }
         }
         Some(if negate { !matched } else { matched })
