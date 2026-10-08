@@ -313,6 +313,21 @@ mod jq {
 
     /// `join` appends in place; metering must not turn it quadratic (300k
     /// joins took over 30 s when every append copied the string).
+    ///
+    /// This is the only test here whose guard is *throughput* rather than a
+    /// cap, so the 600 s budget has to sit between the linear cost and the
+    /// quadratic one on the slowest build we run. The nightly
+    /// AddressSanitizer job is what makes that interval narrow, and it caught
+    /// a real regression: the prelude's `join` shared its accumulator at the
+    /// add, so every element copied the whole result. 300k elements cost 68 s
+    /// unoptimized natively -- fine against 600 s, but past it once ASAN's
+    /// instrumentation was on top (nightly #247). The fold is linear again
+    /// (14 s for the same 300k), which both restores the headroom and keeps
+    /// the budget discriminating: a quadratic `join` overruns it under ASAN,
+    /// a linear one finishes well inside it. Do not shrink the element count
+    /// to buy headroom -- the quadratic penalty scales with it, so a smaller
+    /// array would fit the budget either way and the guard would stop
+    /// guarding.
     #[tokio::test]
     async fn ordinary_workloads_still_fit() {
         let r = run(

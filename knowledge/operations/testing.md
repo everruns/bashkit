@@ -207,6 +207,20 @@ Only a test that asserts a timeout sets a short deadline, and it sets it
 explicitly. Before adding a cap test, confirm the cap is the sole limit that can
 stop the script.
 
+The same file holds one test whose guard is **throughput**, not a cap
+(`ordinary_workloads_still_fit`), and it has the opposite constraint: its
+budget has to sit *between* the linear cost and the quadratic one on the
+slowest build, so it must be loose enough for ASAN and tight enough to still
+fail. That interval is real and it found a real bug -- a quadratic `join`
+(68 s for 300k elements unoptimized) passed against 600 s natively and only
+overran it under ASAN, which is how nightly #247 surfaced it. Two rules follow:
+
+- Size a throughput guard from the quadratic penalty, not from convenience.
+  Shrinking the workload to buy headroom shrinks the penalty with it, and a
+  small enough array fits the budget whether the code is linear or not.
+- Make the linear path fast rather than the budget generous. Raising the
+  budget to fit a slow linear run also lets a quadratic run through.
+
 ## Public capability parity contract
 
 [`contracts/capability-parity.json`](../../contracts/capability-parity.json) is the

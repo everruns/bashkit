@@ -1316,6 +1316,7 @@ const JQ_BANNED: &[&str] = &[
     "JQ_COMPAT_DEFS",
     "def setpath",
     "def leaf_paths",
+    "def _bk_joinstr",
     "def @tsv:",
     "def @csv:",
     "def env:",
@@ -1372,6 +1373,17 @@ jq_no_leak!(
 );
 jq_no_leak!(no_leak_iterate_over_null, r#"echo 'null' | jq '.[]'"#);
 jq_no_leak!(no_leak_add_array_and_number, r#"echo '[1,2]' | jq '. + 1'"#);
+// `join` fails inside the compat prelude, so its diagnostics are the ones
+// most likely to carry prelude source out to the caller.
+jq_no_leak!(
+    no_leak_join_non_addable_separator,
+    r#"echo '["a","b"]' | jq 'join(1)'"#
+);
+jq_no_leak!(
+    no_leak_join_nested_array,
+    r#"echo '[[1]]' | jq 'join(",")'"#
+);
+jq_no_leak!(no_leak_join_over_string, r#"echo '"abc"' | jq 'join(",")'"#);
 
 // New: malformed $ARGS / file flags
 jq_no_leak!(no_leak_invalid_jsonargs, "jq -n . --jsonargs 'not json'");
@@ -2107,6 +2119,51 @@ async fn string_builtins_follow_jq() {
         "\"1--a-true\"\n\"\"\n\"string (\\\"\\\") and array ([1]) cannot be added\"\n1\n\"ab\"\n\
          [[\"a\",\"1\"],[\"b\",\"2\"]]\n{\"x\":\"a\",\"y\":null}\n\"\\u007f\"\n"
     );
+}
+
+/// `join` is defined in the compat prelude rather than vendored, so its
+/// parity with real jq is only as good as that definition. Every case here
+/// was captured from jq 1.7, including the wording and operand order of the
+/// two error messages: the separator is only ever added once the array holds
+/// a second element, so `["a"] | join(1)` succeeds while `["a","b"] | join(1)`
+/// reports the accumulated string first.
+#[tokio::test]
+async fn join_follows_jq() {
+    let cases = [
+        (r#"[1, null, "a", true] | join("-")"#, "\"1--a-true\""),
+        (r#"[null] | join(",")"#, "\"\""),
+        (r#"[] | join(",")"#, "\"\""),
+        (r#"{} | join(",")"#, "\"\""),
+        (r#"[false] | join(",")"#, "\"false\""),
+        (r#"["a"] | join(1)"#, "\"a\""),
+        (r#"["a","b","c"] | join("")"#, "\"abc\""),
+        (r#"["a","b"] | join("<>")"#, "\"a<>b\""),
+        (
+            r#"["\u00e9","\u00fc"] | join("\u2014")"#,
+            "\"\u{e9}\u{2014}\u{fc}\"",
+        ),
+        (r#"{"a":"x","b":"y"} | join("-")"#, "\"x-y\""),
+        (
+            r#"try ([[1]] | join(",")) catch ."#,
+            r#""string (\"\") and array ([1]) cannot be added""#,
+        ),
+        (
+            r#"try (["a","b"] | join(1)) catch ."#,
+            r#""string (\"a\") and number (1) cannot be added""#,
+        ),
+        (
+            r#"try ([1,2] | join(2)) catch ."#,
+            r#""string (\"1\") and number (2) cannot be added""#,
+        ),
+        (
+            r#"try ("abc" | join(",")) catch ."#,
+            r#""Cannot iterate over string (\"abc\")""#,
+        ),
+    ];
+    for (filter, want) in cases {
+        let out = run_jq_with_args(&["-nc", filter], "").await.unwrap();
+        assert_eq!(out, format!("{want}\n"), "{filter}");
+    }
 }
 
 #[tokio::test]

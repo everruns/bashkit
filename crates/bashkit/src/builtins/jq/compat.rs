@@ -15,6 +15,15 @@
 //!    `truncate_stream`: jq 1.7's definitions (capture groups in `scan`,
 //!    null for an unmatched group, null joins as "", non-strings pass
 //!    through the trim filters).
+//!  - `join`: jq's own definition folds with `(if . == null then "" else
+//!    . + $x end) + $elem`, which keeps the accumulator reachable while the
+//!    right operand is evaluated. A shared accumulator cannot be appended to
+//!    in place, so every element copied the whole result and `join` was
+//!    quadratic: 68 s for 300k elements. The definition below coerces the
+//!    elements first and then folds with the accumulator as the left operand
+//!    of a single add (`. + ($x + $s)`), which is linear -- 14 s for the same
+//!    300k. See knowledge/runtimes/jaq-json-vendor.md for the measurements
+//!    and the rule; `join_follows_jq` pins the observable behaviour.
 //!  - `halt_error`: jq prints a string as is, null as nothing, and other
 //!    values as JSON plus a newline, then halts (the run loop turns the
 //!    halt into the command's exit code, never a process exit).
@@ -83,12 +92,25 @@ def capture(re; flags):
   match(re; flags)
   | reduce (.captures[] | select(.name != null)) as $c ({}; . + {($c.name): $c.string});
 def capture(re): capture(re; "");
+# `join`: fold with the accumulator as the left operand of ONE add, and with
+# the right operand fully parenthesized, or the accumulator is shared at the
+# add and every element copies it (quadratic -- see the module docs). The
+# leading separator the fold prepends is sliced off at the end; arrays of 0 or
+# 1 element never reach the fold, so `["a"] | join(1)` still succeeds like jq,
+# and `$p[0] + $x` reproduces jq's error (and its operand order) for a
+# non-addable separator as soon as a second element exists.
+def _bk_joinstr:
+  if . == null then ""
+  elif type == "string" then .
+  elif type == "boolean" or type == "number" then tojson
+  else "" + . end;
 def join($x):
-  reduce .[] as $i (null;
-    (if . == null then "" else . + $x end)
-    + ($i | if . == null then ""
-            elif type == "boolean" or type == "number" then tojson
-            else . end)) // "";
+  [.[] | _bk_joinstr] as $p
+  | if ($p | length) <= 1 then ("" + ($p[0] // ""))
+    else ($p[0] + $x) as $_sep_is_addable
+       | reduce $p[] as $s (""; . + ($x + $s))
+       | .[($x | length):]
+    end;
 def _bk_ltrimstr($x): ltrimstr($x);
 def _bk_rtrimstr($x): rtrimstr($x);
 def ltrimstr($x):

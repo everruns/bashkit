@@ -71,6 +71,30 @@ same rewrite applies to every release:
   uniquely held string is appended to in place (`. + $x`, `join`). An owner
   wrapper made every append copy, and `join` over 300k strings went from
   0.5 s to over 30 s.
+- In-place appending only survives if the accumulator is **uniquely held at
+  the add**, which constrains how a folding filter may be written, not just
+  how the meter is built. `Val::add` reuses the left operand's buffer through
+  `BytesMut::from(Bytes)`, which copies unless that `Bytes` is unique, so a
+  fold whose accumulator is also reachable from somewhere else in the same
+  expression is quadratic. Measured in an unoptimized build, 100k -> 300k
+  iterations (linear would be 3.0x):
+
+  | filter body | 100k | 300k | ratio |
+  | --- | --- | --- | --- |
+  | `. + "x"` | 0.28 s | 0.83 s | 2.9x |
+  | `. + ("," + "x")` | 0.48 s | 1.79 s | 3.7x |
+  | `. + "," + "x"` | 0.91 s | 5.20 s | 5.7x |
+  | `. + "x" + "y"` | 1.02 s | 7.49 s | 7.4x |
+
+  Rule: the accumulator appears **once**, as the left operand of a **single**
+  add, with the right operand fully parenthesized. `(. + a) + b` keeps `.`
+  alive to evaluate `b`, so the inner add sees a shared buffer and copies it;
+  `. + (a + b)` does not. Testing the accumulator in a condition
+  (`if . == null then ... else . + $x end`) shares it the same way. This is
+  why the prelude's `join` (`builtins/jq/compat.rs`) coerces the elements into
+  an array first and then folds with `. + ($x + $s)`, instead of jq's own
+  `(if . == null then "" else . + $x end) + ...` shape: that shape cost 68 s
+  for 300k elements where the fold above costs 14 s and scales linearly.
 - Array and object bodies are `Metered<Vec<Val>>` / `Metered<Map>`: charged
   on creation and clone, re-charged by `resync()` after every in-place
   mutation, released on drop.
