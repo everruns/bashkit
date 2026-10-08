@@ -3446,8 +3446,14 @@ impl<'a> Parser<'a> {
                 Ok(word)
             }
             Some(tokens::Token::QuotedWord(w)) | Some(tokens::Token::QuotedGlobWord(w)) => {
-                // Double-quoted: parse for variable expansion
-                let word = self.with_raw(self.parse_word(w.clone()));
+                // Double-quoted: parse for variable expansion. Marked quoted
+                // as command words are, so a redirect target such as
+                // `> one-\*` or `> "$f"` is neither split nor globbed.
+                let glob = matches!(&self.current_token, Some(tokens::Token::QuotedGlobWord(_)));
+                let mut word = self.parse_word(w.clone());
+                word.quoted = true;
+                word.has_unquoted_glob |= glob;
+                let word = self.with_raw(word);
                 self.advance();
                 Ok(word)
             }

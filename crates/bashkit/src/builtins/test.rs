@@ -41,8 +41,15 @@ impl Builtin for Test {
         }
 
         let cwd = ctx.cwd.clone();
+        let set_vars = ctx.shell.as_ref().map_or(&[][..], |s| s.set_vars);
+        let env = Env {
+            fs: &ctx.fs,
+            cwd: &cwd,
+            variables: ctx.variables,
+            set_vars,
+        };
         // Parse and evaluate the expression
-        match evaluate_expression(ctx.args, &ctx.fs, &cwd, ctx.variables).await {
+        match evaluate_expression(ctx.args, &env).await {
             Ok(true) => Ok(ExecResult::ok(String::new())),
             Ok(false) => Ok(ExecResult::err(String::new(), 1)),
             Err(e) => Ok(usage_error("test", e)),
@@ -70,8 +77,15 @@ impl Builtin for Bracket {
         }
 
         let cwd = ctx.cwd.clone();
+        let set_vars = ctx.shell.as_ref().map_or(&[][..], |s| s.set_vars);
+        let env = Env {
+            fs: &ctx.fs,
+            cwd: &cwd,
+            variables: ctx.variables,
+            set_vars,
+        };
         // Parse and evaluate the expression
-        match evaluate_expression(&args, &ctx.fs, &cwd, ctx.variables).await {
+        match evaluate_expression(&args, &env).await {
             Ok(true) => Ok(ExecResult::ok(String::new())),
             Ok(false) => Ok(ExecResult::err(String::new(), 1)),
             Err(e) => Ok(usage_error("[", e)),
@@ -89,13 +103,21 @@ fn resolve_file_path(cwd: &Path, arg: &str) -> PathBuf {
     }
 }
 
-/// Evaluate a test expression
-fn evaluate_expression<'a>(
-    args: &'a [String],
+/// What an expression can look at: the filesystem, the cwd, shell variables
+/// (`set -o` state for `-o`) and the `-v` answers from the interpreter.
+struct Env<'a> {
     fs: &'a Arc<dyn FileSystem>,
     cwd: &'a Path,
     variables: &'a HashMap<String, String>,
+    set_vars: &'a [String],
+}
+
+/// Evaluate a test expression
+fn evaluate_expression<'a>(
+    args: &'a [String],
+    env: &'a Env<'a>,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = TestResult> + Send + 'a>> {
+    let (fs, cwd) = (env.fs, env.cwd);
     Box::pin(async move {
         if args.is_empty() {
             return Ok(false);
@@ -103,12 +125,12 @@ fn evaluate_expression<'a>(
 
         // Handle negation
         if args[0] == "!" {
-            return Ok(!evaluate_expression(&args[1..], fs, cwd, variables).await?);
+            return Ok(!evaluate_expression(&args[1..], env).await?);
         }
 
         // Handle parentheses (basic support)
         if args[0] == "(" && args.last().map(|s| s.as_str()) == Some(")") {
-            return evaluate_expression(&args[1..args.len() - 1], fs, cwd, variables).await;
+            return evaluate_expression(&args[1..args.len() - 1], env).await;
         }
 
         // Look for logical operators: -o has lowest precedence, then -a.
@@ -120,16 +142,16 @@ fn evaluate_expression<'a>(
                 // Both sides are evaluated: bash's `test` connectives do not
                 // short-circuit, so a bad operand on the right is an error
                 // even when the left side already decides the answer.
-                let left = evaluate_expression(&args[..i], fs, cwd, variables).await;
-                let right = evaluate_expression(&args[i + 1..], fs, cwd, variables).await;
+                let left = evaluate_expression(&args[..i], env).await;
+                let right = evaluate_expression(&args[i + 1..], env).await;
                 let (left, right) = (left?, right?);
                 return Ok(left || right);
             }
         }
         for (i, arg) in args.iter().enumerate() {
             if arg == "-a" && i > 0 && i + 1 < args.len() {
-                let left = evaluate_expression(&args[..i], fs, cwd, variables).await;
-                let right = evaluate_expression(&args[i + 1..], fs, cwd, variables).await;
+                let left = evaluate_expression(&args[..i], env).await;
+                let right = evaluate_expression(&args[i + 1..], env).await;
                 let (left, right) = (left?, right?);
                 return Ok(left && right);
             }
@@ -143,7 +165,7 @@ fn evaluate_expression<'a>(
             }
             2 => {
                 // Unary operators
-                evaluate_unary(&args[0], &args[1], fs, cwd, variables).await
+                evaluate_unary(&args[0], &args[1], env).await
             }
             3 => {
                 // Binary operators
@@ -155,14 +177,12 @@ fn evaluate_expression<'a>(
 }
 
 /// Evaluate a unary test expression
-async fn evaluate_unary(
-    op: &str,
-    arg: &str,
-    fs: &Arc<dyn FileSystem>,
-    cwd: &Path,
-    variables: &HashMap<String, String>,
-) -> TestResult {
+async fn evaluate_unary(op: &str, arg: &str, env: &Env<'_>) -> TestResult {
+    let (fs, cwd, variables) = (env.fs, env.cwd, env.variables);
     match op {
+        // Shell state: a set variable, an enabled `set -o` option.
+        "-v" => Ok(env.set_vars.iter().any(|v| v == arg)),
+        "-o" => Ok(super::vars::set_o_option_on(variables, arg).unwrap_or(false)),
         // String tests
         "-z" => Ok(arg.is_empty()),
         "-n" => Ok(!arg.is_empty()),

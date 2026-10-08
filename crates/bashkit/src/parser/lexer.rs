@@ -486,6 +486,12 @@ impl<'a> Lexer<'a> {
             // N>&M - duplicate fd
             consume(self, 2);
 
+            // `N>&M-` moves M: leave `M-` to be read as the target word.
+            let digits = self.lookahead().take_while(|c| c.is_ascii_digit()).count();
+            if digits > 0 && self.lookahead().nth(digits) == Some('-') {
+                return Some(Token::DupFdWord(fd));
+            }
+
             // Read the target fd number or '-'
             let mut target_str = String::new();
             while let Some(c) = self.peek_char() {
@@ -2545,8 +2551,13 @@ impl<'a> Lexer<'a> {
                 in_double_quote = !in_double_quote;
             } else if ch == '\'' && !in_double_quote {
                 in_single_quote = !in_single_quote;
-            } else if ch == '\\' && in_double_quote {
-                // Escaped char inside double quotes — skip the next char too
+            } else if ch == '\\' && !in_single_quote && self.peek_char() == Some('\n') {
+                // `\<newline>` continues the command line: the body starts
+                // after the logical line (`cat <<EOF \` / `; echo two`).
+                self.advance();
+                continue;
+            } else if ch == '\\' && !in_single_quote {
+                // Escaped char (outside single quotes) — skip the next char too
                 rest_of_line.push(ch);
                 if let Some(next) = self.peek_char() {
                     rest_of_line.push(next);
