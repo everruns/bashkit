@@ -2,6 +2,7 @@
 
 ## 2026-10-07
 
+* **Fix**: `${v@a}` prints every attribute letter `declare -p` shows, in bash's order (`a`/`A`, `i`, `n`, `r`, `x`, `l`, `u`), follows namerefs, takes the array from a subscript, and repeats per element for `${arr[@]@a}`. It only knew `r` and `x`, so `declare -i n; ${n@a}` was empty.
 - Added the bash-oracle scoreboard (`scripts/bash-oracle`, `just bash-oracle`):
   108 whole-script cases replayed against output recorded from real bash 5.2,
   scored as `match` (status + stdout, 90/108) and `strict` (also stderr,

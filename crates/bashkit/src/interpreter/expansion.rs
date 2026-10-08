@@ -122,6 +122,25 @@ impl Interpreter {
 
     /// Apply a `${var@operator}` transformation.
     pub(super) fn apply_transformation(&self, name: &str, operator: char) -> String {
+        // `${v@a}`: the variable's attribute letters, the same ones
+        // `declare -p` prints. A subscript picks the array, a nameref its
+        // target, and `${a[@]@a}` repeats the letters once per element.
+        if operator == 'a' {
+            let base = name.split('[').next().unwrap_or(name);
+            let letters = self.attr_letters(self.resolve_nameref(base));
+            let letters = if letters == "-" {
+                String::new()
+            } else {
+                letters
+            };
+            if name.ends_with("[@]") || name.ends_with("[*]") {
+                let count = self
+                    .resolve_param_expansion_elements(name)
+                    .map_or(0, |elems| elems.len());
+                return vec![letters; count].join(" ");
+            }
+            return letters;
+        }
         // `${a[@]@Q}`, `${@@U}`: value transforms apply to each element.
         if matches!(operator, 'Q' | 'E' | 'P' | 'u' | 'U' | 'L')
             && let Some(elems) = self.resolve_param_expansion_elements(name)
@@ -147,16 +166,6 @@ impl Interpreter {
         };
         match operator {
             'A' => format!("{}='{}'", name, value.replace('\'', "'\\''")),
-            'a' => {
-                let mut attrs = String::new();
-                if self.is_var_readonly(name) {
-                    attrs.push('r');
-                }
-                if self.env.contains_key(name) {
-                    attrs.push('x');
-                }
-                attrs
-            }
             _ => Self::transform_value(&value, operator),
         }
     }
