@@ -1539,6 +1539,11 @@ pub struct Interpreter {
     loop_depth: usize,
     /// Active function calls and `source`s: `return` is valid only when > 0.
     return_depth: usize,
+    /// The last `[[ ]]` leaf was an invalid `=~` regex (status 2 if it
+    /// decides the result).
+    cond_regex_error: bool,
+    /// Diagnostics from `[[ ]]` leaves (arithmetic operand errors).
+    cond_stderr: String,
     /// First arithmetic error raised by a read-only evaluation site (array
     /// subscripts, `declare -i` values, substring offsets). The command
     /// boundary turns it into a line abort, as bash does.
@@ -2031,6 +2036,8 @@ impl Interpreter {
             child_shell_depth: 0,
             loop_depth: 0,
             return_depth: 0,
+            cond_regex_error: false,
+            cond_stderr: String::new(),
             arith_error: StdMutex::new(None),
             pending_compound_args: Vec::new(),
             assign_raw: false,
@@ -2197,6 +2204,8 @@ impl Interpreter {
             child_shell_depth: self.child_shell_depth,
             loop_depth: self.loop_depth,
             return_depth: self.return_depth,
+            cond_regex_error: false,
+            cond_stderr: String::new(),
             arith_error: StdMutex::new(None),
             pending_compound_args: Vec::new(),
             assign_raw: false,
@@ -4241,7 +4250,12 @@ impl Interpreter {
         // Evaluate with lazy expansion to support short-circuit semantics.
         // In `[[ -n "${X:-}" && "$X" != "off" ]]`, if the left side is false,
         // the right side must NOT be expanded (to avoid set -u errors).
-        let result = self.evaluate_conditional_words(words).await?;
+        self.cond_regex_error = false;
+        self.cond_stderr.clear();
+        let result = self.evaluate_conditional_words(words).await;
+        let regex_error = std::mem::take(&mut self.cond_regex_error);
+        let cond_stderr = std::mem::take(&mut self.cond_stderr);
+        let result = result?;
         // If a nounset error occurred during evaluation, propagate it.
         if let Some(err_msg) = self.nounset_error.take() {
             self.last_exit_code = 1;
@@ -4252,12 +4266,17 @@ impl Interpreter {
                 ..Default::default()
             });
         }
-        let exit_code = if result { 0 } else { 1 };
+        // An invalid regex that decides the result gives status 2.
+        let exit_code = match (result, regex_error) {
+            (true, _) => 0,
+            (false, true) => 2,
+            (false, false) => 1,
+        };
         self.last_exit_code = exit_code;
 
         Ok(ExecResult {
             stdout: crate::StreamData::new(),
-            stderr: crate::StreamData::new(),
+            stderr: cond_stderr.into(),
             exit_code,
             control_flow: ControlFlow::None,
             ..Default::default()
@@ -4367,7 +4386,9 @@ impl Interpreter {
 
             // Handle negation
             if Self::conditional_word_literal(&words[0]) == Some("!") {
-                return Ok(!self.evaluate_conditional_words(&words[1..]).await?);
+                let negated = !self.evaluate_conditional_words(&words[1..]).await?;
+                self.cond_regex_error = false;
+                return Ok(negated);
             }
 
             // Handle parentheses only when they wrap the whole expression.
@@ -4410,6 +4431,7 @@ impl Interpreter {
                     self.expand_word(word).await?
                 });
             }
+            self.cond_regex_error = false;
             Ok(self.evaluate_conditional(&expanded).await)
         })
     }
@@ -4502,30 +4524,12 @@ impl Interpreter {
                         "!=" => !self.pattern_matches(&args[0], &args[2]),
                         "<" => args[0] < args[2],
                         ">" => args[0] > args[2],
-                        "-eq" => {
-                            args[0].parse::<i64>().unwrap_or(0)
-                                == args[2].parse::<i64>().unwrap_or(0)
-                        }
-                        "-ne" => {
-                            args[0].parse::<i64>().unwrap_or(0)
-                                != args[2].parse::<i64>().unwrap_or(0)
-                        }
-                        "-lt" => {
-                            args[0].parse::<i64>().unwrap_or(0)
-                                < args[2].parse::<i64>().unwrap_or(0)
-                        }
-                        "-le" => {
-                            args[0].parse::<i64>().unwrap_or(0)
-                                <= args[2].parse::<i64>().unwrap_or(0)
-                        }
-                        "-gt" => {
-                            args[0].parse::<i64>().unwrap_or(0)
-                                > args[2].parse::<i64>().unwrap_or(0)
-                        }
-                        "-ge" => {
-                            args[0].parse::<i64>().unwrap_or(0)
-                                >= args[2].parse::<i64>().unwrap_or(0)
-                        }
+                        "-eq" => self.cond_int_cmp(&args[0], &args[2], |a, b| a == b),
+                        "-ne" => self.cond_int_cmp(&args[0], &args[2], |a, b| a != b),
+                        "-lt" => self.cond_int_cmp(&args[0], &args[2], |a, b| a < b),
+                        "-le" => self.cond_int_cmp(&args[0], &args[2], |a, b| a <= b),
+                        "-gt" => self.cond_int_cmp(&args[0], &args[2], |a, b| a > b),
+                        "-ge" => self.cond_int_cmp(&args[0], &args[2], |a, b| a >= b),
                         "=~" => self.regex_match(&args[0], &args[2]),
                         "-nt" => {
                             let lm = self.fs.stat(std::path::Path::new(&args[0])).await;
@@ -4581,9 +4585,39 @@ impl Interpreter {
         self.is_variable_set(name)
     }
 
+    /// `[[ a -eq b ]]` and friends: both operands are arithmetic
+    /// expressions, evaluated as they stand (no second `$` expansion). An
+    /// invalid operand is reported and makes the test false.
+    fn cond_int_cmp(&mut self, left: &str, right: &str, cmp: fn(i64, i64) -> bool) -> bool {
+        let mut values = [0i64; 2];
+        for (slot, operand) in values.iter_mut().zip([left, right]) {
+            let mut ev = arithmetic::ArithEval::new(self);
+            let r = ev.eval_str(operand);
+            let writes = std::mem::take(&mut ev.writes);
+            self.apply_arith_writes(writes);
+            match r {
+                Ok(v) => *slot = v,
+                Err(msg) => {
+                    let msg = format!("{}: {msg}", operand.trim());
+                    let diag = self.arith_diag("[[: ", &msg);
+                    self.cond_stderr.push_str(&diag);
+                    return false;
+                }
+            }
+        }
+        cmp(values[0], values[1])
+    }
+
     /// Perform regex match and set BASH_REMATCH array.
     fn regex_match(&mut self, string: &str, pattern: &str) -> bool {
-        match self.regex_cache.get_or_compile(pattern) {
+        // POSIX ERE rejects unknown `[:class:]` names; the Rust engine would
+        // read them as plain bracket members.
+        let compiled = if ere_has_invalid_char_class(pattern) {
+            None
+        } else {
+            self.regex_cache.get_or_compile(pattern)
+        };
+        match compiled {
             Some(re) => {
                 if let Some(captures) = re.captures(string) {
                     // Set BASH_REMATCH array
@@ -4600,6 +4634,8 @@ impl Interpreter {
                 }
             }
             None => {
+                // Invalid regex: status 2 when it decides `[[ ]]`.
+                self.cond_regex_error = true;
                 self.arrays_mut().remove("BASH_REMATCH");
                 false
             }
@@ -7914,6 +7950,11 @@ impl Interpreter {
             "let" => Some(self.execute_let_builtin(args, redirects).await),
             "unset" => Some(self.execute_unset_builtin(args, redirects).await),
             "getopts" => Some(self.execute_getopts(args, redirects).await),
+            // Bare `set`: the same sorted, quoted listing as `declare`.
+            "set" if args.is_empty() => {
+                let result = ExecResult::ok(self.format_set_listing());
+                Some(self.apply_redirections(result, redirects).await)
+            }
             _ => None,
         }
     }
@@ -7962,8 +8003,9 @@ impl Interpreter {
         stdin: Option<crate::StreamData>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecResult>> + Send + 'a>> {
         Box::pin(async move {
-            // Interpreter-level special builtins
-            if Self::is_special_builtin_name(name) {
+            // Interpreter-level special builtins. A bare `set` lists every
+            // variable (arrays included), which needs interpreter state.
+            if Self::is_special_builtin_name(name) || (name == "set" && args.is_empty()) {
                 return self
                     .execute_special_builtin_with_hooks(
                         name,
@@ -9076,20 +9118,46 @@ impl Interpreter {
         args: &[String],
         redirects: &[Redirect],
     ) -> Result<ExecResult> {
+        // Options come first (clusters like `-fn`, `--` ends them); the
+        // first operand ends option parsing (`unset x -n` unsets `-n`).
         let mut unset_nameref = false;
         let mut unset_function = false;
-        let mut var_args: Vec<&String> = Vec::new();
-        for arg in args {
-            if arg == "-n" {
-                unset_nameref = true;
-            } else if arg == "-f" {
-                unset_function = true;
-            } else if arg == "-v" {
-                // -v (variable, default) - explicit variable mode
-            } else {
-                var_args.push(arg);
+        let mut unset_var = false;
+        let mut operands_start = args.len();
+        for (i, arg) in args.iter().enumerate() {
+            if arg == "--" {
+                operands_start = i + 1;
+                break;
+            }
+            let Some(flags) = arg.strip_prefix('-').filter(|f| !f.is_empty()) else {
+                operands_start = i;
+                break;
+            };
+            for flag in flags.chars() {
+                match flag {
+                    'n' => unset_nameref = true,
+                    'f' => unset_function = true,
+                    'v' => unset_var = true,
+                    _ => {
+                        let result = ExecResult::err(
+                            format!(
+                                "bash: unset: -{flag}: invalid option\nunset: usage: unset [-f] [-v] [-n] [name ...]\n"
+                            ),
+                            2,
+                        );
+                        return self.apply_redirections(result, redirects).await;
+                    }
+                }
             }
         }
+        if unset_function && unset_var {
+            let result = ExecResult::err(
+                "bash: unset: cannot simultaneously unset a function and a variable\n",
+                1,
+            );
+            return self.apply_redirections(result, redirects).await;
+        }
+        let var_args: Vec<&String> = args[operands_start..].iter().collect();
 
         let mut stderr = String::new();
         let mut exit_code: i32 = 0;
@@ -9099,6 +9167,12 @@ impl Interpreter {
                 self.functions_mut().remove(arg.as_str());
                 continue;
             }
+            // Only an explicit `-v` checks the name (bash).
+            if unset_var && !is_valid_var_name(arg) && !Self::is_array_reference(arg) {
+                stderr.push_str(&format!("bash: unset: `{arg}': not a valid identifier\n"));
+                exit_code = 1;
+                continue;
+            }
             if let Some(bracket) = arg.find('[')
                 && arg.ends_with(']')
             {
@@ -9106,6 +9180,13 @@ impl Interpreter {
                 let key = &arg[bracket + 1..arg.len() - 1];
                 let expanded_key = self.expand_variable_or_literal(key);
                 let resolved_name = self.resolve_nameref(arr_name).to_string();
+                if self.is_var_readonly(&resolved_name) {
+                    stderr.push_str(&format!(
+                        "bash: unset: {resolved_name}: cannot unset: readonly variable\n"
+                    ));
+                    exit_code = 1;
+                    continue;
+                }
                 // THREAT[TM-DOS-114]: releasing one element must give back both
                 // its entry slot and its bytes, or repeated set/unset cycles
                 // drift the budget until a healthy script is refused.
@@ -9125,10 +9206,16 @@ impl Interpreter {
                 }
                 continue;
             }
-            if unset_nameref {
+            if unset_nameref && self.scoped.namerefs.contains_key(arg.as_str()) {
                 self.remove_nameref(arg);
             } else {
-                let resolved = self.resolve_nameref(arg).to_string();
+                // `-n` on a plain variable unsets it without following
+                // namerefs.
+                let resolved = if unset_nameref {
+                    arg.to_string()
+                } else {
+                    self.resolve_nameref(arg).to_string()
+                };
                 // THREAT[TM-INJ-009]: Block unset of internal marker variables
                 if is_internal_variable(&resolved) {
                     stderr.push_str(&format!(
@@ -9158,6 +9245,12 @@ impl Interpreter {
             ..Default::default()
         };
         self.apply_redirections(result, redirects).await
+    }
+
+    /// `name[subscript]` with a valid name (`unset -v 'a[1]'`).
+    fn is_array_reference(arg: &str) -> bool {
+        arg.find('[')
+            .is_some_and(|b| b > 0 && arg.ends_with(']') && is_valid_var_name(&arg[..b]))
     }
 
     /// Remove every live binding of `name`: scalar value, arrays,
@@ -11375,6 +11468,58 @@ impl Interpreter {
             }
         }
     }
+}
+
+/// Whether an ERE uses a `[:name:]` character class POSIX does not define
+/// (`[[:foo:]]`), which regcomp rejects.
+fn ere_has_invalid_char_class(pattern: &str) -> bool {
+    const CLASSES: [&str; 12] = [
+        "alnum", "alpha", "blank", "cntrl", "digit", "graph", "lower", "print", "punct", "space",
+        "upper", "xdigit",
+    ];
+    let chars: Vec<char> = pattern.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        match chars[i] {
+            '\\' => i += 2,
+            '[' => {
+                // Bracket expression: a leading `^` and a first `]` are members.
+                i += 1;
+                if chars.get(i) == Some(&'^') {
+                    i += 1;
+                }
+                if chars.get(i) == Some(&']') {
+                    i += 1;
+                }
+                while i < chars.len() && chars[i] != ']' {
+                    if chars[i] == '['
+                        && let Some(&kind @ (':' | '.' | '=')) = chars.get(i + 1)
+                    {
+                        let start = i + 2;
+                        let mut end = start;
+                        while end + 1 < chars.len()
+                            && !(chars[end] == kind && chars[end + 1] == ']')
+                        {
+                            end += 1;
+                        }
+                        if end + 1 >= chars.len() {
+                            return false;
+                        }
+                        let name: String = chars[start..end].iter().collect();
+                        if kind == ':' && !CLASSES.contains(&name.as_str()) {
+                            return true;
+                        }
+                        i = end + 2;
+                    } else {
+                        i += 1;
+                    }
+                }
+                i += 1;
+            }
+            _ => i += 1,
+        }
+    }
+    false
 }
 
 /// Turn a builtin's usage error into a failed command (exit 2) instead of

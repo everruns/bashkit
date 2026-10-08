@@ -368,7 +368,6 @@ readonly r=1; f() { local r=2; }; f; echo $?
 
 ### bashbox_interpreter_core_set_lists_variables_quoting_when_needed
 # set lists variables, quoting when needed
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 a=1; b="x y"; c=""; d="it's"; set | grep "^[abcd]="
 ### expect
 a=1
@@ -703,7 +702,6 @@ still
 
 ### bashbox_interpreter_core_alias_define_list_and_query
 # alias define, list and query
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 alias a=b c="it's"; alias; alias a; alias zz; echo $?
 ### expect
 alias a='b'
@@ -721,7 +719,6 @@ alias a=b; unalias a zz; echo $?; alias x=y; unalias -a; alias
 
 ### bashbox_interpreter_core_trap_listing_order_and_quoting
 # trap listing order and quoting
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 trap "echo b" ERR; trap "echo a" EXIT; trap "" INT; trap "it's" SIGTERM; trap
 ### expect
 trap -- 'echo a' EXIT
@@ -733,7 +730,6 @@ a
 
 ### bashbox_interpreter_core_trap_with_a_lone_signal_resets_it
 # trap with a lone signal resets it
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 trap "echo x" 0; trap; trap EXIT; trap; echo done
 ### expect
 trap -- 'echo x' EXIT
@@ -874,7 +870,6 @@ time -p true
 
 ### bashbox_interpreter_core_an_invalid_regex_fails_with_status_2
 # an invalid regex fails [[ with status 2
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 re='('; [[ a =~ $re ]]; echo $?; re='[[:foo:]]'; [[ a =~ $re ]]; echo $?; [[ abc =~ b(c) ]]; echo $? ${BASH_REMATCH[@]}
 ### expect
 2
@@ -884,7 +879,6 @@ re='('; [[ a =~ $re ]]; echo $?; re='[[:foo:]]'; [[ a =~ $re ]]; echo $?; [[ abc
 
 ### bashbox_interpreter_core_evaluates_integer_operands_without_expanding_them_again
 # [[ ]] evaluates integer operands without expanding them again
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 x='$(echo hi >&2; echo 1)'; [[ $x -eq 1 ]]; echo $?; x='1+1'; [[ $x -eq 2 ]]; echo $?; [[ 08 -eq 1 ]]; echo $?
 ### expect
 1
@@ -920,7 +914,6 @@ next 1
 
 ### bashbox_interpreter_core_unset_takes_options_first
 # unset takes options first
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 unset -v x -n y; echo $?; unset -z; echo $?; unset -fn; echo $?; unset -n; echo $?; unset 'a b'; echo $?
 ### expect
 1
@@ -932,7 +925,6 @@ unset -v x -n y; echo $?; unset -z; echo $?; unset -fn; echo $?; unset -n; echo 
 
 ### bashbox_interpreter_core_unset_of_an_element_and_of_a_readonly_variable
 # unset of an element and of a readonly variable
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 a=(1 2 3); unset 'a[1]'; declare -p a; readonly r; unset -n r; echo $?; readonly -a ra=(1); unset 'ra[0]'; echo $?
 ### expect
 declare -a a=([0]="1" [2]="3")

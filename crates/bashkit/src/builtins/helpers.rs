@@ -11,6 +11,12 @@
 use super::check_help_version;
 use crate::interpreter::ExecResult;
 
+/// bash `sh_single_quote`: wrap in single quotes, each `'` as `'\''`.
+/// Used by listings meant to be re-read as input (`alias`, `trap`).
+pub(crate) fn single_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
 /// Build the error real GNU coreutils/util-linux print for an unrecognized
 /// command-line option, so builtins reject typos the way the real tools do
 /// instead of silently ignoring the bad flag.
