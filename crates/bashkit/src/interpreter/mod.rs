@@ -6920,7 +6920,9 @@ impl Interpreter {
                 None
             };
             // `>(cmd)` runs in a subshell too (see expand_process_substitution).
-            let snapshot = self.snapshot_subshell_state();
+            // Boxed: keeps this future (in every simple command's await chain)
+            // small so deep `$(...)` nesting stays within the stack.
+            let snapshot = Box::new(self.snapshot_subshell_state());
             let last_exit_code = self.last_exit_code;
             self.bash_subshell += 1;
             let mut run = Ok(());
@@ -6947,7 +6949,7 @@ impl Interpreter {
                     break;
                 }
             }
-            self.restore_subshell_state(snapshot);
+            self.restore_subshell_state(*snapshot);
             self.last_exit_code = last_exit_code;
             run?;
         }
@@ -10355,7 +10357,7 @@ impl Interpreter {
             let mut stdout = String::new();
             // The substituted list runs in a subshell: nothing it changes
             // (variables, cwd, options, `$?`) reaches the parent.
-            let snapshot = self.snapshot_subshell_state();
+            let snapshot = Box::new(self.snapshot_subshell_state());
             let last_exit_code = self.last_exit_code;
             self.bash_subshell += 1;
             let mut failed = None;
@@ -10376,7 +10378,7 @@ impl Interpreter {
                     }
                 }
             }
-            self.restore_subshell_state(snapshot);
+            self.restore_subshell_state(*snapshot);
             self.last_exit_code = last_exit_code;
             if let Some(e) = failed {
                 return Err(e);
