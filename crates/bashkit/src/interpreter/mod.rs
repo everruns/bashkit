@@ -370,6 +370,12 @@ pub(crate) struct ShellRef<'a> {
     pub(crate) stdout_pipe: Option<Arc<pipe::Pipe>>,
     /// Stdin of a streaming filter stage (see `Context::stdin_stream`).
     pub(crate) stdin_pipe: Option<Arc<pipe::Pipe>>,
+    /// Enclosing loops in the current function (`break`/`continue`).
+    pub(crate) loop_depth: usize,
+    /// Active function calls and `source`s (`return` is valid when > 0).
+    pub(crate) return_depth: usize,
+    /// `$?` when the builtin started (`return` without an argument).
+    pub(crate) last_exit_code: i32,
 }
 
 // Interpreter-dispatched "special" builtins, listed here so the public
@@ -1527,6 +1533,12 @@ pub struct Interpreter {
     script_depth: usize,
     /// Nested `bash`/`sh` child shells (TM-DOS-125).
     child_shell_depth: usize,
+    /// Enclosing `for`/`while`/`until`/`select` loops in the current
+    /// function (bash `loop_level`). A function call starts at 0, so
+    /// `break`/`continue` never leave the caller's loop.
+    loop_depth: usize,
+    /// Active function calls and `source`s: `return` is valid only when > 0.
+    return_depth: usize,
     /// First arithmetic error raised by a read-only evaluation site (array
     /// subscripts, `declare -i` values, substring offsets). The command
     /// boundary turns it into a line abort, as bash does.
@@ -2015,6 +2027,8 @@ impl Interpreter {
             concurrent_jobs: true,
             script_depth: 0,
             child_shell_depth: 0,
+            loop_depth: 0,
+            return_depth: 0,
             arith_error: StdMutex::new(None),
             pending_compound_args: Vec::new(),
             assign_raw: false,
@@ -2179,6 +2193,8 @@ impl Interpreter {
             script_depth: 1,
             // Forks are polled on this task's stack, so they inherit its depth.
             child_shell_depth: self.child_shell_depth,
+            loop_depth: self.loop_depth,
+            return_depth: self.return_depth,
             arith_error: StdMutex::new(None),
             pending_compound_args: Vec::new(),
             assign_raw: false,
@@ -2422,6 +2438,8 @@ impl Interpreter {
         // one cancelled script cannot suppress traps in the next script.
         self.in_trap = false;
         self.condition_sequence_depth = 0;
+        self.loop_depth = 0;
+        self.return_depth = 0;
         self.deferred_proc_subs.clear();
         self.clear_pending_fd_redirect_state();
         // Top-level timeouts drop the interpreter future at await points, so
@@ -3200,6 +3218,7 @@ impl Interpreter {
         // line is skipped and the shell resumes at the next one.
         let mut aborted_line: Option<usize> = None;
         let mut propagate_abort = false;
+        let mut propagated_flow = ControlFlow::None;
         for command in &script.commands {
             if aborted_line == Some(Self::command_line(command)) {
                 continue;
@@ -3276,6 +3295,15 @@ impl Interpreter {
             // Stop on control flow (e.g. nounset error uses Return to abort)
             if result.control_flow != ControlFlow::None {
                 if let ControlFlow::Exit(code) = result.control_flow {
+                    if !run_exit_trap {
+                        // `exit` in a `source`/`eval` body ends the shell:
+                        // the caller's top level runs the exit hooks.
+                        propagated_flow = ControlFlow::Exit(code);
+                        exit_code = code;
+                        self.last_exit_code = code;
+                        stopped = true;
+                        break;
+                    }
                     if fire_exit_hook {
                         if !self.hooks.on_exit.is_empty() {
                             self.execution_budget.consume_work(100)?;
@@ -3294,6 +3322,16 @@ impl Interpreter {
                         break;
                     }
                 } else {
+                    // `return` ends a sourced file with its status;
+                    // `break`/`continue`/`return` in a `source`/`eval`
+                    // body act on the caller's loop or function.
+                    if let ControlFlow::Return(code) = result.control_flow {
+                        exit_code = code;
+                        self.last_exit_code = code;
+                    }
+                    if !run_exit_trap {
+                        propagated_flow = result.control_flow;
+                    }
                     stopped = true;
                     break;
                 }
@@ -3407,7 +3445,7 @@ impl Interpreter {
             control_flow: if propagate_abort {
                 ControlFlow::Abort
             } else {
-                ControlFlow::None
+                propagated_flow
             },
             stdout_truncated,
             stderr_truncated,
@@ -3619,12 +3657,25 @@ impl Interpreter {
     async fn execute_compound(&mut self, compound: &CompoundCommand) -> Result<ExecResult> {
         match compound {
             CompoundCommand::If(if_cmd) => self.execute_if(if_cmd).await,
-            CompoundCommand::For(for_cmd) => self.execute_for(for_cmd).await,
-            CompoundCommand::ArithmeticFor(arith_for) => {
-                self.execute_arithmetic_for(arith_for).await
+            CompoundCommand::For(_)
+            | CompoundCommand::ArithmeticFor(_)
+            | CompoundCommand::While(_)
+            | CompoundCommand::Until(_)
+            | CompoundCommand::Select(_) => {
+                self.loop_depth += 1;
+                let result = match compound {
+                    CompoundCommand::For(for_cmd) => self.execute_for(for_cmd).await,
+                    CompoundCommand::ArithmeticFor(arith_for) => {
+                        self.execute_arithmetic_for(arith_for).await
+                    }
+                    CompoundCommand::While(while_cmd) => self.execute_while(while_cmd).await,
+                    CompoundCommand::Until(until_cmd) => self.execute_until(until_cmd).await,
+                    CompoundCommand::Select(select_cmd) => self.execute_select(select_cmd).await,
+                    _ => unreachable!("loop compound matched above"),
+                };
+                self.loop_depth -= 1;
+                result
             }
-            CompoundCommand::While(while_cmd) => self.execute_while(while_cmd).await,
-            CompoundCommand::Until(until_cmd) => self.execute_until(until_cmd).await,
             CompoundCommand::Subshell(commands) => {
                 self.counters.push_subshell(&self.limits)?;
                 // Subshells run in fully isolated scope: variables, arrays,
@@ -3704,7 +3755,6 @@ impl Interpreter {
             }
             CompoundCommand::BraceGroup(commands) => self.execute_command_sequence(commands).await,
             CompoundCommand::Case(case_cmd) => self.execute_case(case_cmd).await,
-            CompoundCommand::Select(select_cmd) => self.execute_select(select_cmd).await,
             CompoundCommand::Arithmetic(expr) => {
                 self.execute_arithmetic_command(&crate::parser::arith_exec_text(expr))
                     .await
@@ -5419,7 +5469,12 @@ impl Interpreter {
             self.update_bash_source();
         }
 
+        // A new shell is outside any loop, function or sourced file.
+        let saved_loop_depth = std::mem::replace(&mut self.loop_depth, 0);
+        let saved_return_depth = std::mem::replace(&mut self.return_depth, 0);
         let result = self.execute_script_body(&script, true, false).await;
+        self.loop_depth = saved_loop_depth;
+        self.return_depth = saved_return_depth;
 
         // Restore BASH_SOURCE
         if script_file.is_some() {
@@ -7586,6 +7641,9 @@ impl Interpreter {
                     execution_extensions,
                     stdout_pipe: None,
                     stdin_pipe: None,
+                    loop_depth: self.loop_depth,
+                    return_depth: self.return_depth,
+                    last_exit_code: self.last_exit_code,
                 };
                 let plan_ctx = builtins::Context {
                     args,
@@ -7653,6 +7711,9 @@ impl Interpreter {
                 execution_extensions,
                 stdout_pipe: self.builtin_stdout_pipe.take(),
                 stdin_pipe: self.builtin_stdin_pipe.take(),
+                loop_depth: self.loop_depth,
+                return_depth: self.return_depth,
+                last_exit_code: self.last_exit_code,
             };
             let ctx = builtins::Context {
                 args,
@@ -8280,7 +8341,12 @@ impl Interpreter {
         let shares_caller_stdin = stdin.is_some() && stdin == prev_pipeline_stdin;
         self.pipeline_stdin = stdin;
 
+        // A new process is outside any loop, function or sourced file.
+        let saved_loop_depth = std::mem::replace(&mut self.loop_depth, 0);
+        let saved_return_depth = std::mem::replace(&mut self.return_depth, 0);
         let result = self.execute_script_body(&script, true, false).await;
+        self.loop_depth = saved_loop_depth;
+        self.return_depth = saved_return_depth;
         let child_stdin_left = self.pipeline_stdin.take();
 
         // Restore full parent state — child mutations don't propagate
@@ -8442,7 +8508,9 @@ impl Interpreter {
 
         // Execute the script commands in the current shell context.
         // Use execute_script_body (not execute) to preserve depth counters.
+        self.return_depth += 1;
         let exec_result = self.execute_script_body(&script, false, true).await;
+        self.return_depth -= 1;
 
         // Pop source depth and BASH_SOURCE (always, even on error)
         self.counters.pop_function();
@@ -8450,6 +8518,11 @@ impl Interpreter {
         self.update_bash_source();
 
         let mut result = exec_result?;
+        // `return` ends the sourced file with its status.
+        if let ControlFlow::Return(code) = result.control_flow {
+            result.exit_code = code;
+            result.control_flow = ControlFlow::None;
+        }
 
         // Restore positional parameters
         if has_source_args {
@@ -8685,6 +8758,7 @@ impl Interpreter {
                 out.push_str(&word.to_string());
             }
             WordPart::Literal(s) => Self::push_alias_reparse_literal(out, s, false),
+            WordPart::BadSubstitution(text) => out.push_str(text),
             WordPart::Variable(name) => out.push_str(&format!("${}", name)),
             WordPart::CommandSubstitution(cmd) => out.push_str(&format!("$({:?})", cmd)),
             WordPart::ArithmeticExpansion(expr) => out.push_str(&format!("$(({}))", expr)),
@@ -8899,7 +8973,12 @@ impl Interpreter {
         };
 
         // Execute function body. Always restore call state even on error.
+        // The body starts outside any loop (bash resets `loop_level`).
+        let saved_loop_depth = std::mem::replace(&mut self.loop_depth, 0);
+        self.return_depth += 1;
         let result = self.execute_command(&func_def.body).await;
+        self.return_depth -= 1;
+        self.loop_depth = saved_loop_depth;
         if let Some(cb) = saved_callback {
             self.output_callback = Some(cb);
         }

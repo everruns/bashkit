@@ -3504,8 +3504,14 @@ impl<'a> Parser<'a> {
                     // ${VAR} format with possible parameter expansion
                     chars.next(); // consume '{'
 
-                    // Check for ${#var} or ${#arr[@]} - length expansion
-                    if chars.peek() == Some(&'#') {
+                    if let Some(inner) = bad_brace_parameter(&chars) {
+                        // Bash accepts the word and fails when expanding it.
+                        for _ in 0..=inner.chars().count() {
+                            chars.next();
+                        }
+                        push_part!(WordPart::BadSubstitution(format!("${{{inner}}}")));
+                    } else if chars.peek() == Some(&'#') {
+                        // ${#var} or ${#arr[@]} - length expansion
                         chars.next(); // consume '#'
                         let mut var_name = String::new();
                         while let Some(&c) = chars.peek() {
@@ -4279,6 +4285,109 @@ fn empty_background(span: Span) -> (ListOperator, Command) {
 
 /// Whether a raw `=~` operand holds an expansion. A `$` that cannot start
 /// one (`^a$`, `(x$|y$)`) is the regex end anchor; single quotes hide both.
+/// Text inside `${...}` when bash would reject it with "bad substitution"
+/// at expansion time (`${x!}`, `${}`, `${#x:2}`, `${ x}`), else `None`.
+///
+/// `chars` is positioned just after the `{`. Only the parameter part is
+/// checked: a valid name (identifier, digits or one special character, with
+/// an optional subscript) must be followed by `}` or an operator. `${!...}`
+/// forms and anything involving quote/escape markers are left to the
+/// regular parser, so this only ever rejects words bash rejects too.
+fn bad_brace_parameter(chars: &std::iter::Peekable<std::str::Chars<'_>>) -> Option<String> {
+    const MARKERS: [char; 3] = ['\x00', '\u{1e}', '\u{1f}'];
+    let mut it = chars.clone();
+    let length_prefix = match it.peek() {
+        Some('!') => return None,
+        Some('#') => {
+            it.next();
+            match it.peek() {
+                // `${#}`, `${##}`, `${#-}`, ...: length of a special parameter
+                // or `$#` itself; leave these to the regular parser.
+                Some(c) if c.is_ascii_alphanumeric() || *c == '_' => true,
+                _ => return None,
+            }
+        }
+        _ => false,
+    };
+    let bad = match it.peek().copied() {
+        None => return None,
+        Some(c) if c.is_ascii_alphabetic() || c == '_' => {
+            while it
+                .peek()
+                .is_some_and(|c| c.is_ascii_alphanumeric() || *c == '_')
+            {
+                it.next();
+            }
+            if it.peek() == Some(&'[') {
+                // Subscript: balanced brackets; unterminated ones are bad.
+                let mut depth = 0usize;
+                let mut closed = false;
+                for c in it.by_ref() {
+                    match c {
+                        _ if MARKERS.contains(&c) => return None,
+                        '[' => depth += 1,
+                        ']' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                closed = true;
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                if !closed {
+                    return None;
+                }
+            }
+            next_is_bad(it.peek().copied(), length_prefix)
+        }
+        Some(c) if c.is_ascii_digit() => {
+            while it.peek().is_some_and(char::is_ascii_digit) {
+                it.next();
+            }
+            next_is_bad(it.peek().copied(), length_prefix)
+        }
+        Some('@' | '*' | '#' | '?' | '-' | '$' | '!') if !length_prefix => {
+            it.next();
+            next_is_bad(it.peek().copied(), false)
+        }
+        Some(c) if MARKERS.contains(&c) => return None,
+        Some(_) => true,
+    };
+    if !bad {
+        return None;
+    }
+    // Find the closing brace to report and skip the whole expansion.
+    let mut inner = String::new();
+    let mut depth = 0usize;
+    for c in chars.clone() {
+        if MARKERS.contains(&c) || c == '\'' || c == '"' || c == '\\' {
+            return None;
+        }
+        match c {
+            '{' => depth += 1,
+            '}' if depth == 0 => return Some(inner),
+            '}' => depth -= 1,
+            _ => {}
+        }
+        inner.push(c);
+    }
+    None
+}
+
+/// After the parameter of `${...}`: whether `next` cannot start an operator.
+fn next_is_bad(next: Option<char>, length_prefix: bool) -> bool {
+    match next {
+        None => false,
+        Some('\x00' | '\u{1e}' | '\u{1f}') => false,
+        Some('}') => false,
+        Some(_) if length_prefix => true,
+        Some(':' | '-' | '=' | '+' | '?' | '#' | '%' | '/' | '^' | ',' | '~' | '@') => false,
+        Some(_) => true,
+    }
+}
+
 fn cond_regex_expands(raw: &str) -> bool {
     let mut chars = raw.chars().peekable();
     while let Some(c) = chars.next() {

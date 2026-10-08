@@ -276,6 +276,11 @@ impl Interpreter {
 
         for part in &word.parts {
             match part {
+                WordPart::BadSubstitution(text) => {
+                    return Err(crate::error::Error::LineAbort(format!(
+                        "bash: {text}: bad substitution\n"
+                    )));
+                }
                 WordPart::CompoundAssignment { .. } => {
                     // Only declaration builtins take `name=(...)`; elsewhere
                     // the text stands for itself.
@@ -430,6 +435,16 @@ impl Interpreter {
                     );
 
                     let (is_set, value) = self.resolve_param_expansion_name(name);
+
+                    // `${1:=x}`, `${@=x}`: only variables can be assigned.
+                    if matches!(operator, ParameterOp::AssignDefault)
+                        && !name.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
+                        && (!is_set || (*colon_variant && value.is_empty()))
+                    {
+                        return Err(crate::error::Error::LineAbort(format!(
+                            "bash: ${name}: cannot assign in this way\n"
+                        )));
+                    }
 
                     if self.is_nounset() && !suppress_nounset && !is_set {
                         self.nounset_error = Some(format!("bash: {}: unbound variable\n", name));
