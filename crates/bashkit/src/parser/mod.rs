@@ -365,10 +365,12 @@ impl<'a> Parser<'a> {
         let start_span = self.current_span;
         self.parse_script_into(&mut commands)?;
         let end_span = self.current_span;
+        let (commands, command_end_lines) = commands.into_iter().unzip();
         Ok(Script {
-            commands: commands.into_iter().map(|(cmd, _)| cmd).collect(),
+            commands,
             span: start_span.merge(end_span),
             trailing_error: None,
+            command_end_lines,
         })
     }
 
@@ -406,11 +408,13 @@ impl<'a> Parser<'a> {
             }
         };
         commands.truncate(keep);
+        let (commands, command_end_lines) = commands.into_iter().unzip();
         (
             Script {
-                commands: commands.into_iter().map(|(cmd, _)| cmd).collect(),
+                commands,
                 span: start_span.merge(end_span),
                 trailing_error: None,
+                command_end_lines,
             },
             err,
         )

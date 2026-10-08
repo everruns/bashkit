@@ -1354,7 +1354,7 @@ struct SubshellSnapshot {
     bash_subshell: u32,
     xtrace_depth: usize,
     err_trap_dormant: bool,
-    line_base: usize,
+    line_base: isize,
 }
 
 /// Bits of `NoforkScope::subshell_env`, after bash's `subshell_environment`.
@@ -1465,8 +1465,9 @@ pub struct Interpreter {
     /// Current line number for $LINENO
     current_line: usize,
     /// Added to command line numbers: a trap handler counts its lines from
-    /// the line of the command that triggered it (bash).
-    line_base: usize,
+    /// the line of the command that triggered it (bash). Negative after a
+    /// top-level command aborts mid-way (see `shift_lines_after_abort`).
+    line_base: isize,
     /// Interactive shell (REPL / terminal): diagnostics name the shell but
     /// carry no `line N:`, like `bash -i`. See [`Self::diag_prefix`].
     interactive: bool,
@@ -3498,8 +3499,8 @@ impl Interpreter {
         let mut aborted_line: Option<usize> = None;
         let mut propagate_abort = false;
         let mut propagated_flow = ControlFlow::None;
-        for command in &script.commands {
-            if aborted_line == Some(Self::command_line(command)) {
+        for (index, command) in script.commands.iter().enumerate() {
+            if aborted_line == Some(Self::command_start_line(command)) {
                 continue;
             }
             self.check_cancelled()?;
@@ -3575,7 +3576,15 @@ impl Interpreter {
                 // A shell's top level (script, `bash -c`) resumes at the next
                 // line; `source`/`eval` bodies pass the abort to their caller.
                 if run_exit_trap {
-                    aborted_line = Some(Self::command_line(command));
+                    let end_line = script
+                        .command_end_lines
+                        .get(index)
+                        .copied()
+                        .unwrap_or_else(|| Self::command_start_line(command));
+                    aborted_line = Some(end_line);
+                    if top_level {
+                        self.shift_lines_after_abort(end_line);
+                    }
                     continue;
                 }
                 propagate_abort = true;
@@ -3787,6 +3796,38 @@ impl Interpreter {
         }
     }
 
+    /// `$LINENO` of source line `line` under the current `line_base`.
+    fn line_at(&self, line: usize) -> usize {
+        usize::try_from(self.line_base.saturating_add_unsigned(line))
+            .unwrap_or(1)
+            .max(1)
+    }
+
+    /// bash quirk: a fatal error aborting a top-level command leaves the
+    /// shell's line counter at the failing command's line, and the parser
+    /// keeps counting from there. So every later line reads as
+    /// `failing_line + (line - end_line)`, where `end_line` is the line the
+    /// aborted command's terminator sits on (`for ...` / `echo $((1/0))` /
+    /// `done` on three lines shifts the rest of the script back one line).
+    // WTF: bash also shifts the lines of functions defined after the abort;
+    // bashkit runs function bodies with their parse-time lines.
+    fn shift_lines_after_abort(&mut self, end_line: usize) {
+        let shift = self.line_at(end_line).saturating_sub(self.current_line);
+        self.line_base = self.line_base.saturating_sub_unsigned(shift);
+    }
+
+    /// First source line of a command; `{ }` / `( )` record no span, so
+    /// they use their first inner command's line.
+    fn command_start_line(command: &Command) -> usize {
+        match command {
+            Command::Compound(
+                CompoundCommand::BraceGroup(body) | CompoundCommand::Subshell(body),
+                _,
+            ) => body.first().map_or(1, Self::command_start_line),
+            _ => Self::command_line(command),
+        }
+    }
+
     /// `$LINENO` for a command about to run. `(( ))` and `[[ ]]` carry no
     /// position of their own: they keep the line of the list around them
     /// (`[[ $LINENO -gt 1 ]] && ...`), not line 1.
@@ -3798,7 +3839,7 @@ impl Interpreter {
                 _
             )
         ) {
-            self.current_line = self.line_base + Self::command_line(command);
+            self.current_line = self.line_at(Self::command_line(command));
         }
     }
 
@@ -9673,8 +9714,10 @@ impl Interpreter {
         // command per level until the budget aborts, risking stack overflow.
         // Like bash, the eval'd text counts lines from the eval's own line
         // (`$LINENO`, diagnostics), not from 1.
-        let saved_line_base =
-            std::mem::replace(&mut self.line_base, self.current_line.saturating_sub(1));
+        let saved_line_base = std::mem::replace(
+            &mut self.line_base,
+            isize::try_from(self.current_line.saturating_sub(1)).unwrap_or(0),
+        );
         self.xtrace_depth += 1;
         let result = self.execute_script_body(&script, false, true).await;
         self.xtrace_depth -= 1;
@@ -12755,8 +12798,10 @@ impl Interpreter {
         };
         let was_in_trap = self.in_trap;
         self.in_trap = true;
-        let saved_line_base =
-            std::mem::replace(&mut self.line_base, self.current_line.saturating_sub(1));
+        let saved_line_base = std::mem::replace(
+            &mut self.line_base,
+            isize::try_from(self.current_line.saturating_sub(1)).unwrap_or(0),
+        );
         let emit_before = self.output_emit_count;
         self.xtrace_depth += 1;
         let result = self.execute_command_sequence(&trap_script.commands).await;
