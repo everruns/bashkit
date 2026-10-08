@@ -193,7 +193,6 @@ after 1
 
 ### bashbox_interpreter_builtins_fires_after_the_body_of_the_function_that_set_it
 # fires after the body of the function that set it
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 f(){ trap 'echo ret' RETURN; echo in; }; f; echo after
 ### expect
 in
@@ -211,7 +210,6 @@ end
 
 ### bashbox_interpreter_builtins_stays_set_but_other_functions_do_not_see_it
 # stays set but other functions do not see it
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 f(){ trap 'echo ret' RETURN; }; g(){ echo g; }; f; echo top; g; h(){ g; }; h
 ### expect
 ret
@@ -222,7 +220,6 @@ g
 
 ### bashbox_interpreter_builtins_sees_the_function_locals
 # sees the function locals
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 f(){ local v=loc; trap 'echo $v' RETURN; }; f
 ### expect
 loc
@@ -237,7 +234,6 @@ cat < missing.txt; echo $?
 
 ### bashbox_interpreter_builtins_creates_the_file
 # <> creates the file
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 cat <> rw.txt; echo $?; test -f rw.txt && echo created
 ### expect
 0
@@ -253,7 +249,6 @@ err
 
 ### bashbox_interpreter_builtins_closing_stderr
 # closing stderr
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 ls /nope 2>&-; echo y
 ### expect
 y
@@ -261,7 +256,6 @@ y
 
 ### bashbox_interpreter_builtins_file_sends_both_streams_to_the_file
 # >&file sends both streams to the file
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 { echo z; echo e >&2; } >& both.txt; cat both.txt
 ### expect
 z
@@ -270,7 +264,6 @@ e
 
 ### bashbox_interpreter_builtins_and_write_and_append_both_streams
 # &> and &>> write and append both streams
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 { echo a; echo b >&2; } &> all.txt; { echo c; } &>> all.txt; cat all.txt
 ### expect
 a
@@ -294,7 +287,6 @@ echo a > /no/such/dir/f; echo $?
 
 ### bashbox_interpreter_builtins_a_missing_directory_fails_2
 # a missing directory fails >&
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 echo z >& /no/such/dir/f; echo $?
 ### expect
 1
@@ -335,7 +327,6 @@ a=(); echo ${#a[@]}; a=(1 2 3); a=(); echo ${#a[@]}
 
 ### bashbox_interpreter_builtins_to_a_readonly_variable_fails
 # to a readonly variable fails
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 readonly r=1
 r=2
 echo $?
@@ -359,7 +350,6 @@ x=0; echo $((0 && (x=5))) $x $((1 || (x=6))) $x $((1 && 2)) $((0 || 0)) $((0 || 
 
 ### bashbox_interpreter_builtins_unary_operators
 # unary operators
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 echo $((-(2+3))) $((+4)) $((!0)) $((!5)) $((~0)) $((++5)) $((--5))
 ### expect
 -5 4 1 0 -1 5 5
@@ -404,7 +394,6 @@ a=(1 2 3); echo $(("1"+1)) $(( $(echo 2) * 3 )) $(( ${#a[@]} + 1 ))
 
 ### bashbox_interpreter_builtins_associative_array_elements
 # associative array elements
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 declare -A m; m[foo]=5; echo $((m[foo]*2)); (( m[bar]=3 )); echo ${m[bar]}
 ### expect
 10
@@ -421,7 +410,6 @@ declare -A m; m[foo]=5; echo $((m[foo]*2)); (( m[bar]=3 )); echo ${m[bar]}
 
 ### bashbox_interpreter_builtins_c_style_for_header_with_a_substitution
 # c-style for header with a substitution
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 for ((i=$(echo 1); i<3; i++)); do echo $i; done
 ### expect
 1
@@ -430,7 +418,6 @@ for ((i=$(echo 1); i<3; i++)); do echo $i; done
 
 ### bashbox_interpreter_builtins_case
 # /=
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 x=5; ((x/=0)); echo $? $x
 ### expect
 1 5
@@ -438,7 +425,6 @@ x=5; ((x/=0)); echo $? $x
 
 ### bashbox_interpreter_builtins_case_2
 # %=
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 x=5; ((x%=0)); echo $? $x
 ### expect
 1 5
@@ -460,7 +446,6 @@ x=5; ((x%=0)); echo $? $x
 
 ### bashbox_interpreter_builtins_string_comparisons
 # string comparisons
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 [[ abc != a* ]]; echo $?; [[ abc != x* ]]; echo $?; [[ a < b ]]; echo $?; [[ b > a ]]; echo $?; [[ b < a ]]; echo $?
 ### expect
 1
@@ -506,7 +491,6 @@ re="(b)(c)"; [[ abc =~ $re ]]; echo $? ${BASH_REMATCH[0]} ${BASH_REMATCH[2]}; [[
 
 ### bashbox_interpreter_builtins_variable_is_set
 # variable is set
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 v=1; a=(1 2); [[ -v v ]]; echo $?; [[ -v a ]]; echo $?; [[ -v nope ]]; echo $?
 ### expect
 0
@@ -524,7 +508,6 @@ nl
 
 ### bashbox_interpreter_builtins_unset_in_its_own_function_keeps_a_local_hiding_the_global
 # unset in its own function keeps a local hiding the global
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 f(){ local x=1; unset x; echo "[${x-unset}]"; x=2; echo $x; }; x=g; f; echo $x
 ### expect
 [unset]

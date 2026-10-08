@@ -334,6 +334,9 @@ pub(crate) struct ShellRef<'a> {
     pub(crate) aliases: &'a mut HashMap<String, String>,
     /// Direct mutable access to trap handlers.
     pub(crate) traps: &'a mut HashMap<String, String>,
+    /// Set while the ERR handler is inherited for display only (subshell
+    /// without `set -E`); `trap` clears it when it sets or resets ERR.
+    pub(crate) err_trap_dormant: &'a mut bool,
     /// Variable attribute table (readonly/integer/lower/upper). Mutable so
     /// `readonly`/`declare`/`unset` builtins can update attributes without
     /// re-allocating `_READONLY_X`-style marker strings.
@@ -1223,6 +1226,8 @@ bitflags::bitflags! {
         const PIPEFAIL     = 0b0000_0001_0000_0000; // set -o pipefail / SHOPT_pipefail
         const EXPAND_ALIAS = 0b0000_0010_0000_0000; // shopt expand_aliases
         const KEYWORD      = 0b0000_0100_0000_0000; // set -k / SHOPT_k
+        const ERRTRACE     = 0b0000_1000_0000_0000; // set -E / SHOPT_E
+        const FUNCTRACE    = 0b0001_0000_0000_0000; // set -T / SHOPT_T
     }
 }
 
@@ -1241,6 +1246,8 @@ impl BashFlags {
             "SHOPT_pipefail" => Some(Self::PIPEFAIL),
             "SHOPT_expand_aliases" => Some(Self::EXPAND_ALIAS),
             "SHOPT_k" => Some(Self::KEYWORD),
+            "SHOPT_E" => Some(Self::ERRTRACE),
+            "SHOPT_T" => Some(Self::FUNCTRACE),
             _ => None,
         }
     }
@@ -1318,6 +1325,8 @@ struct SubshellSnapshot {
     last_bg_pid: Option<String>,
     seconds_base: (crate::time_compat::Instant, i64),
     bash_subshell: u32,
+    err_trap_dormant: bool,
+    line_base: usize,
 }
 
 /// Interpreter state.
@@ -1384,6 +1393,9 @@ pub struct Interpreter {
     jobs: SharedJobTable,
     /// Current line number for $LINENO
     current_line: usize,
+    /// Added to command line numbers: a trap handler counts its lines from
+    /// the line of the command that triggered it (bash).
+    line_base: usize,
     /// `unset LINENO` makes it an ordinary variable for the rest of the
     /// shell's life, like bash.
     lineno_unset: bool,
@@ -1524,6 +1536,14 @@ pub struct Interpreter {
     /// True while executing a trap handler. Suppresses recursive DEBUG trap
     /// invocation to prevent amplification attacks (TM-DOS-035).
     in_trap: bool,
+    /// The ERR trap is inherited for display only: a subshell, command
+    /// substitution or pipeline stage without `set -E` keeps the parent's
+    /// handler visible to `trap -p` but does not run it (bash). `trap`
+    /// setting or resetting ERR clears it.
+    err_trap_dormant: bool,
+    /// The next `execute_command` is a multi-command pipeline stage: its own
+    /// status never fires ERR (the pipeline as a whole does).
+    err_trap_skip_stage: bool,
     /// Depth of if/while/until condition evaluation.
     /// Important decision: condition context is tracked as interpreter state so
     /// nested AND-OR lists can suppress ERR traps without weakening top-level
@@ -2004,6 +2024,7 @@ impl Interpreter {
             ),
             jobs: jobs::new_shared_job_table(),
             current_line: 1,
+            line_base: 0,
             lineno_unset: false,
             source_depth: 0,
             last_command_name: String::new(),
@@ -2055,6 +2076,8 @@ impl Interpreter {
             cancelled: Arc::new(AtomicBool::new(false)),
             hooks: Arc::new(crate::hooks::Hooks::default()),
             in_trap: false,
+            err_trap_dormant: false,
+            err_trap_skip_stage: false,
             condition_sequence_depth: 0,
             deferred_proc_subs: Vec::new(),
             proc_sub_paths: HashSet::new(),
@@ -2183,6 +2206,7 @@ impl Interpreter {
             execution_budget: self.execution_budget.clone(),
             jobs: self.jobs.fork(),
             current_line: self.current_line,
+            line_base: self.line_base,
             lineno_unset: self.lineno_unset,
             #[cfg(feature = "http_client")]
             http_client: self.http_client.clone(),
@@ -2228,6 +2252,10 @@ impl Interpreter {
             cancelled: Arc::clone(&self.cancelled),
             hooks: Arc::clone(&self.hooks),
             in_trap: false,
+            // A job or pipeline stage is a subshell: ERR stays dormant there
+            // unless `set -E`.
+            err_trap_dormant: self.err_trap_dormant || !self.flags.contains(BashFlags::ERRTRACE),
+            err_trap_skip_stage: false,
             condition_sequence_depth: self.condition_sequence_depth,
             deferred_proc_subs: Vec::new(),
             proc_sub_paths: HashSet::new(),
@@ -2485,6 +2513,9 @@ impl Interpreter {
         // handler is awaited; clear the re-entrancy guard before each exec so
         // one cancelled script cannot suppress traps in the next script.
         self.in_trap = false;
+        self.err_trap_dormant = false;
+        self.err_trap_skip_stage = false;
+        self.line_base = 0;
         self.condition_sequence_depth = 0;
         self.loop_depth = 0;
         self.return_depth = 0;
@@ -3391,18 +3422,8 @@ impl Interpreter {
                 }
             }
 
-            // Run ERR trap on non-zero exit (unless in conditional chain).
-            // Lists are suppressed here because execute_list already fired
-            // the ERR trap for the failing subcommand; firing again would
-            // double-invoke the trap (e.g. `set -e; trap 'f' ERR; false`).
-            if exit_code != 0 {
-                let suppressed = matches!(command, Command::List(_))
-                    || matches!(command, Command::Pipeline(p) if p.negated)
-                    || result.errexit_suppressed;
-                if !suppressed {
-                    self.run_err_trap(&mut stdout, &mut stderr).await;
-                }
-            }
+            // The ERR trap already ran in `execute_command`, after the
+            // failing simple command, pipeline or `( )` itself.
 
             // errexit (set -e): stop on non-zero exit unless the callee marks
             // the status as suppressed (for example, a short-circuited AND-OR
@@ -3548,9 +3569,15 @@ impl Interpreter {
         command: &'a Command,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecResult>> + Send + 'a>> {
         Box::pin(async move {
+            // Whether ERR may fire after this command: bash decides before
+            // running it, so a trap the command itself sets (`f` setting
+            // ERR inside) does not fire for that same command.
+            let skip_stage = std::mem::take(&mut self.err_trap_skip_stage);
+            let err_armed = !skip_stage && self.err_trap_armed() && Self::fires_err_trap(command);
+            let emit_before = self.output_emit_count;
             self.check_cancelled()?;
             // Update current line for $LINENO
-            self.current_line = Self::command_line(command);
+            self.current_line = self.line_base + Self::command_line(command);
             if let Some(name) = Self::command_name(command) {
                 self.last_command_name = name.to_string();
             }
@@ -3673,8 +3700,55 @@ impl Interpreter {
                     Ok(ExecResult::ok(String::new()))
                 }
             };
-            self.abort_line_on_error(result)
+            let mut result = self.abort_line_on_error(result);
+            if err_armed
+                && let Ok(r) = &mut result
+                && r.exit_code != 0
+                && r.control_flow == ControlFlow::None
+                && !r.errexit_suppressed
+                && !self.is_in_condition_sequence()
+            {
+                // `$LINENO` in the handler is the failing command's line.
+                self.current_line = self.line_base + Self::command_line(command);
+                Box::pin(self.run_err_trap_after(r, emit_before)).await;
+            }
+            result
         })
+    }
+
+    /// An ERR trap is set and live (not dormant in a subshell).
+    fn err_trap_armed(&self) -> bool {
+        !self.err_trap_dormant && !self.in_trap && self.scoped.traps.contains_key("ERR")
+    }
+
+    /// Commands whose own failure fires ERR, like bash: simple commands
+    /// (function calls included), multi-command pipelines, `( )`, `[[ ]]`
+    /// and `(( ))`. Lists and other compounds do not; the failing command
+    /// inside them fires instead.
+    fn fires_err_trap(command: &Command) -> bool {
+        match command {
+            Command::Simple(_) => true,
+            Command::Pipeline(p) => !p.negated && p.commands.len() > 1,
+            Command::Compound(c, _) => matches!(
+                c,
+                CompoundCommand::Subshell(_)
+                    | CompoundCommand::Arithmetic(_)
+                    | CompoundCommand::Conditional(_)
+            ),
+            Command::List(_) | Command::Function(_) => false,
+        }
+    }
+
+    /// Run the ERR trap after a failing command, its output following the
+    /// command's own (streamed first, so neither is dropped).
+    async fn run_err_trap_after(&mut self, result: &mut ExecResult, emit_before: u64) {
+        self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
+        self.last_exit_code = result.exit_code;
+        let mut stdout = crate::StreamData::new();
+        let mut stderr = crate::StreamData::new();
+        self.run_err_trap(&mut stdout, &mut stderr).await;
+        result.stdout.append(&stdout);
+        result.stderr.append(&stderr);
     }
 
     /// Turn a line-abort error (or an arithmetic error recorded by a
@@ -3754,6 +3828,7 @@ impl Interpreter {
                 let snap = self.snapshot_subshell_state();
                 let saved_call_stack = self.call_stack.clone();
                 self.bash_subshell += 1;
+                self.enter_subshell_err_scope();
                 let saved_exit = self.last_exit_code;
                 let saved_coproc = self.coproc_buffers.clone();
 
@@ -4266,7 +4341,8 @@ impl Interpreter {
 
         // Execute initialization
         if !arith_for.init.is_empty() {
-            self.execute_arithmetic_with_side_effects(&arith_for.init);
+            let init = self.arith_for_expr(&arith_for.init).await?;
+            self.execute_arithmetic_with_side_effects(&init);
         }
 
         self.counters.enter_loop();
@@ -4277,7 +4353,8 @@ impl Interpreter {
 
                 // Check condition (if empty, always true)
                 if !arith_for.condition.is_empty() {
-                    let cond_result = self.evaluate_arithmetic(&arith_for.condition);
+                    let condition = self.arith_for_expr(&arith_for.condition).await?;
+                    let cond_result = self.evaluate_arithmetic(&condition);
                     if cond_result == 0 {
                         break;
                     }
@@ -4303,7 +4380,8 @@ impl Interpreter {
 
                 // Execute step
                 if !arith_for.step.is_empty() {
-                    self.execute_arithmetic_with_side_effects(&arith_for.step);
+                    let step = self.arith_for_expr(&arith_for.step).await?;
+                    self.execute_arithmetic_with_side_effects(&step);
                 }
             }
 
@@ -4745,6 +4823,18 @@ impl Interpreter {
             // `((...))` reports an arithmetic error and fails with status 1;
             // unlike `$((...))` it does not abandon the line.
             Err(msg) => Ok(ExecResult::err(self.arith_diag("((: ", &msg), 1)),
+        }
+    }
+
+    /// A `for ((init; cond; step))` expression with its `$(...)` run, each
+    /// time it is evaluated, as `((...))` does.
+    async fn arith_for_expr<'e>(&mut self, expr: &'e str) -> Result<std::borrow::Cow<'e, str>> {
+        if expr.contains("$(") {
+            Ok(Box::pin(self.expand_command_subs_in_arithmetic(expr))
+                .await?
+                .into())
+        } else {
+            Ok(expr.into())
         }
     }
 
@@ -5690,6 +5780,7 @@ impl Interpreter {
     /// keep only exported scalars in `variables`. The caller is expected to
     /// have just taken a snapshot to undo this on return. See issue #1777.
     fn reset_state_for_child_shell(&mut self) -> Option<String> {
+        self.line_base = 0;
         let exported_names: Vec<String> = self
             .scoped
             .var_attrs
@@ -6014,7 +6105,10 @@ impl Interpreter {
                 Ok((scope, stdin)) => {
                     let result = match command {
                         Command::Simple(simple) => self.execute_simple_command(simple, stdin).await,
-                        _ => self.execute_command(command).await,
+                        _ => {
+                            self.err_trap_skip_stage = count > 1;
+                            self.execute_command(command).await
+                        }
                     };
                     self.exit_pipeline_stage(scope, result)
                 }
@@ -6201,6 +6295,8 @@ impl Interpreter {
                 sink.write(out.as_bytes());
             }));
             child.pipe_out = Some(Arc::clone(&pipe));
+            // The pipeline as a whole fires ERR, not its stages.
+            child.err_trap_skip_stage = true;
             let write_end = pipe::WriteEnd(Arc::clone(&pipe));
             let read_end = input.take().map(pipe::ReadEnd);
             let command = command.clone();
@@ -6255,7 +6351,10 @@ impl Interpreter {
                 let (scope, stdin) = self.enter_pipeline_stage(last, None, !lastpipe)?;
                 let result = match last {
                     Command::Simple(simple) => self.execute_simple_command(simple, stdin).await,
-                    _ => self.execute_command(last).await,
+                    _ => {
+                        self.err_trap_skip_stage = true;
+                        self.execute_command(last).await
+                    }
                 };
                 self.exit_pipeline_stage(scope, result)
             });
@@ -6386,6 +6485,9 @@ impl Interpreter {
             )
         {
             self.bash_subshell += 1;
+        }
+        if subshell {
+            self.enter_subshell_err_scope();
         }
         let mut scope = PipelineStageScope {
             saved,
@@ -6577,15 +6679,6 @@ impl Interpreter {
                     ..Default::default()
                 });
             }
-
-            // Check if first command in a semicolon-separated list failed => ERR trap
-            let first_op_is_semicolon = list
-                .rest
-                .first()
-                .is_some_and(|(op, _)| matches!(op, ListOperator::Semicolon));
-            if exit_code != 0 && first_op_is_semicolon && !self.is_in_condition_sequence() {
-                self.run_err_trap(&mut stdout, &mut stderr).await;
-            }
         }
 
         for (i, (op, cmd)) in list.rest.iter().enumerate() {
@@ -6671,14 +6764,6 @@ impl Interpreter {
                             control_flow,
                             ..Default::default()
                         });
-                    }
-
-                    // ERR trap follows the same AND-OR suppression as errexit.
-                    if exit_code != 0
-                        && !exit_code_from_conditional_context
-                        && !self.is_in_condition_sequence()
-                    {
-                        self.run_err_trap(&mut stdout, &mut stderr).await;
                     }
                 }
             }
@@ -7830,6 +7915,7 @@ impl Interpreter {
                     functions: &self.scoped.functions,
                     aliases: Arc::make_mut(&mut self.scoped.aliases),
                     traps: Arc::make_mut(&mut self.scoped.traps),
+                    err_trap_dormant: &mut self.err_trap_dormant,
                     var_attrs: Arc::make_mut(&mut self.scoped.var_attrs),
                     namerefs: Arc::make_mut(&mut self.scoped.namerefs),
                     dir_stack: Arc::make_mut(&mut self.scoped.dir_stack),
@@ -7900,6 +7986,7 @@ impl Interpreter {
                 functions: &self.scoped.functions,
                 aliases: Arc::make_mut(&mut self.scoped.aliases),
                 traps: Arc::make_mut(&mut self.scoped.traps),
+                err_trap_dormant: &mut self.err_trap_dormant,
                 var_attrs: Arc::make_mut(&mut self.scoped.var_attrs),
                 namerefs: Arc::make_mut(&mut self.scoped.namerefs),
                 dir_stack: Arc::make_mut(&mut self.scoped.dir_stack),
@@ -8720,7 +8807,11 @@ impl Interpreter {
         // Use execute_script_body (not execute) to preserve depth counters.
         self.return_depth += 1;
         self.source_depth += 1;
-        let exec_result = self.execute_script_body(&script, false, true).await;
+        let emit_before = self.output_emit_count;
+        let mut exec_result = self.execute_script_body(&script, false, true).await;
+        if let Ok(r) = &mut exec_result {
+            Box::pin(self.run_return_trap(r, emit_before)).await;
+        }
         self.return_depth -= 1;
         self.source_depth -= 1;
 
@@ -9198,9 +9289,19 @@ impl Interpreter {
         // Execute function body. Always restore call state even on error.
         // The body starts outside any loop (bash resets `loop_level`).
         let saved_loop_depth = std::mem::replace(&mut self.loop_depth, 0);
+        // Body lines count from the definition, not a calling trap handler.
+        let saved_line_base = std::mem::replace(&mut self.line_base, 0);
+        let saved_traps = self.enter_function_traps();
+        let emit_before = self.output_emit_count;
         self.return_depth += 1;
-        let result = self.execute_command(&func_def.body).await;
+        let mut result = self.execute_command(&func_def.body).await;
+        if let Ok(r) = &mut result {
+            // Still in the function: the handler sees its locals.
+            Box::pin(self.run_return_trap(r, emit_before)).await;
+        }
         self.return_depth -= 1;
+        self.leave_function_traps(saved_traps);
+        self.line_base = saved_line_base;
         self.loop_depth = saved_loop_depth;
         if let Some(cb) = saved_callback {
             self.output_callback = Some(cb);
@@ -10421,6 +10522,16 @@ impl Interpreter {
             last_bg_pid: self.last_bg_pid.clone(),
             seconds_base: self.seconds_base,
             bash_subshell: self.bash_subshell,
+            err_trap_dormant: self.err_trap_dormant,
+            line_base: self.line_base,
+        }
+    }
+
+    /// Entering a subshell environment (`( )`, `$( )`, a pipeline stage):
+    /// without `set -E` the ERR trap stays listed but no longer runs.
+    fn enter_subshell_err_scope(&mut self) {
+        if !self.flags.contains(BashFlags::ERRTRACE) {
+            self.err_trap_dormant = true;
         }
     }
 
@@ -10438,6 +10549,8 @@ impl Interpreter {
         self.last_bg_pid = snap.last_bg_pid;
         self.seconds_base = snap.seconds_base;
         self.bash_subshell = snap.bash_subshell;
+        self.err_trap_dormant = snap.err_trap_dormant;
+        self.line_base = snap.line_base;
     }
 
     /// Perform the redirections of a null command (no command word) and
@@ -10619,6 +10732,7 @@ impl Interpreter {
             // mutable state so mutations don't leak to the parent.
             let snapshot = self.snapshot_subshell_state();
             self.bash_subshell += 1;
+            self.enter_subshell_err_scope();
             // THREAT[TM-DOS-111]: Expansion happens before top-level output caps,
             // so reserve every byte before growing the substitution buffer.
             let mut stdout = BudgetedString::new(Some(&self.execution_budget))?;
@@ -11741,8 +11855,11 @@ impl Interpreter {
         };
         let was_in_trap = self.in_trap;
         self.in_trap = true;
+        let saved_line_base =
+            std::mem::replace(&mut self.line_base, self.current_line.saturating_sub(1));
         let emit_before = self.output_emit_count;
         let result = self.execute_command_sequence(&trap_script.commands).await;
+        self.line_base = saved_line_base;
         self.in_trap = was_in_trap;
         let Ok(trap_result) = result else {
             return None;
@@ -11751,6 +11868,55 @@ impl Interpreter {
         stdout.append(&trap_result.stdout);
         stderr.append(&trap_result.stderr);
         Some((trap_result.control_flow, trap_result.exit_code))
+    }
+
+    /// Function entry: like bash, the body does not inherit the ERR trap
+    /// without `set -E`, nor the RETURN trap without `set -T`. Returns the
+    /// handlers set aside, for `leave_function_traps`.
+    fn enter_function_traps(&mut self) -> (Option<String>, Option<String>) {
+        let take = |this: &mut Self, key: &str, inherit: BashFlags| {
+            if this.flags.contains(inherit) || !this.scoped.traps.contains_key(key) {
+                None
+            } else {
+                this.traps_mut().remove(key)
+            }
+        };
+        let err = take(self, "ERR", BashFlags::ERRTRACE);
+        let ret = take(self, "RETURN", BashFlags::FUNCTRACE);
+        (err, ret)
+    }
+
+    /// Function return: a handler set aside on entry comes back unless the
+    /// body set its own, which then stays (bash `trap_if_untrapped`).
+    fn leave_function_traps(&mut self, saved: (Option<String>, Option<String>)) {
+        for (key, handler) in [("ERR", saved.0), ("RETURN", saved.1)] {
+            if let Some(handler) = handler
+                && !self.scoped.traps.contains_key(key)
+            {
+                self.traps_mut().insert(key.to_string(), handler);
+            }
+        }
+    }
+
+    /// Run the RETURN trap as a function or sourced file finishes, after
+    /// its output. The handler keeps `$?`; an `exit` in it ends the shell.
+    async fn run_return_trap(&mut self, result: &mut ExecResult, emit_before: u64) {
+        if self.in_trap {
+            return;
+        }
+        let Some(trap_cmd) = self.scoped.traps.get("RETURN").cloned() else {
+            return;
+        };
+        self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
+        let saved_exit = self.last_exit_code;
+        let flow = self
+            .run_trap_command(&trap_cmd, &mut result.stdout, &mut result.stderr)
+            .await;
+        self.last_exit_code = saved_exit;
+        if let Some((flow @ ControlFlow::Exit(code), _)) = flow {
+            result.control_flow = flow;
+            result.exit_code = code;
+        }
     }
 
     /// The trap set for `signal`, under any of the spellings `trap` accepts

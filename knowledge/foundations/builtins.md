@@ -253,6 +253,23 @@ Internal builtins that need interpreter state receive it via `Context.shell`:
   `DEBUG`, `ERR`, `RETURN`), accepts `0`/`2`/`int`/`SIGINT`, rejects unknown
   specs (status 1) and lists in bash order (EXIT, signals by number, DEBUG,
   ERR, RETURN) with `sh_single_quote` quoting, as `alias` does.
+- ERR fires in `execute_command`, after the failing command itself, for
+  the commands bash fires it for: simple commands (function calls and
+  `eval` included), multi-command pipelines, `( )`, `[[ ]]` and `(( ))`.
+  Lists, groups, loops, `if`/`case` never fire it themselves; the failing
+  command inside does. Whether it may fire is decided before the command
+  runs (bash's `was_error_trap`), so a function that sets ERR does not fire
+  it for its own call. Condition contexts (`if`/`while` tests, non-final
+  `&&`/`||` elements, `!`) suppress it like errexit. `$LINENO` in any trap
+  handler counts from the triggering line (`Interpreter::line_base`).
+- ERR and RETURN scoping: without `set -E` a function body runs with ERR
+  removed, and a subshell, `$( )` or pipeline stage keeps ERR listed for
+  `trap -p` but dormant (`err_trap_dormant`, cleared when `trap` sets or
+  resets ERR there). Without `set -T` a function body runs with RETURN
+  removed. On return the caller's handler comes back only if the body left
+  that trap unset (bash `trap_if_untrapped`), so a trap a function sets
+  stays. RETURN runs when a function body or sourced file finishes, before
+  locals are popped, keeping `$?` and the function's status.
 - `hash` keeps no table (every lookup walks the virtual PATH): a bare `hash`
   reports `hash table empty`, `hash NAME` only checks that NAME resolves.
 - `builtin NAME`, like `type`/`command -v`, treats a registered command that

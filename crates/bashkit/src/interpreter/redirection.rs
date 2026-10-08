@@ -239,9 +239,20 @@ impl Interpreter {
             }
         }
 
+        // `N>&-` among other redirects (`2>&1 1>&-`) depends on their order,
+        // which only the fd-table path tracks.
+        let has_close = redirects.len() > 1
+            && redirects.iter().any(|r| {
+                r.kind == RedirectKind::DupOutput
+                    && matches!(r.target.parts.as_slice(), [WordPart::Literal(t)] if t == "-")
+            });
+
         // `N>file` (N>=3) opens fd N without touching stdout; only the
         // fd-table path keeps fd N separate from fd 1.
-        if (has_dup_output && has_file_redirect) || has_high_fd_file_redirect(redirects) {
+        if (has_dup_output && has_file_redirect)
+            || has_close
+            || has_high_fd_file_redirect(redirects)
+        {
             return self.apply_redirections_fd_table(result, redirects).await;
         }
 
@@ -352,40 +363,29 @@ impl Interpreter {
                 }
                 RedirectKind::OutputBoth => {
                     let target_path = self.expand_word(&redirect.target).await?;
-                    let path = self.resolve_path(&target_path);
-                    if let Some(target_fd) = dev_fd_alias(&path) {
-                        // `&> /dev/fd/N` == `>&N 2>&N`, resolved against the
-                        // original descriptors.
-                        if target_fd == 2 {
-                            let mut combined = std::mem::take(&mut result.stdout);
-                            combined.append(&result.stderr);
-                            result.stderr = combined;
-                        } else {
-                            self.dup_output_fast(&mut result, 1, target_fd).await?;
-                            self.dup_output_fast(&mut result, 2, target_fd).await?;
-                        }
-                    } else if is_dev_null(&path) {
-                        result.stdout = crate::StreamData::new();
-                        result.stderr = crate::StreamData::new();
-                    } else {
-                        let mut combined = result.stdout.as_bytes().to_vec();
-                        combined.extend_from_slice(result.stderr.as_bytes());
-                        if let Err(e) = self.fs.write_file(&path, &combined).await {
-                            result.stderr = self
-                                .redirect_error(&target_path, &io_error_reason(&e))
-                                .into();
-                            result.exit_code = 1;
-                            return Ok(result);
-                        }
-                        result.stdout = crate::StreamData::new();
-                        result.stderr = crate::StreamData::new();
+                    if !self.output_both_fast(&mut result, &target_path).await? {
+                        return Ok(result);
                     }
                 }
                 RedirectKind::DupOutput => {
                     let target = self.expand_word(&redirect.target).await?;
-                    let target_fd: i32 = target.parse().unwrap_or(1);
                     let src_fd = redirect.fd.unwrap_or(1);
-                    self.dup_output_fast(&mut result, src_fd, target_fd).await?;
+                    match DupTarget::parse(&target) {
+                        DupTarget::Fd(target_fd) => {
+                            self.dup_output_fast(&mut result, src_fd, target_fd).await?;
+                        }
+                        DupTarget::Close => self.close_output_fast(&mut result, src_fd),
+                        // `>&file` / `1>&file`: bash's spelling of `&>file`.
+                        DupTarget::File if src_fd == 1 => {
+                            if !self.output_both_fast(&mut result, &target).await? {
+                                return Ok(result);
+                            }
+                        }
+                        DupTarget::File => {
+                            self.ambiguous_dup_target(&mut result, &target);
+                            return Ok(result);
+                        }
+                    }
                 }
                 RedirectKind::Input
                 | RedirectKind::HereString
@@ -396,6 +396,82 @@ impl Interpreter {
         }
 
         Ok(result)
+    }
+
+    /// `&>file` on the fast path: both streams go to the file. Returns
+    /// false when the file could not be opened (the command's output is
+    /// dropped and the error reported, as bash never runs it).
+    async fn output_both_fast(
+        &mut self,
+        result: &mut ExecResult,
+        target_path: &str,
+    ) -> Result<bool> {
+        let path = self.resolve_path(target_path);
+        if let Some(target_fd) = dev_fd_alias(&path) {
+            // `&> /dev/fd/N` == `>&N 2>&N`, resolved against the
+            // original descriptors.
+            if target_fd == 2 {
+                let mut combined = std::mem::take(&mut result.stdout);
+                combined.append(&result.stderr);
+                result.stderr = combined;
+            } else {
+                self.dup_output_fast(result, 1, target_fd).await?;
+                self.dup_output_fast(result, 2, target_fd).await?;
+            }
+        } else if is_dev_null(&path) {
+            result.stdout = crate::StreamData::new();
+            result.stderr = crate::StreamData::new();
+        } else {
+            let mut combined = result.stdout.as_bytes().to_vec();
+            combined.extend_from_slice(result.stderr.as_bytes());
+            if let Err(e) = self.fs.write_file(&path, &combined).await {
+                result.stdout = crate::StreamData::new();
+                result.stderr = self
+                    .redirect_error(target_path, &io_error_reason(&e))
+                    .into();
+                result.exit_code = 1;
+                return Ok(false);
+            }
+            result.stdout = crate::StreamData::new();
+            result.stderr = crate::StreamData::new();
+        }
+        Ok(true)
+    }
+
+    /// `N>&-` on the fast path: fd N is closed for the command. Writes to
+    /// a closed stderr vanish; output to a closed stdout fails the command
+    /// with a write error, as in bash.
+    // WTF: bash names the writing command (`echo: write error`); the
+    // redirect is applied after the command ran, so the name is not known.
+    fn close_output_fast(&self, result: &mut ExecResult, src_fd: i32) {
+        match src_fd {
+            1 if !result.stdout.is_empty() => {
+                result.stdout = crate::StreamData::new();
+                result
+                    .stderr
+                    .append(&crate::StreamData::from(self.closed_stdout_error()));
+                result.exit_code = 1;
+            }
+            2 => result.stderr = crate::StreamData::new(),
+            // Nothing written to stdout; closing fd 3+ for one command
+            // routes nothing.
+            _ => {}
+        }
+    }
+
+    fn closed_stdout_error(&self) -> String {
+        format!(
+            "bash: line {}: write error: Bad file descriptor\n",
+            self.current_line
+        )
+    }
+
+    /// `N>&word` with N other than 1 and a word that is neither a number
+    /// nor `-`: bash refuses it without running the command.
+    fn ambiguous_dup_target(&self, result: &mut ExecResult, word: &str) {
+        result.stdout = crate::StreamData::new();
+        result.stderr = self.redirect_error(word, "ambiguous redirect").into();
+        result.exit_code = 1;
     }
 
     /// `src_fd>&target_fd` on the fast (single-pass) redirect path.
@@ -583,9 +659,38 @@ impl Interpreter {
                 }
                 RedirectKind::DupOutput => {
                     let target = self.expand_word(&redirect.target).await?;
-                    let target_fd: i32 = target.parse().unwrap_or(1);
                     let src_fd = redirect.fd.unwrap_or(1);
-                    self.dup_output_fd_table(src_fd, target_fd, &mut fd1, &mut fd2);
+                    match DupTarget::parse(&target) {
+                        DupTarget::Fd(target_fd) => {
+                            self.dup_output_fd_table(src_fd, target_fd, &mut fd1, &mut fd2);
+                        }
+                        DupTarget::Close => match src_fd {
+                            1 => fd1 = FdTarget::Closed,
+                            2 => fd2 = FdTarget::Closed,
+                            n => self.pending_fd_targets.push((n, FdTarget::Closed)),
+                        },
+                        // `>&file`: both streams to the file, like `&>file`.
+                        DupTarget::File if src_fd == 1 => {
+                            if target.ends_with('/') {
+                                self.clear_pending_fd_redirect_state();
+                                self.rejects_directory_target(&target, &mut result);
+                                return Ok(result);
+                            }
+                            let path = self.resolve_path(&target);
+                            let file = if is_dev_null(&path) {
+                                FdTarget::DevNull
+                            } else {
+                                FdTarget::WriteFile(path, target)
+                            };
+                            fd1 = file.clone();
+                            fd2 = file;
+                        }
+                        DupTarget::File => {
+                            self.clear_pending_fd_redirect_state();
+                            self.ambiguous_dup_target(&mut result, &target);
+                            return Ok(result);
+                        }
+                    }
                 }
                 RedirectKind::Input
                 | RedirectKind::HereString
@@ -597,7 +702,14 @@ impl Interpreter {
 
         // Route stdout/stderr/fd3+ to their targets (non-async to avoid state machine bloat)
         let orig_stdout = std::mem::take(&mut result.stdout);
-        let orig_stderr = std::mem::take(&mut result.stderr);
+        let mut orig_stderr = std::mem::take(&mut result.stderr);
+        if matches!(fd1, FdTarget::Closed) && !orig_stdout.is_empty() {
+            // Writing to the closed stdout fails; the report goes to fd 2.
+            let mut report = crate::StreamData::from(self.closed_stdout_error());
+            report.append(&orig_stderr);
+            orig_stderr = report;
+            result.exit_code = 1;
+        }
         let (new_stdout, mut new_stderr, file_writes) = route_fd_table_content(
             &orig_stdout,
             &orig_stderr,
@@ -719,6 +831,28 @@ pub(super) fn push_redirect_scope_fds(scope: &mut Vec<i32>, redirects: &[Redirec
             && !matches!(r.target.parts.as_slice(), [WordPart::Literal(t)] if t == "-")
         {
             scope.push(fd);
+        }
+    }
+}
+
+/// What the word of `N>&word` names once expanded.
+enum DupTarget {
+    /// A descriptor number: duplicate it.
+    Fd(i32),
+    /// `-`: close fd N.
+    Close,
+    /// Anything else: a file (`>&file` means `&>file`).
+    File,
+}
+
+impl DupTarget {
+    fn parse(word: &str) -> Self {
+        if word == "-" {
+            Self::Close
+        } else if !word.is_empty() && word.bytes().all(|b| b.is_ascii_digit()) {
+            word.parse().map_or(Self::File, Self::Fd)
+        } else {
+            Self::File
         }
     }
 }

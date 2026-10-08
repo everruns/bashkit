@@ -483,8 +483,9 @@ impl<'a> Lexer<'a> {
                 return Some(Token::DupFdCloseOut(fd));
             }
             if target_str.is_empty() {
-                // Just N>& without target - treat as DupOutput with fd
-                return Some(Token::RedirectFd(fd));
+                // `N>&word`: a descriptor, `-` or (for fd 1) a file, known
+                // only once the word is expanded.
+                return Some(Token::DupFdWord(fd));
             }
 
             let target_fd: i32 = target_str.parse().unwrap_or(1);

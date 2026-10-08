@@ -370,3 +370,48 @@ echo "${PIPESTATUS[*]}"
 got y
 141 0
 ### end
+
+
+### dup_word_to_fd1_writes_both_streams
+# 1>&file is &>file
+{ echo o; echo e >&2; } 1>&both.txt
+cat both.txt
+### expect
+o
+e
+### end
+
+### dup_word_to_fd2_is_ambiguous
+# 2>&file is an ambiguous redirect and the command does not run
+echo b 2>&out.txt
+echo "status $?"
+test -e out.txt || echo "no file"
+### expect
+status 1
+no file
+### end
+
+### dup_expanded_fd
+# 2>&$fd duplicates the descriptor the word expands to
+fd=1
+{ echo e >&2; } 2>&$fd | tr e E
+### expect
+E
+### end
+
+### close_stdout_after_dup
+# 2>&1 1>&- sends stderr to the old stdout and drops stdout
+f() { echo out; echo err >&2; }
+f 2>&1 1>&- | sed 's/^.*write error/write error/'
+### expect
+write error: Bad file descriptor
+err
+### end
+
+### failed_output_both_runs_nothing
+# &> into a missing directory drops the output and fails
+echo z &> /no/such/dir/f
+echo "status $?"
+### expect
+status 1
+### end

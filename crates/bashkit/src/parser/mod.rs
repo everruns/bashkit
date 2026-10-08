@@ -691,6 +691,19 @@ impl<'a> Parser<'a> {
                         heredoc_delim: None,
                     });
                 }
+                Some(tokens::Token::DupFdWord(fd)) => {
+                    let fd = *fd;
+                    self.advance();
+                    if let Ok(target) = self.expect_word() {
+                        redirects.push(Redirect {
+                            fd: Some(fd),
+                            fd_var: None,
+                            kind: RedirectKind::DupOutput,
+                            target,
+                            heredoc_delim: None,
+                        });
+                    }
+                }
                 Some(tokens::Token::DupInput) => {
                     self.advance();
                     if let Ok(target) = self.expect_word() {
@@ -2883,6 +2896,7 @@ impl<'a> Parser<'a> {
                     | tokens::Token::RedirectFdAppend(_)
                     | tokens::Token::DupFd(..)
                     | tokens::Token::DupFdCloseOut(_)
+                    | tokens::Token::DupFdWord(_)
                     | tokens::Token::DupInput
                     | tokens::Token::DupFdIn(..)
                     | tokens::Token::DupFdClose(_)
@@ -3168,6 +3182,18 @@ impl<'a> Parser<'a> {
                     fd_var: None,
                     kind: RedirectKind::DupOutput,
                     target: Word::literal("-"),
+                    heredoc_delim: None,
+                });
+            }
+            Some(tokens::Token::DupFdWord(fd)) => {
+                let fd = *fd;
+                self.advance();
+                let target = self.expect_word()?;
+                redirects.push(Redirect {
+                    fd: Some(fd),
+                    fd_var: None,
+                    kind: RedirectKind::DupOutput,
+                    target,
                     heredoc_delim: None,
                 });
             }
