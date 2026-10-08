@@ -1396,6 +1396,17 @@ pub struct Interpreter {
     /// a function or a sourced script, so it needs to tell the two apart from
     /// a plain top-level command.
     source_depth: usize,
+    /// Bytes already accumulated by the command sequence that is running, as
+    /// of the command about to run. A redirect `exec` installs applies from
+    /// there on, so these mark where routing starts.
+    sequence_accum: (usize, usize),
+    /// `sequence_accum` as it was when `exec` last installed a target for
+    /// fd 1 or 2: output written before that keeps going to the caller.
+    exec_install_mark: (usize, usize),
+    /// Name of the last simple command run, for a diagnostic raised after it
+    /// returned: a write to a closed descriptor is reported at the subshell
+    /// boundary, where the offending command is no longer in hand.
+    last_command_name: String,
     /// HTTP client for network builtins (curl, wget)
     #[cfg(feature = "http_client")]
     http_client: Option<Arc<crate::network::HttpClient>>,
@@ -1997,6 +2008,9 @@ impl Interpreter {
             current_line: 1,
             lineno_unset: false,
             source_depth: 0,
+            last_command_name: String::new(),
+            sequence_accum: (0, 0),
+            exec_install_mark: (0, 0),
             #[cfg(feature = "http_client")]
             http_client: None,
             #[cfg(feature = "git")]
@@ -2149,6 +2163,9 @@ impl Interpreter {
             env: self.env.clone(),
             scoped: self.scoped.clone(),
             source_depth: self.source_depth,
+            last_command_name: self.last_command_name.clone(),
+            sequence_accum: self.sequence_accum,
+            exec_install_mark: self.exec_install_mark,
             flags: self.flags,
             cwd: self.cwd.clone(),
             last_exit_code: self.last_exit_code,
@@ -3272,8 +3289,13 @@ impl Interpreter {
             }
             self.check_cancelled()?;
             if top_level {
-                self.route_exec_output(&mut result, emitted_before, Self::command_name(command))
-                    .await?;
+                self.route_exec_output(
+                    &mut result,
+                    emitted_before,
+                    (0, 0),
+                    Self::command_name(command),
+                )
+                .await?;
             }
             self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
             if top_level {
@@ -3531,6 +3553,9 @@ impl Interpreter {
             self.check_cancelled()?;
             // Update current line for $LINENO
             self.current_line = Self::command_line(command);
+            if let Some(name) = Self::command_name(command) {
+                self.last_command_name = name.to_string();
+            }
 
             // `set -n`: read commands without running them for the rest of
             // this exec (bash does the same in scripts; nothing can undo it,
@@ -3734,7 +3759,21 @@ impl Interpreter {
                 let saved_exit = self.last_exit_code;
                 let saved_coproc = self.coproc_buffers.clone();
 
+                let emitted_before = (
+                    self.output_stream_stdout_bytes,
+                    self.output_stream_stderr_bytes,
+                );
                 let mut result = self.execute_command_sequence(commands).await;
+                // An `exec` redirect set inside the subshell applies to the
+                // subshell's own output. It has to be routed here, while the
+                // subshell's fd table is still current: the outermost loop
+                // sees the parent's table, restored just below. What the
+                // subshell wrote before the `exec` stays with the caller.
+                let keep_floor = self.exec_install_mark;
+                if let Ok(ref mut res) = result {
+                    self.route_exec_output(res, emitted_before, keep_floor, None)
+                        .await?;
+                }
 
                 // Fire EXIT trap set inside the subshell before restoring parent state
                 if let Some(trap_cmd) = self.scoped.traps.get("EXIT").cloned() {
@@ -5798,6 +5837,7 @@ impl Interpreter {
 
         for command in commands {
             let emit_before = self.output_emit_count;
+            self.sequence_accum = (stdout.len(), stderr.len());
             let result = self.execute_command(command).await?;
             self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
             stdout.append(&result.stdout);
@@ -6413,6 +6453,7 @@ impl Interpreter {
             exit_code_from_conditional_context = false;
         } else {
             let emit_before = self.output_emit_count;
+            self.sequence_accum = (0, 0);
             // A non-final `&&`/`||` element runs with errexit ignored.
             let conditional = list
                 .rest
@@ -6508,6 +6549,7 @@ impl Interpreter {
                     exit_code_from_conditional_context = false;
                 } else {
                     let emit_before = self.output_emit_count;
+                    self.sequence_accum = (stdout.len(), stderr.len());
                     let followed_by_conditional_op =
                         list.rest.get(i + 1).is_some_and(|(op, cmd)| {
                             !Self::is_empty_sentinel(cmd)
@@ -7364,6 +7406,9 @@ impl Interpreter {
         args: &[String],
         redirects: &[Redirect],
     ) -> Result<ExecResult> {
+        // Whatever the enclosing sequence has written so far belongs to the
+        // caller; only what follows this `exec` goes to its target.
+        self.exec_install_mark = self.sequence_accum;
         if !args.is_empty() {
             // Security: never reconstruct shell source from argv.
             // Execute argv directly to avoid quote/parse injection.
@@ -7416,13 +7461,16 @@ impl Interpreter {
         &mut self,
         result: &mut ExecResult,
         emitted_before: (usize, usize),
+        keep_floor: (usize, usize),
         command_name: Option<&str>,
     ) -> Result<()> {
         if !self.exec_fd_table.contains_key(&1) && !self.exec_fd_table.contains_key(&2) {
             return Ok(());
         }
-        let streamed_out = self.output_stream_stdout_bytes - emitted_before.0;
-        let streamed_err = self.output_stream_stderr_bytes - emitted_before.1;
+        // Bytes to leave with the caller: what a streaming caller already saw,
+        // or what was written before the `exec` installed its target.
+        let streamed_out = (self.output_stream_stdout_bytes - emitted_before.0).max(keep_floor.0);
+        let streamed_err = (self.output_stream_stderr_bytes - emitted_before.1).max(keep_floor.1);
         let take = |data: &mut crate::StreamData, keep: usize| {
             let keep = keep.min(data.len());
             let rest = crate::StreamData::from(&data.as_bytes()[keep..]);
@@ -7453,7 +7501,12 @@ impl Interpreter {
         }
         if write_failed {
             // bash: the write fails and the command reports it, naming itself.
-            let who = command_name.map(|n| format!("{n}: ")).unwrap_or_default();
+            let who = command_name.unwrap_or(&self.last_command_name);
+            let who = if who.is_empty() {
+                String::new()
+            } else {
+                format!("{who}: ")
+            };
             let msg = format!(
                 "bash: line {}: {who}write error: Bad file descriptor\n",
                 self.current_line
