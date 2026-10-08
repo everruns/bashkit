@@ -279,6 +279,98 @@ async fn jq_control_normalization_respects_live_memory_budget() {
     );
 }
 
+#[cfg(feature = "jq")]
+#[tokio::test]
+/// TM-DOS-110: stream preprocessing must obey the intermediate limit even for empty.
+async fn jq_stream_long_key_respects_memory_limit() {
+    let mut bash = Bash::builder()
+        .limits(ExecutionLimits::new().max_live_intermediate_bytes(32_768))
+        .build();
+    let input = format!("{{\"{}\":[null,null]}}", "k".repeat(65_536));
+    bash.fs()
+        .write_file(Path::new("/input.json"), input.as_bytes())
+        .await
+        .unwrap();
+    let result = bash.exec("jq --stream empty /input.json").await.unwrap();
+    assert_eq!(result.exit_code, 5);
+    assert!(
+        result
+            .stderr
+            .contains("value size limit (32768 bytes) exceeded"),
+        "{}",
+        result.stderr
+    );
+    assert!(result.stdout.is_empty());
+    assert_eq!(
+        bash.exec("echo recovered").await.unwrap().stdout,
+        "recovered\n"
+    );
+}
+
+#[cfg(feature = "jq")]
+#[tokio::test]
+/// TM-DOS-110: slurping events retains them and must meter their bodies.
+async fn jq_stream_slurp_respects_memory_limit() {
+    let mut bash = Bash::builder()
+        .limits(ExecutionLimits::new().max_live_intermediate_bytes(65_536))
+        .build();
+    let input = format!(
+        "{{\"{}\":[{}]}}",
+        "k".repeat(1024),
+        vec!["null"; 2000].join(",")
+    );
+    let result = bash
+        .exec_with_options("jq --stream --slurp empty", ExecOptions::new().stdin(input))
+        .await
+        .unwrap();
+    assert_eq!(result.exit_code, 5);
+    assert!(
+        result
+            .stderr
+            .contains("value size limit (65536 bytes) exceeded"),
+        "{}",
+        result.stderr
+    );
+    assert!(result.stdout.is_empty());
+}
+
+#[cfg(feature = "jq")]
+#[tokio::test]
+/// Shared keys and lazy events keep many leaves below a small live limit.
+async fn jq_stream_many_leaves_fit_small_memory_limit() {
+    let mut bash = Bash::builder()
+        .limits(ExecutionLimits::new().max_live_intermediate_bytes(65_536))
+        .build();
+    let input = format!(
+        "{{\"{}\":[{}]}}",
+        "k".repeat(1024),
+        vec!["null"; 2000].join(",")
+    );
+    let result = bash
+        .exec_with_options(
+            "jq -nc --stream 'reduce inputs as $event (0; . + 1)'",
+            ExecOptions::new().stdin(input),
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.exit_code, 0, "{}", result.stderr);
+    assert_eq!(result.stdout, "2002\n");
+}
+
+#[cfg(feature = "jq")]
+#[tokio::test]
+/// Non-emitting filters must charge traversal, beyond input normalization.
+async fn jq_stream_empty_consumes_shared_work_budget() {
+    let input = format!("[{}]", vec!["null"; 1000].join(","));
+    let mut bash = Bash::builder()
+        .limits(ExecutionLimits::new().max_work_units(input.len() as u64 + 500))
+        .build();
+    assert_budget_exhausted(
+        bash.exec_with_options("jq --stream empty", ExecOptions::new().stdin(input))
+            .await,
+    );
+}
+
 #[cfg(feature = "python")]
 #[tokio::test]
 /// TM-DOS-096: separate Python entries cannot each claim a fresh VM allowance.

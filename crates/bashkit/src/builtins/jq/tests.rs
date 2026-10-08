@@ -2211,6 +2211,34 @@ async fn stream_flag_feeds_path_events() {
 }
 
 #[tokio::test]
+async fn stream_slurp_and_metadata_preserve_event_order() {
+    let result = run_jq_with_files(
+        &[
+            "-c",
+            "--stream",
+            "[input_filename, .]",
+            "/first.json",
+            "/second.json",
+        ],
+        &[("/first.json", "[1,[]]"), ("/second.json", "{}")],
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        result.stdout,
+        "[\"/first.json\",[[0],1]]\n[\"/first.json\",[[1],[]]]\n[\"/first.json\",[[1]]]\n[\"/second.json\",[[],{}]]\n"
+    );
+    let out = run_jq_with_args(&["-sc", "--stream", "."], "[1,[]] {}")
+        .await
+        .unwrap();
+    assert_eq!(out, "[[[0],1],[[1],[]],[[1]],[[],{}]]\n");
+    let out = run_jq_with_args(&["-nc", "--stream", "[limit(1; inputs)], input"], "[1,2]")
+        .await
+        .unwrap();
+    assert_eq!(out, "[[[0],1]]\n[[1],2]\n");
+}
+
+#[tokio::test]
 async fn seq_flag_uses_record_separators() {
     let out = run_jq_with_args(&["--seq", "-c", "."], "\x1e[1]\n\x1e2\n")
         .await

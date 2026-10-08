@@ -98,6 +98,11 @@ catch its way around it. Output is capped by `max_stdout_bytes`, and a filter
 that loops without emitting (`until(false; .)`) stops at the execution timeout
 with `jq: execution timed out`.
 
+`--stream` produces path events incrementally, sharing ancestor keys. Event
+and traversal storage obey the same memory limit, and traversal checks work,
+cancellation and timeout limits even with an `empty` filter. `--slurp`
+retains events and can hit the memory limit on otherwise small JSON input.
+
 The limit counts real in-memory size, which is several times the JSON text:
 a 5.6 MB array of 100,000 small objects fits the default, much larger inputs
 need a larger `max_live_intermediate_bytes`.

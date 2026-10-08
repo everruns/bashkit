@@ -6,6 +6,7 @@
 //!  - `args`: CLI parsing (incl. `--slurpfile`, `--rawfile`, `--args`,
 //!    `--jsonargs`, `--indent`)
 //!  - `convert`: order-preserving JSON reader -> JqJson <-> jaq Val, depth check
+//!  - `stream`: incremental, metered path events with shared ancestor keys
 //!  - `format`: indent-aware output rendering (custom `--indent N`)
 //!  - `compat`: prepended jq-compat definitions and global var names
 //!  - `errors`: jq-style error formatting (no Debug-shape leaks)
@@ -58,6 +59,7 @@ mod messages;
 )]
 mod jaq_json;
 mod regex_compat;
+mod stream;
 
 #[cfg(test)]
 mod tests;
@@ -67,7 +69,7 @@ use compat::{
     ARGS_VAR_NAME, ENV_VAR_NAME, FILENAME_VAR_NAME, LINENO_VAR_NAME, PUBLIC_ENV_VAR_NAME,
     build_compat_prefix,
 };
-use convert::{JqJson, jq_to_val, parse_json_stream, stream_events, val_to_jq_capped};
+use convert::{JqJson, jq_to_val, parse_json_stream, val_to_jq_capped};
 use errors::{format_compile_errors, format_load_errors, format_runtime_error_at};
 use format::{Indent, render, sort_keys as sort_jq_keys};
 
@@ -141,7 +143,7 @@ pub struct Jq;
 /// Bookkeeping for one filter run: the input value and the per-input
 /// metadata (filename / line number) bound to compat globals.
 struct FilterInput {
-    value: Val,
+    value: JqJson,
     filename: Val,
     lineno: usize,
 }
@@ -397,13 +399,8 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
         }
     };
 
-    // Pre-convert globals to Val once.
-    let env_val = jq_to_val(&env_obj);
-    let args_val = jq_to_val(&args_obj);
-    let pre_var_vals: Vec<Val> = all_var_bindings.iter().map(|(_, v)| jq_to_val(v)).collect();
-
-    // Build the input stream. Each value keeps its file name and the line
-    // number jq reports for it in errors.
+    // Keep parsed input trees, not expanded events. Conversion and streaming
+    // happen inside the metered, unwind-protected synchronous evaluation.
     let mut parse_error: Option<String> = None;
     let mut items: Vec<FilterInput> = Vec::new();
     let name_val = |name: &Option<&str>| match name {
@@ -413,7 +410,7 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
     if parsed.raw_input && parsed.slurp {
         let text: String = sources.iter().map(|(_, t)| t.as_str()).collect();
         items.push(FilterInput {
-            value: Val::from(text),
+            value: JqJson::String(text),
             filename: sources
                 .last()
                 .map(|(n, _)| name_val(n))
@@ -424,16 +421,14 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
         for (name, text) in &sources {
             for (i, line) in text.lines().enumerate() {
                 items.push(FilterInput {
-                    value: Val::from(line.to_string()),
+                    value: JqJson::String(line.to_string()),
                     filename: name_val(name),
                     lineno: i + 1,
                 });
             }
         }
     } else {
-        let mut slurped: Vec<JqJson> = Vec::new();
         for (name, text) in &sources {
-            // `--seq`: RS (0x1e) separates values; read it as whitespace.
             let seq_text;
             let text = if parsed.seq {
                 seq_text = text.replace('\x1e', " ");
@@ -443,44 +438,20 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
             };
             let (vals, err) = parse_jq_json_stream_partial(&ctx, text)?;
             let lines = input::value_lines(text);
-            // `--stream`: each value becomes its path events.
-            let vals: Vec<(JqJson, usize)> = vals
-                .into_iter()
-                .enumerate()
-                .flat_map(|(i, v)| {
-                    let line = lines.get(i).copied().unwrap_or(0);
-                    if parsed.stream {
-                        stream_events(&v).into_iter().map(|e| (e, line)).collect()
-                    } else {
-                        vec![(v, line)]
-                    }
-                })
-                .collect();
-            if parsed.slurp {
-                slurped.extend(vals.into_iter().map(|(v, _)| v));
-            } else {
-                for (v, line) in &vals {
-                    items.push(FilterInput {
-                        value: jq_to_val(v),
-                        filename: name_val(name),
-                        lineno: *line,
-                    });
-                }
+            for (i, value) in vals.into_iter().enumerate() {
+                items.push(FilterInput {
+                    value,
+                    filename: name_val(name),
+                    lineno: lines.get(i).copied().unwrap_or(0),
+                });
             }
             if let Some(e) = err {
                 parse_error = Some(e);
                 break;
             }
         }
-        if parsed.slurp && parse_error.is_none() {
-            items.push(FilterInput {
-                value: jq_to_val(&JqJson::Array(slurped)),
-                filename: sources
-                    .last()
-                    .map(|(n, _)| name_val(n))
-                    .unwrap_or(Val::Null),
-                lineno: 0,
-            });
+        if parsed.slurp && parse_error.is_some() {
+            items.clear();
         }
     }
 
@@ -545,13 +516,6 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
     // line for `input_filename` and error locations.
     let current: std::rc::Rc<std::cell::RefCell<(Val, usize)>> =
         std::rc::Rc::new(std::cell::RefCell::new((Val::Null, 0)));
-    let tracker = current.clone();
-    let value_iter: Box<dyn Iterator<Item = std::result::Result<Val, String>>> =
-        Box::new(items.into_iter().map(move |fi| {
-            *tracker.borrow_mut() = (fi.filename, fi.lineno);
-            Ok::<Val, String>(fi.value)
-        }));
-    let shared_inputs = RcIter::new(value_iter);
     let null_input = parsed.null_input;
     let location = |current: &(Val, usize)| -> String {
         if null_input {
@@ -573,7 +537,54 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
 
     // THREAT[TM-DOS-110]: the meter aborts a run by unwinding where jaq
     // gives it no error channel (see jaq_json::meter::Abort).
+    let input_error = std::cell::RefCell::new(None);
     let run_filter = std::panic::AssertUnwindSafe(|| -> Result<Option<ExecResult>> {
+        let env_val = jq_to_val(&env_obj);
+        let args_val = jq_to_val(&args_obj);
+        let pre_var_vals: Vec<Val> = all_var_bindings.iter().map(|(_, v)| jq_to_val(v)).collect();
+        let tracker = current.clone();
+        let values = items.iter().flat_map(|fi| {
+            let iter: Box<dyn Iterator<Item = Result<Val>> + '_> =
+                if parsed.stream && !parsed.raw_input {
+                    Box::new(stream::StreamEvents::new(&fi.value, &ctx))
+                } else {
+                    Box::new(std::iter::once_with(|| Ok(jq_to_val(&fi.value))))
+                };
+            let tracker = tracker.clone();
+            iter.inspect(move |_| {
+                *tracker.borrow_mut() = (fi.filename.clone(), fi.lineno);
+            })
+        });
+        let mut value_iter: Box<dyn Iterator<Item = std::result::Result<Val, String>> + '_> =
+            Box::new(values.map(|value| {
+                value.map_err(|error| {
+                    let message = error.to_string();
+                    *input_error.borrow_mut() = Some(error);
+                    message
+                })
+            }));
+        if parsed.slurp && !parsed.raw_input && parse_error.is_none() {
+            let mut values = jaq_json::meter::Metered::<Vec<Val>>::default();
+            for value in value_iter {
+                let value = match value {
+                    Ok(value) => value,
+                    Err(e) => {
+                        return Ok(Some(ExecResult::err(format!("jq: input error: {e}\n"), 5)));
+                    }
+                };
+                stream::push_metered(&mut values, value)?;
+            }
+            *current.borrow_mut() = (
+                sources
+                    .last()
+                    .map(|(n, _)| name_val(n))
+                    .unwrap_or(Val::Null),
+                0,
+            );
+            value_iter = Box::new(std::iter::once(Ok(Val::Arr(jaq_json::Rc::new(values)))));
+        }
+        let shared_inputs = RcIter::new(value_iter);
+
         let mut first = true;
         'inputs: loop {
             let jaq_input: Val = if null_input {
@@ -711,8 +722,15 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
         }
         Ok(None)
     });
-    match std::panic::catch_unwind(run_filter) {
+    let evaluation = std::panic::catch_unwind(run_filter);
+    match evaluation {
         Ok(result) => {
+            if meter.tripped() {
+                return size_error(&meter);
+            }
+            if let Some(error) = input_error.into_inner() {
+                return Err(error);
+            }
             if let Some(early) = result? {
                 return Ok(early);
             }
