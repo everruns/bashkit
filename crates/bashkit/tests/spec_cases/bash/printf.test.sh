@@ -282,3 +282,10 @@ printf '\xff\xfe' | od -An -tx1
 ### expect
  ff fe
 ### end
+
+### printf_q_keeps_printable_non_ascii
+printf '%q\n' 'com espaço' 'a€b'
+### expect
+com\ espaço
+a€b
+### end
