@@ -765,90 +765,25 @@ impl Interpreter {
                 }
             }
 
+            // "x$@y", x"${a[@]}"y, "${1+"$@"}": a quoted `@` expansion yields
+            // one field per element even inside a larger word; the text
+            // before it joins the first element and the text after the last.
+            if let Some(fields) = self.expand_at_word_fields(word).await? {
+                return Ok(fields);
+            }
+
             let has_mixed_part_quotes =
                 word.part_quoted.iter().any(|q| *q) && word.part_quoted.iter().any(|q| !*q);
             if has_mixed_part_quotes {
                 let mut segments = Vec::new();
-                let mut sentinel_haystack = self
-                    .scoped
-                    .variables
-                    .get("IFS")
-                    .cloned()
-                    .unwrap_or_default();
                 for (idx, part) in word.parts.iter().enumerate() {
                     let part_is_quoted = word.part_quoted.get(idx).copied().unwrap_or(word.quoted);
-                    let part_has_expansion = Self::is_field_split_expansion(part);
-                    let value = if idx > 0
-                        && let WordPart::Literal(s) = part
-                    {
-                        s.clone()
-                    } else {
-                        let single = Word {
-                            parts: vec![part.clone()],
-                            quoted: part_is_quoted,
-                            has_unquoted_glob: false,
-                            part_quoted: vec![part_is_quoted],
-                            raw: None,
-                        };
-                        self.expand_word(&single).await?
-                    };
-
-                    if part_has_expansion && !part_is_quoted {
-                        sentinel_haystack.push_str(&value);
-                        segments.push((value, false, false));
-                    } else {
-                        let value =
-                            if part_is_quoted && part_has_expansion && word.has_unquoted_glob {
-                                Self::quote_expansion_for_quoted_glob(&value)
-                            } else {
-                                value
-                            };
-                        let preserves_empty_field = part_is_quoted && value.is_empty();
-                        sentinel_haystack.push_str(&value);
-                        segments.push((value, true, preserves_empty_field));
-                    }
+                    segments.push(
+                        self.mixed_word_segment(word, idx, part, part_is_quoted)
+                            .await?,
+                    );
                 }
-
-                // Pick a sentinel char absent from the data so empty quoted
-                // fields survive splitting and can be stripped afterward. If no
-                // candidate is free (astronomically unlikely), skip the sentinel
-                // rather than fall back to NUL, which is a valid data byte.
-                let empty_field_sentinel = segments
-                    .iter()
-                    .any(|(_, _, preserves_empty_field)| *preserves_empty_field)
-                    .then(|| {
-                        OPERAND_QUOTE_MARK_CANDIDATES
-                            .iter()
-                            .copied()
-                            .find(|candidate| !sentinel_haystack.contains(*candidate))
-                    })
-                    .flatten();
-
-                let mut expanded_for_split = String::new();
-                for (value, is_protected, preserves_empty_field) in segments {
-                    if is_protected {
-                        // Field splitting scans the whole expanded word. Mark literal and
-                        // quoted segments as protected so unquoted expansion delimiters can
-                        // still create boundaries between adjacent protected segments.
-                        expanded_for_split.push(QUOTED_SEGMENT_START);
-                        if preserves_empty_field
-                            && let Some(empty_field_sentinel) = empty_field_sentinel
-                        {
-                            expanded_for_split.push(empty_field_sentinel);
-                        }
-                        expanded_for_split.push_str(&value);
-                        expanded_for_split.push(QUOTED_SEGMENT_END);
-                    } else {
-                        expanded_for_split.push_str(&value);
-                    }
-                }
-                let mut fields = self.ifs_split(&expanded_for_split)?;
-                if let Some(empty_field_sentinel) = empty_field_sentinel {
-                    for field in &mut fields {
-                        field.retain(|ch| ch != empty_field_sentinel);
-                    }
-                }
-                return Ok(fields);
+                return self.split_marked_segments(segments);
             }
 
             // For other words, expand to a single field then apply IFS word splitting
@@ -873,6 +808,283 @@ impl Interpreter {
                 Ok(vec![Self::strip_quote_markers(&expanded)])
             }
         })
+    }
+
+    /// One part of a mixed-quote word as `(value, protected, keeps_empty)`:
+    /// quoted parts and literals are protected from IFS splitting; an empty
+    /// quoted part still makes a field.
+    async fn mixed_word_segment(
+        &mut self,
+        word: &Word,
+        idx: usize,
+        part: &WordPart,
+        part_is_quoted: bool,
+    ) -> Result<(String, bool, bool)> {
+        let part_has_expansion = Self::is_field_split_expansion(part);
+        let value = if idx > 0
+            && let WordPart::Literal(s) = part
+        {
+            s.clone()
+        } else {
+            let single = Word {
+                parts: vec![part.clone()],
+                quoted: part_is_quoted,
+                has_unquoted_glob: false,
+                part_quoted: vec![part_is_quoted],
+                raw: None,
+            };
+            self.expand_word(&single).await?
+        };
+        if part_has_expansion && !part_is_quoted {
+            return Ok((value, false, false));
+        }
+        let value = if part_is_quoted && part_has_expansion && word.has_unquoted_glob {
+            Self::quote_expansion_for_quoted_glob(&value)
+        } else {
+            value
+        };
+        let preserves_empty_field = part_is_quoted && value.is_empty();
+        Ok((value, true, preserves_empty_field))
+    }
+
+    /// Join `(value, protected, keeps_empty)` segments into one string and
+    /// IFS-split it: only unprotected segments split, and protected
+    /// boundaries still separate fields created by unquoted expansions.
+    fn split_marked_segments(&self, segments: Vec<(String, bool, bool)>) -> Result<Vec<String>> {
+        // Pick a sentinel char absent from the data so empty quoted
+        // fields survive splitting and can be stripped afterward. If no
+        // candidate is free (astronomically unlikely), skip the sentinel
+        // rather than fall back to NUL, which is a valid data byte.
+        let empty_field_sentinel = segments
+            .iter()
+            .any(|(_, _, preserves_empty_field)| *preserves_empty_field)
+            .then(|| {
+                let ifs = self.scoped.variables.get("IFS");
+                OPERAND_QUOTE_MARK_CANDIDATES
+                    .iter()
+                    .copied()
+                    .find(|candidate| {
+                        !ifs.is_some_and(|ifs| ifs.contains(*candidate))
+                            && !segments.iter().any(|(v, _, _)| v.contains(*candidate))
+                    })
+            })
+            .flatten();
+
+        let mut expanded_for_split = String::new();
+        for (value, is_protected, preserves_empty_field) in segments {
+            if is_protected {
+                // Field splitting scans the whole expanded word. Mark literal and
+                // quoted segments as protected so unquoted expansion delimiters can
+                // still create boundaries between adjacent protected segments.
+                expanded_for_split.push(QUOTED_SEGMENT_START);
+                if preserves_empty_field && let Some(empty_field_sentinel) = empty_field_sentinel {
+                    expanded_for_split.push(empty_field_sentinel);
+                }
+                expanded_for_split.push_str(&value);
+                expanded_for_split.push(QUOTED_SEGMENT_END);
+            } else {
+                expanded_for_split.push_str(&value);
+            }
+        }
+        let mut fields = self.ifs_split(&expanded_for_split)?;
+        if let Some(empty_field_sentinel) = empty_field_sentinel {
+            for field in &mut fields {
+                field.retain(|ch| ch != empty_field_sentinel);
+            }
+        }
+        Ok(fields)
+    }
+
+    /// Fields of a word holding a quoted `@` expansion (`"x$@y"`,
+    /// `"${a[@]}"z`, `"${1+"$@"}"`), or `None` when it has none and the
+    /// ordinary single-field path applies.
+    async fn expand_at_word_fields(&mut self, word: &Word) -> Result<Option<Vec<String>>> {
+        // Per-part flags are only recorded for mixed words; otherwise the
+        // whole word's quoting applies to every part.
+        let mixed = word.part_quoted.iter().any(|q| *q);
+        let part_quoted = |idx: usize| {
+            if mixed {
+                word.part_quoted.get(idx).copied().unwrap_or(false)
+            } else {
+                word.quoted
+            }
+        };
+        let quoted_at = |idx: usize, part: &WordPart| {
+            (part_quoted(idx) && Self::is_at_part(part)) || Self::at_operand_part(part).is_some()
+        };
+        if !word
+            .parts
+            .iter()
+            .enumerate()
+            .any(|(idx, part)| quoted_at(idx, part))
+        {
+            return Ok(None);
+        }
+        // Each field under construction is a list of segments.
+        let mut fields: Vec<Vec<(String, bool, bool)>> = vec![Vec::new()];
+        for (idx, part) in word.parts.iter().enumerate() {
+            let q = part_quoted(idx);
+            if let Some(elems) = self.part_at_fields(part, q).await? {
+                for (i, elem) in elems.into_iter().enumerate() {
+                    if i > 0 {
+                        fields.push(Vec::new());
+                    }
+                    let elem = if word.has_unquoted_glob {
+                        Self::quote_expansion_for_quoted_glob(&elem)
+                    } else {
+                        elem
+                    };
+                    if let Some(field) = fields.last_mut() {
+                        field.push((elem, true, true));
+                    }
+                }
+                continue;
+            }
+            let segment = self.mixed_word_segment(word, idx, part, q).await?;
+            if let Some(field) = fields.last_mut() {
+                field.push(segment);
+            }
+        }
+        let mut out = Vec::new();
+        for segments in fields {
+            if segments.is_empty() {
+                continue;
+            }
+            out.extend(self.split_marked_segments(segments)?);
+            if out.len() > self.limits.max_word_split_fields {
+                out.truncate(self.limits.max_word_split_fields);
+                break;
+            }
+        }
+        Ok(Some(out))
+    }
+
+    /// `$@`, `${a[@]}`, and per-element operators on them (`${@^}`,
+    /// `${a[@]/x/y}`): one field per element when quoted.
+    fn is_at_part(part: &WordPart) -> bool {
+        match part {
+            WordPart::Variable(name) => name == "@",
+            WordPart::ArrayAccess { index, .. } => index == "@",
+            WordPart::ParameterExpansion { name, operator, .. } => {
+                Self::is_elementwise_op(operator) && (name == "@" || name.ends_with("[@]"))
+            }
+            WordPart::Transformation { name, .. } => name == "@" || name.ends_with("[@]"),
+            WordPart::Substring { name, .. } => name == "@",
+            _ => false,
+        }
+    }
+
+    /// `${x-word}` / `${x+word}` whose operand holds an `@` expansion
+    /// (`${1+"$@"}`): `(name, operand, colon, use_when_set)`.
+    fn at_operand_part(part: &WordPart) -> Option<(&str, &str, bool, bool)> {
+        let WordPart::ParameterExpansion {
+            name,
+            operator,
+            operand,
+            colon_variant,
+        } = part
+        else {
+            return None;
+        };
+        let use_when_set = match operator {
+            ParameterOp::UseDefault => false,
+            ParameterOp::UseReplacement => true,
+            _ => return None,
+        };
+        (operand.contains("$@") || operand.contains("${@") || operand.contains("[@]}")).then_some((
+            name.as_str(),
+            operand.as_str(),
+            *colon_variant,
+            use_when_set,
+        ))
+    }
+
+    /// Elements of a part that expands to one field per element here, or
+    /// `None` when it expands to a single string.
+    async fn part_at_fields(
+        &mut self,
+        part: &WordPart,
+        quoted: bool,
+    ) -> Result<Option<Vec<String>>> {
+        if let Some((name, operand, colon, use_when_set)) = Self::at_operand_part(part) {
+            let (is_set, value) = self.resolve_param_expansion_name(name);
+            let unset_or_null = !is_set || (colon && value.is_empty());
+            if use_when_set == unset_or_null {
+                return Ok(None);
+            }
+            let inner = self.operand_word(operand, quoted);
+            let fields = self.expand_word_to_fields(&inner).await?;
+            // bash: inside double quotes an operand whose `"$@"` is empty
+            // still leaves one empty field (`"${x-"$@"}"`).
+            if quoted && fields.is_empty() {
+                return Ok(Some(vec![String::new()]));
+            }
+            return Ok(Some(fields));
+        }
+        if !quoted || !Self::is_at_part(part) {
+            return Ok(None);
+        }
+        Ok(Some(match part {
+            WordPart::Variable(_) => self
+                .call_stack
+                .last()
+                .map(|f| f.positional.clone())
+                .unwrap_or_default(),
+            WordPart::ArrayAccess { name, .. } => self
+                .array_view(name)
+                .map(|items| items.into_iter().map(|(_, v)| v).collect())
+                .unwrap_or_default(),
+            _ => match self.elementwise_fields(part) {
+                Some((elems, _)) => elems,
+                None => return Ok(None),
+            },
+        }))
+    }
+
+    /// A `${x-word}` operand as a word of its own: its double-quoted spans
+    /// (and all of it, inside an outer `"..."`) are quoted parts.
+    fn operand_word(&self, operand: &str, outer_quoted: bool) -> Word {
+        let (parsed, quote_mark, force_quoted) = Self::parse_marked_operand(
+            operand,
+            self.limits.max_ast_depth,
+            self.limits.max_parser_operations,
+        );
+        let mut parts = Vec::new();
+        let mut part_quoted = Vec::new();
+        let mut in_marked = false;
+        for part in parsed.parts {
+            match part {
+                WordPart::Literal(s) => {
+                    let mut lit = String::new();
+                    for ch in s.chars() {
+                        if Some(ch) == quote_mark {
+                            if !lit.is_empty() {
+                                parts.push(WordPart::Literal(std::mem::take(&mut lit)));
+                                part_quoted.push(outer_quoted || in_marked || force_quoted);
+                            }
+                            in_marked = !in_marked;
+                        } else {
+                            lit.push(ch);
+                        }
+                    }
+                    if !lit.is_empty() {
+                        parts.push(WordPart::Literal(lit));
+                        part_quoted.push(outer_quoted || in_marked || force_quoted);
+                    }
+                }
+                other => {
+                    parts.push(other);
+                    part_quoted.push(outer_quoted || in_marked || force_quoted);
+                }
+            }
+        }
+        Word {
+            quoted: !part_quoted.is_empty() && part_quoted.iter().all(|q| *q),
+            parts,
+            has_unquoted_glob: false,
+            part_quoted,
+            raw: None,
+        }
     }
 
     /// Expansion parts whose unquoted result undergoes IFS field splitting.
