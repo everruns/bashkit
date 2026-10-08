@@ -30,6 +30,7 @@ pub mod builtin_cap_security_tests;
 pub mod builtin_error_security_tests;
 pub mod builtin_fs_error_tests;
 pub mod builtin_registry_tests;
+pub mod builtin_validation_tests;
 pub mod byte_range_panic_tests;
 pub mod byte_stream_tests;
 pub mod cancellation_tests;
