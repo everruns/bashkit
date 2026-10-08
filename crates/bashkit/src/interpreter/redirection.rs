@@ -98,7 +98,7 @@ impl Interpreter {
                     let target_path = self.expand_word(&redirect.target).await?;
                     let path = self.resolve_path(&target_path);
                     // Handle /dev/null at interpreter level - cannot be bypassed
-                    if dev_fd_alias(&path) == Some(0) {
+                    if self.fd_alias(&path) == Some(0) {
                         // `< /dev/stdin` re-reads the current stdin: no-op.
                     } else if is_dev_null(&path) {
                         stdin = Some(crate::StreamData::new()); // EOF
@@ -283,7 +283,7 @@ impl Interpreter {
                         return Ok(result);
                     }
                     let path = self.resolve_path(&target_path);
-                    if let Some(target_fd) = dev_fd_alias(&path) {
+                    if let Some(target_fd) = self.fd_alias(&path) {
                         self.dup_output_fast(&mut result, redirect.fd.unwrap_or(1), target_fd)
                             .await?;
                     } else if is_dev_null(&path) {
@@ -294,7 +294,7 @@ impl Interpreter {
                     } else {
                         if redirect.kind == RedirectKind::Output
                             && self.scoped.variables.get("SHOPT_C").map(|v| v.as_str()) == Some("1")
-                            && self.fs.stat(&path).await.is_ok()
+                            && self.fs.stat(&path).await.is_ok_and(clobber_protected)
                         {
                             result.stdout = crate::StreamData::new();
                             result.stderr = self
@@ -341,7 +341,7 @@ impl Interpreter {
                         return Ok(result);
                     }
                     let path = self.resolve_path(&target_path);
-                    if let Some(target_fd) = dev_fd_alias(&path) {
+                    if let Some(target_fd) = self.fd_alias(&path) {
                         self.dup_output_fast(&mut result, redirect.fd.unwrap_or(1), target_fd)
                             .await?;
                     } else if is_dev_null(&path) {
@@ -425,7 +425,7 @@ impl Interpreter {
         target_path: &str,
     ) -> Result<bool> {
         let path = self.resolve_path(target_path);
-        if let Some(target_fd) = dev_fd_alias(&path) {
+        if let Some(target_fd) = self.fd_alias(&path) {
             // `&> /dev/fd/N` == `>&N 2>&N`, resolved against the
             // original descriptors.
             if target_fd == 2 {
@@ -606,7 +606,7 @@ impl Interpreter {
                         return Ok(result);
                     }
                     let path = self.resolve_path(&target_path);
-                    if let Some(target_fd) = dev_fd_alias(&path) {
+                    if let Some(target_fd) = self.fd_alias(&path) {
                         let src_fd = redirect.fd.unwrap_or(1);
                         self.dup_output_fd_table(src_fd, target_fd, &mut fd1, &mut fd2);
                         continue;
@@ -615,7 +615,7 @@ impl Interpreter {
                     if redirect.kind == RedirectKind::Output
                         && self.scoped.variables.get("SHOPT_C").map(|v| v.as_str()) == Some("1")
                         && !is_dev_null(&path)
-                        && self.fs.stat(&path).await.is_ok()
+                        && self.fs.stat(&path).await.is_ok_and(clobber_protected)
                     {
                         result.stdout = crate::StreamData::new();
                         result.stderr = self
@@ -644,7 +644,7 @@ impl Interpreter {
                         return Ok(result);
                     }
                     let path = self.resolve_path(&target_path);
-                    if let Some(target_fd) = dev_fd_alias(&path) {
+                    if let Some(target_fd) = self.fd_alias(&path) {
                         let src_fd = redirect.fd.unwrap_or(1);
                         self.dup_output_fd_table(src_fd, target_fd, &mut fd1, &mut fd2);
                         continue;
@@ -663,7 +663,7 @@ impl Interpreter {
                 RedirectKind::OutputBoth => {
                     let target_path = self.expand_word(&redirect.target).await?;
                     let path = self.resolve_path(&target_path);
-                    if let Some(target_fd) = dev_fd_alias(&path) {
+                    if let Some(target_fd) = self.fd_alias(&path) {
                         self.dup_output_fd_table(1, target_fd, &mut fd1, &mut fd2);
                         self.dup_output_fd_table(2, 1, &mut fd1, &mut fd2);
                         continue;
@@ -903,12 +903,25 @@ fn buffer_text(lines: &[String]) -> crate::StreamData {
     text.into()
 }
 
+/// `set -C`: `>` may not truncate an existing file. A pipe (FIFO, process
+/// substitution) is not truncated, so it stays writable.
+fn clobber_protected(meta: crate::fs::Metadata) -> bool {
+    meta.file_type != crate::fs::FileType::Fifo
+}
+
 /// Lines of `text`, reversed so `pop()` yields the first.
 fn reversed_lines(text: &str) -> Vec<String> {
     text.lines().rev().map(str::to_string).collect()
 }
 
 impl Interpreter {
+    /// Descriptor a `/dev/...` redirect target aliases (`dev_fd_alias`),
+    /// except an open process substitution's `/dev/fd/N`: that is a pipe
+    /// end, opened through the fs like a file (`ProcSubFs`).
+    pub(super) fn fd_alias(&self, path: &Path) -> Option<i32> {
+        dev_fd_alias(path).filter(|&fd| fd < 3 || !self.proc_subs.is_open(fd))
+    }
+
     /// Whether `fd` is open in this shell (or provided by an enclosing
     /// command's redirections).
     pub(super) fn fd_is_open(&self, fd: i32) -> bool {
@@ -1170,9 +1183,16 @@ impl Interpreter {
                 let target_path = self.expand_word(&redirect.target).await?;
                 let path = self.resolve_path(&target_path);
                 self.ensure_persistent_fd_capacity(n)?;
-                let entry = if let Some(target_fd) = dev_fd_alias(&path) {
+                let entry = if let Some(target_fd) = self.fd_alias(&path) {
                     self.exec_fd_alias_target(target_fd)
                 } else if is_dev_null(&path) {
+                    FdTarget::DevNull
+                } else if crate::fs::proc_sub_fd(&path).is_some_and(|fd| self.proc_subs.is_open(fd))
+                {
+                    // WTF: `exec 3> >(cmd)` would need `cmd` to outlive the
+                    // `exec` and read fd 3 as it is written; it runs right
+                    // after the `exec` instead (no input), so later writes to
+                    // fd 3 are dropped rather than failing on the closed fd.
                     FdTarget::DevNull
                 } else {
                     // Truncate (or create) the file on open, like real

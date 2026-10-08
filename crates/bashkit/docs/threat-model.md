@@ -543,6 +543,7 @@ echo $user_input
 | Wrapper rebuild drops constructor capabilities (TM-ISO-025) | A binding reset loses limits, policy files, callbacks, or network policy | Canonical capability matrix with executable evidence; rebuilds retain constructor config | **MITIGATED** |
 | Shared ToolRegistry request context (TM-ISO-026) | Concurrent shell/Python/TypeScript calls leak tenant identity or traces | Per-request `ExecutionExtensions`, task-local runtime routing, and callback-owned context | **MITIGATED** |
 | Stale request authority and retained host-extension handles (TM-ISO-027) | A late runtime/transport/callback result crosses completion, or a builtin/tool keeps VFS or request context past completion/cancellation | Shared request budget plus one revocable capability lease, cancellation-aware awaits, deterministic late-use failure, RAII closure/release, and explicit `insert_trusted` escape hatch | **MITIGATED** |
+| Process substitution shared through the VFS (TM-ISO-028) | Tenants on one filesystem read or clobber each other's `<(cmd)` data at `/dev/fd/63` | `/dev/fd/N` (N >= 3) resolves in each interpreter's own fd namespace; nothing reaches the shared filesystem | **MITIGATED** |
 
 Each [`Bash`] instance is fully isolated. For multi-tenant environments, create
 separate instances per tenant:

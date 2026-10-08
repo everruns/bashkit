@@ -11,7 +11,6 @@ hi
 
 ### bashbox_process_substitution_two_substitutions_are_numbered_down_from_63
 # two substitutions are numbered down from 63
-### skip: process substitution paths are /dev/fd/proc_sub_<n>, not /dev/fd/63 (limitations.md, Process substitution row: tenant-safe naming on a shared VFS)
 echo <(true) <(true) >(true); cat <(echo a) <(echo b)
 ### expect
 /dev/fd/63 /dev/fd/62 /dev/fd/61
@@ -21,7 +20,6 @@ b
 
 ### bashbox_process_substitution_the_number_is_reused_once_the_command_is_done
 # the number is reused once the command is done
-### skip: process substitution paths are /dev/fd/proc_sub_<n>, not /dev/fd/63 (limitations.md, Process substitution row: tenant-safe naming on a shared VFS)
 echo <(true); f(){ echo <(true); }; f
 ### expect
 /dev/fd/63
@@ -30,7 +28,7 @@ echo <(true); f(){ echo <(true); }; f
 
 ### bashbox_process_substitution_part_of_a_word
 # part of a word
-### skip: process substitution is its own word, not joined to adjacent text (x<(true) is two words), and paths are /dev/fd/proc_sub_<n> (limitations.md, Process substitution row)
+### skip: process substitution is its own word, not joined to adjacent text (x<(true) is two words) (limitations.md, Process substitution row)
 echo x<(true)
 ### expect
 x/dev/fd/63
@@ -77,7 +75,7 @@ x=1; cat <(x=2; echo $x); echo $x
 
 ### bashbox_process_substitution_assigned_to_a_variable
 # assigned to a variable
-### skip: x=<(true) parses as an assignment then a separate process-substitution word, and paths are /dev/fd/proc_sub_<n> (limitations.md, Process substitution row)
+### skip: x=<(true) parses as an assignment then a separate process-substitution word (limitations.md, Process substitution row)
 x=<(true); echo $x
 ### expect
 /dev/fd/63
