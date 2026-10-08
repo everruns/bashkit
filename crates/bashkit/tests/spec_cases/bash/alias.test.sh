@@ -203,3 +203,51 @@ show "$dir"/*.txt
 ### expect
 <d/a.txt>
 ### end
+
+### alias_double_dash_and_p
+shopt -s expand_aliases
+alias -- foo=echo; echo "status=$?"
+foo x
+alias -p
+unalias -- foo
+foo y 2>/dev/null; echo "after=$?"
+### expect
+status=0
+x
+alias foo='echo'
+after=127
+### end
+
+### alias_trailing_blank_chains
+shopt -s expand_aliases
+alias e_='echo ' one='ONE ' two='TWO ' three='THREE'
+e_ one two one \
+  two three two one
+### expect
+ONE TWO ONE TWO THREE two one
+### end
+
+### alias_keeps_prefix_assignment
+shopt -s expand_aliases
+alias show='printenv FOO'
+FOO=2 show
+### expect
+2
+### end
+
+### alias_with_command_substitution_arg
+shopt -s expand_aliases
+alias a='printf [%s]'
+a `echo foo bar` $(echo baz); echo
+### expect
+[foo][bar][baz]
+### end
+
+### alias_syntax_error_status
+### exit_code: 2
+# A syntax error in the expanded text fails with status 2
+shopt -s expand_aliases
+alias e_=';; oops'
+e_ x
+### expect
+### end

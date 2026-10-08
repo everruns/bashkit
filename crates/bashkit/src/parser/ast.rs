@@ -324,7 +324,11 @@ impl fmt::Display for Word {
                 WordPart::Literal(s) => write!(f, "{}", s)?,
                 WordPart::Variable(name) => write!(f, "${}", name)?,
                 WordPart::BadSubstitution(text) => write!(f, "{}", text)?,
-                WordPart::CommandSubstitution(cmd) => write!(f, "$({:?})", cmd)?,
+                // Printed as shell text (re-parsed by alias expansion);
+                // never `Debug` (TM-INF-022).
+                WordPart::CommandSubstitution(cmd) => {
+                    write!(f, "$({})", super::print_cmd::inline_commands(cmd))?
+                }
                 WordPart::ArithmeticExpansion(expr) => write!(f, "$(({}))", expr)?,
                 WordPart::ParameterExpansion {
                     name,
@@ -370,7 +374,9 @@ impl fmt::Display for Word {
                 WordPart::Length(name) => write!(f, "${{#{}}}", name)?,
                 WordPart::ArrayAccess { name, index } => write!(f, "${{{}[{}]}}", name, index)?,
                 WordPart::ArrayLength(name) => write!(f, "${{#{}[@]}}", name)?,
-                WordPart::ArrayIndices(name) => write!(f, "${{!{}[@]}}", name)?,
+                WordPart::ArrayIndices { name, star } => {
+                    write!(f, "${{!{}[{}]}}", name, if *star { '*' } else { '@' })?
+                }
                 WordPart::Substring {
                     name,
                     offset,
@@ -413,10 +419,17 @@ impl fmt::Display for Word {
                         write!(f, "${{!{}}}", name)?
                     }
                 }
-                WordPart::PrefixMatch(prefix) => write!(f, "${{!{}*}}", prefix)?,
+                WordPart::PrefixMatch { prefix, star } => {
+                    write!(f, "${{!{}{}}}", prefix, if *star { '*' } else { '@' })?
+                }
                 WordPart::ProcessSubstitution { commands, is_input } => {
                     let prefix = if *is_input { "<" } else { ">" };
-                    write!(f, "{}({:?})", prefix, commands)?
+                    write!(
+                        f,
+                        "{}({})",
+                        prefix,
+                        super::print_cmd::inline_commands(commands)
+                    )?
                 }
                 WordPart::Transformation { name, operator } => {
                     write!(f, "${{{}@{}}}", name, operator)?
@@ -479,8 +492,8 @@ pub enum WordPart {
     ArrayAccess { name: String, index: String },
     /// Array length `${#arr[@]}` or `${#arr[*]}`
     ArrayLength(String),
-    /// Array indices `${!arr[@]}` or `${!arr[*]}`
-    ArrayIndices(String),
+    /// Array indices `${!arr[@]}` or (`star`) `${!arr[*]}`
+    ArrayIndices { name: String, star: bool },
     /// Substring extraction `${var:offset}` or `${var:offset:length}`
     Substring {
         name: String,
@@ -501,8 +514,9 @@ pub enum WordPart {
         operand: String,
         colon_variant: bool,
     },
-    /// Prefix matching `${!prefix*}` or `${!prefix@}` - names of variables with given prefix
-    PrefixMatch(String),
+    /// Prefix matching `${!prefix*}` (`star`) or `${!prefix@}` - names of
+    /// variables with given prefix
+    PrefixMatch { prefix: String, star: bool },
     /// Process substitution <(cmd) or >(cmd)
     ProcessSubstitution {
         /// The commands to run
@@ -726,7 +740,10 @@ mod tests {
     #[test]
     fn word_display_array_indices() {
         let w = Word {
-            parts: vec![WordPart::ArrayIndices("arr".into())],
+            parts: vec![WordPart::ArrayIndices {
+                name: "arr".into(),
+                star: false,
+            }],
             quoted: false,
             has_unquoted_glob: false,
             part_quoted: Vec::new(),
@@ -819,7 +836,10 @@ mod tests {
     #[test]
     fn word_display_prefix_match() {
         let w = Word {
-            parts: vec![WordPart::PrefixMatch("MY_".into())],
+            parts: vec![WordPart::PrefixMatch {
+                prefix: "MY_".into(),
+                star: true,
+            }],
             quoted: false,
             has_unquoted_glob: false,
             part_quoted: Vec::new(),

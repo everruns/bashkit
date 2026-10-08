@@ -4694,10 +4694,13 @@ impl Interpreter {
             (false, false) => 1,
         };
         self.last_exit_code = exit_code;
+        // `$(...)` stderr from the operands belongs to this command, so a
+        // redirect on it (`[[ $(f) ]] 2>log`) catches it.
+        let subst_stderr = std::mem::take(&mut self.subst_stderr);
 
         Ok(ExecResult {
             stdout: crate::StreamData::new(),
-            stderr: cond_stderr.into(),
+            stderr: subst_stderr + &crate::StreamData::from(cond_stderr),
             exit_code,
             control_flow: ControlFlow::None,
             ..Default::default()
@@ -4705,7 +4708,10 @@ impl Interpreter {
     }
 
     fn conditional_word_literal(word: &Word) -> Option<&str> {
+        // A quoted `'!'` or `"("` is an operand, never an operator.
         if word.parts.len() == 1
+            && !word.quoted
+            && !word.part_quoted.first().copied().unwrap_or(false)
             && let WordPart::Literal(s) = &word.parts[0]
         {
             return Some(s);
@@ -4900,23 +4906,47 @@ impl Interpreter {
                 return false;
             }
 
+            // A leaf `x OP y` is a binary test even when an operand reads
+            // like `!` or `(` (`[[ '!' == ! ]]`): the parser already
+            // settled the structure.
+            let binary = args.len() == 3
+                && matches!(
+                    args[1].as_str(),
+                    "=" | "=="
+                        | "!="
+                        | "<"
+                        | ">"
+                        | "=~"
+                        | "-nt"
+                        | "-ot"
+                        | "-ef"
+                        | "-eq"
+                        | "-ne"
+                        | "-lt"
+                        | "-le"
+                        | "-gt"
+                        | "-ge"
+                );
+
             // Handle parentheses only when they wrap the whole expression.
-            if Self::conditional_args_wrapped(args) {
+            if !binary && Self::conditional_args_wrapped(args) {
                 return self.evaluate_conditional(&args[1..args.len() - 1]).await;
             }
 
             // Look for logical operators at current paren depth: || lowest, then &&.
-            if let Some(i) = Self::find_top_level_conditional_arg_operator(args, "||") {
-                return self.evaluate_conditional(&args[..i]).await
-                    || self.evaluate_conditional(&args[i + 1..]).await;
-            }
-            if let Some(i) = Self::find_top_level_conditional_arg_operator(args, "&&") {
-                return self.evaluate_conditional(&args[..i]).await
-                    && self.evaluate_conditional(&args[i + 1..]).await;
+            if !binary {
+                if let Some(i) = Self::find_top_level_conditional_arg_operator(args, "||") {
+                    return self.evaluate_conditional(&args[..i]).await
+                        || self.evaluate_conditional(&args[i + 1..]).await;
+                }
+                if let Some(i) = Self::find_top_level_conditional_arg_operator(args, "&&") {
+                    return self.evaluate_conditional(&args[..i]).await
+                        && self.evaluate_conditional(&args[i + 1..]).await;
+                }
             }
 
             // `!` binds tighter than `&&`/`||`.
-            if args[0] == "!" {
+            if !binary && args[0] == "!" {
                 return !self.evaluate_conditional(&args[1..]).await;
             }
 
@@ -7415,21 +7445,49 @@ impl Interpreter {
             }
         }
 
-        // Build expanded command: alias value + original args
-        let mut expanded_cmd = expansion;
-        let trailing_space = expanded_cmd.ends_with(' ');
-        let mut args_iter = command.args.iter();
-        if trailing_space && let Some(first_arg) = args_iter.next() {
-            let arg_str = Self::format_word_for_alias_reparse(first_arg);
-            if let Some(arg_expansion) = self.scoped.aliases.get(&arg_str).cloned() {
-                expanded_cmd.push_str(&arg_expansion);
-            } else {
-                expanded_cmd.push_str(&arg_str);
+        // Build expanded command: prefix assignments (`FOO=1 al`), alias
+        // value, original args.
+        let mut expanded_cmd = String::new();
+        for assignment in &command.assignments {
+            expanded_cmd.push_str(&Self::xtrace_assignment_lhs(assignment));
+            expanded_cmd.push('=');
+            match &assignment.value {
+                AssignmentValue::Scalar(w) => {
+                    expanded_cmd.push_str(&Self::format_word_for_alias_reparse(w));
+                }
+                AssignmentValue::Array(elems) => {
+                    expanded_cmd.push('(');
+                    let elems: Vec<String> = elems
+                        .iter()
+                        .map(Self::format_word_for_alias_reparse)
+                        .collect();
+                    expanded_cmd.push_str(&elems.join(" "));
+                    expanded_cmd.push(')');
+                }
             }
-        }
-        for word in args_iter {
             expanded_cmd.push(' ');
-            expanded_cmd.push_str(&Self::format_word_for_alias_reparse(word));
+        }
+        expanded_cmd.push_str(&expansion);
+        // A value ending in a blank alias-expands the next word too, and so
+        // on down the chain (`e_ one two` with `one='ONE '`).
+        let mut trailing_space = expansion.ends_with(' ');
+        for word in &command.args {
+            let arg_str = Self::format_word_for_alias_reparse(word);
+            let plain =
+                !word.quoted && word.parts.iter().all(|p| matches!(p, WordPart::Literal(_)));
+            if trailing_space
+                && plain
+                && let Some(arg_expansion) = self.scoped.aliases.get(&arg_str)
+            {
+                trailing_space = arg_expansion.ends_with(' ');
+                expanded_cmd.push_str(arg_expansion);
+                continue;
+            }
+            if !trailing_space {
+                expanded_cmd.push(' ');
+            }
+            trailing_space = false;
+            expanded_cmd.push_str(&arg_str);
         }
         for redir in &command.redirects {
             expanded_cmd.push(' ');
@@ -7466,9 +7524,11 @@ impl Interpreter {
                     self.execute_script_body(&s, false, true).await
                 }
             }
+            // A syntax error in the expanded text fails like any syntax
+            // error: status 2.
             Err(e) => Ok(ExecResult::err(
                 self.diag(format!("alias expansion: parse error: {e}\n")),
-                1,
+                2,
             )),
         };
 
@@ -7775,9 +7835,15 @@ impl Interpreter {
                 return Err(err);
             }
 
-            // Alias expansion
-            if let Some(result) = self
-                .try_alias_expansion(&name, command, stdin.clone(), var_saves.clone())
+            // Alias expansion. Boxed and gated on a defined alias so its
+            // re-parse state stays off this hot frame (TM-DOS-089).
+            if self.scoped.aliases.contains_key(&name)
+                && let Some(result) = Box::pin(self.try_alias_expansion(
+                    &name,
+                    command,
+                    stdin.clone(),
+                    var_saves.clone(),
+                ))
                 .await
             {
                 self.discard_deferred_proc_subs_from(deferred_proc_sub_start);
@@ -9739,7 +9805,11 @@ impl Interpreter {
                 out.push_str(&format!("${{{}[{}]}}", name, index))
             }
             WordPart::ArrayLength(name) => out.push_str(&format!("${{#{}[@]}}", name)),
-            WordPart::ArrayIndices(name) => out.push_str(&format!("${{!{}[@]}}", name)),
+            WordPart::ArrayIndices { name, star } => out.push_str(&format!(
+                "${{!{}[{}]}}",
+                name,
+                if *star { '*' } else { '@' }
+            )),
             WordPart::Substring {
                 name,
                 offset,
@@ -9782,7 +9852,11 @@ impl Interpreter {
                     out.push_str(&format!("${{!{}}}", name));
                 }
             }
-            WordPart::PrefixMatch(prefix) => out.push_str(&format!("${{!{}*}}", prefix)),
+            WordPart::PrefixMatch { prefix, star } => out.push_str(&format!(
+                "${{!{}{}}}",
+                prefix,
+                if *star { '*' } else { '@' }
+            )),
             WordPart::ProcessSubstitution { commands, is_input } => {
                 let prefix = if *is_input { "<" } else { ">" };
                 out.push_str(&format!("{}({:?})", prefix, commands));

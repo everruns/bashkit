@@ -359,8 +359,23 @@ impl<'a> Lexer<'a> {
                             self.read_word_starting_with("[")
                         }
                         _ => {
-                            // Part of a glob bracket expression [abc], read the whole thing
-                            self.read_bracket_word()
+                            // A backslash inside the brackets is quoting
+                            // (`[\\]_` is the pattern `[\]` then `_`): read
+                            // it as an ordinary word, which removes quotes.
+                            let mut ahead = self.lookahead();
+                            let escaped = loop {
+                                match ahead.next() {
+                                    Some('\\') => break true,
+                                    None | Some(']' | ' ' | '\t' | '\n') => break false,
+                                    _ => {}
+                                }
+                            };
+                            if escaped {
+                                self.read_word_from("[".to_string())
+                            } else {
+                                // Part of a glob bracket expression [abc], read the whole thing
+                                self.read_bracket_word()
+                            }
                         }
                     }
                 }
@@ -657,7 +672,7 @@ impl<'a> Lexer<'a> {
                         }
                         continue;
                     }
-                    if quote_char == '\'' && c == '$' {
+                    if quote_char == '\'' && matches!(c, '$' | '\u{1e}' | '\u{1f}') {
                         // Preserve literal '$' semantics from single-quoted
                         // segments when concatenated into an existing word
                         // (e.g. foo'$(id)' or VAR='${HOME}').
@@ -750,7 +765,11 @@ impl<'a> Lexer<'a> {
     }
 
     fn read_word(&mut self) -> Option<Token> {
-        let mut word = String::new();
+        self.read_word_from(String::new())
+    }
+
+    /// `read_word` with `word` already holding unquoted text (a `[`).
+    fn read_word_from(&mut self, mut word: String) -> Option<Token> {
         // Track whether any double-quoted segment contained a variable/command
         // expansion.  When true the whole token is promoted to QuotedWord so
         // the interpreter suppresses IFS field splitting — matching POSIX
@@ -760,7 +779,7 @@ impl<'a> Lexer<'a> {
         // unquoted portion of the word.  When both `has_quoted_expansion` and
         // this flag are true, the word needs IFS-splitting suppression (quoted)
         // *and* glob expansion on the unquoted portion — e.g. `"$var"*.ext`.
-        let mut has_unquoted_glob = false;
+        let mut has_unquoted_glob = word.contains(['*', '?', '[']);
         // Byte ranges of quoted or backslash-escaped text, and whether an
         // unquoted `$`/backtick expansion appears. Together they decide how
         // quoted glob characters stay literal (see the end of this function).
@@ -780,9 +799,10 @@ impl<'a> Lexer<'a> {
                 let quote_char = ch;
                 self.advance(); // consume opening quote
                 let mut closed = false;
-                if quote_char == '"' {
-                    word.push('\u{1e}');
-                }
+                // Both quote kinds mark their span, so the quoted text is
+                // never IFS-split (`$x'a b'`) and an empty pair still makes
+                // a field (`$x""`).
+                word.push('\u{1e}');
                 let seg_start = word.len();
                 while let Some(c) = self.peek_char() {
                     if c == quote_char {
@@ -852,7 +872,7 @@ impl<'a> Lexer<'a> {
                         }
                         continue;
                     }
-                    if quote_char == '\'' && c == '$' {
+                    if quote_char == '\'' && matches!(c, '$' | '\u{1e}' | '\u{1f}') {
                         // Preserve literal '$' semantics from single-quoted
                         // segments when concatenated into an existing word
                         // (e.g. foo'$(id)' or VAR='${HOME}').
@@ -872,9 +892,7 @@ impl<'a> Lexer<'a> {
                     )));
                 }
                 quoted_ranges.push((seg_start, word.len()));
-                if quote_char == '"' {
-                    word.push('\u{1f}');
-                }
+                word.push('\u{1f}');
                 continue;
             } else if ch == '$' {
                 // Handle variable references and command substitution
@@ -1184,9 +1202,11 @@ impl<'a> Lexer<'a> {
         // start with a quote. Without one the word never globs, so it is
         // simply quoted. A word with an unquoted expansion keeps the old
         // classification: quoting it would suppress field splitting.
-        let quoted_glob = quoted_ranges
-            .iter()
-            .any(|&(start, end)| word[start..end].contains(['*', '?', '[', '{', '}', ',']));
+        let quoted_glob = quoted_ranges.iter().any(|&(start, end)| {
+            // `(`, `)` and `|` count too: `*\(\)` must not become the
+            // extglob `*()`. So does `\`: `[\\]` stays one bracket.
+            word[start..end].contains(['*', '?', '[', '{', '}', ',', '(', ')', '|', '\\'])
+        });
         if quoted_glob && has_unquoted_glob {
             return Some(Token::QuotedGlobWord(
                 Self::escape_glob_metas_in_quoted_ranges(&word, &quoted_ranges),
@@ -1357,6 +1377,12 @@ impl<'a> Lexer<'a> {
                         flags.has_unquoted_expansion = true;
                         content.push('$');
                         self.advance();
+                        // `"a"$(cmd)`, `"a"$((n))`, `"a"${x:-a b}`: read the
+                        // whole expansion, as `read_word` does.
+                        if let Err(e) = self.read_continuation_expansion(content) {
+                            flags.error = Some(e);
+                            break;
+                        }
                     }
                 }
                 Some('\\') => {
@@ -1393,10 +1419,48 @@ impl<'a> Lexer<'a> {
         flags
     }
 
-    /// Add quote markers in one rebuild pass. Empty ranges carry no protected
-    /// bytes, and adjacent quoted ranges are equivalent to one quoted span.
+    /// After an unquoted `$` in a quoted word's continuation, read a
+    /// `$(...)`, `$((...))` or `${...}` body into `content`. Other forms
+    /// (`$name`, `$?`) are word chars the caller reads itself.
+    fn read_continuation_expansion(&mut self, content: &mut String) -> Result<(), String> {
+        match self.peek_char() {
+            Some('(') => {
+                content.push('(');
+                self.advance();
+                if self.peek_char() == Some('(') {
+                    content.push('(');
+                    self.advance();
+                    let mut depth = 2;
+                    while let Some(c) = self.peek_char() {
+                        content.push(c);
+                        self.advance();
+                        if c == '(' {
+                            depth += 1;
+                        } else if c == ')' {
+                            depth -= 1;
+                            if depth == 0 {
+                                break;
+                            }
+                        }
+                    }
+                } else if !self.read_command_subst_body(content) {
+                    return Err("unterminated command substitution".to_string());
+                }
+            }
+            Some('{') => {
+                content.push('{');
+                self.advance();
+                self.read_unquoted_param_body(content)?;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Add quote markers in one rebuild pass. Adjacent quoted ranges are
+    /// equivalent to one quoted span. An empty range (`""$x`) keeps its
+    /// marker pair: an empty quoted part still makes a field.
     fn apply_quote_markers(content: &mut String, mut ranges: Vec<(usize, usize)>) {
-        ranges.retain(|(start, end)| start < end);
         if ranges.is_empty() {
             return;
         }
@@ -1439,9 +1503,8 @@ impl<'a> Lexer<'a> {
     /// braces are NUL-escaped for the same reason. Bash keeps `'` literal in a
     /// double-quoted `${x:-'d'}`, which `read_param_expansion_into` handles.
     ///
-    /// TODO: quoted operand text is still IFS-split when the expansion is
-    /// unquoted (`${x:-'a  b'}` gives two fields, bash gives one). Fixing it
-    /// needs quote markers carried out of `expand_operand` into field splitting.
+    /// Field splitting of an unquoted `${x:-'a  b'}` keeps those quoted
+    /// spans whole (`Interpreter::split_word_segments`).
     fn read_unquoted_param_body(&mut self, word: &mut String) -> Result<(), String> {
         fn push_escaped(word: &mut String, content: &str) {
             for ch in content.chars() {
@@ -2599,7 +2662,9 @@ mod tests {
         assert_eq!(lexer.next_token(), Some(Token::Word("echo".to_string())));
         assert_eq!(
             lexer.next_token(),
-            Some(Token::Word("foo\x00$(id)".to_string()))
+            // Quote markers bound the single-quoted span; `(`/`)` inside it
+            // make the word quoted-literal.
+            Some(Token::QuotedWord("foo\u{1e}\x00$(id)\u{1f}".to_string()))
         );
         assert_eq!(lexer.next_token(), None);
     }

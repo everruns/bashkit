@@ -24,7 +24,34 @@ impl Builtin for Alias {
             return Ok(ExecResult::ok(String::new()));
         };
 
-        if ctx.args.is_empty() {
+        // Leading options: `-p` lists, `--` ends them.
+        let mut args: &[String] = ctx.args;
+        let mut print_all = false;
+        while let Some(arg) = args.first() {
+            if arg == "--" {
+                args = &args[1..];
+                break;
+            }
+            if arg.len() < 2 || !arg.starts_with('-') {
+                break;
+            }
+            if arg.chars().skip(1).all(|c| c == 'p') {
+                print_all = true;
+                args = &args[1..];
+                continue;
+            }
+            let bad = arg.chars().nth(1).unwrap_or('-');
+            return Ok(ExecResult::err(
+                format!(
+                    "bash: alias: -{bad}: invalid option\n\
+                     alias: usage: alias [-p] [name[=value] ... ]\n"
+                ),
+                2,
+            ));
+        }
+
+        let mut print_listing = String::new();
+        if args.is_empty() || print_all {
             // List all aliases
             let mut sorted: Vec<_> = shell.aliases.iter().collect();
             sorted.sort_by_key(|(k, _)| (*k).clone());
@@ -32,14 +59,17 @@ impl Builtin for Alias {
             for (name, value) in sorted {
                 output.push_str(&format!("alias {name}={}\n", single_quote(value)));
             }
-            return Ok(ExecResult::ok(output));
+            if args.is_empty() {
+                return Ok(ExecResult::ok(output));
+            }
+            print_listing = output;
         }
 
-        let mut output = String::new();
+        let mut output = print_listing;
         let mut exit_code = 0;
         let mut stderr = String::new();
 
-        for arg in ctx.args {
+        for arg in args {
             if let Some(eq_pos) = arg.find('=') {
                 // alias name=value — set directly
                 let name = &arg[..eq_pos];
@@ -92,7 +122,11 @@ impl Builtin for Unalias {
         let mut exit_code = 0;
         let mut stderr = String::new();
 
-        for arg in ctx.args {
+        let args = match ctx.args.first().map(String::as_str) {
+            Some("--") => &ctx.args[1..],
+            _ => ctx.args,
+        };
+        for arg in args {
             if arg == "-a" {
                 shell.aliases.clear();
             } else if shell.aliases.remove(arg.as_str()).is_none() {

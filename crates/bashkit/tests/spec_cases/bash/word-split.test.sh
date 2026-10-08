@@ -491,3 +491,100 @@ set -- "a b" c; printf '[%s]' "${1+"$@"}" ${1+"$@"} "${zz-$@}"; echo
 ### expect
 [a b][c][a b][c][a b][c]
 ### end
+
+### literal_ifs_char_beside_expansion_not_split
+# Only expansion results split: a literal `:` next to ${w} stays text
+IFS=:; w=a:; printf '[%s]' ${w}:b ${w}:; echo
+IFS=z; w=az; printf '[%s]' ${w}zb; echo
+### expect
+[a][:b][a][:]
+[a][zb]
+### end
+
+### empty_quotes_beside_expansion_keep_field
+# $space"" and ""$A"" keep the empty quoted parts as fields
+space=" "; A="  abc  def  "
+printf '[%s]' 1 $space"" 2 $space'' 3; echo
+printf '[%s]' ""$A""; echo
+for i in ""$A""; do echo "=$i="; done
+### expect
+[1][][2][][3]
+[][abc][def][]
+==
+=abc=
+=def=
+==
+### end
+
+### quoted_text_inside_unquoted_word_not_split
+x=1; y="p q"; printf '[%s]' $x'a b' $y\ r; echo
+### expect
+[1a b][p][q r]
+### end
+
+### default_operand_quotes_protect_text
+# ${u:-"2 3" "4 5"}: quoted operand text stays whole, the blank between splits
+printf '[%s]' 1 ${u:-"2 3" "4 5"} 6; echo
+printf '[%s]' 1${u:-"2 3" "4 5"}6; echo
+IFS=_; printf '[%s]' 1${u:-"2_3"x_x"4_5"}6; echo
+IFS=x; v=; echo ${v:-AxBxC}x ${v:-"AxBxC"}x
+### expect
+[1][2 3][4 5][6]
+[12 3][4 56]
+[12_3x][x4_56]
+A B Cx AxBxCx
+### end
+
+### unquoted_star_nonwhitespace_ifs_keeps_empty
+# Unquoted $* / $@ join on the first IFS char, then split
+set -- one '' two; IFS=zx
+printf '[%s]' $* ; echo
+printf '[%s]' =$@=; echo
+set -- '' '' '' ''; printf '<%s>' $*; echo " $#"
+### expect
+[one][][two]
+[=one][][two=]
+<><><> 4
+### end
+
+### unquoted_at_null_ifs
+# A null IFS never splits, but $@ / $* still give one field per parameter
+IFS=; set -- 'a b' '' c
+printf '[%s]' $@; echo
+printf '[%s]' =$*=; echo
+x=; printf '[%s]' $x; echo "n=$#"
+### expect
+[a b][c]
+[=a b][c=]
+[]n=3
+### end
+
+### length_result_is_split
+v=hello; IFS=5; echo "[${#v}]" ${#v} end
+### expect
+[5]  end
+### end
+
+### name_list_star_forms_under_null_ifs
+a=(x y z); pa=1; pb=2; IFS=
+printf '[%s]' ${!a[*]} "${!a[*]}" ${!a[@]}; echo
+printf '[%s]' ${!p*} "${!p*}" ${!p@} "x${!p@}y"; echo
+### expect
+[0 1 2][012][0][1][2]
+[papb][papb][pa][pb][xpa][pby]
+### end
+
+### expansion_after_quoted_prefix_runs_once
+i=0; echo {a,b}-$((i++)) "q"$((i++)) "c"$(echo d) "u"${z:-e f}; echo $i
+### expect
+a-0 b-1 q2 cd ue f
+3
+### end
+
+### escaped_backslash_in_bracket_word
+printf '[%s]' [\\]_ "[\\]_"; echo
+set -f; printf '[%s]' [\\]_; echo
+### expect
+[[\]_][[\]_]
+[[\]_]
+### end
