@@ -983,6 +983,30 @@ struct SavedVar {
     env: Option<String>,
 }
 
+/// One entry of bash's debug stack, the frames behind `BASH_SOURCE`,
+/// `BASH_LINENO` and `FUNCNAME`: a function call (`funcname` is the
+/// function, `file` where it was defined), a sourced file (`source`), or the
+/// script file itself (`main`, line 0). `call_line` is the line the frame
+/// was entered from.
+#[derive(Debug, Clone)]
+struct SourceFrame {
+    file: String,
+    funcname: String,
+    call_line: usize,
+    is_function: bool,
+}
+
+impl SourceFrame {
+    fn script(file: &str) -> Self {
+        Self {
+            file: file.to_string(),
+            funcname: "main".to_string(),
+            call_line: 0,
+            is_function: false,
+        }
+    }
+}
+
 /// A frame in the call stack for local variable scoping
 #[derive(Debug, Clone)]
 struct CallFrame {
@@ -1459,8 +1483,28 @@ pub struct Interpreter {
     command_resolver: Option<Arc<dyn crate::builtins::CommandResolver>>,
     /// Call stack for local variable scoping
     call_stack: Vec<CallFrame>,
-    /// Source file stack for BASH_SOURCE array
-    bash_source_stack: Vec<String>,
+    /// Debug stack behind BASH_SOURCE / BASH_LINENO / FUNCNAME
+    bash_source_stack: Vec<SourceFrame>,
+    /// File each function was defined in (`BASH_SOURCE` inside it).
+    function_files: HashMap<String, String>,
+    /// The pending line abort is a failed assignment (readonly target).
+    assign_error_abort: bool,
+    /// Directory at the last `PWD=...` / `unset PWD`: while the shell is
+    /// still there, `$PWD` is that value instead of the working directory.
+    pwd_shadow: Option<PathBuf>,
+    /// Prefix assignments of the function call being dispatched
+    /// (`v=x f`), with the values they replaced.
+    pending_tempenv: Option<Vec<(String, Option<String>)>>,
+    /// bash's temporary-environment scopes of running function calls:
+    /// `(call_stack.len() below the function frame, name -> replaced value)`.
+    /// `unset v` in the function removes the binding and reveals the value
+    /// below (dynamic unset); `local v` takes the binding over.
+    /// The flag marks a function call's scope (an `eval`/`source` one is
+    /// never taken over by `local`).
+    tempenv_frames: Vec<(usize, HashMap<String, Option<String>>, bool)>,
+    /// The next `expand_word_to_fields` expands a declaration builtin's
+    /// operand: `name=value` words are not field-split.
+    decl_operand_fields: bool,
     /// Resource limits
     limits: ExecutionLimits,
     /// Session-level resource limits (persist across exec() calls)
@@ -2166,6 +2210,12 @@ impl Interpreter {
             command_resolver: None,
             call_stack: Vec::new(),
             bash_source_stack: Vec::new(),
+            function_files: HashMap::new(),
+            assign_error_abort: false,
+            pwd_shadow: None,
+            pending_tempenv: None,
+            tempenv_frames: Vec::new(),
+            decl_operand_fields: false,
             limits: ExecutionLimits::default(),
             session_limits: SessionLimits::default(),
             memory_limits: crate::limits::MemoryLimits::default(),
@@ -2370,6 +2420,12 @@ impl Interpreter {
             command_resolver: self.command_resolver.clone(),
             call_stack: self.call_stack.clone(),
             bash_source_stack: self.bash_source_stack.clone(),
+            function_files: self.function_files.clone(),
+            assign_error_abort: false,
+            pwd_shadow: None,
+            pending_tempenv: None,
+            tempenv_frames: Vec::new(),
+            decl_operand_fields: false,
             limits: self.limits.clone(),
             session_limits: self.session_limits.clone(),
             memory_limits: self.memory_limits.clone(),
@@ -2550,21 +2606,47 @@ impl Interpreter {
     }
 
     /// Check if errexit (set -e) is enabled.
-    /// Sync the internal bash_source_stack to the BASH_SOURCE indexed array.
+    /// Sync the debug stack to the `BASH_SOURCE`, `BASH_LINENO` and
+    /// `FUNCNAME` arrays (index 0 = innermost frame). `FUNCNAME` exists only
+    /// while a function runs (bash), so a file sourced at top level shows
+    /// no `source` entry.
     fn update_bash_source(&mut self) {
         if self.bash_source_stack.is_empty() {
-            self.arrays_mut().remove("BASH_SOURCE");
+            let arrays = self.arrays_mut();
+            arrays.remove("BASH_SOURCE");
+            arrays.remove("BASH_LINENO");
+            arrays.remove("FUNCNAME");
             return;
         }
-
-        let arr: HashMap<usize, String> = self
-            .bash_source_stack
+        let frames = &self.bash_source_stack;
+        let source: HashMap<usize, String> = frames
             .iter()
             .rev()
             .enumerate()
-            .map(|(i, s)| (i, s.clone()))
+            .map(|(i, f)| (i, f.file.clone()))
             .collect();
-        self.arrays_mut().insert("BASH_SOURCE".to_string(), arr);
+        let lineno: HashMap<usize, String> = frames
+            .iter()
+            .rev()
+            .enumerate()
+            .map(|(i, f)| (i, f.call_line.to_string()))
+            .collect();
+        let funcname: Option<HashMap<usize, String>> =
+            frames.iter().any(|f| f.is_function).then(|| {
+                frames
+                    .iter()
+                    .rev()
+                    .enumerate()
+                    .map(|(i, f)| (i, f.funcname.clone()))
+                    .collect()
+            });
+        let arrays = self.arrays_mut();
+        arrays.insert("BASH_SOURCE".to_string(), source);
+        arrays.insert("BASH_LINENO".to_string(), lineno);
+        match funcname {
+            Some(f) => arrays.insert("FUNCNAME".to_string(), f),
+            None => arrays.remove("FUNCNAME"),
+        };
     }
 
     fn is_errexit_enabled(&self) -> bool {
@@ -2777,9 +2859,9 @@ impl Interpreter {
     /// bash's `get_name_for_error`.
     pub(crate) fn diag_name(&self) -> String {
         if !self.interactive
-            && let Some(src) = self.bash_source_stack.last().filter(|s| !s.is_empty())
+            && let Some(src) = self.bash_source_stack.last().filter(|s| !s.file.is_empty())
         {
-            return src.clone();
+            return src.file.clone();
         }
         if let Some(frame) = self.call_stack.iter().rev().find(|f| !f.keeps_arg0) {
             return frame.name.clone();
@@ -3724,6 +3806,11 @@ impl Interpreter {
                         );
                         stdout.append(&trap_result.stdout);
                         stderr.append(&trap_result.stderr);
+                        // `exit N` in the handler is the shell's status.
+                        if let ControlFlow::Exit(code) = trap_result.control_flow {
+                            exit_code = code;
+                            self.last_exit_code = code;
+                        }
                     }
                 }
             }
@@ -3950,39 +4037,7 @@ impl Interpreter {
                     }
                     result
                 }
-                Command::Function(func_def) => {
-                    // THREAT[TM-DOS-060]: Check function count/size budget
-                    let body_bytes = function_storage_bytes(func_def);
-                    let is_new = !self.scoped.functions.contains_key(&func_def.name);
-                    let old_body_bytes = if is_new {
-                        0
-                    } else {
-                        self.scoped
-                            .functions
-                            .get(&func_def.name)
-                            .map(function_storage_bytes)
-                            .unwrap_or(0)
-                    };
-                    if self
-                        .memory_budget
-                        .check_function_insert(
-                            body_bytes,
-                            is_new,
-                            old_body_bytes,
-                            &self.memory_limits,
-                        )
-                        .is_ok()
-                    {
-                        self.memory_budget.record_function_insert(
-                            body_bytes,
-                            is_new,
-                            old_body_bytes,
-                        );
-                        self.functions_mut()
-                            .insert(func_def.name.clone(), func_def.clone());
-                    }
-                    Ok(ExecResult::ok(String::new()))
-                }
+                Command::Function(func_def) => Ok(self.define_function(func_def)),
             };
             let mut result = result;
             self.settle_pending_subst_stderr(&mut result);
@@ -4102,6 +4157,15 @@ impl Interpreter {
         result.stderr.append(&stderr);
     }
 
+    /// `eval` / `source` end an aborted body themselves (bash discards the
+    /// rest of the text and returns 1): the caller keeps running.
+    fn end_abort_at_boundary(result: &mut ExecResult) {
+        if result.control_flow == ControlFlow::Abort {
+            result.control_flow = ControlFlow::None;
+            result.exit_code = 1;
+        }
+    }
+
     /// Turn a line-abort error (or an arithmetic error recorded by a
     /// read-only evaluation site) into `ControlFlow::Abort`, keeping the
     /// output produced so far.
@@ -4109,10 +4173,18 @@ impl Interpreter {
         match result {
             Err(crate::error::Error::LineAbort(msg)) => {
                 self.take_arith_error();
+                // `readonly v; v=x` under `set -e` ends the shell (bash); other
+                // line aborts (arithmetic errors) do not.
+                let assign_error = std::mem::take(&mut self.assign_error_abort);
                 Ok(ExecResult {
                     stderr: msg.into(),
                     exit_code: 1,
-                    control_flow: ControlFlow::Abort,
+                    control_flow: if assign_error && (self.errexit_active() || self.is_posix_mode())
+                    {
+                        ControlFlow::Exit(1)
+                    } else {
+                        ControlFlow::Abort
+                    },
                     ..Default::default()
                 })
             }
@@ -4271,7 +4343,7 @@ impl Interpreter {
             CompoundCommand::BraceGroup(commands) => self.execute_command_sequence(commands).await,
             CompoundCommand::Case(case_cmd) => self.execute_case(case_cmd).await,
             CompoundCommand::Arithmetic(expr) => {
-                self.execute_arithmetic_command(&crate::parser::arith_exec_text(expr))
+                self.execute_arithmetic_command(&crate::parser::arith_exec_text(expr), expr)
                     .await
             }
             CompoundCommand::Time(time_cmd) => self.execute_time(time_cmd).await,
@@ -5234,12 +5306,18 @@ impl Interpreter {
         }
     }
 
-    async fn execute_arithmetic_command(&mut self, expr: &str) -> Result<ExecResult> {
+    async fn execute_arithmetic_command(&mut self, expr: &str, raw: &str) -> Result<ExecResult> {
         let expr = if expr.contains("$(") {
             self.expand_command_subs_in_arithmetic(expr).await?
         } else {
             expr.to_string()
         };
+        if self.is_xtrace_enabled() {
+            // bash: `(( a = 42 ))` traces as `+ ((  a = 42  ))`, the
+            // source text between one space inside each paren pair.
+            let prefix = self.xtrace_prefix().await;
+            self.queue_xtrace_line(&prefix, &format!("(( {raw} ))"));
+        }
         match self.try_evaluate_arithmetic_with_assign(&expr) {
             Ok(v) => Ok(ExecResult {
                 exit_code: if v != 0 { 0 } else { 1 },
@@ -6036,7 +6114,7 @@ impl Interpreter {
         // that file and count lines from its own text.
         let saved_source_stack = std::mem::replace(
             &mut self.bash_source_stack,
-            script_file.iter().cloned().collect(),
+            script_file.iter().map(|f| SourceFrame::script(f)).collect(),
         );
         self.update_bash_source();
         let saved_line = self.current_line;
@@ -7432,6 +7510,8 @@ impl Interpreter {
                                 stderr.push_str(&msg);
                                 continue;
                             }
+                            // A failed bare assignment also counts for `set -e`.
+                            self.assign_error_abort = true;
                             return Err(crate::error::Error::LineAbort(msg));
                         }
                         if let Some(index_str) = &assignment.index {
@@ -7781,18 +7861,50 @@ impl Interpreter {
         Box::pin(async move {
             let prefix = self.xtrace_prefix().await;
             let mut body = String::from(xtrace::quote_word(name));
+            let mut after = Vec::new();
             for arg in args {
                 body.push(' ');
                 // `declare -a a=(1 2)` operand placeholder: bash traces the
+                // array assignment first (`+ a=('1' '2')`), then the
                 // declaration as `declare -a a`.
                 if arg.contains(declare::COMPOUND_MARK) {
-                    let name = arg.split('=').next().unwrap_or(arg);
-                    body.push_str(name.trim_end_matches('+'));
+                    let lhs = arg.split(declare::COMPOUND_MARK).next().unwrap_or(arg);
+                    let name = lhs.trim_end_matches('=').trim_end_matches('+');
+                    let idx: Option<usize> = arg
+                        .split(declare::COMPOUND_MARK)
+                        .nth(1)
+                        .and_then(|i| i.parse().ok());
+                    if let Some(elems) = idx.and_then(|i| self.pending_compound_args.get(i)) {
+                        let shown: Vec<String> = elems
+                            .iter()
+                            .map(|w| {
+                                let text = crate::parser::word_text(w);
+                                if w.parts.iter().all(|p| matches!(p, WordPart::Literal(_))) {
+                                    format!("'{}'", text.replace('\'', "'\\''"))
+                                } else {
+                                    text
+                                }
+                            })
+                            .collect();
+                        self.queue_xtrace_line(&prefix, &format!("{lhs}({})", shown.join(" ")));
+                    }
+                    body.push_str(name);
                 } else {
                     body.push_str(&xtrace::quote_word(arg));
+                    // `readonly x=3` / `export x=3`: bash then traces the
+                    // assignment itself.
+                    if matches!(name, "readonly" | "export")
+                        && let Some((lhs, value)) = arg.split_once('=')
+                        && Self::is_assignment_prefix(&format!("{lhs}="))
+                    {
+                        after.push(format!("{lhs}={}", xtrace::quote_value(value)));
+                    }
                 }
             }
             self.queue_xtrace_line(&prefix, &body);
+            for line in after {
+                self.queue_xtrace_line(&prefix, &line);
+            }
             // A function body, `eval` and `source` stream their own output as
             // they run, which makes the enclosing list skip streaming this
             // command's result: write the queued lines now (they stay queued
@@ -7880,10 +7992,7 @@ impl Interpreter {
             }
 
             let pre_expanded_args = if !name.is_empty() {
-                let decl = matches!(
-                    name.as_str(),
-                    "declare" | "typeset" | "local" | "export" | "readonly" | "builtin" | "command"
-                );
+                let decl = Self::is_decl_keyword(&name, command);
                 match self.expand_command_args(command, decl).await {
                     Ok(args) if name_extra_args.is_empty() => Some(args),
                     Ok(args) => {
@@ -7905,7 +8014,7 @@ impl Interpreter {
                 return Err(err);
             }
 
-            let var_saves: Vec<(String, Option<String>)> = command
+            let mut var_saves: Vec<(String, Option<String>)> = command
                 .assignments
                 .iter()
                 .map(|a| (a.name.clone(), self.scoped.variables.get(&a.name).cloned()))
@@ -8034,10 +8143,17 @@ impl Interpreter {
             }
 
             self.nofork_now = self.nofork_eligible(command);
+            if !var_saves.is_empty() {
+                self.arm_tempenv(&name, &var_saves);
+            }
             let result = self
                 .execute_dispatched_command(&name, args, command, stdin)
                 .await;
+            self.pending_tempenv = None;
 
+            if !var_saves.is_empty() {
+                self.keep_posix_prefix(&name, &mut env_saves, &mut var_saves);
+            }
             // Restore env
             for (name, old) in env_saves {
                 match old {
@@ -8113,6 +8229,7 @@ impl Interpreter {
                 let braced = self.brace_expand_word(word0);
                 for word in braced.as_deref().unwrap_or(std::slice::from_ref(word0)) {
                     // Use field expansion so "${arr[@]}" produces multiple args
+                    self.decl_operand_fields = decl;
                     let fields = self.expand_word_to_fields(word).await?;
 
                     // Skip brace and glob expansion for quoted words — unless the
@@ -8120,6 +8237,12 @@ impl Interpreter {
                     // the quoted expansion suppresses IFS splitting but the unquoted
                     // portion must still undergo glob expansion.
                     if word.quoted && !word.has_unquoted_glob {
+                        args.extend(fields);
+                        continue;
+                    }
+
+                    // `export v=*`: an assignment operand is not globbed.
+                    if decl && Self::is_decl_assignment_word(word) {
                         args.extend(fields);
                         continue;
                     }
@@ -8412,11 +8535,37 @@ impl Interpreter {
         // Whatever the enclosing sequence has written so far belongs to the
         // caller; only what follows this `exec` goes to its target.
         self.exec_install_mark = self.sequence_accum;
+        // Options: `-c` (empty env) and `-l` (login) change nothing here;
+        // `-a NAME` names argv[0]; `--` ends them.
+        let mut args = args;
+        let mut argv0: Option<String> = None;
+        while let Some(first) = args.first() {
+            match first.as_str() {
+                "--" => {
+                    args = &args[1..];
+                    break;
+                }
+                "-c" | "-l" | "-cl" | "-lc" => args = &args[1..],
+                "-a" if args.len() > 1 => {
+                    argv0 = Some(args[1].clone());
+                    args = &args[2..];
+                }
+                _ => break,
+            }
+        }
         if !args.is_empty() {
             // Security: never reconstruct shell source from argv.
             // Execute argv directly to avoid quote/parse injection.
             let target_name = args[0].clone();
-            let target_args = args[1..].to_vec();
+            let mut target_args = args[1..].to_vec();
+            // A shell's argv[0] is its `$0`: `exec -a N sh -c 'echo $0'`.
+            if let Some(name) = argv0
+                && matches!(target_name.as_str(), "sh" | "bash")
+                && target_args.len() == 2
+                && target_args[0] == "-c"
+            {
+                target_args.push(name);
+            }
             let target_command = SimpleCommand {
                 name: Word::literal(target_name.clone()),
                 args: target_args.iter().cloned().map(Word::literal).collect(),
@@ -9026,7 +9175,7 @@ impl Interpreter {
         }
 
         match name {
-            "exec" => Some(self.execute_exec_builtin(args, redirects).await),
+            "exec" => Some(Box::pin(self.execute_exec_builtin(args, redirects)).await),
             "local" => Some(
                 self.execute_declaration_builtin(name, declare::DeclKind::Local, args, redirects)
                     .await,
@@ -9045,16 +9194,16 @@ impl Interpreter {
                 .await,
             ),
             "bash" | "sh" => Some(self.execute_shell(name, args, stdin, redirects).await),
-            "source" | "." => Some(self.execute_source(name, args, redirects).await),
-            "eval" => Some(self.execute_eval(args, stdin, redirects).await),
-            "command" => Some(self.execute_command_builtin(args, stdin, redirects).await),
+            "source" | "." => Some(Box::pin(self.execute_source(name, args, redirects)).await),
+            "eval" => Some(Box::pin(self.execute_eval(args, stdin, redirects)).await),
+            "command" => Some(Box::pin(self.execute_command_builtin(args, stdin, redirects)).await),
             "builtin" => Some(self.execute_builtin_builtin(args, stdin, redirects).await),
             "declare" | "typeset" => Some(
                 self.execute_declaration_builtin(name, declare::DeclKind::Declare, args, redirects)
                     .await,
             ),
             "let" => Some(self.execute_let_builtin(args, redirects).await),
-            "unset" => Some(self.execute_unset_builtin(args, redirects).await),
+            "unset" => Some(Box::pin(self.execute_unset_builtin(args, redirects)).await),
             "getopts" => Some(self.execute_getopts(args, redirects).await),
             // Bare `set`: the same sorted, quoted listing as `declare`.
             "set" if args.is_empty() => {
@@ -9092,7 +9241,10 @@ impl Interpreter {
         // recursion path, and the builtin/path-search arms below would
         // otherwise add their large frame to every call level
         // (THREAT[TM-DOS-020]: bounded recursion on a 2 MiB stack).
-        if let Some(func_def) = self.scoped.functions.get(name).cloned() {
+        // In POSIX mode a special builtin wins over a function of its name.
+        if let Some(func_def) = self.scoped.functions.get(name).cloned()
+            && !self.posix_special_builtin(name)
+        {
             return Box::pin(async move {
                 self.execute_function_call(name, &func_def, args, stdin, &command.redirects)
                     .await
@@ -9547,7 +9699,7 @@ impl Interpreter {
 
         // Set up BASH_SOURCE for the subprocess
         let saved_source_stack = self.bash_source_stack.clone();
-        self.bash_source_stack = vec![name.to_string()];
+        self.bash_source_stack = vec![SourceFrame::script(name)];
         self.update_bash_source();
 
         // Forward pipeline stdin so commands inside the script (cat, read, etc.) can consume it
@@ -9771,7 +9923,12 @@ impl Interpreter {
         })?;
 
         // Track source file for BASH_SOURCE
-        self.bash_source_stack.push(filename.clone());
+        self.bash_source_stack.push(SourceFrame {
+            file: filename.clone(),
+            funcname: "source".to_string(),
+            call_line: self.current_line,
+            is_function: false,
+        });
         self.update_bash_source();
 
         // Execute the script commands in the current shell context.
@@ -9780,22 +9937,29 @@ impl Interpreter {
         self.source_depth += 1;
         let emit_before = self.output_emit_count;
         self.xtrace_depth += 1;
+        let tempenv_pushed = self.push_pending_tempenv(false);
         let region = self.enter_output_region(redirects);
         let mut exec_result = self.execute_script_body(&script, false, true).await;
         self.leave_output_region(region);
+        if tempenv_pushed {
+            self.tempenv_frames.pop();
+        }
         self.xtrace_depth -= 1;
+        // The RETURN trap runs once the `source` frame is gone: its
+        // `FUNCNAME[0]` names the caller.
+        self.bash_source_stack.pop();
+        self.update_bash_source();
         if let Ok(r) = &mut exec_result {
             Box::pin(self.run_return_trap(r, emit_before)).await;
         }
         self.return_depth -= 1;
         self.source_depth -= 1;
 
-        // Pop source depth and BASH_SOURCE (always, even on error)
+        // Pop source depth (BASH_SOURCE went before the RETURN trap).
         self.counters.pop_function();
-        self.bash_source_stack.pop();
-        self.update_bash_source();
 
         let mut result = exec_result?;
+        Self::end_abort_at_boundary(&mut result);
         // `return` ends the sourced file with its status.
         if let ControlFlow::Return(code) = result.control_flow {
             result.exit_code = code;
@@ -9885,13 +10049,18 @@ impl Interpreter {
         // (`$LINENO`, diagnostics), not from 1.
         let saved_line_base =
             std::mem::replace(&mut self.line_base, self.current_line.saturating_sub(1));
+        let tempenv_pushed = self.push_pending_tempenv(false);
         self.xtrace_depth += 1;
         let region = self.enter_output_region(redirects);
         let result = self.execute_script_body(&script, false, true).await;
+        if tempenv_pushed {
+            self.tempenv_frames.pop();
+        }
         self.leave_output_region(region);
         self.xtrace_depth -= 1;
         self.line_base = saved_line_base;
         let mut result = result?;
+        Self::end_abort_at_boundary(&mut result);
 
         self.pipeline_stdin = prev_pipeline_stdin;
 
@@ -10229,6 +10398,9 @@ impl Interpreter {
         // Check function depth limit
         self.counters.push_function(&self.limits)?;
 
+        // `v=x f`: the prefix assignments form a scope just below the frame.
+        let tempenv_pushed = self.push_pending_tempenv(true);
+
         // Push call frame with positional parameters
         self.call_stack.push(CallFrame {
             name: name.to_string(),
@@ -10240,27 +10412,19 @@ impl Interpreter {
             keeps_arg0: true,
         });
 
-        // Set FUNCNAME array from call stack (index 0 = current, 1 = caller, ...)
-        let funcname_arr: HashMap<usize, String> = self
-            .call_stack
-            .iter()
-            .rev()
-            .enumerate()
-            .map(|(i, f)| (i, f.name.clone()))
-            .collect();
+        // Debug stack: FUNCNAME / BASH_SOURCE / BASH_LINENO gain this call.
         // Interpreter-set FUNCNAME entries are metadata and are inserted
         // uncharged. Remember how many there are so that on return we credit
         // back only the *user-added* entries (e.g. `FUNCNAME[7]=x`), which were
         // charged via the normal array-assignment path. Without this, repeated
         // FUNCNAME mutation would leak array budget across calls (over-count).
-        let funcname_meta_len = funcname_arr.len();
-        let prev_funcname = self
-            .arrays_mut()
-            .insert("FUNCNAME".to_string(), funcname_arr);
-
-        // BASH_SOURCE: duplicate current top entry for function calls
-        let current_source = self.bash_source_stack.last().cloned().unwrap_or_default();
-        self.bash_source_stack.push(current_source);
+        self.bash_source_stack.push(SourceFrame {
+            file: self.function_files.get(name).cloned().unwrap_or_default(),
+            funcname: name.to_string(),
+            call_line: self.current_line,
+            is_function: true,
+        });
+        let funcname_meta_len = self.bash_source_stack.len();
         self.update_bash_source();
 
         // Forward pipeline stdin to function body
@@ -10308,16 +10472,10 @@ impl Interpreter {
         // Restore previous pipeline stdin
         self.pipeline_stdin = prev_pipeline_stdin;
 
-        // Pop call frame, restore local array bindings, function counter, and BASH_SOURCE
-        self.pop_call_frame();
-        self.counters.pop_function();
-        self.bash_source_stack.pop();
-        self.update_bash_source();
-
-        // Restore previous FUNCNAME (or set from remaining stack). Interpreter
-        // metadata entries are never charged, but a script may have added its
-        // own entries to FUNCNAME while inside the function; those were charged,
-        // so credit them back as the array is discarded to avoid budget drift.
+        // Interpreter metadata entries are never charged, but a script may
+        // have added its own entries to FUNCNAME while inside the function;
+        // those were charged, so credit them back as the array is rebuilt to
+        // avoid budget drift.
         let funcname_user_entries = self
             .scoped
             .arrays
@@ -10328,10 +10486,15 @@ impl Interpreter {
             self.memory_budget
                 .record_array_remove(funcname_user_entries);
         }
-        if self.call_stack.is_empty() {
-            self.arrays_mut().remove("FUNCNAME");
-        } else if let Some(prev) = prev_funcname {
-            self.arrays_mut().insert("FUNCNAME".to_string(), prev);
+
+        // Pop call frame, restore local array bindings, function counter, and
+        // the debug stack (BASH_SOURCE / BASH_LINENO / FUNCNAME).
+        self.pop_call_frame();
+        self.counters.pop_function();
+        self.bash_source_stack.pop();
+        self.update_bash_source();
+        if tempenv_pushed {
+            self.tempenv_frames.pop();
         }
 
         let mut result = result?;
@@ -10444,8 +10607,14 @@ impl Interpreter {
             {
                 let arr_name = &arg[..bracket];
                 let key = &arg[bracket + 1..arg.len() - 1];
-                let expanded_key = self.expand_variable_or_literal(key);
                 let resolved_name = self.resolve_nameref(arr_name).to_string();
+                // `unset 'm["$k"]'`: an assoc key is word-expanded (quotes
+                // removed); an indexed one is arithmetic (`a[i-1]`, `a[-1]`).
+                let expanded_key = if self.scoped.assoc_arrays.contains_key(&resolved_name) {
+                    Box::pin(self.expand_raw_assoc_key(key)).await?
+                } else {
+                    self.expand_variable_or_literal(key)
+                };
                 if self.is_var_readonly(&resolved_name) {
                     stderr.push_str(&self.diag(format!(
                         "unset: {resolved_name}: cannot unset: readonly variable\n"
@@ -10459,10 +10628,12 @@ impl Interpreter {
                 let released = if let Some(arr) = self.assoc_arrays_mut().get_mut(&resolved_name) {
                     arr.remove(&expanded_key)
                         .map(|value| expanded_key.len() + value.len())
-                } else if let Some(arr) = self.arrays_mut().get_mut(&resolved_name)
-                    && let Ok(idx) = key.parse::<usize>()
-                {
-                    arr.remove(&idx).map(|value| value.len())
+                } else if self.scoped.arrays.contains_key(&resolved_name) {
+                    let idx = self.resolve_indexed_array_subscript(&resolved_name, key);
+                    self.arrays_mut()
+                        .get_mut(&resolved_name)
+                        .and_then(|arr| arr.remove(&idx))
+                        .map(|value| value.len())
                 } else {
                     None
                 };
@@ -10501,6 +10672,20 @@ impl Interpreter {
                 }
                 if resolved == "LINENO" {
                     self.lineno_unset = true;
+                }
+                if resolved == "PWD" {
+                    self.pwd_shadow = Some(self.cwd.clone());
+                }
+                // Without -v, a name that is no variable unsets the function.
+                if !unset_var
+                    && !unset_nameref
+                    && !self.is_variable_set(&resolved)
+                    && !self.scoped.arrays.contains_key(&resolved)
+                    && !self.scoped.assoc_arrays.contains_key(&resolved)
+                    && self.scoped.functions.contains_key(&resolved)
+                {
+                    self.functions_mut().remove(&resolved);
+                    continue;
                 }
                 self.unset_variable(&resolved);
             }
@@ -10546,11 +10731,57 @@ impl Interpreter {
     /// `unset name` (bash semantics). A local of the current function stays
     /// local but unset. A local of a calling function is popped instead, so
     /// the binding it shadowed becomes visible again.
+    /// Push the dispatched command's prefix assignments (`v=x f`,
+    /// `v=x eval ...`) as a temp-env scope at the current call depth.
+    fn push_pending_tempenv(&mut self, function: bool) -> bool {
+        let Some(saves) = self.pending_tempenv.take() else {
+            return false;
+        };
+        let mut map = HashMap::new();
+        for (k, v) in saves {
+            map.entry(k).or_insert(v);
+        }
+        self.tempenv_frames
+            .push((self.call_stack.len(), map, function));
+        true
+    }
+
+    /// The temp-env scope holding the visible binding of `name`, if no
+    /// `local` sits above it.
+    fn visible_tempenv(&self, name: &str) -> Option<usize> {
+        let owner = self
+            .call_stack
+            .iter()
+            .rposition(|f| f.saved_vars.contains_key(name));
+        let t = self
+            .tempenv_frames
+            .iter()
+            .rposition(|(_, m, _)| m.contains_key(name))?;
+        owner
+            .is_none_or(|o| self.tempenv_frames[t].0 > o)
+            .then_some(t)
+    }
+
     fn unset_variable(&mut self, name: &str) {
         let owner = self
             .call_stack
             .iter()
             .rposition(|f| f.saved_vars.contains_key(name));
+        // A temp-env binding (`v=x f`) above every local: drop it and show
+        // the value it replaced (bash's dynamic unset).
+        if let Some(t) = self.visible_tempenv(name) {
+            let saved = self.tempenv_frames[t].1.remove(name).flatten();
+            match saved {
+                Some(v) => {
+                    self.insert_variable_checked(name.to_string(), v);
+                }
+                None => {
+                    self.remove_scalar_value(name);
+                }
+            }
+            self.env_mut().remove(name);
+            return;
+        }
         let current = self.local_frame_index();
         if let Some(idx) = owner
             && Some(idx) != current
@@ -10887,8 +11118,17 @@ impl Interpreter {
                     } else {
                         self.resolve_command_path(cmd_name).await
                     };
-                let description = if self.scoped.functions.contains_key(cmd_name.as_str()) {
-                    format!("{} is a function\n", cmd_name)
+                let alias = self
+                    .is_expand_aliases_enabled()
+                    .then(|| self.scoped.aliases.get(cmd_name.as_str()))
+                    .flatten();
+                let description = if let Some(value) = alias {
+                    format!("{cmd_name} is aliased to `{value}'\n")
+                } else if let Some(f) = self.scoped.functions.get(cmd_name.as_str()) {
+                    format!(
+                        "{cmd_name} is a function\n{}\n",
+                        crate::parser::function_string(cmd_name, &f.body)
+                    )
                 } else if is_keyword(cmd_name) {
                     format!("{} is a shell keyword\n", cmd_name)
                 } else if let Some(path) = path {
@@ -10896,10 +11136,9 @@ impl Interpreter {
                 } else if registered {
                     format!("{} is a shell builtin\n", cmd_name)
                 } else {
-                    return Ok(ExecResult::err(
-                        self.diag(format!("command: {cmd_name}: not found\n")),
-                        1,
-                    ));
+                    let result =
+                        ExecResult::err(self.diag(format!("command: {cmd_name}: not found\n")), 1);
+                    return self.apply_redirections(result, redirects).await;
                 };
                 let mut result = ExecResult::ok(description);
                 result = self.apply_redirections(result, redirects).await?;
@@ -11272,24 +11511,16 @@ impl Interpreter {
             self.bash_source_stack.truncate(baseline_bash_source_len);
             self.update_bash_source();
         }
+        // Temp-env scopes of the cancelled calls are gone with them.
+        self.tempenv_frames
+            .retain(|(depth, _, _)| *depth < baseline_call_stack_len);
+        self.pending_tempenv = None;
 
         // Some cancellable paths push call frames or BASH_SOURCE without pushing function depth.
         self.counters.function_depth = baseline_function_depth;
         self.pipeline_stdin = baseline_pipeline_stdin;
 
-        if self.call_stack.is_empty() {
-            self.arrays_mut().remove("FUNCNAME");
-        } else {
-            let funcname_arr: HashMap<usize, String> = self
-                .call_stack
-                .iter()
-                .rev()
-                .enumerate()
-                .map(|(i, f)| (i, f.name.clone()))
-                .collect();
-            self.arrays_mut()
-                .insert("FUNCNAME".to_string(), funcname_arr);
-        }
+        self.update_bash_source();
     }
 
     /// Process structured side effects from builtin execution.
@@ -11980,6 +12211,27 @@ impl Interpreter {
     /// Fully expand an associative array key using standard word expansion.
     /// This preserves literal bare names (e.g. `x` -> `x`) while correctly
     /// expanding embedded/multiple parameter references (e.g. `foo$bar`).
+    /// Expand an assoc key written as raw shell text (`unset 'm["$k"]'`):
+    /// quotes are lexed and removed, then the word expands.
+    async fn expand_raw_assoc_key(&mut self, s: &str) -> Result<String> {
+        if !s.contains(['"', '\'', '\\']) {
+            return self.expand_assoc_key(s).await;
+        }
+        let script = Parser::with_limits(
+            &format!(": {s}"),
+            self.limits.max_ast_depth,
+            self.limits.max_parser_operations,
+        )
+        .parse();
+        if let Ok(script) = script
+            && let [Command::Simple(cmd)] = script.commands.as_slice()
+            && let [word] = cmd.args.as_slice()
+        {
+            return self.expand_word(word).await;
+        }
+        self.expand_assoc_key(s).await
+    }
+
     async fn expand_assoc_key(&mut self, s: &str) -> Result<String> {
         let word = Parser::parse_word_string_with_limits(
             s,
@@ -12003,10 +12255,147 @@ impl Interpreter {
     /// If the variable is declared `local` in any active call frame, update that frame.
     /// Otherwise, set in global variables.
     /// THREAT[TM-DOS-060]: Checks memory budget before inserting.
+    /// Run a function definition. Out of line: `execute_command`'s frame
+    /// repeats per `$(...)` level (TM-DOS-089).
+    #[inline(never)]
+    fn define_function(&mut self, func_def: &FunctionDef) -> ExecResult {
+        // POSIX mode: a special builtin cannot become a function; a
+        // non-interactive bash exits with status 2.
+        if self.posix_special_builtin(&func_def.name) {
+            return self.special_builtin_function_error(&func_def.name);
+        }
+        // THREAT[TM-DOS-060]: Check function count/size budget
+        let body_bytes = function_storage_bytes(func_def);
+        let is_new = !self.scoped.functions.contains_key(&func_def.name);
+        let old_body_bytes = if is_new {
+            0
+        } else {
+            self.scoped
+                .functions
+                .get(&func_def.name)
+                .map(function_storage_bytes)
+                .unwrap_or(0)
+        };
+        if self
+            .memory_budget
+            .check_function_insert(body_bytes, is_new, old_body_bytes, &self.memory_limits)
+            .is_ok()
+        {
+            self.memory_budget
+                .record_function_insert(body_bytes, is_new, old_body_bytes);
+            self.functions_mut()
+                .insert(func_def.name.clone(), func_def.clone());
+            self.record_function_file(&func_def.name);
+        }
+        ExecResult::ok(String::new())
+    }
+
+    /// Remember the file a function is defined in (`BASH_SOURCE` inside it).
+    #[inline(never)]
+    fn record_function_file(&mut self, name: &str) {
+        let file = self
+            .bash_source_stack
+            .last()
+            .map(|f| f.file.clone())
+            .unwrap_or_default();
+        self.function_files.insert(name.to_string(), file);
+    }
+
+    /// `v=x f` / `v=x eval ...`: hand the prefix assignments to the call as
+    /// a temp-env scope (see `tempenv_frames`).
+    #[inline(never)]
+    fn arm_tempenv(&mut self, name: &str, var_saves: &[(String, Option<String>)]) {
+        if self.scoped.functions.contains_key(name) || matches!(name, "eval" | "source" | ".") {
+            self.pending_tempenv = Some(var_saves.to_vec());
+        }
+    }
+
+    /// POSIX mode: `v=x :` / `v=x readonly y` keep their prefix assignments
+    /// (special builtins); `x=tmp unset x` still reveals the old `x`.
+    #[inline(never)]
+    fn keep_posix_prefix(
+        &self,
+        name: &str,
+        env_saves: &mut HashMap<String, Option<String>>,
+        var_saves: &mut Vec<(String, Option<String>)>,
+    ) {
+        if name != "unset" && self.posix_special_builtin(name) {
+            env_saves.clear();
+            var_saves.clear();
+        }
+    }
+
+    /// A declaration builtin written literally: its `name=value` operands
+    /// are assignments (no splitting, no globbing). `$e x=$v` (e=export)
+    /// and `builtin export x=$v` are ordinary words.
+    #[inline(never)]
+    fn is_decl_keyword(name: &str, command: &SimpleCommand) -> bool {
+        matches!(
+            name,
+            "declare" | "typeset" | "local" | "export" | "readonly"
+        ) && command
+            .name
+            .parts
+            .iter()
+            .all(|p| matches!(p, WordPart::Literal(_)))
+    }
+
+    /// `export v=*`: a declaration operand that is an assignment.
+    #[inline(never)]
+    fn is_decl_assignment_word(word: &Word) -> bool {
+        matches!(word.parts.first(), Some(WordPart::Literal(s)) if Self::is_assignment_prefix(s))
+    }
+
+    /// `foo() {...}` where `foo` is a special builtin in POSIX mode: a
+    /// non-interactive bash exits with status 2.
+    #[inline(never)]
+    fn special_builtin_function_error(&self, name: &str) -> ExecResult {
+        ExecResult {
+            stderr: self
+                .diag(format!("`{name}': is a special builtin\n"))
+                .into(),
+            exit_code: 2,
+            control_flow: ControlFlow::Exit(2),
+            ..Default::default()
+        }
+    }
+
+    fn is_posix_mode(&self) -> bool {
+        self.scoped
+            .variables
+            .get("SHOPT_posix")
+            .is_some_and(|v| v == "1")
+    }
+
+    /// `name` is a POSIX special builtin and the shell is in POSIX mode:
+    /// functions cannot shadow it and its prefix assignments persist.
+    fn posix_special_builtin(&self, name: &str) -> bool {
+        matches!(
+            name,
+            ":" | "."
+                | "break"
+                | "continue"
+                | "eval"
+                | "exec"
+                | "exit"
+                | "export"
+                | "readonly"
+                | "return"
+                | "set"
+                | "shift"
+                | "times"
+                | "trap"
+                | "unset"
+        ) && self.is_posix_mode()
+    }
+
     fn set_variable(&mut self, name: String, value: String) {
         // THREAT[TM-INJ-009]: Block user assignment to internal marker variables
         if Self::is_internal_variable(&name) {
             return;
+        }
+        if name == "PWD" {
+            self.pwd_shadow = Some(self.cwd.clone());
         }
         // Resolve nameref: if `name` is a nameref, assign to the target
         // instead. The common case (no nameref) moves `name` through.
@@ -12218,6 +12607,9 @@ impl Interpreter {
     /// Records a fatal execution error if the budget would be exceeded.
     /// Internal marker variables (_READONLY_, _NAMEREF_, etc.) bypass budget checks.
     fn insert_variable_checked(&mut self, key: String, value: String) -> bool {
+        if key == "PWD" {
+            self.pwd_shadow = Some(self.cwd.clone());
+        }
         let is_internal = Self::is_internal_variable(&key);
         if !is_internal {
             let is_new = !self.scoped.variables.contains_key(&key);
@@ -12288,11 +12680,28 @@ impl Interpreter {
         if self.call_stack[idx].saved_vars.contains_key(name) {
             return true;
         }
+        // `v=x f` then `local v` in `f`: the local takes over the temp-env
+        // binding, keeping its value; what it replaced is what returns.
+        // A temp-env value further out (`v=x eval`, a caller's `v=x g`) is
+        // inherited but stays in its scope.
+        let visible = self.visible_tempenv(name);
+        let takeover = visible
+            .filter(|t| self.tempenv_frames[*t].0 == idx && self.tempenv_frames[*t].2)
+            .and_then(|t| self.tempenv_frames[t].1.remove(name));
         // The saved value stays charged to the budget while the frame holds it.
-        let value = Arc::make_mut(&mut self.scoped.variables).remove(name);
+        let mut value = Arc::make_mut(&mut self.scoped.variables).remove(name);
         let attrs = self.var_attrs_mut().remove(name);
         let nameref = self.namerefs_mut().remove(name);
         let env = self.env.get(name).cloned();
+        let inherited = match takeover {
+            Some(below) => std::mem::replace(&mut value, below),
+            None if visible.is_some() => value.clone(),
+            None => {
+                // An exported caller value is hidden, not inherited.
+                self.env_mut().remove(name);
+                None
+            }
+        };
         let exported = attrs.is_some_and(|a| a.contains(VarAttrs::EXPORT)) || env.is_some();
         self.call_stack[idx].saved_vars.insert(
             name.to_string(),
@@ -12305,6 +12714,9 @@ impl Interpreter {
         );
         if exported {
             self.add_var_attr(name, VarAttrs::EXPORT);
+        }
+        if let Some(v) = inherited {
+            self.insert_variable_checked(name.to_string(), v);
         }
         self.shadow_local_array_bindings(name, false, false);
         true
@@ -12808,7 +13220,17 @@ impl Interpreter {
             "LINENO" if !self.lineno_unset && !self.is_local_anywhere("LINENO") => {
                 return self.current_line.to_string();
             }
+            // `PWD=x` / `unset PWD` hold until the directory changes
+            // (bash keeps PWD an ordinary variable that `cd` rewrites).
             "PWD" => {
+                if self.pwd_shadow.as_ref() == Some(&self.cwd) {
+                    return self
+                        .scoped
+                        .variables
+                        .get("PWD")
+                        .cloned()
+                        .unwrap_or_default();
+                }
                 return self.cwd.to_string_lossy().to_string();
             }
             "OLDPWD" => {
@@ -13512,7 +13934,9 @@ mod tests {
             positional: Vec::new(),
             keeps_arg0: false,
         });
-        interp.bash_source_stack.push("script.sh".to_string());
+        interp
+            .bash_source_stack
+            .push(SourceFrame::script("script.sh"));
 
         interp.reconcile_cancelled_execution_state(
             baseline_call_stack_len,

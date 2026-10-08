@@ -103,6 +103,16 @@ impl Builtin for Trap {
                     }
                     return Ok(ExecResult::ok(output));
                 }
+                // `-` alone is a handler (reset); any other `-x` is a bad option.
+                opt if opt.len() > 1 && opt.starts_with('-') => {
+                    let c = opt[1..].chars().next().unwrap_or('-');
+                    return Ok(ExecResult::err(
+                        format!(
+                            "trap: -{c}: invalid option\ntrap: usage: trap [-lp] [[action] signal_spec ...]\n"
+                        ),
+                        2,
+                    ));
+                }
                 _ => break,
             }
         }
@@ -146,8 +156,10 @@ impl Builtin for Trap {
 
         // `trap SIGNAL` and `trap N ...` (first operand a number) reset
         // every operand; otherwise the first operand is the handler.
+        // (` 42 `: bash skips blanks around the number.)
+        let first = args[0].trim_matches([' ', '\t']);
         let reset_all =
-            args.len() == 1 || (!args[0].is_empty() && args[0].bytes().all(|b| b.is_ascii_digit()));
+            args.len() == 1 || (!first.is_empty() && first.bytes().all(|b| b.is_ascii_digit()));
         let (handler, specs) = if reset_all {
             (None, args)
         } else {

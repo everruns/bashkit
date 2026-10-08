@@ -57,6 +57,38 @@ fn format_stack(ctx: &Context<'_>) -> String {
     stack_entries(ctx, false).join(" ")
 }
 
+/// Operands of `pushd`/`popd` after `--`; a `-x`/`+x` that is no number is
+/// a usage error (status 2), as in bash. `+N`/`-N` stack rotation is not
+/// supported and is treated as an operand.
+fn stack_operands<'a>(
+    args: &'a [String],
+    name: &str,
+    usage: &str,
+) -> std::result::Result<Vec<&'a String>, Box<ExecResult>> {
+    let mut out = Vec::new();
+    let mut opts = true;
+    for arg in args {
+        if opts && arg == "--" {
+            opts = false;
+            continue;
+        }
+        if opts && arg.len() > 1 && arg.starts_with(['-', '+']) {
+            if arg == "-n" {
+                continue;
+            }
+            if !arg[1..].bytes().all(|b| b.is_ascii_digit()) {
+                return Err(Box::new(ExecResult::err(
+                    format!("{name}: {arg}: invalid number\n{name}: usage: {usage}\n"),
+                    2,
+                )));
+            }
+        }
+        opts = false;
+        out.push(arg);
+    }
+    Ok(out)
+}
+
 /// The pushd builtin - push directory onto stack and cd.
 ///
 /// Usage: pushd [dir]
@@ -68,7 +100,17 @@ pub struct Pushd;
 #[async_trait]
 impl Builtin for Pushd {
     async fn execute(&self, mut ctx: Context<'_>) -> Result<ExecResult> {
-        if ctx.args.is_empty() {
+        let operands = match stack_operands(ctx.args, "pushd", "pushd [-n] [+N | -N | dir]") {
+            Ok(o) => o,
+            Err(e) => return Ok(*e),
+        };
+        if operands.len() > 1 {
+            return Ok(ExecResult::err(
+                "pushd: too many arguments\n".to_string(),
+                1,
+            ));
+        }
+        if operands.is_empty() {
             // Swap current dir with the top of the stack.
             let Some(top) = ctx.shell.as_ref().and_then(|s| s.dir_stack.last()).cloned() else {
                 return Ok(ExecResult::err(
@@ -91,7 +133,7 @@ impl Builtin for Pushd {
             *ctx.cwd = new_path;
             Ok(ExecResult::ok(format!("{}\n", format_stack(&ctx))))
         } else {
-            let target = ctx.args[0].clone();
+            let target = operands[0].clone();
             let new_path = normalize_path(ctx.cwd, &target);
 
             // Single stat: distinguish "not found" from "not a directory" without
@@ -140,6 +182,16 @@ pub struct Popd;
 #[async_trait]
 impl Builtin for Popd {
     async fn execute(&self, mut ctx: Context<'_>) -> Result<ExecResult> {
+        let operands = match stack_operands(ctx.args, "popd", "popd [-n] [+N | -N]") {
+            Ok(o) => o,
+            Err(e) => return Ok(*e),
+        };
+        if let Some(arg) = operands.first() {
+            return Ok(ExecResult::err(
+                format!("popd: {arg}: invalid argument\npopd: usage: popd [-n] [+N | -N]\n"),
+                2,
+            ));
+        }
         let Some(dir) = ctx.shell.as_mut().and_then(|s| s.dir_stack.pop()) else {
             return Ok(ExecResult::err(
                 "popd: directory stack empty\n".to_string(),
@@ -178,6 +230,12 @@ impl Builtin for Dirs {
                     per_line = true;
                 }
                 "-l" => long = true,
+                a if !a.starts_with(['-', '+']) => {
+                    return Ok(ExecResult::err(
+                        format!("dirs: {a}: invalid option\ndirs: usage: dirs [-clpv] [+N] [-N]\n"),
+                        2,
+                    ));
+                }
                 _ => {}
             }
         }

@@ -477,12 +477,18 @@ impl Interpreter {
                     // machine with Vec<String> locals (causes stack overflow at
                     // depth 32 in debug builds — see stack_overflow_regression_tests).
                     self.operand_outer_unquoted = !Self::part_is_quoted(word, idx);
+                    let colon_variant = self.star_colon_variant(
+                        name,
+                        &value,
+                        *colon_variant,
+                        self.operand_outer_unquoted,
+                    );
                     let expanded = self.apply_param_op_maybe_per_element(
                         &value,
                         name,
                         operator,
                         operand,
-                        *colon_variant,
+                        colon_variant,
                         is_set,
                     );
                     self.operand_outer_unquoted = false;
@@ -623,19 +629,45 @@ impl Interpreter {
                     Self::append_expansion_for_word(&mut result, word, &expanded);
                 }
                 WordPart::Transformation { name, operator } => {
-                    if self.is_nounset() && !name.contains('[') && !self.is_variable_set(name) {
-                        self.nounset_error = Some(self.unbound_variable_diag(name));
-                    }
-                    Self::append_expansion_for_word(
-                        &mut result,
-                        word,
-                        &self.apply_transformation(name, *operator),
-                    );
+                    let value = self.transformation_part(name, *operator);
+                    Self::append_expansion_for_word(&mut result, word, &value);
                 }
             }
         }
 
         Ok(result)
+    }
+
+    /// `${v@op}` / `${!ref@op}` (the variable `ref` names). Kept out of
+    /// `expand_word_inner` so its temporaries stay off that hot frame.
+    #[inline(never)]
+    fn transformation_part(&mut self, name: &str, operator: char) -> String {
+        let indirect;
+        let name = match name.strip_prefix('!') {
+            Some(r) => {
+                indirect = self.expand_variable(r);
+                indirect.as_str()
+            }
+            None => name,
+        };
+        if self.is_nounset() && !name.contains('[') && !self.is_variable_set(name) {
+            self.nounset_error = Some(self.unbound_variable_diag(name));
+        }
+        self.apply_transformation(name, operator)
+    }
+
+    /// Unquoted `${*:-x}` / `${a[*]:-x}` test the words joined with a space,
+    /// not IFS: `("" "")` is not null even with IFS empty. Returns the colon
+    /// flag to apply.
+    #[inline(never)]
+    fn star_colon_variant(&self, name: &str, value: &str, colon: bool, unquoted: bool) -> bool {
+        colon
+            && !(unquoted
+                && value.is_empty()
+                && (name == "*" || name.ends_with("[*]"))
+                && self
+                    .resolve_param_expansion_elements(name)
+                    .is_some_and(|e| e.len() > 1))
     }
 
     /// Whether part `idx` of `word` is quoted. Per-part flags count only
@@ -799,6 +831,8 @@ impl Interpreter {
         word: &'a Word,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<String>>> + Send + 'a>> {
         Box::pin(async move {
+            // Taken at once so nested command substitutions never see it.
+            let decl_operand = std::mem::take(&mut self.decl_operand_fields);
             // Check if the word contains only an array expansion or $@/$*
             if word.parts.len() == 1 {
                 // Handle $@ and $* as special parameters
@@ -913,10 +947,13 @@ impl Interpreter {
             // Skip splitting for assignment-like words (e.g., result="$1") where
             // the lexer stripped quotes from a mixed-quoted word (produces Token::Word
             // with quoted: false even though the expansion was inside double quotes).
-            let is_assignment_word = matches!(
-                word.parts.first(),
-                Some(WordPart::Literal(s)) if Self::is_assignment_prefix(s)
-            );
+            // Only a declaration builtin's `name=value` operand skips
+            // splitting; `echo x=$v` splits like any word (bash).
+            let is_assignment_word = decl_operand
+                && matches!(
+                    word.parts.first(),
+                    Some(WordPart::Literal(s)) if Self::is_assignment_prefix(s)
+                );
             let has_expansion = !word.quoted
                 && !is_assignment_word
                 && word.parts.iter().any(Self::is_field_split_expansion);
@@ -939,7 +976,7 @@ impl Interpreter {
 
     /// `name=` / `name+=` / `name[i]=` at the start of a word: the
     /// assignment-looking argument whose value is not field-split.
-    fn is_assignment_prefix(s: &str) -> bool {
+    pub(super) fn is_assignment_prefix(s: &str) -> bool {
         let Some(eq) = s.find('=') else {
             return false;
         };
@@ -1532,6 +1569,21 @@ impl Interpreter {
         // Regular variable
         let is_set = self.is_variable_set(name);
         let value = self.expand_variable(name);
+        if !is_set {
+            // `${a-x}` on an array tests `a[0]`: `a=("")` is set.
+            let resolved = self.resolve_nameref(name);
+            let elem = match self.scoped.arrays.get(resolved) {
+                Some(arr) => arr.get(&0).cloned(),
+                None => self
+                    .scoped
+                    .assoc_arrays
+                    .get(resolved)
+                    .and_then(|arr| arr.get("0").cloned()),
+            };
+            if let Some(v) = elem {
+                return (true, v);
+            }
+        }
         (is_set, value)
     }
 

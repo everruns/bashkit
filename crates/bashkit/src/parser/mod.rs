@@ -1979,6 +1979,17 @@ impl<'a> Parser<'a> {
                     kinds.push(CondTok::Op(">"));
                     self.advance();
                 }
+                // `[[ { =~ "{" ]]`: braces are plain words here.
+                Some(tokens::Token::LeftBrace) | Some(tokens::Token::RightBrace) => {
+                    let text = if matches!(self.current_token, Some(tokens::Token::LeftBrace)) {
+                        "{"
+                    } else {
+                        "}"
+                    };
+                    words.push(Word::literal(text));
+                    kinds.push(CondTok::Word(None));
+                    self.advance();
+                }
                 // `[[ a\n&& b\n]]`: newlines inside are blanks.
                 Some(tokens::Token::Newline) => {
                     self.advance();
@@ -3809,8 +3820,8 @@ impl<'a> Parser<'a> {
                         for _ in 0..=inner.chars().count() {
                             chars.next();
                         }
-                        push_part!(WordPart::BadSubstitution(format!("${{{inner}}}")));
-                    } else if chars.peek() == Some(&'#') {
+                        push_part!(WordPart::BadSubstitution(bad_substitution_text(&inner)));
+                    } else if chars.peek() == Some(&'#') && !hash_param_with_op(&chars) {
                         // ${#var} or ${#arr[@]} - length expansion
                         chars.next(); // consume '#'
                         let mut var_name = String::new();
@@ -3972,8 +3983,15 @@ impl<'a> Parser<'a> {
                                 }
                                 suffix.push(chars.next().unwrap());
                             }
-                            // Strip trailing * or @
-                            if suffix.ends_with('*') || suffix.ends_with('@') {
+                            // `${!ref@a}`: transform the variable `ref` names.
+                            if push_indirect_transformation(
+                                &mut parts,
+                                &mut part_quoted,
+                                in_quoted_segment,
+                                &var_name,
+                                &suffix,
+                            ) {
+                            } else if suffix.ends_with('*') || suffix.ends_with('@') {
                                 let full_prefix =
                                     format!("{}{}", var_name, &suffix[..suffix.len() - 1]);
                                 push_part!(WordPart::PrefixMatch {
@@ -3999,7 +4017,7 @@ impl<'a> Parser<'a> {
                         // ${?...}, ${$...}
                         if var_name.is_empty()
                             && let Some(&c) = chars.peek()
-                            && matches!(c, '@' | '*' | '-' | '?' | '$')
+                            && matches!(c, '@' | '*' | '-' | '?' | '$' | '#')
                         {
                             var_name.push(chars.next().unwrap());
                         }
@@ -4697,7 +4715,8 @@ fn bad_brace_parameter(chars: &std::iter::Peekable<std::str::Chars<'_>>) -> Opti
     let mut inner = String::new();
     let mut depth = 0usize;
     for c in chars.clone() {
-        if MARKERS.contains(&c) || c == '\'' || c == '"' || c == '\\' {
+        // `${#1#'x'}` is bad whatever the quoting after the name.
+        if !length_prefix && (MARKERS.contains(&c) || c == '\'' || c == '"' || c == '\\') {
             return None;
         }
         match c {
@@ -4709,6 +4728,53 @@ fn bad_brace_parameter(chars: &std::iter::Peekable<std::str::Chars<'_>>) -> Opti
         inner.push(c);
     }
     None
+}
+
+/// `${...}` text shown for a bad substitution, quote markers dropped.
+#[inline(never)]
+fn bad_substitution_text(inner: &str) -> String {
+    let shown: String = inner
+        .chars()
+        .filter(|c| !matches!(c, '\x00' | '\u{1e}' | '\u{1f}'))
+        .collect();
+    format!("${{{shown}}}")
+}
+
+/// `${!ref@a}`: push the transformation of the variable `ref` names
+/// (`suffix` is `@a`). Out of line so `parse_word`'s frame, which recurses
+/// per `$(...)` level, holds no extra `WordPart`.
+#[inline(never)]
+fn push_indirect_transformation(
+    parts: &mut Vec<WordPart>,
+    part_quoted: &mut Vec<bool>,
+    quoted: bool,
+    var_name: &str,
+    suffix: &str,
+) -> bool {
+    let Some(op) = suffix.strip_prefix('@') else {
+        return false;
+    };
+    let mut chars = op.chars();
+    let Some(c) = chars.next() else {
+        return false;
+    };
+    if chars.next().is_some() || !"QEPAKakuUL".contains(c) || var_name.is_empty() {
+        return false;
+    }
+    parts.push(WordPart::Transformation {
+        name: format!("!{var_name}"),
+        operator: c,
+    });
+    part_quoted.push(quoted);
+    true
+}
+
+/// `${##pat}` / `${###}`: `$#` followed by a pattern-removal
+/// operator, not the length of a parameter (`${##}` alone is `${#'#'}`).
+fn hash_param_with_op(chars: &std::iter::Peekable<std::str::Chars<'_>>) -> bool {
+    let mut it = chars.clone();
+    it.next(); // '#'
+    it.next() == Some('#') && !matches!(it.next(), Some('}') | None)
 }
 
 /// After the parameter of `${...}`: whether `next` cannot start an operator.
@@ -4756,44 +4822,113 @@ fn cond_regex_expands(raw: &str) -> bool {
 /// is regex syntax (`^a'.'\.b$` matches `a.` then `.b`).
 fn cond_regex_literal(raw: &str) -> String {
     let mut out = String::new();
-    let mut chars = raw.chars();
-    let literal = |out: &mut String, c: char| {
-        if c.is_alphanumeric() || c == '_' || c == ' ' {
+    let chars: Vec<char> = raw.chars().collect();
+    // Inside a bracket expression bash only removes the quotes: `["a-z"]`
+    // is the range `[a-z]`. `bracket_start` is where its members begin.
+    let mut in_bracket = false;
+    let mut bracket_start = 0usize;
+    let literal = |out: &mut String, c: char, in_bracket: bool| {
+        if in_bracket {
+            if matches!(c, '\\' | '[' | ']') {
+                out.push('\\');
+            }
+            out.push(c);
+        } else if c.is_alphanumeric() || c == '_' || c == ' ' {
             out.push(c);
         } else {
             out.push('\\');
             out.push(c);
         }
     };
-    while let Some(c) = chars.next() {
+    let mut i = 0usize;
+    while i < chars.len() {
+        let c = chars[i];
+        i += 1;
         match c {
-            '\\' => match chars.next() {
-                Some(n) => literal(&mut out, n),
+            '\\' => match chars.get(i) {
+                Some(&n) => {
+                    i += 1;
+                    literal(&mut out, n, in_bracket);
+                }
                 None => out.push_str("\\\\"),
             },
+            '$' if chars.get(i) == Some(&'\'') => {
+                let rest: String = chars[i + 1..].iter().collect();
+                match Lexer::decode_ansi_c_body(&rest) {
+                    Some((text, used)) => {
+                        for q in text.chars() {
+                            literal(&mut out, q, in_bracket);
+                        }
+                        i += 1 + rest[..used].chars().count();
+                    }
+                    None => out.push(c),
+                }
+            }
+            // `$"..."` is a double-quoted string.
+            '$' if chars.get(i) == Some(&'"') => {}
             '\'' => {
-                for q in chars.by_ref() {
+                while i < chars.len() {
+                    let q = chars[i];
+                    i += 1;
                     if q == '\'' {
                         break;
                     }
-                    literal(&mut out, q);
+                    literal(&mut out, q, in_bracket);
                 }
             }
             '"' => {
-                while let Some(q) = chars.next() {
+                while i < chars.len() {
+                    let q = chars[i];
+                    i += 1;
                     match q {
                         '"' => break,
-                        '\\' => match chars.next() {
-                            Some(n @ ('"' | '\\' | '$' | '`')) => literal(&mut out, n),
-                            Some(n) => {
-                                literal(&mut out, '\\');
-                                literal(&mut out, n);
+                        '\\' => match chars.get(i) {
+                            Some(&n @ ('"' | '\\' | '$' | '`')) => {
+                                i += 1;
+                                literal(&mut out, n, in_bracket);
                             }
-                            None => literal(&mut out, '\\'),
+                            Some(&n) => {
+                                i += 1;
+                                literal(&mut out, '\\', in_bracket);
+                                literal(&mut out, n, in_bracket);
+                            }
+                            None => literal(&mut out, '\\', in_bracket),
                         },
-                        _ => literal(&mut out, q),
+                        _ => literal(&mut out, q, in_bracket),
                     }
                 }
+            }
+            '[' if !in_bracket => {
+                out.push(c);
+                in_bracket = true;
+                if chars.get(i) == Some(&'^') {
+                    out.push('^');
+                    i += 1;
+                }
+                bracket_start = out.len();
+            }
+            '[' if matches!(chars.get(i), Some(':' | '.' | '=')) => {
+                // `[:space:]` inside a bracket: copy through its `:]`.
+                let kind = chars[i];
+                out.push(c);
+                while i < chars.len() {
+                    let q = chars[i];
+                    i += 1;
+                    out.push(q);
+                    if q == ']' && out.len() >= 2 && out[..out.len() - 1].ends_with(kind) {
+                        break;
+                    }
+                }
+            }
+            ']' if in_bracket && out.len() > bracket_start => {
+                out.push(c);
+                in_bracket = false;
+            }
+            // A leading `]` or a bare `[` is a member (`[][{}]`); the regex
+            // engine wants both escaped.
+            '[' | ']' if in_bracket => {
+                out.push('\\');
+                out.push(c);
             }
             _ => out.push(c),
         }
@@ -5400,9 +5535,10 @@ mod tests {
                     "ANSI-C quoted NUL must not expose expansions for {input}: {:?}",
                     arg.parts
                 );
+                // bash strings end at a NUL: nothing after it survives.
                 assert!(
-                    arg.to_string().starts_with('\0'),
-                    "decoded ANSI-C NUL should remain literal for {input}"
+                    arg.to_string().is_empty(),
+                    "decoded ANSI-C NUL should end the string for {input}"
                 );
             } else {
                 panic!("expected simple command");

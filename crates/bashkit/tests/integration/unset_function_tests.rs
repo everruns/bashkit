@@ -37,12 +37,26 @@ echo $x
 }
 
 #[tokio::test]
-async fn unset_without_f_does_not_affect_functions() {
+async fn unset_without_f_keeps_function_when_variable_exists() {
     let result = run(r#"
+f=1
 f() { echo hi; }
 unset f
 f
 "#)
     .await;
     assert_eq!(result.stdout, "hi\n");
+}
+
+#[tokio::test]
+async fn unset_without_f_falls_back_to_function() {
+    // bash: with no variable of that name, `unset f` unsets the function.
+    let result = run(r#"
+f() { echo hi; }
+unset f
+f
+echo status=$?
+"#)
+    .await;
+    assert_eq!(result.stdout, "status=127\n");
 }
