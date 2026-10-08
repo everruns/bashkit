@@ -4067,6 +4067,25 @@ impl Interpreter {
         }
     }
 
+    /// Result of a fatal expansion error (`set -u` unbound variable,
+    /// `${x?msg}`): a non-interactive bash exits the shell with status 1, even
+    /// from inside a function, `eval` or `source` (a subshell, `$(...)` or
+    /// pipeline stage only ends itself). An interactive shell abandons the
+    /// current command line instead.
+    fn expansion_error_result(&mut self, err_msg: String) -> ExecResult {
+        self.last_exit_code = 1;
+        ExecResult {
+            stderr: err_msg.into(),
+            exit_code: 1,
+            control_flow: if self.interactive {
+                ControlFlow::Abort
+            } else {
+                ControlFlow::Exit(1)
+            },
+            ..Default::default()
+        }
+    }
+
     /// Error for a pending arithmetic error, if any (checked after expansion
     /// so the command does not run).
     fn pending_arith_abort(&self) -> Option<crate::error::Error> {
@@ -4182,7 +4201,7 @@ impl Interpreter {
 
                 // Consume Exit and Return control flow at subshell boundary —
                 // they only terminate the subshell, not the parent shell.
-                // Return is used by ${var:?msg} error handling and nounset errors.
+                // Exit also carries fatal expansion errors (${var:?msg}, nounset).
                 // Also clear errexit_suppressed: inner AND/OR suppression must not
                 // escape the subshell boundary and prevent the parent set -e from
                 // firing on the subshell's non-zero exit code.
@@ -4227,6 +4246,17 @@ impl Interpreter {
         let condition_result = self.execute_condition_sequence(&if_cmd.condition).await?;
         cond_stdout.append(&condition_result.stdout);
         cond_stderr.append(&condition_result.stderr);
+        // `exit`/`return`/`break` (or a fatal expansion error) inside the
+        // condition ends the `if` with that control flow.
+        if condition_result.control_flow != ControlFlow::None {
+            return Ok(ExecResult {
+                stdout: cond_stdout,
+                stderr: cond_stderr,
+                exit_code: condition_result.exit_code,
+                control_flow: condition_result.control_flow,
+                ..Default::default()
+            });
+        }
 
         if condition_result.exit_code == 0 {
             // Condition succeeded, execute then branch
@@ -4241,6 +4271,15 @@ impl Interpreter {
             let elif_result = self.execute_condition_sequence(elif_condition).await?;
             cond_stdout.append(&elif_result.stdout);
             cond_stderr.append(&elif_result.stderr);
+            if elif_result.control_flow != ControlFlow::None {
+                return Ok(ExecResult {
+                    stdout: cond_stdout,
+                    stderr: cond_stderr,
+                    exit_code: elif_result.exit_code,
+                    control_flow: elif_result.control_flow,
+                    ..Default::default()
+                });
+            }
 
             if elif_result.exit_code == 0 {
                 let mut result = self.execute_command_sequence(elif_body).await?;
@@ -4702,13 +4741,7 @@ impl Interpreter {
         let result = result?;
         // If a nounset error occurred during evaluation, propagate it.
         if let Some(err_msg) = self.nounset_error.take() {
-            self.last_exit_code = 1;
-            return Ok(ExecResult {
-                stderr: err_msg.into(),
-                exit_code: 1,
-                control_flow: ControlFlow::Return(1),
-                ..Default::default()
-            });
+            return Ok(self.expansion_error_result(err_msg));
         }
         // An invalid regex that decides the result gives status 2.
         let exit_code = match (result, regex_error) {
@@ -7800,15 +7833,8 @@ impl Interpreter {
             };
 
             if let Some(err_msg) = self.nounset_error.take() {
-                self.last_exit_code = 1;
                 self.discard_deferred_proc_subs_from(deferred_proc_sub_start);
-                return Ok(ExecResult {
-                    stdout: crate::StreamData::new(),
-                    stderr: err_msg.into(),
-                    exit_code: 1,
-                    control_flow: ControlFlow::Return(1),
-                    ..Default::default()
-                });
+                return Ok(self.expansion_error_result(err_msg));
             }
 
             let pre_expanded_args = if !name.is_empty() {
@@ -8179,14 +8205,7 @@ impl Interpreter {
 
             // Check for nounset error from argument expansion
             if let Some(err_msg) = self.nounset_error.take() {
-                self.last_exit_code = 1;
-                return Ok(ExecResult {
-                    stdout: crate::StreamData::new(),
-                    stderr: err_msg.into(),
-                    exit_code: 1,
-                    control_flow: ControlFlow::Return(1),
-                    ..Default::default()
-                });
+                return Ok(self.expansion_error_result(err_msg));
             }
 
             if let Some(stderr) = self.disabled_redirect_error(&command.redirects) {

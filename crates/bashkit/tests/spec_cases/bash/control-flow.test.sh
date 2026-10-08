@@ -523,3 +523,16 @@ iter 1
 iter 0
 done
 ### end
+
+### if_condition_control_flow_propagates
+# exit/return/break inside an if or elif condition take effect
+f(){ if return 4; then echo t; fi; echo in; }; f; echo "f=$?"
+for i in 1 2; do if break; then echo t; fi; echo in; done; echo "loop done"
+g(){ if false; then :; elif return 5; then echo t; fi; }; g; echo "g=$?"
+if true; exit 3; then echo t; fi; echo after
+### exit_code:3
+### expect
+f=4
+loop done
+g=5
+### end
