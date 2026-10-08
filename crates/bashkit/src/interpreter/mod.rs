@@ -4887,7 +4887,7 @@ impl Interpreter {
 
                 // Check condition (if empty, always true)
                 // The clauses see the `for` line, not the body's last one.
-                let for_line = self.line_base + arith_for.span.line();
+                let for_line = self.line_at(arith_for.span.line());
                 self.current_line = for_line;
                 if !arith_for.condition.is_empty() {
                     let condition = self.arith_for_expr(&arith_for.condition).await?;
