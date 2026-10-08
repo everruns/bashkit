@@ -2753,9 +2753,19 @@ impl<'a> Parser<'a> {
     /// If the last word is a single literal `{identifier}`, pop it and return the name.
     /// Used for `exec {var}>file` / `exec {var}>&-` syntax.
     fn pop_fd_var(words: &mut Vec<Word>) -> Option<String> {
-        if let Some(last) = words.last()
-            && last.parts.len() == 1
-            && let WordPart::Literal(ref s) = last.parts[0]
+        // `{arr[i]}` lexes as several literal parts, because `[` opens a glob
+        // bracket, so the name is read from the parts joined rather than from
+        // a single one.
+        let joined = words.last().and_then(|last| {
+            last.parts
+                .iter()
+                .map(|part| match part {
+                    WordPart::Literal(text) => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect::<Option<String>>()
+        });
+        if let Some(ref s) = joined
             && s.starts_with('{')
             && s.ends_with('}')
             && s.len() > 2

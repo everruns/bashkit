@@ -19,3 +19,14 @@ echo "rc=$?"
 ### expect
 rc=0
 ### end
+
+### fd_var_array_subscript_opens_and_writes
+declare -a A
+A[1]=7
+exec {A[1]}> o.txt
+echo hi >&"${A[1]}"
+exec {A[1]}>&-
+cat o.txt
+### expect
+hi
+### end
