@@ -3,12 +3,13 @@
 ## 2026-10-07
 
 - Added the bash-oracle scoreboard (`scripts/bash-oracle`, `just bash-oracle`):
-  108 whole-script cases replayed against output recorded from real bash 5.2,
-  scored as `match` (status + stdout, 90/108) and `strict` (also stderr,
-  69/108), with floors in `floor.txt` and a CI workflow. Cases whose output
+  106 whole-script cases replayed against output recorded from real bash 5.2,
+  scored as `match` (status + stdout, 90/106) and `strict` (also stderr,
+  69/106), with floors in `floor.txt` and a CI workflow. Cases whose output
   names the working directory are dropped at record time: bashkit's virtual
   filesystem starts in `/home/user` by design, so they measure sandbox
-  identity, not parity.
+  identity, not parity. Cases that score dash rather than bash (`sh -c` runs
+  dash on Debian) are out of the corpus too.
 * **Test**: Debian-oracle scoreboard. `just debian-oracle` / `.github/workflows/debian-oracle.yml` run the pseudo-linus bench (about 9,600 cases recorded on real Debian, fetched at a pinned commit because parts of its corpus derive from GPL suites) and fail when a tool drops below `scripts/debian-oracle/floors.tsv`. See operations/testing "Debian-Oracle Scoreboard".
 * **Fix**: `{arr[i]}` works as a redirect's fd variable in every position, `exec {A[1]}> file` and `exec {A[1]}>&-` alike. The name lexes as several literal parts because `[` opens a glob bracket, so the redirect parsed as a command called `{A[1]}` and failed with `command not found`.
 * **Fix**: `grep` follows GNU grep 3.11. Prefixes print as `FILE:LINE:BYTE:` (context lines with `-`), group separators appear between non-adjacent groups and files whenever a context option is given (`-NUM`, `--group-separator`, `--no-group-separator`), trailing context after `-m` is printed in full, `-o` skips empty matches and is POSIX leftmost-longest (`grep -oE 'ab|abcd'` prints `abcd`), `-b -o` gives each match's offset. New `grep_pattern` translates GNU BRE/ERE (brackets, intervals, `\< \> \b \w`, literal leading `*` in BRE, dropped leading ERE operator with GNU's warning, glibc error messages) onto awk's leftmost-longest `AwkRegex`; back-references work in BRE and ERE via fancy-regex (TM-DOS-025 cap). Options parse like getopt_long (unique prefixes such as `--no-gr`, `-T`, `-d`, `--label`, `-` for stdin, `-R` follows symlinks), an empty `-f` file matches nothing, a directory operand without `-r` reports `Is a directory`, invalid UTF-8 output turns the file binary, `\r` is line data. Debian-oracle grep score 60.5% to 96.8% (185 cases); grep's probes in the regex set all pass except two raw-`\x01` patterns the shell drops. Remaining misses are readdir order (L-GREP-003); L-GREP-002 lists the other gaps. See foundations/builtins "grep".
