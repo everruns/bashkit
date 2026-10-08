@@ -1,0 +1,7 @@
+### status: 0
+### stdout
+no-filho
+filho-sai
+subshell herda? 1
+fim
+### stderr

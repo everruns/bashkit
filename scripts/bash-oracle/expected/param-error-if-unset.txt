@@ -1,0 +1,5 @@
+### status: 1
+### stdout
+antes
+### stderr
+SCRIPT: line 2: obrigatorio: precisa definir

@@ -1,0 +1,5 @@
+### status: 143
+### stdout
+pegou-USR1
+pegou-TERM
+### stderr

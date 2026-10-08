@@ -1,0 +1,9 @@
+### status: 0
+### stdout
+0
+rc=1
+12
+rc=1
+### stderr
+SCRIPT: line 1: printf: abc: invalid number
+SCRIPT: line 3: printf: 12abc: invalid number

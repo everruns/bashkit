@@ -1,0 +1,18 @@
+### status: 0
+### stdout
+rc=2
+rc=2
+rc=1
+rc=1
+rc=1
+rc=1
+rc=1
+SCRIPT: line 8: return: can only `return' from a function or sourced script
+rc=2
+### stderr
+SCRIPT: line 1: test: abc: integer expression expected
+SCRIPT: line 2: [: a: unary operator expected
+SCRIPT: line 3: local: can only be used in a function
+SCRIPT: line 5: cd: /naoexiste: No such file or directory
+SCRIPT: line 6: unset: `arr[': not a valid identifier
+SCRIPT: line 7: read: abc: invalid timeout specification

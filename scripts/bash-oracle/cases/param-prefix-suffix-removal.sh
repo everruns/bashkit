@@ -1,0 +1,6 @@
+path="/usr/local/lib/libfoo.so.1.2"
+echo "${path#*/} ${path##*/} ${path%.*} ${path%%.*}"
+f="arquivo.tar.gz"
+echo "${f%.gz} ${f%%.*} ${f#*.} ${f##*.}"
+url="https://example.com/a/b?q=1"
+host="${url#*://}"; host="${host%%/*}"; echo "$host"

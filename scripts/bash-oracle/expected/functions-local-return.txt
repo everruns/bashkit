@@ -1,0 +1,12 @@
+### status: 0
+### stdout
+rc=3 contador=5
+inner vê outer
+outer vê mudado
+global global
+args=2 primeiro=a
+3628800
+3 v
+inc () 
+{ 
+### stderr

@@ -1,0 +1,10 @@
+### status: 0
+### stdout
+$'aspas "duplas" e \'simples\' e $cifrao e tab\t e nl\n'
+simples
+com\ espaço
+''
+a\*b
+\~home
+roundtrip-ok
+### stderr

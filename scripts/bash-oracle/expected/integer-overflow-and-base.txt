@@ -1,0 +1,8 @@
+### status: 0
+### stdout
+-9223372036854775808
+18
+8
+rc=1
+### stderr
+SCRIPT: line 4: 08: value too great for base (error token is "08")

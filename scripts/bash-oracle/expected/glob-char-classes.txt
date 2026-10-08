@@ -1,0 +1,8 @@
+### status: 0
+### stdout
+[ab]*.txt
+[!a]*.txt
+[[:digit:]]*
+?.txt
+*.txt *.txt
+### stderr

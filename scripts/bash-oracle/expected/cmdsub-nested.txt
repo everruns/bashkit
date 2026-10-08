@@ -1,0 +1,8 @@
+### status: 0
+### stdout
+abcd
+deep
+crase
+casou
+aspas "dentro"
+### stderr

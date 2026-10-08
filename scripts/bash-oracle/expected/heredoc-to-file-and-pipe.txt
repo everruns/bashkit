@@ -1,0 +1,6 @@
+### status: 0
+### stdout
+LINHA UM
+LINHA DOIS
+30
+### stderr

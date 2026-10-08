@@ -1,0 +1,7 @@
+### status: 0
+### stdout
+n=4
+x  y
+11
+contagem: 1
+### stderr

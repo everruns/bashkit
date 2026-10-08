@@ -1,0 +1,6 @@
+### status: 1
+### stdout
+padrão
+vazio: 0
+### stderr
+SCRIPT: line 4: naodefinida: unbound variable

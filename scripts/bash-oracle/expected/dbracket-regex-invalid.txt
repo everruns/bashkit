@@ -1,0 +1,5 @@
+### status: 2
+### stdout
+### stderr
+SCRIPT: line 1: unexpected EOF while looking for matching `)'
+SCRIPT: line 3: unexpected argument to conditional binary operator

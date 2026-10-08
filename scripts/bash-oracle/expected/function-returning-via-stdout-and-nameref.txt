@@ -1,0 +1,6 @@
+### status: 0
+### stdout
+jpeg
+via nameref
+x y
+### stderr

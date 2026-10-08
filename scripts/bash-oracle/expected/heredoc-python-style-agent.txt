@@ -1,0 +1,5 @@
+### status: 0
+### stdout
+args: um dois
+args: três
+### stderr

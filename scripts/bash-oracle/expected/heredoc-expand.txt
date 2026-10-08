@@ -1,0 +1,7 @@
+### status: 0
+### stdout
+olá agente
+soma 5
+cmd sub
+literal $user e `crase`
+### stderr

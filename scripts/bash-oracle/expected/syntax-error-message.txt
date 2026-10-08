@@ -1,0 +1,9 @@
+### status: 0
+### stdout
+antes
+rc=2
+rc=2
+### stderr
+SCRIPT: eval: line 2: syntax error near unexpected token `then'
+SCRIPT: eval: line 2: `if then fi'
+bash: -c: line 2: syntax error: unexpected end of file

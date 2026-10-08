@@ -1,0 +1,9 @@
+### status: 0
+### stdout
+/home/sandbox /home/sandbox/x
+~ ~
+/home/sandbox/sub
+a:~/b
+/tmp
+/tmp
+### stderr

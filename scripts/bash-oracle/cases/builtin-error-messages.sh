@@ -1,0 +1,8 @@
+test 1 -eq abc; echo "rc=$?"
+[ a -lt ]; echo "rc=$?"
+local x=1; echo "rc=$?"
+shift 9; echo "rc=$?"
+cd /naoexiste; echo "rc=$?"
+unset -v 'arr[' ; echo "rc=$?"
+read -t abc x <<< ""; echo "rc=$?"
+return 2>&1; echo "rc=$?"

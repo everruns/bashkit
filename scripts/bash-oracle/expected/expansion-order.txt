@@ -1,0 +1,7 @@
+### status: 0
+### stdout
+$HOME
+*
+{1,2}
+$(echo injetado)
+### stderr

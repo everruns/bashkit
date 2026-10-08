@@ -1,0 +1,19 @@
+### status: 0
+### stdout
+1
+2
+1
+1
+1
+2
+r
+1
+1
+2
+1
+2
+1
+sh:unset
+lrwxrwxrwx '/bin/sh' -> 'dash'
+lrwxrwxrwx '/usr/bin/sh' -> 'dash'
+### stderr

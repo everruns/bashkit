@@ -1,0 +1,6 @@
+### status: 0
+### stdout
+ERR em g
+ERR em main
+fim
+### stderr

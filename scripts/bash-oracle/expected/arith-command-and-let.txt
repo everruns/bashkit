@@ -1,0 +1,9 @@
+### status: 0
+### stdout
+maior
+não é zero
+rc0=1
+10 6
+5
+0,1,2,
+### stderr

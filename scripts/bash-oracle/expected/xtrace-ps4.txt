@@ -1,0 +1,8 @@
+### status: 0
+### stdout
+ok
+### stderr
+++ [3] echo sub
++ [3] x=sub
++ [4] [[ sub == sub ]]
++ [4] echo ok

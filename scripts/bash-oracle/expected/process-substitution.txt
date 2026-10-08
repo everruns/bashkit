@@ -1,0 +1,14 @@
+### status: 0
+### stdout
+2c2
+< b
+---
+> c
+rc=1
+lido:x
+lido:y
+1	4
+2	5
+3	6
+fd: ok
+### stderr
