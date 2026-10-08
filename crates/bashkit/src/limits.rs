@@ -1142,6 +1142,10 @@ impl<T> BudgetedVec<T> {
         Ok(())
     }
 
+    pub(crate) fn pop(&mut self) -> Option<T> {
+        self.inner.pop()
+    }
+
     pub(crate) fn into_parts(self) -> (Vec<T>, Option<ExecutionBudgetLease>) {
         (self.inner, self.lease)
     }

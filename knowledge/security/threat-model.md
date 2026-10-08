@@ -206,7 +206,7 @@ delegation (see TM-DOS-046). Regression tests: `path_validation_security` module
 
 | ID | Threat | Attack Vector | Mitigation | Status |
 |----|--------|--------------|------------|--------|
-| TM-DOS-011 | Symlink loops | `ln -s /a /b; ln -s /b /a` | `FollowFs` follows at most 40 links per lookup (Linux MAXSYMLINKS), then fails with "Too many levels of symbolic links"; `find -L` adds canonical-path loop detection (TM-DOS-121). Regressions: `fs::follow::tests::loops_fail_with_eloop`, `hop_limit_allows_long_chains`, `symlink_loop_is_reported` spec | **MITIGATED** |
+| TM-DOS-011 | Symlink loops | `ln -s /a /b; ln -s /b /a` | `FollowFs` follows at most 40 links per lookup (Linux MAXSYMLINKS), then fails with "Too many levels of symbolic links"; `find -L` adds canonical-path loop detection (TM-DOS-121). `grep -R` uses the same resolver and skips resolved ancestor cycles, charges traversal to the shared execution budget, leases pending paths/listings, and admits and scans one file at a time; quiet matches stop traversal. Regressions: `grep_recursive_security_tests` (single/two-link and parent cycles, sibling aliases, traversal work, live file bytes, aggregate input, per-file lease release). Regressions: `fs::follow::tests::loops_fail_with_eloop`, `hop_limit_allows_long_chains`, `symlink_loop_is_reported` spec | **MITIGATED** |
 | TM-DOS-012 | Deep directory nesting | `mkdir -p a/b/c/.../z` (1000 levels) | `max_path_depth` limit (100) | **MITIGATED** |
 | TM-DOS-013 | Long filenames | Create 10KB filename | `max_filename_length` (255) + `max_path_length` (4096) | **MITIGATED** |
 | TM-DOS-014 | Many directory entries | Create 1M files in one dir | `max_file_count` limit | **MITIGATED** |
