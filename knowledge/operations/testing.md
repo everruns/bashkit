@@ -343,7 +343,7 @@ filesystem and compares with the bench's own `harness::compare_outcome`.
 
 ## Bash-Oracle Scoreboard
 
-`scripts/bash-oracle/run.py` (`just bash-oracle`) replays 108 whole-script
+`scripts/bash-oracle/run.py` (`just bash-oracle`) replays 106 whole-script
 cases through the bashkit CLI and diffs each with output recorded from real
 bash 5.2 in `scripts/bash-oracle/expected/`. Where the Debian-oracle
 scoreboard scores individual coreutils tools, this one scores shell behavior:
@@ -360,8 +360,8 @@ process substitution, parameter expansion errors.
   For the same reason the recordings are made with bashkit's sandbox identity
   (`HOME=/home/sandbox`, `USER=sandbox`), so a gap is behavior, not identity.
 - **Two scores.** `match` is status plus stdout, what a script observes, and the
-  number the bash-parity work tracks (90/108 at the time of writing). `strict`
-  also requires bash's stderr text (69/108); it trails behind because most
+  number the bash-parity work tracks (90/106 at the time of writing). `strict`
+  also requires bash's stderr text (69/106); it trails behind because most
   builtin diagnostics still lack bash's `SCRIPT: line N:` prefix. `floor.txt` holds both as `<match> <strict>` and the
   run fails when either drops.
 - **CI.** `.github/workflows/bash-oracle.yml` runs on PRs touching the
