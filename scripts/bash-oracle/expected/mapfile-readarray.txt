@@ -1,0 +1,10 @@
+### status: 0
+### stdout
+0: 
+
+[a][b][c
+]
+$'x\n' $'y\n' 
+### stderr
+SCRIPT: line 1: dados.txt: No such file or directory
+SCRIPT: line 3: dados.txt: No such file or directory

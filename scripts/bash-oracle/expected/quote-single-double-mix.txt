@@ -1,0 +1,6 @@
+### status: 0
+### stdout
+literal $name "aspas" expande mundo 'simples'
+barra \ cifrão $ crase ` aspas "
+it's
+### stderr

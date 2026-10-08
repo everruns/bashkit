@@ -1,0 +1,8 @@
+### status: 2
+### stdout
+### stderr
+[deploy] início
+[deploy] temporários: 2
+grep: config.ini: No such file or directory
+grep: config.ini: No such file or directory
+[deploy] limpando

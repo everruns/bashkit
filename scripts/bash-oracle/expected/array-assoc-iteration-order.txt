@@ -1,0 +1,4 @@
+### status: 0
+### stdout
+teta alfa eta delta epsilon beta zeta gama
+### stderr

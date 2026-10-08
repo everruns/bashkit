@@ -1,0 +1,7 @@
+### status: 0
+### stdout
+total=0 arquivos=0
+summary.txt
+### stderr
+ignorando src/*.txt
+ignorando missing.txt

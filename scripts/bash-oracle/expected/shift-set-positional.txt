@@ -1,0 +1,14 @@
+### status: 0
+### stdout
+5 a
+4 b
+2 d e
+rc=1 2
+[x y]
+[z]
+<x>
+<y>
+<z>
+x y-z
+vazio=0
+### stderr

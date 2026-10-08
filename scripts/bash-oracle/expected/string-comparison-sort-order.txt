@@ -1,0 +1,13 @@
+### status: 0
+### stdout
+a>=B
+test a>=B
+A
+B
+a
+b
+A
+B
+a
+b
+### stderr

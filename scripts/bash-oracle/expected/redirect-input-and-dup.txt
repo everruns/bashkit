@@ -1,0 +1,8 @@
+### status: 0
+### stdout
+### stderr
+SCRIPT: line 1: entrada.txt: No such file or directory
+SCRIPT: line 2: entrada.txt: No such file or directory
+cat: ordenado.txt: No such file or directory
+SCRIPT: line 4: entrada.txt: No such file or directory
+SCRIPT: line 5: entrada.txt: No such file or directory

@@ -1,0 +1,13 @@
+### status: 0
+### stdout
+amarela 4
+banana=amarela
+kiwi=verde
+maçã=vermelha
+uva=roxa
+tem uva
+sem uva
+a:3
+b:2
+c:1
+### stderr

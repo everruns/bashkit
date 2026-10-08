@@ -1,0 +1,12 @@
+### status: 0
+### stdout
+for 1
+for 3
+for 4
+while 3
+until 0
+1a
+2a
+pos p
+pos q
+### stderr

@@ -1,0 +1,9 @@
+### status: 0
+### stdout
+[Olá, Mundo!]
+4
+cba
+contém
+11
+13
+### stderr

@@ -1,0 +1,5 @@
+### status: 0
+### stdout
+fora do pipe: 0
+lastpipe: 6
+### stderr

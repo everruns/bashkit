@@ -1,0 +1,4 @@
+### status: 0
+### stdout
+TEXTO
+### stderr

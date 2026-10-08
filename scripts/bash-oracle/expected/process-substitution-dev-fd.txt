@@ -1,0 +1,5 @@
+### status: 0
+### stdout
+/dev/fd/63
+stdin ok
+### stderr

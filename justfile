@@ -217,6 +217,13 @@ run-script file *args:
 
 # === Benchmarks ===
 
+# Bash-parity scoreboard: recorded real-bash output for every case in
+# scripts/bash-oracle/cases. Fails on a regression below floor.txt; pass
+# --case NAME to see one case diffed section by section.
+bash-oracle *ARGS:
+    cargo build -q -p bashkit-cli
+    python3 scripts/bash-oracle/run.py {{ARGS}}
+
 # Debian-oracle scoreboard (pseudo-linus bench, fetched at a pinned commit).
 # Fails on a regression below scripts/debian-oracle/floors.tsv; pass
 # --update-floors after a fix raises a score. Optional TOOL args narrow the run.

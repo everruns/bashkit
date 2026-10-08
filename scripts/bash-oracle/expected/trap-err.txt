@@ -1,0 +1,6 @@
+### status: 0
+### stdout
+ERR na linha 2: false rc=1
+depois
+ERR na linha 5: return 2 rc=2
+### stderr

@@ -1,0 +1,9 @@
+### status: 1
+### stdout
+1 pequeno
+5 médio
+10 grande
+não é dir
+strings-ok
+eq-ok
+### stderr

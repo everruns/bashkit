@@ -1,0 +1,11 @@
+### status: 0
+### stdout
+extglob        	off
+nullglob       	off
+globstar       	off
+errexit        	off
+noclobber      	off
+nounset        	off
+pipefail       	off
+extglob q=1
+### stderr

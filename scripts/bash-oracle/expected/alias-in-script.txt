@@ -1,0 +1,5 @@
+### status: 0
+### stdout
+agora expande
+### stderr
+SCRIPT: line 2: ll: command not found

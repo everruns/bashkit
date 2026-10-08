@@ -1,0 +1,10 @@
+### status: 0
+### stdout
+pipe:err
+2
+o1: out out 
+e1: err 
+both: out err 
+only_out: out 
+amp: out err out err 
+### stderr

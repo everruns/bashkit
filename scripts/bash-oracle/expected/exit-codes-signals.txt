@@ -1,0 +1,7 @@
+### status: 0
+### stdout
+kill9=137
+term=143
+256=0
+timeout=124
+### stderr

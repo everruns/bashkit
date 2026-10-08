@@ -1,0 +1,9 @@
+### status: 1
+### stdout
+g vê f
+após unset global
+global: global
+h 2
+h is a function
+SCRIPT: line 6: type: h: not found
+### stderr

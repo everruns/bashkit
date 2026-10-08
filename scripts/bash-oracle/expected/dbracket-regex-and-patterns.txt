@@ -1,0 +1,12 @@
+### status: 0
+### stdout
+match=1.2.3 major=1 n=4
+var-regex ok
+quoted literal ok
+glob-ok
+quoted não é glob
+grouping-ok
+lexico-ok
+num-ok
+sem aspas ok
+### stderr

@@ -1,0 +1,9 @@
+### status: 0
+### stdout
+sem-nl
+a	b
+c
+a\tb
+-- -n
+x
+### stderr

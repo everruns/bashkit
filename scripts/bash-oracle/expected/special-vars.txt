@@ -1,0 +1,9 @@
+### status: 0
+### stdout
+SCRIPT|10|a b c d e f g h i j|a b c d e f g h i j|j
+hashall
+5
+1
+6
+0
+### stderr

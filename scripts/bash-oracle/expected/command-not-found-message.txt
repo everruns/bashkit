@@ -1,0 +1,7 @@
+### status: 0
+### stdout
+rc=127
+rc=127
+### stderr
+SCRIPT: line 1: comando_que_nao_existe: command not found
+SCRIPT: line 3: /caminho/absoluto/inexistente: No such file or directory

@@ -1,0 +1,8 @@
+read -r a <<< 'barra\invertida'; echo "$a"
+read a <<< 'barra\invertida'; echo "$a"
+read -ra arr <<< "um dois três"; echo "${#arr[@]} ${arr[1]}"
+read -d ';' x <<< "antes;depois"; echo "$x"
+read -n 3 y <<< "abcdef"; echo "$y"
+IFS= read -r z <<< "  espaços  "; echo "[$z]"
+read -r w <<< "  espaços  "; echo "[$w]"
+read nada < /dev/null; echo "rc=$? [$nada]"

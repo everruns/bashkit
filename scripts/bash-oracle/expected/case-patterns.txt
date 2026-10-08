@@ -1,0 +1,14 @@
+### status: 0
+### stdout
+a.txt: texto
+b.TXT: texto
+img.png: imagem
+Makefile: maiúscula
+x: outro
+com espaço: espaço
+um
+fallthrough
+primeiro
+segundo
+terceiro
+### stderr

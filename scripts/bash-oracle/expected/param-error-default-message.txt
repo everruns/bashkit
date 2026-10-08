@@ -1,0 +1,4 @@
+### status: 1
+### stdout
+### stderr
+SCRIPT: line 2: x: parameter null or not set

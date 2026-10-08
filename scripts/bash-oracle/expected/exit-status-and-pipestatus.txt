@@ -1,0 +1,12 @@
+### status: 0
+### stdout
+true=0
+false=1
+neg=0
+pipe=0 ps=1 0
+ps=0 1 0 n=3
+300->44
+-1->255
+cnf=127
+noexec=127
+### stderr

@@ -1,0 +1,6 @@
+### status: 1
+### stdout
+a
+sem segundo
+### stderr
+SCRIPT: line 5: $2: unbound variable

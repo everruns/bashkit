@@ -1,0 +1,6 @@
+### status: 0
+### stdout
+10 cdefghij cde hij gh |
+4 4 dois três
+p2 p3 p4 | p2 p3 | 4
+### stderr
