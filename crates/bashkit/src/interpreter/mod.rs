@@ -5634,7 +5634,31 @@ impl Interpreter {
         let child_snapshot = self.snapshot_subshell_state();
         // A new shell starts at subshell level 0.
         self.bash_subshell = 0;
-        self.reset_state_for_child_shell();
+        let shlvl_warning = self.reset_state_for_child_shell();
+        // Output the `bash` command's own redirects will route must not stream
+        // from the child first (`bash -c 'echo x >&2' 2>/dev/null` printed x),
+        // as for functions and compounds.
+        let has_output_redirect = redirects.iter().any(|r| {
+            !matches!(
+                r.kind,
+                RedirectKind::Input | RedirectKind::HereDoc | RedirectKind::HereString
+            )
+        });
+        let saved_callback = if has_output_redirect {
+            self.output_callback.take()
+        } else {
+            None
+        };
+        // The warning is the child's first output, so a streaming caller sees
+        // it before anything the child prints.
+        if let Some(ref warning) = shlvl_warning {
+            let before = self.output_emit_count;
+            self.maybe_emit_output(
+                &crate::StreamData::new(),
+                &crate::StreamData::from(warning.clone()),
+                before,
+            );
+        }
 
         // Push call frame, apply options, execute, restore, pop
         self.call_stack.push(CallFrame {
@@ -5685,6 +5709,9 @@ impl Interpreter {
 
         // Restore stdin
         self.pipeline_stdin = saved_stdin;
+        if let Some(cb) = saved_callback {
+            self.output_callback = Some(cb);
+        }
 
         self.pop_call_frame();
 
@@ -5695,16 +5722,44 @@ impl Interpreter {
         self.child_shell_depth -= 1;
 
         match result {
-            Ok(exec_result) => self.apply_redirections(exec_result, redirects).await,
+            Ok(mut exec_result) => {
+                if let Some(warning) = shlvl_warning {
+                    exec_result.stderr =
+                        crate::StreamData::from(warning + &exec_result.stderr.text_lossy());
+                }
+                self.apply_redirections(exec_result, redirects).await
+            }
             Err(e) => Err(e),
         }
+    }
+
+    /// `$SHLVL` for a shell started from one whose level is `parent`, following
+    /// bash's `adjust_shell_level`: a level that is not a number counts as 0, a
+    /// negative one lands on 0 rather than counting up from below, and a level
+    /// that would pass 999 restarts at 1 with a warning (so a script that runs
+    /// itself cannot drive the number up forever).
+    fn child_shell_level(parent: Option<&str>) -> (String, Option<String>) {
+        let parent: i64 = parent
+            .map(str::trim)
+            .and_then(|text| text.parse().ok())
+            .unwrap_or(0);
+        let next = if parent < 0 { 0 } else { parent + 1 };
+        if next > 999 {
+            return (
+                "1".to_string(),
+                Some(format!(
+                    "bash: warning: shell level ({next}) too high, resetting to 1\n"
+                )),
+            );
+        }
+        (next.to_string(), None)
     }
 
     /// Reset interpreter state to what a freshly-forked `bash`/`sh` child
     /// would see: drop arrays/assoc_arrays/functions/aliases/namerefs, and
     /// keep only exported scalars in `variables`. The caller is expected to
     /// have just taken a snapshot to undo this on return. See issue #1777.
-    fn reset_state_for_child_shell(&mut self) {
+    fn reset_state_for_child_shell(&mut self) -> Option<String> {
         self.line_base = 0;
         let exported_names: Vec<String> = self
             .scoped
@@ -5750,7 +5805,23 @@ impl Interpreter {
         }
         // A new shell starts getopts afresh.
         next_vars.insert("OPTIND".to_string(), "1".to_string());
+        // A new shell counts itself: the child's level is one above the one it
+        // inherited, and it is exported so a grandchild counts from there.
+        // The inherited value is what the child would read: an exported
+        // variable, else the environment (where `SHLVL=n bash` puts it), else
+        // the parent's own level. bash exports SHLVL at startup; bashkit's
+        // synthetic startup variables are not marked exported, so the parent's
+        // plain variable stands in for that export.
+        let inherited = next_vars
+            .get("SHLVL")
+            .or_else(|| self.env.get("SHLVL"))
+            .or_else(|| self.scoped.variables.get("SHLVL"))
+            .map(String::as_str);
+        let (level, warning) = Self::child_shell_level(inherited);
+        next_vars.insert("SHLVL".to_string(), level.clone());
         *self.vars_mut() = next_vars;
+        self.add_var_attr("SHLVL", VarAttrs::EXPORT);
+        self.env_mut().insert("SHLVL".to_string(), level);
         self.arrays_mut().clear();
         self.assoc_arrays_mut().clear();
         self.functions_mut().clear();
@@ -5760,6 +5831,7 @@ impl Interpreter {
         self.scoped.aliases = Arc::new(HashMap::new());
         // Reset SHOPT_* flag bitfield so options from the parent don't leak.
         self.flags = BashFlags::empty();
+        warning
     }
 }
 
