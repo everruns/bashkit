@@ -1,4 +1,7 @@
 //! od, xxd, and hexdump builtins - byte-level inspection tools
+//!
+//! Decision: od caps row width before layout arithmetic, pads only one field
+//! on the stack, and admits output growth through the shared request budget.
 
 use super::clap_cache::cached_command;
 use async_trait::async_trait;
@@ -7,6 +10,7 @@ use super::{Builtin, Context};
 use crate::error::Result;
 use crate::fs::vfs_join;
 use crate::interpreter::ExecResult;
+use crate::limits::{BudgetedString, ExecutionBudget};
 
 /// The od builtin - dump files in octal and other formats.
 ///
@@ -49,6 +53,9 @@ pub struct Hexdump;
 // short final block is zero-filled; `z` appends a `>...<` trailer; repeated
 // full blocks collapse to `*` unless `-v`. Floating-point types (`f`, `-e`,
 // `-f`, `-F`) are rejected with an explicit error (not yet ported).
+
+// THREAT[TM-DOS-103]: Bound caller-selected dimensions even without a budget.
+const OD_MAX_WIDTH: usize = 65_536;
 
 struct OdOptions {
     addr_radix: AddrRadix,
@@ -285,7 +292,11 @@ fn od_options_from_matches(
         opts.skip = parse_od_num(s, "-j")?;
     }
     if let Some(s) = matches.get_one::<String>("width") {
-        opts.width = Some(parse_od_num(s, "-w")?);
+        let width = parse_od_num(s, "-w")?;
+        if width > OD_MAX_WIDTH {
+            return Err(format!("od: width exceeds maximum of {OD_MAX_WIDTH} bytes"));
+        }
+        opts.width = Some(width);
     }
     if let Some(e) = matches.get_one::<String>("endian") {
         opts.big_endian = e == "big";
@@ -361,7 +372,18 @@ fn format_od_field(spec: &OdSpec, bytes: &[u8], big_endian: bool) -> String {
     }
 }
 
-fn od_dump(data: &[u8], opts: &OdOptions) -> String {
+// Avoid allocating padding or formatted rows outside the budgeted owner.
+fn od_spaces(output: &mut BudgetedString, mut count: usize) -> Result<()> {
+    const SPACES: &str = "                                                                ";
+    while count > 0 {
+        let n = count.min(SPACES.len());
+        output.try_push_str(&SPACES[..n])?;
+        count -= n;
+    }
+    Ok(())
+}
+
+fn od_dump(data: &[u8], opts: &OdOptions, budget: Option<&ExecutionBudget>) -> Result<String> {
     let lcm = opts.specs.iter().fold(1usize, |acc, s| {
         let (mut a, mut b) = (acc, s.size);
         while b != 0 {
@@ -388,14 +410,18 @@ fn od_dump(data: &[u8], opts: &OdOptions) -> String {
         None => data,
     };
 
-    let mut output = String::new();
+    // THREAT[TM-DOS-103]: lease capacity before fallible allocation.
+    let mut output = BudgetedString::new(budget)?;
     let mut prev: Option<&[u8]> = None;
     let mut in_dup_run = false;
     for (chunk_idx, chunk) in data.chunks(bpb).enumerate() {
+        if let Some(budget) = budget {
+            budget.consume_work(chunk.len() as u64)?;
+        }
         let offset = opts.skip + chunk_idx * bpb;
         if !opts.show_duplicates && chunk.len() == bpb && prev == Some(chunk) {
             if !in_dup_run {
-                output.push_str("*\n");
+                output.try_push_str("*\n")?;
                 in_dup_run = true;
             }
             continue;
@@ -403,13 +429,11 @@ fn od_dump(data: &[u8], opts: &OdOptions) -> String {
         in_dup_run = false;
         prev = Some(chunk);
 
-        let mut block = chunk.to_vec();
-        block.resize(bpb, 0);
         for (si, spec) in opts.specs.iter().enumerate() {
             if si == 0 {
-                output.push_str(&format_od_addr(offset, opts.addr_radix));
+                output.try_push_str(&format_od_addr(offset, opts.addr_radix))?;
             } else {
-                output.push_str(&" ".repeat(addr_pad));
+                od_spaces(&mut output, addr_pad)?;
             }
             let fields = bpb / spec.size;
             let blank = (bpb - chunk.len()) / spec.size;
@@ -418,38 +442,48 @@ fn od_dump(data: &[u8], opts: &OdOptions) -> String {
             let mut pad_remaining = pad;
             for i in (blank + 1..=fields).rev() {
                 let idx = fields - i;
-                let next_pad = pad * (i - 1) / fields;
+                // Width is capped; u64 also keeps the product safe on 32-bit hosts.
+                let next_pad = (pad as u64 * (i - 1) as u64 / fields as u64) as usize;
                 let adjusted = pad_remaining - next_pad + width;
-                let field = &block[idx * spec.size..(idx + 1) * spec.size];
-                let text = format_od_field(spec, field, opts.big_endian);
-                output.push_str(&format!("{text:>adjusted$}"));
+                if let Some(budget) = budget {
+                    budget.consume_work(1)?;
+                }
+                // Only an incomplete numeric field needs zero padding (max 8 bytes).
+                let mut field = [0u8; 8];
+                let start = idx * spec.size;
+                let available = spec.size.min(chunk.len() - start);
+                field[..available].copy_from_slice(&chunk[start..start + available]);
+                let text = format_od_field(spec, &field[..spec.size], opts.big_endian);
+                od_spaces(&mut output, adjusted.saturating_sub(text.len()))?;
+                output.try_push_str(&text)?;
                 pad_remaining = next_pad;
             }
             if spec.trailer {
-                let trailer_pad = blank * width + pad * blank / fields;
-                output.push_str(&" ".repeat(trailer_pad));
-                output.push_str("  >");
+                let trailer_pad =
+                    blank * width + (pad as u64 * blank as u64 / fields as u64) as usize;
+                od_spaces(&mut output, trailer_pad)?;
+                output.try_push_str("  >")?;
                 for &b in chunk {
-                    output.push(if (0x20..0x7f).contains(&b) {
+                    output.try_push(if (0x20..0x7f).contains(&b) {
                         b as char
                     } else {
                         '.'
-                    });
+                    })?;
                 }
-                output.push('<');
+                output.try_push('<')?;
             }
-            output.push('\n');
+            output.try_push('\n')?;
         }
     }
 
     // GNU always ends with the final address (nothing for `-An`).
     let addr = format_od_addr(opts.skip + data.len(), opts.addr_radix);
     if !addr.is_empty() {
-        output.push_str(&addr);
-        output.push('\n');
+        output.try_push_str(&addr)?;
+        output.try_push('\n')?;
     }
 
-    output
+    Ok(output.into_inner())
 }
 
 // Cached `od` arg surface: pre-built once, cloned per invocation.
@@ -489,7 +523,15 @@ impl Builtin for Od {
             Ok(data) => data,
             Err(failure) => return Ok(failure),
         };
-        let output = od_dump(&data, &opts);
+        let budget = ctx
+            .execution_budget()
+            .map(|budget| {
+                budget
+                    .try_with(Clone::clone)
+                    .map_err(|_| crate::Error::Cancelled)
+            })
+            .transpose()?;
+        let output = od_dump(&data, &opts, budget.as_ref())?;
 
         Ok(ExecResult::ok(output))
     }

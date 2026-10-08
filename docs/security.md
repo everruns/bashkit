@@ -18,6 +18,12 @@ individual threat IDs and mitigation status, see the
 | **Resource limits** | Configurable caps on commands, loop iterations, recursion depth, AST depth, timeouts, and parser operations prevent denial-of-service from malicious scripts. |
 | **Filesystem limits** | Total bytes, per-file size, file count, path depth, and filename length are all capped to prevent storage exhaustion (zip bombs, tar bombs, recursive copies). |
 
+`od -w` / `od --width` accepts at most 65,536 bytes per row. Larger widths
+fail before rendering, even with empty input. Numeric fields use at most eight
+bytes of stack padding; output capacity is admitted against
+`ExecutionLimits::max_live_intermediate_bytes` before fallible allocation.
+This memory budget applies to pipelines and redirected output too.
+
 Recursive `grep -R` skips directory symlinks that resolve to an ancestor and
 reports `warning: recursive directory loop` (suppressed by `-s`). Separate
 aliases of a non-ancestor directory remain searchable. Traversal uses the shared

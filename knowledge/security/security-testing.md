@@ -73,6 +73,16 @@ probability `10%`, count `5*`): see [fail crate docs](https://docs.rs/fail).
 2. **Filesystem failure**: I/O errors, permission denied, disk full, partial writes, data corruption
 3. **Interpreter failure**: execution errors, panic recovery, unexpected exit codes
 
+## od Width Regression Oracle
+
+`od_resource_tests` compares valid-width layouts with GNU `od` when available
+(required in Linux CI). Zero and type-misaligned widths are asserted directly
+against Bashkit's existing type-size fallback. Some GNU versions abort on
+`-w0`, so an invalid-width GNU subprocess cannot serve as a compatibility
+oracle; see the [GNU report](https://lists.gnu.org/archive/html/bug-coreutils/2025-06/msg00014.html).
+The enormous-width tests invoke only the fixed builtin, after safe bounded
+regressions established the allocation path.
+
 ## Adding New Fail Points
 
 Add `fail_point!("module::function", |action| ...)` under
