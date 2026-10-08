@@ -484,6 +484,7 @@ impl Interpreter {
     /// op: b'@', b'?', b'*', b'+', b'!'
     /// alts: the | separated alternatives
     /// rest: pattern after the closing )
+    #[allow(clippy::too_many_arguments)]
     fn match_extglob(
         &self,
         op: u8,
