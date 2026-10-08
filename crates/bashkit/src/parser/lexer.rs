@@ -64,6 +64,7 @@ type Lookahead<'s, 'a> = std::iter::Peekable<
 >;
 
 /// Lexer for bash scripts.
+#[derive(Clone)]
 pub struct Lexer<'a> {
     #[allow(dead_code)] // Stored for error reporting in future
     input: &'a str,
@@ -116,6 +117,11 @@ impl<'a> Lexer<'a> {
     pub fn next_token(&mut self) -> Option<Token> {
         self.skip_whitespace();
         self.next_token_inner()
+    }
+
+    /// Put `ch` back in front of the remaining input.
+    pub fn unread_char(&mut self, ch: char) {
+        self.reinject_buf.push_front(ch);
     }
 
     fn peek_char(&mut self) -> Option<char> {
@@ -563,6 +569,10 @@ impl<'a> Lexer<'a> {
     fn read_backtick_into(&mut self, word: &mut String) -> Result<(), String> {
         self.advance(); // consume opening `
         word.push_str("$(");
+        // `` `(cmd)` `` must not read as `$((`.
+        if self.peek_char() == Some('(') {
+            word.push(' ');
+        }
         let body_start = word.len();
         let mut closed = false;
         while let Some(c) = self.peek_char() {
@@ -1027,10 +1037,12 @@ impl<'a> Lexer<'a> {
 
                     // Check for $(( - arithmetic expansion
                     if self.peek_char() == Some('(') {
+                        let inner_open = word.len();
                         word.push('(');
                         self.advance();
                         // Read until ))
                         let mut depth = 2;
+                        let mut subshell = false;
                         while let Some(c) = self.peek_char() {
                             word.push(c);
                             self.advance();
@@ -1038,6 +1050,14 @@ impl<'a> Lexer<'a> {
                                 depth += 1;
                             } else if c == ')' {
                                 depth -= 1;
+                                if depth == 1 && !subshell && self.peek_char() != Some(')') {
+                                    // `$(( cmd ) )`: the inner `(` closes
+                                    // alone, so this is `$( (cmd) )`, a
+                                    // command substitution of a subshell
+                                    // (bash reads it the same way).
+                                    word.insert(inner_open, ' ');
+                                    subshell = true;
+                                }
                                 if depth == 0 {
                                     break;
                                 }
@@ -1106,7 +1126,8 @@ impl<'a> Lexer<'a> {
                         // (quote removal — only the literal char survives).
                         // `\$` and `\`` must stay literal through parse_word, so
                         // they carry the NUL sentinel like quoted `\$` does.
-                        if matches!(next, '$' | '`') {
+                        // `\~` likewise must not tilde-expand.
+                        if matches!(next, '$' | '`' | '~') {
                             word.push('\x00');
                         }
                         if Self::is_glob_escape_char(next) {
@@ -1929,6 +1950,9 @@ impl<'a> Lexer<'a> {
                     // Backtick command substitution inside double quotes
                     self.advance(); // consume opening `
                     content.push_str("$(");
+                    if self.peek_char() == Some('(') {
+                        content.push(' ');
+                    }
                     let body_start = content.len();
                     while let Some(c) = self.peek_char() {
                         if c == '`' {
@@ -2304,8 +2328,12 @@ impl<'a> Lexer<'a> {
     fn read_bracket_word(&mut self) -> Option<Token> {
         let mut word = String::from("[");
 
-        // Read until we find the closing ] (handle nested correctly)
+        // Read until we find the closing ]. A metacharacter ends the word
+        // first: `[bin;` is the word `[bin`, not a bracket expression.
         while let Some(ch) = self.peek_char() {
+            if matches!(ch, ' ' | '\t' | '\n' | ';' | '&' | '|' | '<' | '>') {
+                break;
+            }
             word.push(ch);
             self.advance();
             if ch == ']' {
@@ -2338,6 +2366,13 @@ impl<'a> Lexer<'a> {
     /// way, so `<<` is a shift and spacing survives for `type`. Returns
     /// `None` when input ends first.
     pub fn read_dparen_body(&mut self) -> Option<String> {
+        self.read_dparen_body_checked().ok()
+    }
+
+    /// [`Self::read_dparen_body`], telling why it failed: `Err(true)` when
+    /// a `)` closed the inner `(` alone (`((cmd) )`), which bash reads as
+    /// nested subshells; `Err(false)` when input ran out.
+    pub fn read_dparen_body_checked(&mut self) -> Result<String, bool> {
         let mut body = String::new();
         let mut depth = 0usize;
         while let Some(c) = self.advance() {
@@ -2345,10 +2380,9 @@ impl<'a> Lexer<'a> {
                 '(' => depth += 1,
                 ')' if depth == 0 && self.peek_char() == Some(')') => {
                     self.advance();
-                    return Some(body);
+                    return Ok(body);
                 }
-                // An unbalanced `)` stays text.
-                ')' if depth == 0 => {}
+                ')' if depth == 0 => return Err(true),
                 ')' => depth -= 1,
                 '\\' => {
                     body.push(c);
@@ -2377,7 +2411,7 @@ impl<'a> Lexer<'a> {
             }
             body.push(c);
         }
-        None
+        Err(false)
     }
 
     /// Read the raw source of a `[[ ... =~ REGEX ]]` operand, as bash does:

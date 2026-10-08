@@ -110,3 +110,12 @@ d1/ d2/ l/
 d1/ d2/ f1/
 d2/s/
 ### end
+
+### glob_bracket_word_ends_at_metachar
+echo [bin; echo [!bin
+echo a[b
+### expect
+[bin
+[!bin
+a[b
+### end

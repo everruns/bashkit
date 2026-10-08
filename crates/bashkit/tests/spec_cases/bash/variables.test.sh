@@ -780,3 +780,21 @@ echo "after reset:${result}end"
 ### expect
 after reset:end
 ### end
+
+### transform_unset_quotes_to_nothing
+empty=''
+x=x
+echo ${x@Q} ${empty@Q} ${undef@Q} ${x@K} ${undef@k} ${x@A} ${undef@A}
+hello1=1 hello=()
+echo ${!hello@}
+### expect
+'x' '' 'x' x='x'
+hello hello1
+### end
+
+### transform_unset_with_nounset
+set -u
+(echo ${undef@Q}); echo "stat: $?"
+### expect
+stat: 1
+### end

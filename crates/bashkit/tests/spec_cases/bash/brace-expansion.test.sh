@@ -157,3 +157,17 @@ for x in {only}; do echo $x; done
 ### expect
 {only}
 ### end
+
+### brace_unclosed_open_brace_is_literal
+echo {{a,b}
+echo x{{a,b}y}z
+### expect
+{a {b
+x{ay}z x{by}z
+### end
+
+### brace_zero_step_is_one
+echo -{1..4..0}- {a..c..0}
+### expect
+-1- -2- -3- -4- a b c
+### end

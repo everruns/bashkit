@@ -2090,10 +2090,22 @@ impl<'a> Parser<'a> {
         if self.peeked_token.is_none() {
             // Read `(( expr ))` as written (see read_dparen_body); the
             // command keeps that text, so `type` prints it unchanged.
-            let Some(body) = self.lexer.read_dparen_body() else {
-                return Err(Error::parse(
-                    "unexpected end of input in arithmetic command".to_string(),
-                ));
+            let saved = self.lexer.clone();
+            let body = match self.lexer.read_dparen_body_checked() {
+                Ok(body) => body,
+                Err(true) => {
+                    // `((cmd) ...)`: two subshells, as bash reads it. Re-read
+                    // from just after `((`, with the second `(` put back.
+                    self.lexer = saved;
+                    self.lexer.unread_char('(');
+                    self.current_token = Some(tokens::Token::LeftParen);
+                    return self.parse_subshell();
+                }
+                Err(false) => {
+                    return Err(Error::parse(
+                        "unexpected end of input in arithmetic command".to_string(),
+                    ));
+                }
             };
             self.advance();
             return Ok(CompoundCommand::Arithmetic(body));
@@ -3656,7 +3668,20 @@ impl<'a> Parser<'a> {
             if ch == '\x00' {
                 // NUL sentinel from lexer: next char is a literal (escaped in source).
                 if let Some(literal_ch) = chars.next() {
-                    current.push(literal_ch);
+                    if literal_ch == '~'
+                        && !in_quoted_segment
+                        && (current.is_empty() || current.ends_with([':', '=']))
+                    {
+                        // `\~` where a tilde prefix could start: a quoted
+                        // part, so it never tilde-expands.
+                        if !current.is_empty() {
+                            push_part!(WordPart::Literal(std::mem::take(&mut current)));
+                        }
+                        parts.push(WordPart::Literal("~".to_string()));
+                        part_quoted.push(true);
+                    } else {
+                        current.push(literal_ch);
+                    }
                 }
             } else if ch == '\u{1e}' || ch == '\u{1f}' {
                 // A quote boundary ends the literal run, so `part_quoted`
@@ -4243,6 +4268,13 @@ impl<'a> Parser<'a> {
                                         false
                                     };
                                     let mut pattern = String::new();
+                                    // `${x///}`, `${x////c}`: the pattern
+                                    // cannot be empty, so a `/` right after
+                                    // `//` is the pattern itself.
+                                    if replace_all && chars.peek() == Some(&'/') {
+                                        chars.next();
+                                        pattern.push('/');
+                                    }
                                     let mut in_dq = false;
                                     while let Some(&ch) = chars.peek() {
                                         if ch == '\x00' {

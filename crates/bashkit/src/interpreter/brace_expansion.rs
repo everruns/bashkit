@@ -81,6 +81,18 @@ impl Interpreter {
         // No valid brace pattern found
         let (start, end) = match (brace_start, brace_end) {
             (Some(s), Some(e)) => (s, e),
+            // An unclosed `{` is literal; a later group may still close
+            // (`{{a,b}` -> `{a {b`).
+            (Some(open), None) => {
+                return self.expand_after_literal_brace(
+                    &chars,
+                    open,
+                    count,
+                    bytes,
+                    max,
+                    recursion_depth,
+                );
+            }
             _ => return vec![s.to_string()],
         };
 
@@ -267,7 +279,8 @@ impl Interpreter {
             // Parse optional step (default: 1 or -1 based on direction)
             let step: i64 = if parts.len() == 3 {
                 match parts[2].parse::<i64>() {
-                    Ok(0) => return None, // step=0 is invalid
+                    // bash treats a zero step as 1.
+                    Ok(0) => 1,
                     Ok(s) => s,
                     Err(_) => return None,
                 }
@@ -329,7 +342,7 @@ impl Interpreter {
             if start_char.is_ascii_alphabetic() && end_char.is_ascii_alphabetic() {
                 let step: i64 = if parts.len() == 3 {
                     match parts[2].parse::<i64>() {
-                        Ok(0) => return None,
+                        Ok(0) => 1,
                         Ok(s) => s,
                         Err(_) => return None,
                     }
