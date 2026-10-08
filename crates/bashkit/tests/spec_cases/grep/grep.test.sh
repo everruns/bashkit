@@ -758,3 +758,25 @@ grep -c --binary-files=without-match needle data.bin; echo "rc=$?"
 0
 rc=1
 ### end
+
+### grep_recursive_directory_cycle
+# Resolved ancestors are skipped; independent aliases must still be searched.
+mkdir -p /tmp/greploop/d
+printf 'x\n' > /tmp/greploop/d/f
+ln -s . /tmp/greploop/d/a
+grep -R x /tmp/greploop/d 2>&1 | sort
+### expect
+/tmp/greploop/d/f:x
+grep: /tmp/greploop/d/a: warning: recursive directory loop
+### end
+
+### grep_recursive_sibling_aliases
+mkdir -p /tmp/grepaliases/d /tmp/grepaliases/target
+printf 'x\n' > /tmp/grepaliases/target/f
+ln -s /tmp/grepaliases/target /tmp/grepaliases/d/a
+ln -s /tmp/grepaliases/target /tmp/grepaliases/d/b
+grep -R x /tmp/grepaliases/d | sort
+### expect
+/tmp/grepaliases/d/a/f:x
+/tmp/grepaliases/d/b/f:x
+### end

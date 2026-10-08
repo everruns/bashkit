@@ -494,6 +494,16 @@ probe of the 879 BRE/ERE regex cases except two whose pattern holds a raw
 - Options parse like getopt_long: mixed with operands, unique long-option
   prefixes, `-NUM`, `--label`, `-` for stdin, `-d read|skip|recurse`, `-R`
   following symlinks met while recursing (`-r` skips them).
+- Recursive traversal compares canonical paths only against the current ancestor
+  chain, using the VFS resolver shared with `find`. Cycles produce GNU's
+  `warning: recursive directory loop` and are skipped; separate sibling aliases
+  still search the same target under each display name. Diagnostics use the shared
+  errno formatter and a UTF-8-safe 1 KiB cap. Traversal and ancestor
+  comparisons consume shared work (checking deadline/cancellation), pending paths
+  and listings carry live-byte leases, and files are admitted by metadata size
+  before reading and scanned one at a time. Indexed search retains admitted paths
+  instead of contents. `-q` stops on the first matching file. Regression coverage:
+  `grep_recursive_security_tests` in the consolidated integration binary.
 
 Gaps are L-GREP-001..003 in [Known Limitations](../operations/limitations.md);
 regex caps are TM-DOS-023/025 in the [Threat Model](../security/threat-model.md).
