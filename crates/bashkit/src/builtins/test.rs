@@ -1,4 +1,10 @@
 //! test builtin command ([ and test)
+//!
+//! An operand bash cannot use is not false, it is an error: `test 1 -eq abc`
+//! writes `test: abc: integer expression expected` and exits 2. So the
+//! evaluator returns `Result<bool, TestError>` rather than a bare bool, and
+//! the two builtins turn the error into a diagnostic named after how they
+//! were invoked (`test:` or `[:`).
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -11,6 +17,17 @@ use crate::error::Result;
 use crate::fs::FileSystem;
 use crate::fs::vfs_join;
 use crate::interpreter::ExecResult;
+
+/// An expression bash refuses to answer: it writes a diagnostic and exits 2.
+struct TestError(String);
+
+/// `Ok` is the expression's truth value, `Err` a usage error (exit 2).
+type TestResult = std::result::Result<bool, TestError>;
+
+/// `test: abc: integer expression expected`, named after the invocation.
+fn usage_error(name: &str, e: TestError) -> ExecResult {
+    ExecResult::err(format!("{name}: {}\n", e.0), 2)
+}
 
 /// The test builtin command.
 pub struct Test;
@@ -25,12 +42,10 @@ impl Builtin for Test {
 
         let cwd = ctx.cwd.clone();
         // Parse and evaluate the expression
-        let result = evaluate_expression(ctx.args, &ctx.fs, &cwd, ctx.variables).await;
-
-        if result {
-            Ok(ExecResult::ok(String::new()))
-        } else {
-            Ok(ExecResult::err(String::new(), 1))
+        match evaluate_expression(ctx.args, &ctx.fs, &cwd, ctx.variables).await {
+            Ok(true) => Ok(ExecResult::ok(String::new())),
+            Ok(false) => Ok(ExecResult::err(String::new(), 1)),
+            Err(e) => Ok(usage_error("test", e)),
         }
     }
 }
@@ -56,12 +71,10 @@ impl Builtin for Bracket {
 
         let cwd = ctx.cwd.clone();
         // Parse and evaluate the expression
-        let result = evaluate_expression(&args, &ctx.fs, &cwd, ctx.variables).await;
-
-        if result {
-            Ok(ExecResult::ok(String::new()))
-        } else {
-            Ok(ExecResult::err(String::new(), 1))
+        match evaluate_expression(&args, &ctx.fs, &cwd, ctx.variables).await {
+            Ok(true) => Ok(ExecResult::ok(String::new())),
+            Ok(false) => Ok(ExecResult::err(String::new(), 1)),
+            Err(e) => Ok(usage_error("[", e)),
         }
     }
 }
@@ -82,15 +95,15 @@ fn evaluate_expression<'a>(
     fs: &'a Arc<dyn FileSystem>,
     cwd: &'a Path,
     variables: &'a HashMap<String, String>,
-) -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send + 'a>> {
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = TestResult> + Send + 'a>> {
     Box::pin(async move {
         if args.is_empty() {
-            return false;
+            return Ok(false);
         }
 
         // Handle negation
         if args[0] == "!" {
-            return !evaluate_expression(&args[1..], fs, cwd, variables).await;
+            return Ok(!evaluate_expression(&args[1..], fs, cwd, variables).await?);
         }
 
         // Handle parentheses (basic support)
@@ -99,17 +112,26 @@ fn evaluate_expression<'a>(
         }
 
         // Look for logical operators: -o has lowest precedence, then -a.
-        // Scan for -o first (split at lowest precedence first).
+        // Scan for -o first (split at lowest precedence first). A connective
+        // in the last position is not one: `test x -a` is the two-argument
+        // form, which bash reads as an unary operator and rejects.
         for (i, arg) in args.iter().enumerate() {
-            if arg == "-o" && i > 0 {
-                return evaluate_expression(&args[..i], fs, cwd, variables).await
-                    || evaluate_expression(&args[i + 1..], fs, cwd, variables).await;
+            if arg == "-o" && i > 0 && i + 1 < args.len() {
+                // Both sides are evaluated: bash's `test` connectives do not
+                // short-circuit, so a bad operand on the right is an error
+                // even when the left side already decides the answer.
+                let left = evaluate_expression(&args[..i], fs, cwd, variables).await;
+                let right = evaluate_expression(&args[i + 1..], fs, cwd, variables).await;
+                let (left, right) = (left?, right?);
+                return Ok(left || right);
             }
         }
         for (i, arg) in args.iter().enumerate() {
-            if arg == "-a" && i > 0 {
-                return evaluate_expression(&args[..i], fs, cwd, variables).await
-                    && evaluate_expression(&args[i + 1..], fs, cwd, variables).await;
+            if arg == "-a" && i > 0 && i + 1 < args.len() {
+                let left = evaluate_expression(&args[..i], fs, cwd, variables).await;
+                let right = evaluate_expression(&args[i + 1..], fs, cwd, variables).await;
+                let (left, right) = (left?, right?);
+                return Ok(left && right);
             }
         }
 
@@ -117,7 +139,7 @@ fn evaluate_expression<'a>(
         match args.len() {
             1 => {
                 // Single arg: true if non-empty string
-                !args[0].is_empty()
+                Ok(!args[0].is_empty())
             }
             2 => {
                 // Unary operators
@@ -127,7 +149,7 @@ fn evaluate_expression<'a>(
                 // Binary operators
                 evaluate_binary(&args[0], &args[1], &args[2], fs, cwd).await
             }
-            _ => false,
+            _ => Err(TestError("too many arguments".to_string())),
         }
     })
 }
@@ -139,96 +161,90 @@ async fn evaluate_unary(
     fs: &Arc<dyn FileSystem>,
     cwd: &Path,
     variables: &HashMap<String, String>,
-) -> bool {
+) -> TestResult {
     match op {
         // String tests
-        "-z" => arg.is_empty(),
-        "-n" => !arg.is_empty(),
+        "-z" => Ok(arg.is_empty()),
+        "-n" => Ok(!arg.is_empty()),
 
         // File tests using the virtual filesystem
         "-e" | "-a" => {
             // file exists
             let path = resolve_file_path(cwd, arg);
-            fs.exists(&path).await.unwrap_or(false)
+            Ok(fs.exists(&path).await.unwrap_or(false))
         }
         "-f" => {
             // regular file
             let path = resolve_file_path(cwd, arg);
-            if let Ok(meta) = fs.stat(&path).await {
-                meta.file_type.is_file()
-            } else {
-                false
-            }
+            Ok(match fs.stat(&path).await {
+                Ok(meta) => meta.file_type.is_file(),
+                Err(_) => false,
+            })
         }
         "-d" => {
             // directory
             let path = resolve_file_path(cwd, arg);
-            if let Ok(meta) = fs.stat(&path).await {
-                meta.file_type.is_dir()
-            } else {
-                false
-            }
+            Ok(match fs.stat(&path).await {
+                Ok(meta) => meta.file_type.is_dir(),
+                Err(_) => false,
+            })
         }
         "-r" => {
             // readable - in virtual fs, check if file exists
             // (permissions are stored but not enforced)
             let path = resolve_file_path(cwd, arg);
-            fs.exists(&path).await.unwrap_or(false)
+            Ok(fs.exists(&path).await.unwrap_or(false))
         }
         "-w" => {
             // writable - in virtual fs, check if file exists
             let path = resolve_file_path(cwd, arg);
-            fs.exists(&path).await.unwrap_or(false)
+            Ok(fs.exists(&path).await.unwrap_or(false))
         }
         "-x" => {
             // executable - in virtual fs, check if file exists and has executable permission
             let path = resolve_file_path(cwd, arg);
-            if let Ok(meta) = fs.stat(&path).await {
+            Ok(match fs.stat(&path).await {
                 // Check if any execute bit is set (u+x, g+x, o+x)
-                (meta.mode & 0o111) != 0
-            } else {
-                false
-            }
+                Ok(meta) => (meta.mode & 0o111) != 0,
+                Err(_) => false,
+            })
         }
         "-s" => {
             // file exists and has size > 0
             let path = resolve_file_path(cwd, arg);
-            if let Ok(meta) = fs.stat(&path).await {
-                meta.size > 0
-            } else {
-                false
-            }
+            Ok(match fs.stat(&path).await {
+                Ok(meta) => meta.size > 0,
+                Err(_) => false,
+            })
         }
         "-L" | "-h" => {
             // symbolic link
             let path = resolve_file_path(cwd, arg);
-            if let Ok(meta) = fs.lstat(&path).await {
-                meta.file_type.is_symlink()
-            } else {
-                false
-            }
+            Ok(match fs.lstat(&path).await {
+                Ok(meta) => meta.file_type.is_symlink(),
+                Err(_) => false,
+            })
         }
         "-p" => {
             // named pipe (FIFO)
             let path = resolve_file_path(cwd, arg);
-            if let Ok(meta) = fs.stat(&path).await {
-                meta.file_type.is_fifo()
-            } else {
-                false
-            }
+            Ok(match fs.stat(&path).await {
+                Ok(meta) => meta.file_type.is_fifo(),
+                Err(_) => false,
+            })
         }
-        "-S" => false, // socket (not supported)
-        "-b" => false, // block device (not supported)
-        "-c" => false, // character device (not supported)
+        "-S" => Ok(false), // socket (not supported)
+        "-b" => Ok(false), // block device (not supported)
+        "-c" => Ok(false), // character device (not supported)
         "-t" => {
             // file descriptor refers to a terminal
             // In VFS sandbox, defaults to false for all FDs.
             // Configurable via _TTY_N variables (e.g. _TTY_0=1 for stdin).
             let fd_key = format!("_TTY_{}", arg);
-            variables.get(&fd_key).map(|v| v == "1").unwrap_or(false)
+            Ok(variables.get(&fd_key).map(|v| v == "1").unwrap_or(false))
         }
 
-        _ => false,
+        _ => Err(TestError(format!("{op}: unary operator expected"))),
     }
 }
 
@@ -239,57 +255,68 @@ async fn evaluate_binary(
     right: &str,
     fs: &Arc<dyn FileSystem>,
     cwd: &Path,
-) -> bool {
+) -> TestResult {
     match op {
         // String comparisons
-        "=" | "==" => left == right,
-        "!=" => left != right,
-        "<" => left < right,
-        ">" => left > right,
+        "=" | "==" => Ok(left == right),
+        "!=" => Ok(left != right),
+        "<" => Ok(left < right),
+        ">" => Ok(left > right),
 
-        // Numeric comparisons
-        "-eq" => parse_int(left) == parse_int(right),
-        "-ne" => parse_int(left) != parse_int(right),
-        "-lt" => parse_int(left) < parse_int(right),
-        "-le" => parse_int(left) <= parse_int(right),
-        "-gt" => parse_int(left) > parse_int(right),
-        "-ge" => parse_int(left) >= parse_int(right),
+        // Numeric comparisons. An operand that is not an integer is a usage
+        // error, not a false comparison: bash exits 2 and says so.
+        "-eq" | "-ne" | "-lt" | "-le" | "-gt" | "-ge" => {
+            let (l, r) = (int_operand(left)?, int_operand(right)?);
+            Ok(match op {
+                "-eq" => l == r,
+                "-ne" => l != r,
+                "-lt" => l < r,
+                "-le" => l <= r,
+                "-gt" => l > r,
+                _ => l >= r,
+            })
+        }
 
         // File comparisons
         "-nt" => {
             // file1 is newer than file2
             let left_meta = fs.stat(&resolve_file_path(cwd, left)).await;
             let right_meta = fs.stat(&resolve_file_path(cwd, right)).await;
-            match (left_meta, right_meta) {
+            Ok(match (left_meta, right_meta) {
                 (Ok(lm), Ok(rm)) => lm.modified > rm.modified,
                 (Ok(_), Err(_)) => true, // left exists, right doesn't → left is newer
                 _ => false,
-            }
+            })
         }
         "-ot" => {
             // file1 is older than file2
             let left_meta = fs.stat(&resolve_file_path(cwd, left)).await;
             let right_meta = fs.stat(&resolve_file_path(cwd, right)).await;
-            match (left_meta, right_meta) {
+            Ok(match (left_meta, right_meta) {
                 (Ok(lm), Ok(rm)) => lm.modified < rm.modified,
                 (Err(_), Ok(_)) => true, // left doesn't exist, right does → left is older
                 _ => false,
-            }
+            })
         }
         "-ef" => {
             // file1 and file2 refer to the same file (same path after resolution)
             // In VFS without inodes, compare canonical paths
             let left_path = super::resolve_path(cwd, left);
             let right_path = super::resolve_path(cwd, right);
-            left_path == right_path
+            Ok(left_path == right_path)
         }
 
-        _ => false,
+        _ => Err(TestError(format!("{op}: binary operator expected"))),
     }
 }
 
-fn parse_int(s: &str) -> i64 {
-    s.trim().parse().unwrap_or(0)
+/// An integer operand of `-eq` and friends. Bash accepts surrounding
+/// whitespace and a sign but only decimal digits, so `0x10` and `1e3` are
+/// errors, and so is a value that does not fit in a 64-bit integer.
+fn int_operand(s: &str) -> std::result::Result<i64, TestError> {
+    s.trim()
+        .parse()
+        .map_err(|_| TestError(format!("{s}: integer expression expected")))
 }
 
 #[cfg(test)]
@@ -765,14 +792,105 @@ mod tests {
     // ==================== numeric parse edge cases ====================
 
     #[tokio::test]
-    async fn test_eq_non_numeric_treated_as_zero() {
+    async fn test_eq_non_numeric_is_a_usage_error() {
         let (fs, mut cwd, mut variables) = setup().await;
         let env = HashMap::new();
-        // Non-numeric values parse as 0
         let args = vec!["abc".to_string(), "-eq".to_string(), "0".to_string()];
         let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
         let result = Test.execute(ctx).await.unwrap();
-        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.exit_code, 2);
+        assert_eq!(
+            result.stderr.to_string(),
+            "test: abc: integer expression expected\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn bracket_names_itself_in_a_usage_error() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["a".to_string(), "-lt".to_string(), "]".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Bracket.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 2);
+        assert_eq!(result.stderr.to_string(), "[: a: unary operator expected\n");
+    }
+
+    #[tokio::test]
+    async fn unknown_binary_operator_is_a_usage_error() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec!["a".to_string(), "foo".to_string(), "b".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Test.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 2);
+        assert_eq!(
+            result.stderr.to_string(),
+            "test: foo: binary operator expected\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn four_operands_are_too_many() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec![
+            "a".to_string(),
+            "b".to_string(),
+            "c".to_string(),
+            "d".to_string(),
+        ];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Test.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 2);
+        assert_eq!(result.stderr.to_string(), "test: too many arguments\n");
+    }
+
+    /// `test`'s connectives do not short-circuit, so a bad operand on the
+    /// side that cannot change the answer is still an error.
+    #[tokio::test]
+    async fn a_connective_evaluates_both_sides() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args = vec![
+            "1".to_string(),
+            "-eq".to_string(),
+            "2".to_string(),
+            "-a".to_string(),
+            "abc".to_string(),
+            "-eq".to_string(),
+            "1".to_string(),
+        ];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Test.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 2);
+        assert_eq!(
+            result.stderr.to_string(),
+            "test: abc: integer expression expected\n"
+        );
+    }
+
+    /// Whitespace, a sign and leading zeros are fine; a base prefix,
+    /// an exponent and an out-of-range value are not.
+    #[tokio::test]
+    async fn integer_operand_follows_bash() {
+        for (operand, ok) in [
+            (" 5 ", true),
+            ("+5", true),
+            ("010", true),
+            ("0x10", false),
+            ("1e3", false),
+            ("99999999999999999999", false),
+            ("", false),
+        ] {
+            let (fs, mut cwd, mut variables) = setup().await;
+            let env = HashMap::new();
+            let args = vec![operand.to_string(), "-ne".to_string(), "0".to_string()];
+            let ctx =
+                Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+            let result = Test.execute(ctx).await.unwrap();
+            assert_eq!(result.exit_code == 2, !ok, "operand <{operand}>");
+        }
     }
 
     #[tokio::test]
