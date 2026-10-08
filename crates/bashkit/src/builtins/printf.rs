@@ -14,9 +14,9 @@ use super::generated::format::{
     FormatArgument, FormatArguments, FormatError, FormatItem, parse_spec_and_escape,
 };
 use super::limits::PRINTF_MAX_DIAG_CHARS as MAX_PRINTF_DIAG_CHARS;
-use super::{Builtin, Context, Date, MAX_FORMAT_WIDTH};
+use super::{Builtin, BuiltinSideEffect, Context, Date, MAX_FORMAT_WIDTH};
 use crate::error::Result;
-use crate::interpreter::{ExecResult, is_internal_variable};
+use crate::interpreter::{ExecResult, is_internal_variable, is_valid_var_name};
 
 /// printf builtin - formatted string output
 ///
@@ -43,29 +43,47 @@ impl Builtin for Printf {
         ) {
             return Ok(r);
         }
-        if ctx.args.is_empty() {
-            return Ok(ExecResult::ok(String::new()));
-        }
-
-        let mut args_iter = ctx.args.iter();
+        // Options as bash's getopt("v:") reads them: `-v NAME`, `-vNAME`,
+        // repeated `-v` (last wins), `--` ends them. A lone `-` is the format.
+        let mut args_iter = ctx.args.iter().peekable();
         let mut var_name: Option<String> = None;
-
-        let format = loop {
-            match args_iter.next() {
-                Some(arg) if arg == "-v" => {
-                    if let Some(vname) = args_iter.next() {
-                        var_name = Some(vname.clone());
-                    }
-                }
-                // `--` ends options; the next word is the format.
-                Some(arg) if arg == "--" => match args_iter.next() {
-                    Some(f) => break f.clone(),
-                    None => return Ok(ExecResult::ok(String::new())),
-                },
-                Some(arg) => break arg.clone(),
-                None => return Ok(ExecResult::ok(String::new())),
+        while let Some(arg) = args_iter.peek() {
+            if arg.as_str() == "--" {
+                args_iter.next();
+                break;
             }
+            let Some(rest) = arg.strip_prefix('-').filter(|r| !r.is_empty()) else {
+                break;
+            };
+            if let Some(name) = rest.strip_prefix('v') {
+                args_iter.next();
+                if !name.is_empty() {
+                    var_name = Some(name.to_string());
+                } else if let Some(name) = args_iter.next() {
+                    var_name = Some(name.clone());
+                } else {
+                    return Ok(usage_error(
+                        "bash: printf: -v: option requires an argument\n",
+                    ));
+                }
+            } else {
+                let opt: String = rest.chars().take(1).collect();
+                return Ok(usage_error(&format!(
+                    "bash: printf: -{opt}: invalid option\n"
+                )));
+            }
+        }
+        let Some(format) = args_iter.next().cloned() else {
+            return Ok(usage_error(""));
         };
+        if let Some(name) = &var_name
+            && !valid_var_target(name)
+        {
+            return Ok(ExecResult::err(
+                format!("bash: printf: `{name}': not a valid identifier\n"),
+                2,
+            ));
+        }
 
         let args: Vec<String> = args_iter.cloned().collect();
         let format = escape_format_backslash_c(&format).into_owned();
@@ -89,13 +107,34 @@ impl Builtin for Printf {
             if is_internal_variable(&name) {
                 return Ok(ExecResult::ok(String::new()));
             }
+            // Assigned by the interpreter like `read`: locals, namerefs,
+            // `a[i]` targets, `declare -i` arithmetic and readonly all apply.
             // Variables are text; a non-UTF-8 byte is decoded lossily here.
-            ctx.variables
-                .insert(name, String::from_utf8_lossy(&output).into_owned());
-            Ok(ExecResult::ok(String::new()))
+            let mut result = ExecResult::ok(String::new());
+            result.side_effects.push(BuiltinSideEffect::SetVariable {
+                name,
+                value: String::from_utf8_lossy(&output).into_owned(),
+            });
+            Ok(result)
         } else {
             Ok(ExecResult::ok_bytes(output))
         }
+    }
+}
+
+/// bash's usage failure: optional diagnostic, then the usage line, status 2.
+fn usage_error(diag: &str) -> ExecResult {
+    ExecResult::err(
+        format!("{diag}printf: usage: printf [-v var] format [arguments]\n"),
+        2,
+    )
+}
+
+/// A `-v` target: an identifier, or `name[subscript]`.
+fn valid_var_target(name: &str) -> bool {
+    match name.find('[') {
+        Some(b) => is_valid_var_name(&name[..b]) && name.ends_with(']') && name.len() > b + 2,
+        None => is_valid_var_name(name),
     }
 }
 

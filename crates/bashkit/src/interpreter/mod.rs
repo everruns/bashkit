@@ -10266,6 +10266,7 @@ impl Interpreter {
         self.refresh_shopt_flags();
         let effects = std::mem::take(&mut result.side_effects);
         let mut shift_failed = false;
+        let mut readonly_failed = false;
         let mut pending_self_signal = None;
         for effect in &effects {
             match effect {
@@ -10327,14 +10328,29 @@ impl Interpreter {
                     self.last_exit_code = *code;
                 }
                 builtins::BuiltinSideEffect::SetVariable { name, value } => {
+                    if readonly_failed {
+                        continue;
+                    }
                     // A builtin (read, getopts, ...) assigning through a
                     // circular nameref fails that command, as in bash,
                     // instead of abandoning the line like an assignment.
-                    if self.resolve_nameref_strict(name).is_err() {
+                    let Ok(target) = self.resolve_nameref_strict(name) else {
                         result
                             .stderr
                             .push_str(&format!("bash: warning: {name}: circular name reference\n"));
                         result.exit_code = 1;
+                        continue;
+                    };
+                    // THREAT[TM-INJ-019]: a readonly target fails the builtin
+                    // visibly (status 1) and, as in bash's `read`, the later
+                    // names are left alone.
+                    let base = target.split('[').next().unwrap_or(&target);
+                    if self.is_var_readonly(base) {
+                        result
+                            .stderr
+                            .push_str(&format!("bash: {base}: readonly variable\n"));
+                        result.exit_code = 1;
+                        readonly_failed = true;
                         continue;
                     }
                     self.set_variable(name.clone(), value.clone());
