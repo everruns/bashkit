@@ -34,7 +34,8 @@ flaky recording.
 The working-directory rule also keeps sandbox identity out of the corpus:
 bashkit's virtual filesystem starts in `/home/user` whatever the process cwd
 is, by design, so a case printing the real cwd would be a permanent gap that
-measures nothing.
+measures nothing. The same holds for host environment variables such as
+`LC_ALL` or `TZ`: the bashkit CLI does not import them, so cases do not print them.
 
 ```bash
 python3 scripts/bash-oracle/record.py          # all cases

@@ -4,6 +4,6 @@ filho vê: sim nada
 só-no-comando
 depois: vazio
 env -i: 1 sem home
-/home/sandbox sandbox C.UTF-8 
+/home/sandbox sandbox
 após unset: sumiu
 ### stderr
