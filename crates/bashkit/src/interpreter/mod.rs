@@ -7310,17 +7310,10 @@ impl Interpreter {
         if matches!(self.exec_fd_table.get(&2), Some(FdTarget::Stderr)) {
             self.exec_fd_table.remove(&2);
         }
-        let result = ExecResult::default();
-        // `{var}` redirects were fully applied above (their fd lives on).
-        if redirects.iter().any(|r| r.fd_var.is_some()) {
-            let numbered: Vec<Redirect> = redirects
-                .iter()
-                .filter(|r| r.fd_var.is_none())
-                .cloned()
-                .collect();
-            return self.apply_redirections(result, &numbered).await;
-        }
-        self.apply_redirections(result, redirects).await
+        // Every redirect was applied to the shell above (and validated
+        // there): re-applying them to `exec`'s empty output would check
+        // `1>&3` against the state after `3>&-`.
+        Ok(ExecResult::default())
     }
 
     /// Target for `exec N>&M` / `exec N>/dev/fd/M`.

@@ -108,39 +108,55 @@ mod resource_exhaustion {
         assert!(!fs.exists(Path::new("/out.zip")).await.unwrap());
     }
 
-    /// TM-DOS-063: Negative fd vars must be rejected and must not bypass fd limits.
+    /// TM-DOS-063: `{v}>file` ignores a prior (negative) value of `v`: bash
+    /// allocates the lowest free fd >= 10 and stores it, so a crafted value
+    /// can neither pick the fd nor bypass the fd limit.
     #[tokio::test]
-    async fn fd_limit_rejects_negative_fd_var_output() {
+    async fn fd_var_output_ignores_negative_value_and_respects_limit() {
         let limits = ExecutionLimits::new().max_file_descriptors(1);
         let mut bash = Bash::builder().limits(limits).build();
 
-        let result = bash.exec("v=-1; exec {v}>/tmp/neg-out").await;
+        let result = bash
+            .exec("v=-1; exec {v}>/tmp/neg-out; echo $v")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "10\n");
 
-        assert!(result.is_err());
+        let result = bash.exec("w=-1; exec {w}>/tmp/neg-out2").await;
         let err = result.unwrap_err().to_string();
-        assert!(
-            err.contains("invalid file descriptor"),
-            "Expected invalid file descriptor error, got: {}",
-            err
-        );
+        assert!(err.contains("file descriptor"), "got: {err}");
     }
 
-    /// TM-DOS-063: Negative fd vars for input must be rejected.
+    /// TM-DOS-063: same for input `{v}<file`.
     #[tokio::test]
-    async fn fd_limit_rejects_negative_fd_var_input() {
+    async fn fd_var_input_ignores_negative_value_and_respects_limit() {
         let limits = ExecutionLimits::new().max_file_descriptors(1);
         let mut bash = Bash::builder().limits(limits).build();
         bash.exec("echo hi >/tmp/neg-in").await.unwrap();
 
-        let result = bash.exec("v=-1; exec {v}</tmp/neg-in").await;
+        let result = bash
+            .exec("v=-1; exec {v}</tmp/neg-in; echo $v; read x <&$v; echo $x")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "10\nhi\n");
 
-        assert!(result.is_err());
+        let result = bash.exec("w=-1; exec {w}</tmp/neg-in").await;
         let err = result.unwrap_err().to_string();
-        assert!(
-            err.contains("invalid file descriptor"),
-            "Expected invalid file descriptor error, got: {}",
-            err
-        );
+        assert!(err.contains("file descriptor"), "got: {err}");
+    }
+
+    /// TM-DOS-063: `cmd {v}>file` on any command leaves the fd open (bash
+    /// never undoes `{var}` redirections), so a loop must hit the fd cap.
+    #[tokio::test]
+    async fn fd_var_on_plain_command_in_loop_hits_fd_limit() {
+        let limits = ExecutionLimits::new().max_file_descriptors(8);
+        let mut bash = Bash::builder().limits(limits).build();
+
+        let result = bash
+            .exec("for i in $(seq 100); do : {v}>/dev/null; done")
+            .await;
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("file descriptor"), "got: {err}");
     }
 
     /// Subsequent exec() calls recover after a prior call hits the command limit.
