@@ -210,6 +210,7 @@ pub use iconv::Iconv;
 pub use inspect::{File, Less, Stat};
 pub use install::Install;
 pub use introspect::{Hash, Type, Which};
+pub(crate) use jobctl::signal_name;
 pub use join::Join;
 #[cfg(feature = "jq")]
 pub use jq::Jq;

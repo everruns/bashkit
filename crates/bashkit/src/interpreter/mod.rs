@@ -9947,6 +9947,7 @@ impl Interpreter {
         self.refresh_shopt_flags();
         let effects = std::mem::take(&mut result.side_effects);
         let mut shift_failed = false;
+        let mut pending_self_signal = None;
         for effect in &effects {
             match effect {
                 builtins::BuiltinSideEffect::SetArray { name, elements } => {
@@ -9965,6 +9966,9 @@ impl Interpreter {
                     if !arr.is_empty() {
                         self.insert_array_checked(name.clone(), arr);
                     }
+                }
+                builtins::BuiltinSideEffect::SignalSelf(signal) => {
+                    pending_self_signal = Some(*signal);
                 }
                 builtins::BuiltinSideEffect::RemoveArray(name) => {
                     self.arrays_mut().remove(name);
@@ -10022,6 +10026,41 @@ impl Interpreter {
         if shift_failed {
             result.exit_code = 1;
         }
+        if let Some(signal) = pending_self_signal {
+            self.deliver_self_signal(signal, result).await;
+        }
+    }
+
+    /// `kill -SIG $$`: bash runs that signal's trap if one is set, and
+    /// otherwise lets the default action end the shell with status
+    /// 128 + signal. Signals whose default is to be ignored do neither.
+    async fn deliver_self_signal(&mut self, signal: i32, result: &mut ExecResult) {
+        if let Some(trap_cmd) = self.signal_trap(signal) {
+            let mut stdout = std::mem::take(&mut result.stdout);
+            let mut stderr = std::mem::take(&mut result.stderr);
+            let flow = self
+                .run_trap_command(&trap_cmd, &mut stdout, &mut stderr)
+                .await;
+            result.stdout = stdout;
+            result.stderr = stderr;
+            // An `exit` inside the handler ends the script, as it does in bash.
+            if let Some((ControlFlow::Exit(code), _)) = flow {
+                self.last_exit_code = code;
+                result.exit_code = code;
+                result.control_flow = ControlFlow::Exit(code);
+            }
+            return;
+        }
+        if matches!(
+            builtins::signal_name(signal),
+            Some("CHLD" | "URG" | "WINCH" | "CONT")
+        ) {
+            return;
+        }
+        let status = 128 + signal;
+        self.last_exit_code = status;
+        result.exit_code = status;
+        result.control_flow = ControlFlow::Exit(status);
     }
 
     /// Resolve a path relative to cwd, normalizing `.` and `..` components.
@@ -11341,6 +11380,53 @@ impl Interpreter {
         (crate::StreamData::new(), crate::StreamData::new())
     }
 
+    /// Run a trap handler's command, merging its output into the result the
+    /// caller is building.
+    /// Returns the handler's own control flow (an `exit` inside it), if any.
+    async fn run_trap_command(
+        &mut self,
+        trap_cmd: &str,
+        stdout: &mut crate::StreamData,
+        stderr: &mut crate::StreamData,
+    ) -> Option<(ControlFlow, i32)> {
+        // THREAT[TM-DOS-030]: Propagate interpreter parser limits.
+        let Ok(trap_script) = Parser::with_limits(
+            trap_cmd,
+            self.limits.max_ast_depth,
+            self.limits.max_parser_operations,
+        )
+        .with_execution_budget(self.execution_budget.clone())
+        .parse() else {
+            return None;
+        };
+        let was_in_trap = self.in_trap;
+        self.in_trap = true;
+        let emit_before = self.output_emit_count;
+        let result = self.execute_command_sequence(&trap_script.commands).await;
+        self.in_trap = was_in_trap;
+        let Ok(trap_result) = result else {
+            return None;
+        };
+        self.maybe_emit_output(&trap_result.stdout, &trap_result.stderr, emit_before);
+        stdout.append(&trap_result.stdout);
+        stderr.append(&trap_result.stderr);
+        Some((trap_result.control_flow, trap_result.exit_code))
+    }
+
+    /// The trap set for `signal`, under any of the spellings `trap` accepts
+    /// (`TERM`, `SIGTERM`, `15`).
+    fn signal_trap(&self, signal: i32) -> Option<String> {
+        let name = builtins::signal_name(signal);
+        let keys = [
+            name.map(str::to_string),
+            name.map(|n| format!("SIG{n}")),
+            Some(signal.to_string()),
+        ];
+        keys.into_iter()
+            .flatten()
+            .find_map(|key| self.scoped.traps.get(&key).cloned())
+    }
+
     async fn run_err_trap(
         &mut self,
         stdout: &mut crate::StreamData,
@@ -11352,25 +11438,7 @@ impl Interpreter {
             return;
         }
         if let Some(trap_cmd) = self.scoped.traps.get("ERR").cloned() {
-            // THREAT[TM-DOS-030]: Propagate interpreter parser limits
-            if let Ok(trap_script) = Parser::with_limits(
-                &trap_cmd,
-                self.limits.max_ast_depth,
-                self.limits.max_parser_operations,
-            )
-            .with_execution_budget(self.execution_budget.clone())
-            .parse()
-            {
-                self.in_trap = true;
-                let emit_before = self.output_emit_count;
-                let result = self.execute_command_sequence(&trap_script.commands).await;
-                self.in_trap = false;
-                if let Ok(trap_result) = result {
-                    self.maybe_emit_output(&trap_result.stdout, &trap_result.stderr, emit_before);
-                    stdout.append(&trap_result.stdout);
-                    stderr.append(&trap_result.stderr);
-                }
-            }
+            let _ = self.run_trap_command(&trap_cmd, stdout, stderr).await;
         }
     }
 }

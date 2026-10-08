@@ -52,6 +52,9 @@ pub enum BuiltinSideEffect {
     SetLastExitCode(i32),
     /// Set a shell variable (respects local scoping via `set_variable`).
     SetVariable { name: String, value: String },
+    /// The shell signalled itself (`kill -SIG $$`): run that signal's trap if
+    /// one is set, otherwise end the script with status 128 + signal.
+    SignalSelf(i32),
 }
 
 /// Result of executing a bash script.
