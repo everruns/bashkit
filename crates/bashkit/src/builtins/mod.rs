@@ -209,6 +209,7 @@ pub use http::Http;
 pub use iconv::Iconv;
 pub use inspect::{File, Less, Stat};
 pub use install::Install;
+pub(crate) use introspect::CommandHash;
 pub use introspect::{Hash, Type, Which};
 pub(crate) use jobctl::signal_name;
 pub use join::Join;
@@ -267,7 +268,10 @@ pub use trap::Trap;
 pub use tree::Tree;
 pub use truncate::Truncate;
 pub use vars::{Eval, Local, Readonly, Set, Shift, Shopt, Times, Unset};
-pub(crate) use vars::{SET_O_OPTIONS, dollar_dash};
+pub(crate) use vars::{
+    SET_O_OPTIONS, bashopts_value, dollar_dash, set_o_var_by_letter, set_o_var_by_name,
+    shellopts_value, shopt_known,
+};
 pub use verify::Verify;
 #[cfg(feature = "terminal")]
 pub use vi::Vi;
@@ -690,13 +694,35 @@ pub(crate) async fn search_path(ctx: &Context<'_>, name: &str) -> Option<String>
 }
 
 /// Every executable `name` along `PATH`, in order (`type -a`); stops at the
-/// first when `first_only`.
+/// first when `first_only`. A relative `PATH` entry (`_tmp`, or an empty one,
+/// which means `.`) is looked up from the current directory but reported as
+/// written (`_tmp/pwd`), as bash does.
 pub(crate) async fn search_path_all(
     ctx: &Context<'_>,
     name: &str,
     first_only: bool,
 ) -> Vec<String> {
+    search_path_with(ctx, name, first_only, false).await
+}
+
+/// bash's `find_user_command`: the first executable `name` along `PATH`, or
+/// failing that the first regular file of that name (`type -t` says `file`,
+/// running it fails with "Permission denied").
+pub(crate) async fn search_path_or_file(ctx: &Context<'_>, name: &str) -> Option<String> {
+    search_path_with(ctx, name, true, true)
+        .await
+        .into_iter()
+        .next()
+}
+
+async fn search_path_with(
+    ctx: &Context<'_>,
+    name: &str,
+    first_only: bool,
+    file_fallback: bool,
+) -> Vec<String> {
     let mut found = Vec::new();
+    let mut fallback = None;
     if name.is_empty() || name.contains('/') {
         return found;
     }
@@ -706,20 +732,41 @@ pub(crate) async fn search_path_all(
         .or_else(|| ctx.env.get("PATH"))
         .cloned()
         .unwrap_or_default();
-    for dir in path_var.split(':').filter(|d| !d.is_empty()) {
-        let candidate = format!("{}/{name}", dir.trim_end_matches('/'));
-        if let Ok(meta) = ctx.fs.stat(Path::new(&candidate)).await
-            && meta.file_type.is_file()
-            && meta.mode & 0o111 != 0
-            && !found.contains(&candidate)
-        {
-            found.push(candidate);
-            if first_only {
-                break;
+    for dir in path_var.split(':') {
+        let candidate = path_candidate(dir, name);
+        let resolved = resolve_path(ctx.cwd, &candidate);
+        let Ok(meta) = ctx.fs.stat(&resolved).await else {
+            continue;
+        };
+        if !meta.file_type.is_file() || found.contains(&candidate) {
+            continue;
+        }
+        if meta.mode & 0o111 == 0 {
+            if file_fallback && fallback.is_none() {
+                fallback = Some(candidate);
             }
+            continue;
+        }
+        found.push(candidate);
+        if first_only {
+            break;
         }
     }
+    if found.is_empty()
+        && let Some(file) = fallback
+    {
+        found.push(file);
+    }
     found
+}
+
+/// `dir/name` for one `PATH` entry; an empty entry is the current directory.
+pub(crate) fn path_candidate(dir: &str, name: &str) -> String {
+    if dir.is_empty() {
+        format!("./{name}")
+    } else {
+        format!("{}/{name}", dir.trim_end_matches('/'))
+    }
 }
 
 /// One step requested by a [`PlanDriver`].

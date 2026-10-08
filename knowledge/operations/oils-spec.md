@@ -17,20 +17,25 @@ Implemented. Harness: `scripts/oils-spec/run.py` (`just oils-spec`).
 
 ## Headline
 
-**78.8%**: bashkit passes 2120 of the 2692 Oils spec cases real bash 5.2.21
-passes (2759 cases in 132 spec files; bashkit passes 2127 of all cases,
-77.1%). Oils `57d3f0d088c3`, 2026-10-08. Report:
-`scripts/oils-spec/results/oils-spec-linux-x86_64-20261008T132606Z.md`.
+**82.1%**: bashkit passes 2211 of the 2692 Oils spec cases real bash 5.2.21
+passes (2759 cases in 132 spec files; bashkit passes 2218 of all cases,
+80.4%). Oils `57d3f0d088c3`, 2026-10-08. Report:
+`scripts/oils-spec/results/oils-spec-linux-x86_64-20261008T152730Z.md`.
 The first run (74.2%, `...T103235Z.md`) missed 16 cases each in
 `globignore` and `word-split`, 14 in `builtin-cd`, 13 in `alias` and
-`dbracket`; those files now miss 1, 0, 5, 7 and 1. The run before this one
-(77.3%, `...T115238Z.md`) missed 9 in `tilde` and `var-op-patsub`, 8 in
-`var-op-bash` and `brace-expansion`, 5 in `glob`, `loop` and
-`paren-ambiguity`; they now miss 1, 2, 3, 4, 3, 0 and 0.
+`dbracket`; those files now miss 1, 0, 4, 7 and 1. The run before this one
+(78.8%, `...T132606Z.md`) missed 12 in `builtin-type-bash`, 11 in
+`sh-options` and `vars-special`, 9 in `redirect-multi`, 7 in `command_`,
+`redirect` and `sh-usage`, 6 in `here-doc` and `sh-options-bash`, 5 in
+`builtin-eval-source`; they now miss 0, 4, 4, 0, 0, 2, 3, 0, 0 and 0. What
+is left there is interactive-only, the harness running bashkit with `-c`
+(`$-` holds `c`), or listed in [Known Limitations](limitations.md)
+(byte-wise glob under `LC_ALL=C`, FIFOs, `<>` offsets, `-v` echo, the
+empty startup environment, `$LINENO` in a top-level `(( ))`).
 
 Spec files with the most misses at the latest run: `builtin-completion`
-(34), `array` (25), `prompt` (25), `builtin-trap-bash` (19), `var-ref` (15).
-28 of the 132 files pass completely.
+(34), `prompt` (25), `array` (23), `builtin-trap-bash` (19), `var-ref` (15).
+36 of the 132 files pass completely.
 
 ## Why
 

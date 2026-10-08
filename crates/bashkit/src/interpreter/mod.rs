@@ -362,6 +362,12 @@ pub(crate) struct ShellRef<'a> {
     /// Directory stack for `pushd`/`popd`/`dirs`. Direct mutable access backed
     /// by `Arc::make_mut` of the parent's Arc-wrapped stack.
     pub(crate) dir_stack: &'a mut Vec<String>,
+    /// Command hash table (`hash`, `type`'s "is hashed").
+    pub(crate) command_hash: &'a mut builtins::CommandHash,
+    /// `test -v NAME` answers, worked out by the interpreter (which knows
+    /// arrays, namerefs and dynamic variables) for each operand that follows
+    /// a `-v` in a `test`/`[` call. Empty for every other builtin.
+    pub(crate) set_vars: &'a [String],
     /// Registered builtin commands (read-only, accessed via `has_builtin`).
     pub(crate) builtins: &'a HashMap<String, Arc<dyn Builtin>>,
     /// Host-owned builtin registry, when configured (read-only). Needed so
@@ -1308,6 +1314,9 @@ struct ScopedState {
     /// `cwd`, not part of this vec. Previously stored as `_DIRSTACK_*` shell
     /// variables; now typed state so it can't be forged from a script.
     dir_stack: Arc<Vec<String>>,
+    /// Command hash table: `$PATH` lookups remembered until `hash -r` or a
+    /// `PATH` assignment. A subshell gets a copy.
+    command_hash: Arc<builtins::CommandHash>,
 }
 
 /// All interpreter state mutated inside a `$(...)` / arithmetic substitution
@@ -1317,9 +1326,18 @@ struct ScopedState {
 /// (`Arc::make_mut`). For substitutions that don't mutate state at all (the
 /// common case — `$(echo $x)`, command queries) this saves an entire deep
 /// HashMap clone per substitution.
+/// What `enter_output_region` changed, for `leave_output_region`.
+struct OutputRegion {
+    callback: Option<OutputCallback>,
+    merge: bool,
+}
+
 /// Results gathered while a pipeline runs (see `execute_pipeline`).
 #[derive(Default)]
 struct PipelineAcc {
+    /// `merge_stderr` outside the pipeline: off inside a multi-stage one,
+    /// whose stages' stdout feeds a pipe.
+    merge: bool,
     statuses: Vec<i32>,
     stderr: crate::StreamData,
     stderr_truncated: bool,
@@ -1352,6 +1370,7 @@ struct SubshellSnapshot {
     last_bg_pid: Option<String>,
     seconds_base: (crate::time_compat::Instant, i64),
     bash_subshell: u32,
+    bashpid: u32,
     xtrace_depth: usize,
     err_trap_dormant: bool,
     line_base: usize,
@@ -1481,6 +1500,17 @@ pub struct Interpreter {
     /// of the command about to run. A redirect `exec` installs applies from
     /// there on, so these mark where routing starts.
     sequence_accum: (usize, usize),
+    /// Inside a redirect region where fd 2 and fd 1 end up at the same place
+    /// (`{ ...; } 2>&1`, `f &>log`, `bash -c ... 2>&1`): each command's
+    /// stderr joins stdout as it finishes, so the two keep their order.
+    /// Off in command substitutions and multi-stage pipelines, whose stdout
+    /// goes somewhere else.
+    merge_stderr: bool,
+    /// The running command has a `PATH=...` prefix assignment: bash then
+    /// searches that PATH without the hash table and hashes nothing.
+    temp_path: bool,
+    /// `ShellRef::set_vars` for the running `test`/`[` call.
+    test_set_vars: Vec<String>,
     /// `sequence_accum` as it was when `exec` last installed a target for
     /// fd 1 or 2: output written before that keeps going to the caller.
     exec_install_mark: (usize, usize),
@@ -1522,6 +1552,9 @@ pub struct Interpreter {
     builtin_stdin_pipe: Option<Arc<pipe::Pipe>>,
     /// `$BASH_SUBSHELL`: subshell nesting (`( )`, `$( )`, pipeline stages, jobs).
     bash_subshell: u32,
+    /// `$BASHPID` of the subshell running now: a virtual pid from the job
+    /// table's sequence, 0 in the shell itself (whose `$BASHPID` is `$$`).
+    bashpid: u32,
     /// Extra `set -x` prefix levels: `$(...)`, `eval`, `source` and trap
     /// handlers each repeat PS4's first character once more (`++ cmd`).
     xtrace_depth: usize,
@@ -2083,6 +2116,9 @@ impl Interpreter {
         // Synthetic, never read from the host (TM-INF rules).
         variables.insert("PATH".to_string(), DEFAULT_PATH.to_string());
         variables.insert("SHELL".to_string(), "/bin/bash".to_string());
+        // `$_` starts as the shell's own path (bash), so `set -u` scripts
+        // can read it before any command ran.
+        variables.insert("_".to_string(), "/bin/bash".to_string());
         variables.insert("SHLVL".to_string(), "1".to_string());
         variables.insert("OSTYPE".to_string(), "linux-gnu".to_string());
         variables.insert("HOSTTYPE".to_string(), "x86_64".to_string());
@@ -2101,12 +2137,24 @@ impl Interpreter {
             RandomState::new().build_hasher().finish() as u32
         };
 
+        // Read-only from startup, as in bash: the user ids and parent pid
+        // (`UID=0 cmd` cannot fake them) and the option lists, which are
+        // computed on read (see `expand_variable`).
+        let mut var_attrs = HashMap::new();
+        for name in ["UID", "EUID", "PPID"] {
+            var_attrs.insert(name.to_string(), VarAttrs::READONLY | VarAttrs::INTEGER);
+        }
+        for name in ["SHELLOPTS", "BASHOPTS"] {
+            var_attrs.insert(name.to_string(), VarAttrs::READONLY);
+        }
+
         Self {
             fs,
             env: Arc::new(HashMap::new()),
             scoped: ScopedState {
                 variables: Arc::new(variables),
                 arrays: Arc::new(arrays),
+                var_attrs: Arc::new(var_attrs),
                 ..Default::default()
             },
             flags: BashFlags::empty(),
@@ -2137,6 +2185,9 @@ impl Interpreter {
             source_depth: 0,
             last_command_name: String::new(),
             sequence_accum: (0, 0),
+            merge_stderr: false,
+            temp_path: false,
+            test_set_vars: Vec::new(),
             exec_install_mark: (0, 0),
             #[cfg(feature = "http_client")]
             http_client: None,
@@ -2153,6 +2204,7 @@ impl Interpreter {
             builtin_stdout_pipe: None,
             builtin_stdin_pipe: None,
             bash_subshell: 0,
+            bashpid: 0,
             xtrace_depth: 0,
             getopts_char_idx: 0,
             last_bg_pid: None,
@@ -2305,6 +2357,9 @@ impl Interpreter {
             source_depth: self.source_depth,
             last_command_name: self.last_command_name.clone(),
             sequence_accum: self.sequence_accum,
+            merge_stderr: false,
+            temp_path: false,
+            test_set_vars: Vec::new(),
             exec_install_mark: self.exec_install_mark,
             flags: self.flags,
             cwd: self.cwd.clone(),
@@ -2347,6 +2402,7 @@ impl Interpreter {
             builtin_stdout_pipe: None,
             builtin_stdin_pipe: None,
             bash_subshell: self.bash_subshell + 1,
+            bashpid: self.jobs.lock().alloc_pid(),
             xtrace_depth: self.xtrace_depth,
             getopts_char_idx: self.getopts_char_idx,
             last_bg_pid: self.last_bg_pid.clone(),
@@ -3515,6 +3571,9 @@ impl Interpreter {
                 )
                 .await?;
             }
+            if self.merge_stderr {
+                Self::merge_stderr_into_stdout(&mut result);
+            }
             self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
             if top_level {
                 self.flush_exec_passthrough(&mut result);
@@ -3962,6 +4021,9 @@ impl Interpreter {
             return;
         }
         match result {
+            // fd 2 joins fd 1 here: the trace and substitution stderr were
+            // written before the command's output.
+            Ok(r) if self.merge_stderr => r.stdout = queued + &r.stdout,
             Ok(r) => r.stderr = queued + &r.stderr,
             Err(_) => {
                 let later = std::mem::take(&mut self.subst_stderr);
@@ -4117,6 +4179,7 @@ impl Interpreter {
                 let snap = self.snapshot_subshell_state();
                 let saved_call_stack = self.call_stack.clone();
                 self.bash_subshell += 1;
+                self.enter_subshell_pid();
                 self.enter_nofork_scope(commands, true, SUBSHELL_PAREN);
                 self.enter_subshell_err_scope();
                 let saved_exit = self.last_exit_code;
@@ -4647,6 +4710,9 @@ impl Interpreter {
                 self.counters.tick_loop(&self.limits)?;
 
                 // Check condition (if empty, always true)
+                // The clauses see the `for` line, not the body's last one.
+                let for_line = self.line_base + arith_for.span.line();
+                self.current_line = for_line;
                 if !arith_for.condition.is_empty() {
                     let condition = self.arith_for_expr(&arith_for.condition).await?;
                     let cond_result = self.evaluate_arithmetic(&condition);
@@ -4675,6 +4741,7 @@ impl Interpreter {
 
                 // Execute step
                 if !arith_for.step.is_empty() {
+                    self.current_line = for_line;
                     let step = self.arith_for_expr(&arith_for.step).await?;
                     self.execute_arithmetic_with_side_effects(&step);
                 }
@@ -5534,20 +5601,6 @@ impl Interpreter {
     ///
     /// SECURITY: This re-invokes the virtual interpreter, NOT external bash.
     /// See threat model TM-ESC-015 for security analysis.
-    /// Map a `-o` option name to its internal variable representation.
-    fn resolve_shell_option_name(opt: &str) -> Option<(&'static str, &'static str)> {
-        match opt {
-            "errexit" => Some(("SHOPT_e", "1")),
-            "nounset" => Some(("SHOPT_u", "1")),
-            "xtrace" => Some(("SHOPT_x", "1")),
-            "verbose" => Some(("SHOPT_v", "1")),
-            "pipefail" => Some(("SHOPT_pipefail", "1")),
-            "noglob" => Some(("SHOPT_f", "1")),
-            "noclobber" => Some(("SHOPT_C", "1")),
-            _ => None,
-        }
-    }
-
     /// Build the "invalid option" error real Bash prints when the shell is
     /// invoked with an unknown option (e.g. `bash --verison` or `bash -q`).
     /// Bash exits 2 and prints the offending option plus a usage line. We keep
@@ -5562,19 +5615,24 @@ impl Interpreter {
         )
     }
 
-    /// Parse `bash`/`sh` command-line arguments into structured form.
-    /// Returns `Err(ExecResult)` for --version/--help (already produced output).
+    /// Parse `bash`/`sh` command-line arguments into structured form, the
+    /// way bash's `parse_shell_options` does: options (`-x`, `+x`, `-o NAME`,
+    /// `-O SHOPT`, clusters like `-xe`) run until the first word that is not
+    /// one; `-` or `--` ends them and is dropped. `-c` (or `+c`) only marks
+    /// command mode: the command string is the first word after the options
+    /// (`bash -c -x 'echo hi'`), and the words after it are `$0`, `$1`, ...
+    /// Returns `Err(ExecResult)` for --version/--help and usage errors.
     #[allow(clippy::type_complexity, clippy::result_large_err)]
     fn parse_shell_args(
         shell_name: &str,
         args: &[String],
     ) -> std::result::Result<
         (
-            Option<String>,                    // command_string (-c)
-            Option<String>,                    // script_file
-            Vec<String>,                       // script_args
-            bool,                              // noexec
-            Vec<(&'static str, &'static str)>, // shell_opts
+            Option<String>,        // command_string (-c)
+            Option<String>,        // script_file
+            Vec<String>,           // script_args
+            bool,                  // noexec
+            Vec<(String, String)>, // shell_opts (variable, value)
         ),
         ExecResult,
     > {
@@ -5582,12 +5640,14 @@ impl Interpreter {
         let mut script_file: Option<String> = None;
         let mut script_args: Vec<String> = Vec::new();
         let mut noexec = false;
-        let mut shell_opts: Vec<(&str, &str)> = Vec::new();
+        let mut want_command = false;
+        let mut shell_opts: Vec<(String, String)> = Vec::new();
         let mut idx = 0;
+        let flag = |on: bool| if on { "1" } else { "0" }.to_string();
 
         while idx < args.len() {
-            let arg = &args[idx];
-            match arg.as_str() {
+            let arg = args[idx].as_str();
+            match arg {
                 "--version" => {
                     return Err(ExecResult::ok(format!(
                         "Bashkit {} (virtual {} interpreter)\n",
@@ -5606,77 +5666,14 @@ impl Interpreter {
                          \t-x\t\tPrint commands before execution (xtrace)\n\
                          \t-u\t\tError on unset variables (nounset)\n\
                          \t-o option\tSet option by name\n\
+                         \t-O shopt\tSet shopt option by name\n\
                          \t--version\tShow version\n\
                          \t--help\t\tShow this help\n",
                         shell_name
                     )));
                 }
-                "-c" => {
+                "-" | "--" => {
                     idx += 1;
-                    if idx >= args.len() {
-                        return Err(ExecResult::err(
-                            format!("{}: -c: option requires an argument\n", shell_name),
-                            2,
-                        ));
-                    }
-                    command_string = Some(args[idx].clone());
-                    idx += 1;
-                    script_args = args[idx..].to_vec();
-                    break;
-                }
-                "-n" => {
-                    noexec = true;
-                    idx += 1;
-                }
-                "-e" => {
-                    shell_opts.push(("SHOPT_e", "1"));
-                    idx += 1;
-                }
-                "-x" => {
-                    shell_opts.push(("SHOPT_x", "1"));
-                    idx += 1;
-                }
-                "-u" => {
-                    shell_opts.push(("SHOPT_u", "1"));
-                    idx += 1;
-                }
-                "-v" => {
-                    shell_opts.push(("SHOPT_v", "1"));
-                    idx += 1;
-                }
-                "-f" => {
-                    shell_opts.push(("SHOPT_f", "1"));
-                    idx += 1;
-                }
-                "-o" => {
-                    idx += 1;
-                    if idx >= args.len() {
-                        return Err(ExecResult::err(
-                            format!("{}: -o: option requires an argument\n", shell_name),
-                            2,
-                        ));
-                    }
-                    let opt = &args[idx];
-                    if let Some(pair) = Self::resolve_shell_option_name(opt) {
-                        shell_opts.push(pair);
-                    } else {
-                        return Err(ExecResult::err(
-                            format!("{}: set: {}: invalid option name\n", shell_name, opt),
-                            2,
-                        ));
-                    }
-                    idx += 1;
-                }
-                "-i" | "-s" => {
-                    idx += 1;
-                }
-                "--" => {
-                    idx += 1;
-                    if idx < args.len() {
-                        script_file = Some(args[idx].clone());
-                        idx += 1;
-                        script_args = args[idx..].to_vec();
-                    }
                     break;
                 }
                 s if s.starts_with("--") => {
@@ -5685,23 +5682,16 @@ impl Interpreter {
                     // rest) so valid options like `--norc` keep working, and
                     // reject typos like `--verison` the way Bash does.
                     let name = s.split('=').next().unwrap_or(s);
+                    idx += 1;
                     match name {
-                        "--verbose" => {
-                            shell_opts.push(("SHOPT_v", "1"));
-                            idx += 1;
-                        }
+                        "--verbose" => shell_opts.push(("SHOPT_v".to_string(), flag(true))),
                         // Accepted by Bash but not modelled here (no-op).
                         "--login" | "--noprofile" | "--norc" | "--noediting" | "--posix"
                         | "--restricted" | "--protected" | "--debugger" | "--debug"
-                        | "--dump-strings" | "--dump-po-strings" => {
-                            idx += 1;
-                        }
+                        | "--dump-strings" | "--dump-po-strings" => {}
                         // These take an argument, as `--opt=VAL` or `--opt VAL`.
                         "--rcfile" | "--init-file" | "--wordexp" => {
-                            if s.contains('=') {
-                                idx += 1;
-                            } else {
-                                idx += 1;
+                            if !s.contains('=') {
                                 if idx >= args.len() {
                                     return Err(ExecResult::err(
                                         format!(
@@ -5716,78 +5706,77 @@ impl Interpreter {
                         _ => return Err(Self::shell_invalid_option(shell_name, s)),
                     }
                 }
-                s if s.starts_with('-') && s.len() > 1 => {
-                    let chars: Vec<char> = s.chars().skip(1).collect();
-                    let mut ci = 0;
-                    let mut consumed_c = false;
-                    while ci < chars.len() {
-                        match chars[ci] {
-                            'n' => noexec = true,
-                            'e' => shell_opts.push(("SHOPT_e", "1")),
-                            'x' => shell_opts.push(("SHOPT_x", "1")),
-                            'u' => shell_opts.push(("SHOPT_u", "1")),
-                            'v' => shell_opts.push(("SHOPT_v", "1")),
-                            'f' => shell_opts.push(("SHOPT_f", "1")),
-                            // Accepted by Bash at invocation but not acted on here.
-                            'a' | 'b' | 'h' | 'k' | 'm' | 'p' | 't' | 'B' | 'C' | 'E' | 'H'
-                            | 'P' | 'T' | 'i' | 'l' | 'r' | 's' | 'D' => {}
-                            'c' => {
-                                // -c consumes the next arg as the command string.
-                                idx += 1;
-                                if idx >= args.len() {
+                s if (s.starts_with('-') || s.starts_with('+')) && s.len() > 1 => {
+                    let on = s.starts_with('-');
+                    idx += 1;
+                    for c in s.chars().skip(1) {
+                        match c {
+                            'c' => want_command = true,
+                            'n' => noexec = on,
+                            // Accepted at invocation but not acted on here.
+                            'i' | 'l' | 'r' | 's' | 'D' => {}
+                            'o' | 'O' => {
+                                let Some(name) = args.get(idx) else {
                                     return Err(ExecResult::err(
-                                        format!("{shell_name}: -c: option requires an argument\n"),
+                                        format!(
+                                            "{shell_name}: -{c}: option requires an argument\n"
+                                        ),
                                         2,
                                     ));
-                                }
-                                command_string = Some(args[idx].clone());
+                                };
                                 idx += 1;
-                                script_args = args[idx..].to_vec();
-                                consumed_c = true;
-                                break;
-                            }
-                            'o' => {
-                                idx += 1;
-                                if idx >= args.len() {
-                                    return Err(ExecResult::err(
-                                        format!("{shell_name}: -o: option requires an argument\n"),
-                                        2,
-                                    ));
-                                }
-                                match Self::resolve_shell_option_name(&args[idx]) {
-                                    Some(pair) => shell_opts.push(pair),
+                                let var = if c == 'o' {
+                                    builtins::set_o_var_by_name(name).map(str::to_string)
+                                } else {
+                                    builtins::shopt_known(name).then(|| format!("SHOPT_{name}"))
+                                };
+                                match var {
+                                    Some(var) => shell_opts.push((var, flag(on))),
                                     None => {
+                                        let what = if c == 'o' {
+                                            "set: {name}: invalid option name"
+                                        } else {
+                                            "{name}: invalid shell option name"
+                                        };
                                         return Err(ExecResult::err(
                                             format!(
-                                                "{shell_name}: set: {}: invalid option name\n",
-                                                args[idx]
+                                                "{shell_name}: {}\n",
+                                                what.replace("{name}", name)
                                             ),
                                             2,
                                         ));
                                     }
                                 }
                             }
-                            other => {
-                                return Err(Self::shell_invalid_option(
-                                    shell_name,
-                                    &format!("-{other}"),
-                                ));
-                            }
+                            other => match builtins::set_o_var_by_letter(other) {
+                                Some(var) => shell_opts.push((var.to_string(), flag(on))),
+                                None => {
+                                    let sign = if on { '-' } else { '+' };
+                                    return Err(Self::shell_invalid_option(
+                                        shell_name,
+                                        &format!("{sign}{other}"),
+                                    ));
+                                }
+                            },
                         }
-                        ci += 1;
                     }
-                    if consumed_c {
-                        break;
-                    }
-                    idx += 1;
                 }
-                _ => {
-                    script_file = Some(arg.clone());
-                    idx += 1;
-                    script_args = args[idx..].to_vec();
-                    break;
-                }
+                _ => break,
             }
+        }
+
+        if want_command {
+            let Some(cmd) = args.get(idx) else {
+                return Err(ExecResult::err(
+                    format!("{shell_name}: -c: option requires an argument\n"),
+                    2,
+                ));
+            };
+            command_string = Some(cmd.clone());
+            script_args = args[idx + 1..].to_vec();
+        } else if let Some(file) = args.get(idx) {
+            script_file = Some(file.clone());
+            script_args = args[idx + 1..].to_vec();
         }
 
         Ok((command_string, script_file, script_args, noexec, shell_opts))
@@ -6007,17 +5996,7 @@ impl Interpreter {
         // Output the `bash` command's own redirects will route must not stream
         // from the child first (`bash -c 'echo x >&2' 2>/dev/null` printed x),
         // as for functions and compounds.
-        let has_output_redirect = redirects.iter().any(|r| {
-            !matches!(
-                r.kind,
-                RedirectKind::Input | RedirectKind::HereDoc | RedirectKind::HereString
-            )
-        });
-        let saved_callback = if has_output_redirect {
-            self.output_callback.take()
-        } else {
-            None
-        };
+        let region = self.enter_output_region(redirects);
         // The warning is the child's first output, so a streaming caller sees
         // it before anything the child prints.
         if let Some(ref warning) = shlvl_warning {
@@ -6040,13 +6019,8 @@ impl Interpreter {
             keeps_arg0: false,
         });
 
-        let mut saved_opt_names: HashSet<&'static str> = HashSet::new();
         for (var, val) in &shell_opts {
-            if !saved_opt_names.insert(*var) {
-                self.insert_variable_checked(var.to_string(), val.to_string());
-                continue;
-            }
-            self.insert_variable_checked(var.to_string(), val.to_string());
+            self.insert_variable_checked(var.clone(), val.clone());
         }
         self.insert_variable_checked("OPTIND".to_string(), "1".to_string());
         self.getopts_char_idx = 0;
@@ -6082,9 +6056,7 @@ impl Interpreter {
 
         // Restore stdin
         self.pipeline_stdin = saved_stdin;
-        if let Some(cb) = saved_callback {
-            self.output_callback = Some(cb);
-        }
+        self.leave_output_region(region);
 
         self.pop_call_frame();
 
@@ -6106,6 +6078,50 @@ impl Interpreter {
             }
             Err(e) => Err(e),
         }
+    }
+
+    fn merge_stderr_into_stdout(result: &mut ExecResult) {
+        if !result.stderr.is_empty() {
+            let err = std::mem::take(&mut result.stderr);
+            result.stdout.append(&err);
+        }
+    }
+
+    /// Enter the body of a command whose `redirects` route output: its
+    /// output must not stream before they apply (the callback is held), and
+    /// when they leave fd 1 and fd 2 at one place stderr merges in order
+    /// (see `merge_stderr`). Undo with `leave_output_region`.
+    fn enter_output_region(&mut self, redirects: &[Redirect]) -> OutputRegion {
+        let callback = if Self::has_output_redirect(redirects) {
+            self.output_callback.take()
+        } else {
+            None
+        };
+        let merge = self.merge_stderr;
+        if let Some(joined) = redirection::stdout_stderr_joined(redirects) {
+            self.merge_stderr = joined;
+        }
+        OutputRegion { callback, merge }
+    }
+
+    fn leave_output_region(&mut self, region: OutputRegion) {
+        if let Some(cb) = region.callback {
+            self.output_callback = Some(cb);
+        }
+        self.merge_stderr = region.merge;
+    }
+
+    /// Whether `redirects` route any output (anything but stdin-side ones).
+    fn has_output_redirect(redirects: &[Redirect]) -> bool {
+        redirects.iter().any(|r| {
+            !matches!(
+                r.kind,
+                RedirectKind::Input
+                    | RedirectKind::HereDoc
+                    | RedirectKind::HereDocStrip
+                    | RedirectKind::HereString
+            )
+        })
     }
 
     /// `$SHLVL` for a shell started from one whose level is `parent`, following
@@ -6278,6 +6294,12 @@ impl Interpreter {
     /// have just taken a snapshot to undo this on return. See issue #1777.
     fn reset_state_for_child_shell(&mut self, in_place: bool) -> Option<String> {
         self.line_base = 0;
+        // `export SHELLOPTS`: the child starts with the parent's `set -o`
+        // options (bash reads it from the environment at startup).
+        let inherited_opts = self
+            .var_attrs_get("SHELLOPTS")
+            .contains(VarAttrs::EXPORT)
+            .then(|| builtins::shellopts_value(&self.scoped.variables));
         let exported_names: Vec<String> = self
             .scoped
             .var_attrs
@@ -6320,8 +6342,22 @@ impl Interpreter {
                 next_vars.insert(name.to_string(), val.clone());
             }
         }
-        // A new shell starts getopts afresh.
+        // A new shell starts getopts afresh, with `$_` naming the shell and
+        // a default PATH when it inherited none (`env -i bash`).
         next_vars.insert("OPTIND".to_string(), "1".to_string());
+        next_vars.insert("_".to_string(), "/bin/bash".to_string());
+        next_vars
+            .entry("PATH".to_string())
+            .or_insert_with(|| DEFAULT_PATH.to_string());
+        // bash sets these at startup whatever the environment holds.
+        next_vars
+            .entry("PWD".to_string())
+            .or_insert_with(|| self.cwd.to_string_lossy().into_owned());
+        for (name, value) in [("IFS", " \t\n"), ("PS2", "> "), ("PS4", "+ ")] {
+            next_vars
+                .entry(name.to_string())
+                .or_insert_with(|| value.to_string());
+        }
         // A new shell counts itself: the child's level is one above the one it
         // inherited, and it is exported so a grandchild counts from there.
         // The inherited value is what the child would read: an exported
@@ -6365,6 +6401,12 @@ impl Interpreter {
         self.scoped.traps = Arc::new(ignored);
         // Reset SHOPT_* flag bitfield so options from the parent don't leak.
         self.flags = BashFlags::empty();
+        // After the reset: inserting syncs the flag cache.
+        for name in inherited_opts.iter().flat_map(|opts| opts.split(':')) {
+            if let Some(var) = builtins::set_o_var_by_name(name) {
+                self.insert_variable_checked(var.to_string(), "1".to_string());
+            }
+        }
         warning
     }
 }
@@ -6538,7 +6580,10 @@ impl Interpreter {
         for command in commands {
             let emit_before = self.output_emit_count;
             self.sequence_accum = (stdout.len(), stderr.len());
-            let result = self.execute_command(command).await?;
+            let mut result = self.execute_command(command).await?;
+            if self.merge_stderr {
+                Self::merge_stderr_into_stdout(&mut result);
+            }
             self.reap_coprocs();
             self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
             stdout.append(&result.stdout);
@@ -6596,6 +6641,8 @@ impl Interpreter {
         let mut acc = PipelineAcc::default();
         let mut stdin_data: Option<crate::StreamData> = None;
         let count = pipeline.commands.len();
+        acc.merge = self.merge_stderr;
+        self.merge_stderr &= count == 1;
 
         for (i, command) in pipeline.commands.iter().enumerate() {
             if stream_from == Some(i) {
@@ -6709,11 +6756,13 @@ impl Interpreter {
     #[inline(never)]
     fn finish_pipeline(&mut self, pipeline: &Pipeline, acc: PipelineAcc) -> ExecResult {
         let PipelineAcc {
+            merge,
             statuses: pipe_statuses,
             stderr,
             stderr_truncated,
             last: mut last_result,
         } = acc;
+        self.merge_stderr = merge;
         last_result.stderr = stderr;
         last_result.stderr_truncated |= stderr_truncated;
 
@@ -7006,6 +7055,7 @@ impl Interpreter {
             self.bash_subshell += 1;
         }
         if subshell {
+            self.enter_subshell_pid();
             self.enter_subshell_err_scope();
             self.push_nofork_scope(self.nofork.target, SUBSHELL_PIPE);
         }
@@ -7186,7 +7236,10 @@ impl Interpreter {
             self.condition_sequence_depth += usize::from(conditional);
             let result = self.execute_command(&list.first).await;
             self.condition_sequence_depth -= usize::from(conditional);
-            let result = result?;
+            let mut result = result?;
+            if self.merge_stderr {
+                Self::merge_stderr_into_stdout(&mut result);
+            }
             self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
             stdout.append(&result.stdout);
             stderr.append(&result.stderr);
@@ -7273,7 +7326,10 @@ impl Interpreter {
                     self.condition_sequence_depth += usize::from(followed_by_conditional_op);
                     let result = self.execute_command(cmd).await;
                     self.condition_sequence_depth -= usize::from(followed_by_conditional_op);
-                    let result = result?;
+                    let mut result = result?;
+                    if self.merge_stderr {
+                        Self::merge_stderr_into_stdout(&mut result);
+                    }
                     self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
                     stdout.append(&result.stdout);
                     stderr.append(&result.stderr);
@@ -7342,6 +7398,7 @@ impl Interpreter {
         // repeats per function nesting level (THREAT[TM-DOS-020]).
         Box::pin(async move {
             let mut stderr = String::new();
+            self.temp_path = has_command && assignments.iter().any(|a| a.name == "PATH");
             for assignment in assignments {
                 match &assignment.value {
                     AssignmentValue::Scalar(word) => {
@@ -7429,6 +7486,10 @@ impl Interpreter {
                             .await?;
                     }
                 }
+            }
+            // A command of assignments only leaves `$_` empty (bash).
+            if !has_command && !assignments.is_empty() {
+                self.insert_variable_checked("_".to_string(), String::new());
             }
             Ok(stderr)
         })
@@ -7612,6 +7673,7 @@ impl Interpreter {
             let snapshot = Box::new(self.snapshot_subshell_state());
             let last_exit_code = self.last_exit_code;
             self.bash_subshell += 1;
+            self.enter_subshell_pid();
             self.xtrace_depth += 1;
             self.enter_nofork_scope(&commands, true, 0);
             let mut run = Ok(());
@@ -7658,6 +7720,7 @@ impl Interpreter {
                 }
             }
         }
+        self.temp_path = false;
     }
 
     /// `set -x` line prefix: PS4 expanded like bash's prompt strings
@@ -7713,6 +7776,7 @@ impl Interpreter {
         &'a mut self,
         name: &'a str,
         args: &'a [String],
+        redirected: bool,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
         Box::pin(async move {
             let prefix = self.xtrace_prefix().await;
@@ -7732,8 +7796,12 @@ impl Interpreter {
             // A function body, `eval` and `source` stream their own output as
             // they run, which makes the enclosing list skip streaming this
             // command's result: write the queued lines now (they stay queued
-            // for the returned result).
-            if matches!(name, "eval" | "source" | ".") || self.scoped.functions.contains_key(name) {
+            // for the returned result). Not when the command's own output
+            // redirects hold that streaming back (`f 2>&1`).
+            if !redirected
+                && (matches!(name, "eval" | "source" | ".")
+                    || self.scoped.functions.contains_key(name))
+            {
                 let pending = self.subst_stderr.clone();
                 let before = self.output_emit_count;
                 self.maybe_emit_output(&crate::StreamData::new(), &pending, before);
@@ -7961,7 +8029,8 @@ impl Interpreter {
             }
 
             if self.is_xtrace_enabled() {
-                self.trace_simple_command(&name, &args).await;
+                let redirected = Self::has_output_redirect(&command.redirects);
+                self.trace_simple_command(&name, &args, redirected).await;
             }
 
             self.nofork_now = self.nofork_eligible(command);
@@ -8081,6 +8150,57 @@ impl Interpreter {
         })
     }
 
+    /// `execute_dispatched_command` for a command whose redirects need
+    /// resolving first: targets that may split (one word or an ambiguous
+    /// redirect) and `N<<E` here-doc fds opened for the command only.
+    fn execute_dispatched_with_redirect_prep<'a>(
+        &'a mut self,
+        name: &'a str,
+        args: Vec<String>,
+        command: &'a SimpleCommand,
+        stdin: Option<crate::StreamData>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecResult>> + Send + 'a>> {
+        Box::pin(async move {
+            // `> $f` / `> out-*`: one word or an ambiguous redirect.
+            match self
+                .resolve_split_redirect_targets(&command.redirects)
+                .await?
+            {
+                Ok(None) => {}
+                Ok(Some(redirects)) => {
+                    let command = SimpleCommand {
+                        redirects,
+                        ..command.clone()
+                    };
+                    return self
+                        .execute_dispatched_command(name, args, &command, stdin)
+                        .await;
+                }
+                Err(failed) => {
+                    self.last_exit_code = failed.exit_code;
+                    return Ok(failed);
+                }
+            }
+            // `cmd 3<<E`: fd 3 reads the here-doc for this command only
+            // (`exec 3<<E` keeps it, through its own path).
+            if name != "exec"
+                && let Some((scope, redirects)) = self.open_here_fds(&command.redirects).await?
+            {
+                let command = SimpleCommand {
+                    redirects,
+                    ..command.clone()
+                };
+                let result = self
+                    .execute_dispatched_command(name, args, &command, stdin)
+                    .await;
+                self.close_here_fds(scope);
+                return result;
+            }
+            self.execute_dispatched_command(name, args, command, stdin)
+                .await
+        })
+    }
+
     /// Execute a command after name resolution and prefix assignment setup.
     ///
     /// Handles stdin processing and dispatch to functions, special builtins,
@@ -8096,6 +8216,13 @@ impl Interpreter {
         stdin: Option<crate::StreamData>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecResult>> + Send + 'a>> {
         Box::pin(async move {
+            // Split targets and per-command here-doc fds: rare, so the work
+            // sits in its own boxed future, off this hot frame (TM-DOS-089).
+            if redirection::needs_redirect_prep(name, &command.redirects) {
+                return self
+                    .execute_dispatched_with_redirect_prep(name, args, command, stdin)
+                    .await;
+            }
             // `cmd {fd}>file`: bash never undoes a `{var}` redirection, so it
             // opens a descriptor in the shell like `exec` would. `exec`
             // itself applies its redirects in order.
@@ -8156,7 +8283,14 @@ impl Interpreter {
                 };
             // Track $_ (last argument of previous command, from already-expanded args)
             if let Some(last) = args.last() {
-                self.insert_variable_checked("_".to_string(), last.clone());
+                // `declare a=(1 2)`: the operand placeholder stands for `a`.
+                let last = if last.contains(declare::COMPOUND_MARK) {
+                    let name = last.split('=').next().unwrap_or(last);
+                    name.trim_end_matches('+').to_string()
+                } else {
+                    last.clone()
+                };
+                self.insert_variable_checked("_".to_string(), last);
             } else {
                 self.insert_variable_checked("_".to_string(), name.to_string());
             }
@@ -8480,6 +8614,7 @@ impl Interpreter {
         // Clone the Arc out of the map so the call doesn't hold a borrow on
         // self.builtins while we take &mut self for the execution body.
         let builtin = self.builtins.get(name).unwrap().clone();
+        self.hash_builtin_use(name);
         self.execute_builtin_arc(
             name,
             builtin,
@@ -8488,6 +8623,41 @@ impl Interpreter {
             stdin,
             redirects,
         )
+    }
+
+    /// A registered builtin that real bash runs from `PATH` (`whoami`, `ls`)
+    /// is hashed as bash hashes the program; its file is looked up only when
+    /// `hash`/`type` shows it. Shell builtins never are; `set +h` stops it.
+    fn hash_builtin_use(&mut self, name: &str) {
+        if self.temp_path
+            || builtins::BASH_BUILTIN_NAMES.contains(&name)
+            || ENV_SHELL_ONLY_BUILTINS.contains(&name)
+            || self
+                .scoped
+                .variables
+                .get("SHOPT_h")
+                .is_some_and(|v| v == "0")
+        {
+            return;
+        }
+        Arc::make_mut(&mut self.scoped.command_hash).hit(name, None);
+    }
+
+    /// The operands after `-v` in a `test`/`[` call that name set variables
+    /// (see `ShellRef::set_vars`).
+    /// Kept in `test_set_vars` (not a local) so the hot builtin frame does
+    /// not grow (TM-DOS-089).
+    fn test_v_probe(&mut self, name: &str, args: &[String]) {
+        if !matches!(name, "test" | "[") {
+            self.test_set_vars.clear();
+            return;
+        }
+        let set: Vec<String> = args
+            .windows(2)
+            .filter(|w| w[0] == "-v" && self.cond_var_is_set(&w[1]))
+            .map(|w| w[1].clone())
+            .collect();
+        self.test_set_vars = set;
     }
 
     /// Execute a builtin resolved via the host-owned [`BuiltinRegistry`].
@@ -8581,6 +8751,7 @@ impl Interpreter {
                 self.execution_budget.consume_work(100)?;
             }
 
+            self.test_v_probe(name, args);
             // Check for execution plan first
             {
                 let execution_extensions = self.current_execution_extensions();
@@ -8595,6 +8766,8 @@ impl Interpreter {
                     var_attrs: Arc::make_mut(&mut self.scoped.var_attrs),
                     namerefs: Arc::make_mut(&mut self.scoped.namerefs),
                     dir_stack: Arc::make_mut(&mut self.scoped.dir_stack),
+                    command_hash: Arc::make_mut(&mut self.scoped.command_hash),
+                    set_vars: &self.test_set_vars,
                     call_stack: &self.call_stack,
                     history: &self.history,
                     limits: &self.limits,
@@ -8666,6 +8839,8 @@ impl Interpreter {
                 var_attrs: Arc::make_mut(&mut self.scoped.var_attrs),
                 namerefs: Arc::make_mut(&mut self.scoped.namerefs),
                 dir_stack: Arc::make_mut(&mut self.scoped.dir_stack),
+                command_hash: Arc::make_mut(&mut self.scoped.command_hash),
+                set_vars: &self.test_set_vars,
                 call_stack: &self.call_stack,
                 history: &self.history,
                 limits: &self.limits,
@@ -9073,14 +9248,19 @@ impl Interpreter {
             Ok(raw) => raw,
             Err(failed) => return self.redirect_result(failed, redirects).await,
         };
-        // A root-filesystem stub (`/usr/bin/env`) runs the builtin it names.
-        if let Some(cmd) = crate::fs::stub_command(&raw)
-            && self.builtins.contains_key(cmd)
-        {
-            let cmd = cmd.to_string();
-            return self
-                .execute_registered_builtin(&cmd, args, stdin.as_ref(), redirects)
-                .await;
+        // A root-filesystem stub (`/usr/bin/env`) runs the builtin it names;
+        // `/bin/bash` starts a child shell as `bash` does.
+        if let Some(cmd) = crate::fs::stub_command(&raw) {
+            if matches!(cmd, "bash" | "sh") {
+                let cmd = cmd.to_string();
+                return Box::pin(self.execute_shell(&cmd, args, stdin, redirects)).await;
+            }
+            if self.builtins.contains_key(cmd) {
+                let cmd = cmd.to_string();
+                return self
+                    .execute_registered_builtin(&cmd, args, stdin.as_ref(), redirects)
+                    .await;
+            }
         }
         let content = decode_file_bytes_for_path(&path, &raw);
 
@@ -9112,6 +9292,14 @@ impl Interpreter {
                 127,
             )
         };
+        // A component past NAME_MAX fails before any lookup (execve's
+        // ENAMETOOLONG), which bash reports as status 126.
+        if path.components().any(|c| c.as_os_str().len() > 255) {
+            return Err(ExecResult::err(
+                self.diag(format!("{name}: File name too long\n")),
+                126,
+            ));
+        }
         let meta = self.fs.stat(path).await.map_err(|_| missing())?;
         if meta.file_type.is_dir() {
             return Err(ExecResult::err(
@@ -9156,7 +9344,23 @@ impl Interpreter {
         if !self.shell_features.has_script_execution() {
             return None;
         }
+        if let Some(path) = self
+            .scoped
+            .command_hash
+            .get(name)
+            .and_then(|e| e.path.clone())
+        {
+            return Some(path);
+        }
+        self.search_path_file(name).await
+    }
 
+    /// bash's `find_user_command`: the first executable `name` along `PATH`,
+    /// else the first regular file of that name (which then fails with
+    /// "Permission denied"). Relative entries (`_tmp`, and an empty one for
+    /// `.`) are searched from the current directory and kept relative in the
+    /// result, as bash shows them.
+    async fn search_path_file(&self, name: &str) -> Option<String> {
         let path_var = self
             .scoped
             .variables
@@ -9164,25 +9368,28 @@ impl Interpreter {
             .or_else(|| self.env.get("PATH"))
             .cloned()
             .unwrap_or_default();
-
+        let mut fallback = None;
         for dir in path_var.split(':') {
-            if dir.is_empty() {
+            let candidate = builtins::path_candidate(dir, name);
+            let Ok(meta) = self.fs.stat(&self.resolve_path(&candidate)).await else {
+                continue;
+            };
+            if !meta.file_type.is_file() {
                 continue;
             }
-            let candidate = PathBuf::from(dir).join(name);
-            if let Ok(meta) = self.fs.stat(&candidate).await {
-                if meta.file_type.is_dir() {
-                    continue;
-                }
-                if meta.mode & 0o111 == 0 {
-                    continue;
-                }
-                return Some(candidate.to_string_lossy().to_string());
+            if meta.mode & 0o111 != 0 {
+                return Some(candidate);
             }
+            fallback.get_or_insert(candidate);
         }
-        None
+        fallback
     }
 
+    /// Run `name` from `$PATH`: its hashed file if `hash` remembers one, else
+    /// the file the search finds (which is then hashed). `Ok(None)` when no
+    /// file matches (the caller reports "command not found"). A hashed file
+    /// that is gone fails with "No such file or directory" (bash does not
+    /// search again until `hash -r`).
     async fn try_execute_script_via_path_search(
         &mut self,
         name: &str,
@@ -9190,38 +9397,54 @@ impl Interpreter {
         stdin: Option<crate::StreamData>,
         redirects: &[Redirect],
     ) -> Result<Option<ExecResult>> {
-        let path_var = self
+        let hashed = self
             .scoped
-            .variables
-            .get("PATH")
-            .or_else(|| self.env.get("PATH"))
-            .cloned()
-            .unwrap_or_default();
-
-        for dir in path_var.split(':') {
-            if dir.is_empty() {
-                continue;
+            .command_hash
+            .get(name)
+            .filter(|_| !self.temp_path)
+            .and_then(|e| e.path.clone());
+        let found = match hashed {
+            Some(path) => path,
+            None => match self.search_path_file(name).await {
+                Some(path) => path,
+                None => return Ok(None),
+            },
+        };
+        if !self.temp_path
+            && self
+                .scoped
+                .variables
+                .get("SHOPT_h")
+                .is_none_or(|v| v != "0")
+        {
+            Arc::make_mut(&mut self.scoped.command_hash).hit(name, Some(found.clone()));
+        }
+        let resolved = self.resolve_path(&found);
+        let raw = match self.read_executable(&found, &resolved).await {
+            Ok(raw) => raw,
+            Err(failed) => return self.redirect_result(failed, redirects).await.map(Some),
+        };
+        // A root-filesystem stub (`/usr/bin/env`) runs the builtin it names;
+        // `/bin/bash` starts a child shell as `bash` does.
+        if let Some(cmd) = crate::fs::stub_command(&raw) {
+            if matches!(cmd, "bash" | "sh") {
+                let cmd = cmd.to_string();
+                return Box::pin(self.execute_shell(&cmd, args, stdin, redirects))
+                    .await
+                    .map(Some);
             }
-            let candidate = PathBuf::from(dir).join(name);
-            if let Ok(meta) = self.fs.stat(&candidate).await {
-                if meta.file_type.is_dir() {
-                    continue;
-                }
-                if meta.mode & 0o111 == 0 {
-                    continue;
-                }
-                if let Ok(content) = self.fs.read_file(&candidate).await {
-                    let script_text = decode_file_bytes_for_path(&candidate, &content);
-                    let resolved = candidate.to_string_lossy();
-                    let result = self
-                        .execute_script_content(&resolved, &script_text, args, stdin, redirects)
-                        .await?;
-                    return Ok(Some(result));
-                }
+            if self.builtins.contains_key(cmd) {
+                let cmd = cmd.to_string();
+                return self
+                    .execute_registered_builtin(&cmd, args, stdin.as_ref(), redirects)
+                    .await
+                    .map(Some);
             }
         }
-
-        Ok(None)
+        let script_text = decode_file_bytes_for_path(&resolved, &raw);
+        self.execute_script_content(&found, &script_text, args, stdin, redirects)
+            .await
+            .map(Some)
     }
 
     /// Parse and execute script content in a new call frame.
@@ -9301,7 +9524,10 @@ impl Interpreter {
         self.scoped.var_attrs = Arc::new(HashMap::new());
         self.scoped.namerefs = Arc::new(HashMap::new());
         self.flags = BashFlags::empty();
-        self.coproc_buffers.clear();
+        // The child inherits the readable fds the parent opened (`exec 3<f`,
+        // `./x 8<<EOF`); coproc pipes stay with the shell that owns them.
+        self.coproc_buffers
+            .retain(|_, fd| matches!(fd, coproc::InputFd::Lines(_)));
         self.last_exit_code = 0;
         self.nounset_error = None;
         if let Ok(mut e) = self.arith_error.lock() {
@@ -9337,7 +9563,12 @@ impl Interpreter {
         let saved_return_depth = std::mem::replace(&mut self.return_depth, 0);
         let saved_line = self.current_line;
         let saved_interactive = std::mem::replace(&mut self.interactive, false);
+        // Output the script's own redirects will route must not stream from
+        // the child first (`./x.sh &>log` printed x's output and logged it),
+        // as for `bash -c` and functions.
+        let region = self.enter_output_region(redirects);
         let result = self.execute_script_body(&script, true, false).await;
+        self.leave_output_region(region);
         self.interactive = saved_interactive;
         self.current_line = saved_line;
         self.loop_depth = saved_loop_depth;
@@ -9395,6 +9626,22 @@ impl Interpreter {
         args: &[String],
         redirects: &[Redirect],
     ) -> Result<ExecResult> {
+        // `source -- FILE` drops the `--`; any other leading `-x` is an
+        // invalid option (status 2), as in bash.
+        let args = match args.first().map(String::as_str) {
+            Some("--") => &args[1..],
+            Some(flag) if flag.len() > 1 && flag.starts_with('-') => {
+                let c = flag[1..].chars().next().unwrap_or('-');
+                let msg = self.diag(format!(
+                    "{name}: -{c}: invalid option\n\
+                     {name}: usage: {name} filename [arguments]\n"
+                ));
+                return self
+                    .redirect_result(ExecResult::err(msg, 2), redirects)
+                    .await;
+            }
+            _ => args,
+        };
         let filename = match args.first() {
             Some(f) => f,
             None => {
@@ -9433,11 +9680,26 @@ impl Interpreter {
                 .or_else(|| self.env.get("PATH"))
                 .cloned()
                 .unwrap_or_default();
-            for dir in path_var.split(':') {
+            // `shopt -u sourcepath` turns the PATH search off (on by default).
+            let sourcepath = self
+                .scoped
+                .variables
+                .get("SHOPT_sourcepath")
+                .is_none_or(|v| v != "0");
+            for dir in path_var.split(':').filter(|_| sourcepath) {
                 if dir.is_empty() {
                     continue;
                 }
-                let candidate = PathBuf::from(dir).join(filename);
+                // Relative entries (`dir`) are searched from the cwd.
+                let candidate = self.resolve_path(&builtins::path_candidate(dir, filename));
+                if !self
+                    .fs
+                    .stat(&candidate)
+                    .await
+                    .is_ok_and(|m| m.file_type.is_file())
+                {
+                    continue;
+                }
                 if let Ok(c) = self.fs.read_file(&candidate).await {
                     found = Some(decode_file_bytes_for_path(&candidate, &c));
                     break;
@@ -9518,7 +9780,9 @@ impl Interpreter {
         self.source_depth += 1;
         let emit_before = self.output_emit_count;
         self.xtrace_depth += 1;
+        let region = self.enter_output_region(redirects);
         let mut exec_result = self.execute_script_body(&script, false, true).await;
+        self.leave_output_region(region);
         self.xtrace_depth -= 1;
         if let Ok(r) = &mut exec_result {
             Box::pin(self.run_return_trap(r, emit_before)).await;
@@ -9569,6 +9833,24 @@ impl Interpreter {
         stdin: Option<crate::StreamData>,
         redirects: &[Redirect],
     ) -> Result<ExecResult> {
+        // bash's `eval` takes no options but still parses them: a leading
+        // `--` is dropped and `-x` is an invalid option (status 2). A bare
+        // `-` is an ordinary word.
+        let args = match args.first().map(String::as_str) {
+            Some("--") => &args[1..],
+            Some(flag) if flag.len() > 1 && flag.starts_with('-') => {
+                let c = flag[1..].chars().next().unwrap_or('-');
+                let result = ExecResult::err(
+                    format!(
+                        "{}eval: -{c}: invalid option\neval: usage: eval [arg ...]\n",
+                        self.diag_prefix()
+                    ),
+                    2,
+                );
+                return self.redirect_result(result, redirects).await;
+            }
+            _ => args,
+        };
         if args.is_empty() {
             return Ok(ExecResult::ok(String::new()));
         }
@@ -9604,7 +9886,9 @@ impl Interpreter {
         let saved_line_base =
             std::mem::replace(&mut self.line_base, self.current_line.saturating_sub(1));
         self.xtrace_depth += 1;
+        let region = self.enter_output_region(redirects);
         let result = self.execute_script_body(&script, false, true).await;
+        self.leave_output_region(region);
         self.xtrace_depth -= 1;
         self.line_base = saved_line_base;
         let mut result = result?;
@@ -9994,17 +10278,7 @@ impl Interpreter {
 
         // Output the call's redirects will route must not stream from the
         // body first (`f > out` printed `out` too), as for compounds.
-        let has_output_redirect = redirects.iter().any(|r| {
-            !matches!(
-                r.kind,
-                RedirectKind::Input | RedirectKind::HereDoc | RedirectKind::HereString
-            )
-        });
-        let saved_callback = if has_output_redirect {
-            self.output_callback.take()
-        } else {
-            None
-        };
+        let region = self.enter_output_region(redirects);
 
         // Execute function body. Always restore call state even on error.
         // The body starts outside any loop (bash resets `loop_level`).
@@ -10023,9 +10297,7 @@ impl Interpreter {
         self.leave_function_traps(saved_traps);
         self.line_base = saved_line_base;
         self.loop_depth = saved_loop_depth;
-        if let Some(cb) = saved_callback {
-            self.output_callback = Some(cb);
-        }
+        self.leave_output_region(region);
         if capture_pending_fd {
             self.pending_fd_capture_depth = self.pending_fd_capture_depth.saturating_sub(1);
             if result.is_err() {
@@ -10074,7 +10346,6 @@ impl Interpreter {
         // from inside the function must not prevent the caller's set -e from
         // firing on the function's non-zero exit code.
         result.errexit_suppressed = false;
-
         self.apply_redirections(result, redirects).await
     }
 
@@ -10719,7 +10990,22 @@ impl Interpreter {
     ///
     /// This is the interpreter hook that fulfills sub-command execution requests
     /// from builtins like `timeout`, `xargs`, and `find -exec`.
-    async fn execute_builtin_plan(
+    fn execute_builtin_plan<'a>(
+        &'a mut self,
+        plan: builtins::ExecutionPlan,
+        redirects: &'a [Redirect],
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecResult>> + Send + 'a>> {
+        Box::pin(async move {
+            // Output a redirect routes must not stream first
+            // (`env sh -c ... >&2`, `make 2>&1`, `find -exec ... > out`).
+            let region = self.enter_output_region(redirects);
+            let result = self.execute_builtin_plan_inner(plan, redirects).await;
+            self.leave_output_region(region);
+            result
+        })
+    }
+
+    async fn execute_builtin_plan_inner(
         &mut self,
         plan: builtins::ExecutionPlan,
         redirects: &[Redirect],
@@ -10775,19 +11061,6 @@ impl Interpreter {
                 chdir,
             } => Box::pin(self.execute_env_plan(command, clear, unset, set, chdir)).await?,
             builtins::ExecutionPlan::Driver(mut driver) => {
-                // Output that will be redirected must not stream first
-                // (`make 2>&1`, `find -exec ... > out`).
-                let redirected = redirects.iter().any(|r| {
-                    !matches!(
-                        r.kind,
-                        RedirectKind::Input | RedirectKind::HereDoc | RedirectKind::HereString
-                    )
-                });
-                let outer_callback = if redirected {
-                    self.output_callback.take()
-                } else {
-                    None
-                };
                 let mut last = None;
                 let result = loop {
                     let step = match driver.next(last.take()).await {
@@ -10834,9 +11107,6 @@ impl Interpreter {
                         builtins::PlanStep::Done(result) => break Ok(result),
                     }
                 };
-                if outer_callback.is_some() {
-                    self.output_callback = outer_callback;
-                }
                 result?
             }
             builtins::ExecutionPlan::Batch { commands } => {
@@ -11195,6 +11465,7 @@ impl Interpreter {
             let snapshot = Box::new(self.snapshot_subshell_state());
             let last_exit_code = self.last_exit_code;
             self.bash_subshell += 1;
+            self.enter_subshell_pid();
             self.xtrace_depth += 1;
             self.enter_nofork_scope(commands, true, 0);
             let mut failed = None;
@@ -11285,10 +11556,16 @@ impl Interpreter {
             last_bg_pid: self.last_bg_pid.clone(),
             seconds_base: self.seconds_base,
             bash_subshell: self.bash_subshell,
+            bashpid: self.bashpid,
             xtrace_depth: self.xtrace_depth,
             err_trap_dormant: self.err_trap_dormant,
             line_base: self.line_base,
         }
+    }
+
+    /// A subshell gets a `$BASHPID` of its own (restored with the snapshot).
+    fn enter_subshell_pid(&mut self) {
+        self.bashpid = self.jobs.lock().alloc_pid();
     }
 
     /// Entering a subshell environment (`( )`, `$( )`, a pipeline stage):
@@ -11313,6 +11590,7 @@ impl Interpreter {
         self.last_bg_pid = snap.last_bg_pid;
         self.seconds_base = snap.seconds_base;
         self.bash_subshell = snap.bash_subshell;
+        self.bashpid = snap.bashpid;
         self.xtrace_depth = snap.xtrace_depth;
         self.err_trap_dormant = snap.err_trap_dormant;
         self.line_base = snap.line_base;
@@ -11416,6 +11694,22 @@ impl Interpreter {
             if let Some(stderr) = self.disabled_redirect_error(redirects) {
                 return Ok(ExecResult::err(stderr, 1));
             }
+            match self.resolve_split_redirect_targets(redirects).await? {
+                Ok(None) => {}
+                Ok(Some(resolved)) => {
+                    return self
+                        .execute_compound_with_redirects(compound, &resolved)
+                        .await;
+                }
+                Err(failed) => return Ok(failed),
+            }
+            if let Some((scope, remaining)) = self.open_here_fds(redirects).await? {
+                let result = self
+                    .execute_compound_with_redirects(compound, &remaining)
+                    .await;
+                self.close_here_fds(scope);
+                return result;
+            }
             if redirects.iter().any(|r| r.fd_var.is_some()) {
                 let remaining = match self.apply_named_fd_redirects(redirects).await? {
                     Ok(remaining) => remaining,
@@ -11472,17 +11766,7 @@ impl Interpreter {
             // Suspend output callback while output redirects are active
             // so that maybe_emit_output inside the compound body does not
             // leak output that will be redirected (e.g. `{ cmd; } 2>/dev/null`).
-            let has_output_redirect = redirects.iter().any(|r| {
-                !matches!(
-                    r.kind,
-                    RedirectKind::Input | RedirectKind::HereDoc | RedirectKind::HereString
-                )
-            });
-            let saved_callback = if has_output_redirect {
-                self.output_callback.take()
-            } else {
-                None
-            };
+            let region = self.enter_output_region(redirects);
 
             let has_dup_output = redirects.iter().any(|r| r.kind == RedirectKind::DupOutput);
             let has_file_redirect = redirects.iter().any(|r| {
@@ -11509,12 +11793,9 @@ impl Interpreter {
                     self.clear_pending_fd_redirect_state();
                 }
             }
-            let result = result?;
-
             // Restore callback before applying redirections
-            if let Some(cb) = saved_callback {
-                self.output_callback = Some(cb);
-            }
+            self.leave_output_region(region);
+            let result = result?;
 
             if let Some(prev) = prev_pipeline_stdin {
                 self.pipeline_stdin = prev;
@@ -11538,7 +11819,10 @@ impl Interpreter {
             // Command substitution runs in a subshell: snapshot all
             // mutable state so mutations don't leak to the parent.
             let snapshot = self.snapshot_subshell_state();
+            // Its stdout is captured; its stderr goes to the caller's fd 2.
+            let saved_merge = std::mem::replace(&mut self.merge_stderr, false);
             self.bash_subshell += 1;
+            self.enter_subshell_pid();
             self.xtrace_depth += 1;
             self.enter_subshell_err_scope();
             // The outer command's queued stderr must not pass through the
@@ -11654,6 +11938,7 @@ impl Interpreter {
             }
             self.release_held_subst_stderr(held_stderr);
             self.restore_subshell_state(snapshot);
+            self.merge_stderr = saved_merge;
             self.counters.pop_subst();
             self.subst_generation += 1;
             let trimmed_len = stdout.trim_end_matches('\n').len();
@@ -11753,6 +12038,10 @@ impl Interpreter {
         // SRANDOM ignores assignment (bash 5.1).
         if resolved == "SRANDOM" {
             return;
+        }
+        // Assigning PATH empties the command hash table (bash).
+        if resolved == "PATH" && !self.scoped.command_hash.is_empty() {
+            Arc::make_mut(&mut self.scoped.command_hash).clear();
         }
         // Assigning OPTIND restarts `getopts` within an option group.
         if resolved == "OPTIND" {
@@ -12473,10 +12762,16 @@ impl Interpreter {
                 return String::new();
             }
             // THREAT[TM-INF-014]: Return sandboxed PID, not real host PID.
-            // `$BASHPID` is the same: subshells and jobs report the shell's
-            // pid too (they have no process of their own).
-            "$" | "BASHPID" => {
+            "$" => {
                 return "1".to_string();
+            }
+            // A subshell's own virtual pid (`$$` stays the shell's).
+            "BASHPID" => {
+                return if self.bashpid == 0 {
+                    "1".to_string()
+                } else {
+                    self.bashpid.to_string()
+                };
             }
             "!" => {
                 // $! - PID of most recent background command
@@ -12534,6 +12829,9 @@ impl Interpreter {
             "BASH_SUBSHELL" => {
                 return self.bash_subshell.to_string();
             }
+            // The enabled `set -o` / `shopt` options, colon-separated.
+            "SHELLOPTS" => return builtins::shellopts_value(&self.scoped.variables),
+            "BASHOPTS" => return builtins::bashopts_value(&self.scoped.variables),
             "SECONDS" => {
                 let (start, base) = self.seconds_base;
                 let elapsed = i64::try_from(start.elapsed().as_secs()).unwrap_or(i64::MAX);
@@ -12592,6 +12890,8 @@ impl Interpreter {
                 | "BASH_VERSION"
                 | "SECONDS"
                 | "BASH_SUBSHELL"
+                | "SHELLOPTS"
+                | "BASHOPTS"
         ) {
             return true;
         }

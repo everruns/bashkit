@@ -419,6 +419,13 @@ impl Interpreter {
             (!target.is_empty()).then(|| double_quote(target))
         } else {
             match self.var_kind(name) {
+                // Computed from the live option state, never stored.
+                VarKind::Scalar | VarKind::Unset if name == "SHELLOPTS" => Some(declare_quote(
+                    &crate::builtins::shellopts_value(&self.scoped.variables),
+                )),
+                VarKind::Scalar | VarKind::Unset if name == "BASHOPTS" => Some(declare_quote(
+                    &crate::builtins::bashopts_value(&self.scoped.variables),
+                )),
                 VarKind::Indexed => {
                     let arr = &self.scoped.arrays[name];
                     (!(arr.is_empty() && novalue)).then(|| format_indexed_body(arr))

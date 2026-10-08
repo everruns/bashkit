@@ -134,36 +134,42 @@ impl Builtin for Wc {
             if let Some(stdin) = ctx.stdin {
                 let counts = count_data(stdin.as_bytes());
                 // Real bash: no padding for single-value stdin, padded for multiple values
-                let padded = flags.active_count() > 1;
-                output.push_str(&format_counts(&counts, &flags, None, padded));
+                let width = if flags.active_count() > 1 { 7 } else { 1 };
+                output.push_str(&format_counts(&counts, &flags, None, width));
                 output.push('\n');
             }
         } else {
-            // Read from files
+            // Read every file first: the column width depends on all of them.
+            let mut counted = Vec::with_capacity(files.len());
             for file in &files {
                 let path = if file.starts_with('/') {
                     std::path::PathBuf::from(file)
                 } else {
                     vfs_join(ctx.cwd, file)
                 };
-
+                let regular = ctx
+                    .fs
+                    .stat(&path)
+                    .await
+                    .is_ok_and(|m| m.file_type.is_file());
                 match read_stream_file(&*ctx.fs, &path, "wc").await {
                     Ok(data) => {
-                        let counts = count_data(data.as_bytes());
-
-                        total_lines += counts.lines;
-                        total_words += counts.words;
-                        total_bytes += counts.bytes;
-                        total_chars += counts.chars;
-                        if counts.max_line_length > total_max_line {
-                            total_max_line = counts.max_line_length;
-                        }
-
-                        output.push_str(&format_counts(&counts, &flags, Some(file), true));
-                        output.push('\n');
+                        counted.push((count_data(data.as_bytes()), regular && *file != "-"))
                     }
                     Err(e) => return Ok(e),
                 }
+            }
+            let width = number_width(&counted, flags.active_count());
+            for ((counts, _), file) in counted.iter().zip(&files) {
+                total_lines += counts.lines;
+                total_words += counts.words;
+                total_bytes += counts.bytes;
+                total_chars += counts.chars;
+                if counts.max_line_length > total_max_line {
+                    total_max_line = counts.max_line_length;
+                }
+                output.push_str(&format_counts(counts, &flags, Some(file), width));
+                output.push('\n');
             }
 
             // Print total if multiple files
@@ -179,7 +185,7 @@ impl Builtin for Wc {
                     &totals,
                     &flags,
                     Some(&"total".to_string()),
-                    true,
+                    width,
                 ));
                 output.push('\n');
             }
@@ -218,14 +224,31 @@ fn count_data(bytes: &[u8]) -> TextCounts {
     }
 }
 
-/// Format counts for output.
-/// When `padded` is true, right-align numbers in 8-char fields (used for file output).
-/// When `padded` is false, use minimal formatting like real bash stdin output.
+/// GNU wc's `compute_number_width`: one file with one count is unpadded;
+/// otherwise wide enough for the total size of the regular files, and at
+/// least 7 when any input is not a regular file (its size is unknown).
+fn number_width(counted: &[(TextCounts, bool)], active: usize) -> usize {
+    if counted.len() == 1 && active == 1 {
+        return 1;
+    }
+    let mut minimum = 1;
+    let mut total = 0usize;
+    for (counts, regular) in counted {
+        if *regular {
+            total = total.saturating_add(counts.bytes);
+        } else {
+            minimum = 7;
+        }
+    }
+    total.to_string().len().max(minimum)
+}
+
+/// Format counts for output, each right-aligned in `width` columns.
 fn format_counts(
     counts: &TextCounts,
     flags: &WcFlags,
     filename: Option<&String>,
-    padded: bool,
+    width: usize,
 ) -> String {
     let mut values: Vec<usize> = Vec::new();
 
@@ -245,14 +268,8 @@ fn format_counts(
         values.push(counts.max_line_length);
     }
 
-    let result = if padded {
-        // Real bash uses 7-char wide fields separated by a space
-        let parts: Vec<String> = values.iter().map(|v| format!("{:>7}", v)).collect();
-        parts.join(" ")
-    } else {
-        let parts: Vec<String> = values.iter().map(|v| v.to_string()).collect();
-        parts.join(" ")
-    };
+    let parts: Vec<String> = values.iter().map(|v| format!("{v:>width$}")).collect();
+    let result = parts.join(" ");
 
     if let Some(name) = filename {
         format!("{} {}", result, name)
