@@ -301,9 +301,9 @@ impl Interpreter {
         for part in &word.parts {
             match part {
                 WordPart::BadSubstitution(text) => {
-                    return Err(crate::error::Error::LineAbort(format!(
-                        "bash: {text}: bad substitution\n"
-                    )));
+                    return Err(crate::error::Error::LineAbort(
+                        self.diag(format!("{text}: bad substitution\n")),
+                    ));
                 }
                 WordPart::CompoundAssignment { .. } => {
                     // Only declaration builtins take `name=(...)`; elsewhere
@@ -364,7 +364,7 @@ impl Interpreter {
                 }
                 WordPart::Variable(name) => {
                     if self.is_nounset() && !self.is_variable_set(name) {
-                        self.nounset_error = Some(format!("bash: {}: unbound variable\n", name));
+                        self.nounset_error = Some(self.unbound_variable_diag(name));
                     }
                     if name == "*" && word.quoted {
                         let positional = self
@@ -446,7 +446,7 @@ impl Interpreter {
                                 | ParameterOp::Error
                         )
                     {
-                        self.nounset_error = Some("bash: ${}: bad substitution\n".to_string());
+                        self.nounset_error = Some(self.diag("${}: bad substitution\n"));
                         continue;
                     }
 
@@ -465,13 +465,13 @@ impl Interpreter {
                         && !name.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
                         && (!is_set || (*colon_variant && value.is_empty()))
                     {
-                        return Err(crate::error::Error::LineAbort(format!(
-                            "bash: ${name}: cannot assign in this way\n"
-                        )));
+                        return Err(crate::error::Error::LineAbort(
+                            self.diag(format!("${name}: cannot assign in this way\n")),
+                        ));
                     }
 
                     if self.is_nounset() && !suppress_nounset && !is_set {
-                        self.nounset_error = Some(format!("bash: {}: unbound variable\n", name));
+                        self.nounset_error = Some(self.diag(format!("{name}: unbound variable\n")));
                     }
 
                     if operand.contains("$(") {
@@ -1659,9 +1659,9 @@ impl Interpreter {
                 if use_default {
                     let expanded = self.expand_operand(operand);
                     let msg = if expanded.is_empty() {
-                        format!("bash: {}: parameter null or not set\n", name)
+                        self.diag(format!("{}: parameter null or not set\n", name))
                     } else {
-                        format!("bash: {}: {}\n", name, expanded)
+                        self.diag(format!("{}: {}\n", name, expanded))
                     };
                     self.nounset_error = Some(msg);
                     String::new()

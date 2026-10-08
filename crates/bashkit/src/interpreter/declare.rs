@@ -586,10 +586,10 @@ impl Interpreter {
                 if !kind.allowed_options().contains(c) {
                     let sign = if set { '-' } else { '+' };
                     return Ok(ExecResult::err(
-                        format!(
-                            "bash: {cmd}: {sign}{c}: invalid option\n{}",
+                        self.diag(format!(
+                            "{cmd}: {sign}{c}: invalid option\n{}",
                             kind.usage(cmd)
-                        ),
+                        )),
                         2,
                     ));
                 }
@@ -641,7 +641,7 @@ impl Interpreter {
                 }
             }
             return Ok(ExecResult::err(
-                "bash: local: can only be used in a function\n".to_string(),
+                self.diag("local: can only be used in a function\n"),
                 1,
             ));
         }
@@ -703,7 +703,7 @@ impl Interpreter {
                 if !self.scoped.functions.contains_key(name.as_str()) {
                     status = 1;
                     if matches!(kind, DeclKind::Export | DeclKind::Readonly) {
-                        err.push_str(&format!("bash: {cmd}: {name}: not a function\n"));
+                        err.push_str(&self.diag(format!("{cmd}: {name}: not a function\n")));
                     }
                 } else if matches!(kind, DeclKind::Declare | DeclKind::Local) {
                     out.push_str(&show(name, false));
@@ -733,7 +733,7 @@ impl Interpreter {
                 match self.format_declare_line(name) {
                     Some(line) => out.push_str(&line),
                     None => {
-                        err.push_str(&format!("bash: {cmd}: {name}: not found\n"));
+                        err.push_str(&self.diag(format!("{cmd}: {name}: not found\n")));
                         status = 1;
                     }
                 }
@@ -832,10 +832,10 @@ impl Interpreter {
             _ => (lhs, None),
         };
         if !is_valid_var_name(base) {
-            return Ok(Some(format!(
-                "bash: {cmd}: `{}': not a valid identifier\n",
+            return Ok(Some(self.diag(format!(
+                "{cmd}: `{}': not a valid identifier\n",
                 display_arg()
-            )));
+            ))));
         }
         // THREAT[TM-INJ-012/014/015]: internal marker names are never declared.
         if is_internal_variable(base) {
@@ -870,9 +870,9 @@ impl Interpreter {
             match self.resolve_nameref_strict(lhs) {
                 Ok(t) => t,
                 Err(()) => {
-                    return Ok(Some(format!(
-                        "bash: {cmd}: warning: {base}: circular name reference\n"
-                    )));
+                    return Ok(Some(self.diag(format!(
+                        "{cmd}: warning: {base}: circular name reference\n"
+                    ))));
                 }
             }
         };
@@ -901,7 +901,9 @@ impl Interpreter {
                 .cloned()
                 .unwrap_or_default();
             if saved.attrs.is_some_and(|a| a.contains(VarAttrs::READONLY)) {
-                return Ok(Some(format!("bash: {cmd}: {name}: readonly variable\n")));
+                return Ok(Some(
+                    self.diag(format!("{cmd}: {name}: readonly variable\n")),
+                ));
             }
             let new_value = if append {
                 saved.value.clone().unwrap_or_default() + v
@@ -939,7 +941,9 @@ impl Interpreter {
 
         if make_local && !self.is_local_in_current_frame(name) {
             if self.is_var_readonly(name) {
-                return Ok(Some(format!("bash: {cmd}: {name}: readonly variable\n")));
+                return Ok(Some(
+                    self.diag(format!("{cmd}: {name}: readonly variable\n")),
+                ));
             }
             self.make_local(name);
         }
@@ -949,7 +953,9 @@ impl Interpreter {
         if self.is_var_readonly(name)
             && (value.is_some() || opts.off.readonly || opts.off.export && kind == DeclKind::Export)
         {
-            return Ok(Some(format!("bash: {cmd}: {name}: readonly variable\n")));
+            return Ok(Some(
+                self.diag(format!("{cmd}: {name}: readonly variable\n")),
+            ));
         }
 
         let is_compound = matches!(value, Some(DeclValue::Compound(_)));
@@ -971,7 +977,7 @@ impl Interpreter {
             None
         };
         if let Some(what) = conversion {
-            let msg = format!("bash: {cmd}: {name}: cannot convert {what} array\n");
+            let msg = self.diag(format!("{cmd}: {name}: cannot convert {what} array\n"));
             if is_compound {
                 // With an array value bash abandons the whole command line.
                 return Err(crate::error::Error::LineAbort(msg));
@@ -1015,9 +1021,9 @@ impl Interpreter {
             None => {}
             Some(DeclValue::Compound(words)) => {
                 if subscript.is_some() {
-                    return Ok(Some(format!(
-                        "bash: {cmd}: {name}: cannot assign list to array member\n"
-                    )));
+                    return Ok(Some(self.diag(format!(
+                        "{cmd}: {name}: cannot assign list to array member\n"
+                    ))));
                 }
                 let assoc = self.var_kind(name) == VarKind::Assoc;
                 self.assign_array_words(name, &words, append, assoc).await?;
@@ -1106,32 +1112,32 @@ impl Interpreter {
         let target = match value {
             Some(DeclValue::Str(t)) => Some(t),
             Some(DeclValue::Compound(_)) => {
-                return Some(format!(
-                    "bash: {cmd}: {name}: reference variable cannot be an array\n"
-                ));
+                return Some(self.diag(format!(
+                    "{cmd}: {name}: reference variable cannot be an array\n"
+                )));
             }
             None => None,
         };
         if let Some(t) = &target {
             if !valid_nameref_target(t) {
-                return Some(format!(
-                    "bash: {cmd}: `{t}': invalid variable name for name reference\n"
-                ));
+                return Some(self.diag(format!(
+                    "{cmd}: `{t}': invalid variable name for name reference\n"
+                )));
             }
             if t == name && !make_local {
-                return Some(format!(
-                    "bash: {cmd}: {name}: nameref variable self references not allowed\n"
-                ));
+                return Some(self.diag(format!(
+                    "{cmd}: {name}: nameref variable self references not allowed\n"
+                )));
             }
         }
         if make_local && !self.is_local_in_current_frame(name) {
             if self.is_var_readonly(name) {
-                return Some(format!("bash: {cmd}: {name}: readonly variable\n"));
+                return Some(self.diag(format!("{cmd}: {name}: readonly variable\n")));
             }
             self.make_local(name);
         }
         if target.is_some() && self.is_var_readonly(name) {
-            return Some(format!("bash: {cmd}: {name}: readonly variable\n"));
+            return Some(self.diag(format!("{cmd}: {name}: readonly variable\n")));
         }
         let target = match target {
             Some(t) => t,
@@ -1144,9 +1150,9 @@ impl Interpreter {
                         v
                     }
                     Some(v) => {
-                        return Some(format!(
-                            "bash: {cmd}: `{v}': invalid variable name for name reference\n"
-                        ));
+                        return Some(self.diag(format!(
+                            "{cmd}: `{v}': invalid variable name for name reference\n"
+                        )));
                     }
                     None => String::new(),
                 },
@@ -1389,9 +1395,9 @@ impl Interpreter {
                         let len = map.keys().max().map_or(0, |m| m + 1) as i64;
                         let i = len + raw;
                         if i < 0 {
-                            return Err(crate::error::Error::LineAbort(format!(
-                                "bash: {name}[{key_text}]: bad array subscript\n"
-                            )));
+                            return Err(crate::error::Error::LineAbort(
+                                self.diag(format!("{name}[{key_text}]: bad array subscript\n")),
+                            ));
                         }
                         i as usize
                     } else {

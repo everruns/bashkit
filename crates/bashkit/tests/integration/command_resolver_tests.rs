@@ -166,7 +166,7 @@ async fn resolver_panic_becomes_a_sanitized_shell_error() {
     assert_eq!(result.exit_code, 1);
     assert_eq!(
         result.stderr,
-        "bash: attacker-controlled-name: resolver failed unexpectedly\n"
+        "bash: line 1: attacker-controlled-name: resolver failed unexpectedly\n"
     );
     assert!(!result.stderr.contains("sensitive host resolver detail"));
 }

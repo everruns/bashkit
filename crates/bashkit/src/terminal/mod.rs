@@ -253,6 +253,8 @@ impl Terminal {
                 HookAction::Continue(event)
             }))
             .build();
+        // An interactive shell: diagnostics read `bash: x: ...` (no line).
+        bash.set_interactive(true);
         let clock = InputWaitClock::default();
         bash.input_wait_clock = Some(clock.clone());
         let interrupt = Arc::new(tokio::sync::Notify::new());
