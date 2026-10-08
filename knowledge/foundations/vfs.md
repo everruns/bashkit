@@ -187,7 +187,9 @@ mounts and custom filesystems always win.
 
 Rules: system-only files cannot be written or removed (`PermissionDenied`);
 creating a file in a system dir (`/etc/app.conf`) creates the parent in the
-session fs first; `mkdir /bin` shadows the system dir. Listings of `/`,
+session fs first, except under `/proc`, which refuses new entries like Linux
+procfs (`echo x > /proc/new`, `mkdir`, `touch`, `ln -s` fail with `No such
+file or directory`) unless the session fs itself holds the parent directory; `mkdir /bin` shadows the system dir. Listings of `/`,
 `/usr`, `/dev` merge both layers. Usage accounting, snapshots and
 `fs()` writes go to the session fs only, so the layer costs no quota and is
 never persisted. Restricted shells turn it off with `rootfs(false)` (the

@@ -143,6 +143,7 @@ pub mod sqlite_fuzz_tests;
 pub mod sqlite_integration_tests;
 pub mod sqlite_security_tests;
 pub mod stack_overflow_regression_tests;
+pub mod stderr_fidelity_tests;
 pub mod subst_depth_limit_tests;
 pub mod symlink_overlay_security_tests;
 #[cfg(feature = "terminal")]

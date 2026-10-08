@@ -14,6 +14,9 @@
 //!   modifying, removing, or renaming one fails with "Permission denied". New
 //!   files may still be created under `/etc`, `/usr/bin`, ... (they go to the
 //!   session filesystem), which keeps scripts that `mkdir -p /etc/app` working.
+//! - `/proc` is the exception: like Linux procfs, nothing new can be created
+//!   in it (`echo x > /proc/new` fails with "No such file or directory"),
+//!   unless the session filesystem itself holds the parent directory.
 //! - `/bin` and `/usr/bin` hold a stub per registered command (not shell-only
 //!   builtins) so `ls /usr/bin`, `[ -x /usr/bin/env ]`, `which`, and
 //!   `#!/usr/bin/env` work. Executing a stub dispatches the builtin.
@@ -140,6 +143,9 @@ fn in_tree(path: &Path) -> bool {
 fn is_ancestor(path: &Path) -> bool {
     SYS_ANCESTORS.iter().any(|a| path == Path::new(a))
 }
+
+/// The procfs tree: a pseudo-filesystem that refuses new entries.
+const PROC_TREE: &str = "/proc";
 
 fn permission_denied() -> crate::Error {
     IoError::new(ErrorKind::PermissionDenied, "Permission denied").into()
@@ -359,9 +365,18 @@ impl RootFs {
     }
 
     /// Create a missing parent that the system layer provides, so new files
-    /// can be created under `/etc` and friends.
+    /// can be created under `/etc` and friends. `/proc` refuses new entries
+    /// like Linux procfs (`ENOENT`), unless the session filesystem holds the
+    /// parent (an embedder's own `/proc` tree).
     async fn ensure_parent(&self, path: &Path) -> Result<()> {
         let p = normalize_path(path);
+        if p.starts_with(PROC_TREE)
+            && let Some(parent) = p.parent()
+            && !self.inner.exists(parent).await.unwrap_or(false)
+            && self.served_by_sys(&p).await.is_none()
+        {
+            return Err(IoError::new(ErrorKind::NotFound, "No such file or directory").into());
+        }
         if let Some(parent) = p.parent()
             && Self::sys_path(parent).is_some()
             && !self.inner.exists(parent).await.unwrap_or(false)
@@ -404,9 +419,7 @@ impl FileSystem for RootFs {
             }
             return Err(IoError::new(ErrorKind::AlreadyExists, "File exists").into());
         }
-        if !recursive {
-            self.ensure_parent(path).await?;
-        }
+        self.ensure_parent(path).await?;
         self.inner.mkdir(path, recursive).await
     }
 
@@ -623,6 +636,47 @@ mod tests {
                 .unwrap()
                 .file_type
                 .is_dir()
+        );
+    }
+
+    #[tokio::test]
+    async fn proc_refuses_new_entries_like_procfs() {
+        let fs = rootfs();
+        for path in ["/proc/naopode", "/proc/self/new"] {
+            let err = fs.write_file(Path::new(path), b"y").await.unwrap_err();
+            assert_eq!(
+                crate::error::io_error_reason(&err),
+                "No such file or directory"
+            );
+            assert!(fs.append_file(Path::new(path), b"y").await.is_err());
+            assert!(fs.mkdir(Path::new(path), false).await.is_err());
+            assert!(!fs.exists(Path::new(path)).await.unwrap());
+        }
+        assert!(fs.mkdir(Path::new("/proc/a/b"), true).await.is_err());
+        assert!(
+            fs.symlink(Path::new("/tmp"), Path::new("/proc/link"))
+                .await
+                .is_err()
+        );
+        // Existing entries stay read-only, not missing.
+        assert!(
+            fs.write_file(Path::new("/proc/version"), b"y")
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn embedder_proc_dir_accepts_new_files() {
+        let inner = Arc::new(InMemoryFs::new());
+        inner.mkdir(Path::new("/proc/app"), true).await.unwrap();
+        let fs = RootFs::new(inner, "sandbox", "bashkit-sandbox");
+        fs.write_file(Path::new("/proc/app/state"), b"ok")
+            .await
+            .unwrap();
+        assert_eq!(
+            fs.read_file(Path::new("/proc/app/state")).await.unwrap(),
+            b"ok"
         );
     }
 
