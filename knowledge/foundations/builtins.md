@@ -331,6 +331,11 @@ and `-l`/`-u`. A readonly target fails the builtin with
 leaving `b` alone. `printf` reads options like bash's getopt (`v:`):
 `-v NAME`, `-vNAME`, `--`; a missing `-v` argument, missing format, invalid
 option or invalid `-v` name exits 2 with the usage line.
+A numeric conversion of a non-number (`%d abc`, `%d 12abc`, `%f x`)
+prints the parsed prefix, reports `bash: printf: ARG: invalid number` and
+exits 1; the vendored uucore formatter's `show_error!` messages are
+collected per call (`format_support::collect_diagnostics`, capped) and
+mapped to bash's wording.
 
 ### Execution Plans (Sub-Command Delegation)
 
