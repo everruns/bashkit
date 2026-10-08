@@ -56,7 +56,6 @@ true || echo no; echo $?
 
 ### bashbox_interpreter_core_err_trap_fires_for_a_failing_command
 # ERR trap fires for a failing command
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 trap "echo caught \$?" ERR; false; echo next $?
 ### expect
 caught 1
@@ -432,7 +431,6 @@ shopt -s nullglob; echo $?
 
 ### bashbox_interpreter_core_source_without_a_file
 # source without a file
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 source; echo $?
 ### expect
 2
@@ -613,7 +611,6 @@ x
 
 ### bashbox_interpreter_core_getopts_stops_at_a_non_option
 # getopts stops at a non-option
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 set -- a -b; getopts b o; echo "$? $o $OPTIND"
 ### expect
 1 ? 1
@@ -682,7 +679,6 @@ command cd /tmp; pwd
 
 ### bashbox_interpreter_core_builtin
 # builtin
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 builtin cd /tmp && pwd; builtin echo hi; builtin cat; echo $?; builtin; echo $?
 ### expect
 /tmp
@@ -746,7 +742,6 @@ done
 
 ### bashbox_interpreter_core_err_trap_keeps
 # ERR trap keeps $?
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 trap "true" ERR; false; echo $?
 ### expect
 1
@@ -780,7 +775,6 @@ pushd /nope; echo $?
 
 ### bashbox_interpreter_core_pushd_abbreviates_home
 # pushd abbreviates HOME
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 cd /tmp; pushd ~
 ### expect
 ~ /tmp
@@ -788,7 +782,6 @@ cd /tmp; pushd ~
 
 ### bashbox_interpreter_core_hash
 # hash
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 hash; hash -r; : a b; echo $?
 ### expect
 hash: hash table empty
@@ -839,7 +832,6 @@ printf "x y" | { IFS= read -r v; echo "[$v]"; }
 
 ### bashbox_interpreter_core_nul_delimited_records
 # NUL delimited records
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 printf "a\0b\0" | while read -r -d "" v; do echo "[$v]"; done
 ### expect
 [a]

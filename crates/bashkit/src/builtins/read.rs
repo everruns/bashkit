@@ -56,7 +56,8 @@ impl Builtin for Read {
                             } else {
                                 &rest
                             };
-                            delimiter = delim_str.chars().next();
+                            // `-d ''` reads up to a NUL byte.
+                            delimiter = Some(delim_str.chars().next().unwrap_or('\0'));
                             break;
                         }
                         'n' | 'N' => {

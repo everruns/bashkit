@@ -24,15 +24,37 @@ fn normalize_path(base: &std::path::Path, target: &str) -> PathBuf {
     super::resolve_path(&PathBuf::from("/"), &path.to_string_lossy())
 }
 
-/// Format the stack as bash's `dirs` default: current dir followed by the
-/// stack from top (most recent) to bottom.
-fn format_stack(ctx: &Context<'_>) -> String {
-    let cwd = ctx.cwd.to_string_lossy().to_string();
-    let mut parts = vec![cwd];
-    if let Some(shell) = ctx.shell.as_ref() {
-        parts.extend(shell.dir_stack.iter().rev().cloned());
+/// bash `polite_directory_format`: a directory under `$HOME` is shown as
+/// `~` plus the rest (`$HOME` of `/` or unset disables it).
+fn polite(dir: &str, home: Option<&str>) -> String {
+    if let Some(home) = home.filter(|h| h.len() > 1)
+        && let Some(rest) = dir.strip_prefix(home)
+        && (rest.is_empty() || rest.starts_with('/'))
+    {
+        return format!("~{rest}");
     }
-    parts.join(" ")
+    dir.to_string()
+}
+
+/// Current dir followed by the stack from top (most recent) to bottom,
+/// `~`-abbreviated unless `long`.
+fn stack_entries(ctx: &Context<'_>, long: bool) -> Vec<String> {
+    let home = if long {
+        None
+    } else {
+        ctx.variables.get("HOME").map(String::as_str)
+    };
+    let cwd = ctx.cwd.to_string_lossy();
+    let mut parts = vec![polite(&cwd, home)];
+    if let Some(shell) = ctx.shell.as_ref() {
+        parts.extend(shell.dir_stack.iter().rev().map(|d| polite(d, home)));
+    }
+    parts
+}
+
+/// Format the stack as bash's `dirs` default: one line, `~`-abbreviated.
+fn format_stack(ctx: &Context<'_>) -> String {
+    stack_entries(ctx, false).join(" ")
 }
 
 /// The pushd builtin - push directory onto stack and cd.
@@ -145,6 +167,7 @@ impl Builtin for Dirs {
         let mut clear = false;
         let mut per_line = false;
         let mut verbose = false;
+        let mut long = false;
 
         for arg in ctx.args.iter() {
             match arg.as_str() {
@@ -154,7 +177,7 @@ impl Builtin for Dirs {
                     verbose = true;
                     per_line = true;
                 }
-                "-l" => {} // long listing (we don't do ~ substitution anyway)
+                "-l" => long = true,
                 _ => {}
             }
         }
@@ -166,28 +189,18 @@ impl Builtin for Dirs {
             return Ok(ExecResult::ok(String::new()));
         }
 
-        if !verbose && !per_line {
-            // Default output doesn't need to walk the stack separately.
-            return Ok(ExecResult::ok(format!("{}\n", format_stack(&ctx))));
-        }
-
-        let cwd = ctx.cwd.to_string_lossy().to_string();
-        // Stack from top (most recent) to bottom, borrowed (no clone).
-        let empty: Vec<String> = Vec::new();
-        let stack = ctx.shell.as_ref().map(|s| &*s.dir_stack).unwrap_or(&empty);
-
-        if verbose {
-            let mut output = format!(" 0  {}\n", cwd);
-            for (n, dir) in stack.iter().rev().enumerate() {
-                output.push_str(&format!(" {}  {}\n", n + 1, dir));
-            }
-            Ok(ExecResult::ok(output))
+        let entries = stack_entries(&ctx, long);
+        let output = if verbose {
+            entries
+                .iter()
+                .enumerate()
+                .map(|(n, dir)| format!(" {n}  {dir}\n"))
+                .collect()
+        } else if per_line {
+            entries.iter().map(|dir| format!("{dir}\n")).collect()
         } else {
-            let mut output = format!("{}\n", cwd);
-            for dir in stack.iter().rev() {
-                output.push_str(&format!("{}\n", dir));
-            }
-            Ok(ExecResult::ok(output))
-        }
+            format!("{}\n", entries.join(" "))
+        };
+        Ok(ExecResult::ok(output))
     }
 }

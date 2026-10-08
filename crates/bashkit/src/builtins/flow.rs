@@ -73,10 +73,9 @@ impl Builtin for Exit {
 fn loop_control(name: &str, ctx: &Context<'_>, make: fn(u32) -> ControlFlow) -> ExecResult {
     // Builtins run without shell state (e.g. direct unit calls) keep the
     // plain unwinding behaviour.
-    let depth = ctx
-        .shell
-        .as_ref()
-        .map_or(u32::MAX, |s| u32::try_from(s.loop_depth).unwrap_or(u32::MAX));
+    let depth = ctx.shell.as_ref().map_or(u32::MAX, |s| {
+        u32::try_from(s.loop_depth).unwrap_or(u32::MAX)
+    });
     if depth == 0 {
         return ExecResult::err(
             format!("bash: {name}: only meaningful in a `for', `while', or `until' loop\n"),
@@ -150,7 +149,8 @@ impl Builtin for Return {
                 Err(_) => {
                     let mut result = ExecResult::with_control_flow(ControlFlow::Return(2));
                     result.exit_code = 2;
-                    result.stderr = format!("bash: return: {arg}: numeric argument required\n").into();
+                    result.stderr =
+                        format!("bash: return: {arg}: numeric argument required\n").into();
                     return Ok(result);
                 }
             },

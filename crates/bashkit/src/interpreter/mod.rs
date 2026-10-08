@@ -1930,6 +1930,8 @@ impl Interpreter {
         variables.insert("OSTYPE".to_string(), "linux-gnu".to_string());
         variables.insert("HOSTTYPE".to_string(), "x86_64".to_string());
         variables.insert("MACHTYPE".to_string(), "x86_64-pc-linux-gnu".to_string());
+        // bash starts every shell with OPTIND=1 (getopts state).
+        variables.insert("OPTIND".to_string(), "1".to_string());
 
         // BASH_VERSINFO array: (major minor patch build status machine)
         let mut arrays = HashMap::new();
@@ -5546,6 +5548,8 @@ impl Interpreter {
                 next_vars.insert(name.to_string(), val.clone());
             }
         }
+        // A new shell starts getopts afresh.
+        next_vars.insert("OPTIND".to_string(), "1".to_string());
         *self.vars_mut() = next_vars;
         self.arrays_mut().clear();
         self.assoc_arrays_mut().clear();
@@ -8401,7 +8405,10 @@ impl Interpreter {
         let filename = match args.first() {
             Some(f) => f,
             None => {
-                return Ok(ExecResult::err("source: filename argument required", 1));
+                return Ok(ExecResult::err(
+                    "bash: source: filename argument required\nsource: usage: source filename [arguments]\n",
+                    2,
+                ));
             }
         };
 
@@ -9250,9 +9257,14 @@ impl Interpreter {
         // function); an empty or unset OPTIND starts over at 1.
         let optind: usize = self.expand_variable("OPTIND").parse().unwrap_or(1);
 
-        // Check if we're past the end
+        // Check if we're past the end (bash leaves OPTIND just past the
+        // last argument).
         if optind < 1 || optind > parse_args.len() {
             self.set_variable(varname.clone(), "?".to_string());
+            self.set_variable(
+                "OPTIND".to_string(),
+                optind.clamp(1, parse_args.len() + 1).to_string(),
+            );
             return Ok(ExecResult {
                 stdout: crate::StreamData::new(),
                 stderr: crate::StreamData::new(),
@@ -9267,9 +9279,14 @@ impl Interpreter {
         // Check if this is an option (starts with -)
         if !current_arg.starts_with('-') || current_arg == "-" || current_arg == "--" {
             self.set_variable(varname.clone(), "?".to_string());
-            if current_arg == "--" {
-                self.set_variable("OPTIND".to_string(), (optind + 1).to_string());
-            }
+            // OPTIND stays on the first operand (past a `--`), and getopts
+            // writes it back even when it was unset.
+            let next = if current_arg == "--" {
+                optind + 1
+            } else {
+                optind
+            };
+            self.set_variable("OPTIND".to_string(), next.to_string());
             return Ok(ExecResult {
                 stdout: crate::StreamData::new(),
                 stderr: crate::StreamData::new(),
@@ -9397,10 +9414,17 @@ impl Interpreter {
         let Some(name) = args.first() else {
             return Ok(ExecResult::ok(String::new()));
         };
-        if !(Self::is_special_builtin_name(name)
+        let registered = Self::is_special_builtin_name(name)
             || self.builtins.contains_key(name.as_str())
-            || self.has_host_builtin(name))
-        {
+            || self.has_host_builtin(name);
+        // Same rule as `type`/`command -v`: a registered command that real
+        // bash runs from PATH (`cat`, `ls`) is a file, not a shell builtin,
+        // when the root filesystem provides it.
+        let is_shell_builtin = registered
+            && (Self::is_special_builtin_name(name)
+                || builtins::BASH_BUILTIN_NAMES.contains(&name.as_str())
+                || self.resolve_command_path(name).await.is_none());
+        if !is_shell_builtin {
             return Ok(ExecResult::err(
                 format!("bash: builtin: {name}: not a shell builtin\n"),
                 1,
@@ -11298,10 +11322,14 @@ impl Interpreter {
             .with_execution_budget(self.execution_budget.clone())
             .parse()
             {
+                // The handler runs with `$?` of the trapping command and the
+                // shell keeps that status afterwards (bash restores it).
+                let saved_exit = self.last_exit_code;
                 self.in_trap = true;
                 let emit_before = self.output_emit_count;
                 let result = self.execute_command_sequence(&trap_script.commands).await;
                 self.in_trap = false;
+                self.last_exit_code = saved_exit;
                 if let Ok(trap_result) = result {
                     self.maybe_emit_output(&trap_result.stdout, &trap_result.stderr, emit_before);
                     return (trap_result.stdout, trap_result.stderr);
@@ -11331,10 +11359,14 @@ impl Interpreter {
             .with_execution_budget(self.execution_budget.clone())
             .parse()
             {
+                // The handler runs with `$?` of the trapping command and the
+                // shell keeps that status afterwards (bash restores it).
+                let saved_exit = self.last_exit_code;
                 self.in_trap = true;
                 let emit_before = self.output_emit_count;
                 let result = self.execute_command_sequence(&trap_script.commands).await;
                 self.in_trap = false;
+                self.last_exit_code = saved_exit;
                 if let Ok(trap_result) = result {
                     self.maybe_emit_output(&trap_result.stdout, &trap_result.stderr, emit_before);
                     stdout.append(&trap_result.stdout);
