@@ -10,7 +10,7 @@
 //! which checks for terminators BEFORE parsing each command.
 //!
 //! Grammar errors are worded the way bash words them, by the token the parse
-//! stopped at (see [`Parser::error`]): `syntax error near unexpected token
+//! stopped at (see `Parser::error`): `syntax error near unexpected token
 //! `fi'`, or `syntax error: unexpected end of file` reported on the line after
 //! the last when the input ran out inside a construct.
 
