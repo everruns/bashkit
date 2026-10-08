@@ -1484,6 +1484,14 @@ pub struct Interpreter {
     /// `sequence_accum` as it was when `exec` last installed a target for
     /// fd 1 or 2: output written before that keeps going to the caller.
     exec_install_mark: (usize, usize),
+    /// Set by the top-level loop when the command it runs is a `;`/`&&`
+    /// list: `execute_list` then routes each element's output through the
+    /// `exec` fd table as it finishes, so `exec 2>&1; cmd1; cmd2` sends
+    /// `cmd1`'s stderr out before `cmd2` runs (not at the end of the line).
+    route_top_list: bool,
+    /// Lengths of the stdout/stderr a routed top-level list returned: the
+    /// top-level loop routes only what was appended after them.
+    top_list_routed: Option<(usize, usize)>,
     /// Name of the last simple command run, for a diagnostic raised after it
     /// returned: a write to a closed descriptor is reported at the subshell
     /// boundary, where the offending command is no longer in hand.
@@ -2138,6 +2146,8 @@ impl Interpreter {
             last_command_name: String::new(),
             sequence_accum: (0, 0),
             exec_install_mark: (0, 0),
+            route_top_list: false,
+            top_list_routed: None,
             #[cfg(feature = "http_client")]
             http_client: None,
             #[cfg(feature = "git")]
@@ -2306,6 +2316,8 @@ impl Interpreter {
             last_command_name: self.last_command_name.clone(),
             sequence_accum: self.sequence_accum,
             exec_install_mark: self.exec_install_mark,
+            route_top_list: false,
+            top_list_routed: None,
             flags: self.flags,
             cwd: self.cwd.clone(),
             last_exit_code: self.last_exit_code,
@@ -3496,7 +3508,12 @@ impl Interpreter {
                 self.output_stream_stdout_bytes,
                 self.output_stream_stderr_bytes,
             );
-            let mut result = self.execute_command(command).await?;
+            self.route_top_list = top_level && matches!(command, Command::List(_));
+            self.top_list_routed = None;
+            let result = self.execute_command(command).await;
+            self.route_top_list = false;
+            let list_routed = self.top_list_routed.take();
+            let mut result = result?;
             if top_level {
                 // Background jobs that finished meanwhile report here, as
                 // bash prints their output while the script continues.
@@ -3510,7 +3527,7 @@ impl Interpreter {
                 self.route_exec_output(
                     &mut result,
                     emitted_before,
-                    (0, 0),
+                    list_routed.unwrap_or((0, 0)),
                     Self::command_name(command),
                 )
                 .await?;
@@ -3865,7 +3882,14 @@ impl Interpreter {
                     })
                 }
                 Command::Pipeline(pipeline) => self.execute_pipeline(pipeline).await,
-                Command::List(list) => self.execute_list(list).await,
+                Command::List(list) => {
+                    let route = std::mem::take(&mut self.route_top_list);
+                    let result = self.execute_list(list, route).await;
+                    if route && let Ok(r) = &result {
+                        self.top_list_routed = Some((r.stdout.len(), r.stderr.len()));
+                    }
+                    result
+                }
                 Command::Compound(compound, redirects) => {
                     // Substitutions in its words or redirects (`for x in
                     // <(a)`, `done < <(b)`, `[[ -e <(c) ]]`) close with it.
@@ -7190,7 +7214,9 @@ impl Interpreter {
 
     /// Execute a command list (cmd1 && cmd2 || cmd3)
     #[allow(unused_assignments)] // control_flow may be set but overwritten
-    async fn execute_list(&mut self, list: &CommandList) -> Result<ExecResult> {
+    /// `route`: this list is a top-level command; route each element's output
+    /// through the `exec` fd table as it finishes (see `route_top_list`).
+    async fn execute_list(&mut self, list: &CommandList, route: bool) -> Result<ExecResult> {
         let mut stdout = crate::StreamData::new();
         let mut stderr = crate::StreamData::new();
         let mut exit_code;
@@ -7210,6 +7236,10 @@ impl Interpreter {
             exit_code_from_conditional_context = false;
         } else {
             let emit_before = self.output_emit_count;
+            let emitted_before = (
+                self.output_stream_stdout_bytes,
+                self.output_stream_stderr_bytes,
+            );
             self.sequence_accum = (0, 0);
             // A non-final `&&`/`||` element runs with errexit ignored.
             let conditional = list
@@ -7219,7 +7249,16 @@ impl Interpreter {
             self.condition_sequence_depth += usize::from(conditional);
             let result = self.execute_command(&list.first).await;
             self.condition_sequence_depth -= usize::from(conditional);
-            let result = result?;
+            let mut result = result?;
+            if route {
+                Box::pin(self.route_exec_output(
+                    &mut result,
+                    emitted_before,
+                    (0, 0),
+                    Self::command_name(&list.first),
+                ))
+                .await?;
+            }
             self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
             stdout.append(&result.stdout);
             stderr.append(&result.stderr);
@@ -7297,6 +7336,10 @@ impl Interpreter {
                     exit_code_from_conditional_context = false;
                 } else {
                     let emit_before = self.output_emit_count;
+                    let emitted_before = (
+                        self.output_stream_stdout_bytes,
+                        self.output_stream_stderr_bytes,
+                    );
                     self.sequence_accum = (stdout.len(), stderr.len());
                     let followed_by_conditional_op =
                         list.rest.get(i + 1).is_some_and(|(op, cmd)| {
@@ -7306,7 +7349,16 @@ impl Interpreter {
                     self.condition_sequence_depth += usize::from(followed_by_conditional_op);
                     let result = self.execute_command(cmd).await;
                     self.condition_sequence_depth -= usize::from(followed_by_conditional_op);
-                    let result = result?;
+                    let mut result = result?;
+                    if route {
+                        Box::pin(self.route_exec_output(
+                            &mut result,
+                            emitted_before,
+                            (0, 0),
+                            Self::command_name(cmd),
+                        ))
+                        .await?;
+                    }
                     self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
                     stdout.append(&result.stdout);
                     stderr.append(&result.stderr);
@@ -8344,9 +8396,10 @@ impl Interpreter {
     /// Send a top-level command's output where `exec` pointed fd 1 and 2
     /// (`exec >log 2>&1`). Output a sub-call already streamed to the caller
     /// (before the `exec` ran) stays; the rest goes to the target.
-    // WTF: output written in the same top-level command before `exec >log`
-    // ran, and not streamed, also goes to the log; routing happens per
-    // top-level command, not per write.
+    // WTF: routing happens per top-level command (per element of a
+    // top-level `;`/`&&` list), not per write: output written earlier in the
+    // same compound command (`{ echo a; exec >log; }`) before `exec >log`
+    // ran, and not streamed, also goes to the log.
     async fn route_exec_output(
         &mut self,
         result: &mut ExecResult,

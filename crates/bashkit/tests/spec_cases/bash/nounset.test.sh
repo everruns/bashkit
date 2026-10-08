@@ -86,3 +86,22 @@ if f; then echo then; fi
 echo after
 ### expect
 ### end
+
+### nounset_error_inside_command_substitution_reported
+# the unbound-variable error raised inside $(...) reaches the shell's stderr
+set -u
+exec 2>&1
+x=$(echo $zz); echo "r=$?"
+: "$(echo $zz)"; echo "r=$?"
+y=$(: ${zz?inner}; echo no); echo "[$y]"
+ls /nonexistent-dir >/dev/null; echo after
+### expect
+bash: line 3: zz: unbound variable
+r=1
+bash: line 4: zz: unbound variable
+r=0
+bash: line 5: zz: inner
+[]
+ls: cannot access '/nonexistent-dir': No such file or directory
+after
+### end
