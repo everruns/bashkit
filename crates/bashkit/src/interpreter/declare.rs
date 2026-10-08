@@ -1223,7 +1223,9 @@ impl Interpreter {
             self.set_assoc_element_checked(name.to_string(), key, v);
         } else {
             self.promote_scalar_to_indexed(name);
-            let idx = self.resolve_indexed_array_subscript(name, sub);
+            let idx = self
+                .indexed_write_subscript(name, sub)
+                .map_err(crate::error::Error::LineAbort)?;
             let old = if append {
                 Some(
                     self.scoped

@@ -1227,6 +1227,7 @@ bitflags::bitflags! {
         const NOCLOBBER    = 0b0000_0000_1000_0000; // set -C / SHOPT_C
         const PIPEFAIL     = 0b0000_0001_0000_0000; // set -o pipefail / SHOPT_pipefail
         const EXPAND_ALIAS = 0b0000_0010_0000_0000; // shopt expand_aliases
+        const KEYWORD      = 0b0000_0100_0000_0000; // set -k / SHOPT_k
     }
 }
 
@@ -1244,6 +1245,7 @@ impl BashFlags {
             "SHOPT_C" => Some(Self::NOCLOBBER),
             "SHOPT_pipefail" => Some(Self::PIPEFAIL),
             "SHOPT_expand_aliases" => Some(Self::EXPAND_ALIAS),
+            "SHOPT_k" => Some(Self::KEYWORD),
             _ => None,
         }
     }
@@ -6813,6 +6815,17 @@ impl Interpreter {
         stdin: Option<crate::StreamData>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecResult>> + Send + 'a>> {
         Box::pin(async move {
+            // `set -k`: assignment words anywhere in the command go to its
+            // environment, not its arguments.
+            let hoisted;
+            let command = if self.flags.contains(BashFlags::KEYWORD)
+                && command.args.iter().any(|w| keyword_assignment(w).is_some())
+            {
+                hoisted = hoist_keyword_assignments(command);
+                &hoisted
+            } else {
+                command
+            };
             let deferred_proc_sub_start = self.deferred_proc_subs.len();
             let (_debug_stdout, _debug_stderr) = self.run_debug_trap().await;
 
@@ -10619,6 +10632,31 @@ impl Interpreter {
         }
     }
 
+    /// Subscript for a write to an indexed array: a negative index counts
+    /// back from the end, and one before the start is an error
+    /// (`a[-5]=x` on three elements: "bad array subscript").
+    fn indexed_write_subscript(
+        &self,
+        arr_name: &str,
+        key: &str,
+    ) -> std::result::Result<usize, String> {
+        let raw_idx = self.evaluate_arithmetic(key);
+        if raw_idx >= 0 {
+            return Ok(raw_idx as usize);
+        }
+        let len = self
+            .scoped
+            .arrays
+            .get(arr_name)
+            .and_then(|a| a.keys().max().map(|m| m.saturating_add(1) as i128))
+            .unwrap_or(0);
+        let idx = len + raw_idx as i128;
+        if idx < 0 {
+            return Err(format!("bash: {arr_name}[{key}]: bad array subscript\n"));
+        }
+        Ok(idx as usize)
+    }
+
     /// Resolve an indexed-array subscript the same way for read-before-write and write paths.
     fn resolve_indexed_array_subscript(&self, arr_name: &str, key: &str) -> usize {
         let raw_idx = self.evaluate_arithmetic(key);
@@ -11468,6 +11506,53 @@ impl Interpreter {
             }
         }
     }
+}
+
+/// `name=value` / `name+=value` argument with an unquoted, literal name:
+/// an assignment under `set -k`. Returns the assignment.
+fn keyword_assignment(word: &Word) -> Option<Assignment> {
+    let Some(WordPart::Literal(first)) = word.parts.first() else {
+        return None;
+    };
+    // A quoted word without per-part flags was quoted as a whole.
+    let first_quoted = if word.part_quoted.iter().any(|q| *q) {
+        word.part_quoted[0]
+    } else {
+        word.quoted
+    };
+    if first_quoted {
+        return None;
+    }
+    let eq = first.find('=')?;
+    let (name, append) = match first[..eq].strip_suffix('+') {
+        Some(n) => (n, true),
+        None => (&first[..eq], false),
+    };
+    if !is_valid_var_name(name) {
+        return None;
+    }
+    let mut value = word.clone();
+    value.raw = None;
+    value.parts[0] = WordPart::Literal(first[eq + 1..].to_string());
+    Some(Assignment {
+        name: name.to_string(),
+        index: None,
+        value: AssignmentValue::Scalar(value),
+        append,
+    })
+}
+
+/// `set -k`: move assignment arguments into the command's assignments.
+fn hoist_keyword_assignments(command: &SimpleCommand) -> SimpleCommand {
+    let mut hoisted = command.clone();
+    hoisted.args.clear();
+    for word in &command.args {
+        match keyword_assignment(word) {
+            Some(assignment) => hoisted.assignments.push(assignment),
+            None => hoisted.args.push(word.clone()),
+        }
+    }
+    hoisted
 }
 
 /// Whether an ERE uses a `[:name:]` character class POSIX does not define

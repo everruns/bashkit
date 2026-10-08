@@ -904,7 +904,6 @@ declare -A m; k='a b'; m[$k]=1; m[1+1]=2; echo "${m[a b]} ${m[1+1]}"
 
 ### bashbox_interpreter_core_a_negative_subscript_counts_back_from_the_end
 # a negative subscript counts back from the end
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 a=(1 2 3); a[-1]+=x; declare -p a; a[-5]=q; echo same
 echo next $?
 ### expect
@@ -947,7 +946,6 @@ set -o noexec; echo hi
 
 ### bashbox_interpreter_core_set_k_takes_assignments_from_anywhere_in_a_command
 # set -k takes assignments from anywhere in a command
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 f() { echo "$x"; }; set -k; echo a=b c; f x=5; echo $-; set +k; echo a=b
 ### expect
 c
@@ -974,7 +972,7 @@ x=1; unset -- x; echo $? ${x-unset}
 
 ### bashbox_interpreter_core_redirections_report_why_a_file_can_t_be_opened
 # redirections report why a file can't be opened
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
+### skip: TODO `<>` (read-write open) redirect is not parsed yet, and InMemoryFs lets `f/x` be created under a regular file `f` instead of failing with ENOTDIR
 true <> /tmp; echo $?; touch f; echo hi > f/x; echo $?; cat < f/x; echo $?; ln -s loop loop; echo hi > loop; echo $?
 ### expect
 1
