@@ -1609,6 +1609,10 @@ pub struct Interpreter {
     /// (`x=$(nocmd)`) show; the command that expanded it emits them ahead of
     /// its own stderr, outside its own redirects (bash expands words first).
     subst_stderr: crate::StreamData,
+    /// `subst_stderr` values set aside by enclosing commands and
+    /// substitutions while an inner one runs. Kept here rather than in async
+    /// locals so the recursive `$(...)` futures stay small (TM-DOS-089).
+    subst_stderr_held: Vec<crate::StreamData>,
     /// First arithmetic error raised by a read-only evaluation site (array
     /// subscripts, `declare -i` values, substring offsets). The command
     /// boundary turns it into a line abort, as bash does.
@@ -2117,6 +2121,7 @@ impl Interpreter {
             cond_regex_error: false,
             cond_stderr: String::new(),
             subst_stderr: crate::StreamData::new(),
+            subst_stderr_held: Vec::new(),
             arith_error: StdMutex::new(None),
             pending_compound_args: Vec::new(),
             assign_raw: false,
@@ -2298,6 +2303,7 @@ impl Interpreter {
             cond_regex_error: false,
             cond_stderr: String::new(),
             subst_stderr: crate::StreamData::new(),
+            subst_stderr_held: Vec::new(),
             arith_error: StdMutex::new(None),
             pending_compound_args: Vec::new(),
             assign_raw: false,
@@ -2546,6 +2552,7 @@ impl Interpreter {
         // An exec that failed mid-command must not hand its queued `$(...)`
         // stderr to the next exec.
         self.subst_stderr = crate::StreamData::new();
+        self.subst_stderr_held.clear();
         self.condition_sequence_depth = 0;
         self.loop_depth = 0;
         self.return_depth = 0;
@@ -3795,8 +3802,8 @@ impl Interpreter {
                     Ok(ExecResult::ok(String::new()))
                 }
             };
-            let pending = std::mem::take(&mut self.subst_stderr);
-            let result = self.settle_subst_stderr(pending, result);
+            let mut result = result;
+            self.settle_pending_subst_stderr(&mut result);
             let mut result = self.abort_line_on_error(result);
             if err_armed
                 && let Ok(r) = &mut result
@@ -3827,25 +3834,52 @@ impl Interpreter {
 
     /// Emit queued `$(...)` stderr ahead of the command's own. On error it
     /// stays queued for the next command boundary.
-    fn settle_subst_stderr(
-        &mut self,
-        queued: crate::StreamData,
-        result: Result<ExecResult>,
-    ) -> Result<ExecResult> {
+    fn settle_subst_stderr(&mut self, queued: crate::StreamData, result: &mut Result<ExecResult>) {
         if queued.is_empty() {
-            return result;
+            return;
         }
         match result {
-            Ok(mut r) => {
-                r.stderr = queued + &r.stderr;
-                Ok(r)
-            }
-            Err(e) => {
+            Ok(r) => r.stderr = queued + &r.stderr,
+            Err(_) => {
                 let later = std::mem::take(&mut self.subst_stderr);
                 self.subst_stderr = queued + &later;
-                Err(e)
             }
         }
+    }
+
+    /// Emit the pending `$(...)` stderr ahead of `result`'s own.
+    fn settle_pending_subst_stderr(&mut self, result: &mut Result<ExecResult>) {
+        let queued = std::mem::take(&mut self.subst_stderr);
+        self.settle_subst_stderr(queued, result);
+    }
+
+    /// Set the pending `$(...)` stderr aside while an inner command or
+    /// substitution runs; returns the slot to settle or release it from.
+    /// A slot left behind by an inner early `?` return is dropped when an
+    /// enclosing slot is taken back.
+    fn hold_subst_stderr(&mut self) -> usize {
+        let held = std::mem::take(&mut self.subst_stderr);
+        self.subst_stderr_held.push(held);
+        self.subst_stderr_held.len() - 1
+    }
+
+    fn take_held_subst_stderr(&mut self, slot: usize) -> crate::StreamData {
+        self.subst_stderr_held.truncate(slot + 1);
+        self.subst_stderr_held.pop().unwrap_or_default()
+    }
+
+    /// Settle the stderr set aside by [`Self::hold_subst_stderr`] on `result`.
+    fn settle_held_subst_stderr(&mut self, slot: usize, result: &mut Result<ExecResult>) {
+        let held = self.take_held_subst_stderr(slot);
+        self.settle_subst_stderr(held, result);
+    }
+
+    /// End a substitution: the outer stderr set aside on entry comes back,
+    /// followed by whatever the substitution queued.
+    fn release_held_subst_stderr(&mut self, slot: usize) {
+        let inner = std::mem::take(&mut self.subst_stderr);
+        self.subst_stderr = self.take_held_subst_stderr(slot);
+        self.queue_subst_stderr(&inner);
     }
 
     /// An ERR trap is set and live (not dormant in a subshell).
@@ -7364,13 +7398,12 @@ impl Interpreter {
 
             // Empty command handling
             if name.is_empty() {
-                if command.name.quoted && !name_vanished && command.assignments.is_empty() {
-                    self.last_exit_code = 127;
-                    self.discard_deferred_proc_subs_from(deferred_proc_sub_start);
-                    let result = ExecResult::err(self.diag(": command not found\n"), 127);
-                    return self.redirect_result(result, &command.redirects).await;
-                }
-                let exit_code = if !command.assignments.is_empty()
+                // `"" 2>/dev/null`: the not-found report follows the redirects.
+                let not_found =
+                    command.name.quoted && !name_vanished && command.assignments.is_empty();
+                let exit_code = if not_found {
+                    127
+                } else if !command.assignments.is_empty()
                     && self.subst_generation == pre_assign_subst_gen
                 {
                     0
@@ -7385,11 +7418,13 @@ impl Interpreter {
                     self.last_exit_code
                 };
                 self.discard_deferred_proc_subs_from(deferred_proc_sub_start);
-                if !command.redirects.is_empty() {
+                if not_found || !command.redirects.is_empty() {
                     // Null commands still perform their redirections: `> f`
                     // truncates, `< missing` fails with status 1.
+                    let own_error =
+                        not_found.then(|| ExecResult::err(self.diag(": command not found\n"), 127));
                     return self
-                        .execute_null_command_redirects(exit_code, &command.redirects)
+                        .null_command_outcome(own_error, exit_code, &command.redirects)
                         .await;
                 }
                 self.last_exit_code = exit_code;
@@ -7599,12 +7634,13 @@ impl Interpreter {
             redirection::push_redirect_scope_fds(&mut self.fd_redirect_scope, &command.redirects);
             // Stderr of this command's own `$(...)` words: claimed here so a
             // function body cannot route it through the call's redirects.
-            let subst_stderr = std::mem::take(&mut self.subst_stderr);
-            let result = self
+            let held = self.hold_subst_stderr();
+            let mut result = self
                 .execute_dispatched_command_inner(name, args, command, stdin)
                 .await;
             self.fd_redirect_scope.truncate(scope_len);
-            self.settle_subst_stderr(subst_stderr, result)
+            self.settle_held_subst_stderr(held, &mut result);
+            result
         })
     }
 
@@ -8022,7 +8058,7 @@ impl Interpreter {
                             self.diag(format!("{name}: cancelled by before_tool hook\n")),
                             1,
                         );
-                        return self.apply_redirections(result, redirects).await;
+                        return self.redirect_result(result, redirects).await;
                     }
                 }
             } else {
@@ -8271,7 +8307,7 @@ impl Interpreter {
                         self.diag(format!("{name}: cancelled by before_tool hook\n")),
                         1,
                     );
-                    return self.apply_redirections(result, redirects).await;
+                    return self.redirect_result(result, redirects).await;
                 }
             }
         } else {
@@ -8867,7 +8903,7 @@ impl Interpreter {
                      {name}: usage: {name} filename [arguments]\n"
                 ));
                 return self
-                    .apply_redirections(ExecResult::err(msg, 2), redirects)
+                    .redirect_result(ExecResult::err(msg, 2), redirects)
                     .await;
             }
         };
@@ -8884,7 +8920,7 @@ impl Interpreter {
                         self.diag(format!("{filename}: No such file or directory\n")),
                         1,
                     );
-                    return self.apply_redirections(result, redirects).await;
+                    return self.redirect_result(result, redirects).await;
                 }
             }
         } else {
@@ -8921,7 +8957,7 @@ impl Interpreter {
                         self.diag(format!("{filename}: No such file or directory\n")),
                         1,
                     );
-                    return self.apply_redirections(result, redirects).await;
+                    return self.redirect_result(result, redirects).await;
                 }
             }
         };
@@ -8937,7 +8973,7 @@ impl Interpreter {
                 };
                 let result =
                     ExecResult::err(format!("{filename}: line {}: {message}\n", line.max(1)), 2);
-                return self.apply_redirections(result, redirects).await;
+                return self.redirect_result(result, redirects).await;
             }
             Err(e) => return Err(e),
         };
@@ -9057,7 +9093,7 @@ impl Interpreter {
                     format!("{who}: eval: line {at}: {message}\n{who}: eval: line {at}: `{src}'\n"),
                     2,
                 );
-                return self.apply_redirections(result, redirects).await;
+                return self.redirect_result(result, redirects).await;
             }
             Err(e) => return Err(e),
         };
@@ -9550,7 +9586,7 @@ impl Interpreter {
     ) -> Result<ExecResult> {
         if args.is_empty() {
             let result = ExecResult::err(self.diag("let: expression expected\n"), 1);
-            return self.apply_redirections(result, redirects).await;
+            return self.redirect_result(result, redirects).await;
         }
         let mut last_val = 0i64;
         for arg in args {
@@ -9559,7 +9595,7 @@ impl Interpreter {
                 // An error stops `let` at that expression with status 1.
                 Err(msg) => {
                     let result = ExecResult::err(self.arith_diag("let: ", &msg), 1);
-                    return self.apply_redirections(result, redirects).await;
+                    return self.redirect_result(result, redirects).await;
                 }
             }
         }
@@ -9604,7 +9640,7 @@ impl Interpreter {
                             )),
                             2,
                         );
-                        return self.apply_redirections(result, redirects).await;
+                        return self.redirect_result(result, redirects).await;
                     }
                 }
             }
@@ -9614,7 +9650,7 @@ impl Interpreter {
                 self.diag("unset: cannot simultaneously unset a function and a variable\n"),
                 1,
             );
-            return self.apply_redirections(result, redirects).await;
+            return self.redirect_result(result, redirects).await;
         }
         let var_args: Vec<&String> = args[operands_start..].iter().collect();
 
@@ -9787,7 +9823,7 @@ impl Interpreter {
     ) -> Result<ExecResult> {
         if args.len() < 2 {
             let result = ExecResult::err("getopts: usage: getopts optstring name [arg ...]\n", 2);
-            return self.apply_redirections(result, redirects).await;
+            return self.redirect_result(result, redirects).await;
         }
 
         let optstring = &args[0];
@@ -9983,7 +10019,7 @@ impl Interpreter {
                 self.diag(format!("builtin: {name}: not a shell builtin\n")),
                 1,
             );
-            return self.apply_redirections(result, redirects).await;
+            return self.redirect_result(result, redirects).await;
         }
         // `command NAME` already runs the builtin and skips functions; a
         // leading `--` keeps a `-v`-named builtin from becoming a flag.
@@ -10174,7 +10210,7 @@ impl Interpreter {
                     self.diag(format!("{}: command not found\n", remaining[0])),
                     127,
                 );
-                self.apply_redirections(result, redirects).await
+                self.redirect_result(result, redirects).await
             }
         }
     }
@@ -10759,6 +10795,30 @@ impl Interpreter {
 
     /// Perform the redirections of a null command (no command word) and
     /// return its result. Input redirects are opened and discarded.
+    /// A null command's outcome: its own error (`""`) under its redirects,
+    /// or just the redirects. Boxed, and a single await in
+    /// `execute_simple_command`, to keep that future's frame small on the
+    /// `$(...)` recursion path (TM-DOS-089).
+    fn null_command_outcome<'a>(
+        &'a mut self,
+        own_error: Option<ExecResult>,
+        exit_code: i32,
+        redirects: &'a [Redirect],
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecResult>> + Send + 'a>> {
+        Box::pin(async move {
+            match own_error {
+                Some(result) => {
+                    self.last_exit_code = result.exit_code;
+                    self.apply_redirections(result, redirects).await
+                }
+                None => {
+                    self.execute_null_command_redirects(exit_code, redirects)
+                        .await
+                }
+            }
+        })
+    }
+
     async fn execute_null_command_redirects(
         &mut self,
         exit_code: i32,
@@ -10948,7 +11008,7 @@ impl Interpreter {
             self.enter_subshell_err_scope();
             // The outer command's queued stderr must not pass through the
             // substitution's own redirects (`$(cmd 2>&1)`).
-            let outer_stderr = std::mem::take(&mut self.subst_stderr);
+            let held_stderr = self.hold_subst_stderr();
             // THREAT[TM-DOS-111]: Expansion happens before top-level output caps,
             // so reserve every byte before growing the substitution buffer.
             let mut stdout = BudgetedString::new(Some(&self.execution_budget))?;
@@ -11032,9 +11092,7 @@ impl Interpreter {
             }
             self.output_callback = saved_callback;
             if run.is_err() {
-                let inner_stderr = std::mem::take(&mut self.subst_stderr);
-                self.subst_stderr = outer_stderr.clone();
-                self.queue_subst_stderr(&inner_stderr);
+                self.release_held_subst_stderr(held_stderr);
             }
             run?;
             // Fire EXIT trap set inside the command substitution
@@ -11054,9 +11112,7 @@ impl Interpreter {
                 stdout.try_push_str(&trap_result.stdout.command_substitution_text())?;
                 self.queue_subst_stderr(&trap_result.stderr);
             }
-            let inner_stderr = std::mem::take(&mut self.subst_stderr);
-            self.subst_stderr = outer_stderr;
-            self.queue_subst_stderr(&inner_stderr);
+            self.release_held_subst_stderr(held_stderr);
             self.restore_subshell_state(snapshot);
             self.counters.pop_subst();
             self.subst_generation += 1;
