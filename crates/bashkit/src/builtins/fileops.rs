@@ -381,7 +381,11 @@ impl Builtin for Cp {
                 continue;
             }
             if let Err(e) = ctx.fs.copy(&src_path, &final_dest).await {
-                stderr.push_str(&format!("cp: cannot copy '{}': {}\n", source, e));
+                stderr.push_str(&format!(
+                    "cp: cannot copy '{}': {}\n",
+                    source,
+                    crate::error::io_error_reason(&e)
+                ));
             }
         }
 
@@ -469,11 +473,13 @@ pub(crate) fn copy_tree<'a>(
                 .await
                 .map_err(|e| format!("cannot create symbolic link '{}': {e}", dst.display())));
         }
-        Ok(ctx
-            .fs
-            .copy(src, dst)
-            .await
-            .map_err(|e| format!("cannot copy '{}': {e}", src.display())))
+        Ok(ctx.fs.copy(src, dst).await.map_err(|e| {
+            format!(
+                "cannot copy '{}': {}",
+                src.display(),
+                crate::error::io_error_reason(&e)
+            )
+        }))
     })
 }
 

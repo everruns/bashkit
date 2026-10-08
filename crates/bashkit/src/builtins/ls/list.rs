@@ -193,14 +193,20 @@ impl Builtin for Ls {
             let path = resolve_path(ctx.cwd, path_str);
 
             // lstat: a dangling link still lists as itself.
-            let Ok(lmeta) = ctx.fs.lstat(&path).await else {
-                return Ok(ExecResult::err(
-                    format!(
-                        "ls: cannot access '{}': No such file or directory\n",
-                        path_str
-                    ),
-                    2,
-                ));
+            let lmeta = match ctx.fs.lstat(&path).await {
+                Ok(m) => m,
+                Err(e) => {
+                    let reason = match &e {
+                        crate::Error::Io(io) if io.kind() == std::io::ErrorKind::NotADirectory => {
+                            "Not a directory"
+                        }
+                        _ => "No such file or directory",
+                    };
+                    return Ok(ExecResult::err(
+                        format!("ls: cannot access '{}': {reason}\n", path_str),
+                        2,
+                    ));
+                }
             };
             // GNU: a link operand is followed unless -l, -d or -F describe
             // the link itself.

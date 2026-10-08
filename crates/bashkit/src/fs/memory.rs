@@ -354,6 +354,28 @@ impl Default for InMemoryFs {
 }
 
 impl InMemoryFs {
+    /// Whether an ancestor of `path` is a regular file or FIFO.
+    fn ancestor_is_file(entries: &HashMap<PathBuf, FsEntry>, path: &Path) -> bool {
+        path.ancestors().skip(1).any(|a| {
+            matches!(
+                entries.get(a),
+                Some(FsEntry::File { .. } | FsEntry::LazyFile { .. } | FsEntry::Fifo { .. })
+            )
+        })
+    }
+
+    /// Error for a path whose parent is missing: `ENOTDIR` when some
+    /// ancestor is a regular file or FIFO (`f/x` under file `f`), otherwise
+    /// "parent directory not found". Symlink ancestors stay `NotFound` so the
+    /// symlink-following layer resolves them.
+    fn missing_parent_error(entries: &HashMap<PathBuf, FsEntry>, path: &Path) -> crate::Error {
+        if Self::ancestor_is_file(entries, path) {
+            IoError::new(ErrorKind::NotADirectory, "not a directory").into()
+        } else {
+            IoError::new(ErrorKind::NotFound, "parent directory not found").into()
+        }
+    }
+
     // File-count quotas cover every non-directory entry. Use negation so new
     // FsEntry variants are automatically counted without an explicit update here.
     fn entry_counts_toward_file_count(entry: &FsEntry) -> bool {
@@ -1167,6 +1189,11 @@ impl FileSystem for InMemoryFs {
                     // Need write lock to materialize — fall through
                 }
                 None => {
+                    if Self::ancestor_is_file(&entries, &path) {
+                        return Err(
+                            IoError::new(ErrorKind::NotADirectory, "not a directory").into()
+                        );
+                    }
                     return Err(IoError::new(ErrorKind::NotFound, "file not found").into());
                 }
             }
@@ -1248,10 +1275,13 @@ impl FileSystem for InMemoryFs {
 
         // Ensure parent directory exists
         if let Some(parent) = path.parent()
-            && !entries.contains_key(parent)
             && parent != Path::new("/")
+            && !matches!(
+                entries.get(parent),
+                Some(FsEntry::Directory { .. } | FsEntry::Symlink { .. })
+            )
         {
-            return Err(IoError::new(ErrorKind::NotFound, "parent directory not found").into());
+            return Err(Self::missing_parent_error(&entries, &path));
         }
 
         // Cannot write to a directory
@@ -1326,12 +1356,13 @@ impl FileSystem for InMemoryFs {
                 // (inline instead of calling write_file to avoid deadlock on entries lock)
                 self.check_write_limits(&entries, &path, content.len())?;
                 if let Some(parent) = path.parent()
-                    && !entries.contains_key(parent)
                     && parent != Path::new("/")
+                    && !matches!(
+                        entries.get(parent),
+                        Some(FsEntry::Directory { .. } | FsEntry::Symlink { .. })
+                    )
                 {
-                    return Err(
-                        IoError::new(ErrorKind::NotFound, "parent directory not found").into(),
-                    );
+                    return Err(Self::missing_parent_error(&entries, &path));
                 }
                 entries.insert(
                     path,
@@ -1499,7 +1530,7 @@ impl FileSystem for InMemoryFs {
                 && parent != Path::new("/")
                 && !matches!(entries.get(parent), Some(FsEntry::Directory { .. }))
             {
-                return Err(IoError::new(ErrorKind::NotFound, "parent directory not found").into());
+                return Err(Self::missing_parent_error(&entries, &path));
             }
 
             if entries.contains_key(&path) {
@@ -1594,6 +1625,9 @@ impl FileSystem for InMemoryFs {
             | Some(FsEntry::Directory { metadata })
             | Some(FsEntry::Symlink { metadata, .. })
             | Some(FsEntry::Fifo { metadata, .. }) => Ok(metadata.clone()),
+            None if Self::ancestor_is_file(&entries, &path) => {
+                Err(IoError::new(ErrorKind::NotADirectory, "not a directory").into())
+            }
             None => Err(IoError::new(ErrorKind::NotFound, "not found").into()),
         }
     }
@@ -1666,7 +1700,7 @@ impl FileSystem for InMemoryFs {
         if let Some(parent) = to.parent()
             && !matches!(entries.get(parent), Some(FsEntry::Directory { .. }))
         {
-            return Err(IoError::new(ErrorKind::NotFound, "parent directory not found").into());
+            return Err(Self::missing_parent_error(&entries, &to));
         }
 
         let entry = entries
@@ -1757,7 +1791,7 @@ impl FileSystem for InMemoryFs {
         if let Some(parent) = to.parent()
             && !matches!(entries.get(parent), Some(FsEntry::Directory { .. }))
         {
-            return Err(IoError::new(ErrorKind::NotFound, "parent directory not found").into());
+            return Err(Self::missing_parent_error(&entries, &to));
         }
 
         // THREAT[TM-DOS-047]: Always check write limits, even on overwrite.
@@ -1974,6 +2008,44 @@ mod tests {
         let entries = fs.read_dir(Path::new("/dst/nested")).await.unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].name, "main.rs");
+    }
+
+    // A regular file in the path is ENOTDIR (bash: `f/x: Not a directory`),
+    // not a place to create entries.
+    #[tokio::test]
+    async fn path_under_regular_file_is_not_a_directory() {
+        let fs = InMemoryFs::new();
+        fs.write_file(Path::new("/tmp/f"), b"").await.unwrap();
+        let kind = |r: Result<()>| match r {
+            Err(crate::Error::Io(io)) => io.kind(),
+            other => panic!("expected io error, got ok={}", other.is_ok()),
+        };
+        assert_eq!(
+            kind(fs.write_file(Path::new("/tmp/f/x"), b"hi").await),
+            ErrorKind::NotADirectory
+        );
+        assert_eq!(
+            kind(fs.append_file(Path::new("/tmp/f/x"), b"hi").await),
+            ErrorKind::NotADirectory
+        );
+        assert_eq!(
+            kind(fs.mkdir(Path::new("/tmp/f/d"), false).await),
+            ErrorKind::NotADirectory
+        );
+        assert_eq!(
+            kind(fs.read_file(Path::new("/tmp/f/x")).await.map(|_| ())),
+            ErrorKind::NotADirectory
+        );
+        assert_eq!(
+            kind(fs.stat(Path::new("/tmp/f/x")).await.map(|_| ())),
+            ErrorKind::NotADirectory
+        );
+        assert!(!fs.exists(Path::new("/tmp/f/x")).await.unwrap());
+        // A missing parent stays "not found".
+        assert_eq!(
+            kind(fs.write_file(Path::new("/tmp/nope/x"), b"hi").await),
+            ErrorKind::NotFound
+        );
     }
 
     #[tokio::test]
