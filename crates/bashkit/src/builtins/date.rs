@@ -566,6 +566,16 @@ impl Builtin for Date {
         if let Some(fmt) = operands.iter().find(|s| s.starts_with('+')) {
             format_arg = Some(fmt.clone());
         }
+        // GNU date reads an operand without `+` as a date to set: the
+        // sandbox clock cannot be set, and anything else is not a date.
+        if let Some(op) = operands.iter().find(|s| !s.starts_with('+')) {
+            let msg = if !op.is_empty() && op.bytes().all(|b| b.is_ascii_digit() || b == b'.') {
+                "date: cannot set date: Operation not permitted\n".to_string()
+            } else {
+                format!("date: invalid date '{op}'\n")
+            };
+            return Ok(ExecResult::err(msg, 1));
+        }
 
         // THREAT[TM-INF-018]: Resolve only the virtual environment's TZ.
         let selected_timezone = match SandboxTimezone::from_env(ctx.env.get("TZ")) {

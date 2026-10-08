@@ -392,6 +392,12 @@ const BUILTINS: &[CmdInfo] = &[
         usage: "glob [OPTS] PATTERN [STR...]",
         description: "Glob matching",
     },
+    CmdInfo {
+        name: "help",
+        category: "utility",
+        usage: "help [-s] [--list] [--search TERM] [--json] [COMMAND]",
+        description: "Display information about builtin commands",
+    },
 ];
 
 #[async_trait]
@@ -412,6 +418,13 @@ impl Builtin for Help {
                 "--search" => {
                     i += 1;
                     search = ctx.args.get(i).cloned();
+                }
+                "--" => {
+                    // End of options: the next word is the topic.
+                    i += 1;
+                    if let Some(arg) = ctx.args.get(i) {
+                        command = Some(arg.clone());
+                    }
                 }
                 arg if !arg.starts_with('-') => command = Some(arg.to_string()),
                 other => {
@@ -444,7 +457,12 @@ impl Builtin for Help {
                     info.name, info.description, info.usage, info.category
                 )));
             }
-            return Ok(ExecResult::err(format!("help: no help for '{cmd}'\n"), 1));
+            return Ok(ExecResult::err(
+                format!(
+                    "bash: help: no help topics match `{cmd}'.  Try `help help' or `man -k {cmd}' or `info {cmd}'.\n"
+                ),
+                1,
+            ));
         }
 
         // Search mode

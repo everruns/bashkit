@@ -6,9 +6,9 @@ printenv NONEXISTENT_VAR_XYZ_123
 ### end
 
 ### printenv_no_args_empty
-### bash_diff: VFS env starts empty, printenv shows nothing
-# printenv with no args on empty env
+### bash_diff: VFS env starts with only PWD exported
+# printenv with no args on the startup environment
 printenv | wc -l
 ### expect
-0
+1
 ### end

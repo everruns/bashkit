@@ -197,7 +197,7 @@ impl Interpreter {
         match operator {
             // An unset variable quotes to nothing, not `''`.
             'Q' | 'K' | 'k' | 'A' if !is_set && value.is_empty() => String::new(),
-            'A' => format!("{}='{}'", name, value.replace('\'', "'\\''")),
+            'A' => format!("{}={}", name, Self::transform_value(&value, 'Q')),
             // On a scalar, `@K`/`@k` quote like `@Q`.
             'K' | 'k' if !name.contains('[') => Self::transform_value(&value, 'Q'),
             _ => Self::transform_value(&value, operator),
@@ -207,6 +207,8 @@ impl Interpreter {
     /// The `${v@op}` transforms that depend only on the value.
     fn transform_value(value: &str, operator: char) -> String {
         match operator {
+            // Control characters force bash's `$'...'` form.
+            'Q' if super::declare::ansic_should_quote(value) => super::declare::ansic_quote(value),
             'Q' => format!("'{}'", value.replace('\'', "'\\''")),
             'E' => value
                 .replace("\\n", "\n")
@@ -400,8 +402,9 @@ impl Interpreter {
                     Self::append_expansion_for_word(&mut result, word, &trimmed);
                 }
                 WordPart::ArithmeticExpansion(expr) => {
-                    let expanded_expr = if expr.contains("$(") {
-                        self.expand_command_subs_in_arithmetic(expr).await?
+                    let expanded_expr = if expr.contains("$(") || expr.contains('`') {
+                        // Boxed: keeps expand_word's frame small (TM-DOS-089).
+                        Box::pin(self.expand_command_subs_in_arithmetic(expr)).await?
                     } else {
                         expr.to_string()
                     };
@@ -427,6 +430,7 @@ impl Interpreter {
                         result.push_str(&self.expand_variable("#"));
                         continue;
                     } else {
+                        self.nounset_check_plain(name);
                         self.expand_variable(name)
                     };
                     result.push_str(&self.shell_length(&value).to_string());
@@ -510,11 +514,15 @@ impl Interpreter {
                     Self::append_expansion_for_word(&mut result, word, &expanded);
                 }
                 WordPart::ArrayAccess { name, index } => {
-                    Self::append_expansion_for_word(
-                        &mut result,
-                        word,
-                        &self.expand_array_access_part(name, index),
-                    );
+                    // `${a[$(cmd)]}` in the source: the substitution runs
+                    // first (source text, not data: L-ARITH-001 is about
+                    // values read into arithmetic).
+                    let value = if index.contains("$(") && !self.is_assoc_array(name) {
+                        self.array_access_after_subst(name, index).await?
+                    } else {
+                        self.expand_array_access_part(name, index)
+                    };
+                    Self::append_expansion_for_word(&mut result, word, &value);
                 }
                 WordPart::ArrayIndices { name, star } => {
                     let keys = self.array_keys(name);
@@ -530,6 +538,7 @@ impl Interpreter {
                     offset,
                     length,
                 } => {
+                    self.nounset_check_plain(name);
                     let value = self
                         .substring_part(name, offset, length.as_deref())
                         .map_err(crate::error::Error::LineAbort)?;
@@ -690,6 +699,32 @@ impl Interpreter {
             }
             self.expand_prompt_string(value).await
         })
+    }
+
+    /// `${a[$(cmd)]}`: run the substitutions, then read the element. Boxed
+    /// so its temporaries stay off `expand_word_inner`'s frame.
+    fn array_access_after_subst<'a>(
+        &'a mut self,
+        name: &'a str,
+        index: &'a str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String>> + Send + 'a>> {
+        Box::pin(async move {
+            let index = self.expand_command_subs_in_arithmetic(index).await?;
+            Ok(self.expand_array_access_part(name, &index))
+        })
+    }
+
+    /// `set -u`: `${#v}` / `${v:1}` of an unset plain name is fatal.
+    #[inline(never)]
+    fn nounset_check_plain(&mut self, name: &str) {
+        if self.is_nounset()
+            && self.nounset_error.is_none()
+            && !name.contains('[')
+            && !matches!(name, "@" | "*")
+            && !self.is_variable_set(name)
+        {
+            self.nounset_error = Some(self.unbound_variable_diag(name));
+        }
     }
 
     /// `${v@op}` / `${!ref@op}` (the variable `ref` names). Kept out of
@@ -1542,7 +1577,14 @@ impl Interpreter {
                         part_quoted.push(outer_quoted || in_marked || force_quoted);
                     }
                 }
-                other => {
+                mut other => {
+                    // A nested `${b:-"x y"}` keeps its own quotes.
+                    if let (Some(m), WordPart::ParameterExpansion { operand: inner, .. }) =
+                        (quote_mark, &mut other)
+                        && inner.contains(m)
+                    {
+                        *inner = inner.replace(m, "\"");
+                    }
                     parts.push(other);
                     part_quoted.push(outer_quoted || in_marked || force_quoted);
                 }
@@ -1990,6 +2032,16 @@ impl Interpreter {
                     colon_variant,
                 } => {
                     let (is_set, value) = self.resolve_param_expansion_name(name);
+                    // The nested operand still holds this level's quote
+                    // marks: give it back its `"` (`${a:-${b:-"1 2"}}`).
+                    let restored;
+                    let inner_operand = match quote_mark {
+                        Some(m) if inner_operand.contains(m) => {
+                            restored = inner_operand.replace(m, "\"");
+                            &restored
+                        }
+                        _ => inner_operand,
+                    };
                     let expanded = self.apply_parameter_op(
                         &value,
                         name,
@@ -2022,6 +2074,11 @@ impl Interpreter {
                             !repl && (in_marked || force_quoted),
                         );
                     }
+                }
+                // `${x:-${(m)y}}`: abandons the line like a top-level one.
+                // The line-abort slot is shared with arithmetic errors.
+                WordPart::BadSubstitution(text) => {
+                    self.record_arith_error(format!("{text}: bad substitution"));
                 }
                 // TODO: process substitution in sync operand expansion
                 _ => {}

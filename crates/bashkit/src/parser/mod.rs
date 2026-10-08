@@ -905,6 +905,50 @@ impl<'a> Parser<'a> {
         Ok(Some(Command::Compound(compound, redirects)))
     }
 
+    /// The subscript of `name[sub]=...` as written in the source.
+    fn raw_subscript(raw: &str, name: &str) -> Option<String> {
+        let rest = raw.strip_prefix(name)?.strip_prefix('[')?;
+        let mut depth = 1usize;
+        let mut quote: Option<char> = None;
+        let mut escaped = false;
+        for (i, c) in rest.char_indices() {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            match (quote, c) {
+                (Some('\''), '\'') => quote = None,
+                (Some('\''), _) => {}
+                (_, '\\') => escaped = true,
+                (Some('"'), '"') => quote = None,
+                (Some(_), _) => {}
+                (None, '\'' | '"') => quote = Some(c),
+                (None, '[') => depth += 1,
+                (None, ']') => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(rest[..i].to_string());
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
+    /// `name=...`, `name+=...`, `name[sub]=...` with a valid name: an
+    /// assignment, never a function name (`func-name=x () {...}` is one).
+    fn is_assignment_like(word: &str) -> bool {
+        let Some(eq) = word.find('=') else {
+            return false;
+        };
+        let lhs = word[..eq].strip_suffix('+').unwrap_or(&word[..eq]);
+        let name = lhs.split('[').next().unwrap_or(lhs);
+        !name.is_empty()
+            && !name.starts_with(|c: char| c.is_ascii_digit())
+            && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    }
+
     /// Parse a single command (simple or compound)
     fn parse_command(&mut self) -> Result<Option<Command>> {
         self.skip_newlines()?;
@@ -927,7 +971,7 @@ impl<'a> Parser<'a> {
                     // Check for POSIX-style function: name() { body }
                     // Don't match if word contains '=' (that's an assignment like arr=(a b c))
                     // Reserved words (`then (cmd)`) never name a function.
-                    if !word.contains('=')
+                    if !Self::is_assignment_like(&word)
                         && !matches!(
                             word.as_str(),
                             "then" | "else" | "elif" | "fi" | "do" | "done" | "esac" | "in" | "!"
@@ -2700,7 +2744,16 @@ impl<'a> Parser<'a> {
                 .to_string()
         });
         let name = name.to_string();
-        let index = index.map(|s| s.to_string());
+        // A quoted subscript (`a["1"]=x`, `a['2']=x`) keeps its source text:
+        // arithmetic drops double quotes but rejects single ones, as bash.
+        let index = match index {
+            Some(ix) if ix.contains(['\u{1e}', '\u{1f}']) => Some(
+                self.source_slice(self.current_span.start.offset, self.current_span.end.offset)
+                    .and_then(|raw| Self::raw_subscript(&raw, &name))
+                    .unwrap_or_else(|| ix.to_string()),
+            ),
+            ix => ix.map(|s| s.to_string()),
+        };
         let value_str = value.to_string();
 
         // Array literal in the token itself: arr=(a b c)
@@ -3125,6 +3178,11 @@ impl<'a> Parser<'a> {
                 {
                     words.push(Word::literal("[["));
                     self.advance();
+                }
+                // `echo a(b)`, `foo $x() {`: a `(` after a command word is a
+                // syntax error in bash, not the start of a subshell.
+                Some(tokens::Token::LeftParen) if !words.is_empty() => {
+                    return Err(self.error("unexpected token"));
                 }
                 Some(tokens::Token::Newline)
                 | Some(tokens::Token::Semicolon)
@@ -4162,17 +4220,26 @@ impl<'a> Parser<'a> {
                                         if chars.peek() == Some(&'}') {
                                             chars.next();
                                         }
-                                        // `${a[@]:o:l}` slices the elements,
-                                        // `${a[1]:o:l}` the element's text.
-                                        push_part!(WordPart::Substring {
-                                            name: format!(
-                                                "{}[{}]",
-                                                std::mem::take(&mut var_name),
-                                                index
-                                            ),
-                                            offset,
-                                            length,
-                                        });
+                                        // `${a[@]:}`: an empty offset is a
+                                        // bad substitution (bash).
+                                        if offset.is_empty() && length.is_none() {
+                                            push_part!(WordPart::BadSubstitution(format!(
+                                                "${{{}[{index}]:}}",
+                                                std::mem::take(&mut var_name)
+                                            )));
+                                        } else {
+                                            // `${a[@]:o:l}` slices the elements,
+                                            // `${a[1]:o:l}` the element's text.
+                                            push_part!(WordPart::Substring {
+                                                name: format!(
+                                                    "{}[{}]",
+                                                    std::mem::take(&mut var_name),
+                                                    index
+                                                ),
+                                                offset,
+                                                length,
+                                            });
+                                        }
                                     }
                                 } else if matches!(next_c, '-' | '+' | '=' | '?') {
                                     // Non-colon operators on array: ${arr[@]-default}
@@ -4250,11 +4317,17 @@ impl<'a> Parser<'a> {
                                             if chars.peek() == Some(&'}') {
                                                 chars.next();
                                             }
-                                            push_part!(WordPart::Substring {
-                                                name: var_name,
-                                                offset,
-                                                length,
-                                            });
+                                            if offset.is_empty() && length.is_none() {
+                                                push_part!(WordPart::BadSubstitution(format!(
+                                                    "${{{var_name}:}}"
+                                                )));
+                                            } else {
+                                                push_part!(WordPart::Substring {
+                                                    name: var_name,
+                                                    offset,
+                                                    length,
+                                                });
+                                            }
                                         }
                                     }
                                 }
@@ -4577,7 +4650,13 @@ impl<'a> Parser<'a> {
                     _ => false,
                 }
             });
-            if !unquoted_expansion && !quoted_at {
+            // `{X,,Y,}''`: brace items next to the empty quotes are words
+            // even when empty.
+            let brace_candidate = parts
+                .iter()
+                .zip(&part_quoted)
+                .any(|(p, q)| !*q && matches!(p, WordPart::Literal(t) if t.contains('{')));
+            if !unquoted_expansion && !quoted_at && !brace_candidate {
                 let mut kept_parts = Vec::with_capacity(parts.len());
                 let mut kept_quoted = Vec::with_capacity(parts.len());
                 for (p, q) in parts.into_iter().zip(part_quoted) {

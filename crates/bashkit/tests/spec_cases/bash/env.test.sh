@@ -1,9 +1,9 @@
 ### env_no_args_empty
-### bash_diff: VFS env starts empty
-# env with no args on empty environment
+### bash_diff: VFS env starts with only PWD exported
+# env with no args on the startup environment
 env | wc -l
 ### expect
-0
+1
 ### end
 
 ### env_ignore_environment
@@ -16,8 +16,8 @@ env -i | wc -l
 
 ### env_set_vars
 ### bash_diff: VFS env does not support running commands
-# env with NAME=VALUE prints specified vars
+# env with NAME=VALUE prints specified vars (plus the exported PWD)
 env FOO=bar BAZ=qux | grep -c "="
 ### expect
-2
+3
 ### end

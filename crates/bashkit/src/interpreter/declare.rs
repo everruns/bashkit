@@ -1167,6 +1167,12 @@ impl Interpreter {
         };
         self.remove_scalar_value(name);
         self.remove_var_attr(name, VarAttrs::NOVALUE);
+        // `declare -n -x ref=x`: bash exports the reference itself, its
+        // value being the target name.
+        if opts.on.export && !target.is_empty() {
+            self.add_var_attr(name, VarAttrs::EXPORT);
+            self.insert_env_checked(name.to_string(), target.clone());
+        }
         self.set_nameref(name, target);
         if opts.on.readonly {
             self.add_var_attr(name, VarAttrs::READONLY);
@@ -1222,7 +1228,8 @@ impl Interpreter {
     ) -> Result<()> {
         let attrs = self.var_attrs_get(name);
         if self.var_kind(name) == VarKind::Assoc {
-            let key = self.expand_assoc_key(sub).await?;
+            // A quoted key arrives as source text (`a["k"]=v`).
+            let key = self.expand_raw_assoc_key(sub).await?;
             let old = if append {
                 self.scoped
                     .assoc_arrays
@@ -1236,6 +1243,15 @@ impl Interpreter {
             self.set_assoc_element_checked(name.to_string(), key, v);
         } else {
             self.promote_scalar_to_indexed(name);
+            // `a[$(cmd)]=v`: run the substitutions first (boxed: keeps
+            // this future small on the assignment path).
+            let expanded;
+            let sub = if sub.contains("$(") || sub.contains('`') {
+                expanded = Box::pin(self.expand_command_subs_in_arithmetic(sub)).await?;
+                expanded.as_str()
+            } else {
+                sub
+            };
             let idx = self
                 .indexed_write_subscript(name, sub)
                 .map_err(crate::error::Error::LineAbort)?;
@@ -1338,20 +1354,34 @@ impl Interpreter {
                     .saturating_sub(self.memory_budget.array_entries),
             );
             let mut pending_key: Option<String> = None;
+            // `A=([k]=v x)`: once the list starts with a subscript, a bare
+            // element is an error (bash), not half of a key/value pair.
+            let keyed_list = words.first().is_some_and(|w| split_keyed_word(w).is_some());
             for word in words {
                 if map.len() >= max_entries {
                     break;
                 }
                 if let Some((kw, vw, kappend)) = split_keyed_word(word) {
                     let key = self.expand_word(&kw).await?;
-                    let val = self.expand_word(&vw).await?;
-                    let old = if kappend {
+                    // Assoc values get no tilde expansion (`[k]=~` is `~`).
+                    let val = self.expand_word(&no_tilde_word(&vw)).await?;
+                    // `A=([k]=1 [k]+=2)` appends to the value from before the
+                    // assignment (none), as bash does; `A+=(...)` to the live one.
+                    let old = if kappend && append {
                         Some(map.get(&key).cloned().unwrap_or_default())
                     } else {
                         None
                     };
                     let v = self.transform_element(attrs, old.as_deref(), val);
                     map.insert(key, v);
+                    continue;
+                }
+                if keyed_list {
+                    let text = self.expand_word(word).await?;
+                    let msg = self.diag(format!(
+                        "{name}: {text}: must use subscript when assigning associative array\n"
+                    ));
+                    self.queue_subst_stderr(&crate::StreamData::from(msg));
                     continue;
                 }
                 let remaining = max_entries.saturating_sub(map.len()).saturating_mul(2);
@@ -1385,56 +1415,94 @@ impl Interpreter {
                     .saturating_sub(self.memory_budget.array_entries),
             );
             let mut next = map.keys().max().map_or(0, |k| k + 1);
-            'words: for word in words {
+            // bash expands every element's value first, then evaluates the
+            // subscripts in order against the array as it is being built:
+            // `a=([0]=1+2 [a[0]]=x)` stores x at 3.
+            enum Item {
+                Keyed(String, String, bool),
+                Fields(Vec<String>),
+            }
+            let mut items = Vec::with_capacity(words.len());
+            let mut budget = max_entries.saturating_sub(map.len());
+            for word in words {
                 // Bash brace-expands indexed elements before spotting
                 // `[i]=`, so `([2]=v{1,2})` stores the plain words
                 // `[2]=v1 [2]=v2`; assoc elements never brace-expand.
                 let braces = self.brace_expand_word(word).is_some();
                 if let Some((kw, vw, kappend)) = split_keyed_word(word).filter(|_| !braces) {
                     let key_text = self.expand_word(&kw).await?;
-                    let raw = match self.try_evaluate_arithmetic_with_assign(&key_text) {
-                        Ok(v) => v,
-                        Err(msg) => {
-                            return Err(crate::error::Error::LineAbort(self.arith_diag("", &msg)));
-                        }
-                    };
-                    let idx = if raw < 0 {
-                        let len = map.keys().max().map_or(0, |m| m + 1) as i64;
-                        let i = len + raw;
-                        if i < 0 {
-                            return Err(crate::error::Error::LineAbort(
-                                self.diag(format!("{name}[{key_text}]: bad array subscript\n")),
-                            ));
-                        }
-                        i as usize
-                    } else {
-                        raw as usize
-                    };
+                    // `[k]=~:~` tilde-expands like an assignment value.
+                    let vw = self.tilde_assignment_value(&vw).into_owned();
                     let val = self.expand_word(&vw).await?;
-                    let old = if kappend {
-                        Some(map.get(&idx).cloned().unwrap_or_default())
-                    } else {
-                        None
-                    };
-                    let v = self.transform_element(attrs, old.as_deref(), val);
-                    if map.len() >= max_entries && !map.contains_key(&idx) {
-                        break;
-                    }
-                    map.insert(idx, v);
-                    next = idx + 1;
+                    items.push(Item::Keyed(key_text, val, kappend));
                     continue;
                 }
-                let remaining = max_entries.saturating_sub(map.len());
-                if remaining == 0 {
+                if budget == 0 {
                     break;
                 }
-                for field in self.expand_element_fields(word, remaining).await? {
-                    if map.len() >= max_entries {
-                        break 'words;
+                let fields = self.expand_element_fields(word, budget).await?;
+                budget = budget.saturating_sub(fields.len());
+                items.push(Item::Fields(fields));
+            }
+            // Only a subscript that names the array needs it live (keeps
+            // the common case free of per-element copies).
+            let mentions_self = items
+                .iter()
+                .any(|i| matches!(i, Item::Keyed(k, ..) if k.contains(name)));
+            if mentions_self && !append {
+                self.insert_array_checked(name.to_string(), HashMap::new());
+            }
+            'items: for item in items {
+                match item {
+                    Item::Keyed(key_text, val, kappend) => {
+                        let raw = match self.try_evaluate_arithmetic_with_assign(&key_text) {
+                            Ok(v) => v,
+                            Err(msg) => {
+                                return Err(crate::error::Error::LineAbort(
+                                    self.arith_diag("", &msg),
+                                ));
+                            }
+                        };
+                        let idx = if raw < 0 {
+                            let len = map.keys().max().map_or(0, |m| m + 1) as i64;
+                            let i = len + raw;
+                            if i < 0 {
+                                return Err(crate::error::Error::LineAbort(
+                                    self.diag(format!("{name}[{key_text}]: bad array subscript\n")),
+                                ));
+                            }
+                            i as usize
+                        } else {
+                            raw as usize
+                        };
+                        let old = if kappend {
+                            Some(map.get(&idx).cloned().unwrap_or_default())
+                        } else {
+                            None
+                        };
+                        let v = self.transform_element(attrs, old.as_deref(), val);
+                        if map.len() >= max_entries && !map.contains_key(&idx) {
+                            break 'items;
+                        }
+                        if mentions_self {
+                            self.set_indexed_element_checked(name, idx, v.clone());
+                        }
+                        map.insert(idx, v);
+                        next = idx + 1;
                     }
-                    let v = self.transform_element(attrs, None, field);
-                    map.insert(next, v);
-                    next += 1;
+                    Item::Fields(fields) => {
+                        for field in fields {
+                            if map.len() >= max_entries {
+                                break 'items;
+                            }
+                            let v = self.transform_element(attrs, None, field);
+                            if mentions_self {
+                                self.set_indexed_element_checked(name, next, v.clone());
+                            }
+                            map.insert(next, v);
+                            next += 1;
+                        }
+                    }
                 }
             }
             self.remove_scalar_value(name);
@@ -1529,6 +1597,28 @@ impl Interpreter {
         fields.truncate(limit);
         Ok(fields)
     }
+}
+
+/// `word` with its unquoted literal `~`s taken literally.
+fn no_tilde_word(word: &Word) -> std::borrow::Cow<'_, Word> {
+    let has_tilde = word
+        .parts
+        .iter()
+        .any(|p| matches!(p, WordPart::Literal(s) if s.contains('~')));
+    if !has_tilde {
+        return std::borrow::Cow::Borrowed(word);
+    }
+    let mut out = word.clone();
+    out.part_quoted = word
+        .parts
+        .iter()
+        .enumerate()
+        .map(|(i, p)| {
+            matches!(p, WordPart::Literal(s) if s.contains('~'))
+                || word.part_quoted.get(i).copied().unwrap_or(word.quoted)
+        })
+        .collect();
+    std::borrow::Cow::Owned(out)
 }
 
 #[cfg(test)]

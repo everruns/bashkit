@@ -49,6 +49,12 @@ fn tokenize(src: &str) -> std::result::Result<Vec<(Tok, usize)>, (String, usize)
             i += 1;
             continue;
         }
+        // A backslash-newline line continuation is removed, as in the
+        // shell's own word reading.
+        if c == b'\\' && bytes.get(i + 1) == Some(&b'\n') {
+            i += 2;
+            continue;
+        }
         let start = i;
         if c.is_ascii_digit() {
             while i < bytes.len()
@@ -131,6 +137,10 @@ pub(super) fn parse_arith_number(s: &str) -> std::result::Result<i64, String> {
         if let Some(rest) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
             (16, rest)
         } else if let Some(hash) = s.find('#') {
+            // bash reads the base as a decimal number: `02#1`, `0#1` are not.
+            if s.starts_with('0') {
+                return Err("invalid number".to_string());
+            }
             let base = s[..hash]
                 .parse::<u32>()
                 .ok()
@@ -745,6 +755,14 @@ impl<'a> ArithEval<'a> {
     }
 
     fn read_lvalue_int(&mut self, lv: &LValue) -> ArithResult<i64> {
+        if self.noeval == 0
+            && self.interp.is_nounset_for_arith()
+            && !self.overlay.keys().any(|(n, _)| *n == lv.name)
+            && self.interp.arith_name_unbound(&lv.name)
+        {
+            self.interp.record_arith_unbound(&lv.name);
+            return Err(format!("{}: unbound variable", lv.name));
+        }
         let s = self.read_lvalue_str(lv);
         let t = s.trim();
         if t.is_empty() {
@@ -857,6 +875,39 @@ impl Interpreter {
     /// expansion.
     pub(super) fn arith_diag(&self, prefix: &str, msg: &str) -> String {
         self.diag(format!("{prefix}{msg}\n"))
+    }
+
+    pub(super) fn is_nounset_for_arith(&self) -> bool {
+        self.is_nounset()
+    }
+
+    /// `set -u`: a name with no value at all (an indexed array with
+    /// elements is set even where the subscript is not; an empty
+    /// associative array is not).
+    pub(super) fn arith_name_unbound(&self, name: &str) -> bool {
+        !self.is_variable_set(name)
+            && self.scoped.arrays.get(name).is_none_or(|a| a.is_empty())
+            && self
+                .scoped
+                .assoc_arrays
+                .get(name)
+                .is_none_or(|a| a.is_empty())
+    }
+
+    pub(super) fn record_arith_unbound(&self, name: &str) {
+        if let Ok(mut slot) = self.arith_unbound.lock()
+            && slot.is_none()
+        {
+            *slot = Some(self.unbound_variable_diag(name));
+        }
+    }
+
+    pub(super) fn has_arith_unbound(&self) -> bool {
+        self.arith_unbound.lock().is_ok_and(|s| s.is_some())
+    }
+
+    pub(super) fn take_arith_unbound(&self) -> Option<String> {
+        self.arith_unbound.lock().ok().and_then(|mut s| s.take())
     }
 
     pub(super) fn take_arith_error(&self) -> Option<String> {
