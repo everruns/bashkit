@@ -307,3 +307,25 @@ printf -x 2>/dev/null; echo $?; printf -v 2>/dev/null; echo $?; printf 2>/dev/nu
 2
 -
 ### end
+
+### printf_invalid_number_fails
+# bash: a non-numeric %d argument prints its parsed prefix and fails (status 1)
+printf '%d\n' abc; echo rc=$?; printf '%d\n' 12abc; echo rc=$?; printf -v v %d 3x; echo "$? $v"
+printf '%d\n' 99999999999999999999 2>/dev/null; echo rc=$?; printf '%d|' '' "'x"; echo rc=$?
+### expect
+0
+rc=1
+12
+rc=1
+1 3
+9223372036854775807
+rc=0
+0|120|rc=0
+### end
+
+### printf_invalid_number_stderr
+# the diagnostic names the argument like bash
+printf '%d' abc 2>&1 >/dev/null | sed 's/^.*printf: //'
+### expect
+abc: invalid number
+### end

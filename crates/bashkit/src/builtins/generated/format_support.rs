@@ -3,6 +3,8 @@
 //! Keep uucore runtime hooks local and side-effect free: bashkit builtins
 //! return structured `ExecResult`s, so generated formatting code must not
 //! write diagnostics directly to host stderr or depend on uucore exit state.
+//! `show_error!` messages are collected per call ([`collect_diagnostics`])
+//! so `printf` can report bad numeric arguments the way bash does.
 
 use std::ffi::{OsStr, OsString};
 
@@ -84,9 +86,42 @@ pub fn locale_aware_escape_name(input: &OsStr, style: QuotingStyle) -> OsString 
     }
 }
 
+/// Most diagnostics one [`collect_diagnostics`] call keeps (one per bad
+/// argument; the cap bounds memory for huge argument lists).
+const MAX_COLLECTED_DIAGNOSTICS: usize = 64;
+
+std::thread_local! {
+    /// `Some` while [`collect_diagnostics`] runs: uucore's `show_error!`
+    /// messages land here instead of host stderr.
+    static DIAGNOSTICS: std::cell::RefCell<Option<Vec<String>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Run `f` (synchronous, so the thread-local cannot leak across tasks) and
+/// return the `show_error!` messages it produced, in order.
+pub fn collect_diagnostics<R>(f: impl FnOnce() -> R) -> (R, Vec<String>) {
+    DIAGNOSTICS.with(|d| *d.borrow_mut() = Some(Vec::new()));
+    let result = f();
+    let diags = DIAGNOSTICS
+        .with(|d| d.borrow_mut().take())
+        .unwrap_or_default();
+    (result, diags)
+}
+
+/// Record one `show_error!` message when a collector is active.
+pub fn record_diagnostic(msg: std::fmt::Arguments<'_>) {
+    DIAGNOSTICS.with(|d| {
+        if let Some(diags) = d.borrow_mut().as_mut()
+            && diags.len() < MAX_COLLECTED_DIAGNOSTICS
+        {
+            diags.push(msg.to_string());
+        }
+    });
+}
+
 macro_rules! show_error {
     ($($arg:tt)*) => {{
-        let _ = format_args!($($arg)*);
+        $crate::builtins::generated::format_support::record_diagnostic(format_args!($($arg)*));
     }};
 }
 

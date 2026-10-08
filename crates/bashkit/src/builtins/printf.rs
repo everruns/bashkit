@@ -5,13 +5,18 @@
 //! outside generated code so regenerating `format/` cannot erase the DoS guard.
 
 use std::borrow::Cow;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::ops::ControlFlow;
 
 use async_trait::async_trait;
 
+use os_display::Quotable;
+
 use super::generated::format::{
     FormatArgument, FormatArguments, FormatError, FormatItem, parse_spec_and_escape,
+};
+use super::generated::format_support::{
+    QuotingStyle, collect_diagnostics, locale_aware_escape_name,
 };
 use super::limits::PRINTF_MAX_DIAG_CHARS as MAX_PRINTF_DIAG_CHARS;
 use super::{Builtin, BuiltinSideEffect, Context, Date, MAX_FORMAT_WIDTH};
@@ -97,10 +102,12 @@ impl Builtin for Printf {
             Ok(v) => v,
             Err(err) => return Ok(ExecResult::err(format!("{err}\n"), 1)),
         };
-        let output = match render_printf_bytes(&format, &args) {
+        let (rendered, diags) = collect_diagnostics(|| render_printf_bytes(&format, &args));
+        let output = match rendered {
             Ok(output) => output,
             Err(err) => return Ok(ExecResult::err(err, 1)),
         };
+        let (number_stderr, number_status) = numeric_argument_diagnostics(&diags, &args);
 
         if let Some(name) = var_name {
             // THREAT[TM-INJ-009]: Block internal variable prefix injection via printf -v
@@ -110,16 +117,57 @@ impl Builtin for Printf {
             // Assigned by the interpreter like `read`: locals, namerefs,
             // `a[i]` targets, `declare -i` arithmetic and readonly all apply.
             // Variables are text; a non-UTF-8 byte is decoded lossily here.
-            let mut result = ExecResult::ok(String::new());
+            let mut result = ExecResult::with_code(String::new(), number_status);
+            result.stderr = number_stderr.into();
             result.side_effects.push(BuiltinSideEffect::SetVariable {
                 name,
                 value: String::from_utf8_lossy(&output).into_owned(),
             });
             Ok(result)
         } else {
-            Ok(ExecResult::ok_bytes(output))
+            let mut result = ExecResult::ok_bytes(output);
+            result.exit_code = number_status;
+            result.stderr = number_stderr.into();
+            Ok(result)
         }
     }
+}
+
+/// bash's report for numeric conversions uucore flagged: `abc`/`12abc`
+/// are `invalid number` (status 1, the parsed prefix is still printed),
+/// out of range is only a warning (status 0). An empty argument is 0 and a
+/// leading quote is a character code (`"'"` alone is 0), both without
+/// complaint in bash.
+fn numeric_argument_diagnostics(diags: &[String], args: &[String]) -> (String, i32) {
+    let mut stderr = String::new();
+    let mut status = 0;
+    for diag in diags {
+        // uucore writes `<quoted arg>: <reason>`; recover the raw argument by
+        // quoting each candidate the same way.
+        let Some(arg) = args.iter().find(|a| {
+            let quoted =
+                locale_aware_escape_name(OsStr::new(a.as_str()), QuotingStyle::C_NO_QUOTES)
+                    .quote()
+                    .to_string();
+            diag.strip_prefix(quoted.as_str())
+                .is_some_and(|rest| rest.starts_with(": "))
+        }) else {
+            continue;
+        };
+        let shown = truncate_text(arg, MAX_PRINTF_DIAG_CHARS / 2);
+        if diag.ends_with("Numerical result out of range") {
+            stderr.push_str(&format!(
+                "bash: printf: warning: {shown}: Numerical result out of range\n"
+            ));
+        } else if !arg.is_empty() && !arg.starts_with(['\'', '"']) {
+            stderr.push_str(&format!("bash: printf: {shown}: invalid number\n"));
+            status = 1;
+        }
+        if stderr.len() > MAX_PRINTF_DIAG_CHARS {
+            break;
+        }
+    }
+    (stderr, status)
 }
 
 /// bash's usage failure: optional diagnostic, then the usage line, status 2.
