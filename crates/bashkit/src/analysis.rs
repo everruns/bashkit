@@ -512,9 +512,11 @@ impl Walker {
     fn walk_redirects(&mut self, redirects: &[Redirect], ctx: CommandContext) {
         for redirect in redirects {
             let mode = match redirect.kind {
-                RedirectKind::Output | RedirectKind::Clobber | RedirectKind::OutputBoth => {
-                    RedirectMode::Write
-                }
+                // `<>` may create and overwrite the file: gate it as a write.
+                RedirectKind::Output
+                | RedirectKind::Clobber
+                | RedirectKind::OutputBoth
+                | RedirectKind::ReadWrite => RedirectMode::Write,
                 RedirectKind::Append => RedirectMode::Append,
                 RedirectKind::Input => RedirectMode::Read,
                 // Fd duplication, here-documents and here-strings do not name a

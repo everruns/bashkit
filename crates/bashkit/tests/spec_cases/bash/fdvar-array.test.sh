@@ -13,7 +13,9 @@ one
 ### end
 
 ### fd_var_array_is_not_a_command
-coproc C { echo x; }
+# `cat` keeps the coproc alive until its input closes: with `echo x` real
+# bash could reap it (unsetting C) before the close, making rc=1.
+coproc C { cat; }
 exec {C[1]}>&- 2>&1
 echo "rc=$?"
 ### expect

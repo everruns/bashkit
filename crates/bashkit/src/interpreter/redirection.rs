@@ -29,9 +29,44 @@ impl Interpreter {
         redirects: &[Redirect],
     ) -> Result<Option<crate::StreamData>> {
         let mut stdin = existing_stdin;
+        // Readable fds this command's own redirects open (`4<<E <&4`).
+        let mut own_fds: Vec<(i32, crate::StreamData)> = Vec::new();
 
         for redirect in redirects {
+            // Fd N >= 1 for an input-side redirect (`3<f`, `4<<<w`, `5<>f`).
+            let high_fd = redirect.fd.filter(|&fd| fd != 0);
             match redirect.kind {
+                RedirectKind::ReadWrite => {
+                    // `<>`: open (creating) the file read-write.
+                    let target_path = self.expand_word(&redirect.target).await?;
+                    let path = self.resolve_path(&target_path);
+                    let content = if is_dev_null(&path) {
+                        crate::StreamData::new()
+                    } else if !self.shell_features.has_file_redirects() {
+                        return Err(crate::error::Error::Execution(format!(
+                            "bash: {}: filesystem redirection disabled",
+                            target_path
+                        )));
+                    } else {
+                        let opened = match self.fs.append_file(&path, b"").await {
+                            Ok(()) => self.fs.read_file(&path).await,
+                            Err(e) => Err(e),
+                        };
+                        match opened {
+                            Ok(content) => content.into(),
+                            Err(e) => {
+                                return Err(crate::error::Error::CommandFailure(format!(
+                                    "bash: {target_path}: {}\n",
+                                    io_error_reason(&e)
+                                )));
+                            }
+                        }
+                    };
+                    match high_fd {
+                        Some(fd) => own_fds.push((fd, content)),
+                        None => stdin = Some(content),
+                    }
+                }
                 RedirectKind::Input => {
                     if !self.shell_features.has_file_redirects()
                         && !word_is_literal_dev_null(&redirect.target)
@@ -56,7 +91,14 @@ impl Interpreter {
                     } else {
                         match self.fs.read_file(&path).await {
                             Ok(content) => {
-                                stdin = Some(content.into());
+                                let content: crate::StreamData = content.into();
+                                if let Some(fd) = high_fd {
+                                    own_fds.push((fd, content.clone()));
+                                }
+                                // WTF: `3<file` also feeds stdin; loops like
+                                // `while read -u 3 ...; done 3<file` rely on
+                                // it until per-command fds are modelled.
+                                stdin = Some(content);
                             }
                             Err(e) => {
                                 return Err(crate::error::Error::CommandFailure(format!(
@@ -70,22 +112,41 @@ impl Interpreter {
                 RedirectKind::HereString => {
                     // <<< string - use the target as stdin content
                     let content = self.expand_word(&redirect.target).await?;
-                    stdin = Some(format!("{}\n", content).into());
+                    let content: crate::StreamData = format!("{}\n", content).into();
+                    match high_fd {
+                        Some(fd) => own_fds.push((fd, content)),
+                        None => stdin = Some(content),
+                    }
                 }
                 RedirectKind::HereDoc | RedirectKind::HereDocStrip => {
-                    // << EOF / <<- EOF - use the heredoc content as stdin.
-                    // `3<<EOF` feeds fd 3, which nothing here reads.
-                    if matches!(redirect.fd, None | Some(0)) {
-                        let content = self.expand_word(&redirect.target).await?;
-                        stdin = Some(content.into());
+                    // << EOF / <<- EOF - use the heredoc content as stdin;
+                    // `3<<EOF` feeds fd 3.
+                    let content: crate::StreamData =
+                        self.expand_word(&redirect.target).await?.into();
+                    match high_fd {
+                        Some(fd) => own_fds.push((fd, content)),
+                        None => stdin = Some(content),
                     }
                 }
                 RedirectKind::DupInput => {
-                    // <&FD - if FD is a coproc read FD, consume next line
                     let target = self.expand_word(&redirect.target).await?;
-                    if let Ok(fd) = target.parse::<i32>()
-                        && let Some(buf) = self.coproc_buffers.get_mut(&fd)
-                    {
+                    let Ok(src) = target.parse::<i32>() else {
+                        continue;
+                    };
+                    // `<&4` after this command's own `4<<E`.
+                    if let Some((_, content)) = own_fds.iter().rev().find(|(fd, _)| *fd == src) {
+                        let content = content.clone();
+                        match high_fd {
+                            Some(fd) => own_fds.push((fd, content)),
+                            None => stdin = Some(content),
+                        }
+                        continue;
+                    }
+                    if high_fd.is_some() {
+                        continue;
+                    }
+                    // <&FD - if FD is a coproc read FD, consume next line
+                    if let Some(buf) = self.coproc_buffers.get_mut(&src) {
                         if let Some(line) = buf.pop() {
                             stdin = Some(format!("{}\n", line).into());
                         } else {
@@ -128,6 +189,36 @@ impl Interpreter {
                     | RedirectKind::OutputBoth
             )
         });
+
+        // `>&N` with fd N not open: bash reports it and does not run the
+        // command, so none of its output may show.
+        for redirect in redirects {
+            // Side-effect-free targets only (`>&3`, `>&$fd`): the word is
+            // expanded again when the redirect is applied.
+            if redirect.kind != RedirectKind::DupOutput
+                || !redirect
+                    .target
+                    .parts
+                    .iter()
+                    .all(|p| matches!(p, WordPart::Literal(_) | WordPart::Variable(_)))
+            {
+                continue;
+            }
+            let target = self.expand_word(&redirect.target).await?;
+            if let Ok(fd) = target.parse::<i32>()
+                && fd >= 3
+                && !self.fd_is_open(fd)
+                && !redirects
+                    .iter()
+                    .any(|r| r.fd == Some(fd) && !matches!(r.kind, RedirectKind::DupOutput))
+            {
+                self.clear_pending_fd_redirect_state();
+                result.stdout = crate::StreamData::new();
+                result.stderr = format!("bash: {target}: Bad file descriptor\n").into();
+                result.exit_code = 1;
+                return Ok(result);
+            }
+        }
 
         // `N>file` (N>=3) opens fd N without touching stdout; only the
         // fd-table path keeps fd N separate from fd 1.
@@ -190,7 +281,10 @@ impl Interpreter {
                         }
                     }
                 }
-                RedirectKind::Append => {
+                // `<>` on stdin is input only (see process_input_redirections).
+                RedirectKind::ReadWrite if matches!(redirect.fd, None | Some(0)) => {}
+                // WTF: `1<>file` appends instead of writing at offset 0.
+                RedirectKind::Append | RedirectKind::ReadWrite => {
                     let target_path = self.expand_word(&redirect.target).await?;
                     let path = self.resolve_path(&target_path);
                     if let Some(target_fd) = dev_fd_alias(&path) {
@@ -419,7 +513,8 @@ impl Interpreter {
                         _ => fd1 = target,
                     }
                 }
-                RedirectKind::Append => {
+                RedirectKind::ReadWrite if matches!(redirect.fd, None | Some(0)) => {}
+                RedirectKind::Append | RedirectKind::ReadWrite => {
                     let target_path = self.expand_word(&redirect.target).await?;
                     let path = self.resolve_path(&target_path);
                     if let Some(target_fd) = dev_fd_alias(&path) {
@@ -546,7 +641,373 @@ pub(super) fn has_high_fd_file_redirect(redirects: &[Redirect]) -> bool {
     redirects.iter().any(|r| {
         matches!(
             r.kind,
-            RedirectKind::Output | RedirectKind::Clobber | RedirectKind::Append
+            RedirectKind::Output
+                | RedirectKind::Clobber
+                | RedirectKind::Append
+                | RedirectKind::ReadWrite
         ) && r.fd.is_some_and(|fd| fd >= 3)
     })
+}
+
+// ---------------------------------------------------------------------------
+// Persistent descriptors: `exec` redirections and `{var}` named fds.
+//
+// Important decisions:
+// - The shell's descriptors are virtual, per interpreter (tenant isolation):
+//   output fds live in `exec_fd_table`, readable fds in `coproc_buffers`
+//   (remaining lines), and dups of stdin in `exec_input_fds`. No host fd is
+//   ever touched.
+// - `{var}>file` allocates the lowest free fd >= 10 (bash's
+//   `fcntl(F_DUPFD, 10)`) and stores it in `var`. bash never undoes a
+//   `{var}` redirection, so on any command (not just `exec`) the fd stays
+//   open: it is applied here persistently and removed from the command's own
+//   redirect list.
+// - `>&N` / `<&N` with N closed is `bash: N: Bad file descriptor` (status 1),
+//   unless an enclosing command's redirections provide N
+//   (`fd_redirect_scope`), whose routing the pending-fd machinery handles.
+// - `N<>file` reads the file and appends writes to it. WTF: the shared
+//   read/write offset is not modelled; bash writes at the current offset
+//   (overwriting from the start of an existing file).
+// ---------------------------------------------------------------------------
+
+/// First fd handed out by `{var}` redirections (bash keeps 0-9 for the user).
+const NAMED_FD_BASE: i32 = 10;
+/// First coproc read fd; coproc pairs are handed out downward from here.
+pub(super) const COPROC_FIRST_FD: i32 = 63;
+
+/// Record the fds (>= 3) a command's own redirections open, so commands
+/// running inside it may use them (`f 3>&1`, `{ ...; } 3>log`).
+pub(super) fn push_redirect_scope_fds(scope: &mut Vec<i32>, redirects: &[Redirect]) {
+    for r in redirects {
+        if let Some(fd) = r.fd
+            && fd >= 3
+            && r.fd_var.is_none()
+            && !matches!(r.target.parts.as_slice(), [WordPart::Literal(t)] if t == "-")
+        {
+            scope.push(fd);
+        }
+    }
+}
+
+fn bad_fd_error(word: &str) -> ExecResult {
+    ExecResult::err(format!("bash: {word}: Bad file descriptor\n"), 1)
+}
+
+fn ambiguous_redirect_error(word: &str) -> ExecResult {
+    ExecResult::err(format!("bash: {word}: ambiguous redirect\n"), 1)
+}
+
+/// Remaining coproc-buffer lines (stored reversed) as stdin text.
+fn buffer_text(lines: &[String]) -> crate::StreamData {
+    let mut text = String::new();
+    for line in lines.iter().rev() {
+        text.push_str(line);
+        text.push('\n');
+    }
+    text.into()
+}
+
+/// Lines of `text`, reversed so `pop()` yields the first.
+fn reversed_lines(text: &str) -> Vec<String> {
+    text.lines().rev().map(str::to_string).collect()
+}
+
+impl Interpreter {
+    /// Whether `fd` is open in this shell (or provided by an enclosing
+    /// command's redirections).
+    pub(super) fn fd_is_open(&self, fd: i32) -> bool {
+        if matches!(self.exec_fd_table.get(&fd), Some(FdTarget::Closed)) {
+            return false;
+        }
+        (0..=2).contains(&fd)
+            || self.exec_fd_table.contains_key(&fd)
+            || self.coproc_buffers.contains_key(&fd)
+            || self.exec_input_fds.contains(&fd)
+            || self.fd_redirect_scope.contains(&fd)
+            // coproc pairs, read and write ends
+            || (fd > self.coproc_next_fd && fd <= COPROC_FIRST_FD)
+    }
+
+    fn close_fd(&mut self, fd: i32) {
+        self.exec_fd_table.remove(&fd);
+        self.coproc_buffers.remove(&fd);
+        self.exec_input_fds.remove(&fd);
+    }
+
+    /// `N>&M` / `N<&M` for N >= 3: N becomes a copy of M.
+    fn dup_fd(&mut self, n: i32, m: i32) {
+        if n == m {
+            return;
+        }
+        let out = (matches!(m, 1 | 2) || self.exec_fd_table.contains_key(&m))
+            .then(|| self.exec_fd_alias_target(m));
+        let buf = self.coproc_buffers.get(&m).cloned();
+        let input = m == 0 || self.exec_input_fds.contains(&m);
+        self.close_fd(n);
+        if let Some(target) = out {
+            self.exec_fd_table.insert(n, target);
+        }
+        if let Some(buf) = buf {
+            self.coproc_buffers.insert(n, buf);
+        }
+        if input {
+            self.exec_input_fds.insert(n);
+        }
+    }
+
+    /// Lowest free fd >= 10, as bash allocates for `{var}` redirections.
+    fn allocate_named_fd(&self) -> Result<i32> {
+        let mut fd = NAMED_FD_BASE;
+        while self.fd_is_open(fd) {
+            fd += 1;
+        }
+        self.ensure_persistent_fd_capacity(fd)?;
+        Ok(fd)
+    }
+
+    /// Apply a command's `{var}` redirections persistently and return the
+    /// rest, or the failed redirection's result.
+    pub(super) async fn apply_named_fd_redirects(
+        &mut self,
+        redirects: &[Redirect],
+    ) -> Result<std::result::Result<Vec<Redirect>, ExecResult>> {
+        let mut remaining = Vec::with_capacity(redirects.len());
+        for redirect in redirects {
+            if redirect.fd_var.is_some() {
+                if let Some(err) = self.apply_persistent_redirect(redirect).await? {
+                    return Ok(Err(err));
+                }
+            } else {
+                remaining.push(redirect.clone());
+            }
+        }
+        Ok(Ok(remaining))
+    }
+
+    /// Apply one redirection to the shell itself (as `exec` does). Returns
+    /// the error result when it fails.
+    pub(super) async fn apply_persistent_redirect(
+        &mut self,
+        redirect: &Redirect,
+    ) -> Result<Option<ExecResult>> {
+        let Some(var) = redirect.fd_var.as_deref() else {
+            return self.open_persistent_fd(redirect, redirect.fd).await;
+        };
+        let dup;
+        let mut redirect = redirect;
+        if matches!(
+            redirect.kind,
+            RedirectKind::DupOutput | RedirectKind::DupInput
+        ) {
+            let target = self.expand_word(&redirect.target).await?;
+            if target == "-" {
+                // `{var}>&-` closes the fd named by `$var`.
+                let value = self.expand_name_or_array_element(var);
+                if value.is_empty() {
+                    return Ok(Some(ambiguous_redirect_error(var)));
+                }
+                if let Ok(fd) = value.trim().parse::<i32>()
+                    && fd >= 0
+                {
+                    self.close_fd(fd);
+                }
+                return Ok(None);
+            }
+            if target.parse::<i32>().is_err() {
+                return Ok(Some(ambiguous_redirect_error(var)));
+            }
+            dup = Redirect {
+                target: Word::quoted_literal(target),
+                ..redirect.clone()
+            };
+            redirect = &dup;
+        }
+        let fd = self.allocate_named_fd()?;
+        if let Some(err) = self.open_persistent_fd(redirect, Some(fd)).await? {
+            return Ok(Some(err));
+        }
+        let base = var.split('[').next().unwrap_or(var);
+        let resolved = self.resolve_nameref(base).to_string();
+        if self.var_attrs_get(&resolved).contains(VarAttrs::READONLY) {
+            self.close_fd(fd);
+            return Ok(Some(ExecResult::err(
+                format!(
+                    "bash: {base}: readonly variable\nbash: {var}: cannot assign fd to variable\n"
+                ),
+                1,
+            )));
+        }
+        self.set_parameter_expansion_target(var, fd.to_string());
+        Ok(None)
+    }
+
+    /// Open `redirect` on `fd` (its default fd when `None`) for the rest of
+    /// the shell's life.
+    async fn open_persistent_fd(
+        &mut self,
+        redirect: &Redirect,
+        fd: Option<i32>,
+    ) -> Result<Option<ExecResult>> {
+        // `exec 0<f` is `exec <f`.
+        let fd = fd.filter(|&n| n != 0 || !redirect_reads(redirect.kind));
+        match redirect.kind {
+            RedirectKind::Input | RedirectKind::ReadWrite => {
+                let target_path = self.expand_word(&redirect.target).await?;
+                let path = self.resolve_path(&target_path);
+                let read_write = redirect.kind == RedirectKind::ReadWrite;
+                if is_dev_null(&path) {
+                    match fd {
+                        Some(n) => {
+                            self.ensure_persistent_fd_capacity(n)?;
+                            self.close_fd(n);
+                            self.coproc_buffers.insert(n, Vec::new());
+                            if read_write {
+                                self.exec_fd_table.insert(n, FdTarget::DevNull);
+                            }
+                        }
+                        None => self.pipeline_stdin = Some(crate::StreamData::new()),
+                    }
+                    return Ok(None);
+                }
+                if read_write && let Err(e) = self.fs.append_file(&path, b"").await {
+                    return Ok(Some(ExecResult::err(
+                        format!("bash: {target_path}: {}\n", io_error_reason(&e)),
+                        1,
+                    )));
+                }
+                let content = match self.fs.read_file(&path).await {
+                    Ok(c) => c,
+                    Err(e) => {
+                        return Ok(Some(ExecResult::err(
+                            format!("bash: {target_path}: {}\n", io_error_reason(&e)),
+                            1,
+                        )));
+                    }
+                };
+                let text = decode_file_bytes_for_path(&path, &content);
+                match fd {
+                    Some(n) => {
+                        self.ensure_persistent_fd_capacity(n)?;
+                        self.close_fd(n);
+                        self.coproc_buffers.insert(n, reversed_lines(&text));
+                        if read_write {
+                            self.exec_fd_table
+                                .insert(n, FdTarget::AppendFile(path, target_path));
+                        }
+                    }
+                    // exec < file: redirect stdin for subsequent commands
+                    None => self.pipeline_stdin = Some(text.into()),
+                }
+            }
+            RedirectKind::HereString | RedirectKind::HereDoc | RedirectKind::HereDocStrip => {
+                let mut content = self.expand_word(&redirect.target).await?;
+                if redirect.kind == RedirectKind::HereString {
+                    content.push('\n');
+                }
+                match fd {
+                    Some(n) => {
+                        self.ensure_persistent_fd_capacity(n)?;
+                        self.close_fd(n);
+                        self.coproc_buffers.insert(n, reversed_lines(&content));
+                    }
+                    None => self.pipeline_stdin = Some(content.into()),
+                }
+            }
+            RedirectKind::DupInput | RedirectKind::DupOutput => {
+                let target = self.expand_word(&redirect.target).await?;
+                let default_fd = i32::from(redirect.kind == RedirectKind::DupOutput);
+                let n = fd.unwrap_or(default_fd);
+                if target == "-" || target == "&-" {
+                    // `N>&-` and `N<&-` both close fd N. For 1 and 2 the
+                    // entry stays so a later write reports a closed
+                    // descriptor instead of reaching the caller.
+                    if matches!(n, 1 | 2) {
+                        self.ensure_persistent_fd_capacity(n)?;
+                        self.exec_fd_table.insert(n, FdTarget::Closed);
+                    } else if n >= 3 {
+                        self.close_fd(n);
+                    }
+                    return Ok(None);
+                }
+                let Ok(m) = target.parse::<i32>() else {
+                    if redirect.kind == RedirectKind::DupInput {
+                        return Ok(Some(ambiguous_redirect_error(&target)));
+                    }
+                    // WTF: `exec >&file` (bash: `exec &>file`) is not
+                    // implemented; it is ignored.
+                    return Ok(None);
+                };
+                if !self.fd_is_open(m) {
+                    return Ok(Some(bad_fd_error(&target)));
+                }
+                match n {
+                    0 => {
+                        // `exec <&N`: stdin reads what is left of fd N.
+                        if let Some(buf) = self.coproc_buffers.get(&m) {
+                            self.pipeline_stdin = Some(buffer_text(buf));
+                        }
+                    }
+                    1 | 2 => {
+                        // `exec N>&M` duplicates fd M to fd N
+                        let target_entry = self.exec_fd_alias_target(m);
+                        self.exec_fd_table.insert(n, target_entry);
+                    }
+                    _ => {
+                        self.ensure_persistent_fd_capacity(n)?;
+                        self.dup_fd(n, m);
+                    }
+                }
+            }
+            RedirectKind::Output | RedirectKind::Clobber | RedirectKind::Append => {
+                let n = fd.unwrap_or(1);
+                let append = redirect.kind == RedirectKind::Append;
+                let target_path = self.expand_word(&redirect.target).await?;
+                let path = self.resolve_path(&target_path);
+                self.ensure_persistent_fd_capacity(n)?;
+                let entry = if let Some(target_fd) = dev_fd_alias(&path) {
+                    self.exec_fd_alias_target(target_fd)
+                } else if is_dev_null(&path) {
+                    FdTarget::DevNull
+                } else {
+                    // Truncate (or create) the file on open, like real
+                    // `exec >file`; a failed open leaves the fd as it was.
+                    let opened = if append {
+                        self.fs.append_file(&path, b"").await
+                    } else {
+                        self.fs.write_file(&path, b"").await
+                    };
+                    if let Err(e) = opened {
+                        return Ok(Some(ExecResult::err(
+                            format!("bash: {target_path}: {}\n", io_error_reason(&e)),
+                            1,
+                        )));
+                    }
+                    if append {
+                        FdTarget::AppendFile(path, target_path)
+                    } else {
+                        FdTarget::WriteFile(path, target_path)
+                    }
+                };
+                if n >= 3 {
+                    self.close_fd(n);
+                }
+                self.exec_fd_table.insert(n, entry);
+            }
+            // WTF: `exec &>file` is not implemented; it is ignored.
+            RedirectKind::OutputBoth => {}
+        }
+        Ok(None)
+    }
+}
+
+/// Whether the redirection's default fd is 0.
+fn redirect_reads(kind: RedirectKind) -> bool {
+    !matches!(
+        kind,
+        RedirectKind::Output
+            | RedirectKind::Clobber
+            | RedirectKind::Append
+            | RedirectKind::DupOutput
+            | RedirectKind::OutputBoth
+    )
 }
