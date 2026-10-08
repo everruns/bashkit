@@ -300,7 +300,7 @@ declare -ar b=([0]="3")
 
 ### bashbox_declare_declare_p_quotes_control_characters_and_bytes_that_aren_t_ut
 # declare -p quotes control characters and bytes that aren't UTF-8 like bash
-### skip: L-STREAM-001: words cannot hold the byte \x01 (internal quote-segment marker, dropped) or non-UTF-8 bytes like \xff
+### skip: L-STREAM-001: a word cannot hold the non-UTF-8 byte \xff, so declare -p prints "ÿ" instead of $'\377'
 x=$'a\x01b\e\'"\\c$`d\a\b\f\v\r\t\n\x7f'; declare -p x; y=$'\xc3\xa9\n'; z=$'\xff'; declare -p y z; a=($'x\ny' z); declare -p a
 ### expect
 declare -- x=$'a\001b\E\'"\\c$`d\a\b\f\v\r\t\n\177'

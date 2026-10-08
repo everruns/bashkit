@@ -15,8 +15,8 @@ python3 scripts/bash-oracle/run.py --bin path/to/bashkit
 
 - **match** — status plus stdout, what a script actually observes. This is the
   number the bash-parity work tracks.
-- **strict** — also requires bash's stderr text. It trails well behind, because
-  most bashkit builtin diagnostics still lack bash's `bash: line N:` prefix.
+- **strict** — also requires bash's stderr text. It trails behind, because
+  some wording (parser errors, xtrace details) still differs from bash.
 
 `floor.txt` holds both floors as `<match> <strict>`. `run.py` exits 1 when
 either score falls below its floor, and prints the new number to put in

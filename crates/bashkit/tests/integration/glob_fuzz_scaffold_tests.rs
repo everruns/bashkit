@@ -98,7 +98,7 @@ async fn glob_fuzz_crash_nul_stripped_newline_command_name() {
 }
 
 /// The missing-input-redirect diagnostic must match real bash byte for byte:
-/// `bash: <path>: No such file or directory`.
+/// `bash: line 1: <path>: No such file or directory` (`bash -c`).
 #[tokio::test]
 async fn missing_input_redirect_matches_bash_wording() {
     let mut bash = fuzz_bash();
@@ -252,7 +252,7 @@ async fn consecutive_command_failures_are_separate_lines() {
     let result = bash.exec("nosuchcmd\nalsomissing").await.unwrap();
     assert_eq!(
         result.stderr.to_string(),
-        "bash: nosuchcmd: command not found\nbash: alsomissing: command not found\n"
+        "bash: line 1: nosuchcmd: command not found\nbash: line 2: alsomissing: command not found\n"
     );
 }
 
@@ -263,11 +263,11 @@ async fn consecutive_command_failures_are_separate_lines() {
 #[tokio::test]
 async fn command_resolution_diagnostics_end_with_newline() {
     let cases: &[(&str, &str)] = &[
-        ("nosuchcmd", "bash: nosuchcmd: command not found\n"),
-        ("/tmp", "bash: /tmp: Is a directory\n"),
+        ("nosuchcmd", "bash: line 1: nosuchcmd: command not found\n"),
+        ("/tmp", "bash: line 1: /tmp: Is a directory\n"),
         (
             "/nope/missing",
-            "bash: /nope/missing: No such file or directory\n",
+            "bash: line 1: /nope/missing: No such file or directory\n",
         ),
     ];
     for (script, expected) in cases {
@@ -284,7 +284,7 @@ async fn command_not_found_suggestion_ends_with_newline() {
     let result = bash.exec("grpe").await.unwrap();
     let stderr = result.stderr.to_string();
     assert!(
-        stderr.starts_with("bash: grpe: command not found. Did you mean: "),
+        stderr.starts_with("bash: line 1: grpe: command not found. Did you mean: "),
         "unexpected wording: {stderr:?}"
     );
     assert!(stderr.ends_with("\n"), "not terminated: {stderr:?}");
@@ -300,7 +300,7 @@ async fn non_executable_script_denied_ends_with_newline() {
     let result = bash.exec("/tmp/noexec.sh").await.unwrap();
     assert_eq!(
         result.stderr.to_string(),
-        "bash: /tmp/noexec.sh: Permission denied\n"
+        "bash: line 1: /tmp/noexec.sh: Permission denied\n"
     );
     assert_eq!(result.exit_code, 126);
 }

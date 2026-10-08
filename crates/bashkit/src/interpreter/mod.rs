@@ -10,6 +10,21 @@
 // validating string contents. This is safe because we check for non-empty strings.
 #![allow(clippy::unwrap_used)]
 
+// Decision: shell diagnostics carry bash's non-interactive prefix
+// `$0: line N: ` (`$0` is BASH_SOURCE[0] when a file is being read, so a
+// sourced file names itself), built by `Interpreter::diag_prefix`. Every
+// interpreter-generated message uses it. Bundled builtins have no
+// interpreter handle, so they keep writing `bash: name: msg` (or bare
+// `name: msg` for bash shell builtins) and `prefix_builtin_diagnostics`
+// rewrites the line start at the single dispatch point
+// (`execute_builtin_arc`), before redirects or streaming see the text.
+// Execution plans and `/dev/stderr` operand data are not rewritten; usage
+// lines (`name: usage:`) and coreutils-style builtins (cat, grep, ...:
+// external programs in bash) stay unprefixed. Interactive shells
+// (`set_interactive`) print `$0: msg` with no line, like `bash -i`. The
+// sandbox "Did you mean" / unavailable-command hints after
+// `command not found` are kept on purpose.
+
 mod arithmetic;
 mod brace_expansion;
 mod declare;
@@ -43,11 +58,6 @@ static TIME_REPORT_COUNTER: AtomicU64 = AtomicU64::new(0);
 // bashkit crate semver so scripts that gate on Bash features keep working.
 const COMPAT_BASH_VERSION: &str = "5.2.15(1)-release";
 const COMPAT_BASH_VERSINFO: [&str; 6] = ["5", "2", "15", "1", "release", "virtual"];
-// Important decision: lexer emits these only for mixed words where an initial
-// quoted segment is followed by an unquoted expansion. Keep them internal and
-// strip before observable output.
-const QUOTED_SEGMENT_START: char = '\x01';
-const QUOTED_SEGMENT_END: char = '\x02';
 
 // Important decision: operand quote sentinels must be selected from a small,
 // parser-inert set. Exhaustive Unicode probing is attacker-amplifiable CPU work.
@@ -785,8 +795,8 @@ fn unavailable_command_hint(name: &str) -> Option<&'static str> {
 /// The message is newline-terminated: it goes straight into stderr, and real
 /// bash ends every diagnostic with a newline. Without it consecutive failures
 /// run together on one line (`...command not foundbash: next: ...`).
-fn command_not_found_message(name: &str, known_commands: &[&str]) -> String {
-    let mut msg = format!("bash: {}: command not found", name);
+fn command_not_found_message(prefix: &str, name: &str, known_commands: &[&str]) -> String {
+    let mut msg = format!("{prefix}{name}: command not found");
 
     // Check for unavailable command hints first
     if let Some(hint) = unavailable_command_hint(name) {
@@ -1401,6 +1411,9 @@ pub struct Interpreter {
     /// Added to command line numbers: a trap handler counts its lines from
     /// the line of the command that triggered it (bash).
     line_base: usize,
+    /// Interactive shell (REPL / terminal): diagnostics name the shell but
+    /// carry no `line N:`, like `bash -i`. See [`Self::diag_prefix`].
+    interactive: bool,
     /// `unset LINENO` makes it an ordinary variable for the rest of the
     /// shell's life, like bash.
     lineno_unset: bool,
@@ -1607,6 +1620,9 @@ impl Interpreter {
     // Decision: restored `$!` must match Bashkit-produced virtual numeric job ids.
     const MAX_RESTORED_LAST_BG_PID_LEN: usize = 20;
     const MAX_GLOB_DEPTH: usize = 50;
+    /// THREAT[TM-DOS-031]: recursive glob/extglob steps one match (or one
+    /// pattern-removal/substitution scan) may spend before failing.
+    const MAX_GLOB_STEPS: usize = 100_000;
 
     /// Create a new interpreter with the given filesystem.
     #[cfg(test)]
@@ -2027,6 +2043,7 @@ impl Interpreter {
             jobs: jobs::new_shared_job_table(),
             current_line: 1,
             line_base: 0,
+            interactive: false,
             lineno_unset: false,
             source_depth: 0,
             last_command_name: String::new(),
@@ -2209,6 +2226,7 @@ impl Interpreter {
             jobs: self.jobs.fork(),
             current_line: self.current_line,
             line_base: self.line_base,
+            interactive: self.interactive,
             lineno_unset: self.lineno_unset,
             #[cfg(feature = "http_client")]
             http_client: self.http_client.clone(),
@@ -2571,6 +2589,54 @@ impl Interpreter {
 
     /// Name `$0` expands to when no real script or function frame is active.
     pub(crate) const DEFAULT_ARG0: &'static str = "bash";
+
+    /// Mark the shell interactive (REPL / terminal): diagnostics then read
+    /// `bash: msg` instead of `bash: line N: msg`, as with `bash -i`.
+    pub(crate) fn set_interactive(&mut self, interactive: bool) {
+        self.interactive = interactive;
+    }
+
+    /// The name bash puts in front of a diagnostic: the file being read
+    /// (`BASH_SOURCE[0]`, so a sourced file names itself), else `$0`. Mirrors
+    /// bash's `get_name_for_error`.
+    pub(crate) fn diag_name(&self) -> String {
+        if !self.interactive
+            && let Some(src) = self.bash_source_stack.last().filter(|s| !s.is_empty())
+        {
+            return src.clone();
+        }
+        if let Some(frame) = self.call_stack.iter().rev().find(|f| !f.keeps_arg0) {
+            return frame.name.clone();
+        }
+        Self::DEFAULT_ARG0.to_string()
+    }
+
+    /// Prefix of a shell diagnostic: `$0: line N: ` (non-interactive bash),
+    /// or `$0: ` in an interactive shell. Every interpreter-generated error
+    /// goes through this; bundled builtins get it via
+    /// [`prefix_builtin_diagnostics`].
+    /// `msg` as a shell diagnostic: [`Self::diag_prefix`] followed by `msg`.
+    pub(crate) fn diag(&self, msg: impl std::fmt::Display) -> String {
+        format!("{}{msg}", self.diag_prefix())
+    }
+
+    /// `set -u` diagnostic for a bare `$name`: bash names a positional
+    /// parameter `$N` there (but `3` in `${3}` and other braced forms).
+    pub(crate) fn unbound_variable_diag(&self, name: &str) -> String {
+        if !name.is_empty() && name.bytes().all(|b| b.is_ascii_digit()) {
+            self.diag(format!("${name}: unbound variable\n"))
+        } else {
+            self.diag(format!("{name}: unbound variable\n"))
+        }
+    }
+
+    pub(crate) fn diag_prefix(&self) -> String {
+        if self.interactive {
+            format!("{}: ", self.diag_name())
+        } else {
+            format!("{}: line {}: ", self.diag_name(), self.current_line)
+        }
+    }
 
     /// Current call-stack depth, used by the host `exec` boundary to restore
     /// the stack after installing per-invocation positional parameters.
@@ -3544,6 +3610,23 @@ impl Interpreter {
         }
     }
 
+    /// Line a compound command ends on (`done`, `fi`, `esac`): bash reports
+    /// a failing redirect of `while ...; done < file` there. `None` for the
+    /// forms without a span.
+    fn compound_end_line(compound: &CompoundCommand) -> Option<usize> {
+        let span = match compound {
+            CompoundCommand::If(cmd) => cmd.span,
+            CompoundCommand::For(cmd) => cmd.span,
+            CompoundCommand::ArithmeticFor(cmd) => cmd.span,
+            CompoundCommand::While(cmd) => cmd.span,
+            CompoundCommand::Until(cmd) => cmd.span,
+            CompoundCommand::Case(cmd) => cmd.span,
+            CompoundCommand::Select(cmd) => cmd.span,
+            _ => return None,
+        };
+        Some(span.end.line.max(span.start.line))
+    }
+
     fn command_line(command: &Command) -> usize {
         match command {
             Command::Simple(c) => c.span.line(),
@@ -3979,7 +4062,7 @@ impl Interpreter {
         // Validate for-loop variable name (bash rejects invalid names at runtime, exit 1)
         if !is_valid_var_name(&for_cmd.variable) {
             return Ok(ExecResult::err(
-                format!("bash: `{}': not a valid identifier\n", for_cmd.variable),
+                self.diag(format!("`{}': not a valid identifier\n", for_cmd.variable)),
                 1,
             ));
         }
@@ -4012,7 +4095,7 @@ impl Interpreter {
                                 Err(pat) => {
                                     self.last_exit_code = 1;
                                     return Ok(ExecResult::err(
-                                        format!("-bash: no match: {}\n", pat),
+                                        self.diag(format!("no match: {pat}\n")),
                                         1,
                                     ));
                                 }
@@ -4152,7 +4235,7 @@ impl Interpreter {
                                 Err(pat) => {
                                     self.last_exit_code = 1;
                                     return Ok(ExecResult::err(
-                                        format!("-bash: no match: {}\n", pat),
+                                        self.diag(format!("no match: {pat}\n")),
                                         1,
                                     ));
                                 }
@@ -4671,8 +4754,23 @@ impl Interpreter {
                 3 => {
                     // Binary operators
                     match args[1].as_str() {
-                        "=" | "==" => self.pattern_matches(&args[0], &args[2]),
-                        "!=" => !self.pattern_matches(&args[0], &args[2]),
+                        // bash 5.2: `[[ == ]]` matches as if extglob were on.
+                        "=" | "==" => self.pattern_matches_opts(
+                            &args[0],
+                            &args[2],
+                            glob::PatternOpts {
+                                nocase: self.is_nocasematch(),
+                                extglob: true,
+                            },
+                        ),
+                        "!=" => !self.pattern_matches_opts(
+                            &args[0],
+                            &args[2],
+                            glob::PatternOpts {
+                                nocase: self.is_nocasematch(),
+                                extglob: true,
+                            },
+                        ),
                         "<" => args[0] < args[2],
                         ">" => args[0] > args[2],
                         "-eq" => self.cond_int_cmp(&args[0], &args[2], |a, b| a == b),
@@ -4765,6 +4863,9 @@ impl Interpreter {
         // read them as plain bracket members.
         let compiled = if ere_has_invalid_char_class(pattern) {
             None
+        } else if self.is_nocasematch() {
+            // `shopt -s nocasematch` makes `=~` case-insensitive too.
+            self.regex_cache.get_or_compile(&format!("(?i){pattern}"))
         } else {
             self.regex_cache.get_or_compile(pattern)
         };
@@ -4919,7 +5020,11 @@ impl Interpreter {
                 let mut m = false;
                 for pattern in &case_item.patterns {
                     let pattern_str = self.expand_pattern_word(pattern).await?;
-                    if self.pattern_matches(&word_value, &pattern_str) {
+                    let opts = glob::PatternOpts {
+                        nocase: self.is_nocasematch(),
+                        extglob: self.is_extglob(),
+                    };
+                    if self.pattern_matches_opts(&word_value, &pattern_str, opts) {
                         m = true;
                         break;
                     }
@@ -5688,11 +5793,16 @@ impl Interpreter {
             self.pipeline_stdin = stdin.clone();
         }
 
-        // Set BASH_SOURCE for script file execution
-        if let Some(ref file) = script_file {
-            self.bash_source_stack.push(file.clone());
-            self.update_bash_source();
-        }
+        // The child is a fresh non-interactive shell: BASH_SOURCE holds only
+        // its script file (none for `-c`), so its diagnostics name `$0` or
+        // that file and count lines from its own text.
+        let saved_source_stack = std::mem::replace(
+            &mut self.bash_source_stack,
+            script_file.iter().cloned().collect(),
+        );
+        self.update_bash_source();
+        let saved_line = self.current_line;
+        let saved_interactive = std::mem::replace(&mut self.interactive, false);
 
         // A new shell is outside any loop, function or sourced file.
         let saved_loop_depth = std::mem::replace(&mut self.loop_depth, 0);
@@ -5701,11 +5811,10 @@ impl Interpreter {
         self.loop_depth = saved_loop_depth;
         self.return_depth = saved_return_depth;
 
-        // Restore BASH_SOURCE
-        if script_file.is_some() {
-            self.bash_source_stack.pop();
-            self.update_bash_source();
-        }
+        self.interactive = saved_interactive;
+        self.current_line = saved_line;
+        self.bash_source_stack = saved_source_stack;
+        self.update_bash_source();
 
         // Restore stdin
         self.pipeline_stdin = saved_stdin;
@@ -6545,15 +6654,19 @@ impl Interpreter {
             let mut child = self.fork_for_job();
             let depth_ok = child.counters.push_subshell(&child.limits).is_ok();
             let Some(slot) = slot.filter(|_| depth_ok) else {
+                // bash reports fork failures with the shell name only (no line).
                 let msg = format!(
-                    "bash: fork: retry: Resource temporarily unavailable (max {} background jobs, {} nested)\n",
-                    self.limits.max_background_jobs, self.limits.max_subshell_depth
+                    "{}: fork: retry: Resource temporarily unavailable (max {} background jobs, {} nested)\n",
+                    self.diag_name(),
+                    self.limits.max_background_jobs,
+                    self.limits.max_subshell_depth
                 );
                 parent_stderr.append(&crate::StreamData::from(msg));
                 self.last_exit_code = 1;
                 return Ok(());
             };
             let cmd = cmd.clone();
+            let job_diag = self.diag_prefix();
             let mut fut: jobs::JobFuture = Box::pin(async move {
                 let _slot = slot;
                 let jobs = Arc::clone(&child.jobs);
@@ -6570,7 +6683,7 @@ impl Interpreter {
                         r.control_flow = ControlFlow::None;
                         r
                     }
-                    Err(e) => ExecResult::err(format!("bash: {e}\n"), 1),
+                    Err(e) => ExecResult::err(format!("{job_diag}{e}\n"), 1),
                 }
             });
             match std::future::poll_fn(|cx| std::task::Poll::Ready(fut.as_mut().poll(cx))).await {
@@ -6799,17 +6912,17 @@ impl Interpreter {
                         let target = match self.resolve_nameref_strict(&assignment.name) {
                             Ok(t) => t,
                             Err(()) => {
-                                return Err(crate::error::Error::LineAbort(format!(
-                                    "bash: warning: {}: circular name reference\n",
+                                return Err(crate::error::Error::LineAbort(self.diag(format!(
+                                    "warning: {}: circular name reference\n",
                                     assignment.name
-                                )));
+                                ))));
                             }
                         };
                         let base = target.split('[').next().unwrap_or(&target).to_string();
                         // THREAT[TM-INJ-019]: assignments to readonly variables fail
                         // visibly, as in bash.
                         if self.is_var_readonly(&base) {
-                            let msg = format!("bash: {base}: readonly variable\n");
+                            let msg = self.diag(format!("{base}: readonly variable\n"));
                             if has_command {
                                 stderr.push_str(&msg);
                                 continue;
@@ -6838,17 +6951,17 @@ impl Interpreter {
                         let arr_name = match self.resolve_nameref_strict(&assignment.name) {
                             Ok(n) => n,
                             Err(()) => {
-                                return Err(crate::error::Error::LineAbort(format!(
-                                    "bash: warning: {}: circular name reference\n",
+                                return Err(crate::error::Error::LineAbort(self.diag(format!(
+                                    "warning: {}: circular name reference\n",
                                     assignment.name
-                                )));
+                                ))));
                             }
                         };
                         // THREAT[TM-INJ-019]: arrays honour readonly like scalars.
                         if self.is_var_readonly(&arr_name) {
-                            return Err(crate::error::Error::LineAbort(format!(
-                                "bash: {arr_name}: readonly variable\n"
-                            )));
+                            return Err(crate::error::Error::LineAbort(
+                                self.diag(format!("{arr_name}: readonly variable\n")),
+                            ));
                         }
                         let assoc = self.scoped.assoc_arrays.contains_key(&arr_name);
                         self.assign_array_words(&arr_name, words, assignment.append, assoc)
@@ -6935,7 +7048,7 @@ impl Interpreter {
                 // to prevent bypassing static budget checks via alias expansion.
                 if let Err(e) = crate::parser::validate_budget(&s, &self.limits) {
                     Ok(ExecResult::err(
-                        format!("bash: alias expansion: budget validation failed: {e}\n"),
+                        self.diag(format!("alias expansion: budget validation failed: {e}\n")),
                         1,
                     ))
                 } else {
@@ -6946,7 +7059,7 @@ impl Interpreter {
                 }
             }
             Err(e) => Ok(ExecResult::err(
-                format!("bash: alias expansion: parse error: {}\n", e),
+                self.diag(format!("alias expansion: parse error: {e}\n")),
                 1,
             )),
         };
@@ -6984,16 +7097,39 @@ impl Interpreter {
             } else {
                 None
             };
+            // `>(cmd)` runs in a subshell too (see expand_process_substitution).
+            // Boxed: keeps this future (in every simple command's await chain)
+            // small so deep `$(...)` nesting stays within the stack.
+            let snapshot = Box::new(self.snapshot_subshell_state());
+            let last_exit_code = self.last_exit_code;
+            self.bash_subshell += 1;
+            let mut run = Ok(());
             for cmd in &commands {
                 let prev_stdin = self.pipeline_stdin.take();
                 self.pipeline_stdin = stdin_data.clone();
-                let cmd_result = self.execute_command(cmd).await?;
+                let cmd_result = self.execute_command(cmd).await;
                 self.pipeline_stdin = prev_stdin;
+                let cmd_result = match cmd_result {
+                    Ok(r) => r,
+                    Err(e) => {
+                        run = Err(e);
+                        break;
+                    }
+                };
                 if let Ok(r) = result {
                     r.stdout.append(&cmd_result.stdout);
                     r.stderr.append(&cmd_result.stderr);
                 }
+                if matches!(
+                    cmd_result.control_flow,
+                    ControlFlow::Exit(_) | ControlFlow::Abort
+                ) {
+                    break;
+                }
             }
+            self.restore_subshell_state(*snapshot);
+            self.last_exit_code = last_exit_code;
+            run?;
         }
         Ok(())
     }
@@ -7184,10 +7320,7 @@ impl Interpreter {
                 if command.name.quoted && !name_vanished && command.assignments.is_empty() {
                     self.last_exit_code = 127;
                     self.discard_deferred_proc_subs_from(deferred_proc_sub_start);
-                    return Ok(ExecResult::err(
-                        "bash: : command not found\n".to_string(),
-                        127,
-                    ));
+                    return Ok(ExecResult::err(self.diag(": command not found\n"), 127));
                 }
                 let exit_code = if !command.assignments.is_empty()
                     && self.subst_generation == pre_assign_subst_gen
@@ -7366,7 +7499,8 @@ impl Interpreter {
                                 Err(pat) => {
                                     self.last_exit_code = 1;
                                     return Ok(vec![format!(
-                                        "\x00ERR\x00-bash: no match: {}\n",
+                                        "\x00ERR\x00{}no match: {}\n",
+                                        self.diag_prefix(),
                                         pat
                                     )]);
                                 }
@@ -7465,8 +7599,7 @@ impl Interpreter {
             if name == "return" && !in_function && self.source_depth == 0 {
                 self.last_exit_code = 2;
                 return Ok(ExecResult::err(
-                    "bash: return: can only `return' from a function or sourced script\n"
-                        .to_string(),
+                    self.diag("return: can only `return' from a function or sourced script\n"),
                     2,
                 ));
             }
@@ -7664,10 +7797,7 @@ impl Interpreter {
             } else {
                 format!("{who}: ")
             };
-            let msg = format!(
-                "bash: line {}: {who}write error: Bad file descriptor\n",
-                self.current_line
-            );
+            let msg = self.diag(format!("{who}write error: Bad file descriptor\n"));
             if !matches!(self.exec_fd_table.get(&2), Some(FdTarget::Closed)) {
                 result
                     .stderr
@@ -7836,7 +7966,7 @@ impl Interpreter {
                     Some(modified) => std::borrow::Cow::Owned(modified.args),
                     None => {
                         let result = ExecResult::err(
-                            format!("bash: {name}: cancelled by before_tool hook\n"),
+                            self.diag(format!("{name}: cancelled by before_tool hook\n")),
                             1,
                         );
                         return self.apply_redirections(result, redirects).await;
@@ -7916,7 +8046,7 @@ impl Interpreter {
                     Ok(Err(e)) => return Err(e),
                     Err(_panic) => {
                         let result = ExecResult::err(
-                            format!("bash: {}: builtin failed unexpectedly\n", name),
+                            self.diag(format!("{name}: builtin failed unexpectedly\n")),
                             1,
                         );
                         let result = self.apply_redirections(result, redirects).await?;
@@ -7990,10 +8120,19 @@ impl Interpreter {
                     builtin_usage_error(&format!("{name}: {e}"))
                 }
                 Ok(Err(e)) => return Err(e),
-                Err(_panic) => {
-                    ExecResult::err(format!("bash: {}: builtin failed unexpectedly\n", name), 1)
-                }
+                Err(_panic) => ExecResult::err(
+                    self.diag(format!("{name}: builtin failed unexpectedly\n")),
+                    1,
+                ),
             };
+            // Before `/dev/stderr` operand data is appended and before any
+            // redirect or streaming emission sees the text.
+            if bundled
+                && let Some(stderr) =
+                    prefix_builtin_diagnostics(&result.stderr, name, &self.diag_prefix())
+            {
+                result.stderr = stderr;
+            }
             if let Some(capture) = std_capture {
                 let capture =
                     std::mem::take(&mut *capture.lock().unwrap_or_else(|e| e.into_inner()));
@@ -8050,7 +8189,7 @@ impl Interpreter {
                 })
             }
             None => Ok(ExecResult::err(
-                format!("bash: {name}: cancelled by after_tool hook\n"),
+                self.diag(format!("{name}: cancelled by after_tool hook\n")),
                 1,
             )),
         }
@@ -8076,7 +8215,7 @@ impl Interpreter {
                 Some(modified) => std::borrow::Cow::Owned(modified.args),
                 None => {
                     let result = ExecResult::err(
-                        format!("bash: {name}: cancelled by before_tool hook\n"),
+                        self.diag(format!("{name}: cancelled by before_tool hook\n")),
                         1,
                     );
                     return self.apply_redirections(result, redirects).await;
@@ -8117,7 +8256,7 @@ impl Interpreter {
             && matches!(name, "exec" | "bash" | "sh" | "source" | ".")
         {
             return Some(Ok(ExecResult::err(
-                format!("bash: {}: command not found\n", name),
+                self.diag(format!("{name}: command not found\n")),
                 127,
             )));
         }
@@ -8142,7 +8281,7 @@ impl Interpreter {
                 .await,
             ),
             "bash" | "sh" => Some(self.execute_shell(name, args, stdin, redirects).await),
-            "source" | "." => Some(self.execute_source(args, redirects).await),
+            "source" | "." => Some(self.execute_source(name, args, redirects).await),
             "eval" => Some(self.execute_eval(args, stdin, redirects).await),
             "command" => Some(self.execute_command_builtin(args, stdin, redirects).await),
             "builtin" => Some(self.execute_builtin_builtin(args, stdin, redirects).await),
@@ -8241,7 +8380,7 @@ impl Interpreter {
             if name.contains('/') {
                 if !self.shell_features.has_script_execution() {
                     return Ok(ExecResult::err(
-                        format!("bash: {}: command not found\n", name),
+                        self.diag(format!("{name}: command not found\n")),
                         127,
                     ));
                 }
@@ -8279,7 +8418,7 @@ impl Interpreter {
                         Ok(builtin) => builtin,
                         Err(_panic) => {
                             return Ok(ExecResult::err(
-                                format!("bash: {}: resolver failed unexpectedly\n", name),
+                                self.diag(format!("{name}: resolver failed unexpectedly\n")),
                                 1,
                             ));
                         }
@@ -8314,7 +8453,7 @@ impl Interpreter {
                 .chain(self.scoped.aliases.keys().map(|s| s.as_str()))
                 .chain(host_names.iter().map(|s| s.as_str()))
                 .collect();
-            let msg = command_not_found_message(name, &known);
+            let msg = command_not_found_message(&self.diag_prefix(), name, &known);
             Ok(ExecResult::err(msg, 127))
         })
     }
@@ -8341,7 +8480,7 @@ impl Interpreter {
             Ok(m) => m,
             Err(_) => {
                 return Ok(ExecResult::err(
-                    format!("bash: {}: No such file or directory\n", name),
+                    self.diag(format!("{name}: No such file or directory\n")),
                     127,
                 ));
             }
@@ -8350,7 +8489,7 @@ impl Interpreter {
         // Directory check
         if meta.file_type.is_dir() {
             return Ok(ExecResult::err(
-                format!("bash: {}: Is a directory\n", name),
+                self.diag(format!("{name}: Is a directory\n")),
                 126,
             ));
         }
@@ -8358,7 +8497,7 @@ impl Interpreter {
         // Execute permission check
         if meta.mode & 0o111 == 0 {
             return Ok(ExecResult::err(
-                format!("bash: {}: Permission denied\n", name),
+                self.diag(format!("{name}: Permission denied\n")),
                 126,
             ));
         }
@@ -8368,7 +8507,7 @@ impl Interpreter {
             Ok(c) => c,
             Err(_) => {
                 return Ok(ExecResult::err(
-                    format!("bash: {}: No such file or directory\n", name),
+                    self.diag(format!("{name}: No such file or directory\n")),
                     127,
                 ));
             }
@@ -8516,7 +8655,7 @@ impl Interpreter {
         let script = match parser.parse() {
             Ok(s) => s,
             Err(e) => {
-                return Ok(ExecResult::err(format!("bash: {}: {}\n", name, e), 2));
+                return Ok(ExecResult::err(self.diag(format!("{name}: {e}\n")), 2));
             }
         };
 
@@ -8591,10 +8730,15 @@ impl Interpreter {
         let shares_caller_stdin = stdin.is_some() && stdin == prev_pipeline_stdin;
         self.pipeline_stdin = stdin;
 
-        // A new process is outside any loop, function or sourced file.
+        // A script run by path is a non-interactive child shell with its
+        // own line numbers, outside any loop, function or sourced file.
         let saved_loop_depth = std::mem::replace(&mut self.loop_depth, 0);
         let saved_return_depth = std::mem::replace(&mut self.return_depth, 0);
+        let saved_line = self.current_line;
+        let saved_interactive = std::mem::replace(&mut self.interactive, false);
         let result = self.execute_script_body(&script, true, false).await;
+        self.interactive = saved_interactive;
+        self.current_line = saved_line;
         self.loop_depth = saved_loop_depth;
         self.return_depth = saved_return_depth;
         let child_stdin_left = self.pipeline_stdin.take();
@@ -8646,16 +8790,18 @@ impl Interpreter {
     /// - Original positional parameters are restored after sourcing completes
     async fn execute_source(
         &mut self,
+        name: &str,
         args: &[String],
         redirects: &[Redirect],
     ) -> Result<ExecResult> {
         let filename = match args.first() {
             Some(f) => f,
             None => {
-                return Ok(ExecResult::err(
-                    "bash: source: filename argument required\nsource: usage: source filename [arguments]\n",
-                    2,
+                let msg = self.diag(format!(
+                    "{name}: filename argument required\n\
+                     {name}: usage: {name} filename [arguments]\n"
                 ));
+                return Ok(ExecResult::err(msg, 2));
             }
         };
 
@@ -8668,7 +8814,7 @@ impl Interpreter {
                 Ok(c) => decode_file_bytes_for_path(&path, &c),
                 Err(_) => {
                     return Ok(ExecResult::err(
-                        format!("source: {}: No such file or directory", filename),
+                        self.diag(format!("{filename}: No such file or directory\n")),
                         1,
                     ));
                 }
@@ -8704,7 +8850,7 @@ impl Interpreter {
                 Some(c) => c,
                 None => {
                     return Ok(ExecResult::err(
-                        format!("source: {}: No such file or directory", filename),
+                        self.diag(format!("{filename}: No such file or directory\n")),
                         1,
                     ));
                 }
@@ -8713,9 +8859,15 @@ impl Interpreter {
 
         let script = match self.parse_embedded_script(&content).await {
             Ok(script) => script,
-            Err(crate::error::Error::Parse { message, .. }) => {
+            Err(crate::error::Error::Parse { message, line, .. }) => {
+                // Like bash: the sourced file names itself, with the line.
+                let message = if message.starts_with("syntax error") {
+                    message
+                } else {
+                    format!("syntax error: {message}")
+                };
                 return Ok(ExecResult::err(
-                    format!("source: {}: parse error: {}", filename, message),
+                    format!("{filename}: line {}: {message}\n", line.max(1)),
                     2,
                 ));
             }
@@ -8832,8 +8984,9 @@ impl Interpreter {
                 } else {
                     format!("syntax error: {message}")
                 };
+                let who = self.diag_name();
                 let result = ExecResult::err(
-                    format!("bash: eval: line {at}: {message}\nbash: eval: line {at}: `{src}'\n"),
+                    format!("{who}: eval: line {at}: {message}\n{who}: eval: line {at}: `{src}'\n"),
                     2,
                 );
                 return self.apply_redirections(result, redirects).await;
@@ -9322,7 +9475,7 @@ impl Interpreter {
         redirects: &[Redirect],
     ) -> Result<ExecResult> {
         if args.is_empty() {
-            let result = ExecResult::err("bash: let: expression expected\n", 1);
+            let result = ExecResult::err(self.diag("let: expression expected\n"), 1);
             return self.apply_redirections(result, redirects).await;
         }
         let mut last_val = 0i64;
@@ -9372,9 +9525,9 @@ impl Interpreter {
                     'v' => unset_var = true,
                     _ => {
                         let result = ExecResult::err(
-                            format!(
-                                "bash: unset: -{flag}: invalid option\nunset: usage: unset [-f] [-v] [-n] [name ...]\n"
-                            ),
+                            self.diag(format!(
+                                "unset: -{flag}: invalid option\nunset: usage: unset [-f] [-v] [-n] [name ...]\n"
+                            )),
                             2,
                         );
                         return self.apply_redirections(result, redirects).await;
@@ -9384,7 +9537,7 @@ impl Interpreter {
         }
         if unset_function && unset_var {
             let result = ExecResult::err(
-                "bash: unset: cannot simultaneously unset a function and a variable\n",
+                self.diag("unset: cannot simultaneously unset a function and a variable\n"),
                 1,
             );
             return self.apply_redirections(result, redirects).await;
@@ -9401,7 +9554,7 @@ impl Interpreter {
             }
             // Only an explicit `-v` checks the name (bash).
             if unset_var && !is_valid_var_name(arg) && !Self::is_array_reference(arg) {
-                stderr.push_str(&format!("bash: unset: `{arg}': not a valid identifier\n"));
+                stderr.push_str(&self.diag(format!("unset: `{arg}': not a valid identifier\n")));
                 exit_code = 1;
                 continue;
             }
@@ -9413,9 +9566,9 @@ impl Interpreter {
                 let expanded_key = self.expand_variable_or_literal(key);
                 let resolved_name = self.resolve_nameref(arr_name).to_string();
                 if self.is_var_readonly(&resolved_name) {
-                    stderr.push_str(&format!(
-                        "bash: unset: {resolved_name}: cannot unset: readonly variable\n"
-                    ));
+                    stderr.push_str(&self.diag(format!(
+                        "unset: {resolved_name}: cannot unset: readonly variable\n"
+                    )));
                     exit_code = 1;
                     continue;
                 }
@@ -9450,18 +9603,18 @@ impl Interpreter {
                 };
                 // THREAT[TM-INJ-009]: Block unset of internal marker variables
                 if is_internal_variable(&resolved) {
-                    stderr.push_str(&format!(
-                        "bash: unset: {resolved}: cannot unset: readonly variable\n"
-                    ));
+                    stderr.push_str(&self.diag(format!(
+                        "unset: {resolved}: cannot unset: readonly variable\n"
+                    )));
                     exit_code = 1;
                     continue;
                 }
                 // THREAT[TM-INJ-019]: Refuse to unset readonly variables and surface
                 // the error so callers cannot mistake a silent skip for success.
                 if self.is_var_readonly(&resolved) {
-                    stderr.push_str(&format!(
-                        "bash: unset: {resolved}: cannot unset: readonly variable\n"
-                    ));
+                    stderr.push_str(&self.diag(format!(
+                        "unset: {resolved}: cannot unset: readonly variable\n"
+                    )));
                     exit_code = 1;
                     continue;
                 }
@@ -9675,11 +9828,11 @@ impl Interpreter {
                     } else {
                         self.set_variable(varname.clone(), "?".to_string());
                         let mut result = ExecResult::ok(String::new());
-                        result.stderr = format!(
-                            "bash: getopts: option requires an argument -- '{}'\n",
-                            opt_char
-                        )
-                        .into();
+                        result.stderr = self
+                            .diag(format!(
+                                "getopts: option requires an argument -- '{opt_char}'\n"
+                            ))
+                            .into();
                         result = self.apply_redirections(result, redirects).await?;
                         return Ok(result);
                     }
@@ -9714,7 +9867,9 @@ impl Interpreter {
             } else {
                 self.set_variable(varname.clone(), "?".to_string());
                 let mut result = ExecResult::ok(String::new());
-                result.stderr = format!("bash: getopts: illegal option -- '{}'\n", opt_char).into();
+                result.stderr = self
+                    .diag(format!("getopts: illegal option -- '{opt_char}'\n"))
+                    .into();
                 result = self.apply_redirections(result, redirects).await?;
                 return Ok(result);
             }
@@ -9751,7 +9906,7 @@ impl Interpreter {
                 || self.resolve_command_path(name).await.is_none());
         if !is_shell_builtin {
             return Ok(ExecResult::err(
-                format!("bash: builtin: {name}: not a shell builtin\n"),
+                self.diag(format!("builtin: {name}: not a shell builtin\n")),
                 1,
             ));
         }
@@ -9860,7 +10015,7 @@ impl Interpreter {
                     format!("{} is a shell builtin\n", cmd_name)
                 } else {
                     return Ok(ExecResult::err(
-                        format!("bash: command: {}: not found\n", cmd_name),
+                        self.diag(format!("command: {cmd_name}: not found\n")),
                         1,
                     ));
                 };
@@ -9941,7 +10096,7 @@ impl Interpreter {
                     }
                 }
                 Ok(ExecResult::err(
-                    format!("bash: {}: command not found\n", remaining[0]),
+                    self.diag(format!("{}: command not found\n", remaining[0])),
                     127,
                 ))
             }
@@ -10335,9 +10490,9 @@ impl Interpreter {
                     // circular nameref fails that command, as in bash,
                     // instead of abandoning the line like an assignment.
                     let Ok(target) = self.resolve_nameref_strict(name) else {
-                        result
-                            .stderr
-                            .push_str(&format!("bash: warning: {name}: circular name reference\n"));
+                        result.stderr.push_str(
+                            &self.diag(format!("warning: {name}: circular name reference\n")),
+                        );
                         result.exit_code = 1;
                         continue;
                     };
@@ -10348,7 +10503,7 @@ impl Interpreter {
                     if self.is_var_readonly(base) {
                         result
                             .stderr
-                            .push_str(&format!("bash: {base}: readonly variable\n"));
+                            .push_str(&self.diag(format!("{base}: readonly variable\n")));
                         result.exit_code = 1;
                         readonly_failed = true;
                         continue;
@@ -10429,12 +10584,22 @@ impl Interpreter {
 
         if is_input {
             let mut stdout = String::new();
+            // The substituted list runs in a subshell: nothing it changes
+            // (variables, cwd, options, `$?`) reaches the parent.
+            let snapshot = Box::new(self.snapshot_subshell_state());
+            let last_exit_code = self.last_exit_code;
             self.bash_subshell += 1;
             let mut failed = None;
             for cmd in commands {
                 match self.execute_command(cmd).await {
                     Ok(cmd_result) => {
-                        stdout.push_str(&cmd_result.stdout.command_substitution_text())
+                        stdout.push_str(&cmd_result.stdout.command_substitution_text());
+                        if matches!(
+                            cmd_result.control_flow,
+                            ControlFlow::Exit(_) | ControlFlow::Abort
+                        ) {
+                            break;
+                        }
                     }
                     Err(e) => {
                         failed = Some(e);
@@ -10442,7 +10607,8 @@ impl Interpreter {
                     }
                 }
             }
-            self.bash_subshell -= 1;
+            self.restore_subshell_state(*snapshot);
+            self.last_exit_code = last_exit_code;
             if let Some(e) = failed {
                 return Err(e);
             }
@@ -10611,6 +10777,12 @@ impl Interpreter {
         redirects: &'a [Redirect],
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecResult>> + Send + 'a>> {
         Box::pin(async move {
+            let end_line = (!redirects.is_empty())
+                .then(|| Self::compound_end_line(compound))
+                .flatten();
+            if let Some(line) = end_line {
+                self.current_line = line;
+            }
             // Process input redirections before executing compound
             let stdin = match self.process_input_redirections(None, redirects).await {
                 Ok(s) => s,
@@ -10680,6 +10852,9 @@ impl Interpreter {
             if redirects.is_empty() {
                 Ok(result)
             } else {
+                if let Some(line) = end_line {
+                    self.current_line = line;
+                }
                 self.apply_redirections(result, redirects).await
             }
         })
@@ -10978,7 +11153,7 @@ impl Interpreter {
             .unwrap_or(0);
         let idx = len + raw_idx as i128;
         if idx < 0 {
-            return Err(format!("bash: {arr_name}[{key}]: bad array subscript\n"));
+            return Err(self.diag(format!("{arr_name}[{key}]: bad array subscript\n")));
         }
         Ok(idx as usize)
     }
@@ -12016,6 +12191,115 @@ fn ere_has_invalid_char_class(pattern: &str) -> bool {
 
 /// Turn a builtin's usage error into a failed command (exit 2) instead of
 /// aborting the script. THREAT[TM-INF-022]: the message is capped at 1 KB.
+/// Names real bash runs as shell builtins (`enable -a`). Their diagnostics
+/// carry the shell's `$0: line N: ` prefix; everything else bashkit bundles
+/// (cat, grep, sort, ...) is an external program in bash and keeps its own
+/// `cat: ...` form.
+const BASH_SHELL_BUILTINS: &[&str] = &[
+    ".",
+    ":",
+    "[",
+    "alias",
+    "bg",
+    "bind",
+    "break",
+    "builtin",
+    "caller",
+    "cd",
+    "command",
+    "compgen",
+    "complete",
+    "compopt",
+    "continue",
+    "declare",
+    "dirs",
+    "disown",
+    "echo",
+    "enable",
+    "eval",
+    "exec",
+    "exit",
+    "export",
+    "false",
+    "fc",
+    "fg",
+    "getopts",
+    "hash",
+    "help",
+    "history",
+    "jobs",
+    "kill",
+    "let",
+    "local",
+    "logout",
+    "mapfile",
+    "popd",
+    "printf",
+    "pushd",
+    "pwd",
+    "read",
+    "readarray",
+    "readonly",
+    "return",
+    "set",
+    "shift",
+    "shopt",
+    "source",
+    "suspend",
+    "test",
+    "times",
+    "trap",
+    "true",
+    "type",
+    "typeset",
+    "ulimit",
+    "umask",
+    "unalias",
+    "unset",
+    "wait",
+];
+
+/// Give a bundled builtin's own stderr bash's diagnostic prefix.
+///
+/// Builtins have no interpreter handle, so they write `bash: name: msg` (or,
+/// for shell builtins, bare `name: msg`) and the one dispatch point that
+/// returns their result rewrites the line start to `prefix` (`$0: line N: `).
+/// Usage lines (`name: usage: ...`) stay unprefixed, as in bash. Only the
+/// builtin's own diagnostics reach here: execution plans (nested commands)
+/// and `/dev/stderr` operand data are excluded by the caller.
+fn prefix_builtin_diagnostics(
+    stderr: &crate::StreamData,
+    name: &str,
+    prefix: &str,
+) -> Option<crate::StreamData> {
+    let bytes = stderr.as_bytes();
+    if bytes.is_empty() {
+        return None;
+    }
+    let shell_builtin = BASH_SHELL_BUILTINS.contains(&name);
+    let own = format!("{name}: ");
+    let usage = format!("{name}: usage:");
+    let mut out = Vec::with_capacity(bytes.len() + prefix.len());
+    let mut changed = false;
+    for line in bytes.split_inclusive(|b| *b == b'\n') {
+        if let Some(rest) = line.strip_prefix(b"bash: ".as_slice()) {
+            out.extend_from_slice(prefix.as_bytes());
+            out.extend_from_slice(rest);
+            changed = true;
+        } else if shell_builtin
+            && line.starts_with(own.as_bytes())
+            && !line.starts_with(usage.as_bytes())
+        {
+            out.extend_from_slice(prefix.as_bytes());
+            out.extend_from_slice(line);
+            changed = true;
+        } else {
+            out.extend_from_slice(line);
+        }
+    }
+    changed.then(|| crate::StreamData::from(out))
+}
+
 fn builtin_usage_error(msg: &str) -> ExecResult {
     let mut msg = msg.trim_end().to_string();
     if msg.len() > 1024 {
@@ -13854,6 +14138,31 @@ mod tests {
         assert_eq!(result.exit_code, 0);
     }
 
+    /// THREAT[TM-DOS-031]: `[[ == ]]` understands extglob without `shopt`,
+    /// so backtracking alternation against a near-miss value must stay
+    /// bounded by the per-match step budget.
+    #[tokio::test]
+    async fn test_cond_extglob_backtracking_is_bounded() {
+        use crate::time_compat::Instant;
+        use std::time::Duration;
+        let start = Instant::now();
+        let result = run_script(
+            r#"x=$(printf 'a%.0s' {1..60})b
+[[ $x == +(a|aa) ]] && echo m1 || echo n1
+[[ $x == +(+(a)|+(aa)) ]] && echo m2 || echo n2
+[[ $x == *(a|aa|aaa)*(a|aa)!(z) ]] && echo m3 || echo n3
+y=${x//+(a|aa)/-}; echo ${#y}"#,
+        )
+        .await;
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed < Duration::from_secs(10),
+            "extglob took too long: {:?}",
+            elapsed
+        );
+        assert!(result.stdout.starts_with("n1\nn2\n"), "{}", result.stdout);
+    }
+
     // Issue #425: $$ should not leak real host PID
     #[tokio::test]
     async fn test_dollar_dollar_no_host_pid_leak() {
@@ -14517,7 +14826,7 @@ echo "count=$COUNT"
 
     #[test]
     fn test_command_not_found_suggestions_use_stable_tie_break() {
-        let msg = command_not_found_message("grpe", &["type", "true", "tree", "grep"]);
+        let msg = command_not_found_message("bash: ", "grpe", &["type", "true", "tree", "grep"]);
         assert_eq!(
             msg,
             "bash: grpe: command not found. Did you mean: grep, tree, true?\n"

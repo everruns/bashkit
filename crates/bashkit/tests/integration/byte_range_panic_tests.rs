@@ -65,7 +65,9 @@ async fn array_slice_negative_length_no_panic() {
         .exec("arr=(a b c d e); echo \"${arr[@]:1:-1}\"")
         .await
         .expect("negative slice length must not panic");
-    assert_eq!(result.exit_code, 0);
+    // bash rejects a negative array-slice length and aborts the line.
+    assert_eq!(result.exit_code, 1);
+    assert!(result.stderr.contains("-1: substring expression < 0"));
 }
 
 /// Regression for #1414: ensure `start + len_val` near `usize::MAX` does

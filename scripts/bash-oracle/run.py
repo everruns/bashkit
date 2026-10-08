@@ -8,8 +8,7 @@ with the bash the recordings name (see README.md).
 Two scores, because they move at different speeds. `match` is status plus
 stdout: what a script observes, and the number the roadmap tracks. `strict`
 also requires the stderr text, which still carries bash wording bashkit does
-not reproduce (no `bash: line N:` prefix on most builtin diagnostics), so it
-trails well behind.
+not reproduce (parser error texts, xtrace details), so it trails behind.
 
 `floor.txt` holds both floors, `<match> <strict>`. Exits 1 when either score
 drops below its floor, so a regression fails CI; it also says when a floor is

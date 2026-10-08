@@ -4,7 +4,6 @@
 
 ### bashbox_ansi_c_quoting_the_result_is_quoted_text
 # the result is quoted text
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 x=$'a\nb'; echo "$x"; echo "$'q'" '$'"'q'"; echo $"dq $x"; echo $'it\'s' $'a''b' x$'\t'y; touch zz; echo $'z'* $'*'
 ### expect
 a
@@ -18,7 +17,6 @@ zz *
 
 ### bashbox_ansi_c_quoting_type_shows_it_single_quoted
 # type shows it single-quoted
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 f() { echo $'a\tb' $'it\'s' "$'x'" $"y"; }
 type f
 ### expect
@@ -31,7 +29,6 @@ f ()
 
 ### bashbox_ansi_c_quoting_here_documents_expand_as_in_double_quotes_quotes_stay
 # here-documents expand as in double quotes, quotes stay
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 x=1; cat <<EOF
 don't "q" $x \$x $'a' `echo bt` "\"" \\
  a\

@@ -4,7 +4,6 @@
 
 ### bashbox_shopt_unknown_names_are_reported_but_the_rest_still_apply
 # unknown names are reported but the rest still apply
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 shopt -s extglob nope nullglob; echo s=$?; shopt -p nullglob extglob; shopt -q nope; echo s=$?
 ### expect
 s=1
@@ -24,7 +23,6 @@ s=2
 
 ### bashbox_shopt_o_with_a_bad_name
 # -o with a bad name
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 shopt -so nope; echo s=$?; shopt -uo nope; echo s=$?; shopt -o nope; echo s=$?; shopt -po nope errexit; echo s=$?
 ### expect
 s=0
@@ -43,7 +41,7 @@ shopt -s lastpipe; echo a | read v; echo "[$v]"
 
 ### bashbox_shopt_aliases_expand_only_with_expand_aliases_from_the_next_line_o
 # aliases expand only with expand_aliases, from the next line on
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
+### skip: aliases expand when the command runs, not when its line is read (limitations.md, Aliases row)
 alias e='echo hi'
 e there
 shopt -s expand_aliases

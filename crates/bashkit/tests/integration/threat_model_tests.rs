@@ -1275,9 +1275,11 @@ mod edge_cases {
         // Use rsync which is never a builtin (ssh may be with ssh feature)
         let result = bash.exec("rsync").await.unwrap();
         assert_eq!(result.exit_code, 127);
-        // Should match bash format: "bash: cmd: command not found"
+        // Should match bash format: "bash: line 1: cmd: command not found"
         assert!(
-            result.stderr.starts_with("bash: rsync: command not found"),
+            result
+                .stderr
+                .starts_with("bash: line 1: rsync: command not found"),
             "stderr should match bash format, got: {}",
             result.stderr
         );

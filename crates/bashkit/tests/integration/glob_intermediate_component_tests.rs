@@ -172,6 +172,7 @@ async fn trailing_slash_glob_still_lists_directories() {
 
     let result = bash.exec("echo /skills/*/").await.unwrap();
 
+    // bash keeps the trailing slash on every match.
     assert_eq!(result.stdout, "/skills/pdf/ /skills/xlsx/\n");
 }
 
