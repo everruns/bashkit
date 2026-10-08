@@ -4,7 +4,6 @@
 
 ### bashbox_security_strings_arrays_and_braces
 # strings, arrays and braces
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 x=0123456789; x=$x$x; a=({1..100}); echo ${#x} ${#a[@]} {a,b}{c,d}
 ### expect
 20 100 ac ad bc bd
@@ -12,7 +11,6 @@ x=0123456789; x=$x$x; a=({1..100}); echo ${#x} ${#a[@]} {a,b}{c,d}
 
 ### bashbox_security_substitutions_fds_pipelines_and_here_documents
 # substitutions, fds, pipelines and here-documents
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 exec {fd}>/dev/null; echo $fd $(echo $(echo hi)) | cat | cat; cat <<EOF
 end
 EOF

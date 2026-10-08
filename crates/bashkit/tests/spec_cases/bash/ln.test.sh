@@ -126,7 +126,7 @@ b
 ### end
 
 ### ln_verbose_and_long_options
-cd /tmp
+cd "$(mktemp -d)"
 ln --symbolic --verbose tgt_v lnk_v
 ln --symbolic --force --no-dereference tgt_w lnk_v
 readlink lnk_v
