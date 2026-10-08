@@ -3,7 +3,7 @@
 // BashTool used only for input_schema/system_prompt introspection
 
 use anyhow::{Context, Result};
-use bashkit::{Bash, BashTool, Tool};
+use bashkit::{Bash, BashTool, GitConfig, Tool};
 use serde::{Deserialize, Serialize};
 
 use crate::dataset::EvalTask;
@@ -55,6 +55,44 @@ fn format_tool_output(stdout: &str, stderr: &str, exit_code: i32) -> String {
     out
 }
 
+/// Virtual git identity for eval sessions (TM-GIT-002: never the host's).
+pub const EVAL_GIT_AUTHOR: (&str, &str) = ("Eval Agent", "eval@bashkit-eval.invalid");
+
+/// Build the task's starting `Bash`: mount `files`, enable sandboxed `git`, then
+/// run the optional `setup` script (fixture repos, symlinks, exec bits).
+///
+/// Decision: `setup` runs inside a subshell so its `cd`/variables never leak
+/// into the agent's session, and its output is not recorded as a tool call
+/// (checks see only the agent's own calls). A failing setup is an infra error,
+/// not a model failure. Shared with the reference-solution test so CI proves
+/// every task is solvable on the exact starting state the model sees.
+pub async fn build_task_bash(task: &EvalTask) -> Result<Bash> {
+    let mut builder = Bash::builder()
+        .username("eval")
+        .hostname("bashkit-eval")
+        .git(GitConfig::new().author(EVAL_GIT_AUTHOR.0, EVAL_GIT_AUTHOR.1));
+
+    for (path, content) in &task.files {
+        builder = builder.mount_text(path, content);
+    }
+    let mut bash = builder.build();
+
+    if let Some(setup) = task.setup.as_deref().filter(|s| !s.trim().is_empty()) {
+        let r = bash
+            .exec(&format!("(\nset -e\n{setup}\n)"))
+            .await
+            .with_context(|| format!("task {} setup failed to run", task.id))?;
+        anyhow::ensure!(
+            r.exit_code == 0,
+            "task {} setup exited {}: {}",
+            task.id,
+            r.exit_code,
+            r.stderr
+        );
+    }
+    Ok(bash)
+}
+
 /// Run the agent loop for a single task.
 /// Returns (trace, bash) — bash kept for VFS inspection by scorer.
 pub async fn run_agent_loop(
@@ -62,13 +100,7 @@ pub async fn run_agent_loop(
     task: &EvalTask,
     max_turns: usize,
 ) -> Result<(AgentTrace, Bash)> {
-    // Build Bash with pre-populated files
-    let mut builder = Bash::builder().username("eval").hostname("bashkit-eval");
-
-    for (path, content) in &task.files {
-        builder = builder.mount_text(path, content);
-    }
-    let mut bash = builder.build();
+    let mut bash = build_task_bash(task).await?;
 
     // Get tool definition from BashTool with matching config
     let tool = BashTool::builder()

@@ -309,6 +309,11 @@ eval *ARGS:
 eval-smoke *ARGS:
     mira --bin bashkit-eval run bashkit_smoke {{ARGS}}
 
+# Repo-workflow eval: multi-turn fixture repos (make test, fix, commit). Every
+# task's reference solution also runs offline in `cargo test -p bashkit-eval`.
+eval-repo *ARGS:
+    mira --bin bashkit-eval run bashkit_repo {{ARGS}}
+
 # Scripting-tool eval. The `mode` axis compares scripted vs baseline; select one
 # with `--axis mode=scripted` (omit to run both).
 eval-scripting *ARGS:

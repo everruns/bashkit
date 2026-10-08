@@ -45,6 +45,7 @@ Results are written by mira under `./results/<run_id>/`.
 |------|---------|-----------|
 | `bashkit_bash` | 58 tasks, 15 categories | `--tag <category>`, `--samples <id>` |
 | `bashkit_smoke` | 3 tasks | quick verification |
+| `bashkit_repo` | 8 `repo_workflow` tasks | multi-turn fixture repos (`just eval-repo`) |
 | `bashkit_scripting` | scripting-tool tasks | `--axis mode=scripted\|baseline` |
 
 Targets (model matrix) are defined in `src/mira_study.rs` and gated on
@@ -57,6 +58,12 @@ not supported), e.g. `--targets anthropic/claude-opus-4-8,openai/gpt-5.5`.
 58 hand-curated tasks in JSONL format across 15 categories: file_operations, text_processing, pipelines, scripting, data_transformation, error_recovery, system_info, archive_operations, json_processing, complex_tasks, code_search, environment, database_operations, config_management, build_simulation.
 
 Smoke test dataset (`data/smoke-test.jsonl`) has 3 tasks for quick verification.
+
+Repo workflow dataset (`data/repo-workflow.jsonl`, eval `bashkit_repo`) has 8
+multi-turn tasks: a `setup` script builds a fixture git repo, the model runs
+`make test`, fixes the bug, and commits (symlinks, PATH, background jobs, jq,
+git). Reference solutions in `data/repo-workflow-solutions.jsonl` run in
+`cargo test -p bashkit-eval`, so every task stays solvable without an LLM.
 
 ## Results
 

@@ -96,13 +96,23 @@ Unchanged from the original harness. One JSON object per line:
 ```
 
 `system` = optional system-message override (null = BashTool default);
-`expectations` = checks with optional weight (default 1.0).
+`expectations` = checks with optional weight (default 1.0);
+`setup` = optional shell script run after `files` are mounted and before the
+agent starts (build a fixture git repo, create symlinks, `chmod +x`). It runs
+in a subshell with `set -e`, its output is not a tool call, and a non-zero exit
+is an infra error. The eval `Bash` has the sandboxed `git` builtin enabled
+(author `Eval Agent <eval@bashkit-eval.invalid>`, TM-GIT-002). Both the agent
+loop and the reference-solution test build the starting state with
+`agent::build_task_bash`.
 
 ## Expectation Check Types
 
 `exit_code:N`, `stdout_contains:text`, `stdout_regex:pattern`,
 `stderr_empty`, `file_exists:/path`, `dir_exists:/path`,
-`file_contains:/path:text`, `file_line_regex:/path:pattern`,
+`file_contains:/path:text`, `file_not_contains:/path:text` (file must exist),
+`file_line_regex:/path:pattern`, `symlink:/path:target` (`/path` is a symlink;
+its target resolves lexically to the same absolute path as `target`, so
+`releases/v2` and `/abs/releases/v2` both pass and a copied directory fails),
 `llm_judge:prompt` (stub, weight forced to 0). Semantics in
 `crates/bashkit-eval/src/checks.rs` (ported verbatim from the original scorer,
 with byte-for-byte the same pass/fail logic).
@@ -126,6 +136,7 @@ Three evals are advertised (`#[eval]` wrappers in `src/main.rs`):
 |------|---------|-------|
 | `bashkit_bash` | 58 tasks across 15 categories | Samples tagged by category; select with `--tag <category>` |
 | `bashkit_smoke` | 3 tasks | Quick verification |
+| `bashkit_repo` | 8 `repo_workflow` tasks | Multi-turn fixture repos; 20-turn budget (`REPO_MAX_TURNS`) |
 | `bashkit_scripting` | scripting-tool tasks | `mode` axis: `scripted` vs `baseline` |
 
 ## CLI
@@ -141,8 +152,8 @@ mira --bin bashkit-eval run --format html --out report.html
 mira --bin bashkit-eval run --resume <run_id>
 ```
 
-`just eval`, `just eval-smoke`, `just eval-scripting`, and `just eval-list`
-wrap these.
+`just eval`, `just eval-smoke`, `just eval-repo`, `just eval-scripting`, and
+`just eval-list` wrap these.
 
 ## Output / Metrics
 
@@ -168,6 +179,46 @@ Datasets live in `crates/bashkit-eval/data/`. Categories span file operations,
 text processing, pipelines, scripting, data transformation, error recovery,
 system info, archives, JSON processing, complex multi-step tasks, code search,
 and environment handling, each with task-appropriate pre-populated seed files.
+
+## Repo Workflow Eval (`bashkit_repo`)
+
+Roadmap step "harder evals": repo-shaped, multi-turn tasks in
+`data/repo-workflow.jsonl` (category `repo_workflow`). Each task's `setup`
+turns its `files` into a git repo (`git init` + initial commit), then the model
+explores, runs `make test`, fixes code/data/config, re-runs, and commits. The
+tasks exercise the features agents combine in real repos, together:
+
+| Task | Exercises |
+|------|-----------|
+| `repo_clone_fix_failing_test` | local `git clone`, `make test`, bug fix, commit, upstream untouched |
+| `repo_symlink_release_switch` | `ln -sfn` on a link to a directory, config fix, `git add -A` |
+| `repo_path_bin_tool_fix` | `export PATH=$PWD/bin:$PATH`, exec bits kept across `sed -i` |
+| `repo_parallel_shards_background` | `cmd &`, `$!`, per-job `wait PID` exit codes, data fix, `make` target |
+| `repo_report_sort_regression` | awk/sort pipeline vs golden file, `git commit -am` |
+| `repo_jq_config_validation` | jq-driven validator, typed JSON edits |
+| `repo_release_branch_bump` | `git checkout -b`, version bump across VERSION/package.json/CHANGELOG |
+| `repo_parallel_runner_masks_failure` | runner that `wait`s without a PID hides failures; fix it, then the bug |
+
+Python-dependent tasks are out of scope (bash, awk, sed, jq, make only).
+Checks are deterministic: final file contents, `symlink:`, `.git/HEAD`, and
+`.git/commits` lines (`hash|author|email|ts|message`, the sandboxed git's
+storage format) for "a commit with message X exists" and "history kept". Each
+task also checks the model did not edit tests/golden files instead of code.
+
+**Reference solutions** (`data/repo-workflow-solutions.jsonl`, `src/reference.rs`):
+one list of bash tool calls per task, replayed on the exact starting `Bash`
+(`build_task_bash`) and scored by the same checks as a model run. `cargo test
+-p bashkit-eval` requires every reference to pass all checks and the
+untouched fixture (`make test; git status` only) to fail, so CI keeps every
+task solvable and non-trivial without an LLM. Every reference was also run
+against real bash 5.2 + git and gives the same file results. Building the
+references found and fixed five bashkit gaps: `ln -n`/`-T`/directory
+destinations, `mkdir`/`ln -s` under a symlinked directory, mode loss when
+`sed -i` renames over a `mount_text` file, `git add -A` / `commit -am`, and
+local-path `git clone` (see [Git Support](../integrations/git-support.md)).
+
+`bashkit-replay` looks up mira tasks in `eval-tasks.jsonl` only and runs no
+`setup`, so `bashkit_repo` runs are not in the gap corpus yet.
 
 ## Scripting-Tool Eval
 

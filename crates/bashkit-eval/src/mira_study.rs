@@ -28,10 +28,14 @@ use crate::provider::{
 };
 use crate::scripting_agent::{ScriptingTrace, run_baseline_agent, run_scripted_agent};
 use crate::scripting_dataset::ScriptingEvalTask;
-use crate::snapshot::{Snapshot, SnapshotTargets, ToolOutput, snapshot_fs};
+use crate::snapshot::{Snapshot, SnapshotTargets, ToolOutput, snapshot_fs, snapshot_links};
 
 /// Default agent-turn budget per task (matches the original harness).
 pub const MAX_TURNS: usize = 10;
+
+/// Turn budget for `bashkit_repo`: repo tasks are multi-step by design
+/// (explore, run tests, fix, re-run, commit), so they get twice the default.
+pub const REPO_MAX_TURNS: usize = 20;
 
 /// Default model matrix. Each target is gated on its provider's API-key env var,
 /// so an offline run skips them all (CI stays green) and a keyed run lights up
@@ -161,6 +165,7 @@ fn bash_subject() -> impl Subject {
         let targets = SnapshotTargets::from_expectations(&expectations);
         let fs = bash.fs();
         let (files, dirs) = snapshot_fs(fs.as_ref(), &targets).await;
+        let links = snapshot_links(fs.as_ref(), &targets).await;
 
         let tool_outputs: Vec<ToolOutput> = trace
             .tool_calls
@@ -176,6 +181,7 @@ fn bash_subject() -> impl Subject {
             tool_outputs,
             last_exit_code: trace.last_tool_response.as_ref().map(|r| r.exit_code),
             dirs,
+            links,
         };
 
         let ok = trace.tool_calls.iter().filter(|t| t.exit_code == 0).count();
@@ -287,6 +293,7 @@ fn scripting_transcript(trace: ScriptingTrace) -> Transcript {
         tool_outputs,
         last_exit_code,
         dirs: Vec::new(),
+        links: Default::default(),
     };
 
     let ok = trace
@@ -387,6 +394,7 @@ fn parse_jsonl<T: serde::de::DeserializeOwned>(text: &str) -> Vec<T> {
 /// Embedded datasets (no runtime path dependence — robust under any cwd).
 const EVAL_TASKS: &str = include_str!("../data/eval-tasks.jsonl");
 const SMOKE_TASKS: &str = include_str!("../data/smoke-test.jsonl");
+const REPO_TASKS: &str = include_str!("../data/repo-workflow.jsonl");
 const SCRIPTING_MANY_TOOLS: &str = include_str!("../data/scripting-tool/many-tools.jsonl");
 const SCRIPTING_DISCOVERY: &str = include_str!("../data/scripting-tool/discovery.jsonl");
 const SCRIPTING_PAGINATED: &str = include_str!("../data/scripting-tool/paginated.jsonl");
@@ -418,6 +426,23 @@ pub fn smoke_eval() -> Eval {
         .max_turns(MAX_TURNS)
         .targets(default_targets());
     for sample in bash_samples(SMOKE_TASKS) {
+        b = b.add_sample(sample);
+    }
+    b.build()
+}
+
+/// Repo-shaped, multi-turn tasks (`repo_workflow`): a fixture git repo built
+/// by the task's `setup`, then run `make test`, fix, commit. Kept out of
+/// `bashkit_bash` so its 58-task scores stay comparable across runs. Every
+/// task has a reference solution checked in CI (`reference.rs`).
+pub fn repo_eval() -> Eval {
+    let mut b = Eval::new("bashkit_repo")
+        .describe("Multi-turn repo workflows: make test, fix, commit (symlinks, PATH, jobs, git)")
+        .subject(bash_subject())
+        .scorer(expectations_scorer())
+        .max_turns(REPO_MAX_TURNS)
+        .targets(default_targets());
+    for sample in bash_samples(REPO_TASKS) {
         b = b.add_sample(sample);
     }
     b.build()
@@ -474,6 +499,17 @@ mod tests {
     }
 
     #[test]
+    fn repo_samples_load_with_setup() {
+        let samples = bash_samples(REPO_TASKS);
+        assert_eq!(samples.len(), 8);
+        for s in &samples {
+            let task: EvalTask = serde_json::from_value(s.metadata["task"].clone()).unwrap();
+            assert_eq!(task.category, "repo_workflow", "{}", s.id);
+            assert!(task.setup.is_some(), "{} has no fixture setup", s.id);
+        }
+    }
+
+    #[test]
     fn scripting_samples_load_all_datasets() {
         let datasets = [
             ("many-tools", SCRIPTING_MANY_TOOLS),
@@ -494,6 +530,7 @@ mod tests {
         // Smoke: the eval builders produce valid Evals without panicking.
         let _ = bash_eval();
         let _ = smoke_eval();
+        let _ = repo_eval();
         let _ = scripting_eval();
     }
 }

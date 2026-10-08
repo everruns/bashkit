@@ -19,6 +19,11 @@ pub struct EvalTask {
     /// Files to pre-populate in VFS. Key: absolute path, Value: content.
     #[serde(default)]
     pub files: HashMap<String, String>,
+    /// Shell script run after `files` are mounted and before the agent starts
+    /// (e.g. `git init` a fixture repo, create symlinks, `chmod +x`). Runs in a
+    /// subshell with `set -e`; not shown to the model, not scored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub setup: Option<String>,
     pub expectations: Vec<Expectation>,
 }
 
