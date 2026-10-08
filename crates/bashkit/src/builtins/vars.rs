@@ -530,14 +530,17 @@ fn shopt_set_o(
     } else {
         opts.iter().map(String::as_str).collect()
     };
-    // An unknown name fails the whole command before anything changes.
-    if let Some(bad) = names.iter().find(|n| set_option_by_name(n).is_none()) {
-        return ExecResult::err(format!("bash: shopt: {bad}: invalid option name\n"), 1);
-    }
+    // Each unknown name is reported and skipped; the rest still apply.
+    // bash keeps status 0 for `-s`/`-u` and fails the other verbs.
     let mut out = String::new();
+    let mut err = String::new();
     let mut status = 0;
     for name in names {
         let Some((_, _, var, default)) = set_option_by_name(name) else {
+            err.push_str(&format!("bash: shopt: {name}: invalid option name\n"));
+            if !matches!(mode, Some('s' | 'u')) {
+                status = 1;
+            }
             continue;
         };
         match mode {
@@ -563,6 +566,7 @@ fn shopt_set_o(
         }
     }
     let mut result = ExecResult::ok(out);
+    result.stderr = err.into();
     result.exit_code = status;
     result
 }
@@ -623,33 +627,48 @@ impl Builtin for Shopt {
             return Ok(shopt_set_o(ctx.variables, mode, &opts));
         }
 
+        // Each unknown name is reported and skipped (status 1); the
+        // valid names around it still apply.
+        let mut err = String::new();
+        if !opts.is_empty() {
+            opts.retain(|opt| {
+                let known = SHOPT_OPTIONS.contains(&opt.as_str());
+                if !known {
+                    err.push_str(&format!("bash: shopt: {opt}: invalid shell option name\n"));
+                }
+                known
+            });
+            if !err.is_empty() {
+                let mut result = if opts.is_empty() {
+                    ExecResult::ok(String::new())
+                } else {
+                    Self::run_valid(ctx, mode, opts)
+                };
+                result.stderr = err.into();
+                result.exit_code = 1;
+                return Ok(result);
+            }
+        }
+        Ok(Self::run_valid(ctx, mode, opts))
+    }
+}
+
+impl Shopt {
+    /// Run `shopt` on names already checked against `SHOPT_OPTIONS`.
+    fn run_valid(ctx: Context<'_>, mode: Option<char>, opts: Vec<String>) -> ExecResult {
         match mode {
             Some('s') => {
-                // Set options
                 for opt in &opts {
-                    if !SHOPT_OPTIONS.contains(&opt.as_str()) {
-                        return Ok(ExecResult::err(
-                            format!("bash: shopt: {}: invalid shell option name\n", opt),
-                            1,
-                        ));
-                    }
                     ctx.variables
                         .insert(format!("SHOPT_{}", opt), "1".to_string());
                 }
-                Ok(ExecResult::ok(String::new()))
+                ExecResult::ok(String::new())
             }
             Some('u') => {
-                // Unset options
                 for opt in &opts {
-                    if !SHOPT_OPTIONS.contains(&opt.as_str()) {
-                        return Ok(ExecResult::err(
-                            format!("bash: shopt: {}: invalid shell option name\n", opt),
-                            1,
-                        ));
-                    }
                     ctx.variables.remove(&format!("SHOPT_{}", opt));
                 }
-                Ok(ExecResult::ok(String::new()))
+                ExecResult::ok(String::new())
             }
             Some('q') => {
                 // Query: exit 0 if all named options are on, 1 otherwise
@@ -657,13 +676,13 @@ impl Builtin for Shopt {
                     let key = format!("SHOPT_{}", opt);
                     ctx.variables.get(&key).map(|v| v == "1").unwrap_or(false)
                 });
-                Ok(ExecResult {
+                ExecResult {
                     stdout: crate::StreamData::new(),
                     stderr: crate::StreamData::new(),
                     exit_code: if all_on { 0 } else { 1 },
                     control_flow: crate::interpreter::ControlFlow::None,
                     ..Default::default()
-                })
+                }
             }
             Some('p') => {
                 // Print in reusable format
@@ -681,7 +700,7 @@ impl Builtin for Shopt {
                     let on = ctx.variables.get(&key).map(|v| v == "1").unwrap_or(false);
                     output.push_str(&format!("shopt {} {}\n", if on { "-s" } else { "-u" }, opt));
                 }
-                Ok(ExecResult::ok(output))
+                ExecResult::ok(output)
             }
             None => {
                 // No flag: show status of named options
@@ -697,36 +716,17 @@ impl Builtin for Shopt {
                             if on { "on" } else { "off" }
                         ));
                     }
-                    return Ok(ExecResult::ok(output));
+                    return ExecResult::ok(output);
                 }
                 let mut output = String::new();
-                let mut any_invalid = false;
                 for opt in &opts {
-                    if !SHOPT_OPTIONS.contains(&opt.as_str()) {
-                        output.push_str(&format!(
-                            "bash: shopt: {}: invalid shell option name\n",
-                            opt
-                        ));
-                        any_invalid = true;
-                        continue;
-                    }
                     let key = format!("SHOPT_{}", opt);
                     let on = ctx.variables.get(&key).map(|v| v == "1").unwrap_or(false);
                     output.push_str(&format!("{:<15}\t{}\n", opt, if on { "on" } else { "off" }));
                 }
-                if any_invalid {
-                    Ok(ExecResult {
-                        stdout: crate::StreamData::new(),
-                        stderr: output.into(),
-                        exit_code: 1,
-                        control_flow: crate::interpreter::ControlFlow::None,
-                        ..Default::default()
-                    })
-                } else {
-                    Ok(ExecResult::ok(output))
-                }
+                ExecResult::ok(output)
             }
-            _ => Ok(ExecResult::ok(String::new())),
+            _ => ExecResult::ok(String::new()),
         }
     }
 }

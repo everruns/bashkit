@@ -216,7 +216,6 @@ impl Interpreter {
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String>> + Send + 'a>> {
         Box::pin(async move {
             let expanded = self.expand_word_inner(word).await?;
-            let expanded = Self::strip_quote_markers(&expanded);
             // A `QuotedGlobWord` carries glob escapes for its quoted text;
             // contexts that do not glob (command names, redirect targets,
             // operands) want the text itself.
@@ -283,7 +282,6 @@ impl Interpreter {
     /// quoted expansions from `append_expansion_for_word`.
     pub(super) async fn expand_pattern_word(&mut self, word: &Word) -> Result<String> {
         let expanded = Box::pin(self.expand_word_inner(word)).await?;
-        let expanded = Self::strip_quote_markers(&expanded);
         if word.quoted && !word.has_unquoted_glob {
             Ok(Self::quote_expansion_for_quoted_glob(&expanded))
         } else {
@@ -426,6 +424,10 @@ impl Interpreter {
                         let start = (bracket_pos + 1).min(index_end);
                         let index_str = &name[start..index_end];
                         self.expand_array_access_part(arr_name, index_str)
+                    } else if name == "@" || name == "*" {
+                        // `${#@}` / `${#*}` count the positional parameters.
+                        result.push_str(&self.expand_variable("#"));
+                        continue;
                     } else {
                         self.expand_variable(name)
                     };
@@ -517,7 +519,9 @@ impl Interpreter {
                     offset,
                     length,
                 } if name == "@" || name == "*" => {
-                    let items = self.positional_slice(offset, length.as_deref());
+                    let items = self
+                        .positional_slice(offset, length.as_deref())
+                        .map_err(crate::error::Error::LineAbort)?;
                     let sep = if name == "*" {
                         self.get_ifs_separator()
                     } else {
@@ -531,19 +535,10 @@ impl Interpreter {
                     length,
                 } => {
                     let value = self.expand_variable(name);
-                    let char_count = value.chars().count();
-                    let offset_val: isize = self.evaluate_arithmetic(offset) as isize;
-                    let start = if offset_val < 0 {
-                        (char_count as isize + offset_val).max(0) as usize
-                    } else {
-                        (offset_val as usize).min(char_count)
-                    };
-                    let substr: String = if let Some(len_expr) = length {
-                        let len_val = self.evaluate_arithmetic(len_expr) as usize;
-                        value.chars().skip(start).take(len_val).collect()
-                    } else {
-                        value.chars().skip(start).collect()
-                    };
+                    let (start, end) = self
+                        .slice_range(value.chars().count(), offset, length.as_deref(), true)
+                        .map_err(crate::error::Error::LineAbort)?;
+                    let substr: String = value.chars().skip(start).take(end - start).collect();
                     Self::append_expansion_for_word(&mut result, word, &substr);
                 }
                 WordPart::ArraySlice {
@@ -553,22 +548,14 @@ impl Interpreter {
                 } => {
                     if let Some(items) = self.array_view(name) {
                         let values: Vec<String> = items.into_iter().map(|(_, v)| v).collect();
-
-                        let offset_val: isize = self.evaluate_arithmetic(offset) as isize;
-                        let start = if offset_val < 0 {
-                            (values.len() as isize + offset_val).max(0) as usize
-                        } else {
-                            (offset_val as usize).min(values.len())
-                        };
-
-                        let sliced = if let Some(len_expr) = length {
-                            let len_val = self.evaluate_arithmetic(len_expr) as usize;
-                            let end = start.saturating_add(len_val).min(values.len());
-                            &values[start..end]
-                        } else {
-                            &values[start..]
-                        };
-                        Self::append_expansion_for_word(&mut result, word, &sliced.join(" "));
+                        let (start, end) = self
+                            .slice_range(values.len(), offset, length.as_deref(), false)
+                            .map_err(crate::error::Error::LineAbort)?;
+                        Self::append_expansion_for_word(
+                            &mut result,
+                            word,
+                            &values[start..end].join(" "),
+                        );
                     }
                 }
                 WordPart::IndirectExpansion {
@@ -824,25 +811,40 @@ impl Interpreter {
                     })
                     .flatten();
 
+                // Protected-span markers, likewise chosen absent from the
+                // data so a value holding any byte (`\x01` included) stays data.
+                let mut free_marks = OPERAND_QUOTE_MARK_CANDIDATES.iter().copied().filter(|c| {
+                    Some(*c) != empty_field_sentinel && !sentinel_haystack.contains(*c)
+                });
+                let marks = free_marks.next().zip(free_marks.next());
+
                 let mut expanded_for_split = String::new();
                 for (value, is_protected, preserves_empty_field) in segments {
                     if is_protected {
                         // Field splitting scans the whole expanded word. Mark literal and
                         // quoted segments as protected so unquoted expansion delimiters can
                         // still create boundaries between adjacent protected segments.
-                        expanded_for_split.push(QUOTED_SEGMENT_START);
+                        if let Some((start, _)) = marks {
+                            expanded_for_split.push(start);
+                        }
                         if preserves_empty_field
                             && let Some(empty_field_sentinel) = empty_field_sentinel
                         {
                             expanded_for_split.push(empty_field_sentinel);
                         }
                         expanded_for_split.push_str(&value);
-                        expanded_for_split.push(QUOTED_SEGMENT_END);
+                        if let Some((_, end)) = marks {
+                            expanded_for_split.push(end);
+                        }
                     } else {
                         expanded_for_split.push_str(&value);
                     }
                 }
-                let mut fields = self.ifs_split(&expanded_for_split)?;
+                let mut fields = self.ifs_split_marked(
+                    &expanded_for_split,
+                    self.limits.max_word_split_fields,
+                    marks,
+                )?;
                 if let Some(empty_field_sentinel) = empty_field_sentinel {
                     for field in &mut fields {
                         field.retain(|ch| ch != empty_field_sentinel);
@@ -870,7 +872,7 @@ impl Interpreter {
             if has_expansion {
                 self.ifs_split(&expanded)
             } else {
-                Ok(vec![Self::strip_quote_markers(&expanded)])
+                Ok(vec![expanded])
             }
         })
     }
@@ -978,19 +980,15 @@ impl Interpreter {
         None
     }
 
-    pub(super) fn strip_quote_markers(s: &str) -> String {
-        s.chars()
-            .filter(|&c| c != QUOTED_SEGMENT_START && c != QUOTED_SEGMENT_END)
-            .collect()
-    }
-
-    pub(super) fn quote_marker_chars(s: &str) -> Vec<(char, bool)> {
+    /// `s` as (char, protected) pairs: text between the `marks` pair is
+    /// protected from splitting; the marks themselves are dropped.
+    fn quote_marker_chars(s: &str, marks: Option<(char, char)>) -> Vec<(char, bool)> {
         let mut quoted = false;
         let mut chars = Vec::new();
         for c in s.chars() {
-            match c {
-                QUOTED_SEGMENT_START => quoted = true,
-                QUOTED_SEGMENT_END => quoted = false,
+            match marks {
+                Some((start, _)) if c == start => quoted = true,
+                Some((_, end)) if c == end => quoted = false,
                 _ => chars.push((c, quoted)),
             }
         }
@@ -1010,6 +1008,17 @@ impl Interpreter {
 
     /// Split a string on IFS characters, returning an error if resource caps are exceeded.
     pub(super) fn ifs_split_limited(&self, s: &str, limit: usize) -> Result<Vec<String>> {
+        self.ifs_split_marked(s, limit, None)
+    }
+
+    /// `ifs_split_limited` where text between the `marks` pair is protected
+    /// from splitting (the marks are removed).
+    fn ifs_split_marked(
+        &self,
+        s: &str,
+        limit: usize,
+        marks: Option<(char, char)>,
+    ) -> Result<Vec<String>> {
         // Clamp so callers passing a larger value (e.g. remaining array capacity)
         // cannot bypass the configured max_word_split_fields cap.
         let limit = limit.min(self.limits.max_word_split_fields);
@@ -1025,7 +1034,10 @@ impl Interpreter {
             .unwrap_or_else(|| " \t\n".to_string());
 
         if ifs.is_empty() {
-            let field = Self::strip_quote_markers(s);
+            let field: String = Self::quote_marker_chars(s, marks)
+                .into_iter()
+                .map(|(c, _)| c)
+                .collect();
             let bytes = field.len();
             return self.push_ifs_field(Vec::new(), field, limit, bytes);
         }
@@ -1034,7 +1046,7 @@ impl Interpreter {
         let is_ifs_ws = |c: char, quoted: bool| !quoted && ifs.contains(c) && " \t\n".contains(c);
         let is_ifs_nws = |c: char, quoted: bool| !quoted && ifs.contains(c) && !" \t\n".contains(c);
         let all_whitespace_ifs = ifs.chars().all(|c| " \t\n".contains(c));
-        let chars = Self::quote_marker_chars(s);
+        let chars = Self::quote_marker_chars(s, marks);
 
         if all_whitespace_ifs {
             // IFS is only whitespace: split on unquoted runs, elide empties.
@@ -1516,7 +1528,8 @@ impl Interpreter {
                 offset,
                 length,
             } if name == "@" || name == "*" => {
-                let items = self.positional_slice(offset, length.as_deref());
+                // A range error is raised by the plain expansion path.
+                let items = self.positional_slice(offset, length.as_deref()).ok()?;
                 (name, items)
             }
             _ => return None,
@@ -1526,7 +1539,11 @@ impl Interpreter {
 
     /// `${@:offset:length}`: positional parameters counted from `$0`
     /// (offset 0 includes it); a negative offset counts back from the last.
-    fn positional_slice(&mut self, offset: &str, length: Option<&str>) -> Vec<String> {
+    fn positional_slice(
+        &mut self,
+        offset: &str,
+        length: Option<&str>,
+    ) -> std::result::Result<Vec<String>, String> {
         let positional = self
             .call_stack
             .last()
@@ -1535,22 +1552,57 @@ impl Interpreter {
         let mut all = Vec::with_capacity(positional.len() + 1);
         all.push(self.expand_variable("0"));
         all.extend(positional);
+        let (start, end) = self.slice_range(all.len(), offset, length, false)?;
+        all.truncate(end);
+        Ok(all.split_off(start))
+    }
+
+    /// `[start, end)` of `${v:offset:length}` over `count` items. A negative
+    /// offset counts back from the end; one reaching before the start, or an
+    /// offset past the end, selects nothing. A negative length counts back
+    /// from the end for strings (`neg_len_from_end`); for arrays and `$@`, or
+    /// when it ends before `start`, it is bash's `substring expression < 0`.
+    fn slice_range(
+        &mut self,
+        count: usize,
+        offset: &str,
+        length: Option<&str>,
+        neg_len_from_end: bool,
+    ) -> std::result::Result<(usize, usize), String> {
         let off = self.evaluate_arithmetic(offset);
         let start = if off < 0 {
             let back = usize::try_from(off.unsigned_abs()).unwrap_or(usize::MAX);
-            match all.len().checked_sub(back) {
-                Some(s) => s,
-                None => return Vec::new(),
-            }
+            count.checked_sub(back)
         } else {
-            usize::try_from(off).unwrap_or(usize::MAX).min(all.len())
+            usize::try_from(off).ok().filter(|&o| o <= count)
         };
-        let mut items: Vec<String> = all.into_iter().skip(start).collect();
-        if let Some(len) = length {
-            let n = self.evaluate_arithmetic(len);
-            items.truncate(usize::try_from(n.max(0)).unwrap_or(usize::MAX));
+        let len = length.map(|l| (l, self.evaluate_arithmetic(l)));
+        if let Some((expr, n)) = len
+            && n < 0
+        {
+            let end = usize::try_from(n.unsigned_abs())
+                .ok()
+                .and_then(|back| count.checked_sub(back));
+            match (neg_len_from_end, start, end) {
+                (true, Some(s), Some(e)) if e >= s => return Ok((s, e)),
+                (true, None, _) => return Ok((0, 0)),
+                _ => {
+                    return Err(
+                        self.arith_diag("", &format!("{}: substring expression < 0", expr.trim()))
+                    );
+                }
+            }
         }
-        items
+        let Some(start) = start else {
+            return Ok((0, 0));
+        };
+        let end = match len {
+            Some((_, n)) => start
+                .saturating_add(usize::try_from(n).unwrap_or(usize::MAX))
+                .min(count),
+            None => count,
+        };
+        Ok((start, end))
     }
 
     fn is_elementwise_op(operator: &ParameterOp) -> bool {
@@ -1920,8 +1972,10 @@ impl Interpreter {
             || Self::find_unescaped_char(pat, '?').is_some()
             || Self::find_unescaped_char(pat, '[').is_some();
         let extglob = self.contains_unescaped_extglob(pat);
+        // `shopt -s nocasematch` folds case in `${v/pat/rep}` (not in removal).
+        let nocase = self.is_nocasematch();
 
-        if !has_glob && !extglob {
+        if !has_glob && !extglob && !nocase {
             let literal = Self::unescape_pattern_literal(pat);
             return Some(match anchor {
                 PatternAnchor::Start if value.starts_with(&literal) => vec![(0, literal.len())],
@@ -1943,7 +1997,7 @@ impl Interpreter {
             });
         }
 
-        if !extglob && let Some(re) = Self::glob_pattern_regex(pat, anchor) {
+        if !extglob && let Some(re) = Self::glob_pattern_regex(pat, anchor, nocase) {
             // THREAT[TM-DOS-127]: the regex crate matches in linear time and
             // the compiled program is size-capped, so a long value or pattern
             // cannot blow up the search.
@@ -1967,7 +2021,11 @@ impl Interpreter {
             return Some(ranges);
         }
 
-        self.find_pattern_matches_glob(value, pat, anchor, global)
+        let opts = glob::PatternOpts {
+            nocase,
+            ..self.shell_pattern_opts()
+        };
+        self.find_pattern_matches_glob(value, pat, anchor, global, opts)
     }
 
     /// Extglob fallback, bash's own scan: at each position take the longest
@@ -1980,6 +2038,7 @@ impl Interpreter {
         pat: &str,
         anchor: PatternAnchor,
         global: bool,
+        opts: glob::PatternOpts,
     ) -> Option<Vec<(usize, usize)>> {
         const MAX_GLOB_MATCH_CALLS: usize = 10_000;
         let bounds: Vec<usize> = value
@@ -1989,6 +2048,7 @@ impl Interpreter {
             .collect();
         let n = bounds.len() - 1;
         let mut calls = 0usize;
+        let steps = std::cell::Cell::new(Self::MAX_GLOB_STEPS);
         let mut ranges = Vec::new();
         let mut s = 0;
         loop {
@@ -2006,7 +2066,10 @@ impl Interpreter {
                 if calls > MAX_GLOB_MATCH_CALLS {
                     return None;
                 }
-                if self.glob_match(&value[bounds[s]..bounds[e]], pat) {
+                if steps.get() == 0 {
+                    return None;
+                }
+                if self.glob_match_steps(&value[bounds[s]..bounds[e]], pat, opts, 0, &steps) {
                     found = Some(e);
                     break;
                 }
@@ -2028,7 +2091,7 @@ impl Interpreter {
     /// Translate a bash glob (with `\\c` escapes) into an anchored-as-needed
     /// regex. `None` when it does not translate or compile; callers then use
     /// the glob fallback.
-    fn glob_pattern_regex(pat: &str, anchor: PatternAnchor) -> Option<regex::Regex> {
+    fn glob_pattern_regex(pat: &str, anchor: PatternAnchor, nocase: bool) -> Option<regex::Regex> {
         let chars: Vec<char> = pat.chars().collect();
         let mut re = String::from("(?s)");
         if anchor == PatternAnchor::Start {
@@ -2072,6 +2135,7 @@ impl Interpreter {
             re.push_str("\\z");
         }
         regex::RegexBuilder::new(&re)
+            .case_insensitive(nocase)
             .size_limit(1 << 20)
             .dfa_size_limit(1 << 20)
             .build()
@@ -2270,6 +2334,8 @@ impl Interpreter {
         const MAX_GLOB_MATCH_CALLS: usize = 10_000;
         let chars: Vec<char> = value.chars().collect();
         let mut calls = 0usize;
+        let steps = std::cell::Cell::new(Self::MAX_GLOB_STEPS);
+        let opts = self.shell_pattern_opts();
         if prefix {
             // Try each prefix length; shortest = first match, longest = last match
             let mut last_match = None;
@@ -2279,7 +2345,7 @@ impl Interpreter {
                     break;
                 }
                 let candidate: String = chars[..i].iter().collect();
-                if self.glob_match(&candidate, pattern) {
+                if self.glob_match_steps(&candidate, pattern, opts, 0, &steps) {
                     if !longest {
                         return chars[i..].iter().collect();
                     }
@@ -2298,7 +2364,7 @@ impl Interpreter {
                     break;
                 }
                 let candidate: String = chars[i..].iter().collect();
-                if self.glob_match(&candidate, pattern) {
+                if self.glob_match_steps(&candidate, pattern, opts, 0, &steps) {
                     if !longest {
                         return chars[..i].iter().collect();
                     }

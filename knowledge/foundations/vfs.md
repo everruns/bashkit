@@ -329,7 +329,14 @@ Rules that fall out of the per-component walk:
   from the caller's spelling, so `./` and `../` prefixes survive expansion.
 - No match anywhere in the walk falls back to the literal pattern, or to nothing
   under `nullglob`, same as a trailing-component miss.
-- `**` with `globstar` is handled separately by `expand_glob_recursive`.
+- A trailing `/` keeps only directories and stays on every match (`d/*/` gives
+  `d/e/`).
+- `**` with `globstar` is a component of the same walk: it matches zero or more
+  directories (files too when last), visible ones unless `dotglob`. As the last
+  component its zero-directory match is `d/` after a literal prefix (`d/**`),
+  plain `d` after a glob (`*/**`), and nothing for a bare `**`; duplicates from
+  several `**` collapse. The recursive walk is iterative, depth-capped by
+  `max_path_depth` and stops at the candidate cap.
 - THREAT[TM-DOS-095]: the candidate set multiplies per component, so patterns
   deeper than `FsLimits::max_path_depth` are rejected and the live candidate set
   is capped at `FsLimits::max_file_count`.

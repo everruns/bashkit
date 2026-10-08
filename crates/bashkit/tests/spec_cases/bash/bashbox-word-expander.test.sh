@@ -4,7 +4,6 @@
 
 ### bashbox_word_expander_braced_positional_and_counts
 # braced positional and counts
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 set -- a b; echo ${1} ${#} ${#@} ${#*}
 ### expect
 a 2 2 2
@@ -33,7 +32,6 @@ x x
 
 ### bashbox_word_expander_substring_with_negative_offset_length
 # substring with negative offset/length
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 s=hello; echo ${s: -2} ${s:1:-1} ${s: -3:2} "[${s: -10}]" ${s:1+1:2}
 ### expect
 lo ell ll [] ll
@@ -41,7 +39,6 @@ lo ell ll [] ll
 
 ### bashbox_word_expander_array_slices
 # array slices
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 a=(1 2 3 4); echo ${a[@]: -2} ${a[@]:1:2} "[${a[@]: -9}]"
 ### expect
 3 4 2 3 []
@@ -289,7 +286,6 @@ f(){ for x in "$@"; do echo "[$x]"; done; }; f a "b c"
 
 ### bashbox_word_expander_escaped_comma_and_non_expanding_braces
 # escaped comma and non-expanding braces
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 echo {a\,b,c} {a}b {abc} {1..c}
 ### expect
 a,b c {a}b {abc} {1..c}

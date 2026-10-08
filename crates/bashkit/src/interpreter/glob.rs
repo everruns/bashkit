@@ -61,14 +61,27 @@ pub(super) fn expand_posix_class(name: &str, out: &mut Vec<char>) {
     }
 }
 
+/// Matching knobs for one pattern match. Callers pick them per context:
+/// `[[ == ]]` always understands extglob (bash 5.2), `case` and parameter
+/// expansion follow `shopt extglob`; `nocasematch` folds case for `case`,
+/// `[[ ]]` and `${v/pat/rep}` but not for `${v#pat}` removal; filename
+/// expansion folds case under `nocaseglob`.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct PatternOpts {
+    pub(crate) nocase: bool,
+    pub(crate) extglob: bool,
+}
+
 impl Interpreter {
     // ── Pattern matching ──────────────────────────────────────────────
 
-    /// Check if pattern contains extglob operators
+    /// Check if pattern contains extglob operators (only when `shopt extglob`).
     pub(crate) fn contains_extglob(&self, s: &str) -> bool {
-        if !self.is_extglob() {
-            return false;
-        }
+        self.is_extglob() && Self::has_extglob_op(s)
+    }
+
+    /// Unescaped `@(`, `?(`, `*(`, `+(` or `!(` anywhere in `s`.
+    fn has_extglob_op(s: &str) -> bool {
         let mut escaped = false;
         let mut chars = s.chars().peekable();
         while let Some(ch) = chars.next() {
@@ -87,21 +100,57 @@ impl Interpreter {
         false
     }
 
-    /// Check if a value matches a shell pattern
+    /// Options for `case` patterns and parameter-expansion patterns:
+    /// `shopt extglob`, case-sensitive.
+    pub(crate) fn shell_pattern_opts(&self) -> PatternOpts {
+        PatternOpts {
+            nocase: false,
+            extglob: self.is_extglob(),
+        }
+    }
+
+    /// Options for filename expansion: `shopt extglob` and `nocaseglob`.
+    pub(crate) fn glob_opts(&self) -> PatternOpts {
+        PatternOpts {
+            nocase: self.is_nocaseglob(),
+            extglob: self.is_extglob(),
+        }
+    }
+
+    /// Check if `shopt -s nocasematch` is enabled.
+    pub(crate) fn is_nocasematch(&self) -> bool {
+        self.scoped
+            .variables
+            .get("SHOPT_nocasematch")
+            .map(|v| v == "1")
+            .unwrap_or(false)
+    }
+
+    /// Check if a value matches a shell pattern (`shopt extglob`, case-sensitive).
     pub(crate) fn pattern_matches(&self, value: &str, pattern: &str) -> bool {
+        self.pattern_matches_opts(value, pattern, self.shell_pattern_opts())
+    }
+
+    /// Check if a value matches a shell pattern with explicit options.
+    pub(crate) fn pattern_matches_opts(
+        &self,
+        value: &str,
+        pattern: &str,
+        opts: PatternOpts,
+    ) -> bool {
         // Handle special case of * (match anything)
         if pattern == "*" {
             return true;
         }
 
         // Glob pattern matching with unescaped *, ?, [], and extglob support
-        if self.contains_glob_chars(pattern) || self.contains_extglob(pattern) {
-            self.glob_match(value, pattern)
+        if self.contains_glob_chars(pattern) || (opts.extglob && Self::has_extglob_op(pattern)) {
+            self.glob_match_impl(value, pattern, opts, 0)
         } else {
             // Literal match; a backslash still escapes the next character
             // (`\*` from quoted pattern text matches a literal `*`, and an
             // unquoted `a\b` pattern matches `ab`, as in bash).
-            if pattern.contains('\\') {
+            let literal = if pattern.contains('\\') {
                 let mut literal = String::with_capacity(pattern.len());
                 let mut chars = pattern.chars();
                 while let Some(ch) = chars.next() {
@@ -110,16 +159,20 @@ impl Interpreter {
                         _ => literal.push(ch),
                     }
                 }
-                value == literal
+                literal
             } else {
-                value == pattern
+                pattern.to_string()
+            };
+            if opts.nocase {
+                value.chars().count() == literal.chars().count()
+                    && value
+                        .chars()
+                        .zip(literal.chars())
+                        .all(|(a, b)| a.to_lowercase().eq(b.to_lowercase()))
+            } else {
+                value == literal
             }
         }
-    }
-
-    /// Simple glob pattern matching with support for *, ?, and [...]
-    pub(crate) fn glob_match(&self, value: &str, pattern: &str) -> bool {
-        self.glob_match_impl(value, pattern, false, 0)
     }
 
     /// Parse an extglob pattern-list from pattern string starting after '('.
@@ -140,8 +193,16 @@ impl Interpreter {
                         let mut alts = Vec::new();
                         let mut current = String::new();
                         let mut d = 0;
-                        for c in inner.chars() {
+                        let mut inner_chars = inner.chars();
+                        while let Some(c) = inner_chars.next() {
                             match c {
+                                // `\|` and `\)` stay literal inside an alternative.
+                                '\\' => {
+                                    current.push(c);
+                                    if let Some(next) = inner_chars.next() {
+                                        current.push(next);
+                                    }
+                                }
                                 '(' => {
                                     d += 1;
                                     current.push(c);
@@ -171,20 +232,52 @@ impl Interpreter {
         None // unclosed paren
     }
 
-    /// Glob match with optional case-insensitive mode
+    /// `rest` starts at the `(` after an extglob operator and the group
+    /// closes; an unbalanced `@(a` is literal text, as in bash.
+    fn extglob_group_closes(rest: &std::iter::Peekable<std::str::Chars<'_>>) -> bool {
+        let mut rest = rest.clone();
+        if rest.next() != Some('(') {
+            return false;
+        }
+        let tail: String = rest.collect();
+        Self::parse_extglob_pattern_list(&tail).is_some()
+    }
+
+    /// Glob match with explicit options and a fresh step budget.
     pub(crate) fn glob_match_impl(
         &self,
         value: &str,
         pattern: &str,
-        nocase: bool,
+        opts: PatternOpts,
         depth: usize,
+    ) -> bool {
+        let steps = std::cell::Cell::new(Self::MAX_GLOB_STEPS);
+        self.glob_match_steps(value, pattern, opts, depth, &steps)
+    }
+
+    /// Glob match drawing on a caller-owned step budget, so a loop of
+    /// matches (pattern removal/substitution scans) shares one budget.
+    pub(crate) fn glob_match_steps(
+        &self,
+        value: &str,
+        pattern: &str,
+        opts: PatternOpts,
+        depth: usize,
+        steps: &std::cell::Cell<usize>,
     ) -> bool {
         // THREAT[TM-DOS-031]: Bail on excessive recursion depth
         if depth >= Self::MAX_GLOB_DEPTH {
             return false;
         }
+        // THREAT[TM-DOS-031]: extglob alternation/repetition backtracks
+        // exponentially (`+(a|aa)` vs `aaa…b`); every recursive step spends
+        // from a shared budget and the match fails once it is exhausted.
+        if steps.get() == 0 {
+            return false;
+        }
+        steps.set(steps.get() - 1);
 
-        let extglob = self.is_extglob();
+        let PatternOpts { nocase, extglob } = opts;
         // THREAT[TM-DOS-039]: Once the remaining pattern has no closing bracket,
         // every `[` is literal. Cache that state so an unmatched suffix is scanned
         // at most once instead of from every subsequent `[` start.
@@ -196,7 +289,7 @@ impl Interpreter {
             if matches!(bytes[0], b'@' | b'?' | b'*' | b'+' | b'!') && bytes[1] == b'(' {
                 let op = bytes[0];
                 if let Some((alts, rest)) = Self::parse_extglob_pattern_list(&pattern[2..]) {
-                    return self.match_extglob(op, &alts, &rest, value, nocase, depth + 1);
+                    return self.match_extglob(op, &alts, &rest, value, opts, depth + 1, steps);
                 }
             }
         }
@@ -254,15 +347,16 @@ impl Interpreter {
                     // Check for extglob *(...)
                     let mut pc_clone = pattern_chars.clone();
                     pc_clone.next();
-                    if extglob && pc_clone.peek() == Some(&'(') {
+                    if extglob && Self::extglob_group_closes(&pc_clone) {
                         // Extglob *(pattern-list) — collect remaining pattern
                         let remaining_pattern: String = pattern_chars.collect();
                         let remaining_value: String = value_chars.collect();
-                        if self.glob_match_impl(
+                        if self.glob_match_steps(
                             &remaining_value,
                             &remaining_pattern,
-                            nocase,
+                            opts,
                             depth + 1,
+                            steps,
                         ) {
                             return true;
                         }
@@ -285,14 +379,15 @@ impl Interpreter {
                     // Check for extglob ?(...)
                     let mut pc_clone = pattern_chars.clone();
                     pc_clone.next();
-                    if extglob && pc_clone.peek() == Some(&'(') {
+                    if extglob && Self::extglob_group_closes(&pc_clone) {
                         let remaining_pattern: String = pattern_chars.collect();
                         let remaining_value: String = value_chars.collect();
-                        if self.glob_match_impl(
+                        if self.glob_match_steps(
                             &remaining_value,
                             &remaining_pattern,
-                            nocase,
+                            opts,
                             depth + 1,
+                            steps,
                         ) {
                             return true;
                         }
@@ -353,14 +448,15 @@ impl Interpreter {
                     if extglob && matches!(p, '@' | '+' | '!') {
                         let mut pc_clone = pattern_chars.clone();
                         pc_clone.next();
-                        if pc_clone.peek() == Some(&'(') {
+                        if Self::extglob_group_closes(&pc_clone) {
                             let remaining_pattern: String = pattern_chars.collect();
                             let remaining_value: String = value_chars.collect();
-                            if self.glob_match_impl(
+                            if self.glob_match_steps(
                                 &remaining_value,
                                 &remaining_pattern,
-                                nocase,
+                                opts,
                                 depth + 1,
+                                steps,
                             ) {
                                 return true;
                             }
@@ -388,14 +484,16 @@ impl Interpreter {
     /// op: b'@', b'?', b'*', b'+', b'!'
     /// alts: the | separated alternatives
     /// rest: pattern after the closing )
+    #[allow(clippy::too_many_arguments)]
     fn match_extglob(
         &self,
         op: u8,
         alts: &[String],
         rest: &str,
         value: &str,
-        nocase: bool,
+        opts: PatternOpts,
         depth: usize,
+        steps: &std::cell::Cell<usize>,
     ) -> bool {
         // THREAT[TM-DOS-031]: Bail on excessive recursion depth
         if depth >= Self::MAX_GLOB_DEPTH {
@@ -407,7 +505,7 @@ impl Interpreter {
                 // @(a|b) — exactly one of the alternatives
                 for alt in alts {
                     let full = format!("{}{}", alt, rest);
-                    if self.glob_match_impl(value, &full, nocase, depth + 1) {
+                    if self.glob_match_steps(value, &full, opts, depth + 1, steps) {
                         return true;
                     }
                 }
@@ -416,13 +514,13 @@ impl Interpreter {
             b'?' => {
                 // ?(a|b) — zero or one of the alternatives
                 // Try zero: skip the extglob entirely
-                if self.glob_match_impl(value, rest, nocase, depth + 1) {
+                if self.glob_match_steps(value, rest, opts, depth + 1, steps) {
                     return true;
                 }
                 // Try one
                 for alt in alts {
                     let full = format!("{}{}", alt, rest);
-                    if self.glob_match_impl(value, &full, nocase, depth + 1) {
+                    if self.glob_match_steps(value, &full, opts, depth + 1, steps) {
                         return true;
                     }
                 }
@@ -437,7 +535,7 @@ impl Interpreter {
                     .chain(std::iter::once(value.len()));
                 for alt in alts {
                     let full = format!("{}{}", alt, rest);
-                    if self.glob_match_impl(value, &full, nocase, depth + 1) {
+                    if self.glob_match_steps(value, &full, opts, depth + 1, steps) {
                         return true;
                     }
                     // Try alt followed by more +(a|b)rest
@@ -445,11 +543,11 @@ impl Interpreter {
                     for split in split_points.clone() {
                         let prefix = &value[..split];
                         let suffix = &value[split..];
-                        if self.glob_match_impl(prefix, alt, nocase, depth + 1) {
+                        if self.glob_match_steps(prefix, alt, opts, depth + 1, steps) {
                             // Rebuild the extglob for the suffix
                             let inner = alts.join("|");
                             let re_pattern = format!("+({}){}", inner, rest);
-                            if self.glob_match_impl(suffix, &re_pattern, nocase, depth + 1) {
+                            if self.glob_match_steps(suffix, &re_pattern, opts, depth + 1, steps) {
                                 return true;
                             }
                         }
@@ -460,7 +558,7 @@ impl Interpreter {
             b'*' => {
                 // *(a|b) — zero or more of the alternatives
                 // Try zero
-                if self.glob_match_impl(value, rest, nocase, depth + 1) {
+                if self.glob_match_steps(value, rest, opts, depth + 1, steps) {
                     return true;
                 }
                 let split_points = value
@@ -471,16 +569,16 @@ impl Interpreter {
                 // Try one or more (same as +(...))
                 for alt in alts {
                     let full = format!("{}{}", alt, rest);
-                    if self.glob_match_impl(value, &full, nocase, depth + 1) {
+                    if self.glob_match_steps(value, &full, opts, depth + 1, steps) {
                         return true;
                     }
                     for split in split_points.clone() {
                         let prefix = &value[..split];
                         let suffix = &value[split..];
-                        if self.glob_match_impl(prefix, alt, nocase, depth + 1) {
+                        if self.glob_match_steps(prefix, alt, opts, depth + 1, steps) {
                             let inner = alts.join("|");
                             let re_pattern = format!("*({}){}", inner, rest);
-                            if self.glob_match_impl(suffix, &re_pattern, nocase, depth + 1) {
+                            if self.glob_match_steps(suffix, &re_pattern, opts, depth + 1, steps) {
                                 return true;
                             }
                         }
@@ -489,35 +587,19 @@ impl Interpreter {
                 false
             }
             b'!' => {
-                // !(a|b) — match anything except one of the alternatives
-                // Try every possible split point: prefix must NOT match any alt, rest matches
-                // Actually: !(pat) matches anything that doesn't match @(pat)
-                let inner = alts.join("|");
-                let positive = format!("@({}){}", inner, rest);
-                !self.glob_match_impl(value, &positive, nocase, depth + 1)
-                    && self.glob_match_impl(value, rest, nocase, depth + 1)
-                    || {
-                        // !(pat) can also consume characters — try each split
-                        for split in value
-                            .char_indices()
-                            .map(|(i, _)| i)
-                            .skip(1)
-                            .chain(std::iter::once(value.len()))
-                        {
-                            let prefix = &value[..split];
-                            let suffix = &value[split..];
-                            // prefix must not match any alt
-                            let prefix_matches_any = alts
-                                .iter()
-                                .any(|a| self.glob_match_impl(prefix, a, nocase, depth + 1));
-                            if !prefix_matches_any
-                                && self.glob_match_impl(suffix, rest, nocase, depth + 1)
-                            {
-                                return true;
-                            }
-                        }
-                        false
-                    }
+                // !(a|b) consumes some prefix (possibly empty) that matches
+                // none of the alternatives, and `rest` matches what remains.
+                value
+                    .char_indices()
+                    .map(|(i, _)| i)
+                    .chain(std::iter::once(value.len()))
+                    .any(|split| {
+                        let (prefix, suffix) = value.split_at(split);
+                        !alts
+                            .iter()
+                            .any(|a| self.glob_match_steps(prefix, a, opts, depth + 1, steps))
+                            && self.glob_match_steps(suffix, rest, opts, depth + 1, steps)
+                    })
             }
             _ => false,
         }
@@ -824,18 +906,17 @@ impl Interpreter {
     /// `/skills/*/SKILL.md` by globbing each component in turn against the VFS.
     /// Non-final components only match directories (a plain file can't be
     /// descended into), which is what makes read-only tree mounts globbable.
+    /// A trailing `/` keeps only directories and stays on every match
+    /// (`d/*/` gives `d/e/`). Under `shopt -s globstar` a `**` component
+    /// matches zero or more directories, and files too when it is last.
     pub(crate) async fn expand_glob(&self, pattern: &str) -> Result<Vec<String>> {
-        // Check for ** (recursive glob) — only when globstar is enabled
-        if pattern.contains("**") && self.is_globstar() {
-            return self.expand_glob_recursive(pattern).await;
-        }
-
         let dotglob = self.is_dotglob();
-        let nocase = self.is_nocaseglob();
+        let globstar = self.is_globstar();
+        let opts = self.glob_opts();
         let is_absolute = pattern.starts_with('/');
+        let trailing_slash = pattern.len() > 1 && pattern.ends_with('/');
 
-        // Empty components collapse `//` and drop a trailing `/`, matching the
-        // previous `Path::file_name()` behaviour for patterns like `/dir/*/`.
+        // Empty components collapse `//`; a trailing `/` is tracked above.
         let components: Vec<&str> = pattern.split('/').filter(|s| !s.is_empty()).collect();
         if components.is_empty() {
             return Ok(Vec::new());
@@ -861,11 +942,43 @@ impl Interpreter {
             String::new(),
         )];
 
+        let mut literal_prefix = true;
         for (idx, component) in components.iter().enumerate() {
             let is_last = idx + 1 == components.len();
+            // Only directories can carry the rest of the pattern or a `/`.
+            let dirs_only = !is_last || trailing_slash;
             let mut next: Vec<(PathBuf, String)> = Vec::new();
 
-            if self.contains_glob_chars(component) || self.contains_extglob(component) {
+            if globstar && *component == "**" {
+                for (dir, out) in &candidates {
+                    // Zero directories: the candidate itself. A bare `**`
+                    // never yields the empty cwd path; a literal `d/**`
+                    // yields `d/`, a matched `*/**` yields plain `d`.
+                    if !is_last {
+                        next.push((dir.clone(), out.clone()));
+                    } else if !out.is_empty() {
+                        let own = if literal_prefix {
+                            format!("{out}/")
+                        } else {
+                            out.clone()
+                        };
+                        next.push((dir.clone(), own));
+                    }
+                    self.globstar_walk(
+                        dir,
+                        out,
+                        is_absolute,
+                        dotglob,
+                        dirs_only,
+                        max_candidates,
+                        &mut next,
+                    )
+                    .await;
+                    if next.len() > max_candidates {
+                        break;
+                    }
+                }
+            } else if self.contains_glob_chars(component) || self.contains_extglob(component) {
                 // Dotfiles are hidden per component unless dotglob is set or this
                 // component explicitly starts with '.'.
                 let component_starts_with_dot = component.starts_with('.');
@@ -881,11 +994,10 @@ impl Interpreter {
                         if entry.name.starts_with('.') && !dotglob && !component_starts_with_dot {
                             continue;
                         }
-                        // Only a directory can carry the rest of the pattern.
-                        if !is_last && !entry.metadata.file_type.is_dir() {
+                        if dirs_only && !entry.metadata.file_type.is_dir() {
                             continue;
                         }
-                        if self.glob_match_impl(&entry.name, component, nocase, 0) {
+                        if self.glob_match_impl(&entry.name, component, opts, 0) {
                             matched.push(entry.name);
                         }
                     }
@@ -923,115 +1035,67 @@ impl Interpreter {
                 return Ok(Vec::new());
             }
             candidates = next;
+            literal_prefix &=
+                !(self.contains_glob_chars(component) || self.contains_extglob(component));
         }
 
         // Sort matches alphabetically (bash behavior)
-        let mut matches: Vec<String> = candidates.into_iter().map(|(_, out)| out).collect();
+        let mut matches: Vec<String> = candidates
+            .into_iter()
+            .map(|(_, mut out)| {
+                if trailing_slash && !out.ends_with('/') {
+                    out.push('/');
+                }
+                out
+            })
+            .collect();
         matches.sort();
+        matches.dedup();
         Ok(matches)
     }
 
-    /// Expand a glob pattern containing ** (recursive directory matching).
-    async fn expand_glob_recursive(&self, pattern: &str) -> Result<Vec<String>> {
-        let is_absolute = pattern.starts_with('/');
-        let components: Vec<&str> = pattern.split('/').filter(|s| !s.is_empty()).collect();
-        let dotglob = self.is_dotglob();
-        let nocase = self.is_nocaseglob();
-
-        // Find the ** component
-        let star_star_idx = match components.iter().position(|&c| c == "**") {
-            Some(i) => i,
-            None => return Ok(Vec::new()),
-        };
-
-        // Build the base directory from components before **
-        let base_dir = if is_absolute {
-            let mut p = PathBuf::from("/");
-            for c in &components[..star_star_idx] {
-                p.push(c);
-            }
-            p
-        } else {
-            let mut p = self.cwd.clone();
-            for c in &components[..star_star_idx] {
-                p.push(c);
-            }
-            p
-        };
-
-        // Pattern components after **
-        let after_pattern: Vec<&str> = components[star_star_idx + 1..].to_vec();
-
-        // Collect all directories recursively (including the base)
-        let mut all_dirs = vec![base_dir.clone()];
-        // THREAT[TM-DOS-049]: Cap recursion depth using filesystem path depth limit
+    /// Every directory below `dir` (and every file too unless `dirs_only`),
+    /// for a globstar `**` component. Hidden entries need `dotglob`.
+    /// THREAT[TM-DOS-049]/[TM-DOS-095]: iterative, depth-capped by the
+    /// filesystem path-depth limit, and stops at `max_candidates` results.
+    #[allow(clippy::too_many_arguments)]
+    async fn globstar_walk(
+        &self,
+        dir: &Path,
+        out: &str,
+        is_absolute: bool,
+        dotglob: bool,
+        dirs_only: bool,
+        max_candidates: usize,
+        next: &mut Vec<(PathBuf, String)>,
+    ) {
         let max_depth = self.fs.limits().max_path_depth;
-        self.collect_dirs_recursive(&base_dir, &mut all_dirs, max_depth, dotglob)
-            .await;
-
-        let mut matches = Vec::new();
-
-        for dir in &all_dirs {
-            if after_pattern.is_empty() {
-                // ** alone matches all files recursively
-                if let Ok(entries) = self.fs.read_dir(dir).await {
-                    for entry in entries {
-                        if entry.name.starts_with('.') && !dotglob {
-                            continue;
-                        }
-                        if !entry.metadata.file_type.is_dir() {
-                            matches.push(vfs_join(dir, &entry.name).to_string_lossy().to_string());
-                        }
-                    }
+        let mut stack: Vec<(PathBuf, String, usize)> =
+            vec![(dir.to_path_buf(), out.to_string(), 0)];
+        while let Some((dir, out, depth)) = stack.pop() {
+            if depth >= max_depth || next.len() > max_candidates {
+                continue;
+            }
+            let Ok(mut entries) = self.fs.read_dir(&dir).await else {
+                continue;
+            };
+            entries.sort_by(|a, b| b.name.cmp(&a.name));
+            for entry in entries {
+                if entry.name.starts_with('.') && !dotglob {
+                    continue;
                 }
-            } else if after_pattern.len() == 1 {
-                // Single pattern after **: match files in this directory
-                let pat = after_pattern[0];
-                let pattern_starts_with_dot = pat.starts_with('.');
-                if let Ok(entries) = self.fs.read_dir(dir).await {
-                    for entry in entries {
-                        if entry.name.starts_with('.') && !dotglob && !pattern_starts_with_dot {
-                            continue;
-                        }
-                        if self.glob_match_impl(&entry.name, pat, nocase, 0) {
-                            matches.push(vfs_join(dir, &entry.name).to_string_lossy().to_string());
-                        }
-                    }
+                let is_dir = entry.metadata.file_type.is_dir();
+                if !is_dir && dirs_only {
+                    continue;
+                }
+                let path = vfs_join(&dir, &entry.name);
+                let output = Self::glob_join_output(&out, &entry.name, is_absolute);
+                next.push((path.clone(), output.clone()));
+                if is_dir {
+                    stack.push((path, output, depth + 1));
                 }
             }
         }
-
-        matches.sort();
-        Ok(matches)
-    }
-
-    /// Recursively collect all subdirectories starting from dir.
-    /// THREAT[TM-DOS-049]: `max_depth` caps recursion to prevent stack exhaustion.
-    pub(crate) fn collect_dirs_recursive<'a>(
-        &'a self,
-        dir: &'a Path,
-        result: &'a mut Vec<PathBuf>,
-        max_depth: usize,
-        dotglob: bool,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
-        Box::pin(async move {
-            if max_depth == 0 {
-                return;
-            }
-            if let Ok(entries) = self.fs.read_dir(dir).await {
-                for entry in entries {
-                    if entry.metadata.file_type.is_dir() {
-                        if entry.name.starts_with('.') && !dotglob {
-                            continue;
-                        }
-                        let subdir = vfs_join(dir, &entry.name);
-                        result.push(subdir.clone());
-                        self.collect_dirs_recursive(&subdir, result, max_depth - 1, dotglob)
-                            .await;
-                    }
-                }
-            }
-        })
     }
 }
 

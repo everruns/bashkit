@@ -43,11 +43,6 @@ static TIME_REPORT_COUNTER: AtomicU64 = AtomicU64::new(0);
 // bashkit crate semver so scripts that gate on Bash features keep working.
 const COMPAT_BASH_VERSION: &str = "5.2.15(1)-release";
 const COMPAT_BASH_VERSINFO: [&str; 6] = ["5", "2", "15", "1", "release", "virtual"];
-// Important decision: lexer emits these only for mixed words where an initial
-// quoted segment is followed by an unquoted expansion. Keep them internal and
-// strip before observable output.
-const QUOTED_SEGMENT_START: char = '\x01';
-const QUOTED_SEGMENT_END: char = '\x02';
 
 // Important decision: operand quote sentinels must be selected from a small,
 // parser-inert set. Exhaustive Unicode probing is attacker-amplifiable CPU work.
@@ -1607,6 +1602,9 @@ impl Interpreter {
     // Decision: restored `$!` must match Bashkit-produced virtual numeric job ids.
     const MAX_RESTORED_LAST_BG_PID_LEN: usize = 20;
     const MAX_GLOB_DEPTH: usize = 50;
+    /// THREAT[TM-DOS-031]: recursive glob/extglob steps one match (or one
+    /// pattern-removal/substitution scan) may spend before failing.
+    const MAX_GLOB_STEPS: usize = 100_000;
 
     /// Create a new interpreter with the given filesystem.
     #[cfg(test)]
@@ -4671,8 +4669,23 @@ impl Interpreter {
                 3 => {
                     // Binary operators
                     match args[1].as_str() {
-                        "=" | "==" => self.pattern_matches(&args[0], &args[2]),
-                        "!=" => !self.pattern_matches(&args[0], &args[2]),
+                        // bash 5.2: `[[ == ]]` matches as if extglob were on.
+                        "=" | "==" => self.pattern_matches_opts(
+                            &args[0],
+                            &args[2],
+                            glob::PatternOpts {
+                                nocase: self.is_nocasematch(),
+                                extglob: true,
+                            },
+                        ),
+                        "!=" => !self.pattern_matches_opts(
+                            &args[0],
+                            &args[2],
+                            glob::PatternOpts {
+                                nocase: self.is_nocasematch(),
+                                extglob: true,
+                            },
+                        ),
                         "<" => args[0] < args[2],
                         ">" => args[0] > args[2],
                         "-eq" => self.cond_int_cmp(&args[0], &args[2], |a, b| a == b),
@@ -4765,6 +4778,9 @@ impl Interpreter {
         // read them as plain bracket members.
         let compiled = if ere_has_invalid_char_class(pattern) {
             None
+        } else if self.is_nocasematch() {
+            // `shopt -s nocasematch` makes `=~` case-insensitive too.
+            self.regex_cache.get_or_compile(&format!("(?i){pattern}"))
         } else {
             self.regex_cache.get_or_compile(pattern)
         };
@@ -4919,7 +4935,11 @@ impl Interpreter {
                 let mut m = false;
                 for pattern in &case_item.patterns {
                     let pattern_str = self.expand_pattern_word(pattern).await?;
-                    if self.pattern_matches(&word_value, &pattern_str) {
+                    let opts = glob::PatternOpts {
+                        nocase: self.is_nocasematch(),
+                        extglob: self.is_extglob(),
+                    };
+                    if self.pattern_matches_opts(&word_value, &pattern_str, opts) {
                         m = true;
                         break;
                     }
@@ -6984,16 +7004,39 @@ impl Interpreter {
             } else {
                 None
             };
+            // `>(cmd)` runs in a subshell too (see expand_process_substitution).
+            // Boxed: keeps this future (in every simple command's await chain)
+            // small so deep `$(...)` nesting stays within the stack.
+            let snapshot = Box::new(self.snapshot_subshell_state());
+            let last_exit_code = self.last_exit_code;
+            self.bash_subshell += 1;
+            let mut run = Ok(());
             for cmd in &commands {
                 let prev_stdin = self.pipeline_stdin.take();
                 self.pipeline_stdin = stdin_data.clone();
-                let cmd_result = self.execute_command(cmd).await?;
+                let cmd_result = self.execute_command(cmd).await;
                 self.pipeline_stdin = prev_stdin;
+                let cmd_result = match cmd_result {
+                    Ok(r) => r,
+                    Err(e) => {
+                        run = Err(e);
+                        break;
+                    }
+                };
                 if let Ok(r) = result {
                     r.stdout.append(&cmd_result.stdout);
                     r.stderr.append(&cmd_result.stderr);
                 }
+                if matches!(
+                    cmd_result.control_flow,
+                    ControlFlow::Exit(_) | ControlFlow::Abort
+                ) {
+                    break;
+                }
             }
+            self.restore_subshell_state(*snapshot);
+            self.last_exit_code = last_exit_code;
+            run?;
         }
         Ok(())
     }
@@ -10413,12 +10456,22 @@ impl Interpreter {
 
         if is_input {
             let mut stdout = String::new();
+            // The substituted list runs in a subshell: nothing it changes
+            // (variables, cwd, options, `$?`) reaches the parent.
+            let snapshot = Box::new(self.snapshot_subshell_state());
+            let last_exit_code = self.last_exit_code;
             self.bash_subshell += 1;
             let mut failed = None;
             for cmd in commands {
                 match self.execute_command(cmd).await {
                     Ok(cmd_result) => {
-                        stdout.push_str(&cmd_result.stdout.command_substitution_text())
+                        stdout.push_str(&cmd_result.stdout.command_substitution_text());
+                        if matches!(
+                            cmd_result.control_flow,
+                            ControlFlow::Exit(_) | ControlFlow::Abort
+                        ) {
+                            break;
+                        }
                     }
                     Err(e) => {
                         failed = Some(e);
@@ -10426,7 +10479,8 @@ impl Interpreter {
                     }
                 }
             }
-            self.bash_subshell -= 1;
+            self.restore_subshell_state(*snapshot);
+            self.last_exit_code = last_exit_code;
             if let Some(e) = failed {
                 return Err(e);
             }
@@ -13836,6 +13890,31 @@ mod tests {
             elapsed
         );
         assert_eq!(result.exit_code, 0);
+    }
+
+    /// THREAT[TM-DOS-031]: `[[ == ]]` understands extglob without `shopt`,
+    /// so backtracking alternation against a near-miss value must stay
+    /// bounded by the per-match step budget.
+    #[tokio::test]
+    async fn test_cond_extglob_backtracking_is_bounded() {
+        use crate::time_compat::Instant;
+        use std::time::Duration;
+        let start = Instant::now();
+        let result = run_script(
+            r#"x=$(printf 'a%.0s' {1..60})b
+[[ $x == +(a|aa) ]] && echo m1 || echo n1
+[[ $x == +(+(a)|+(aa)) ]] && echo m2 || echo n2
+[[ $x == *(a|aa|aaa)*(a|aa)!(z) ]] && echo m3 || echo n3
+y=${x//+(a|aa)/-}; echo ${#y}"#,
+        )
+        .await;
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed < Duration::from_secs(10),
+            "extglob took too long: {:?}",
+            elapsed
+        );
+        assert!(result.stdout.starts_with("n1\nn2\n"), "{}", result.stdout);
     }
 
     // Issue #425: $$ should not leak real host PID
