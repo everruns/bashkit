@@ -318,6 +318,20 @@ a reserved-word wrapper around a complete pipeline, so the interpreter measures
 the AST directly. This preserves groups, functions, pipeline status, redirects,
 errexit, cancellation, and the shared request budget.
 
+### Builtin variable assignment
+
+Builtins that assign shell variables (`read`, `printf -v`, `getopts`)
+return a `BuiltinSideEffect::SetVariable` instead of writing
+`ctx.variables`, so the interpreter applies the same rules as an
+assignment: namerefs, locals (shallow binding), `name[subscript]` targets,
+`declare -i` arithmetic (an arithmetic error aborts the line with status 1)
+and `-l`/`-u`. A readonly target fails the builtin with
+`bash: NAME: readonly variable` and status 1 (TM-INJ-019); the remaining
+`SetVariable` effects of that builtin are dropped, matching `read a r b`
+leaving `b` alone. `printf` reads options like bash's getopt (`v:`):
+`-v NAME`, `-vNAME`, `--`; a missing `-v` argument, missing format, invalid
+option or invalid `-v` name exits 2 with the usage line.
+
 ### Execution Plans (Sub-Command Delegation)
 
 Builtins cannot access the interpreter directly. When a builtin needs to run
