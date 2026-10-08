@@ -41,11 +41,13 @@ impl Interpreter {
         self.diag(format!("{path}: {reason}\n"))
     }
 
-    /// Process input redirections (< file, <<< string)
+    /// Process input redirections (< file, <<< string). `demand` is how
+    /// much the command reads, for stdin taken from a coproc's pipe.
     pub(super) async fn process_input_redirections(
         &mut self,
         existing_stdin: Option<crate::StreamData>,
         redirects: &[Redirect],
+        demand: StdinDemand,
     ) -> Result<Option<crate::StreamData>> {
         let mut stdin = existing_stdin;
         // Readable fds this command's own redirects open (`4<<E <&4`).
@@ -145,6 +147,17 @@ impl Interpreter {
                 }
                 RedirectKind::DupInput => {
                     let target = self.expand_word(&redirect.target).await?;
+                    if target.is_empty() && high_fd.is_none() {
+                        // `<&${C[0]}` after the coproc was reaped: an error,
+                        // not a read of the shell's stdin.
+                        // WTF: quoted (`<&"${C[0]}"`) bash says `Bad file
+                        // descriptor` and names the word with its quotes;
+                        // the AST does not keep that quoting here.
+                        return Err(crate::error::Error::CommandFailure(self.redirect_error(
+                            &redirect_target_label(&redirect.target),
+                            "ambiguous redirect",
+                        )));
+                    }
                     let Ok(src) = target.parse::<i32>() else {
                         continue;
                     };
@@ -160,13 +173,22 @@ impl Interpreter {
                     if high_fd.is_some() {
                         continue;
                     }
-                    // <&FD - if FD is a coproc read FD, consume next line
-                    if let Some(buf) = self.coproc_buffers.get_mut(&src) {
-                        if let Some(line) = buf.pop() {
-                            stdin = Some(format!("{}\n", line).into());
-                        } else {
-                            stdin = Some(crate::StreamData::new()); // EOF
+                    // <&FD on a readable fd: its next line, or what the
+                    // command reads of a coproc's output.
+                    match self.coproc_buffers.get_mut(&src) {
+                        Some(coproc::InputFd::Lines(buf)) => {
+                            stdin = Some(
+                                buf.pop()
+                                    .map(|line| format!("{line}\n"))
+                                    .unwrap_or_default()
+                                    .into(),
+                            );
                         }
+                        Some(coproc::InputFd::Pipe(end)) => {
+                            let pipe = Arc::clone(&end.0);
+                            stdin = Some(Box::pin(coproc::read_coproc_input(pipe, demand)).await);
+                        }
+                        None => {}
                     }
                 }
                 _ => {
@@ -502,6 +524,10 @@ impl Interpreter {
                 FdTarget::WriteFile(path, _) | FdTarget::AppendFile(path, _) => {
                     self.fs.append_file(path, data.as_bytes()).await?;
                 }
+                FdTarget::Coproc(w) => {
+                    w.write(data.as_bytes());
+                    coproc::coproc_backpressure(w).await;
+                }
             }
         } else {
             match (src_fd, target_fd) {
@@ -711,6 +737,15 @@ impl Interpreter {
             &self.pending_fd_targets,
             &self.pending_fd_output,
         );
+        // A coproc fed past its pipe's capacity drains first.
+        for target in [&fd1, &fd2]
+            .into_iter()
+            .chain(self.pending_fd_targets.iter().map(|(_, t)| t))
+        {
+            if let FdTarget::Coproc(w) = target {
+                coproc::coproc_backpressure(w).await;
+            }
+        }
         self.clear_pending_fd_redirect_state();
 
         // Write files
@@ -794,8 +829,8 @@ pub(super) fn has_high_fd_file_redirect(redirects: &[Redirect]) -> bool {
 // Important decisions:
 // - The shell's descriptors are virtual, per interpreter (tenant isolation):
 //   output fds live in `exec_fd_table`, readable fds in `coproc_buffers`
-//   (remaining lines), and dups of stdin in `exec_input_fds`. No host fd is
-//   ever touched.
+//   (remaining lines, or a coproc's output pipe: `coproc.rs`), and dups of
+//   stdin in `exec_input_fds`. No host fd is ever touched.
 // - `{var}>file` allocates the lowest free fd >= 10 (bash's
 //   `fcntl(F_DUPFD, 10)`) and stores it in `var`. bash never undoes a
 //   `{var}` redirection, so on any command (not just `exec`) the fd stays
@@ -885,8 +920,6 @@ impl Interpreter {
             || self.coproc_buffers.contains_key(&fd)
             || self.exec_input_fds.contains(&fd)
             || self.fd_redirect_scope.contains(&fd)
-            // coproc pairs, read and write ends
-            || (fd > self.coproc_next_fd && fd <= COPROC_FIRST_FD)
     }
 
     fn close_fd(&mut self, fd: i32) {
@@ -1022,7 +1055,8 @@ impl Interpreter {
                         Some(n) => {
                             self.ensure_persistent_fd_capacity(n)?;
                             self.close_fd(n);
-                            self.coproc_buffers.insert(n, Vec::new());
+                            self.coproc_buffers
+                                .insert(n, coproc::InputFd::Lines(Vec::new()));
                             if read_write {
                                 self.exec_fd_table.insert(n, FdTarget::DevNull);
                             }
@@ -1051,7 +1085,8 @@ impl Interpreter {
                     Some(n) => {
                         self.ensure_persistent_fd_capacity(n)?;
                         self.close_fd(n);
-                        self.coproc_buffers.insert(n, reversed_lines(&text));
+                        self.coproc_buffers
+                            .insert(n, coproc::InputFd::Lines(reversed_lines(&text)));
                         if read_write {
                             self.exec_fd_table
                                 .insert(n, FdTarget::AppendFile(path, target_path));
@@ -1070,7 +1105,8 @@ impl Interpreter {
                     Some(n) => {
                         self.ensure_persistent_fd_capacity(n)?;
                         self.close_fd(n);
-                        self.coproc_buffers.insert(n, reversed_lines(&content));
+                        self.coproc_buffers
+                            .insert(n, coproc::InputFd::Lines(reversed_lines(&content)));
                     }
                     None => self.pipeline_stdin = Some(content.into()),
                 }
@@ -1104,9 +1140,17 @@ impl Interpreter {
                 }
                 match n {
                     0 => {
-                        // `exec <&N`: stdin reads what is left of fd N.
-                        if let Some(buf) = self.coproc_buffers.get(&m) {
-                            self.pipeline_stdin = Some(buffer_text(buf));
+                        // `exec <&N`: stdin reads what is left of fd N
+                        // (a coproc's output: as commands read it).
+                        match self.coproc_buffers.get(&m) {
+                            Some(coproc::InputFd::Lines(buf)) => {
+                                self.pipeline_stdin = Some(buffer_text(buf));
+                            }
+                            Some(coproc::InputFd::Pipe(end)) => {
+                                self.pipeline_stdin = None;
+                                self.pipe_in = Some(Arc::clone(&end.0));
+                            }
+                            None => {}
                         }
                     }
                     1 | 2 => {
