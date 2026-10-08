@@ -446,7 +446,8 @@ impl InMemoryFs {
                     metadata: Metadata {
                         file_type: FileType::Directory,
                         size: 0,
-                        mode: 0o755,
+                        // `/tmp` is world-writable and sticky, as on Linux.
+                        mode: if *dir == "/tmp" { 0o1777 } else { 0o755 },
                         modified: SystemTime::now(),
                         created: SystemTime::now(),
                     },

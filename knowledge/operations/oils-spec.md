@@ -17,25 +17,32 @@ Implemented. Harness: `scripts/oils-spec/run.py` (`just oils-spec`).
 
 ## Headline
 
-**82.1%**: bashkit passes 2211 of the 2692 Oils spec cases real bash 5.2.21
-passes (2759 cases in 132 spec files; bashkit passes 2218 of all cases,
-80.4%). Oils `57d3f0d088c3`, 2026-10-08. Report:
-`scripts/oils-spec/results/oils-spec-linux-x86_64-20261008T152730Z.md`.
+**86.0%**: bashkit passes 2316 of the 2693 Oils spec cases real bash 5.2.21
+passes (2759 cases in 132 spec files; bashkit passes 2322 of all cases,
+84.2%). Oils `57d3f0d088c3`, 2026-10-08. Report:
+`scripts/oils-spec/results/oils-spec-linux-x86_64-20261008T173631Z.md`.
 The first run (74.2%, `...T103235Z.md`) missed 16 cases each in
 `globignore` and `word-split`, 14 in `builtin-cd`, 13 in `alias` and
-`dbracket`; those files now miss 1, 0, 4, 7 and 1. The run before this one
-(78.8%, `...T132606Z.md`) missed 12 in `builtin-type-bash`, 11 in
-`sh-options` and `vars-special`, 9 in `redirect-multi`, 7 in `command_`,
-`redirect` and `sh-usage`, 6 in `here-doc` and `sh-options-bash`, 5 in
-`builtin-eval-source`; they now miss 0, 4, 4, 0, 0, 2, 3, 0, 0 and 0. What
-is left there is interactive-only, the harness running bashkit with `-c`
-(`$-` holds `c`), or listed in [Known Limitations](limitations.md)
-(byte-wise glob under `LC_ALL=C`, FIFOs, `<>` offsets, `-v` echo, the
-empty startup environment, `$LINENO` in a top-level `(( ))`).
+`dbracket`; those files now miss 1, 0, 2, 7 and 1. The run at 78.8%
+(`...T132606Z.md`) missed 12 in `builtin-type-bash`, 11 in `sh-options` and
+`vars-special`, 9 in `redirect-multi`; they now miss 0, 4, 4 and 0. The run
+before this one (82.1%, `...T152730Z.md`) missed 9 in `introspect` and
+`nul-bytes`, 8 in `bugs` and `var-op-test`, 6 in `builtin-vars`, `xtrace`
+and `builtin-read`, 5 in `blog1`, `assign`, `arith-context`,
+`builtin-bracket`, `builtin-meta-assign` and `builtin-process`, 4 in
+`regex`, `builtin-dirs`, `builtin-kill`, `builtin-special` and
+`ble-features`; they now miss 0, 0, 6, 3, 0, 2, 2, 0, 1, 2, 1, 1, 1, 0, 0,
+0, 0 and 0. What is left there is interactive-only, the harness running
+bashkit with `-c` (`$-` holds `c`), real processes and signals (`wait`
+on job specs, `kill` delivery, `ulimit -n`), or listed in
+[Known Limitations](limitations.md) (byte-wise glob under `LC_ALL=C`,
+FIFOs, `<>` offsets, `-v` echo, `/dev/full`, `$(...)` read from a value
+into arithmetic (L-ARITH-001), aliases applied per command, the empty
+startup environment, `$LINENO` in a top-level `(( ))`).
 
 Spec files with the most misses at the latest run: `builtin-completion`
-(34), `prompt` (25), `array` (23), `builtin-trap-bash` (19), `var-ref` (15).
-36 of the 132 files pass completely.
+(33), `prompt` (25), `array` (20), `builtin-trap-bash` (19), `var-ref` (15).
+45 of the 132 files pass completely.
 
 ## Why
 

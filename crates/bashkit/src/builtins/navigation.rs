@@ -116,6 +116,9 @@ impl Builtin for Cd {
             let old_cwd = ctx.cwd.to_string_lossy().to_string();
             ctx.variables.insert("OLDPWD".to_string(), old_cwd);
             *ctx.cwd = resolved;
+            // `cd` rewrites `$PWD` even after `PWD=x` (same directory too).
+            ctx.variables
+                .insert("PWD".to_string(), ctx.cwd.to_string_lossy().into_owned());
             let out = if print_dir || from_cdpath {
                 format!("{}\n", ctx.cwd.to_string_lossy())
             } else {

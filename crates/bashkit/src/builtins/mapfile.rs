@@ -123,6 +123,8 @@ impl Builtin for Mapfile {
                 } else {
                     rec
                 };
+                // Elements are C strings in bash: a NUL ends the value.
+                let value = value.split('\0').next().unwrap_or_default();
                 (start + idx, value.to_string())
             })
             .collect();

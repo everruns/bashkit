@@ -273,6 +273,25 @@ impl Builtin for Ulimit {
                 ));
             }
         };
+        // bash scales kbytes/blocks limits to bytes and rejects a value that
+        // no longer fits a 64-bit limit.
+        if normalized.bytes().all(|b| b.is_ascii_digit()) {
+            let n: u128 = normalized.parse().unwrap_or(u128::MAX);
+            for opt in &opts {
+                let unit = ULIMITS.iter().find(|l| l.0 == *opt).map_or("", |l| l.2);
+                let factor: u128 = if matches!(unit, "kbytes" | "blocks") {
+                    1024
+                } else {
+                    1
+                };
+                if n.saturating_mul(factor) >= u64::MAX as u128 {
+                    return Ok(ExecResult::err(
+                        format!("bash: ulimit: {v}: limit out of range\n"),
+                        1,
+                    ));
+                }
+            }
+        }
         let (set_soft, set_hard) = if hard || soft {
             (soft, hard)
         } else {

@@ -75,17 +75,34 @@ impl Builtin for Kill {
         while let Some(arg) = args.next() {
             match arg.as_str() {
                 "-l" | "-L" => {
-                    // `kill -l 143` / `kill -l 15` → name; bare → list.
-                    if let Some(v) = args.next() {
-                        let n = v.parse::<i32>().unwrap_or(-1);
-                        let n = if n > 128 { n - 128 } else { n };
-                        return Ok(match signal_name(n) {
-                            Some(name) => ExecResult::ok(format!("{name}\n")),
-                            None => ExecResult::err(
-                                format!("bash: kill: {v}: invalid signal specification\n"),
-                                1,
-                            ),
-                        });
+                    // `kill -l 143 15` → names, `kill -l USR1` → number,
+                    // `0` is EXIT; bare → list. A bad one fails the status
+                    // but the others still print.
+                    if args.peek().is_some() {
+                        let mut out = String::new();
+                        let mut err = String::new();
+                        for v in args.by_ref() {
+                            if let Ok(n) = v.parse::<i32>() {
+                                let n = if n > 128 { n - 128 } else { n };
+                                let name = if n == 0 { Some("EXIT") } else { signal_name(n) };
+                                if let Some(name) = name {
+                                    out.push_str(name);
+                                    out.push('\n');
+                                    continue;
+                                }
+                            } else if let Some(n) = parse_signal(v).filter(|n| *n != 0) {
+                                out.push_str(&format!("{n}\n"));
+                                continue;
+                            }
+                            err.push_str(&format!(
+                                "bash: kill: {v}: invalid signal specification\n"
+                            ));
+                        }
+                        let code = i32::from(!err.is_empty());
+                        let mut result = ExecResult::ok(out);
+                        result.stderr = err.into();
+                        result.exit_code = code;
+                        return Ok(result);
                     }
                     let list: Vec<String> = SIGNALS
                         .iter()

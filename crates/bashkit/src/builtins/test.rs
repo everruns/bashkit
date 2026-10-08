@@ -253,9 +253,39 @@ async fn evaluate_unary(op: &str, arg: &str, env: &Env<'_>) -> TestResult {
                 Err(_) => false,
             })
         }
+        // Mode bits: setuid, setgid, sticky.
+        "-u" | "-g" | "-k" => {
+            let bit = match op {
+                "-u" => 0o4000,
+                "-g" => 0o2000,
+                _ => 0o1000,
+            };
+            let path = resolve_file_path(cwd, arg);
+            Ok(fs.stat(&path).await.is_ok_and(|meta| meta.mode & bit != 0))
+        }
+        // Owned by the effective user / group: the sandbox user owns every
+        // file, so this is "exists".
+        "-O" | "-G" => {
+            let path = resolve_file_path(cwd, arg);
+            Ok(fs.exists(&path).await.unwrap_or(false))
+        }
         "-S" => Ok(false), // socket (not supported)
         "-b" => Ok(false), // block device (not supported)
-        "-c" => Ok(false), // character device (not supported)
+        "-c" => {
+            // The virtual character devices.
+            let path = resolve_file_path(cwd, arg);
+            Ok(matches!(
+                path.to_str(),
+                Some(
+                    "/dev/null"
+                        | "/dev/zero"
+                        | "/dev/full"
+                        | "/dev/random"
+                        | "/dev/urandom"
+                        | "/dev/tty"
+                )
+            ))
+        }
         "-t" => {
             // file descriptor refers to a terminal
             // In VFS sandbox, defaults to false for all FDs.

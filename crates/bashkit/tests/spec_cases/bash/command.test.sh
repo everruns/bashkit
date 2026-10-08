@@ -28,12 +28,15 @@ echo is a shell builtin
 ### end
 
 ### command_V_function
-### bash_diff: real bash also prints the function body
-# command -V describes functions
+# command -V describes functions, body included
 my_func() { echo hi; }
 command -V my_func
 ### expect
 my_func is a function
+my_func () 
+{ 
+    echo hi
+}
 ### end
 
 ### command_V_keyword
