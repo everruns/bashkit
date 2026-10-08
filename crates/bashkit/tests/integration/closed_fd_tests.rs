@@ -95,3 +95,27 @@ async fn closing_stdout_inside_a_subshell_names_the_failing_command() {
     );
     assert_eq!(r.exit_code, 1);
 }
+
+/// `exec 2>&1` mid-line: each element of a top-level `;` list is routed as it
+/// finishes, so a streaming caller sees the stderr (merged into stdout) in
+/// order, not dropped.
+#[tokio::test]
+async fn exec_dup_stderr_routes_each_list_element_when_streaming() {
+    let mut bash = Bash::new();
+    let streamed = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let sink = std::sync::Arc::clone(&streamed);
+    let r = bash
+        .exec_streaming(
+            "set -u\nexec 2>&1; x=$(echo $zz); echo after",
+            Box::new(move |stdout, stderr| {
+                let mut s = sink.lock().unwrap();
+                s.push_str(&stdout.to_string());
+                s.push_str(&stderr.to_string());
+            }),
+        )
+        .await
+        .unwrap();
+    let want = "bash: line 2: zz: unbound variable\nafter\n";
+    assert_eq!(r.stdout.to_string(), want);
+    assert_eq!(streamed.lock().unwrap().as_str(), want);
+}
