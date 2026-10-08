@@ -78,6 +78,7 @@ through configurable limits.
 | AWK unbounded loops (TM-DOS-033) | `BEGIN { while(1){} }`, nested loops, deep recursion | Per-loop and whole-program loop caps from `ExecutionLimits`, call-depth cap; all fatal (exit 2) | MITIGATED |
 | awk commands (TM-DOS-128) | `system()`, `print \| cmd` or `cmd \| getline` in a loop | Each command runs as `sh -c` in the sandbox shell under the session's command budget and timeout; awk's loop, output and getline caps still apply | MITIGATED |
 | Command hash table growth (TM-DOS-129) | `hash -p /x nameN` or many distinct PATH commands | The table holds at most 512 entries and drops the oldest; assigning `PATH` empties it | MITIGATED |
+| Array and arithmetic reports (TM-DOS-130) | `$((` nested in arithmetic, many `${a[-9]}` reads, huge `${!r}` target | 32 nesting levels; warnings capped at 64 KiB per command; indirect target echoed truncated to 256 chars | MITIGATED |
 
 **Stack Overflow / Recursion:**
 

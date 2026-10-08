@@ -393,17 +393,6 @@ impl fmt::Display for Word {
                         write!(f, "${{{}:{}}}", name, offset)?
                     }
                 }
-                WordPart::ArraySlice {
-                    name,
-                    offset,
-                    length,
-                } => {
-                    if let Some(len) = length {
-                        write!(f, "${{{}[@]:{}:{}}}", name, offset, len)?
-                    } else {
-                        write!(f, "${{{}[@]:{}}}", name, offset)?
-                    }
-                }
                 WordPart::IndirectExpansion {
                     name,
                     operator,
@@ -424,6 +413,7 @@ impl fmt::Display for Word {
                         write!(f, "${{!{}}}", name)?
                     }
                 }
+                WordPart::IndirectSuffix { name, suffix } => write!(f, "${{!{name}{suffix}}}")?,
                 WordPart::PrefixMatch { prefix, star } => {
                     write!(f, "${{!{}{}}}", prefix, if *star { '*' } else { '@' })?
                 }
@@ -499,14 +489,10 @@ pub enum WordPart {
     ArrayLength(String),
     /// Array indices `${!arr[@]}` or (`star`) `${!arr[*]}`
     ArrayIndices { name: String, star: bool },
-    /// Substring extraction `${var:offset}` or `${var:offset:length}`
+    /// Substring extraction `${var:offset}` or `${var:offset:length}`; on
+    /// `@`, `a[@]` or `a[*]` it slices the parameters or array elements,
+    /// on `a[i]` it takes a substring of the element.
     Substring {
-        name: String,
-        offset: String,
-        length: Option<String>,
-    },
-    /// Array slice `${arr[@]:offset:length}`
-    ArraySlice {
         name: String,
         offset: String,
         length: Option<String>,
@@ -519,6 +505,10 @@ pub enum WordPart {
         operand: String,
         colon_variant: bool,
     },
+    /// `${!name<suffix>}` beyond the forms above (`${!r:1}`, `${!r#x}`,
+    /// `${!a[1]}`, `${!r[@]:-x}`): the value of `name` (which may carry a
+    /// subscript) names the parameter that `${<value><suffix>}` expands.
+    IndirectSuffix { name: String, suffix: String },
     /// Prefix matching `${!prefix*}` (`star`) or `${!prefix@}` - names of
     /// variables with given prefix
     PrefixMatch { prefix: String, star: bool },
@@ -792,8 +782,8 @@ mod tests {
     #[test]
     fn word_display_array_slice_with_length() {
         let w = Word {
-            parts: vec![WordPart::ArraySlice {
-                name: "arr".into(),
+            parts: vec![WordPart::Substring {
+                name: "arr[@]".into(),
                 offset: "1".into(),
                 length: Some("2".into()),
             }],
@@ -808,8 +798,8 @@ mod tests {
     #[test]
     fn word_display_array_slice_without_length() {
         let w = Word {
-            parts: vec![WordPart::ArraySlice {
-                name: "arr".into(),
+            parts: vec![WordPart::Substring {
+                name: "arr[@]".into(),
                 offset: "1".into(),
                 length: None,
             }],

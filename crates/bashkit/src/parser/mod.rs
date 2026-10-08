@@ -2640,6 +2640,28 @@ impl<'a> Parser<'a> {
                     self.advance();
                 }
                 None => break,
+                // bash: `a=(1 & 2)` is a syntax error at the operator.
+                Some(
+                    tokens::Token::Semicolon
+                    | tokens::Token::DoubleSemicolon
+                    | tokens::Token::SemiAmp
+                    | tokens::Token::DoubleSemiAmp
+                    | tokens::Token::Pipe
+                    | tokens::Token::PipeBoth
+                    | tokens::Token::And
+                    | tokens::Token::Or
+                    | tokens::Token::Background
+                    | tokens::Token::LeftParen
+                    | tokens::Token::DoubleLeftParen
+                    | tokens::Token::RedirectOut
+                    | tokens::Token::RedirectAppend
+                    | tokens::Token::RedirectIn,
+                ) => {
+                    let err = self.error("unexpected token");
+                    let first = self.deferred_error.take();
+                    self.deferred_error.set(first.or(Some(err)));
+                    self.advance();
+                }
                 _ => {
                     self.advance();
                 }
@@ -2713,8 +2735,13 @@ impl<'a> Parser<'a> {
 
         // Empty value — check for arr=(...) syntax with separate tokens
         if value_str.is_empty() {
+            let word_end = self.current_span.end.offset;
             self.advance();
-            if matches!(self.current_token, Some(tokens::Token::LeftParen)) {
+            // `a= (1 2)` is not an array literal: the blank ends the
+            // assignment and `(` is then a syntax error (bash).
+            if matches!(self.current_token, Some(tokens::Token::LeftParen))
+                && self.current_span.start.offset == word_end
+            {
                 self.advance(); // consume '('
                 let elements = self.collect_array_elements();
                 return Some((
@@ -2726,6 +2753,11 @@ impl<'a> Parser<'a> {
                     },
                     false,
                 ));
+            }
+            if matches!(self.current_token, Some(tokens::Token::LeftParen)) {
+                let err = self.error("unexpected token");
+                let first = self.deferred_error.take();
+                self.deferred_error.set(first.or(Some(err)));
             }
             // Empty assignment: VAR=
             let mut empty = Word::literal("");
@@ -3888,6 +3920,13 @@ impl<'a> Parser<'a> {
                             {
                                 break;
                             }
+                            // `${!x#y}`, `${!x/a/b}`: an operator ends the name
+                            // (`${!#}` is still the indirect `$#`).
+                            if !var_name.is_empty()
+                                && matches!(c, '#' | '%' | '/' | '^' | ',' | '~')
+                            {
+                                break;
+                            }
                             var_name.push(chars.next().unwrap());
                         }
                         // Check for array indices ${!arr[@]} or ${!arr[*]}
@@ -3901,18 +3940,28 @@ impl<'a> Parser<'a> {
                                 }
                                 index.push(chars.next().unwrap());
                             }
-                            // Consume closing }
                             if chars.peek() == Some(&'}') {
                                 chars.next();
-                            }
-                            if index == "@" || index == "*" {
-                                push_part!(WordPart::ArrayIndices {
-                                    name: var_name,
-                                    star: index == "*",
-                                });
+                                if index == "@" || index == "*" {
+                                    push_part!(WordPart::ArrayIndices {
+                                        name: var_name,
+                                        star: index == "*",
+                                    });
+                                } else {
+                                    // `${!a[1]}`: the element names the variable.
+                                    push_part!(WordPart::IndirectSuffix {
+                                        name: format!("{var_name}[{index}]"),
+                                        suffix: String::new(),
+                                    });
+                                }
                             } else {
-                                // ${!arr[n]} - not standard, treat as variable
-                                push_part!(WordPart::Variable(format!("!{}[{}]", var_name, index)));
+                                // `${!ref[@]:2}`, `${!a[0]#x}`: the elements'
+                                // value names the variable the operator applies to.
+                                let suffix = self.read_brace_operand(&mut chars);
+                                push_part!(WordPart::IndirectSuffix {
+                                    name: format!("{var_name}[{index}]"),
+                                    suffix,
+                                });
                             }
                         } else if chars.peek() == Some(&'}') {
                             // ${!var} - indirect expansion (no operator)
@@ -3948,16 +3997,12 @@ impl<'a> Parser<'a> {
                                     colon_variant: true,
                                 });
                             } else {
-                                // Not a param op after ':', treat as prefix match fallback
-                                let mut suffix = String::new();
-                                while let Some(&c) = chars.peek() {
-                                    if c == '}' {
-                                        chars.next();
-                                        break;
-                                    }
-                                    suffix.push(chars.next().unwrap());
-                                }
-                                push_part!(WordPart::Variable(format!("!{}{}", var_name, suffix)));
+                                // `${!x:1:2}`: substring of the named variable.
+                                let suffix = self.read_brace_operand(&mut chars);
+                                push_part!(WordPart::IndirectSuffix {
+                                    name: var_name,
+                                    suffix,
+                                });
                             }
                         } else if matches!(
                             chars.peek(),
@@ -3981,14 +4026,7 @@ impl<'a> Parser<'a> {
                             });
                         } else {
                             // ${!prefix*} or ${!prefix@} - prefix matching
-                            let mut suffix = String::new();
-                            while let Some(&c) = chars.peek() {
-                                if c == '}' {
-                                    chars.next();
-                                    break;
-                                }
-                                suffix.push(chars.next().unwrap());
-                            }
+                            let suffix = self.read_brace_operand(&mut chars);
                             // `${!ref@a}`: transform the variable `ref` names.
                             if push_indirect_transformation(
                                 &mut parts,
@@ -4005,7 +4043,10 @@ impl<'a> Parser<'a> {
                                     star: suffix.ends_with('*'),
                                 });
                             } else {
-                                push_part!(WordPart::Variable(format!("!{}{}", var_name, suffix)));
+                                push_part!(WordPart::IndirectSuffix {
+                                    name: var_name,
+                                    suffix,
+                                });
                             }
                         }
                     } else {
@@ -4103,31 +4144,24 @@ impl<'a> Parser<'a> {
                                     } else {
                                         // Array slice ${arr[@]:offset:length}
                                         chars.next(); // consume ':'
-                                        let mut offset = String::new();
-                                        while let Some(&c) = chars.peek() {
-                                            if c == ':' || c == '}' {
-                                                break;
-                                            }
-                                            offset.push(chars.next().unwrap());
-                                        }
+                                        let offset = read_slice_field(&mut chars, true);
                                         let length = if chars.peek() == Some(&':') {
                                             chars.next();
-                                            let mut len = String::new();
-                                            while let Some(&c) = chars.peek() {
-                                                if c == '}' {
-                                                    break;
-                                                }
-                                                len.push(chars.next().unwrap());
-                                            }
-                                            Some(len)
+                                            Some(read_slice_field(&mut chars, false))
                                         } else {
                                             None
                                         };
                                         if chars.peek() == Some(&'}') {
                                             chars.next();
                                         }
-                                        push_part!(WordPart::ArraySlice {
-                                            name: std::mem::take(&mut var_name),
+                                        // `${a[@]:o:l}` slices the elements,
+                                        // `${a[1]:o:l}` the element's text.
+                                        push_part!(WordPart::Substring {
+                                            name: format!(
+                                                "{}[{}]",
+                                                std::mem::take(&mut var_name),
+                                                index
+                                            ),
                                             offset,
                                             length,
                                         });
@@ -4198,23 +4232,10 @@ impl<'a> Parser<'a> {
                                         }
                                         _ => {
                                             // Substring extraction ${var:offset} or ${var:offset:length}
-                                            let mut offset = String::new();
-                                            while let Some(&ch) = chars.peek() {
-                                                if ch == ':' || ch == '}' {
-                                                    break;
-                                                }
-                                                offset.push(chars.next().unwrap());
-                                            }
+                                            let offset = read_slice_field(&mut chars, true);
                                             let length = if chars.peek() == Some(&':') {
                                                 chars.next(); // consume ':'
-                                                let mut len = String::new();
-                                                while let Some(&ch) = chars.peek() {
-                                                    if ch == '}' {
-                                                        break;
-                                                    }
-                                                    len.push(chars.next().unwrap());
-                                                }
-                                                Some(len)
+                                                Some(read_slice_field(&mut chars, false))
                                             } else {
                                                 None
                                             };
@@ -4787,6 +4808,33 @@ fn push_indirect_transformation(
     });
     part_quoted.push(quoted);
     true
+}
+
+/// One field of `${v:offset:length}`: up to a top-level `:` (when
+/// `stop_colon`) or `}`. Nested `$((..))`, `${..}` and a ternary's own `:`
+/// (`${s: 0 < 1 ? 2 : 0 : 1}`) stay inside the field.
+fn read_slice_field(
+    chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
+    stop_colon: bool,
+) -> String {
+    let mut field = String::new();
+    let mut depth = 0usize;
+    let mut ternary = 0usize;
+    while let Some(&c) = chars.peek() {
+        match c {
+            '(' | '{' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            '}' if depth == 0 => break,
+            '}' => depth -= 1,
+            '?' if depth == 0 => ternary += 1,
+            ':' if depth == 0 && ternary > 0 => ternary -= 1,
+            ':' if depth == 0 && stop_colon => break,
+            _ => {}
+        }
+        field.push(c);
+        chars.next();
+    }
+    field
 }
 
 /// `${##pat}` / `${###}`: `$#` followed by a pattern-removal

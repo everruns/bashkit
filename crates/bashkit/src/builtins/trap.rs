@@ -155,9 +155,9 @@ impl Builtin for Trap {
         }
 
         // `trap SIGNAL` and `trap N ...` (first operand a number) reset
-        // every operand; otherwise the first operand is the handler.
-        // (` 42 `: bash skips blanks around the number.)
-        let first = args[0].trim_matches([' ', '\t']);
+        // every operand; otherwise the first operand is the handler
+        // (` 42 ` is a handler: bash runs it as a command).
+        let first = args[0].as_str();
         let reset_all =
             args.len() == 1 || (!first.is_empty() && first.bytes().all(|b| b.is_ascii_digit()));
         let (handler, specs) = if reset_all {
@@ -172,6 +172,9 @@ impl Builtin for Trap {
                 Some((_, key)) => {
                     if key == "ERR" {
                         *shell.err_trap_dormant = false;
+                    }
+                    if key == "DEBUG" {
+                        *shell.debug_trap_dormant = false;
                     }
                     match handler {
                         Some(cmd) => {

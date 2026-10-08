@@ -353,6 +353,8 @@ pub(crate) struct ShellRef<'a> {
     /// Set while the ERR handler is inherited for display only (subshell
     /// without `set -E`); `trap` clears it when it sets or resets ERR.
     pub(crate) err_trap_dormant: &'a mut bool,
+    /// Same for DEBUG in a subshell or `$(...)` without `set -T`.
+    pub(crate) debug_trap_dormant: &'a mut bool,
     /// Variable attribute table (readonly/integer/lower/upper). Mutable so
     /// `readonly`/`declare`/`unset` builtins can update attributes without
     /// re-allocating `_READONLY_X`-style marker strings.
@@ -974,6 +976,71 @@ pub(crate) fn is_valid_var_name(name: &str) -> bool {
 // Lookups and builtins therefore only ever see the live maps, so `read`,
 // `printf -v` and `declare -p` work on locals with no frame walk.
 
+/// What a DEBUG handler left for the command it ran before: output not yet
+/// streamed, and an `exit` from the handler.
+#[derive(Default)]
+struct DebugTrapOutput {
+    stdout: crate::StreamData,
+    stderr: crate::StreamData,
+    exit: Option<i32>,
+    /// The handler ran `return` inside a function: `exit` holds its
+    /// status and the function returns instead of the shell exiting.
+    returned: bool,
+}
+
+impl DebugTrapOutput {
+    /// Output of a later handler run after this one's.
+    fn absorb(&mut self, later: DebugTrapOutput) {
+        self.stdout.append(&later.stdout);
+        self.stderr.append(&later.stderr);
+        if self.exit.is_none() {
+            self.exit = later.exit;
+            self.returned = later.returned;
+        }
+    }
+
+    /// `result` with `debug`'s output (if any) ahead of its own.
+    fn prepend_opt(debug: Option<Box<Self>>, result: Result<ExecResult>) -> Result<ExecResult> {
+        match debug {
+            Some(d) => result.map(|r| d.prepend_to(r)),
+            None => result,
+        }
+    }
+
+    /// The result to stop with when the handler ran `exit`.
+    fn exit_result(debug: &mut Option<Box<Self>>) -> Option<ExecResult> {
+        let code = debug.as_ref()?.exit?;
+        debug.take().map(|d| d.into_exit_result(code))
+    }
+
+    /// The handler's output ahead of the command's own.
+    fn prepend_to(self, mut result: ExecResult) -> ExecResult {
+        if !self.stdout.is_empty() {
+            result.stdout = self.stdout + &result.stdout;
+        }
+        if !self.stderr.is_empty() {
+            result.stderr = self.stderr + &result.stderr;
+        }
+        result
+    }
+
+    /// The handler ran `exit` (or `return` in a function): the command
+    /// does not run.
+    fn into_exit_result(self, code: i32) -> ExecResult {
+        ExecResult {
+            stdout: self.stdout,
+            stderr: self.stderr,
+            exit_code: code,
+            control_flow: if self.returned {
+                ControlFlow::Return(code)
+            } else {
+                ControlFlow::Exit(code)
+            },
+            ..Default::default()
+        }
+    }
+}
+
 /// A caller binding saved by a `local` declaration (shallow binding).
 #[derive(Debug, Clone, Default)]
 struct SavedVar {
@@ -1397,6 +1464,7 @@ struct SubshellSnapshot {
     bashpid: u32,
     xtrace_depth: usize,
     err_trap_dormant: bool,
+    debug_trap_dormant: bool,
     line_base: isize,
 }
 
@@ -1709,6 +1777,9 @@ pub struct Interpreter {
     /// handler visible to `trap -p` but does not run it (bash). `trap`
     /// setting or resetting ERR clears it.
     err_trap_dormant: bool,
+    /// Set inside a `( )` subshell or `$( )` without `set -T`: the DEBUG
+    /// trap stays listed but does not run there (bash).
+    debug_trap_dormant: bool,
     /// The next `execute_command` is a multi-command pipeline stage: its own
     /// status never fires ERR (the pipeline as a whole does).
     err_trap_skip_stage: bool,
@@ -1779,6 +1850,9 @@ pub struct Interpreter {
     /// subscripts, `declare -i` values, substring offsets). The command
     /// boundary turns it into a line abort, as bash does.
     arith_error: StdMutex<Option<String>>,
+    /// Non-fatal "bad array subscript" reports from reads that hold only
+    /// `&self` (`${a[-9]}`, `$((a[-9]))`); settled into the command's stderr.
+    subscript_warnings: StdMutex<String>,
     /// Element words of `name=(...)` arguments of the command being run;
     /// see `declare::COMPOUND_MARK`.
     pending_compound_args: Vec<Vec<Word>>,
@@ -2301,6 +2375,7 @@ impl Interpreter {
             hooks: Arc::new(crate::hooks::Hooks::default()),
             in_trap: false,
             err_trap_dormant: false,
+            debug_trap_dormant: false,
             err_trap_skip_stage: false,
             condition_sequence_depth: 0,
             deferred_proc_subs: Vec::new(),
@@ -2323,6 +2398,7 @@ impl Interpreter {
             subst_stderr: crate::StreamData::new(),
             subst_stderr_held: Vec::new(),
             arith_error: StdMutex::new(None),
+            subscript_warnings: StdMutex::new(String::new()),
             pending_compound_args: Vec::new(),
             assign_raw: false,
         }
@@ -2507,6 +2583,7 @@ impl Interpreter {
             // A job or pipeline stage is a subshell: ERR stays dormant there
             // unless `set -E`.
             err_trap_dormant: self.err_trap_dormant || !self.flags.contains(BashFlags::ERRTRACE),
+            debug_trap_dormant: self.debug_trap_dormant,
             err_trap_skip_stage: false,
             condition_sequence_depth: self.condition_sequence_depth,
             deferred_proc_subs: Vec::new(),
@@ -2530,6 +2607,7 @@ impl Interpreter {
             subst_stderr: crate::StreamData::new(),
             subst_stderr_held: Vec::new(),
             arith_error: StdMutex::new(None),
+            subscript_warnings: StdMutex::new(String::new()),
             pending_compound_args: Vec::new(),
             assign_raw: false,
         }
@@ -2800,6 +2878,7 @@ impl Interpreter {
         // one cancelled script cannot suppress traps in the next script.
         self.in_trap = false;
         self.err_trap_dormant = false;
+        self.debug_trap_dormant = false;
         self.err_trap_skip_stage = false;
         self.line_base = 0;
         self.xtrace_depth = 0;
@@ -4154,6 +4233,14 @@ impl Interpreter {
 
     /// Emit the pending `$(...)` stderr ahead of `result`'s own.
     fn settle_pending_subst_stderr(&mut self, result: &mut Result<ExecResult>) {
+        let warnings = self
+            .subscript_warnings
+            .lock()
+            .map(|mut w| std::mem::take(&mut *w))
+            .unwrap_or_default();
+        if !warnings.is_empty() {
+            self.queue_subst_stderr(&warnings.into());
+        }
         let queued = std::mem::take(&mut self.subst_stderr);
         self.settle_subst_stderr(queued, result);
     }
@@ -4338,6 +4425,7 @@ impl Interpreter {
                 self.enter_subshell_pid();
                 self.enter_nofork_scope(commands, true, SUBSHELL_PAREN);
                 self.enter_subshell_err_scope();
+                self.enter_subshell_debug_scope();
                 let saved_exit = self.last_exit_code;
                 let saved_coproc = self.coproc_buffers.clone();
 
@@ -4425,15 +4513,42 @@ impl Interpreter {
                 result
             }
             CompoundCommand::BraceGroup(commands) => self.execute_command_sequence(commands).await,
-            CompoundCommand::Case(case_cmd) => self.execute_case(case_cmd).await,
-            CompoundCommand::Arithmetic(expr) => {
-                self.execute_arithmetic_command(&crate::parser::arith_exec_text(expr), expr)
-                    .await
-            }
+            CompoundCommand::Case(_)
+            | CompoundCommand::Arithmetic(_)
+            | CompoundCommand::Conditional(_) => self.execute_traced_compound(compound).await,
             CompoundCommand::Time(time_cmd) => self.execute_time(time_cmd).await,
-            CompoundCommand::Conditional(words) => self.execute_conditional(words).await,
             CompoundCommand::Coproc(coproc_cmd) => self.execute_coproc(coproc_cmd).await,
         }
+    }
+
+    /// `case`, `(( ))` and `[[ ]]`, after the DEBUG handler (bash runs it
+    /// for them as for simple commands). Boxed so `execute_compound`'s
+    /// frame holds only a pointer.
+    fn execute_traced_compound<'a>(
+        &'a mut self,
+        compound: &'a CompoundCommand,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecResult>> + Send + 'a>> {
+        Box::pin(async move {
+            let mut debug = if self.has_debug_trap() {
+                self.debug_trap_now().await
+            } else {
+                None
+            };
+            if let Some(r) = DebugTrapOutput::exit_result(&mut debug) {
+                return Ok(r);
+            }
+            let r = match compound {
+                CompoundCommand::Case(case_cmd) => self.execute_case(case_cmd).await,
+                CompoundCommand::Arithmetic(expr) => {
+                    self.execute_arithmetic_command(&crate::parser::arith_exec_text(expr), expr)
+                        .await
+                }
+                CompoundCommand::Conditional(words) => self.execute_conditional(words).await,
+                // Only the three kinds above are routed here.
+                _ => Ok(ExecResult::default()),
+            };
+            DebugTrapOutput::prepend_opt(debug, r)
+        })
     }
 
     /// Execute an if statement
@@ -4581,9 +4696,21 @@ impl Interpreter {
                     self.set_variable(for_cmd.variable.clone(), value);
                 }
 
+                // DEBUG runs for each round, at the `for` line.
+                let mut debug = if self.has_debug_trap() {
+                    self.current_line = self.line_at(for_cmd.span.line());
+                    self.debug_trap_now().await
+                } else {
+                    None
+                };
+                if let Some(r) = DebugTrapOutput::exit_result(&mut debug) {
+                    return Ok(r);
+                }
+
                 // Execute body
                 let emit_before = self.output_emit_count;
-                let result = self.execute_command_sequence(&for_cmd.body).await?;
+                let result = self.execute_command_sequence(&for_cmd.body).await;
+                let result = DebugTrapOutput::prepend_opt(debug, result)?;
                 self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
                 let should_errexit = self.errexit_active()
                     && result.exit_code != 0
@@ -4872,9 +4999,19 @@ impl Interpreter {
         arith_for: &ArithmeticForCommand,
     ) -> Result<ExecResult> {
         let mut acc = state::LoopAccumulator::new();
+        // DEBUG output of the clauses (bash runs it before each one), put
+        // ahead of the next body's output or the loop's result.
+        let mut debug: Option<Box<DebugTrapOutput>> = None;
 
         // Execute initialization
         if !arith_for.init.is_empty() {
+            if self.has_debug_trap() {
+                self.current_line = self.line_at(arith_for.span.line());
+                Self::absorb_debug(&mut debug, self.debug_trap_now().await);
+                if let Some(r) = DebugTrapOutput::exit_result(&mut debug) {
+                    return Ok(r);
+                }
+            }
             let init = self.arith_for_expr(&arith_for.init).await?;
             self.execute_arithmetic_with_side_effects(&init);
         }
@@ -4889,6 +5026,12 @@ impl Interpreter {
                 // The clauses see the `for` line, not the body's last one.
                 let for_line = self.line_at(arith_for.span.line());
                 self.current_line = for_line;
+                if self.has_debug_trap() {
+                    Self::absorb_debug(&mut debug, self.debug_trap_now().await);
+                    if let Some(r) = DebugTrapOutput::exit_result(&mut debug) {
+                        return Ok(r);
+                    }
+                }
                 if !arith_for.condition.is_empty() {
                     let condition = self.arith_for_expr(&arith_for.condition).await?;
                     let cond_result = self.evaluate_arithmetic(&condition);
@@ -4899,7 +5042,8 @@ impl Interpreter {
 
                 // Execute body
                 let emit_before = self.output_emit_count;
-                let result = self.execute_command_sequence(&arith_for.body).await?;
+                let result = self.execute_command_sequence(&arith_for.body).await;
+                let result = DebugTrapOutput::prepend_opt(debug.take(), result)?;
                 self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
                 let should_errexit = self.errexit_active()
                     && result.exit_code != 0
@@ -4918,6 +5062,12 @@ impl Interpreter {
                 // Execute step
                 if !arith_for.step.is_empty() {
                     self.current_line = for_line;
+                    if self.has_debug_trap() {
+                        Self::absorb_debug(&mut debug, self.debug_trap_now().await);
+                        if let Some(r) = DebugTrapOutput::exit_result(&mut debug) {
+                            return Ok(r);
+                        }
+                    }
                     let step = self.arith_for_expr(&arith_for.step).await?;
                     self.execute_arithmetic_with_side_effects(&step);
                 }
@@ -4927,7 +5077,18 @@ impl Interpreter {
         }
         .await;
         self.counters.exit_loop();
-        result
+        DebugTrapOutput::prepend_opt(debug, result)
+    }
+
+    /// Add a DEBUG run's output to the pending one.
+    fn absorb_debug(pending: &mut Option<Box<DebugTrapOutput>>, run: Option<Box<DebugTrapOutput>>) {
+        let Some(run) = run else {
+            return;
+        };
+        match pending {
+            Some(p) => p.absorb(*run),
+            None => *pending = Some(run),
+        }
     }
 
     /// Execute an arithmetic command ((expression))
@@ -6817,6 +6978,18 @@ impl Interpreter {
         let mut acc = PipelineAcc::default();
         let mut stdin_data: Option<crate::StreamData> = None;
         let count = pipeline.commands.len();
+        // bash runs DEBUG for each simple-command stage from the shell
+        // itself, ahead of the stages' output; never inside a stage.
+        let mut debug = if count > 1 && self.has_debug_trap() {
+            self.pipeline_debug_traps(pipeline).await
+        } else {
+            None
+        };
+        if let Some(r) = DebugTrapOutput::exit_result(&mut debug) {
+            return Ok(r);
+        }
+        let saved_dormant = self.debug_trap_dormant;
+        self.debug_trap_dormant |= count > 1;
         acc.merge = self.merge_stderr;
         self.merge_stderr &= count == 1;
 
@@ -6824,7 +6997,14 @@ impl Interpreter {
             if stream_from == Some(i) {
                 let stages = self
                     .execute_streaming_group(&pipeline.commands[i..], stdin_data.take(), lastpipe)
-                    .await?;
+                    .await;
+                let stages = match stages {
+                    Ok(s) => s,
+                    Err(e) => {
+                        self.debug_trap_dormant = saved_dormant;
+                        return Err(e);
+                    }
+                };
                 for result in stages {
                     self.absorb_stage(&mut acc, result, true);
                 }
@@ -6858,9 +7038,41 @@ impl Interpreter {
             if let Some(cb) = saved_callback {
                 self.output_callback = Some(cb);
             }
-            stdin_data = self.absorb_stage(&mut acc, result?, is_last);
+            let result = match result {
+                Ok(r) => r,
+                Err(e) => {
+                    self.debug_trap_dormant = saved_dormant;
+                    return Err(e);
+                }
+            };
+            stdin_data = self.absorb_stage(&mut acc, result, is_last);
         }
-        Ok(self.finish_pipeline(pipeline, acc))
+        self.debug_trap_dormant = saved_dormant;
+        DebugTrapOutput::prepend_opt(debug, Ok(self.finish_pipeline(pipeline, acc)))
+    }
+
+    /// DEBUG before each simple-command stage of a pipeline, at its line.
+    #[allow(clippy::type_complexity)]
+    fn pipeline_debug_traps<'a>(
+        &'a mut self,
+        pipeline: &'a Pipeline,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Option<Box<DebugTrapOutput>>> + Send + 'a>,
+    > {
+        Box::pin(async move {
+            let mut out: Option<Box<DebugTrapOutput>> = None;
+            for command in &pipeline.commands {
+                let Command::Simple(simple) = command else {
+                    continue;
+                };
+                self.current_line = self.line_at(simple.span.line());
+                Self::absorb_debug(&mut out, self.debug_trap_now().await);
+                if out.as_ref().is_some_and(|d| d.exit.is_some()) {
+                    break;
+                }
+            }
+            out
+        })
     }
 
     /// Where streaming starts (first stage that runs shell code), and lastpipe.
@@ -7659,6 +7871,12 @@ impl Interpreter {
                         }
                     }
                     AssignmentValue::Array(words) => {
+                        if let Some(index) = &assignment.index {
+                            return Err(crate::error::Error::LineAbort(self.diag(format!(
+                                "{}[{index}]: cannot assign list to array member\n",
+                                assignment.name
+                            ))));
+                        }
                         if self.is_xtrace_enabled() {
                             // bash traces the list as written, before
                             // expanding it: `+ a=(x 'y z' $(cmd))`.
@@ -8056,6 +8274,27 @@ impl Interpreter {
         command: &'a SimpleCommand,
         stdin: Option<crate::StreamData>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecResult>> + Send + 'a>> {
+        // DEBUG runs before the command (bash), its output ahead of the
+        // command's own. Without a handler the body's own future is
+        // returned: no extra poll frame per command (stack depth).
+        let Some(trap_cmd) = self.debug_trap_pending() else {
+            return self.execute_simple_command_body(command, stdin);
+        };
+        Box::pin(async move {
+            let debug = self.run_debug_trap(trap_cmd).await;
+            if let Some(code) = debug.exit {
+                return Ok(debug.into_exit_result(code));
+            }
+            let result = self.execute_simple_command_body(command, stdin).await;
+            Ok(debug.prepend_to(result?))
+        })
+    }
+
+    fn execute_simple_command_body<'a>(
+        &'a mut self,
+        command: &'a SimpleCommand,
+        stdin: Option<crate::StreamData>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecResult>> + Send + 'a>> {
         Box::pin(async move {
             // `set -k`: assignment words anywhere in the command go to its
             // environment, not its arguments.
@@ -8069,7 +8308,6 @@ impl Interpreter {
                 command
             };
             let deferred_proc_sub_start = self.proc_sub_mark();
-            let (_debug_stdout, _debug_stderr) = self.run_debug_trap().await;
 
             // The command word undergoes the same field splitting as args:
             // `"$@"`, `$cmd`, `$(...)` may yield several words (first is the
@@ -8185,6 +8423,12 @@ impl Interpreter {
 
             // Empty command handling
             if name.is_empty() {
+                // `X=${x?msg}` alone: fatal here, not at the next command
+                // (which, after `(X=${x?msg})`, would be the parent's).
+                if let Some(err_msg) = self.nounset_error.take() {
+                    self.discard_deferred_proc_subs_from(deferred_proc_sub_start);
+                    return Ok(self.expansion_error_result(err_msg));
+                }
                 // `"" 2>/dev/null`: the not-found report follows the redirects.
                 let not_found =
                     command.name.quoted && !name_vanished && command.assignments.is_empty();
@@ -8544,7 +8788,7 @@ impl Interpreter {
             // not make `return` legal.
             let in_function = self.call_stack.iter().any(|f| f.keeps_arg0);
             // Its own redirects apply to the report (`return 2>&1`).
-            if name == "return" && !in_function && self.source_depth == 0 {
+            if name == "return" && !in_function && self.source_depth == 0 && !self.in_trap {
                 self.last_exit_code = 2;
                 let result = ExecResult::err(
                     self.diag("return: can only `return' from a function or sourced script\n"),
@@ -9025,6 +9269,7 @@ impl Interpreter {
                     aliases: Arc::make_mut(&mut self.scoped.aliases),
                     traps: Arc::make_mut(&mut self.scoped.traps),
                     err_trap_dormant: &mut self.err_trap_dormant,
+                    debug_trap_dormant: &mut self.debug_trap_dormant,
                     var_attrs: Arc::make_mut(&mut self.scoped.var_attrs),
                     namerefs: Arc::make_mut(&mut self.scoped.namerefs),
                     dir_stack: Arc::make_mut(&mut self.scoped.dir_stack),
@@ -9098,6 +9343,7 @@ impl Interpreter {
                 aliases: Arc::make_mut(&mut self.scoped.aliases),
                 traps: Arc::make_mut(&mut self.scoped.traps),
                 err_trap_dormant: &mut self.err_trap_dormant,
+                debug_trap_dormant: &mut self.debug_trap_dormant,
                 var_attrs: Arc::make_mut(&mut self.scoped.var_attrs),
                 namerefs: Arc::make_mut(&mut self.scoped.namerefs),
                 dir_stack: Arc::make_mut(&mut self.scoped.dir_stack),
@@ -10426,17 +10672,6 @@ impl Interpreter {
                     out.push_str(&format!("${{{}:{}}}", name, offset));
                 }
             }
-            WordPart::ArraySlice {
-                name,
-                offset,
-                length,
-            } => {
-                if let Some(len) = length {
-                    out.push_str(&format!("${{{}[@]:{}:{}}}", name, offset, len));
-                } else {
-                    out.push_str(&format!("${{{}[@]:{}}}", name, offset));
-                }
-            }
             WordPart::IndirectExpansion {
                 name,
                 operator,
@@ -10456,6 +10691,9 @@ impl Interpreter {
                 } else {
                     out.push_str(&format!("${{!{}}}", name));
                 }
+            }
+            WordPart::IndirectSuffix { name, suffix } => {
+                out.push_str(&format!("${{!{name}{suffix}}}"))
             }
             WordPart::PrefixMatch { prefix, star } => out.push_str(&format!(
                 "${{!{}{}}}",
@@ -10567,7 +10805,20 @@ impl Interpreter {
         let saved_traps = self.enter_function_traps();
         let emit_before = self.output_emit_count;
         self.return_depth += 1;
-        let mut result = self.execute_command(&func_def.body).await;
+        // `set -T`: DEBUG also fires as the body starts, at the definition.
+        let mut entry_debug = if self.flags.contains(BashFlags::FUNCTRACE) {
+            self.current_line = func_def.span.line();
+            self.debug_trap_now().await
+        } else {
+            None
+        };
+        let mut result = match DebugTrapOutput::exit_result(&mut entry_debug) {
+            Some(stop) => Ok(stop),
+            None => DebugTrapOutput::prepend_opt(
+                entry_debug,
+                self.execute_command(&func_def.body).await,
+            ),
+        };
         if let Ok(r) = &mut result {
             // Still in the function: the handler sees its locals.
             Box::pin(self.run_return_trap(r, emit_before)).await;
@@ -10744,7 +10995,25 @@ impl Interpreter {
                     arr.remove(&expanded_key)
                         .map(|value| expanded_key.len() + value.len())
                 } else if self.scoped.arrays.contains_key(&resolved_name) {
-                    let idx = self.resolve_indexed_array_subscript(&resolved_name, key);
+                    let raw = self.evaluate_arithmetic(key);
+                    let top = self
+                        .scoped
+                        .arrays
+                        .get(&resolved_name)
+                        .and_then(|a| a.keys().max().map(|m| *m as i128 + 1))
+                        .unwrap_or(0);
+                    if raw < 0 && top + i128::from(raw) < 0 {
+                        // bash: `unset 'a[-9]'` past the start fails.
+                        stderr
+                            .push_str(&self.diag(format!("unset: [{key}]: bad array subscript\n")));
+                        exit_code = 1;
+                        continue;
+                    }
+                    let idx = if raw < 0 {
+                        (top + i128::from(raw)) as usize
+                    } else {
+                        raw as usize
+                    };
                     self.arrays_mut()
                         .get_mut(&resolved_name)
                         .and_then(|arr| arr.remove(&idx))
@@ -11905,6 +12174,7 @@ impl Interpreter {
             bashpid: self.bashpid,
             xtrace_depth: self.xtrace_depth,
             err_trap_dormant: self.err_trap_dormant,
+            debug_trap_dormant: self.debug_trap_dormant,
             line_base: self.line_base,
         }
     }
@@ -11919,6 +12189,14 @@ impl Interpreter {
     fn enter_subshell_err_scope(&mut self) {
         if !self.flags.contains(BashFlags::ERRTRACE) {
             self.err_trap_dormant = true;
+        }
+    }
+
+    /// `( )` and `$( )` do not run the DEBUG trap without `set -T`.
+    /// Pipeline stages still do (bash runs it in each stage).
+    fn enter_subshell_debug_scope(&mut self) {
+        if !self.flags.contains(BashFlags::FUNCTRACE) {
+            self.debug_trap_dormant = true;
         }
     }
 
@@ -11939,6 +12217,7 @@ impl Interpreter {
         self.bashpid = snap.bashpid;
         self.xtrace_depth = snap.xtrace_depth;
         self.err_trap_dormant = snap.err_trap_dormant;
+        self.debug_trap_dormant = snap.debug_trap_dormant;
         self.line_base = snap.line_base;
     }
 
@@ -12171,6 +12450,7 @@ impl Interpreter {
             self.enter_subshell_pid();
             self.xtrace_depth += 1;
             self.enter_subshell_err_scope();
+            self.enter_subshell_debug_scope();
             // The outer command's queued stderr must not pass through the
             // substitution's own redirects (`$(cmd 2>&1)`).
             let held_stderr = self.hold_subst_stderr();
@@ -12619,11 +12899,12 @@ impl Interpreter {
     /// back from the end, and one before the start is an error
     /// (`a[-5]=x` on three elements: "bad array subscript").
     fn indexed_write_subscript(
-        &self,
+        &mut self,
         arr_name: &str,
         key: &str,
     ) -> std::result::Result<usize, String> {
-        let raw_idx = self.evaluate_arithmetic(key);
+        // Evaluated once, with side effects: `a[i++]=x`, `a[a[0]=1]=X`.
+        let raw_idx = self.evaluate_arithmetic_with_assign(key);
         if raw_idx >= 0 {
             return Ok(raw_idx as usize);
         }
@@ -12641,6 +12922,39 @@ impl Interpreter {
     }
 
     /// Resolve an indexed-array subscript the same way for read-before-write and write paths.
+    /// Index read by `${a[key]}` / `$((a[key]))`: `None` (after reporting
+    /// "bad array subscript", which bash does without failing the command)
+    /// when a negative index reaches before element 0.
+    fn read_indexed_array_subscript(&self, arr_name: &str, key: &str) -> Option<usize> {
+        let raw_idx = self.evaluate_arithmetic(key);
+        if raw_idx >= 0 {
+            return Some(raw_idx as usize);
+        }
+        let len = self
+            .scoped
+            .arrays
+            .get(arr_name)
+            .and_then(|a| a.keys().max().map(|m| m.saturating_add(1) as i128))
+            .unwrap_or(0);
+        let idx = len + raw_idx as i128;
+        if idx < 0 {
+            self.warn_bad_subscript(arr_name);
+            return None;
+        }
+        Some(idx as usize)
+    }
+
+    /// Queue bash's non-fatal `name: bad array subscript` report.
+    pub(super) fn warn_bad_subscript(&self, name: &str) {
+        let msg = self.diag(format!("{name}: bad array subscript\n"));
+        if let Ok(mut w) = self.subscript_warnings.lock()
+            // THREAT[TM-DOS-130]: bounded like other queued diagnostics.
+            && w.len() < 64 * 1024
+        {
+            w.push_str(&msg);
+        }
+    }
+
     fn resolve_indexed_array_subscript(&self, arr_name: &str, key: &str) -> usize {
         let raw_idx = self.evaluate_arithmetic(key);
         if raw_idx < 0 {
@@ -13461,42 +13775,72 @@ impl Interpreter {
         self.flags.contains(BashFlags::PIPEFAIL)
     }
 
-    /// Run ERR trap if registered. Appends trap output to stdout/stderr.
-    /// Run the DEBUG trap handler (fires before each simple command).
-    /// Returns (stdout, stderr) from the trap handler.
-    async fn run_debug_trap(&mut self) -> (crate::StreamData, crate::StreamData) {
-        // THREAT[TM-DOS-035]: Suppress DEBUG trap inside trap handlers to prevent
-        // recursive amplification (each trapped command firing more DEBUG traps).
-        if self.in_trap {
-            return (crate::StreamData::new(), crate::StreamData::new());
+    /// The DEBUG handler to run before the next command, if any: not
+    /// inside another trap handler (TM-DOS-035), nor in a `( )` / `$( )`
+    /// subshell or function body that does not inherit it.
+    fn has_debug_trap(&self) -> bool {
+        !self.in_trap && !self.debug_trap_dormant && self.scoped.traps.contains_key("DEBUG")
+    }
+
+    /// Run the DEBUG handler now, if one applies (see `run_debug_trap`).
+    fn debug_trap_now<'a>(
+        &'a mut self,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Option<Box<DebugTrapOutput>>> + Send + 'a>,
+    > {
+        Box::pin(async move {
+            let cmd = self.debug_trap_pending()?;
+            Some(Box::new(self.run_debug_trap(cmd).await))
+        })
+    }
+
+    fn debug_trap_pending(&self) -> Option<String> {
+        if self.in_trap || self.debug_trap_dormant {
+            return None;
         }
-        if let Some(trap_cmd) = self.scoped.traps.get("DEBUG").cloned() {
-            // THREAT[TM-DOS-030]: Propagate interpreter parser limits
-            if let Ok(trap_script) = Parser::with_limits(
-                &trap_cmd,
-                self.limits.max_ast_depth,
-                self.limits.max_parser_operations,
-            )
-            .with_execution_budget(self.execution_budget.clone())
-            .parse()
-            {
-                // The handler runs with `$?` of the trapping command and the
-                // shell keeps that status afterwards (bash restores it).
-                let saved_exit = self.last_exit_code;
-                self.in_trap = true;
-                let emit_before = self.output_emit_count;
-                self.xtrace_depth += 1;
-                let result = self.execute_command_sequence(&trap_script.commands).await;
-                self.xtrace_depth -= 1;
-                self.in_trap = false;
-                self.last_exit_code = saved_exit;
-                if let Ok(trap_result) = result {
-                    self.maybe_emit_output(&trap_result.stdout, &trap_result.stderr, emit_before);
-                    return (trap_result.stdout, trap_result.stderr);
-                }
+        self.scoped.traps.get("DEBUG").cloned()
+    }
+
+    /// Run the DEBUG handler (fires before each simple command, `(( ))`,
+    /// `[[ ]]`, `case` and each `for` round). It sees `$LINENO` of the
+    /// command about to run; `$?` survives it; `return` in a function returns from it; an
+    /// `exit` (or a failure under `set -e`) ends the shell. Boxed so callers'
+    /// frames hold only a pointer (TM-DOS-089).
+    fn run_debug_trap<'a>(
+        &'a mut self,
+        trap_cmd: String,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = DebugTrapOutput> + Send + 'a>> {
+        Box::pin(async move {
+            let mut out = DebugTrapOutput::default();
+            let saved_exit = self.last_exit_code;
+            let count_before = self.output_emit_count;
+            let flow = self
+                .run_trap_command(&trap_cmd, &mut out.stdout, &mut out.stderr)
+                .await;
+            if self.output_emit_count != count_before {
+                // Already streamed: the command's own output must still
+                // stream after it, so the enclosing command must not see
+                // this as its output having been emitted.
+                self.output_emit_count = count_before;
+                out.stdout = crate::StreamData::new();
+                out.stderr = crate::StreamData::new();
             }
-        }
-        (crate::StreamData::new(), crate::StreamData::new())
+            self.last_exit_code = saved_exit;
+            out.exit = match flow {
+                Some((ControlFlow::Exit(code), _)) => Some(code),
+                Some((ControlFlow::Return(code), _)) => {
+                    out.returned = true;
+                    Some(code)
+                }
+                Some((ControlFlow::None, code))
+                    if code != 0 && self.flags.contains(BashFlags::ERREXIT) =>
+                {
+                    Some(code)
+                }
+                _ => None,
+            };
+            out
+        })
     }
 
     /// Run a trap handler's command, merging its output into the result the
@@ -13542,7 +13886,7 @@ impl Interpreter {
     /// Function entry: like bash, the body does not inherit the ERR trap
     /// without `set -E`, nor the RETURN trap without `set -T`. Returns the
     /// handlers set aside, for `leave_function_traps`.
-    fn enter_function_traps(&mut self) -> (Option<String>, Option<String>) {
+    fn enter_function_traps(&mut self) -> (Option<String>, Option<String>, Option<String>) {
         let take = |this: &mut Self, key: &str, inherit: BashFlags| {
             if this.flags.contains(inherit) || !this.scoped.traps.contains_key(key) {
                 None
@@ -13552,13 +13896,14 @@ impl Interpreter {
         };
         let err = take(self, "ERR", BashFlags::ERRTRACE);
         let ret = take(self, "RETURN", BashFlags::FUNCTRACE);
-        (err, ret)
+        let dbg = take(self, "DEBUG", BashFlags::FUNCTRACE);
+        (err, ret, dbg)
     }
 
     /// Function return: a handler set aside on entry comes back unless the
     /// body set its own, which then stays (bash `trap_if_untrapped`).
-    fn leave_function_traps(&mut self, saved: (Option<String>, Option<String>)) {
-        for (key, handler) in [("ERR", saved.0), ("RETURN", saved.1)] {
+    fn leave_function_traps(&mut self, saved: (Option<String>, Option<String>, Option<String>)) {
+        for (key, handler) in [("ERR", saved.0), ("RETURN", saved.1), ("DEBUG", saved.2)] {
             if let Some(handler) = handler
                 && !self.scoped.traps.contains_key(key)
             {
