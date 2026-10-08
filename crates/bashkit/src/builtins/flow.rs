@@ -94,10 +94,11 @@ fn loop_control(name: &str, ctx: &Context<'_>, make: fn(u32) -> ControlFlow) -> 
                 return result;
             }
             Err(_) => {
-                return ExecResult::err(
-                    format!("bash: {name}: {arg}: numeric argument required\n"),
-                    128,
-                );
+                // A special-builtin usage error ends a non-interactive shell.
+                let mut result = ExecResult::with_control_flow(ControlFlow::Exit(128));
+                result.exit_code = 128;
+                result.stderr = format!("bash: {name}: {arg}: numeric argument required\n").into();
+                return result;
             }
         },
     };
@@ -318,13 +319,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn break_non_numeric_defaults_one() {
+    async fn break_non_numeric_exits_the_shell() {
         let (fs, mut cwd, mut variables) = setup().await;
         let env = HashMap::new();
         let args = vec!["abc".to_string()];
         let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
         let result = Break.execute(ctx).await.unwrap();
-        assert!(matches!(result.control_flow, ControlFlow::Break(1)));
+        assert!(matches!(result.control_flow, ControlFlow::Exit(128)));
+        assert!(result.stderr.contains("numeric argument required"));
     }
 
     // ==================== continue ====================
