@@ -234,6 +234,36 @@ Internal builtins that need interpreter state receive it via `Context.shell`:
 - `unset`, functions, arrays, namerefs, call stack locals
 - `let`, arithmetic evaluation with assignment
 - `getopts`, complex variable + call stack interaction
+- bare `set` (no arguments), the same sorted, quoted listing as `declare`,
+  which needs arrays; `set` with arguments stays a registered builtin
+
+### Control flow and shell-state builtins
+
+- `break`/`continue` act on the loops of the current function only: the
+  interpreter keeps `loop_depth` (reset to 0 on a function call, `bash -c`
+  and pipeline children; `source`/`eval` keep it), passed through `ShellRef`.
+  Outside a loop they warn and return 0; the count is clamped to the depth.
+- `return` is valid only inside a function or sourced file (`return_depth`);
+  elsewhere it fails with status 2 and the script goes on. Without an
+  argument it returns `$?`. `return` ends a sourced file with its status, and
+  `break`/`continue`/`return`/`exit` in a `source`/`eval` body propagate to
+  the caller's loop, function or shell.
+- Trap handlers (`ERR`, `DEBUG`) run with the trapping command's `$?` and
+  leave it unchanged. `trap` keys handlers canonically (`EXIT`, `INT`,
+  `DEBUG`, `ERR`, `RETURN`), accepts `0`/`2`/`int`/`SIGINT`, rejects unknown
+  specs (status 1) and lists in bash order (EXIT, signals by number, DEBUG,
+  ERR, RETURN) with `sh_single_quote` quoting, as `alias` does.
+- `hash` keeps no table (every lookup walks the virtual PATH): a bare `hash`
+  reports `hash table empty`, `hash NAME` only checks that NAME resolves.
+- `builtin NAME`, like `type`/`command -v`, treats a registered command that
+  real bash runs from PATH (`cat`) as a file when the root filesystem
+  provides it, so it is "not a shell builtin".
+- `set -k` hoists unquoted `name=value` arguments into the command's
+  temporary environment at execution time.
+- `[[ a -eq b ]]` evaluates each operand as an arithmetic expression without
+  a second `$` expansion; an invalid operand prints the arithmetic error and
+  makes the test false. An invalid `=~` regex (including an unknown
+  `[:class:]`) makes the deciding test return 2.
 
 ### Declaration builtins and variable scope
 
