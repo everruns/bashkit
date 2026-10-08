@@ -45,6 +45,10 @@ const gapLatest = data.gapTelemetry?.latest ?? null;
 const gapRuns = (data.gapTelemetry?.runs ?? []).toSorted(
   (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
 );
+const oilsLatest = data.oilsSpec?.latest ?? null;
+const oilsRuns = (data.oilsSpec?.runs ?? []).toSorted(
+  (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
+);
 const gapKindLabel: Record<string, string> = {
   missing_command: "missing command",
   unknown_option: "unknown option",
@@ -120,7 +124,7 @@ const evalResultsUrl =
   "https://github.com/everruns/bashkit/tree/main/crates/bashkit-eval/results";
 
 const pageDescription =
-  "Explore Bashkit benchmark, Python startup, gap telemetry, Criterion bench, and LLM eval results with latest runtime snapshots, category scores, raw reports, and historical artifact links over time.";
+  "Explore Bashkit benchmark, Python startup, gap telemetry, Oils spec pass rate, Criterion bench, and LLM eval results with latest runtime snapshots, category scores, raw reports, and historical artifact links over time.";
 ---
 
 <BaseLayout title="Bashkit Benches" description={pageDescription}>
@@ -295,6 +299,74 @@ const pageDescription =
                         </td>
                         <td class="score">{compactNumber(run.gapCallsNow)}</td>
                         <td>{compactNumber(run.gapCallsRecorded)}</td>
+                      </tr>
+                    ))
+                  }
+                </tbody>
+              </table>
+            </article>
+          </section>
+        )
+      }
+
+      {
+        oilsLatest && (
+          <section class="snapshot-columns">
+            <article class="snapshot-panel">
+              <div class="panel-head">
+                <span class="bench-eyebrow">Oils spec suite</span>
+                <h2>{`${oilsLatest.passRate}% of what real bash passes`}</h2>
+                <a
+                  class="section-link"
+                  href={repoUrl(oilsLatest.reportSource ?? oilsLatest.source)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Open report ({oilsLatest.date})
+                </a>
+              </div>
+              <table>
+                <thead>
+                  <tr><th>Spec file (most misses)</th><th>bashkit</th><th>bash</th></tr>
+                </thead>
+                <tbody>
+                  {
+                    oilsLatest.topFiles.map((file) => (
+                      <tr>
+                        <td>
+                          <strong><code>{file.name}</code></strong>
+                          <small>{`${file.passRate}% of ${file.cases} cases`}</small>
+                        </td>
+                        <td class="score">{file.bashkitPass}</td>
+                        <td>{file.bashPass}</td>
+                      </tr>
+                    ))
+                  }
+                </tbody>
+              </table>
+            </article>
+
+            <article class="snapshot-panel">
+              <div class="panel-head">
+                <span class="bench-eyebrow">Oils spec history</span>
+                <h2>Cases passed vs real bash</h2>
+              </div>
+              <table>
+                <thead>
+                  <tr><th>Run</th><th>Rate</th><th>bashkit / bash</th></tr>
+                </thead>
+                <tbody>
+                  {
+                    oilsRuns.map((run) => (
+                      <tr>
+                        <td>
+                          <a href={repoUrl(run.reportSource ?? run.source)} target="_blank" rel="noopener noreferrer">
+                            {run.date}
+                          </a>
+                          <small>{`Oils ${run.oilsRev}, bashkit ${run.bashkitCommit}`}</small>
+                        </td>
+                        <td class="score">{`${run.passRate}%`}</td>
+                        <td>{`${compactNumber(run.bashkitPassOfBash ?? run.bashkitPass)} / ${compactNumber(run.bashPass ?? run.cases)}`}</td>
                       </tr>
                     ))
                   }

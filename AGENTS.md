@@ -42,6 +42,7 @@ Fix root cause. Unsure: read more code; if stuck, ask w/ short options. Unrecogn
 | runtimes/python-builtin | Embedded Python via Monty, security, resource limits |
 | runtimes/cpython-wasm | Real CPython 3.14 on WASI (Wizer snapshot, Pulley AOT), WASI-on-VFS host, limits |
 | operations/eval | LLM eval study on the mira framework, dataset format, scoring |
+| operations/oils-spec | Upstream Oils spec suite pass rate vs real bash (`just oils-spec`) |
 | operations/maintenance | Pre-release maintenance requirements |
 | runtimes/python-package | Python package, PyPI wheels, platform matrix |
 | integrations/scripted-tool-orchestration | Compose ToolDef+callback pairs into OrchestratorTool via bash scripts |

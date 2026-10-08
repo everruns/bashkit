@@ -384,6 +384,14 @@ process substitution, parameter expansion errors.
   representing a documented gap stays a gap rather than being deleted, so the
   corpus keeps measuring it (see [limitations](limitations.md)).
 
+## Oils Spec Pass Rate
+
+`scripts/oils-spec/run.py` (`just oils-spec`) runs the whole upstream Oils
+spec suite (bash column, ~2,760 cases) through bashkit and real bash and
+publishes one headline number, bashkit passes over real-bash passes. It is a
+measurement, not a gate: no floor, no CI job. See
+[Oils Spec Pass Rate](oils-spec.md).
+
 ## SQLite CLI Differential Tests
 
 CSV comparisons explicitly set the host CLI row separator to LF. SQLite

@@ -13,6 +13,7 @@ const benchDir = path.join(repoRoot, "crates/bashkit-bench/results");
 const criterionDir = path.join(repoRoot, "crates/bashkit/benches/results");
 const evalDir = path.join(repoRoot, "crates/bashkit-eval/results");
 const gapDir = path.join(evalDir, "gaps");
+const oilsSpecDir = path.join(repoRoot, "scripts/oils-spec/results");
 
 const benchmarkCategoryDescriptions = {
   arithmetic: "Integer math, substitutions, and expression-heavy shell snippets.",
@@ -378,6 +379,53 @@ async function buildGapTelemetry() {
   };
 }
 
+// Oils spec pass rate: one point per `scripts/oils-spec/run.py --save` report
+// (upstream Oils spec suite, bash column). Headline = bashkit passes among the
+// cases real bash passes; the latest report's worst spec files are listed.
+async function buildOilsSpec() {
+  let files;
+  try {
+    files = (await listFiles(oilsSpecDir, ".json")).filter((file) => file.startsWith("oils-spec-"));
+  } catch {
+    return { runs: [], latest: null };
+  }
+  const runs = [];
+  for (const file of files) {
+    const report = await readJson(path.join(oilsSpecDir, file));
+    const source = `scripts/oils-spec/results/${file}`;
+    const total = report.total;
+    runs.push({
+      id: file.replace(/\.json$/, ""),
+      date: dateLabel(report.timestamp),
+      timestamp: report.timestamp,
+      source,
+      reportSource: await existingMarkdownReport(source),
+      oilsRev: report.oils_rev.slice(0, 12),
+      bashkitCommit: report.bashkit_commit,
+      bashVersion: report.bash_version,
+      cases: total.cases,
+      bashPass: total.bash_pass ?? null,
+      bashkitPass: total.bashkit_pass,
+      bashkitPassOfBash: total.bashkit_pass_of_bash ?? null,
+      passRate: total.pass_rate,
+      topFiles: Object.entries(report.files)
+        .slice(0, 12)
+        .map(([name, entry]) => ({
+          name,
+          cases: entry.summary.cases,
+          bashPass: entry.summary.bash_pass ?? entry.summary.cases,
+          bashkitPass: entry.summary.bashkit_pass_of_bash ?? entry.summary.bashkit_pass,
+          passRate: entry.summary.pass_rate,
+        })),
+    });
+  }
+  const sorted = runs.toSorted((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+  return {
+    runs: sorted.map(({ topFiles, ...point }) => point),
+    latest: sorted.at(-1) ?? null,
+  };
+}
+
 async function buildEvalRuns() {
   const files = await listFiles(evalDir, ".json");
   const runs = [];
@@ -508,6 +556,7 @@ const criterionRuns = await buildCriterionRuns();
 const evalRuns = await buildEvalRuns();
 const pythonStartup = await buildPythonStartup();
 const gapTelemetry = await buildGapTelemetry();
+const oilsSpec = await buildOilsSpec();
 const newestSourceTimestamp = latest([...benchRuns, ...criterionRuns, ...evalRuns])?.timestamp ?? null;
 
 const payload = {
@@ -517,6 +566,7 @@ const payload = {
     criterion: "crates/bashkit/benches/results/*.md",
     evals: "crates/bashkit-eval/results/*.json",
     gaps: "crates/bashkit-eval/results/gaps/gaps-*.json",
+    oilsSpec: "scripts/oils-spec/results/oils-spec-*.json",
   },
   summary: {
     benchRuns: benchRuns.length,
@@ -536,6 +586,7 @@ const payload = {
   evalRuns,
   pythonStartup,
   gapTelemetry,
+  oilsSpec,
   modelTrends: buildModelTrends(evalRuns),
   milestones: buildMilestones({ benchRuns, criterionRuns, evalRuns }),
 };
