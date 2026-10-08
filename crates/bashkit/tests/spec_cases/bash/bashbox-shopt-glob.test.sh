@@ -35,7 +35,6 @@ c.txt
 
 ### bashbox_shopt_glob_globstar_makes_recurse
 # globstar makes ** recurse
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 mkdir -p d/e; touch a.txt b.txt .hid C.TXT d/x.txt d/e/y.txt
 shopt -s globstar; echo **; echo **/*.txt; echo d/**; echo d/**/; shopt -u globstar; echo **/*.txt
 ### expect
@@ -48,7 +47,6 @@ d/x.txt
 
 ### bashbox_shopt_glob_a_literal_last_part_must_exist
 # a literal last part must exist
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 mkdir -p d/e; touch a.txt b.txt .hid C.TXT d/x.txt d/e/y.txt
 echo */x.txt */nope.txt; echo d/*/; echo "*".txt \*.txt
 ### expect

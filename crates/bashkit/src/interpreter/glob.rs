@@ -905,18 +905,17 @@ impl Interpreter {
     /// `/skills/*/SKILL.md` by globbing each component in turn against the VFS.
     /// Non-final components only match directories (a plain file can't be
     /// descended into), which is what makes read-only tree mounts globbable.
+    /// A trailing `/` keeps only directories and stays on every match
+    /// (`d/*/` gives `d/e/`). Under `shopt -s globstar` a `**` component
+    /// matches zero or more directories, and files too when it is last.
     pub(crate) async fn expand_glob(&self, pattern: &str) -> Result<Vec<String>> {
-        // Check for ** (recursive glob) — only when globstar is enabled
-        if pattern.contains("**") && self.is_globstar() {
-            return self.expand_glob_recursive(pattern).await;
-        }
-
         let dotglob = self.is_dotglob();
+        let globstar = self.is_globstar();
         let opts = self.glob_opts();
         let is_absolute = pattern.starts_with('/');
+        let trailing_slash = pattern.len() > 1 && pattern.ends_with('/');
 
-        // Empty components collapse `//` and drop a trailing `/`, matching the
-        // previous `Path::file_name()` behaviour for patterns like `/dir/*/`.
+        // Empty components collapse `//`; a trailing `/` is tracked above.
         let components: Vec<&str> = pattern.split('/').filter(|s| !s.is_empty()).collect();
         if components.is_empty() {
             return Ok(Vec::new());
@@ -942,11 +941,43 @@ impl Interpreter {
             String::new(),
         )];
 
+        let mut literal_prefix = true;
         for (idx, component) in components.iter().enumerate() {
             let is_last = idx + 1 == components.len();
+            // Only directories can carry the rest of the pattern or a `/`.
+            let dirs_only = !is_last || trailing_slash;
             let mut next: Vec<(PathBuf, String)> = Vec::new();
 
-            if self.contains_glob_chars(component) || self.contains_extglob(component) {
+            if globstar && *component == "**" {
+                for (dir, out) in &candidates {
+                    // Zero directories: the candidate itself. A bare `**`
+                    // never yields the empty cwd path; a literal `d/**`
+                    // yields `d/`, a matched `*/**` yields plain `d`.
+                    if !is_last {
+                        next.push((dir.clone(), out.clone()));
+                    } else if !out.is_empty() {
+                        let own = if literal_prefix {
+                            format!("{out}/")
+                        } else {
+                            out.clone()
+                        };
+                        next.push((dir.clone(), own));
+                    }
+                    self.globstar_walk(
+                        dir,
+                        out,
+                        is_absolute,
+                        dotglob,
+                        dirs_only,
+                        max_candidates,
+                        &mut next,
+                    )
+                    .await;
+                    if next.len() > max_candidates {
+                        break;
+                    }
+                }
+            } else if self.contains_glob_chars(component) || self.contains_extglob(component) {
                 // Dotfiles are hidden per component unless dotglob is set or this
                 // component explicitly starts with '.'.
                 let component_starts_with_dot = component.starts_with('.');
@@ -962,8 +993,7 @@ impl Interpreter {
                         if entry.name.starts_with('.') && !dotglob && !component_starts_with_dot {
                             continue;
                         }
-                        // Only a directory can carry the rest of the pattern.
-                        if !is_last && !entry.metadata.file_type.is_dir() {
+                        if dirs_only && !entry.metadata.file_type.is_dir() {
                             continue;
                         }
                         if self.glob_match_impl(&entry.name, component, opts, 0) {
@@ -1004,115 +1034,67 @@ impl Interpreter {
                 return Ok(Vec::new());
             }
             candidates = next;
+            literal_prefix &=
+                !(self.contains_glob_chars(component) || self.contains_extglob(component));
         }
 
         // Sort matches alphabetically (bash behavior)
-        let mut matches: Vec<String> = candidates.into_iter().map(|(_, out)| out).collect();
+        let mut matches: Vec<String> = candidates
+            .into_iter()
+            .map(|(_, mut out)| {
+                if trailing_slash && !out.ends_with('/') {
+                    out.push('/');
+                }
+                out
+            })
+            .collect();
         matches.sort();
+        matches.dedup();
         Ok(matches)
     }
 
-    /// Expand a glob pattern containing ** (recursive directory matching).
-    async fn expand_glob_recursive(&self, pattern: &str) -> Result<Vec<String>> {
-        let is_absolute = pattern.starts_with('/');
-        let components: Vec<&str> = pattern.split('/').filter(|s| !s.is_empty()).collect();
-        let dotglob = self.is_dotglob();
-        let opts = self.glob_opts();
-
-        // Find the ** component
-        let star_star_idx = match components.iter().position(|&c| c == "**") {
-            Some(i) => i,
-            None => return Ok(Vec::new()),
-        };
-
-        // Build the base directory from components before **
-        let base_dir = if is_absolute {
-            let mut p = PathBuf::from("/");
-            for c in &components[..star_star_idx] {
-                p.push(c);
-            }
-            p
-        } else {
-            let mut p = self.cwd.clone();
-            for c in &components[..star_star_idx] {
-                p.push(c);
-            }
-            p
-        };
-
-        // Pattern components after **
-        let after_pattern: Vec<&str> = components[star_star_idx + 1..].to_vec();
-
-        // Collect all directories recursively (including the base)
-        let mut all_dirs = vec![base_dir.clone()];
-        // THREAT[TM-DOS-049]: Cap recursion depth using filesystem path depth limit
+    /// Every directory below `dir` (and every file too unless `dirs_only`),
+    /// for a globstar `**` component. Hidden entries need `dotglob`.
+    /// THREAT[TM-DOS-049]/[TM-DOS-095]: iterative, depth-capped by the
+    /// filesystem path-depth limit, and stops at `max_candidates` results.
+    #[allow(clippy::too_many_arguments)]
+    async fn globstar_walk(
+        &self,
+        dir: &Path,
+        out: &str,
+        is_absolute: bool,
+        dotglob: bool,
+        dirs_only: bool,
+        max_candidates: usize,
+        next: &mut Vec<(PathBuf, String)>,
+    ) {
         let max_depth = self.fs.limits().max_path_depth;
-        self.collect_dirs_recursive(&base_dir, &mut all_dirs, max_depth, dotglob)
-            .await;
-
-        let mut matches = Vec::new();
-
-        for dir in &all_dirs {
-            if after_pattern.is_empty() {
-                // ** alone matches all files recursively
-                if let Ok(entries) = self.fs.read_dir(dir).await {
-                    for entry in entries {
-                        if entry.name.starts_with('.') && !dotglob {
-                            continue;
-                        }
-                        if !entry.metadata.file_type.is_dir() {
-                            matches.push(vfs_join(dir, &entry.name).to_string_lossy().to_string());
-                        }
-                    }
+        let mut stack: Vec<(PathBuf, String, usize)> =
+            vec![(dir.to_path_buf(), out.to_string(), 0)];
+        while let Some((dir, out, depth)) = stack.pop() {
+            if depth >= max_depth || next.len() > max_candidates {
+                continue;
+            }
+            let Ok(mut entries) = self.fs.read_dir(&dir).await else {
+                continue;
+            };
+            entries.sort_by(|a, b| b.name.cmp(&a.name));
+            for entry in entries {
+                if entry.name.starts_with('.') && !dotglob {
+                    continue;
                 }
-            } else if after_pattern.len() == 1 {
-                // Single pattern after **: match files in this directory
-                let pat = after_pattern[0];
-                let pattern_starts_with_dot = pat.starts_with('.');
-                if let Ok(entries) = self.fs.read_dir(dir).await {
-                    for entry in entries {
-                        if entry.name.starts_with('.') && !dotglob && !pattern_starts_with_dot {
-                            continue;
-                        }
-                        if self.glob_match_impl(&entry.name, pat, opts, 0) {
-                            matches.push(vfs_join(dir, &entry.name).to_string_lossy().to_string());
-                        }
-                    }
+                let is_dir = entry.metadata.file_type.is_dir();
+                if !is_dir && dirs_only {
+                    continue;
+                }
+                let path = vfs_join(&dir, &entry.name);
+                let output = Self::glob_join_output(&out, &entry.name, is_absolute);
+                next.push((path.clone(), output.clone()));
+                if is_dir {
+                    stack.push((path, output, depth + 1));
                 }
             }
         }
-
-        matches.sort();
-        Ok(matches)
-    }
-
-    /// Recursively collect all subdirectories starting from dir.
-    /// THREAT[TM-DOS-049]: `max_depth` caps recursion to prevent stack exhaustion.
-    pub(crate) fn collect_dirs_recursive<'a>(
-        &'a self,
-        dir: &'a Path,
-        result: &'a mut Vec<PathBuf>,
-        max_depth: usize,
-        dotglob: bool,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
-        Box::pin(async move {
-            if max_depth == 0 {
-                return;
-            }
-            if let Ok(entries) = self.fs.read_dir(dir).await {
-                for entry in entries {
-                    if entry.metadata.file_type.is_dir() {
-                        if entry.name.starts_with('.') && !dotglob {
-                            continue;
-                        }
-                        let subdir = vfs_join(dir, &entry.name);
-                        result.push(subdir.clone());
-                        self.collect_dirs_recursive(&subdir, result, max_depth - 1, dotglob)
-                            .await;
-                    }
-                }
-            }
-        })
     }
 }
 
