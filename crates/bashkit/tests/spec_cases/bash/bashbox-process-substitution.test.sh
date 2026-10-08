@@ -95,7 +95,6 @@ b
 
 ### bashbox_process_substitution_nested_substitutions
 # nested substitutions
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 cat <(cat <(echo inner)); cat <(echo $(echo cmd))
 ### expect
 inner
@@ -139,7 +138,6 @@ y
 
 ### bashbox_process_substitution_a_function_listing_keeps_it
 # a function listing keeps it
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 f(){ cat <(echo a) > >(cat); }; declare -f f
 ### expect
 f () 

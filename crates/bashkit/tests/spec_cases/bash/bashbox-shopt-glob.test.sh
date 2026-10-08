@@ -4,7 +4,6 @@
 
 ### bashbox_shopt_glob_nullglob_drops_a_pattern_that_matches_nothing
 # nullglob drops a pattern that matches nothing
-### skip: TODO bashbox corpus gap, bashkit output differs from real bash
 mkdir -p d/e; touch a.txt b.txt .hid C.TXT d/x.txt d/e/y.txt
 shopt -s nullglob; echo a *.nope b; x=(*.nope); echo ${#x[@]}; echo "*.nope"
 ### expect

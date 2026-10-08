@@ -426,6 +426,10 @@ impl Interpreter {
                         let start = (bracket_pos + 1).min(index_end);
                         let index_str = &name[start..index_end];
                         self.expand_array_access_part(arr_name, index_str)
+                    } else if name == "@" || name == "*" {
+                        // `${#@}` / `${#*}` count the positional parameters.
+                        result.push_str(&self.expand_variable("#"));
+                        continue;
                     } else {
                         self.expand_variable(name)
                     };
@@ -517,7 +521,9 @@ impl Interpreter {
                     offset,
                     length,
                 } if name == "@" || name == "*" => {
-                    let items = self.positional_slice(offset, length.as_deref());
+                    let items = self
+                        .positional_slice(offset, length.as_deref())
+                        .map_err(crate::error::Error::LineAbort)?;
                     let sep = if name == "*" {
                         self.get_ifs_separator()
                     } else {
@@ -531,19 +537,10 @@ impl Interpreter {
                     length,
                 } => {
                     let value = self.expand_variable(name);
-                    let char_count = value.chars().count();
-                    let offset_val: isize = self.evaluate_arithmetic(offset) as isize;
-                    let start = if offset_val < 0 {
-                        (char_count as isize + offset_val).max(0) as usize
-                    } else {
-                        (offset_val as usize).min(char_count)
-                    };
-                    let substr: String = if let Some(len_expr) = length {
-                        let len_val = self.evaluate_arithmetic(len_expr) as usize;
-                        value.chars().skip(start).take(len_val).collect()
-                    } else {
-                        value.chars().skip(start).collect()
-                    };
+                    let (start, end) = self
+                        .slice_range(value.chars().count(), offset, length.as_deref(), true)
+                        .map_err(crate::error::Error::LineAbort)?;
+                    let substr: String = value.chars().skip(start).take(end - start).collect();
                     Self::append_expansion_for_word(&mut result, word, &substr);
                 }
                 WordPart::ArraySlice {
@@ -553,22 +550,14 @@ impl Interpreter {
                 } => {
                     if let Some(items) = self.array_view(name) {
                         let values: Vec<String> = items.into_iter().map(|(_, v)| v).collect();
-
-                        let offset_val: isize = self.evaluate_arithmetic(offset) as isize;
-                        let start = if offset_val < 0 {
-                            (values.len() as isize + offset_val).max(0) as usize
-                        } else {
-                            (offset_val as usize).min(values.len())
-                        };
-
-                        let sliced = if let Some(len_expr) = length {
-                            let len_val = self.evaluate_arithmetic(len_expr) as usize;
-                            let end = start.saturating_add(len_val).min(values.len());
-                            &values[start..end]
-                        } else {
-                            &values[start..]
-                        };
-                        Self::append_expansion_for_word(&mut result, word, &sliced.join(" "));
+                        let (start, end) = self
+                            .slice_range(values.len(), offset, length.as_deref(), false)
+                            .map_err(crate::error::Error::LineAbort)?;
+                        Self::append_expansion_for_word(
+                            &mut result,
+                            word,
+                            &values[start..end].join(" "),
+                        );
                     }
                 }
                 WordPart::IndirectExpansion {
@@ -1516,7 +1505,8 @@ impl Interpreter {
                 offset,
                 length,
             } if name == "@" || name == "*" => {
-                let items = self.positional_slice(offset, length.as_deref());
+                // A range error is raised by the plain expansion path.
+                let items = self.positional_slice(offset, length.as_deref()).ok()?;
                 (name, items)
             }
             _ => return None,
@@ -1526,7 +1516,11 @@ impl Interpreter {
 
     /// `${@:offset:length}`: positional parameters counted from `$0`
     /// (offset 0 includes it); a negative offset counts back from the last.
-    fn positional_slice(&mut self, offset: &str, length: Option<&str>) -> Vec<String> {
+    fn positional_slice(
+        &mut self,
+        offset: &str,
+        length: Option<&str>,
+    ) -> std::result::Result<Vec<String>, String> {
         let positional = self
             .call_stack
             .last()
@@ -1535,22 +1529,57 @@ impl Interpreter {
         let mut all = Vec::with_capacity(positional.len() + 1);
         all.push(self.expand_variable("0"));
         all.extend(positional);
+        let (start, end) = self.slice_range(all.len(), offset, length, false)?;
+        all.truncate(end);
+        Ok(all.split_off(start))
+    }
+
+    /// `[start, end)` of `${v:offset:length}` over `count` items. A negative
+    /// offset counts back from the end; one reaching before the start, or an
+    /// offset past the end, selects nothing. A negative length counts back
+    /// from the end for strings (`neg_len_from_end`); for arrays and `$@`, or
+    /// when it ends before `start`, it is bash's `substring expression < 0`.
+    fn slice_range(
+        &mut self,
+        count: usize,
+        offset: &str,
+        length: Option<&str>,
+        neg_len_from_end: bool,
+    ) -> std::result::Result<(usize, usize), String> {
         let off = self.evaluate_arithmetic(offset);
         let start = if off < 0 {
             let back = usize::try_from(off.unsigned_abs()).unwrap_or(usize::MAX);
-            match all.len().checked_sub(back) {
-                Some(s) => s,
-                None => return Vec::new(),
-            }
+            count.checked_sub(back)
         } else {
-            usize::try_from(off).unwrap_or(usize::MAX).min(all.len())
+            usize::try_from(off).ok().filter(|&o| o <= count)
         };
-        let mut items: Vec<String> = all.into_iter().skip(start).collect();
-        if let Some(len) = length {
-            let n = self.evaluate_arithmetic(len);
-            items.truncate(usize::try_from(n.max(0)).unwrap_or(usize::MAX));
+        let len = length.map(|l| (l, self.evaluate_arithmetic(l)));
+        if let Some((expr, n)) = len
+            && n < 0
+        {
+            let end = usize::try_from(n.unsigned_abs())
+                .ok()
+                .and_then(|back| count.checked_sub(back));
+            match (neg_len_from_end, start, end) {
+                (true, Some(s), Some(e)) if e >= s => return Ok((s, e)),
+                (true, None, _) => return Ok((0, 0)),
+                _ => {
+                    return Err(
+                        self.arith_diag("", &format!("{}: substring expression < 0", expr.trim()))
+                    );
+                }
+            }
         }
-        items
+        let Some(start) = start else {
+            return Ok((0, 0));
+        };
+        let end = match len {
+            Some((_, n)) => start
+                .saturating_add(usize::try_from(n).unwrap_or(usize::MAX))
+                .min(count),
+            None => count,
+        };
+        Ok((start, end))
     }
 
     fn is_elementwise_op(operator: &ParameterOp) -> bool {
