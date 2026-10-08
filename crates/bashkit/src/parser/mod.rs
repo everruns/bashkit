@@ -4620,7 +4620,7 @@ pub(crate) fn arith_exec_text(raw: &str) -> String {
 /// for its own parser (only `\<newline>` is removed); backticks become
 /// `$(...)`.
 fn heredoc_body_escapes(content: &str) -> String {
-    if !content.contains(['\\', '`']) {
+    if !content.contains(['\\', '`']) && !content.contains("$'") {
         return content.to_string();
     }
     let mut out = String::with_capacity(content.len());
@@ -4637,6 +4637,11 @@ fn heredoc_body_escapes(content: &str) -> String {
                 }
                 _ => out.push('\\'),
             },
+            // `$'...'` is not ANSI-C quoting in a here-document.
+            '$' if chars.peek() == Some(&'\'') => {
+                out.push('\x00');
+                out.push('$');
+            }
             '$' if matches!(chars.peek(), Some('(' | '{')) => {
                 out.push('$');
                 let open = chars.next().unwrap_or_default();

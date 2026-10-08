@@ -625,14 +625,30 @@ impl<'a> Lexer<'a> {
                     }
                     // Track quoted expansions for IFS-split suppression
                     if c == '$' && quote_char == '"' {
-                        word.push(c);
                         self.advance();
+                        if self.take_dquote_dollar(&mut word) {
+                            has_quoted_expansion = true;
+                            continue;
+                        }
                         if self.peek_char().is_some_and(|nc| {
                             nc.is_ascii_alphanumeric()
                                 || nc == '_'
                                 || matches!(nc, '{' | '(' | '?' | '#' | '@' | '*' | '!' | '$' | '-')
                         }) {
                             has_quoted_expansion = true;
+                        }
+                        // Read `$(...)`/`${...}` whole so quotes inside them
+                        // keep their own meaning.
+                        if self.peek_char() == Some('(') {
+                            word.push('(');
+                            self.advance();
+                            self.read_command_subst_into(&mut word);
+                        } else if self.peek_char() == Some('{') {
+                            word.push('{');
+                            self.advance();
+                            if let Err(msg) = self.read_param_expansion_into(&mut word) {
+                                return Some(Token::Error(msg));
+                            }
                         }
                         continue;
                     }
@@ -800,8 +816,11 @@ impl<'a> Lexer<'a> {
                     // Handle $(...) inside double-quoted word segments
                     // to preserve single-quoted strings within command substitutions
                     if c == '$' && quote_char == '"' {
-                        word.push(c);
                         self.advance();
+                        if self.take_dquote_dollar(&mut word) {
+                            has_quoted_expansion = true;
+                            continue;
+                        }
                         // Mark that this word contains a quoted expansion so IFS
                         // splitting is suppressed (e.g. +"$fmt" stays one field).
                         if self.peek_char().is_some_and(|nc| {
@@ -816,6 +835,15 @@ impl<'a> Lexer<'a> {
                             self.advance();
                             self.read_command_subst_into(&mut word);
                             continue;
+                        }
+                        if self.peek_char() == Some('{') {
+                            // `${...}` body in double-quote context, so a
+                            // `$'...'` operand inside it stays ANSI-C quoting.
+                            word.push('{');
+                            self.advance();
+                            if let Err(msg) = self.read_param_expansion_into(&mut word) {
+                                return Some(Token::Error(msg));
+                            }
                         }
                         continue;
                     }
@@ -904,8 +932,10 @@ impl<'a> Lexer<'a> {
                             }
                         }
                         if c == '$' {
-                            word.push(c);
                             self.advance();
+                            if self.take_dquote_dollar(&mut word) {
+                                continue;
+                            }
                             if let Some(nc) = self.peek_char() {
                                 if nc == '{' {
                                     word.push(nc);
@@ -1671,6 +1701,33 @@ impl<'a> Lexer<'a> {
     }
 
     /// Characters `escape_glob_metas_in_quoted_ranges` backslash-escapes.
+    /// Decode the body of `$'...'` at the start of `s` (just after `$'`):
+    /// the resolved text and the bytes consumed through the closing `'`.
+    pub(crate) fn decode_ansi_c_body(s: &str) -> Option<(String, usize)> {
+        let mut lexer = Lexer::new(s);
+        let (text, closed) = lexer.read_dollar_single_quoted_content();
+        closed.then_some((text, lexer.position.offset))
+    }
+
+    /// Push a `$` just consumed inside double quotes. Before `'`
+    /// (`"$'q'"`) or the closing `"` it starts no expansion, so it gets the
+    /// NUL sentinel and stays a literal `$` even when quoted text follows
+    /// (`"$"'q'`). `$$` is consumed whole (returns true) so its second `$`
+    /// is not mistaken for a lone one before `"`.
+    fn take_dquote_dollar(&mut self, word: &mut String) -> bool {
+        let next = self.peek_char();
+        if matches!(next, Some('\'' | '"') | None) {
+            word.push('\x00');
+        }
+        word.push('$');
+        if next == Some('$') {
+            word.push('$');
+            self.advance();
+            return true;
+        }
+        false
+    }
+
     /// Push one quoted character of an extglob group so it stays literal:
     /// pattern metacharacters get a backslash, `$`/`` ` `` the NUL sentinel.
     fn push_extglob_literal(word: &mut String, ch: char) {
@@ -1750,8 +1807,10 @@ impl<'a> Lexer<'a> {
                     }
                 }
                 '$' => {
-                    content.push('$');
                     self.advance();
+                    if self.take_dquote_dollar(&mut content) {
+                        continue;
+                    }
                     if self.peek_char() == Some('(') {
                         // $(...) command substitution — track paren depth
                         content.push('(');

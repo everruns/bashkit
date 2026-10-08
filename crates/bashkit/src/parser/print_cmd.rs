@@ -653,21 +653,25 @@ fn assignment_text(a: &Assignment) -> String {
 /// reconstruction when the parser did not record the source.
 fn word_text(w: &Word) -> String {
     match &w.raw {
-        Some(raw) => strip_line_continuations(raw),
+        Some(raw) => normalize_raw_word(raw),
         None => reconstruct_word(w),
     }
 }
 
-/// Bash's lexer drops backslash-newline outside single quotes.
-fn strip_line_continuations(raw: &str) -> String {
-    if !raw.contains("\\\n") {
+/// Source text the way bash prints it back: backslash-newline is dropped
+/// outside single quotes, `$'...'` becomes the single-quoted text it decodes
+/// to (`$'it\'s'` prints `'it'\''s'`) and `$"..."` prints as `"..."`.
+/// Inside double quotes both stay as written.
+fn normalize_raw_word(raw: &str) -> String {
+    if !raw.contains("\\\n") && !raw.contains("$'") && !raw.contains("$\"") {
         return raw.to_string();
     }
     let mut out = String::with_capacity(raw.len());
-    let mut chars = raw.chars().peekable();
     let mut in_single = false;
     let mut in_double = false;
-    while let Some(c) = chars.next() {
+    let mut i = 0;
+    while let Some(c) = raw[i..].chars().next() {
+        i += c.len_utf8();
         match c {
             '\'' if !in_double => {
                 in_single = !in_single;
@@ -677,13 +681,24 @@ fn strip_line_continuations(raw: &str) -> String {
                 in_double = !in_double;
                 out.push(c);
             }
+            '$' if !in_single && !in_double && raw[i..].starts_with('\'') => {
+                match super::lexer::Lexer::decode_ansi_c_body(&raw[i + 1..]) {
+                    Some((text, used)) => {
+                        out.push_str(&super::raw::single_quote(&text));
+                        i += 1 + used;
+                    }
+                    None => out.push(c),
+                }
+            }
+            '$' if !in_single && !in_double && raw[i..].starts_with('"') => {}
             '\\' if !in_single => {
-                if chars.peek() == Some(&'\n') {
-                    chars.next();
+                if raw[i..].starts_with('\n') {
+                    i += 1;
                 } else {
                     out.push(c);
-                    if let Some(n) = chars.next() {
+                    if let Some(n) = raw[i..].chars().next() {
                         out.push(n);
+                        i += n.len_utf8();
                     }
                 }
             }
@@ -920,8 +935,17 @@ mod tests {
 
     #[test]
     fn line_continuation_dropped_outside_single_quotes() {
-        assert_eq!(strip_line_continuations("a\\\nb"), "ab");
-        assert_eq!(strip_line_continuations("'a\\\nb'"), "'a\\\nb'");
+        assert_eq!(normalize_raw_word("a\\\nb"), "ab");
+        assert_eq!(normalize_raw_word("'a\\\nb'"), "'a\\\nb'");
+    }
+
+    #[test]
+    fn ansi_c_and_locale_quotes_print_as_plain_quotes() {
+        assert_eq!(normalize_raw_word("$'a\\tb'"), "'a\tb'");
+        assert_eq!(normalize_raw_word("$'it\\'s'"), "'it'\\''s'");
+        assert_eq!(normalize_raw_word("$\"y\""), "\"y\"");
+        assert_eq!(normalize_raw_word("\"$'x'\""), "\"$'x'\"");
+        assert_eq!(normalize_raw_word("'$\"z\"'"), "'$\"z\"'");
     }
 
     #[test]
