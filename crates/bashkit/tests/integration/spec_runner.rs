@@ -276,6 +276,9 @@ pub fn run_real_bash(script: &str) -> (String, i32) {
         .arg(&rewritten_script)
         .current_dir(sandbox.path())
         .env("TMPDIR", sandbox.path())
+        // A bashkit script is a top-level shell; drop the test runner's own
+        // SHLVL so real bash starts at 1 too.
+        .env_remove("SHLVL")
         .output()
         .expect("Failed to run bash");
 

@@ -127,6 +127,7 @@ pub mod security_audit_pocs;
 mod sed_fuzz_scaffold_tests;
 mod sed_resource_tests;
 pub mod set_e_and_or_tests;
+pub mod shlvl_tests;
 pub mod shuf_resource_tests;
 pub mod skills_tests;
 pub mod snapshot_fixture_tests;
