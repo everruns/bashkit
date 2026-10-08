@@ -6919,16 +6919,37 @@ impl Interpreter {
             } else {
                 None
             };
+            // `>(cmd)` runs in a subshell too (see expand_process_substitution).
+            let snapshot = self.snapshot_subshell_state();
+            let last_exit_code = self.last_exit_code;
+            self.bash_subshell += 1;
+            let mut run = Ok(());
             for cmd in &commands {
                 let prev_stdin = self.pipeline_stdin.take();
                 self.pipeline_stdin = stdin_data.clone();
-                let cmd_result = self.execute_command(cmd).await?;
+                let cmd_result = self.execute_command(cmd).await;
                 self.pipeline_stdin = prev_stdin;
+                let cmd_result = match cmd_result {
+                    Ok(r) => r,
+                    Err(e) => {
+                        run = Err(e);
+                        break;
+                    }
+                };
                 if let Ok(r) = result {
                     r.stdout.append(&cmd_result.stdout);
                     r.stderr.append(&cmd_result.stderr);
                 }
+                if matches!(
+                    cmd_result.control_flow,
+                    ControlFlow::Exit(_) | ControlFlow::Abort
+                ) {
+                    break;
+                }
             }
+            self.restore_subshell_state(snapshot);
+            self.last_exit_code = last_exit_code;
+            run?;
         }
         Ok(())
     }
@@ -10332,12 +10353,22 @@ impl Interpreter {
 
         if is_input {
             let mut stdout = String::new();
+            // The substituted list runs in a subshell: nothing it changes
+            // (variables, cwd, options, `$?`) reaches the parent.
+            let snapshot = self.snapshot_subshell_state();
+            let last_exit_code = self.last_exit_code;
             self.bash_subshell += 1;
             let mut failed = None;
             for cmd in commands {
                 match self.execute_command(cmd).await {
                     Ok(cmd_result) => {
-                        stdout.push_str(&cmd_result.stdout.command_substitution_text())
+                        stdout.push_str(&cmd_result.stdout.command_substitution_text());
+                        if matches!(
+                            cmd_result.control_flow,
+                            ControlFlow::Exit(_) | ControlFlow::Abort
+                        ) {
+                            break;
+                        }
                     }
                     Err(e) => {
                         failed = Some(e);
@@ -10345,7 +10376,8 @@ impl Interpreter {
                     }
                 }
             }
-            self.bash_subshell -= 1;
+            self.restore_subshell_state(snapshot);
+            self.last_exit_code = last_exit_code;
             if let Some(e) = failed {
                 return Err(e);
             }
