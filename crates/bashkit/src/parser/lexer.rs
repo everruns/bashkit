@@ -1523,7 +1523,8 @@ impl<'a> Lexer<'a> {
         let mut bytes: Vec<u8> = Vec::new();
         let mut closed = false;
         while let Some(ch) = self.peek_char() {
-            if !bytes.is_empty() && !(ch == '\\' && self.next_is_byte_escape()) {
+            let continues_bytes = ch == '\\' && self.next_is_byte_escape();
+            if !bytes.is_empty() && !continues_bytes {
                 Self::flush_escape_bytes(&mut out, &mut bytes);
             }
             if ch == '\'' {
