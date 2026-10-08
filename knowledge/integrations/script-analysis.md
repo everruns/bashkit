@@ -146,9 +146,9 @@ a function definition, so it runs only if the function is called).
 | `path` | `string \| null` | Target path if fully literal, else `null` |
 | `mode` | `Read \| Write \| Append` | Access implied by the operator |
 
-`>`, `>|`, and `&>` are `Write`; `>>` is `Append`; `<` is `Read`. Fd
+`>`, `>|`, `&>`, and `<>` (it may create the file) are `Write`; `>>` is `Append`; `<` is `Read`. Fd
 duplications (`2>&1`), here-documents, and here-strings are not file targets and
-are omitted. The parser does not support `<>`, so no read-write mode exists.
+are omitted.
 
 ### Decisions
 
