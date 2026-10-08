@@ -289,3 +289,43 @@ printf '%q\n' 'com espaço' 'a€b'
 com\ espaço
 a€b
 ### end
+
+### printf_v_into_integer_and_element
+# printf -v assigns like read: declare -i evaluates, a[i] sets an element
+declare -i n; printf -v n '%s' '2+3'; echo $n; printf -v 'arr[1+1]' %s z; declare -p arr
+### expect
+5
+declare -a arr=([2]="z")
+### end
+
+### printf_usage_errors
+# bash's getopt: invalid option, missing -v argument, missing format
+printf -x 2>/dev/null; echo $?; printf -v 2>/dev/null; echo $?; printf 2>/dev/null; echo $?; printf - ; echo
+### expect
+2
+2
+2
+-
+### end
+
+### printf_invalid_number_fails
+# bash: a non-numeric %d argument prints its parsed prefix and fails (status 1)
+printf '%d\n' abc; echo rc=$?; printf '%d\n' 12abc; echo rc=$?; printf -v v %d 3x; echo "$? $v"
+printf '%d\n' 99999999999999999999 2>/dev/null; echo rc=$?; printf '%d|' '' "'x"; echo rc=$?
+### expect
+0
+rc=1
+12
+rc=1
+1 3
+9223372036854775807
+rc=0
+0|120|rc=0
+### end
+
+### printf_invalid_number_stderr
+# the diagnostic names the argument like bash
+printf '%d' abc 2>&1 >/dev/null | sed 's/^.*printf: //'
+### expect
+abc: invalid number
+### end

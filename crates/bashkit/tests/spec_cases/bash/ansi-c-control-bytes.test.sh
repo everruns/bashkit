@@ -32,3 +32,11 @@ x='a'$'\x1f''b'; echo "${#x}"
 ### expect
 3
 ### end
+
+### ansi_c_hex_bytes_decode_as_utf8
+# $'\xc3\xa9' is the UTF-8 text é; a lone \x stays literal
+printf '%s|%s\n' $'\xc3\xa9' $'\303\251'; echo $'a\x'
+### expect
+é|é
+a\x
+### end

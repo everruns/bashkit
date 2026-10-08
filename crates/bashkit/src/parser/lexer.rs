@@ -1584,8 +1584,16 @@ impl<'a> Lexer<'a> {
 
     fn read_dollar_single_quoted_content(&mut self) -> (String, bool) {
         let mut out = String::new();
+        // `\xHH` / `\NNN` give bytes: a run that is valid UTF-8 is that
+        // text (`$'\xc3\xa9'` is `é`, as bash prints it); other bytes keep
+        // their one-char-per-byte decoding (L-STREAM-001).
+        let mut bytes: Vec<u8> = Vec::new();
         let mut closed = false;
         while let Some(ch) = self.peek_char() {
+            let continues_bytes = ch == '\\' && self.next_is_byte_escape();
+            if !bytes.is_empty() && !continues_bytes {
+                Self::flush_escape_bytes(&mut out, &mut bytes);
+            }
             if ch == '\'' {
                 self.advance();
                 closed = true;
@@ -1620,8 +1628,11 @@ impl<'a> Lexer<'a> {
                                     }
                                 }
                             }
-                            if let Ok(val) = u8::from_str_radix(&hex, 16) {
-                                out.push(val as char);
+                            if hex.is_empty() {
+                                // bash keeps a `\x` with no hex digits as is.
+                                out.push_str("\\x");
+                            } else if let Ok(val) = u8::from_str_radix(&hex, 16) {
+                                bytes.push(val);
                             }
                         }
                         'u' => {
@@ -1674,7 +1685,7 @@ impl<'a> Lexer<'a> {
                                 }
                             }
                             if let Ok(val) = u8::from_str_radix(&oct, 8) {
-                                out.push(val as char);
+                                bytes.push(val);
                             }
                         }
                         _ => {
@@ -1690,7 +1701,27 @@ impl<'a> Lexer<'a> {
             out.push(ch);
             self.advance();
         }
+        Self::flush_escape_bytes(&mut out, &mut bytes);
         (out, closed)
+    }
+
+    /// After a `\` at the current position: is it `\xH` or `\N` (octal)?
+    fn next_is_byte_escape(&self) -> bool {
+        let mut it = self.reinject_buf.iter().copied().chain(self.chars.clone());
+        it.next();
+        match it.next() {
+            Some('x') => it.next().is_some_and(|h| h.is_ascii_hexdigit()),
+            Some(c) => ('0'..='7').contains(&c),
+            None => false,
+        }
+    }
+
+    fn flush_escape_bytes(out: &mut String, bytes: &mut Vec<u8>) {
+        match std::str::from_utf8(bytes) {
+            Ok(text) => out.push_str(text),
+            Err(_) => out.extend(bytes.iter().map(|&b| b as char)),
+        }
+        bytes.clear();
     }
 
     /// Append a literal segment while protecting sentinel-sensitive bytes from parse_word expansion.

@@ -5,18 +5,23 @@
 //! outside generated code so regenerating `format/` cannot erase the DoS guard.
 
 use std::borrow::Cow;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::ops::ControlFlow;
 
 use async_trait::async_trait;
 
+use os_display::Quotable;
+
 use super::generated::format::{
     FormatArgument, FormatArguments, FormatError, FormatItem, parse_spec_and_escape,
 };
+use super::generated::format_support::{
+    QuotingStyle, collect_diagnostics, locale_aware_escape_name,
+};
 use super::limits::PRINTF_MAX_DIAG_CHARS as MAX_PRINTF_DIAG_CHARS;
-use super::{Builtin, Context, Date, MAX_FORMAT_WIDTH};
+use super::{Builtin, BuiltinSideEffect, Context, Date, MAX_FORMAT_WIDTH};
 use crate::error::Result;
-use crate::interpreter::{ExecResult, is_internal_variable};
+use crate::interpreter::{ExecResult, is_internal_variable, is_valid_var_name};
 
 /// printf builtin - formatted string output
 ///
@@ -43,29 +48,47 @@ impl Builtin for Printf {
         ) {
             return Ok(r);
         }
-        if ctx.args.is_empty() {
-            return Ok(ExecResult::ok(String::new()));
-        }
-
-        let mut args_iter = ctx.args.iter();
+        // Options as bash's getopt("v:") reads them: `-v NAME`, `-vNAME`,
+        // repeated `-v` (last wins), `--` ends them. A lone `-` is the format.
+        let mut args_iter = ctx.args.iter().peekable();
         let mut var_name: Option<String> = None;
-
-        let format = loop {
-            match args_iter.next() {
-                Some(arg) if arg == "-v" => {
-                    if let Some(vname) = args_iter.next() {
-                        var_name = Some(vname.clone());
-                    }
-                }
-                // `--` ends options; the next word is the format.
-                Some(arg) if arg == "--" => match args_iter.next() {
-                    Some(f) => break f.clone(),
-                    None => return Ok(ExecResult::ok(String::new())),
-                },
-                Some(arg) => break arg.clone(),
-                None => return Ok(ExecResult::ok(String::new())),
+        while let Some(arg) = args_iter.peek() {
+            if arg.as_str() == "--" {
+                args_iter.next();
+                break;
             }
+            let Some(rest) = arg.strip_prefix('-').filter(|r| !r.is_empty()) else {
+                break;
+            };
+            if let Some(name) = rest.strip_prefix('v') {
+                args_iter.next();
+                if !name.is_empty() {
+                    var_name = Some(name.to_string());
+                } else if let Some(name) = args_iter.next() {
+                    var_name = Some(name.clone());
+                } else {
+                    return Ok(usage_error(
+                        "bash: printf: -v: option requires an argument\n",
+                    ));
+                }
+            } else {
+                let opt: String = rest.chars().take(1).collect();
+                return Ok(usage_error(&format!(
+                    "bash: printf: -{opt}: invalid option\n"
+                )));
+            }
+        }
+        let Some(format) = args_iter.next().cloned() else {
+            return Ok(usage_error(""));
         };
+        if let Some(name) = &var_name
+            && !valid_var_target(name)
+        {
+            return Ok(ExecResult::err(
+                format!("bash: printf: `{name}': not a valid identifier\n"),
+                2,
+            ));
+        }
 
         let args: Vec<String> = args_iter.cloned().collect();
         let format = escape_format_backslash_c(&format).into_owned();
@@ -79,23 +102,87 @@ impl Builtin for Printf {
             Ok(v) => v,
             Err(err) => return Ok(ExecResult::err(format!("{err}\n"), 1)),
         };
-        let output = match render_printf_bytes(&format, &args) {
+        let (rendered, diags) = collect_diagnostics(|| render_printf_bytes(&format, &args));
+        let output = match rendered {
             Ok(output) => output,
             Err(err) => return Ok(ExecResult::err(err, 1)),
         };
+        let (number_stderr, number_status) = numeric_argument_diagnostics(&diags, &args);
 
         if let Some(name) = var_name {
             // THREAT[TM-INJ-009]: Block internal variable prefix injection via printf -v
             if is_internal_variable(&name) {
                 return Ok(ExecResult::ok(String::new()));
             }
+            // Assigned by the interpreter like `read`: locals, namerefs,
+            // `a[i]` targets, `declare -i` arithmetic and readonly all apply.
             // Variables are text; a non-UTF-8 byte is decoded lossily here.
-            ctx.variables
-                .insert(name, String::from_utf8_lossy(&output).into_owned());
-            Ok(ExecResult::ok(String::new()))
+            let mut result = ExecResult::with_code(String::new(), number_status);
+            result.stderr = number_stderr.into();
+            result.side_effects.push(BuiltinSideEffect::SetVariable {
+                name,
+                value: String::from_utf8_lossy(&output).into_owned(),
+            });
+            Ok(result)
         } else {
-            Ok(ExecResult::ok_bytes(output))
+            let mut result = ExecResult::ok_bytes(output);
+            result.exit_code = number_status;
+            result.stderr = number_stderr.into();
+            Ok(result)
         }
+    }
+}
+
+/// bash's report for numeric conversions uucore flagged: `abc`/`12abc`
+/// are `invalid number` (status 1, the parsed prefix is still printed),
+/// out of range is only a warning (status 0). An empty argument is 0 and a
+/// leading quote is a character code (`"'"` alone is 0), both without
+/// complaint in bash.
+fn numeric_argument_diagnostics(diags: &[String], args: &[String]) -> (String, i32) {
+    let mut stderr = String::new();
+    let mut status = 0;
+    for diag in diags {
+        // uucore writes `<quoted arg>: <reason>`; recover the raw argument by
+        // quoting each candidate the same way.
+        let Some(arg) = args.iter().find(|a| {
+            let quoted =
+                locale_aware_escape_name(OsStr::new(a.as_str()), QuotingStyle::C_NO_QUOTES)
+                    .quote()
+                    .to_string();
+            diag.strip_prefix(quoted.as_str())
+                .is_some_and(|rest| rest.starts_with(": "))
+        }) else {
+            continue;
+        };
+        let shown = truncate_text(arg, MAX_PRINTF_DIAG_CHARS / 2);
+        if diag.ends_with("Numerical result out of range") {
+            stderr.push_str(&format!(
+                "bash: printf: warning: {shown}: Numerical result out of range\n"
+            ));
+        } else if !arg.is_empty() && !arg.starts_with(['\'', '"']) {
+            stderr.push_str(&format!("bash: printf: {shown}: invalid number\n"));
+            status = 1;
+        }
+        if stderr.len() > MAX_PRINTF_DIAG_CHARS {
+            break;
+        }
+    }
+    (stderr, status)
+}
+
+/// bash's usage failure: optional diagnostic, then the usage line, status 2.
+fn usage_error(diag: &str) -> ExecResult {
+    ExecResult::err(
+        format!("{diag}printf: usage: printf [-v var] format [arguments]\n"),
+        2,
+    )
+}
+
+/// A `-v` target: an identifier, or `name[subscript]`.
+fn valid_var_target(name: &str) -> bool {
+    match name.find('[') {
+        Some(b) => is_valid_var_name(&name[..b]) && name.ends_with(']') && name.len() > b + 2,
+        None => is_valid_var_name(name),
     }
 }
 

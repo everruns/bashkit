@@ -319,3 +319,13 @@ mktemp -q -p /nonexist fooXXX; echo "exit=$?"
 exit=1
 exit=1
 ### end
+
+### cp_no_clobber_skips_existing
+# cp -n leaves an existing destination alone (status 0); --no-clobber too
+echo a > f; echo b > g; cp -n g f; echo $?; cat f; cp --no-clobber g f; cat f; cp -n g new; cat new
+### expect
+0
+a
+a
+b
+### end

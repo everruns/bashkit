@@ -101,3 +101,12 @@ echo /nope/*/SKILL.md
 ### expect
 /nope/*/SKILL.md
 ### end
+
+### glob_trailing_slash_directories_only
+# */ matches directories (and symlinks to them) and keeps the slash
+mkdir -p gd/d1 gd/d2/s; touch gd/f1; ln -s d1 gd/l; cd gd; echo */; echo d*/ f1/; echo */*/
+### expect
+d1/ d2/ l/
+d1/ d2/ f1/
+d2/s/
+### end

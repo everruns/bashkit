@@ -994,12 +994,22 @@ impl Interpreter {
                         if entry.name.starts_with('.') && !dotglob && !component_starts_with_dot {
                             continue;
                         }
-                        if dirs_only && !entry.metadata.file_type.is_dir() {
+                        if !self.glob_match_impl(&entry.name, component, opts, 0) {
                             continue;
                         }
-                        if self.glob_match_impl(&entry.name, component, opts, 0) {
-                            matched.push(entry.name);
+                        // A symlink to a directory counts as one (bash's `*/`).
+                        if dirs_only
+                            && !entry.metadata.file_type.is_dir()
+                            && !(entry.metadata.file_type.is_symlink()
+                                && self
+                                    .fs
+                                    .stat(&vfs_join(dir, &entry.name))
+                                    .await
+                                    .is_ok_and(|m| m.file_type.is_dir()))
+                        {
+                            continue;
                         }
+                        matched.push(entry.name);
                     }
 
                     // Looks redundant next to the final sort, but is not: `read_dir`
@@ -1021,6 +1031,16 @@ impl Interpreter {
                     // Intermediate literals are validated implicitly by the next
                     // `read_dir`; only the final component needs an existence check.
                     if is_last && !self.fs.exists(&path).await.unwrap_or(false) {
+                        continue;
+                    }
+                    if is_last
+                        && trailing_slash
+                        && !self
+                            .fs
+                            .stat(&path)
+                            .await
+                            .is_ok_and(|m| m.file_type.is_dir())
+                    {
                         continue;
                     }
                     let output = Self::glob_join_output(out, &literal, is_absolute);

@@ -232,8 +232,11 @@ impl Builtin for Cp {
 
         // Reject unknown options like GNU cp. `-r`/`-R`/`-a` (and the long
         // forms) copy directories recursively; the remaining flags are
-        // accepted and ignored. '--' ends options.
+        // accepted and ignored. '--' ends options. `-n` (`--no-clobber`,
+        // `--update=none`) leaves existing destinations alone, silently and
+        // with status 0 like GNU cp; it wins over `-f`.
         let mut recursive = false;
+        let mut no_clobber = false;
         let mut files: Vec<&String> = Vec::new();
         let mut opts_done = false;
         for arg in ctx.args {
@@ -245,6 +248,9 @@ impl Builtin for Cp {
                 let name = long.split('=').next().unwrap_or("");
                 if matches!(name, "archive" | "recursive") {
                     recursive = true;
+                }
+                if name == "no-clobber" || long == "update=none" {
+                    no_clobber = true;
                 }
                 match name {
                     "archive"
@@ -278,8 +284,9 @@ impl Builtin for Cp {
                 for c in arg[1..].chars() {
                     match c {
                         'a' | 'r' | 'R' => recursive = true,
-                        'd' | 'f' | 'H' | 'i' | 'l' | 'L' | 'n' | 'P' | 'p' | 's' | 't' | 'T'
-                        | 'u' | 'v' | 'x' | 'Z' => {}
+                        'n' => no_clobber = true,
+                        'd' | 'f' | 'H' | 'i' | 'l' | 'L' | 'P' | 'p' | 's' | 't' | 'T' | 'u'
+                        | 'v' | 'x' | 'Z' => {}
                         _ => return Ok(super::invalid_option("cp", &format!("-{c}"), 1)),
                     }
                 }
@@ -360,12 +367,15 @@ impl Builtin for Cp {
                     ));
                     continue;
                 }
-                if let Err(msg) = copy_tree(&ctx, &src_path, &final_dest).await? {
+                if let Err(msg) = copy_tree(&ctx, &src_path, &final_dest, no_clobber).await? {
                     stderr.push_str(&format!("cp: {msg}\n"));
                 }
                 continue;
             }
 
+            if no_clobber && ctx.fs.lstat(&final_dest).await.is_ok() {
+                continue;
+            }
             if let Err(e) = ctx.fs.copy(&src_path, &final_dest).await {
                 stderr.push_str(&format!("cp: cannot copy '{}': {}\n", source, e));
             }
@@ -388,7 +398,12 @@ type CopyTreeFuture<'a> = std::pin::Pin<
 /// Recursively copy `src` to `dst` (GNU `cp -R` without `-L`: symlinks are
 /// recreated, not followed). The outer error is cancellation/budget; the
 /// inner one is a user-facing message for the first failed entry.
-fn copy_tree<'a>(ctx: &'a Context<'_>, src: &'a Path, dst: &'a Path) -> CopyTreeFuture<'a> {
+fn copy_tree<'a>(
+    ctx: &'a Context<'_>,
+    src: &'a Path,
+    dst: &'a Path,
+    no_clobber: bool,
+) -> CopyTreeFuture<'a> {
     Box::pin(async move {
         ctx.consume_budget_work(1)?;
         let meta = match ctx.fs.lstat(src).await {
@@ -422,10 +437,13 @@ fn copy_tree<'a>(ctx: &'a Context<'_>, src: &'a Path, dst: &'a Path) -> CopyTree
             for entry in entries {
                 let from = vfs_join(src, &entry.name);
                 let to = vfs_join(dst, &entry.name);
-                if let Err(msg) = copy_tree(ctx, &from, &to).await? {
+                if let Err(msg) = copy_tree(ctx, &from, &to, no_clobber).await? {
                     return Ok(Err(msg));
                 }
             }
+            return Ok(Ok(()));
+        }
+        if no_clobber && ctx.fs.lstat(dst).await.is_ok() {
             return Ok(Ok(()));
         }
         if meta.file_type.is_symlink() {
