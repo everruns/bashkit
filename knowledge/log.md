@@ -3,6 +3,7 @@
 ## 2026-10-07
 
 * **Fix**: `${v@a}` prints every attribute letter `declare -p` shows, in bash's order (`a`/`A`, `i`, `n`, `r`, `x`, `l`, `u`), follows namerefs, takes the array from a subscript, and repeats per element for `${arr[@]@a}`. It only knew `r` and `x`, so `declare -i n; ${n@a}` was empty.
+* **Fix**: `${#v}` counts bytes when the shell's locale is C/POSIX (`LC_ALL`, then `LC_CTYPE`, then `LANG`, first non-empty), like bash; `LC_ALL=C; s=ação; ${#s}` is 6. With no locale variable set bashkit stays UTF-8, where bash would fall back to C. `${#s}` inside a `${x:-...}` operand counted bytes in every locale and now counts characters. Other operators (`${s:0:2}`, case changes, globs) stay character-based under C (limitations, "Locale").
 - Added the bash-oracle scoreboard (`scripts/bash-oracle`, `just bash-oracle`):
   106 whole-script cases replayed against output recorded from real bash 5.2,
   scored as `match` (status + stdout, 90/106) and `strict` (also stderr,
