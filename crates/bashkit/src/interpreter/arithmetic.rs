@@ -302,12 +302,13 @@ impl<'a> ArithEval<'a> {
             p.next();
             p.next();
             let lv = self.lvalue(&name, sub.as_deref())?;
+            let rhs_at = p.toks[p.pos].1;
             let rhs = self.assign(p)?;
             let value = if op == "=" {
                 rhs
             } else {
                 let cur = self.read_lvalue_int(&lv)?;
-                self.binop(&op[..op.len() - 1], cur, rhs, p)?
+                self.binop(&op[..op.len() - 1], cur, rhs, rhs_at, p)?
             };
             self.store(&lv, value);
             return Ok(value);
@@ -455,8 +456,9 @@ impl<'a> ArithEval<'a> {
                 _ => return Ok(v),
             };
             p.next();
+            let rhs_at = p.toks[p.pos].1;
             let r = self.additive(p)?;
-            v = self.binop(op, v, r, p)?;
+            v = self.binop(op, v, r, rhs_at, p)?;
         }
     }
 
@@ -498,8 +500,9 @@ impl<'a> ArithEval<'a> {
                 _ => return Ok(v),
             };
             p.next();
+            let rhs_at = p.toks[p.pos].1;
             let r = self.power(p)?;
-            v = self.binop(op, v, r, p)?;
+            v = self.binop(op, v, r, rhs_at, p)?;
         }
     }
 
@@ -507,10 +510,11 @@ impl<'a> ArithEval<'a> {
         let base = self.unary(p)?;
         if p.is_op("**") {
             p.next();
+            let rhs_at = p.toks[p.pos].1;
             self.enter()?;
             let exp = self.power(p);
             self.leave();
-            return self.binop("**", base, exp?, p);
+            return self.binop("**", base, exp?, rhs_at, p);
         }
         Ok(base)
     }
@@ -608,7 +612,16 @@ impl<'a> ArithEval<'a> {
         }
     }
 
-    fn binop(&mut self, op: &str, l: i64, r: i64, p: &ArithParser) -> ArithResult<i64> {
+    /// `rhs_at` is where the right operand starts: bash names it as the error
+    /// token of a division by 0.
+    fn binop(
+        &mut self,
+        op: &str,
+        l: i64,
+        r: i64,
+        rhs_at: usize,
+        p: &ArithParser,
+    ) -> ArithResult<i64> {
         Ok(match op {
             "+" => l.wrapping_add(r),
             "-" => l.wrapping_sub(r),
@@ -618,7 +631,8 @@ impl<'a> ArithEval<'a> {
                     if self.noeval > 0 {
                         return Ok(0);
                     }
-                    return Err(p.err("division by 0"));
+                    let token = p.src.get(rhs_at..).unwrap_or("").trim();
+                    return Err(format!("division by 0 (error token is \"{token}\")"));
                 }
                 if op == "/" {
                     l.wrapping_div(r)
@@ -811,6 +825,13 @@ impl Interpreter {
         {
             *slot = Some(msg);
         }
+    }
+
+    /// bash's arithmetic diagnostic: `bash: line N: <prefix><expr>: <what>`.
+    /// `prefix` names the reporting builtin (`((: `, `let: `), empty for an
+    /// expansion.
+    pub(super) fn arith_diag(&self, prefix: &str, msg: &str) -> String {
+        format!("bash: line {}: {prefix}{msg}\n", self.current_line)
     }
 
     pub(super) fn take_arith_error(&self) -> Option<String> {

@@ -1380,7 +1380,7 @@ impl Interpreter {
                     let raw = match self.try_evaluate_arithmetic_with_assign(&key_text) {
                         Ok(v) => v,
                         Err(msg) => {
-                            return Err(crate::error::Error::LineAbort(format!("bash: {msg}\n")));
+                            return Err(crate::error::Error::LineAbort(self.arith_diag("", &msg)));
                         }
                     };
                     let idx = if raw < 0 {

@@ -50,12 +50,22 @@ impl AwkRegex {
         let mut pat = String::with_capacity(t.pattern.len() + 8);
         pat.push_str(if icase { "(?si)" } else { "(?s)" });
         pat.push_str(&t.pattern);
+        Self::from_translated(pat, t.needs_longest)
+    }
+
+    /// Build from a pattern already in `regex` crate syntax (flags
+    /// included). Other POSIX dialects (grep's BRE/ERE) translate with
+    /// their own rules and reuse the leftmost-longest machinery here.
+    pub(crate) fn from_translated(
+        pat: String,
+        needs_longest: bool,
+    ) -> Result<AwkRegex, RegexError> {
         let re = regex::RegexBuilder::new(&pat)
             .size_limit(REGEX_SIZE_LIMIT)
             .dfa_size_limit(REGEX_DFA_SIZE_LIMIT)
             .build()
             .map_err(|e| RegexError(short_error(&e)))?;
-        let longest = if t.needs_longest {
+        let longest = if needs_longest {
             DFA::builder()
                 .configure(
                     DFA::config()

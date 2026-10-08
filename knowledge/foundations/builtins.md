@@ -465,6 +465,39 @@ commands report 127. Gaps are L-AWK-001..004 in
 -028, -033, -109, -110, -116 and -128 in the
 [Threat Model](../security/threat-model.md).
 
+### grep
+
+`grep` targets GNU grep 3.11 in a UTF-8 locale (Debian's grep). Debian-oracle
+differential score: 96.8% of 185 grep cases (60.5% before) and every grep
+probe of the 879 BRE/ERE regex cases except two whose pattern holds a raw
+`\x01` byte the shell drops; the misses are readdir order (L-GREP-003).
+
+- Patterns (`builtins/grep_pattern.rs`): `-G`/`-E` are translated from the
+  GNU BRE/ERE dialects (POSIX brackets with literal backslash, `\{m,n\}`,
+  `\+ \? \|`, `\< \> \b \B \w \W \s \S`, a leading BRE `*` as a literal, a
+  leading ERE operator dropped with dfa.c's `* at start of expression`
+  warning) and matched leftmost-longest through awk's `AwkRegex`. Syntax
+  errors print glibc's messages (`Unmatched ( or \(`, `Invalid range end`,
+  ...) with exit 2. Back-references (BRE and ERE) and `-P` use fancy-regex.
+  `-F` is escaped literals on the POSIX path. `-e`/`-f` entries split on
+  newlines; an empty `-f` file is zero patterns (matches nothing).
+- Output (`FileScan` in `builtins/grep.rs`) follows GNU `prtext`/`prline`:
+  prefixes FILE, LINE, BYTE, then `-T`'s tab; `:` for selected and `-` for
+  context lines; group separators whenever a context option was given, also
+  between files; `-o` prints non-empty matches (context lines only under
+  `-v`), `-b -o` is the match offset; trailing context after `-m` is printed
+  in full. One engine serves buffered and streaming (pipeline) runs.
+- Input: lines end at `\n` (a `\r` is data). A NUL makes a file binary (no
+  line output, first match ends it); a line that is not UTF-8 is binary when
+  it would be printed. Both report `grep: FILE: binary file matches` on
+  stderr unless `-a`.
+- Options parse like getopt_long: mixed with operands, unique long-option
+  prefixes, `-NUM`, `--label`, `-` for stdin, `-d read|skip|recurse`, `-R`
+  following symlinks met while recursing (`-r` skips them).
+
+Gaps are L-GREP-001..003 in [Known Limitations](../operations/limitations.md);
+regex caps are TM-DOS-023/025 in the [Threat Model](../security/threat-model.md).
+
 ### fmt
 
 `fmt` vendors the uutils/coreutils `fmt` engine (MIT): `builtins/fmt/

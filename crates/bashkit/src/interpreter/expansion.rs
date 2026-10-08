@@ -382,7 +382,7 @@ impl Interpreter {
                     };
                     let value = self
                         .try_evaluate_arithmetic_with_assign(&expanded_expr)
-                        .map_err(|msg| crate::error::Error::LineAbort(format!("bash: {msg}\n")))?;
+                        .map_err(|msg| crate::error::Error::LineAbort(self.arith_diag("", &msg)))?;
                     Self::append_expansion_for_word(&mut result, word, &value.to_string());
                 }
                 WordPart::Length(name) => {

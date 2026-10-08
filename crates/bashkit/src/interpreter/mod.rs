@@ -3588,7 +3588,7 @@ impl Interpreter {
             Ok(mut r) => {
                 if let Some(msg) = self.take_arith_error() {
                     r.stderr
-                        .append(&crate::StreamData::from(format!("bash: {msg}\n")));
+                        .append(&crate::StreamData::from(self.arith_diag("", &msg)));
                     r.exit_code = 1;
                     r.control_flow = ControlFlow::Abort;
                 }
@@ -3602,7 +3602,7 @@ impl Interpreter {
     /// so the command does not run).
     fn pending_arith_abort(&self) -> Option<crate::error::Error> {
         self.take_arith_error()
-            .map(|msg| crate::error::Error::LineAbort(format!("bash: {msg}\n")))
+            .map(|msg| crate::error::Error::LineAbort(self.arith_diag("", &msg)))
     }
 
     /// Charge every executable AST command, including optimized command forms.
@@ -4567,7 +4567,7 @@ impl Interpreter {
             }),
             // `((...))` reports an arithmetic error and fails with status 1;
             // unlike `$((...))` it does not abandon the line.
-            Err(msg) => Ok(ExecResult::err(format!("bash: {msg}\n"), 1)),
+            Err(msg) => Ok(ExecResult::err(self.arith_diag("((: ", &msg), 1)),
         }
     }
 
@@ -8253,6 +8253,9 @@ impl Interpreter {
         self.coproc_buffers.clear();
         self.last_exit_code = 0;
         self.nounset_error = None;
+        if let Ok(mut e) = self.arith_error.lock() {
+            *e = None;
+        }
 
         // Push call frame: $0 = script name, $1..N = args
         self.call_stack = vec![CallFrame {
@@ -8968,7 +8971,7 @@ impl Interpreter {
                 Ok(v) => last_val = v,
                 // An error stops `let` at that expression with status 1.
                 Err(msg) => {
-                    let result = ExecResult::err(format!("bash: let: {msg}\n"), 1);
+                    let result = ExecResult::err(self.arith_diag("let: ", &msg), 1);
                     return self.apply_redirections(result, redirects).await;
                 }
             }

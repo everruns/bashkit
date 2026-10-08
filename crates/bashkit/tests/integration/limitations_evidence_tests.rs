@@ -134,6 +134,28 @@ async fn l_grep_001_noop_flags() {
     assert_eq!(plain.stdout, colored.stdout);
 }
 
+/// L-GREP-002: GNU grep >= 3.8 warns "stray \ before /"; bashkit matches
+/// the literal without the warning.
+#[tokio::test]
+async fn l_grep_002_no_stray_backslash_warning() {
+    let mut bash = Bash::new();
+    let r = bash.exec(r"echo a/b | grep 'a\/b'").await.unwrap();
+    assert_eq!(r.stdout, "a/b\n");
+    assert_eq!(r.stderr, "");
+}
+
+/// L-GREP-003: recursive grep visits entries in name order, not readdir
+/// order.
+#[tokio::test]
+async fn l_grep_003_recursive_name_order() {
+    let mut bash = Bash::new();
+    let r = bash
+        .exec("mkdir -p /t/d; echo x > /t/d/b; echo x > /t/d/a; grep -r x /t/d")
+        .await
+        .unwrap();
+    assert_eq!(r.stdout, "/t/d/a:x\n/t/d/b:x\n");
+}
+
 /// L-TERM-001: `vi` is a subset — e.g. `:!cmd` (shell escape) is rejected as
 /// an unknown editor command and runs nothing.
 #[cfg(feature = "terminal")]
