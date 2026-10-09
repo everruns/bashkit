@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_hard",
+  "sample": "hard_log_p95",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "/home/eval/logs/access.log is an HTTP access log. Each well-formed line is: <timestamp> <method> <path> <status> <latency>ms, separated by single spaces. Produce /home/eval/logs/out/report.tsv with per-endpoint latency statistics.\n\nRules:\n- Skip lines that do not have exactly those 5 fields or whose latency is not a number followed by \"ms\" (e.g. truncation markers, or \"-\" for timed-out requests).\n- endpoint = path with any query string (\"?...\" onwards) removed, then a trailing \"/\" removed (unless the path is just \"/\").\n- Exclude /healthz and every path under /static/.\n- For each endpoint: count = number of requests, p50 and p95 = latency percentiles in ms using the nearest-rank method (sort latencies ascending; the p-th percentile is the value at 1-based position ceil(p/100 * count)), err_permille = floor(1000 * (requests with status >= 500) / count).\n- Output: tab-separated, a header line `endpoint\tcount\tp50\tp95\terr_permille`, then the top 5 endpoints ordered by p95 descending, then count descending, then endpoint ascending (byte order). Integers only, no padding."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Created `/home/eval/logs/out/report.tsv` with the requested header and top five endpoints.",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "wc -l /home/eval/logs/access.log; head -20 /home/eval/logs/access.log; ls -la /home/eval/logs /home/eval/logs/out 2>/dev/null || true",
+      "tail -30 /home/eval/logs/access.log; command -v awk; awk 'BEGIN{FS=\" \"} { if (NF!=5) print \"NF\",NR,NF,$0; if ($5 !~ /^[0-9]+ms$/) print \"lat\",NR,$5 }' /home/eval/logs/access.log | head -30",
+      "mkdir -p /home/eval/logs/out\nLC_ALL=C awk '\nfunction finish_endpoint(e, n,    i,j,v,r50,r95) {\n    n = count[e]\n    for (i = 2; i <= n; i++) {\n        v = latency[e SUBSEP i]\n        j = i - 1\n        while (j >= 1 && latency[e SUBSEP j] > v) {\n            latency[e SUBSEP (j + 1)] = latency[e SUBSEP j]\n            j--\n        }\n        latency[e SUBSEP (j + 1)] = v\n    }\n    r50 = int((50 * n + 99) / 100)\n    r95 = int((95 * n + 99) / 100)\n    p50[e] = latency[e SUBSEP r50]\n    p95[e] = latency[e SUBSEP r95]\n    err[e] = int(1000 * errors[e] / n)\n}\n{\n    if ($0 !~ /^[^ ]+ [^ ]+ [^ ]+ [^ ]+ [^ ]+$/) next\n    split($0, f, \" \")\n    if (f[5] !~ /^[0-9]+([.][0-9]+)?ms$/) next\n    sub(/ms$/, \"\", f[5])\n    path = f[3]\n    sub(/\\?.*/, \"\", path)\n    if (path != \"/\") sub(/\\/$/, \"\", path)\n    if (path == \"/healthz\" || path == \"/static\" || path ~ /^\\/static\\//) next\n    e = path\n    count[e]++\n    latency[e SUBSEP count[e]] = f[5] + 0\n    if (f[4] ~ /^[0-9]+$/ && f[4] + 0 >= 500) errors[e]++\n}\nEND {\n    for (e in count) finish_endpoint(e)\n    for (e in count) printf \"%s\\t%d\\t%d\\t%d\\t%d\\n\", e, count[e], p50[e], p95[e], err[e]\n}' /home/eval/logs/access.log > /home/eval/logs/out/.stats.tmp\nprintf 'endpoint\\tcount\\tp50\\tp95\\terr_permille\\n' > /home/eval/logs/out/report.tsv\nLC_ALL=C sort -t \"$(printf '\\t')\" -k4,4nr -k2,2nr -k1,1 /home/eval/logs/out/.stats.tmp | head -5 >> /home/eval/logs/out/report.tsv\ncat /home/eval/logs/out/report.tsv\nrm /home/eval/logs/out/.stats.tmp"
+    ],
+    "usage": {
+      "input_tokens": 5927,
+      "output_tokens": 2619,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 25246
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "wc -l /home/eval/logs/access.log; head -20 /home/eval/logs/access.log; ls -la /home/eval/logs /home/eval/logs/out 2>/dev/null || true",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "3000 /home/eval/logs/access.log\n2026-10-09T10:00:00 GET /api/orders 200 150ms\n2026-10-09T10:00:01 GET /api/items 200 70ms\n2026-10-09T10:00:02 GET /healthz 200 20ms\n2026-10-09T10:00:03 DELETE /api/users 404 120ms\n2026-10-09T10:00:04 POST /api/items 200 240ms\n2026-10-09T10:00:05 DELETE /api/search 503 190ms\n2026-10-09T10:00:06 GET /api/orders 404 160ms\n2026-10-09T10:00:07 GET /api/items 200 70ms\n2026-10-09T10:00:08 DELETE /api/items 200 320ms\n2026-10-09T10:00:09 GET /api/items 200 400ms\n2026-10-09T10:00:10 POST /static/app.js 200 280ms\n2026-10-09T10:00:11 DELETE /api/cart 200 280ms\n2026-10-09T10:00:12 PUT /api/items 200 430ms\n2026-10-09T10:00:13 PUT /api/cart 200 420ms\n2026-10-09T10:00:14 DELETE /static/app.js 200 30ms\n2026-10-09T10:00:15 PUT /api/users 200 40ms\n2026-10-09T10:00:16 GET /healthz 200 100ms\n2026-10-09T10:00:17 DELETE /api/users 404 240ms\n2026-10-09T10:00:18 PUT /api/search 200 230ms\n2026-10-09T10:00:19 DELETE /api/users/ 200 420ms\n"
+          },
+          {
+            "commands": "tail -30 /home/eval/logs/access.log; command -v awk; awk 'BEGIN{FS=\" \"} { if (NF!=5) print \"NF\",NR,NF,$0; if ($5 !~ /^[0-9]+ms$/) print \"lat\",NR,$5 }' /home/eval/logs/access.log | head -30",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "2026-10-09T10:49:30 DELETE /api/cart 200 90ms\n2026-10-09T10:49:31 POST /api/users 200 210ms\n2026-10-09T10:49:32 DELETE /api/search 200 90ms\n2026-10-09T10:49:33 GET /healthz 200 200ms\n2026-10-09T10:49:34 POST /api/cart/ 200 60ms\n2026-10-09T10:49:35 GET /api/search/ 200 160ms\n2026-10-09T10:49:36 DELETE /api/search 200 320ms\n2026-10-09T10:49:37 GET /api/orders 200 440ms\n2026-10-09T10:49:38 DELETE /api/orders 404 290ms\n2026-10-09T10:49:39 DELETE /healthz?page=0 404 320ms\n2026-10-09T10:49:40 GET /api/orders 200 400ms\n2026-10-09T10:49:41 GET /api/items 200 80ms\n2026-10-09T10:49:42 POST /api/orders 200 460ms\n2026-10-09T10:49:43 GET /api/login 200 440ms\n2026-10-09T10:49:44 GET /api/search?page=0 404 280ms\n2026-10-09T10:49:45 DELETE /api/cart 200 130ms\n2026-10-09T10:49:46 GET /healthz 200 310ms\n2026-10-09T10:49:47 DELETE /api/items?page=0 404 20ms\n2026-10-09T10:49:48 GET /api/orders 200 490ms\n2026-10-09T10:49:49 PUT /api/search 200 350ms\n2026-10-09T10:49:50 GET /api/users 200 150ms\n2026-10-09T10:49:51 GET /api/search 200 90ms\n2026-10-09T10:49:52 GET /api/cart 200 150ms\n2026-10-09T10:49:53 GET /api/orders 200 100ms\n2026-10-09T10:49:54 DELETE /api/items/ 200 170ms\n2026-10-09T10:49:55 GET /api/cart/ 200 360ms\n2026-10-09T10:49:56 GET /api/search 503 700ms\n2026-10-09T10:49:57 DELETE /healthz 503 290ms\n2026-10-09T10:49:58 GET /healthz 200 240ms\n2026-10-09T10:49:59 POST /static/app.js 404 330ms\n/usr/bin/awk\nlat 251 -\nNF 397 4 -- log truncated --\nlat 397 \nlat 502 -\nlat 753 -\nNF 794 4 -- log truncated --\nlat 794 \nlat 1004 -\nNF 1191 4 -- log truncated --\nlat 1191 \nlat 1255 -\nlat 1506 -\nNF 1588 4 -- log truncated --\nlat 1588 \nlat 1757 -\nNF 1985 4 -- log truncated --\nlat 1985 \nlat 2008 -\nlat 2259 -\nNF 2382 4 -- log truncated --\nlat 2382 \nlat 2510 -\nlat 2761 -\nNF 2779 4 -- log truncated --\nlat 2779 \n"
+          },
+          {
+            "commands": "mkdir -p /home/eval/logs/out\nLC_ALL=C awk '\nfunction finish_endpoint(e, n,    i,j,v,r50,r95) {\n    n = count[e]\n    for (i = 2; i <= n; i++) {\n        v = latency[e SUBSEP i]\n        j = i - 1\n        while (j >= 1 && latency[e SUBSEP j] > v) {\n            latency[e SUBSEP (j + 1)] = latency[e SUBSEP j]\n            j--\n        }\n        latency[e SUBSEP (j + 1)] = v\n    }\n    r50 = int((50 * n + 99) / 100)\n    r95 = int((95 * n + 99) / 100)\n    p50[e] = latency[e SUBSEP r50]\n    p95[e] = latency[e SUBSEP r95]\n    err[e] = int(1000 * errors[e] / n)\n}\n{\n    if ($0 !~ /^[^ ]+ [^ ]+ [^ ]+ [^ ]+ [^ ]+$/) next\n    split($0, f, \" \")\n    if (f[5] !~ /^[0-9]+([.][0-9]+)?ms$/) next\n    sub(/ms$/, \"\", f[5])\n    path = f[3]\n    sub(/\\?.*/, \"\", path)\n    if (path != \"/\") sub(/\\/$/, \"\", path)\n    if (path == \"/healthz\" || path == \"/static\" || path ~ /^\\/static\\//) next\n    e = path\n    count[e]++\n    latency[e SUBSEP count[e]] = f[5] + 0\n    if (f[4] ~ /^[0-9]+$/ && f[4] + 0 >= 500) errors[e]++\n}\nEND {\n    for (e in count) finish_endpoint(e)\n    for (e in count) printf \"%s\\t%d\\t%d\\t%d\\t%d\\n\", e, count[e], p50[e], p95[e], err[e]\n}' /home/eval/logs/access.log > /home/eval/logs/out/.stats.tmp\nprintf 'endpoint\\tcount\\tp50\\tp95\\terr_permille\\n' > /home/eval/logs/out/report.tsv\nLC_ALL=C sort -t \"$(printf '\\t')\" -k4,4nr -k2,2nr -k1,1 /home/eval/logs/out/.stats.tmp | head -5 >> /home/eval/logs/out/report.tsv\ncat /home/eval/logs/out/report.tsv\nrm /home/eval/logs/out/.stats.tmp",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "endpoint\tcount\tp50\tp95\terr_permille\n/api/items\t381\t270\t640\t41\n/api/search\t381\t210\t500\t62\n/api/login\t371\t240\t480\t37\n/api/orders\t371\t290\t480\t43\n/api/users\t379\t230\t430\t47\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

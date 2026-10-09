@@ -152,12 +152,12 @@ Five evals are advertised (`#[eval]` wrappers in `src/main.rs`):
 Run through the `mira` host (install via `cargo install mira-cli`):
 
 ```
-mira --bin bashkit-eval list
-mira --bin bashkit-eval run bashkit_bash
-mira --bin bashkit-eval run bashkit_bash --targets anthropic/claude-opus-5-5 --tag json_processing
-mira --bin bashkit-eval run bashkit_scripting --axis mode=scripted
-mira --bin bashkit-eval run --format html --out report.html
-mira --bin bashkit-eval run --resume <run_id>
+mira list --study-bin bashkit-eval
+mira run --study-bin bashkit-eval bashkit_bash
+mira run --study-bin bashkit-eval bashkit_bash --targets anthropic/claude-opus-5-5 --tag json_processing
+mira run --study-bin bashkit-eval bashkit_scripting --axis mode=scripted
+mira run --study-bin bashkit-eval --format html --out report.html
+mira run --study-bin bashkit-eval --resume <run_id>
 ```
 
 `just eval`, `just eval-smoke`, `just eval-repo`, `just eval-hard`, `just eval-scripting`, and

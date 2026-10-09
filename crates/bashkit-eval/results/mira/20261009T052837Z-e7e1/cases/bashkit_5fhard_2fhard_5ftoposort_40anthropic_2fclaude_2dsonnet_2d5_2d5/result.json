@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_hard",
+  "sample": "hard_toposort",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "In /home/eval/pkgs there are dependency lists deps.txt, deps-big.txt and deps-cycle.txt. Each non-comment line has the form `package: dep1 dep2 ...` (deps are separated by spaces or tabs; there may be extra whitespace around names and the colon). `#` starts a comment that runs to the end of the line, blank lines are ignored, a package may appear on several lines (its deps accumulate), and a name that only ever appears as a dependency is still a package.\n\nWrite an executable script /home/eval/pkgs/bin/order (bash; awk/sort/etc. are fine, no python) that takes one such file and prints a build order, one package per line, where every package comes after all of its dependencies. The order must be deterministic: repeatedly emit the smallest package (byte order) whose dependencies have all been emitted. If some packages can never be emitted because of a cycle, print the order for the ones that can, then print `cycle: ` followed by all remaining packages sorted (byte order) and separated by single spaces to stderr, and exit 1; otherwise exit 0.\n\nThen from /home/eval/pkgs run it on each file and save: stdout of deps.txt to build/order.txt, stdout of deps-big.txt to build/big-order.txt, stdout of deps-cycle.txt to build/cycle-order.txt, its stderr to build/cycle.txt and its exit status (just the number) to build/cycle.rc."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I wrote `/home/eval/pkgs/bin/order`. It's an awk script with a min-heap, so it always emits the smallest package whose dependencies are all done. I ran it on all three files from `/home/eval/pkgs` and saved the outputs in `build/`. I only skimmed the outputs and did not check them against an independent implementation.\n\n- **Cycle file:** `deps-cycle.txt` printed `e` and `f`, then `cycle: a b c d g` to stderr, and the exit status was 1. That is the expected cycle case.\n- **Other two files:** `deps.txt` and `deps-big.txt` each produced a full order. I didn't capture or check their exit statuses, though no cycle message appeared in either case.\n\nThe script reads the file given as its first argument and uses byte order for sorting.\n\nThe files in `build/` are:\n- `order.txt`\n- `big-order.txt`\n- `cycle-order.txt`\n- `cycle.txt`\n- `cycle.rc`",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cd /home/eval/pkgs; ls -la; head -20 deps.txt; wc -l deps*.txt; cat deps-cycle.txt | head -20; ls bin build 2>&1",
+      "cd /home/eval/pkgs; mkdir -p bin build\ncat > bin/order <<'EOF'\n#!/bin/bash\n# usage: order FILE\nexport LC_ALL=C\n[ $# -ge 1 ] || { echo \"usage: $0 file\" >&2; exit 2; }\nawk '\n{\n  sub(/#.*/, \"\"); gsub(/\\r/, \"\"); gsub(/[ \\t]+/, \" \")\n  sub(/^ /, \"\"); sub(/ $/, \"\")\n  if ($0 == \"\") next\n  i = index($0, \":\")\n  if (i) { lhs = substr($0, 1, i-1); rhs = substr($0, i+1) } else { lhs = $0; rhs = \"\" }\n  gsub(/ /, \"\", lhs)\n  if (lhs == \"\") next\n  pk[lhs] = 1\n  n = split(rhs, d, \" \")\n  for (k = 1; k <= n; k++) {\n    pk[d[k]] = 1\n    if (!((lhs SUBSEP d[k]) in seen)) {\n      seen[lhs, d[k]] = 1\n      cnt[lhs]++\n      rd[d[k]] = rd[d[k]] \" \" lhs\n    }\n  }\n}\nEND {\n  # simple sorted ready set via repeated min scan\n  np = 0\n  for (p in pk) names[++np] = p\n  # sort names (insertion via merge-free approach: use external-free heap)\n  # binary heap of ready packages\n  hs = 0\n  for (p in pk) if (cnt[p] == 0) push(p)\n  while (hs > 0) {\n    p = pop(); print p; done[p] = 1\n    m = split(rd[p], r, \" \")\n    for (k = 1; k <= m; k++) if (--cnt[r[k]] == 0) push(r[k])\n  }\n  rem = \"\"; bad = 0\n  for (p in pk) if (!(p in done)) { lst[++bad] = p }\n  if (bad) {\n    # sort lst\n    for (a = 2; a <= bad; a++) { v = lst[a]; b = a-1; while (b > 0 && lst[b] > v) { lst[b+1] = lst[b]; b-- } lst[b+1] = v }\n    for (a = 1; a <= bad; a++) rem = rem (a>1 ? \" \" : \"\") lst[a]\n    print \"cycle: \" rem > \"/dev/stderr\"\n    exit 1\n  }\n}\nfunction push(x,   i, t) {\n  h[++hs] = x; i = hs\n  while (i > 1 && h[int(i/2)] > h[i]) { t = h[i]; h[i] = h[int(i/2)]; h[int(i/2)] = t; i = int(i/2) }\n}\nfunction pop(   r, i, c, t) {\n  r = h[1]; h[1] = h[hs--]; i = 1\n  while ((c = 2*i) <= hs) {\n    if (c < hs && h[c+1] < h[c]) c++\n    if (h[i] <= h[c]) break\n    t = h[i]; h[i] = h[c]; h[c] = t; i = c\n  }\n  return r\n}\n' \"$1\"\nEOF\nchmod +x bin/order\nbin/order deps.txt > build/order.txt\nbin/order deps-big.txt > build/big-order.txt\nbin/order deps-cycle.txt > build/cycle-order.txt 2> build/cycle.txt; echo $? > build/cycle.rc\nfor f in build/*; do echo == $f; cat $f; done; cat deps-big.txt"
+    ],
+    "usage": {
+      "input_tokens": 5767,
+      "output_tokens": 1959,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 13966
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 1.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cd /home/eval/pkgs; ls -la; head -20 deps.txt; wc -l deps*.txt; cat deps-cycle.txt | head -20; ls bin build 2>&1",
+            "exit_code": 2,
+            "stderr": "",
+            "stdout": "-rw-r--r--      551 2026-10-09 05:34 deps-big.txt\n-rw-r--r--       41 2026-10-09 05:34 deps-cycle.txt\n-rw-r--r--      217 2026-10-09 05:34 deps.txt\n# package: dependencies (each must be built before the package)\napp: web  db   log\nweb: http log\nhttp: net\ndb: net log\nlog:\ncli: app\nnet:\ndocs:\n\n# repeated entries are allowed; deps accumulate\nweb: log\ntest: app mock\n 37 deps-big.txt\n  7 deps-cycle.txt\n 13 deps.txt\n 57 total\na: b\nb: c\nc: a\nd: a\ne:\nf: e\n  g :  f   d\nls: cannot access 'bin': No such file or directory\n"
+          },
+          {
+            "commands": "cd /home/eval/pkgs; mkdir -p bin build\ncat > bin/order <<'EOF'\n#!/bin/bash\n# usage: order FILE\nexport LC_ALL=C\n[ $# -ge 1 ] || { echo \"usage: $0 file\" >&2; exit 2; }\nawk '\n{\n  sub(/#.*/, \"\"); gsub(/\\r/, \"\"); gsub(/[ \\t]+/, \" \")\n  sub(/^ /, \"\"); sub(/ $/, \"\")\n  if ($0 == \"\") next\n  i = index($0, \":\")\n  if (i) { lhs = substr($0, 1, i-1); rhs = substr($0, i+1) } else { lhs = $0; rhs = \"\" }\n  gsub(/ /, \"\", lhs)\n  if (lhs == \"\") next\n  pk[lhs] = 1\n  n = split(rhs, d, \" \")\n  for (k = 1; k <= n; k++) {\n    pk[d[k]] = 1\n    if (!((lhs SUBSEP d[k]) in seen)) {\n      seen[lhs, d[k]] = 1\n      cnt[lhs]++\n      rd[d[k]] = rd[d[k]] \" \" lhs\n    }\n  }\n}\nEND {\n  # simple sorted ready set via repeated min scan\n  np = 0\n  for (p in pk) names[++np] = p\n  # sort names (insertion via merge-free approach: use external-free heap)\n  # binary heap of ready packages\n  hs = 0\n  for (p in pk) if (cnt[p] == 0) push(p)\n  while (hs > 0) {\n    p = pop(); print p; done[p] = 1\n    m = split(rd[p], r, \" \")\n    for (k = 1; k <= m; k++) if (--cnt[r[k]] == 0) push(r[k])\n  }\n  rem = \"\"; bad = 0\n  for (p in pk) if (!(p in done)) { lst[++bad] = p }\n  if (bad) {\n    # sort lst\n    for (a = 2; a <= bad; a++) { v = lst[a]; b = a-1; while (b > 0 && lst[b] > v) { lst[b+1] = lst[b]; b-- } lst[b+1] = v }\n    for (a = 1; a <= bad; a++) rem = rem (a>1 ? \" \" : \"\") lst[a]\n    print \"cycle: \" rem > \"/dev/stderr\"\n    exit 1\n  }\n}\nfunction push(x,   i, t) {\n  h[++hs] = x; i = hs\n  while (i > 1 && h[int(i/2)] > h[i]) { t = h[i]; h[i] = h[int(i/2)]; h[int(i/2)] = t; i = int(i/2) }\n}\nfunction pop(   r, i, c, t) {\n  r = h[1]; h[1] = h[hs--]; i = 1\n  while ((c = 2*i) <= hs) {\n    if (c < hs && h[c+1] < h[c]) c++\n    if (h[i] <= h[c]) break\n    t = h[i]; h[i] = h[c]; h[c] = t; i = c\n  }\n  return r\n}\n' \"$1\"\nEOF\nchmod +x bin/order\nbin/order deps.txt > build/order.txt\nbin/order deps-big.txt > build/big-order.txt\nbin/order deps-cycle.txt > build/cycle-order.txt 2> build/cycle.txt; echo $? > build/cycle.rc\nfor f in build/*; do echo == $f; cat $f; done; cat deps-big.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "== build/big-order.txt\ncli-1\nmath\nregex\ntime-2\nzlib-9\njson-8\nlog\nauth\ncore\ncache-3\ncsv\ncolor\nfs\nnet-9\nbench\nfmt\nmock\nsig-9\ntest-0\ntls\nutil-0\ndocs\nproc\nterm\ndb-9\nuuid-2\nio-8\nhttp\nxml\nyaml-1\n== build/cycle-order.txt\ne\nf\n== build/cycle.rc\n1\n== build/cycle.txt\ncycle: a b c d g\n== build/order.txt\ndocs\nlog\nmock\nnet\ndb\nhttp\nweb\napp\ncli\ntest\nlog:\tzlib-9\nutil-0:  tls  net-9  math\nyaml-1: tls term\nsig-9: csv\nnet-9: log\ncore:  zlib-9  log\n\nsig-9:\tcsv\tnet-9\ncli-1:\nfmt: json-8\nmock:\tbench\nbench: net-9\ncsv:  log\ncolor:\tcsv\nfmt: json-8 bench zlib-9\nproc:  docs  json-8  util-0\ncache-3: core auth\n# --\ntest-0: csv math\nfs:  zlib-9  core\nuuid-2: core\nzlib-9:\nauth:  zlib-9  log  math\ntime-2:  math\njson-8:  zlib-9\nregex:\ndocs:\tcore\tutil-0\ntls:\tcore\tmath\tlog\nhttp: io-8\nxml:\tfmt\tmock\nio-8: csv\nio-8: csv test-0 uuid-2\nnet-9:  log  zlib-9\nmath:\nterm: docs\ndb-9:\tauth\tterm\n# generated dependency list\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

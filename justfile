@@ -297,31 +297,31 @@ bench-python:
 
 # List advertised evals, samples, scorers, and targets
 eval-list:
-    mira --bin bashkit-eval list
+    mira list --study-bin bashkit-eval
 
 # Run the bash agent eval. Pass extra mira flags through, e.g. (--targets takes
 # comma-separated label globs, e.g. 'anthropic/*'):
 #   just eval --targets anthropic/claude-opus-5-5 --tag json_processing --format html --out report.html
 eval *ARGS:
-    mira --bin bashkit-eval run bashkit_bash {{ARGS}}
+    mira run --study-bin bashkit-eval bashkit_bash {{ARGS}}
 
 # Quick 3-task smoke eval
 eval-smoke *ARGS:
-    mira --bin bashkit-eval run bashkit_smoke {{ARGS}}
+    mira run --study-bin bashkit-eval bashkit_smoke {{ARGS}}
 
 # Repo-workflow eval: multi-turn fixture repos (make test, fix, commit). Every
 # task's reference solution also runs offline in `cargo test -p bashkit-eval`.
 eval-repo *ARGS:
-    mira --bin bashkit-eval run bashkit_repo {{ARGS}}
+    mira run --study-bin bashkit-eval bashkit_repo {{ARGS}}
 
 # Hard eval (bashkit_hard): 10 tasks built to not saturate; 25-turn budget.
 eval-hard *ARGS:
-    mira --bin bashkit-eval run bashkit_hard {{ARGS}}
+    mira run --study-bin bashkit-eval bashkit_hard {{ARGS}}
 
 # Scripting-tool eval. The `mode` axis compares scripted vs baseline; select one
 # with `--axis mode=scripted` (omit to run both).
 eval-scripting *ARGS:
-    mira --bin bashkit-eval run bashkit_scripting {{ARGS}}
+    mira run --study-bin bashkit-eval bashkit_scripting {{ARGS}}
 
 # Gap telemetry: replay every recorded eval tool call on the current bashkit,
 # save results/gaps/gaps-<ts>.{json,md}, refresh /benches data. No model or

@@ -1,0 +1,225 @@
+{
+  "eval": "bashkit_hard",
+  "sample": "hard_trap_publish",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "In the git repository /home/eval/publisher, bin/publish violates the contract in its header comment (wrong exit codes, leftover temporary files, sloppy validation). Fix bin/publish so `make test` passes; do not edit tests/. Then use it to publish /home/eval/publisher/etc/prod.conf to /home/eval/publisher/site/config.txt (run `bash bin/publish etc/prod.conf site/config.txt` from /home/eval/publisher), and commit your fix with a message starting with `fix:`."
+  ],
+  "passed": false,
+  "aggregate": 0.5714285714285714,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 0.5714285714285714,
+      "pass": false,
+      "reason": "3/5 checks passed (weighted rate 57%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "",
+    "iterations": 25,
+    "tool_calls_count": 25,
+    "tool_calls": [
+      "cd /home/eval/publisher && ls -la && git status && cat bin/publish",
+      "cd /home/eval/publisher && cat Makefile && cat tests/test_publish.sh",
+      "cd /home/eval/publisher && ls -la tests/fixtures && head -n 50 tests/fixtures/*",
+      "cd /home/eval/publisher && ls -la etc site",
+      "cd /home/eval/publisher && cat etc/prod.conf",
+      "cd /home/eval/publisher && make test",
+      "cat << 'EOF' > /home/eval/publisher/bin/publish\n#!/bin/bash\n# publish SRC DEST: render the key=value file SRC into DEST as \"key: value\"\n# lines sorted by key (LC_ALL=C byte order). Blank lines and lines starting\n# with # are ignored. Every line of SRC counts, even a last line without a\n# trailing newline. Values may contain \"=\".\n#\n# Contract (tests/test_publish.sh checks all of it):\n#   exit 0  success: DEST replaced, nothing printed on stdout\n#   exit 2  usage error (not exactly two arguments)\n#   exit 3  SRC has a line that is not blank, not a comment and not\n#           key=value with key matching [a-z_]+ ; prints\n#           \"publish: bad line N\" (N = 1-based line number) on stderr\n#   exit 4  the directory DEST would be written to does not exist\n#   On every non-zero exit DEST is left untouched, and on every exit no\n#   temporary file or directory remains in ${TMPDIR:-/tmp}.\n\n[ $# -eq 2 ] || { echo \"usage: publish SRC DEST\" >&2; exit 2; }\n\nsrc=$1\ndest=$2\n\ndest_dir=$(dirname \"$dest\")\n[ -d \"$dest_dir\" ] || exit 4\n\nwork_dir=$(mktemp -d \"${TMPDIR:-/tmp}/pub.XXXXXX\")\ntrap 'rm -rf \"$work_dir\"' EXIT\n\npairs=\"$work_dir/pairs\"\n: > \"$pairs\"\n\nn=0\nwhile IFS= read -r line || [ -n \"$line\" ]; do\n  n=$((n + 1))\n  case $line in\n    ''|'#'*)\n      continue\n      ;;\n    *)\n      if [[ \"$line\" =~ ^[a-z_]+=(.*)$ ]]; then\n        printf '%s\\n' \"$line\" >> \"$pairs\"\n      else\n        echo \"publish: bad line $n\" >&2\n        exit 3\n      fi\n      ;;\n  esac\ndone < \"$src\"\n\nout=\"$work_dir/out\"\nLC_ALL=C sort \"$pairs\" | sed 's/=/: /' > \"$out\"\nmv \"$out\" \"$dest\"\nEOF\nchmod +x /home/eval/publisher/bin/publish",
+      "cd /home/eval/publisher && make test",
+      "cd /home/eval/publisher && git status",
+      "cat << 'EOF' > /tmp/test_corner.sh\n#!/bin/bash\nset -e\nexport TMPDIR=$(mktemp -d)\ntrap 'rm -rf \"$TMPDIR\"' EXIT\n\necho -n \"key=val\" > \"$TMPDIR/no_newline.conf\"\nbash /home/eval/publisher/bin/publish \"$TMPDIR/no_newline.conf\" \"$TMPDIR/out.txt\"\n[ \"$(cat \"$TMPDIR/out.txt\")\" = \"key: val\" ] || echo \"FAIL no newline\"\n\necho -n \"bad line\" > \"$TMPDIR/bad_no_newline.conf\"\nset +e\nbash /home/eval/publisher/bin/publish \"$TMPDIR/bad_no_newline.conf\" \"$TMPDIR/out2.txt\" 2>\"$TMPDIR/err.txt\"\nres=$?\nset -e\n[ \"$res\" -eq 3 ] || echo \"FAIL bad no newline exit $res\"\n[ \"$(cat \"$TMPDIR/err.txt\")\" = \"publish: bad line 1\" ] || echo \"FAIL bad no newline msg\"\n\n# Check key with uppercase or dash or numbers\necho \"KEY=val\" > \"$TMPDIR/upper.conf\"\nset +e\nbash /home/eval/publisher/bin/publish \"$TMPDIR/upper.conf\" \"$TMPDIR/out3.txt\" 2>\"$TMPDIR/err3.txt\"\nres=$?\nset -e\n[ \"$res\" -eq 3 ] || echo \"FAIL upper exit $res\"\n[ \"$(cat \"$TMPDIR/err3.txt\")\" = \"publish: bad line 1\" ] || echo \"FAIL upper msg\"\n\necho \"ALL CORNER TESTS PASSED\"\nEOF\nbash /tmp/test_corner.sh",
+      "rm -f /tmp/test_corner.sh",
+      "cd /home/eval/publisher && bash bin/publish etc/prod.conf site/config.txt",
+      "cat /home/eval/publisher/site/config.txt",
+      "cd /home/eval/publisher && git status",
+      "cd /home/eval/publisher && git status --ignored",
+      "cd /home/eval/publisher && rm -rf build",
+      "cd /home/eval/publisher && git status",
+      "cd /home/eval/publisher && git log -n 5 --oneline",
+      "cd /home/eval/publisher && git diff bin/publish",
+      "git -C /home/eval/publisher diff",
+      "cd /home/eval/publisher && git --version",
+      "type -a git",
+      "/usr/bin/git --help",
+      "cd /home/eval/publisher && git status && git add bin/publish site/config.txt",
+      "cd /home/eval/publisher && git status"
+    ],
+    "usage": {
+      "input_tokens": 75539,
+      "output_tokens": 1644,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 74477
+    },
+    "metrics": {
+      "natural_stop": 0.0,
+      "tool_calls": 25.0,
+      "tool_calls_err": 4.0,
+      "tool_calls_ok": 21.0,
+      "turns": 25.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cd /home/eval/publisher && ls -la && git status && cat bin/publish",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "drwxr-xr-x        0 2026-10-09 05:37 .git\n-rw-r--r--       49 2026-10-09 05:37 Makefile\ndrwxr-xr-x        0 2026-10-09 05:37 bin\ndrwxr-xr-x        0 2026-10-09 05:37 etc\ndrwxr-xr-x        0 2026-10-09 05:37 site\ndrwxr-xr-x        0 2026-10-09 05:37 tests\nOn branch master\n\nnothing to commit, working tree clean\n#!/bin/bash\n# publish SRC DEST: render the key=value file SRC into DEST as \"key: value\"\n# lines sorted by key (LC_ALL=C byte order). Blank lines and lines starting\n# with # are ignored. Every line of SRC counts, even a last line without a\n# trailing newline. Values may contain \"=\".\n#\n# Contract (tests/test_publish.sh checks all of it):\n#   exit 0  success: DEST replaced, nothing printed on stdout\n#   exit 2  usage error (not exactly two arguments)\n#   exit 3  SRC has a line that is not blank, not a comment and not\n#           key=value with key matching [a-z_]+ ; prints\n#           \"publish: bad line N\" (N = 1-based line number) on stderr\n#   exit 4  the directory DEST would be written to does not exist\n#   On every non-zero exit DEST is left untouched, and on every exit no\n#   temporary file or directory remains in ${TMPDIR:-/tmp}.\nset -eu\n\n[ $# -eq 2 ] || { echo \"usage: publish SRC DEST\" >&2; exit 1; }\nsrc=$1 dest=$2\n\nrender() {\n  local tmp=$(mktemp)\n  local work=$(mktemp -d)\n  trap 'rm -f \"$tmp\"' EXIT\n  n=0\n  while IFS= read -r line; do\n    n=$((n + 1))\n    case $line in\n      ''|'#'*) continue ;;\n      [a-z_]*=*) echo \"$line\" >> \"$work/pairs\" ;;\n      *) echo \"publish: bad line $n\" >&2; exit 3 ;;\n    esac\n  done < \"$src\"\n  sort \"$work/pairs\" | sed 's/=/: /' > \"$tmp\"\n  cp \"$tmp\" \"$dest\"\n}\n\nrender\ntrap 'echo \"publish: done\"; exit 0' EXIT\n"
+          },
+          {
+            "commands": "cd /home/eval/publisher && cat Makefile && cat tests/test_publish.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "test:\n\t@bash tests/test_publish.sh\n\n.PHONY: test\n#!/bin/bash\ncd \"$(dirname \"$0\")/..\" || exit 2\nexport LC_ALL=C\nexport TMPDIR=\"$PWD/build/tmp\"\nrm -rf build/tmp build/pub; mkdir -p build/tmp build/pub\nfail=0\ncheck() { # NAME WANT GOT\n  if [ \"$2\" != \"$3\" ]; then echo \"FAIL $1: exit $3, want $2\"; fail=1; fi\n  if [ -n \"$(ls -A \"$TMPDIR\")\" ]; then\n    echo \"FAIL $1: left in TMPDIR: $(ls -A \"$TMPDIR\" | tr '\\n' ' ')\"; fail=1\n    rm -rf \"$TMPDIR\"; mkdir -p \"$TMPDIR\"\n  fi\n}\nprintf 'OLD\\n' > build/pub/out.txt\nbash bin/publish tests/fixtures/good.conf > build/pub/usage.out 2>&1; check usage 2 $?\nbash bin/publish tests/fixtures/bad.conf build/pub/out.txt 2> build/pub/stderr; check bad 3 $?\n[ \"$(cat build/pub/stderr)\" = \"publish: bad line 4\" ] || { echo \"FAIL bad: stderr was: $(cat build/pub/stderr)\"; fail=1; }\n[ \"$(cat build/pub/out.txt)\" = OLD ] || { echo \"FAIL bad: DEST was modified\"; fail=1; }\nbash bin/publish tests/fixtures/good.conf build/nope/out.txt 2>/dev/null; check nodir 4 $?\nbash bin/publish tests/fixtures/empty.conf build/pub/empty.txt; check empty 0 $?\n[ -f build/pub/empty.txt ] && [ ! -s build/pub/empty.txt ] || { echo \"FAIL empty: want an empty DEST\"; fail=1; }\nout=$(bash bin/publish tests/fixtures/good.conf build/pub/out.txt); check good 0 $?\n[ -z \"$out\" ] || { echo \"FAIL good: unexpected stdout: $out\"; fail=1; }\ncmp -s tests/fixtures/good.expected build/pub/out.txt || { echo \"FAIL good: DEST differs from tests/fixtures/good.expected\"; fail=1; }\nif [ \"$fail\" -eq 0 ]; then echo PASS | tee build/test-report.txt; else echo FAIL > build/test-report.txt; exit 1; fi\n"
+          },
+          {
+            "commands": "cd /home/eval/publisher && ls -la tests/fixtures && head -n 50 tests/fixtures/*",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       34 2026-10-09 05:37 bad.conf\n-rw-r--r--       16 2026-10-09 05:37 empty.conf\n-rw-r--r--       67 2026-10-09 05:37 good.conf\n-rw-r--r--       54 2026-10-09 05:37 good.expected\n==> tests/fixtures/bad.conf <==\n# bad\nname=ok\n\nmax conns=5\nport=1\n\n==> tests/fixtures/empty.conf <==\n# nothing here\n\n\n==> tests/fixtures/good.conf <==\n# service config\nname=api\nmax_conns=5\n\nurl=http://x/?a=b\na_b=1\na=2\n\n==> tests/fixtures/good.expected <==\na: 2\na_b: 1\nmax_conns: 5\nname: api\nurl: http://x/?a=b\n"
+          },
+          {
+            "commands": "cd /home/eval/publisher && ls -la etc site",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "etc:\n-rw-r--r--      115 2026-10-09 05:37 prod.conf\n\nsite:\n-rw-r--r--       29 2026-10-09 05:37 README\n"
+          },
+          {
+            "commands": "cd /home/eval/publisher && cat etc/prod.conf",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# production\nname=shop\nregion=eu-west\n\ntimeout_s=30\ndb_url=postgres://db/shop?sslmode=require\nfeature_flags=a=1,b=0"
+          },
+          {
+            "commands": "cd /home/eval/publisher && make test",
+            "exit_code": 2,
+            "stderr": "sort: /home/eval/publisher/build/tmp/tmp.jTs9td18Ni/pairs: No such file or directory\nmake: *** [Makefile:2: test] Error 1\n",
+            "stdout": "FAIL usage: exit 1, want 2\npublish: done\nFAIL bad: exit 0, want 3\nFAIL bad: left in TMPDIR: tmp.0Qd05ygsZI tmp.P4CJHTQ6qx \nFAIL bad: stderr was: \nFAIL bad: DEST was modified\nFAIL nodir: exit 1, want 4\nFAIL nodir: left in TMPDIR: tmp.TntbuTbwkU tmp.xUfDOcWtXY \npublish: done\nFAIL empty: left in TMPDIR: tmp.Dm2KGIhxL2 tmp.jTs9td18Ni \nFAIL good: left in TMPDIR: tmp.Fkzah7ARCp tmp.TAXsDCefCj \nFAIL good: unexpected stdout: publish: done\n"
+          },
+          {
+            "commands": "cat << 'EOF' > /home/eval/publisher/bin/publish\n#!/bin/bash\n# publish SRC DEST: render the key=value file SRC into DEST as \"key: value\"\n# lines sorted by key (LC_ALL=C byte order). Blank lines and lines starting\n# with # are ignored. Every line of SRC counts, even a last line without a\n# trailing newline. Values may contain \"=\".\n#\n# Contract (tests/test_publish.sh checks all of it):\n#   exit 0  success: DEST replaced, nothing printed on stdout\n#   exit 2  usage error (not exactly two arguments)\n#   exit 3  SRC has a line that is not blank, not a comment and not\n#           key=value with key matching [a-z_]+ ; prints\n#           \"publish: bad line N\" (N = 1-based line number) on stderr\n#   exit 4  the directory DEST would be written to does not exist\n#   On every non-zero exit DEST is left untouched, and on every exit no\n#   temporary file or directory remains in ${TMPDIR:-/tmp}.\n\n[ $# -eq 2 ] || { echo \"usage: publish SRC DEST\" >&2; exit 2; }\n\nsrc=$1\ndest=$2\n\ndest_dir=$(dirname \"$dest\")\n[ -d \"$dest_dir\" ] || exit 4\n\nwork_dir=$(mktemp -d \"${TMPDIR:-/tmp}/pub.XXXXXX\")\ntrap 'rm -rf \"$work_dir\"' EXIT\n\npairs=\"$work_dir/pairs\"\n: > \"$pairs\"\n\nn=0\nwhile IFS= read -r line || [ -n \"$line\" ]; do\n  n=$((n + 1))\n  case $line in\n    ''|'#'*)\n      continue\n      ;;\n    *)\n      if [[ \"$line\" =~ ^[a-z_]+=(.*)$ ]]; then\n        printf '%s\\n' \"$line\" >> \"$pairs\"\n      else\n        echo \"publish: bad line $n\" >&2\n        exit 3\n      fi\n      ;;\n  esac\ndone < \"$src\"\n\nout=\"$work_dir/out\"\nLC_ALL=C sort \"$pairs\" | sed 's/=/: /' > \"$out\"\nmv \"$out\" \"$dest\"\nEOF\nchmod +x /home/eval/publisher/bin/publish",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "cd /home/eval/publisher && make test",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "PASS\n"
+          },
+          {
+            "commands": "cd /home/eval/publisher && git status",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "On branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/pub/empty.txt\n\tbuild/pub/out.txt\n\tbuild/pub/stderr\n\tbuild/pub/usage.out\n\tbuild/test-report.txt\n"
+          },
+          {
+            "commands": "cat << 'EOF' > /tmp/test_corner.sh\n#!/bin/bash\nset -e\nexport TMPDIR=$(mktemp -d)\ntrap 'rm -rf \"$TMPDIR\"' EXIT\n\necho -n \"key=val\" > \"$TMPDIR/no_newline.conf\"\nbash /home/eval/publisher/bin/publish \"$TMPDIR/no_newline.conf\" \"$TMPDIR/out.txt\"\n[ \"$(cat \"$TMPDIR/out.txt\")\" = \"key: val\" ] || echo \"FAIL no newline\"\n\necho -n \"bad line\" > \"$TMPDIR/bad_no_newline.conf\"\nset +e\nbash /home/eval/publisher/bin/publish \"$TMPDIR/bad_no_newline.conf\" \"$TMPDIR/out2.txt\" 2>\"$TMPDIR/err.txt\"\nres=$?\nset -e\n[ \"$res\" -eq 3 ] || echo \"FAIL bad no newline exit $res\"\n[ \"$(cat \"$TMPDIR/err.txt\")\" = \"publish: bad line 1\" ] || echo \"FAIL bad no newline msg\"\n\n# Check key with uppercase or dash or numbers\necho \"KEY=val\" > \"$TMPDIR/upper.conf\"\nset +e\nbash /home/eval/publisher/bin/publish \"$TMPDIR/upper.conf\" \"$TMPDIR/out3.txt\" 2>\"$TMPDIR/err3.txt\"\nres=$?\nset -e\n[ \"$res\" -eq 3 ] || echo \"FAIL upper exit $res\"\n[ \"$(cat \"$TMPDIR/err3.txt\")\" = \"publish: bad line 1\" ] || echo \"FAIL upper msg\"\n\necho \"ALL CORNER TESTS PASSED\"\nEOF\nbash /tmp/test_corner.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "ALL CORNER TESTS PASSED\n"
+          },
+          {
+            "commands": "rm -f /tmp/test_corner.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "cd /home/eval/publisher && bash bin/publish etc/prod.conf site/config.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "cat /home/eval/publisher/site/config.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "db_url: postgres://db/shop?sslmode=require\nfeature_flags: a=1,b=0\nname: shop\nregion: eu-west\ntimeout_s: 30\n"
+          },
+          {
+            "commands": "cd /home/eval/publisher && git status",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "On branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/pub/empty.txt\n\tbuild/pub/out.txt\n\tbuild/pub/stderr\n\tbuild/pub/usage.out\n\tbuild/test-report.txt\n\tsite/config.txt\n"
+          },
+          {
+            "commands": "cd /home/eval/publisher && git status --ignored",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "On branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/pub/empty.txt\n\tbuild/pub/out.txt\n\tbuild/pub/stderr\n\tbuild/pub/usage.out\n\tbuild/test-report.txt\n\tsite/config.txt\n"
+          },
+          {
+            "commands": "cd /home/eval/publisher && rm -rf build",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "cd /home/eval/publisher && git status",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "On branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tsite/config.txt\n"
+          },
+          {
+            "commands": "cd /home/eval/publisher && git log -n 5 --oneline",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "commit b465c34f\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 05:37:36 2026 +0000\n\n    initial import\n\n"
+          },
+          {
+            "commands": "cd /home/eval/publisher && git diff bin/publish",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Diff output (simplified in virtual mode)\n"
+          },
+          {
+            "commands": "git -C /home/eval/publisher diff",
+            "exit_code": 1,
+            "stderr": "git: '-C' is not a git command. See 'git --help'.\n",
+            "stdout": ""
+          },
+          {
+            "commands": "cd /home/eval/publisher && git --version",
+            "exit_code": 1,
+            "stderr": "git: '--version' is not a git command. See 'git --help'.\n",
+            "stdout": ""
+          },
+          {
+            "commands": "type -a git",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "git is /usr/bin/git\ngit is /bin/git\n"
+          },
+          {
+            "commands": "/usr/bin/git --help",
+            "exit_code": 1,
+            "stderr": "git: '--help' is not a git command. See 'git --help'.\n",
+            "stdout": ""
+          },
+          {
+            "commands": "cd /home/eval/publisher && git status && git add bin/publish site/config.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "On branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tsite/config.txt\n"
+          },
+          {
+            "commands": "cd /home/eval/publisher && git status",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "On branch master\n\nChanges to be committed:\n  (use \"git restore --staged <file>...\" to unstage)\n\tnew file:   bin/publish\n\tnew file:   site/config.txt\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

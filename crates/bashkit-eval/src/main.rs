@@ -3,9 +3,9 @@
 // This binary advertises bashkit's evals to the `mira` CLI over stdio. Run it
 // through the host:
 //
-//     mira --bin bashkit-eval list
-//     ANTHROPIC_API_KEY=... mira --bin bashkit-eval run --tag smoke
-//     mira --bin bashkit-eval run --targets anthropic/claude-opus-5-5 --format html --out report.html
+//     mira list --study-bin bashkit-eval
+//     ANTHROPIC_API_KEY=... mira run --study-bin bashkit-eval --tag smoke
+//     mira run --study-bin bashkit-eval --targets anthropic/claude-opus-5-5 --format html --out report.html
 //
 // The `#[eval]` wrappers live here (in the bin crate) so their inventory
 // registrations are guaranteed to link into this binary; the heavy lifting is

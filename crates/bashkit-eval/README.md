@@ -16,19 +16,19 @@ Install the host CLI once, then drive the study through it:
 cargo install mira-cli            # provides the `mira` binary
 
 # List advertised evals, samples, scorers, and targets
-mira --bin bashkit-eval list
+mira list --study-bin bashkit-eval
 
 # Run the bash agent eval (set keys for the models you want; unkeyed targets skip)
 ANTHROPIC_API_KEY=... OPENROUTER_API_KEY=... \
-  mira --bin bashkit-eval run bashkit_bash
+  mira run --study-bin bashkit-eval bashkit_bash
 
 # A specific model + one category (--targets takes comma-separated label globs)
 ANTHROPIC_API_KEY=... \
-  mira --bin bashkit-eval run bashkit_bash --targets anthropic/claude-opus-5-5 --tag json_processing
+  mira run --study-bin bashkit-eval bashkit_bash --targets anthropic/claude-opus-5-5 --tag json_processing
 
 # Scripting-tool eval, scripted mode only, self-contained HTML report
 OPENAI_API_KEY=... \
-  mira --bin bashkit-eval run bashkit_scripting --axis mode=scripted --format html --out report.html
+  mira run --study-bin bashkit-eval bashkit_scripting --axis mode=scripted --format html --out report.html
 
 # Via just
 just eval-list
@@ -83,18 +83,20 @@ deterministic topological sort). Reference solutions in
 > `results/mira/<run_id>/`). Earlier entries were produced by the original
 > (pre-mira) harness and are retained as a record.
 
-### 2026-10-09, 7-model lineup (58 tasks + 8 repo tasks, latest)
+### 2026-10-09, 7-model lineup (58 tasks + 8 repo + 10 hard, latest)
 
 Lineup refreshed to current models: Claude Opus 5.5 and Sonnet 5.5, GPT-6.1 Sol
 and GPT-6 Luna (Responses API: GPT-6 rejects function tools on Chat Completions
 with reasoning on), and, via OpenRouter, Gemini 3.8 Flash, Kimi K3 and Meta Muse
 Spark 1.3 Contributor. Run folders: `results/mira/20261009T045508Z-b39f`
-(`bashkit_bash`) and `results/mira/20261009T050612Z-09d5` (`bashkit_repo`).
+(`bashkit_bash`), `results/mira/20261009T050612Z-09d5` (`bashkit_repo`) and
+`results/mira/20261009T052837Z-e7e1` (`bashkit_hard`, first run of the new set).
 
 | Metric | Sonnet 5.5 | Kimi K3 | Muse Spark 1.3 | Opus 5.5 | GPT-6.1 Sol | Gemini 3.8 Flash | GPT-6 Luna |
 |--------|-----------|---------|----------------|----------|-------------|------------------|------------|
 | Tasks passed (58) | **58/58** | **58/58** | **58/58** | 57/58 | 54/58 | 54/58 | 51/58 |
 | Repo tasks (8) | **8/8** | **8/8** | 6/8 | 7/8 | 5/8 | 3/8 | 3/8 |
+| Hard tasks (10) | **10/10** | 8/10 | 8/10 | **10/10** | 9/10 | 4/10 | 6/10 |
 | Tool-call success | 95% | **96%** | **96%** | 95% | 91% | 93% | 93% |
 | Tokens (in/out) | 159K / 30K | 174K / 53K | 293K / 128K | 164K / 40K | **51K / 16K** | 229K / 47K | 60K / 20K |
 | Duration | **5.7 min** | 11.2 min | 28.0 min | 8.1 min | 8.0 min | 14.5 min | 5.8 min |
@@ -105,7 +107,7 @@ Duration is the sum of per-task wall-clock time for the 58-task eval.
 
 1. **The 58-task set is saturating**: three models (Sonnet 5.5, Kimi K3, Muse
    Spark 1.3) pass every task, and Opus 5.5 misses one (`complex_todo_app`).
-   The repo-workflow tasks now carry the signal; harder tasks are being added.
+   The repo-workflow and new hard tasks now carry the signal.
 2. **Sonnet 5.5 is the value pick**: 58/58 and 8/8, fastest run, fewest
    Anthropic tokens. Kimi K3 matches its pass counts at about twice the time.
 3. **GPT-6.1 Sol is the most token-frugal** (51K in) but drops 4 tasks and 3
@@ -114,7 +116,12 @@ Duration is the sum of per-task wall-clock time for the 58-task eval.
    for both GPT-6 models and Gemini, `script_getopts_parser` for GPT-6.1 Sol
    and Gemini. In the repo set, `repo_parallel_runner_masks_failure` and
    `repo_report_sort_regression` trip three models each.
-5. **Gap telemetry**: replaying every recorded run on today's bashkit, calls
+5. **Hard set (first run)**: 55/70 overall. Both Claude 5.5 models pass all
+   10; GPT-6.1 Sol 9, Kimi K3 and Muse Spark 8, GPT-6 Luna 6, Gemini 3.8
+   Flash 4. Hardest tasks: `hard_quoting_collect`, `hard_rename_refactor`,
+   `hard_makefile_deps`, `hard_trap_publish` (4/7 each). The top of the field
+   still saturates it, so the next round needs harder tasks again.
+6. **Gap telemetry**: replaying every recorded run on today's bashkit, calls
    hitting a gap fall from 336 recorded to 73
    (`results/gaps/gaps-20261009T051832Z.md`). The top remaining entries are
    mostly invalid bash the models wrote (real bash rejects it too) and probes

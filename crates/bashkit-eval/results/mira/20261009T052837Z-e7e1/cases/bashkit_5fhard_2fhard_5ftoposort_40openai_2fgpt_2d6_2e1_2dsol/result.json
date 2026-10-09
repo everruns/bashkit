@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_hard",
+  "sample": "hard_toposort",
+  "target": "openai/gpt-6.1-sol",
+  "input": [
+    "In /home/eval/pkgs there are dependency lists deps.txt, deps-big.txt and deps-cycle.txt. Each non-comment line has the form `package: dep1 dep2 ...` (deps are separated by spaces or tabs; there may be extra whitespace around names and the colon). `#` starts a comment that runs to the end of the line, blank lines are ignored, a package may appear on several lines (its deps accumulate), and a name that only ever appears as a dependency is still a package.\n\nWrite an executable script /home/eval/pkgs/bin/order (bash; awk/sort/etc. are fine, no python) that takes one such file and prints a build order, one package per line, where every package comes after all of its dependencies. The order must be deterministic: repeatedly emit the smallest package (byte order) whose dependencies have all been emitted. If some packages can never be emitted because of a cycle, print the order for the ones that can, then print `cycle: ` followed by all remaining packages sorted (byte order) and separated by single spaces to stderr, and exit 1; otherwise exit 0.\n\nThen from /home/eval/pkgs run it on each file and save: stdout of deps.txt to build/order.txt, stdout of deps-big.txt to build/big-order.txt, stdout of deps-cycle.txt to build/cycle-order.txt, its stderr to build/cycle.txt and its exit status (just the number) to build/cycle.rc."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Created executable `/home/eval/pkgs/bin/order` and saved all requested outputs in `/home/eval/pkgs/build/`:\n\n- `order.txt`\n- `big-order.txt`\n- `cycle-order.txt`\n- `cycle.txt`\n- `cycle.rc`\n\nThe cycle run emitted `e` and `f`, reported `cycle: a b c d g` to stderr, and exited with status `1`.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cd /home/eval/pkgs && ls -la && for f in deps.txt deps-big.txt deps-cycle.txt; do echo \"--- $f\"; head -n 15 \"$f\"; done",
+      "cd /home/eval/pkgs && mkdir -p bin build && cat > bin/order <<'EOF'\n#!/usr/bin/env bash\n# Kahn's algorithm, with a min-heap of byte-sorted package ranks.\nset -euo pipefail\nexport LC_ALL=C\nif [[ $# -ne 1 ]]; then\n    printf 'usage: %s dependency-file\\n' \"$0\" >&2\n    exit 2\nfi\ninput=$1\n[[ $input == /* ]] || input=./$input\nnames=$(mktemp)\ntrap 'rm -f -- \"$names\"' EXIT\n\n# Include both declared packages and dependency-only packages.\nawk '\nfunction trim(s) { sub(/^[ \\t\\r]+/, \"\", s); sub(/[ \\t\\r]+$/, \"\", s); return s }\n{\n    sub(/#.*/, \"\")\n    if (trim($0) == \"\") next\n    colon = index($0, \":\")\n    print trim(substr($0, 1, colon - 1))\n    rest = trim(substr($0, colon + 1))\n    if (rest != \"\") {\n        n = split(rest, deps, /[ \\t\\r]+/)\n        for (i = 1; i <= n; i++) print deps[i]\n    }\n}' \"$input\" | sort -u > \"$names\"\n\nawk '\nfunction trim(s) { sub(/^[ \\t\\r]+/, \"\", s); sub(/[ \\t\\r]+$/, \"\", s); return s }\nfunction push(v, i, p) {\n    i = ++size\n    while (i > 1) {\n        p = int(i / 2)\n        if (heap[p] <= v) break\n        heap[i] = heap[p]\n        i = p\n    }\n    heap[i] = v\n}\nfunction pop(    result, v, i, c) {\n    result = heap[1]\n    v = heap[size]\n    delete heap[size--]\n    if (size) {\n        i = 1\n        while (2 * i <= size) {\n            c = 2 * i\n            if (c < size && heap[c + 1] < heap[c]) c++\n            if (v <= heap[c]) break\n            heap[i] = heap[c]\n            i = c\n        }\n        heap[i] = v\n    }\n    return result\n}\nFILENAME == ARGV[1] {\n    name[++count] = $0\n    rank[$0] = count\n    next\n}\n{\n    sub(/#.*/, \"\")\n    if (trim($0) == \"\") next\n    colon = index($0, \":\")\n    package = rank[trim(substr($0, 1, colon - 1))]\n    rest = trim(substr($0, colon + 1))\n    if (rest == \"\") next\n    n = split(rest, deps, /[ \\t\\r]+/)\n    for (i = 1; i <= n; i++) {\n        dependency = rank[deps[i]]\n        key = dependency SUBSEP package\n        if (key in seen) continue\n        seen[key] = 1\n        degree[package]++\n        target[++edges] = package\n        link[edges] = head[dependency]\n        head[dependency] = edges\n    }\n}\nEND {\n    for (i = 1; i <= count; i++) if (!degree[i]) push(i)\n    while (size) {\n        v = pop()\n        print name[v]\n        emitted[v] = 1\n        total++\n        for (e = head[v]; e; e = link[e]) {\n            w = target[e]\n            if (--degree[w] == 0) push(w)\n        }\n    }\n    if (total < count) {\n        message = \"cycle:\"\n        for (i = 1; i <= count; i++)\n            if (!emitted[i]) message = message \" \" name[i]\n        print message > \"/dev/stderr\"\n        exit 1\n    }\n}' \"$names\" \"$input\"\nEOF\nchmod +x bin/order\n./bin/order deps.txt > build/order.txt\n./bin/order deps-big.txt > build/big-order.txt\n./bin/order deps-cycle.txt > build/cycle-order.txt 2> build/cycle.txt\nrc=$?\nprintf '%s\\n' \"$rc\" > build/cycle.rc\nprintf '\\n--- Outputs ---\\n'\nfor f in build/order.txt build/big-order.txt build/cycle-order.txt build/cycle.txt build/cycle.rc; do printf '\\n%s\\n' \"$f\"; cat \"$f\"; done"
+    ],
+    "usage": {
+      "input_tokens": 3377,
+      "output_tokens": 1531,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 36980
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cd /home/eval/pkgs && ls -la && for f in deps.txt deps-big.txt deps-cycle.txt; do echo \"--- $f\"; head -n 15 \"$f\"; done",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--      551 2026-10-09 05:34 deps-big.txt\n-rw-r--r--       41 2026-10-09 05:34 deps-cycle.txt\n-rw-r--r--      217 2026-10-09 05:34 deps.txt\n--- deps.txt\n# package: dependencies (each must be built before the package)\napp: web  db   log\nweb: http log\nhttp: net\ndb: net log\nlog:\ncli: app\nnet:\ndocs:\n\n# repeated entries are allowed; deps accumulate\nweb: log\ntest: app mock\n--- deps-big.txt\nlog:\tzlib-9\nutil-0:  tls  net-9  math\nyaml-1: tls term\nsig-9: csv\nnet-9: log\ncore:  zlib-9  log\n\nsig-9:\tcsv\tnet-9\ncli-1:\nfmt: json-8\nmock:\tbench\nbench: net-9\ncsv:  log\ncolor:\tcsv\nfmt: json-8 bench zlib-9\n--- deps-cycle.txt\na: b\nb: c\nc: a\nd: a\ne:\nf: e\n  g :  f   d\n"
+          },
+          {
+            "commands": "cd /home/eval/pkgs && mkdir -p bin build && cat > bin/order <<'EOF'\n#!/usr/bin/env bash\n# Kahn's algorithm, with a min-heap of byte-sorted package ranks.\nset -euo pipefail\nexport LC_ALL=C\nif [[ $# -ne 1 ]]; then\n    printf 'usage: %s dependency-file\\n' \"$0\" >&2\n    exit 2\nfi\ninput=$1\n[[ $input == /* ]] || input=./$input\nnames=$(mktemp)\ntrap 'rm -f -- \"$names\"' EXIT\n\n# Include both declared packages and dependency-only packages.\nawk '\nfunction trim(s) { sub(/^[ \\t\\r]+/, \"\", s); sub(/[ \\t\\r]+$/, \"\", s); return s }\n{\n    sub(/#.*/, \"\")\n    if (trim($0) == \"\") next\n    colon = index($0, \":\")\n    print trim(substr($0, 1, colon - 1))\n    rest = trim(substr($0, colon + 1))\n    if (rest != \"\") {\n        n = split(rest, deps, /[ \\t\\r]+/)\n        for (i = 1; i <= n; i++) print deps[i]\n    }\n}' \"$input\" | sort -u > \"$names\"\n\nawk '\nfunction trim(s) { sub(/^[ \\t\\r]+/, \"\", s); sub(/[ \\t\\r]+$/, \"\", s); return s }\nfunction push(v, i, p) {\n    i = ++size\n    while (i > 1) {\n        p = int(i / 2)\n        if (heap[p] <= v) break\n        heap[i] = heap[p]\n        i = p\n    }\n    heap[i] = v\n}\nfunction pop(    result, v, i, c) {\n    result = heap[1]\n    v = heap[size]\n    delete heap[size--]\n    if (size) {\n        i = 1\n        while (2 * i <= size) {\n            c = 2 * i\n            if (c < size && heap[c + 1] < heap[c]) c++\n            if (v <= heap[c]) break\n            heap[i] = heap[c]\n            i = c\n        }\n        heap[i] = v\n    }\n    return result\n}\nFILENAME == ARGV[1] {\n    name[++count] = $0\n    rank[$0] = count\n    next\n}\n{\n    sub(/#.*/, \"\")\n    if (trim($0) == \"\") next\n    colon = index($0, \":\")\n    package = rank[trim(substr($0, 1, colon - 1))]\n    rest = trim(substr($0, colon + 1))\n    if (rest == \"\") next\n    n = split(rest, deps, /[ \\t\\r]+/)\n    for (i = 1; i <= n; i++) {\n        dependency = rank[deps[i]]\n        key = dependency SUBSEP package\n        if (key in seen) continue\n        seen[key] = 1\n        degree[package]++\n        target[++edges] = package\n        link[edges] = head[dependency]\n        head[dependency] = edges\n    }\n}\nEND {\n    for (i = 1; i <= count; i++) if (!degree[i]) push(i)\n    while (size) {\n        v = pop()\n        print name[v]\n        emitted[v] = 1\n        total++\n        for (e = head[v]; e; e = link[e]) {\n            w = target[e]\n            if (--degree[w] == 0) push(w)\n        }\n    }\n    if (total < count) {\n        message = \"cycle:\"\n        for (i = 1; i <= count; i++)\n            if (!emitted[i]) message = message \" \" name[i]\n        print message > \"/dev/stderr\"\n        exit 1\n    }\n}' \"$names\" \"$input\"\nEOF\nchmod +x bin/order\n./bin/order deps.txt > build/order.txt\n./bin/order deps-big.txt > build/big-order.txt\n./bin/order deps-cycle.txt > build/cycle-order.txt 2> build/cycle.txt\nrc=$?\nprintf '%s\\n' \"$rc\" > build/cycle.rc\nprintf '\\n--- Outputs ---\\n'\nfor f in build/order.txt build/big-order.txt build/cycle-order.txt build/cycle.txt build/cycle.rc; do printf '\\n%s\\n' \"$f\"; cat \"$f\"; done",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "\n--- Outputs ---\n\nbuild/order.txt\ndocs\nlog\nmock\nnet\ndb\nhttp\nweb\napp\ncli\ntest\n\nbuild/big-order.txt\ncli-1\nmath\nregex\ntime-2\nzlib-9\njson-8\nlog\nauth\ncore\ncache-3\ncsv\ncolor\nfs\nnet-9\nbench\nfmt\nmock\nsig-9\ntest-0\ntls\nutil-0\ndocs\nproc\nterm\ndb-9\nuuid-2\nio-8\nhttp\nxml\nyaml-1\n\nbuild/cycle-order.txt\ne\nf\n\nbuild/cycle.txt\ncycle: a b c d g\n\nbuild/cycle.rc\n1\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}
