@@ -14,7 +14,9 @@
 //!   `arith_error` and the command boundary aborts the line.
 //! - Integers wrap at 64 bits; shift counts are masked to 0..63 (x86 / bash).
 //! - THREAT[TM-DOS-026]: recursion depth (`MAX_ARITHMETIC_DEPTH`) and fuel
-//!   (`MAX_ARITHMETIC_EXPANSION_FUEL`) bound nested and self-referential input.
+//!   (`MAX_ARITHMETIC_EXPANSION_FUEL`) are shared by textual dollar expansion,
+//!   subscript evaluation, and recursive variable evaluation. Check before
+//!   expansion; read-only subscript evaluators borrow the same budget.
 
 use super::*;
 
@@ -211,14 +213,40 @@ struct LValue {
 
 type ArithResult<T> = std::result::Result<T, String>;
 
-/// Expression evaluator state shared across recursive variable evaluation.
-pub(super) struct ArithEval<'a> {
+/// One budget for both textual expansion and recursive expression evaluation.
+struct ArithmeticBudget {
+    depth: usize,
+    fuel: usize,
+}
+
+impl ArithmeticBudget {
+    fn new() -> Self {
+        Self {
+            depth: 0,
+            fuel: Interpreter::MAX_ARITHMETIC_EXPANSION_FUEL,
+        }
+    }
+
+    fn charge(&mut self, src: &str) -> ArithResult<()> {
+        if src.len() > Interpreter::MAX_ARITHMETIC_EXPANSION_BYTES {
+            return Err("expression too long".to_string());
+        }
+        let cost = src.len().max(1);
+        self.fuel = self
+            .fuel
+            .checked_sub(cost)
+            .ok_or_else(|| "expression recursion level exceeded".to_string())?;
+        Ok(())
+    }
+}
+
+/// Writes are evaluator-local; read-only subscript evaluations share only the budget.
+struct ArithEval<'a, 'b> {
     interp: &'a Interpreter,
     overlay: HashMap<(String, Option<String>), String>,
     pub(super) writes: Vec<ArithWrite>,
     noeval: u32,
-    depth: usize,
-    fuel: usize,
+    budget: &'b mut ArithmeticBudget,
 }
 
 struct ArithParser<'s> {
@@ -258,39 +286,39 @@ impl ArithParser<'_> {
     }
 }
 
-impl<'a> ArithEval<'a> {
-    pub(super) fn new(interp: &'a Interpreter) -> Self {
+impl<'a, 'b> ArithEval<'a, 'b> {
+    fn new(interp: &'a Interpreter, budget: &'b mut ArithmeticBudget) -> Self {
         Self {
             interp,
             overlay: HashMap::new(),
             writes: Vec::new(),
             noeval: 0,
-            depth: 0,
-            fuel: Interpreter::MAX_ARITHMETIC_EXPANSION_FUEL,
+            budget,
         }
     }
 
     fn enter(&mut self) -> ArithResult<()> {
-        self.depth += 1;
-        if self.depth >= Interpreter::MAX_ARITHMETIC_DEPTH {
+        if self.budget.depth + 1 >= Interpreter::MAX_ARITHMETIC_DEPTH {
             return Err("expression recursion level exceeded".to_string());
         }
+        self.budget.depth += 1;
         Ok(())
     }
 
     fn leave(&mut self) {
-        self.depth -= 1;
+        self.budget.depth -= 1;
     }
 
     /// Evaluate a full expression (already `$`-expanded). Empty -> 0.
     pub(super) fn eval_str(&mut self, src: &str) -> ArithResult<i64> {
-        if src.len() > Interpreter::MAX_ARITHMETIC_EXPANSION_BYTES {
-            return Err("expression too long".to_string());
-        }
-        if self.fuel < src.len().max(1) {
-            return Err("expression recursion level exceeded".to_string());
-        }
-        self.fuel -= src.len().max(1);
+        self.enter()?;
+        let result = self.eval_str_inner(src);
+        self.leave();
+        result
+    }
+
+    fn eval_str_inner(&mut self, src: &str) -> ArithResult<i64> {
+        self.budget.charge(src)?;
         if src.trim().is_empty() {
             return Ok(0);
         }
@@ -299,14 +327,26 @@ impl<'a> ArithEval<'a> {
             format!("{msg} (error token is \"{}\")", diag_echo(rest))
         })?;
         let mut p = ArithParser { src, toks, pos: 0 };
-        self.enter()?;
-        let r = self.comma(&mut p);
-        self.leave();
-        let v = r?;
+        let v = self.comma(&mut p)?;
         if !matches!(p.peek(), Tok::Eof) {
             return Err(p.err("syntax error in expression"));
         }
         Ok(v)
+    }
+
+    /// Guard and charge the original text before expanding any recursive subscript.
+    fn eval_with_dollars(&mut self, src: &str) -> ArithResult<i64> {
+        if !src.contains('$') && !src.contains('"') {
+            return self.eval_str(src);
+        }
+        self.enter()?;
+        let result = (|| {
+            self.budget.charge(src)?;
+            let expanded = self.expand_arith_dollars(src)?;
+            self.eval_str(&expanded)
+        })();
+        self.leave();
+        result
     }
 
     fn comma(&mut self, p: &mut ArithParser) -> ArithResult<i64> {
@@ -829,10 +869,18 @@ impl Interpreter {
     /// Evaluate `expr`, returning the value or an error message, plus the
     /// assignments made (in order, including those before an error).
     pub(super) fn arith_eval(&self, expr: &str) -> (ArithResult<i64>, Vec<ArithWrite>) {
-        let expanded = self.expand_arith_dollars(expr);
-        let mut ev = ArithEval::new(self);
-        let r = ev.eval_str(&expanded);
+        let mut budget = ArithmeticBudget::new();
+        let mut ev = ArithEval::new(self, &mut budget);
+        let r = ev.eval_with_dollars(expr);
         (r, ev.writes)
+    }
+
+    /// Conditional operands have already undergone shell expansion.
+    pub(super) fn arith_eval_unexpanded(&self, expr: &str) -> (ArithResult<i64>, Vec<ArithWrite>) {
+        let mut budget = ArithmeticBudget::new();
+        let mut ev = ArithEval::new(self, &mut budget);
+        let result = ev.eval_str(expr);
+        (result, ev.writes)
     }
 
     /// Apply writes produced by [`arith_eval`](Self::arith_eval).
@@ -934,12 +982,75 @@ impl Interpreter {
         self.arith_error.lock().ok().and_then(|mut s| s.take())
     }
 
+    /// Read-only parameter/redirect lookup uses the same guarded expansion path.
+    pub(super) fn expand_name_or_array_element(&self, name: &str) -> String {
+        let mut budget = ArithmeticBudget::new();
+        let mut ev = ArithEval::new(self, &mut budget);
+        match ev.expand_name_or_array_element(name) {
+            Ok(value) => value,
+            Err(msg) => {
+                self.record_arith_error(msg);
+                String::new()
+            }
+        }
+    }
+}
+
+impl ArithEval<'_, '_> {
+    fn expand_variable(&mut self, name: &str) -> ArithResult<String> {
+        self.enter()?;
+        let result = (|| {
+            let resolved = self.interp.resolve_nameref(name);
+            if parse_embedded_array_ref(resolved).is_some() {
+                self.expand_name_or_array_element(resolved)
+            } else {
+                Ok(self.interp.expand_variable(resolved))
+            }
+        })();
+        self.leave();
+        result
+    }
+
+    fn expand_variable_or_literal(&mut self, sub: &str) -> ArithResult<String> {
+        let trimmed = sub.trim();
+        if !trimmed.contains(['"', '\'', '\\'])
+            && trimmed.matches('$').count() <= 1
+            && let Some(name) = trimmed.strip_prefix('$')
+        {
+            return self.expand_variable(name.trim_start_matches('{').trim_end_matches('}'));
+        }
+        if !sub.contains(['$', '"', '\'', '\\']) {
+            return Ok(sub.to_string());
+        }
+        Interpreter::expand_key_text_using(sub, |name, braced| {
+            if braced {
+                if let Some(array) = name
+                    .strip_suffix("[@]")
+                    .or_else(|| name.strip_suffix("[*]"))
+                {
+                    let separator = if name.ends_with("[*]") {
+                        self.interp.get_ifs_separator()
+                    } else {
+                        " ".to_string()
+                    };
+                    return Ok(self
+                        .interp
+                        .array_values(self.interp.resolve_nameref(array))
+                        .join(&separator));
+                }
+                self.expand_brace_expr_in_arithmetic(name)
+            } else {
+                self.expand_variable(name)
+            }
+        })
+    }
+
     /// Textual `$` expansion inside an arithmetic expression (`$x`, `${..}`,
     /// `$1`, `$#`, ...). Bare identifiers are left for the evaluator.
     /// Double quotes are dropped (`"$x"` is `$x`).
-    pub(super) fn expand_arith_dollars(&self, expr: &str) -> String {
+    fn expand_arith_dollars(&mut self, expr: &str) -> ArithResult<String> {
         if !expr.contains('$') && !expr.contains('"') {
-            return expr.to_string();
+            return Ok(expr.to_string());
         }
         let expr = expr.replace('"', "");
         let mut result = String::new();
@@ -970,10 +1081,11 @@ impl Interpreter {
                 }
                 // THREAT[TM-DOS-130]: nesting recurses; bash-like scripts need few levels.
                 if inner.matches("$((").count() > 32 {
-                    self.record_arith_error("expression recursion level exceeded".to_string());
-                    result.push('0');
+                    return Err("expression recursion level exceeded".to_string());
                 } else {
-                    result.push_str(&self.evaluate_arithmetic(&inner).to_string());
+                    let value =
+                        ArithEval::new(self.interp, self.budget).eval_with_dollars(&inner)?;
+                    result.push_str(&value.to_string());
                 }
             } else if chars.peek() == Some(&'{') {
                 chars.next();
@@ -990,12 +1102,12 @@ impl Interpreter {
                     }
                     brace_content.push(c);
                 }
-                result.push_str(&self.expand_brace_expr_in_arithmetic(&brace_content));
+                result.push_str(&self.expand_brace_expr_in_arithmetic(&brace_content)?);
             } else if let Some(&c) = chars.peek()
                 && matches!(c, '#' | '?' | '$' | '!' | '@' | '*' | '-' | '0'..='9')
             {
                 chars.next();
-                result.push_str(&self.expand_variable(&c.to_string()));
+                result.push_str(&self.expand_variable(&c.to_string())?);
             } else {
                 let mut name = String::new();
                 while let Some(&c) = chars.peek() {
@@ -1009,42 +1121,42 @@ impl Interpreter {
                 if name.is_empty() {
                     result.push('$');
                 } else {
-                    result.push_str(&self.expand_variable(&name));
+                    result.push_str(&self.expand_variable(&name)?);
                 }
             }
         }
-        result
+        Ok(result)
     }
 
     /// Expand a `${...}` expression encountered inside arithmetic context.
     /// Handles: `${#arr[@]}`, `${#arr[*]}`, `${#var}`, `${arr[idx]}`, `${var}`.
-    pub(super) fn expand_brace_expr_in_arithmetic(&self, inner: &str) -> String {
+    fn expand_brace_expr_in_arithmetic(&mut self, inner: &str) -> ArithResult<String> {
         // ${#arr[@]} or ${#arr[*]} — array length
         if let Some(rest) = inner.strip_prefix('#') {
             if let Some(bracket) = rest.find('[') {
                 if !rest.ends_with(']') {
-                    return "0".to_string();
+                    return Ok("0".to_string());
                 }
                 let end = rest.len() - 1;
                 if bracket + 1 > end {
-                    return "0".to_string();
+                    return Ok("0".to_string());
                 }
                 let arr_name = &rest[..bracket];
                 let idx = &rest[bracket + 1..end];
                 if idx == "@" || idx == "*" {
-                    if let Some(arr) = self.scoped.arrays.get(arr_name) {
-                        return arr.len().to_string();
+                    if let Some(arr) = self.interp.scoped.arrays.get(arr_name) {
+                        return Ok(arr.len().to_string());
                     }
-                    if let Some(arr) = self.scoped.assoc_arrays.get(arr_name) {
-                        return arr.len().to_string();
+                    if let Some(arr) = self.interp.scoped.assoc_arrays.get(arr_name) {
+                        return Ok(arr.len().to_string());
                     }
-                    return "0".to_string();
+                    return Ok("0".to_string());
                 }
-                let val = self.expand_name_or_array_element(&rest[..=end]);
-                return self.shell_length(&val).to_string();
+                let val = self.expand_name_or_array_element(&rest[..=end])?;
+                return Ok(self.interp.shell_length(&val).to_string());
             }
-            let val = self.expand_variable(rest);
-            return self.shell_length(&val).to_string();
+            let val = self.expand_variable(rest)?;
+            return Ok(self.interp.shell_length(&val).to_string());
         }
 
         if let Some(bracket) = inner.find('[')
@@ -1067,37 +1179,37 @@ impl Interpreter {
 
     /// Expand a parameter expansion with operators inside arithmetic context.
     /// Handles common cases like ${var%%-*}, ${var##prefix}, etc.
-    pub(super) fn expand_param_op_in_arithmetic(&self, inner: &str) -> String {
+    fn expand_param_op_in_arithmetic(&mut self, inner: &str) -> ArithResult<String> {
         for (pos, ch) in inner.char_indices() {
             match ch {
                 '%' => {
                     let name = &inner[..pos];
-                    let value = self.expand_name_or_array_element(name);
+                    let value = self.expand_name_or_array_element(name)?;
                     if inner[pos..].starts_with("%%") {
                         let pattern = &inner[pos + 2..];
-                        return self.remove_pattern(&value, pattern, false, true);
+                        return Ok(self.interp.remove_pattern(&value, pattern, false, true));
                     }
                     let pattern = &inner[pos + 1..];
-                    return self.remove_pattern(&value, pattern, false, false);
+                    return Ok(self.interp.remove_pattern(&value, pattern, false, false));
                 }
                 '#' if pos > 0 => {
                     let name = &inner[..pos];
-                    let value = self.expand_name_or_array_element(name);
+                    let value = self.expand_name_or_array_element(name)?;
                     if inner[pos..].starts_with("##") {
                         let pattern = &inner[pos + 2..];
-                        return self.remove_pattern(&value, pattern, true, true);
+                        return Ok(self.interp.remove_pattern(&value, pattern, true, true));
                     }
                     let pattern = &inner[pos + 1..];
-                    return self.remove_pattern(&value, pattern, true, false);
+                    return Ok(self.interp.remove_pattern(&value, pattern, true, false));
                 }
                 ':' if inner[pos..].starts_with(":-") => {
                     let name = &inner[..pos];
                     let default = &inner[pos + 2..];
-                    let value = self.expand_name_or_array_element(name);
+                    let value = self.expand_name_or_array_element(name)?;
                     if value.is_empty() {
-                        return default.to_string();
+                        return Ok(default.to_string());
                     }
-                    return value;
+                    return Ok(value);
                 }
                 _ => {}
             }
@@ -1109,27 +1221,33 @@ impl Interpreter {
     /// Used by parameter expansion inside arithmetic so `${arr[$key]:-N}` and
     /// friends can read associative/indexed array elements — `expand_variable`
     /// alone only handles scalar names. Fixes issue #1776.
-    pub(super) fn expand_name_or_array_element(&self, name: &str) -> String {
+    fn expand_name_or_array_element(&mut self, name: &str) -> ArithResult<String> {
         if let Some(bracket) = name.find('[')
             && name.ends_with(']')
         {
             let arr_name = &name[..bracket];
-            let resolved = self.resolve_nameref(arr_name);
+            let resolved = self.interp.resolve_nameref(arr_name);
             let idx_str = strip_subscript_quotes(&name[bracket + 1..name.len() - 1]);
-            if let Some(arr) = self.scoped.assoc_arrays.get(resolved) {
-                let key = self.expand_variable_or_literal(idx_str);
-                return arr.get(&key).cloned().unwrap_or_default();
+            if let Some(arr) = self.interp.scoped.assoc_arrays.get(resolved) {
+                let key = self.expand_variable_or_literal(idx_str)?;
+                return Ok(arr.get(&key).cloned().unwrap_or_default());
             }
-            if let Some(arr) = self.scoped.arrays.get(resolved) {
-                let idx = self.resolve_indexed_array_subscript(resolved, idx_str);
-                return arr.get(&idx).cloned().unwrap_or_default();
+            if let Some(arr) = self.interp.scoped.arrays.get(resolved) {
+                let idx = self.resolve_indexed_array_subscript(resolved, idx_str)?;
+                return Ok(arr.get(&idx).cloned().unwrap_or_default());
             }
-            if self.resolve_indexed_array_subscript(resolved, idx_str) == 0 {
+            if self.resolve_indexed_array_subscript(resolved, idx_str)? == 0 {
                 return self.expand_variable(resolved);
             }
-            return String::new();
+            return Ok(String::new());
         }
         self.expand_variable(name)
+    }
+    fn resolve_indexed_array_subscript(&mut self, name: &str, sub: &str) -> ArithResult<usize> {
+        // Preserve read-only dollar-subscript behavior: discard child writes,
+        // but never refresh depth or fuel on a recursive entry.
+        let raw = ArithEval::new(self.interp, self.budget).eval_with_dollars(sub)?;
+        Ok(self.interp.normalize_indexed_array_subscript(name, raw))
     }
 }
 
