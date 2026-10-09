@@ -2,18 +2,20 @@
 //
 // Decision: a reference solution is a list of `steps`, each one bash tool call,
 // replayed in order on the exact starting `Bash` the model gets
-// (`agent::build_task_bash`: files + git + setup). Each step becomes a
+// (`agent::build_task_bash`: files + git + python3 + sqlite3 + setup), then the
+// task's hidden `verify` probe runs as after a model run. Each step becomes a
 // `ToolOutput`, so the checks score it exactly like a model run (multi-turn
 // shape included: `exit_code` reads the last step, `stdout_contains` any step).
 // CI runs every reference (see tests below), so a dataset edit or a bashkit
 // regression that makes a task unsolvable fails `cargo test -p bashkit-eval`.
 // The setup-only state must NOT pass, so a task cannot be trivially green.
-// See knowledge/operations/eval.md ("Repo Workflow Eval", "Hard Eval").
+// See knowledge/operations/eval.md ("Repo Workflow Tasks", "Hard Tasks",
+// "Runtime Tasks").
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
 
-use crate::agent::build_task_bash;
+use crate::agent::{build_task_bash, run_verify};
 use crate::checks::{CheckSummary, evaluate};
 use crate::dataset::EvalTask;
 use crate::snapshot::{Snapshot, SnapshotTargets, ToolOutput, snapshot_fs, snapshot_links};
@@ -42,6 +44,7 @@ pub async fn run_reference(task: &EvalTask, steps: &[String]) -> Result<(CheckSu
             exit_code,
         });
     }
+    run_verify(&bash, task).await;
 
     let expectations: Vec<(String, f64)> = task
         .expectations
@@ -140,7 +143,28 @@ mod tests {
             .map(|t| t.id.as_str())
             .collect();
         assert!(missing.is_empty(), "tasks without a reference: {missing:?}");
-        assert!(sol_ids.len() >= 18);
+        assert!(sol_ids.len() >= 30);
+    }
+
+    #[test]
+    fn runtime_tasks_score_exact_files() {
+        // Runtime tasks are scored on deterministic file contents (outputs or
+        // the hidden verify probe), never on stdout wording alone.
+        let runtime: Vec<_> = all_tasks()
+            .into_iter()
+            .filter(|t| t.mode == "runtime")
+            .collect();
+        assert!(runtime.len() >= 12);
+        for t in runtime {
+            assert!(
+                t.expectations
+                    .iter()
+                    .any(|e| e.check.starts_with("file_equals:")),
+                "{} has no file_equals check",
+                t.id
+            );
+            assert!(t.max_turns.is_some(), "{} needs max_turns", t.id);
+        }
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -157,8 +181,11 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn untouched_fixture_does_not_pass() {
-        // Only the agent's natural first look (`make test`), no fix: the task
-        // must still fail, so a do-nothing model cannot score.
+        // Only the agent's natural first look, no fix: the task must still
+        // fail, so a do-nothing model cannot score. Agent tasks: `make test`
+        // in the repo. Runtime tasks: inspect inputs and runtimes; the hidden
+        // `verify` probe still runs, so a task checked only through it fails
+        // too (no tool, no db, no migration to probe).
         for (task, _) in referenced() {
             let dir = task
                 .prompt
@@ -166,7 +193,12 @@ mod tests {
                 .find(|w| w.starts_with("/home/eval/"))
                 .map(|w| w.trim_end_matches(['.', ',', ':', ')']))
                 .unwrap_or("/home/eval");
-            let steps = vec![format!("cd {dir} 2>/dev/null; make test; git status")];
+            let look = if task.mode == "runtime" {
+                "ls -R / >/dev/null; python3 --version; sqlite3 :memory: 'SELECT 1'".to_string()
+            } else {
+                format!("cd {dir} 2>/dev/null; make test; git status")
+            };
+            let steps = vec![look];
             let (summary, snap) = run_reference(&task, &steps).await.unwrap();
             assert!(
                 !summary.all_passed(),

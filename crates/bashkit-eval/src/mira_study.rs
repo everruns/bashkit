@@ -557,11 +557,19 @@ mod tests {
             if task.difficulty != "basic" {
                 assert!(task.max_turns.is_some(), "{} needs a turn budget", s.id);
             }
-            *by_difficulty.entry(task.difficulty).or_default() += 1;
+            *by_difficulty
+                .entry(format!("{}/{}", task.mode, task.difficulty))
+                .or_default() += 1;
         }
-        assert_eq!(by_difficulty["basic"], 58);
-        assert_eq!(by_difficulty["repo"], 8);
-        assert!(by_difficulty["hard"] >= 10);
+        assert_eq!(by_difficulty["agent/basic"], 58);
+        assert_eq!(by_difficulty["agent/repo"], 8);
+        assert!(by_difficulty["agent/hard"] >= 10);
+        let runtime: usize = by_difficulty
+            .iter()
+            .filter(|(k, _)| k.starts_with("runtime/"))
+            .map(|(_, n)| n)
+            .sum();
+        assert!(runtime >= 12);
     }
 
     #[test]

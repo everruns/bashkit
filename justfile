@@ -322,6 +322,10 @@ eval-hard *ARGS:
 eval-generate *ARGS:
     mira run --study-bin bashkit-eval bashkit_generate {{ARGS}}
 
+# mode=runtime slice: python3 (CPython) / sqlite3 scripts, state across calls
+eval-runtime *ARGS:
+    mira run --study-bin bashkit-eval bashkit_bash --tag runtime {{ARGS}}
+
 # Scripting-tool eval. The `mode` axis compares scripted vs baseline; select one
 # with `--axis mode=scripted` (omit to run both).
 eval-scripting *ARGS:

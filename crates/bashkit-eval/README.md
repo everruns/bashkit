@@ -44,12 +44,12 @@ Results are written by mira under `./results/<run_id>/`.
 
 | Eval | Samples | Selection |
 |------|---------|-----------|
-| `bashkit_bash` | 58 tasks, 15 categories | `--tag <category>`, `--samples <id>` |
+| `bashkit_bash` | 88 tasks (58 basic + 8 repo + 10 hard agent tasks, 12 runtime) | `--tag <category\|agent\|runtime\|basic\|repo\|hard>`, `--samples <id>` |
 | `bashkit_smoke` | 3 tasks | quick verification |
-| `bashkit_repo` | 8 `repo_workflow` tasks | multi-turn fixture repos (`just eval-repo`) |
-| `bashkit_hard` | 10 hard tasks, 9 categories | built not to saturate; 25 turns (`just eval-hard`) |
 | `bashkit_scripting` | scripting-tool tasks | `--axis mode=scripted\|baseline` |
 | `bashkit_generate` | 15 one-shot tasks (`basic`/`hard`) | one reply, one script run, no feedback (`just eval-generate`, `--tag hard`) |
+
+`just eval-repo`, `just eval-hard` and `just eval-runtime` run the tag slices.
 
 Targets (model matrix) are defined in `src/mira_study.rs` and gated on
 `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `OPENROUTER_API_KEY`; offline runs
@@ -60,24 +60,32 @@ comma-separated globs (mira 0.5+), e.g. `--targets 'anthropic/*'` or
 
 ## Dataset
 
-58 hand-curated tasks in JSONL format across 15 categories: file_operations, text_processing, pipelines, scripting, data_transformation, error_recovery, system_info, archive_operations, json_processing, complex_tasks, code_search, environment, database_operations, config_management, build_simulation.
+One tagged JSONL dataset, `data/eval-tasks.jsonl`. Each task has a `mode`
+(`agent`: bash is the model's tool; `runtime`: bashkit is the execution
+runtime), a `difficulty` (`basic`, `repo`, `hard`) and an optional
+`max_turns`. Every eval `Bash` has sandboxed git, real CPython 3.14 as
+`python3` (`cpython` feature) and `sqlite3` (`sqlite` feature).
+
+- 58 basic agent tasks across 15 categories: file_operations, text_processing, pipelines, scripting, data_transformation, error_recovery, system_info, archive_operations, json_processing, complex_tasks, code_search, environment, database_operations, config_management, build_simulation.
+- 8 repo tasks (`repo_workflow`): a `setup` script builds a fixture git repo,
+  the model runs `make test`, fixes the bug, and commits (symlinks, PATH,
+  background jobs, jq, git).
+- 10 hard agent tasks written after the basic set saturated: interacting bugs
+  revealed one test at a time, quoting/glob/leading-dash file names, masked
+  `set -euo pipefail` failures, trap/exit-code contracts, Makefile dependency
+  graphs, a rename that must spare lookalikes and frozen messages, and
+  golden-output reports.
+- 12 runtime tasks: python3 file-processing scripts (CSV/JSONL/log/encoding/
+  TOML transforms with the stdlib), python3 + bash pipelines, sqlite3 (load CSV,
+  report queries, a reusable schema migration), and state across calls (build
+  a CLI or an idempotent ingester, use it, and have a hidden `verify` script
+  run it again on unseen input after the session).
+
+Reference solutions for every non-basic or runtime task live in
+`data/solutions.jsonl` and run in `cargo test -p bashkit-eval`, so every task
+stays solvable without an LLM and a do-nothing run must fail.
 
 Smoke test dataset (`data/smoke-test.jsonl`) has 3 tasks for quick verification.
-
-Repo workflow dataset (`data/repo-workflow.jsonl`, eval `bashkit_repo`) has 8
-multi-turn tasks: a `setup` script builds a fixture git repo, the model runs
-`make test`, fixes the bug, and commits (symlinks, PATH, background jobs, jq,
-git). Reference solutions in `data/repo-workflow-solutions.jsonl` run in
-`cargo test -p bashkit-eval`, so every task stays solvable without an LLM.
-
-Hard dataset (`data/hard-tasks.jsonl`, eval `bashkit_hard`) has 10 tasks
-written after `bashkit_bash` saturated: interacting bugs revealed one test at
-a time, quoting/glob/leading-dash file names, masked `set -euo pipefail`
-failures, trap/exit-code contracts, Makefile dependency graphs, a rename that
-must spare lookalikes and frozen messages, and golden-output reports (CSV/TSV
-reconciliation, nearest-rank p95 over a generated log, jq rollups, a
-deterministic topological sort). Reference solutions in
-`data/hard-tasks-solutions.jsonl` run in `cargo test -p bashkit-eval`.
 
 ## Results
 

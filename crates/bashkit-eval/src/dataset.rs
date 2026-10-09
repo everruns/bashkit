@@ -35,6 +35,13 @@ pub struct EvalTask {
     /// subshell with `set -e`; not shown to the model, not scored.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub setup: Option<String>,
+    /// Hidden shell script run after the agent finishes (and after a reference
+    /// solution's steps), before scoring. Its stdout+stderr is stored at
+    /// `agent::VERIFY_OUT` for `file_*` checks. Used by runtime tasks to probe
+    /// what the model built: run its tool on unseen input, query its database,
+    /// re-apply its migration to a fresh copy. Not shown to the model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verify: Option<String>,
     pub expectations: Vec<Expectation>,
 }
 
