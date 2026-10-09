@@ -299,6 +299,7 @@ async fn diagnostic_prefix_matches_bash_and_redirect_keeps_full_output() {
     let body = "unalias first second third";
     let oracle = std::process::Command::new("bash")
         .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
         .args(["-c", body, &name])
         .output()
         .unwrap();
