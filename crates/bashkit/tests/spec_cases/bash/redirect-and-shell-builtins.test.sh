@@ -240,3 +240,20 @@ cat <&7; echo s=$?
 ### expect
 s=1
 ### end
+
+### hash_paths_replace_delete_and_fork_independently
+hash -p /old tool other
+hash -p /new tool
+(hash -p /child tool; hash -t tool)
+hash -t tool other
+hash -d tool
+hash -t tool 2>/dev/null; echo status=$?
+hash -r
+hash
+### expect
+/child
+tool	/new
+other	/old
+status=1
+hash: hash table empty
+### end
