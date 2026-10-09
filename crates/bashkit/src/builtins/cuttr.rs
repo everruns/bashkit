@@ -653,23 +653,25 @@ fn expand_char_set(spec: &str) -> std::result::Result<Vec<char>, String> {
     Ok(chars)
 }
 
-/// Push a POSIX class's members; `false` for an unknown class name.
+/// Push a POSIX class's members in byte order, as GNU expands them
+/// (`[:space:]` is `\t\n\v\f\r `, `[:alpha:]` is `A-Za-z`); `false` for
+/// an unknown class name.
 fn push_char_class(chars: &mut Vec<char>, class_name: &str) -> std::result::Result<bool, String> {
     match class_name {
         "lower" => push_char_range(chars, 'a', 'z')?,
         "upper" => push_char_range(chars, 'A', 'Z')?,
         "digit" => push_char_range(chars, '0', '9')?,
         "alpha" => {
-            push_char_range(chars, 'a', 'z')?;
             push_char_range(chars, 'A', 'Z')?;
+            push_char_range(chars, 'a', 'z')?;
         }
         "alnum" => {
-            push_char_range(chars, 'a', 'z')?;
-            push_char_range(chars, 'A', 'Z')?;
             push_char_range(chars, '0', '9')?;
+            push_char_range(chars, 'A', 'Z')?;
+            push_char_range(chars, 'a', 'z')?;
         }
-        "space" => push_chars(chars, [' ', '\t', '\n', '\r', '\x0b', '\x0c'])?,
-        "blank" => push_chars(chars, [' ', '\t'])?,
+        "space" => push_chars(chars, ['\t', '\n', '\x0b', '\x0c', '\r', ' '])?,
+        "blank" => push_chars(chars, ['\t', ' '])?,
         "punct" => {
             for code in 0x21u8..=0x7e {
                 let c = code as char;

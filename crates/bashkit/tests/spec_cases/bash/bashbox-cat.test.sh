@@ -54,3 +54,12 @@ printf '\ta\r\n' | cat -t
 ### expect
 ^Ia^M
 ### end
+
+### bashbox_cat_e_marks_line_ends_and_shows_a_cr_before_them
+# -E marks line ends and shows a CR right before them
+printf 'x\r\ny\r\n\r\n' | cat -E
+### expect
+x^M$
+y^M$
+^M$
+### end

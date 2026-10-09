@@ -41,7 +41,6 @@ shopt -s lastpipe; echo a | read v; echo "[$v]"
 
 ### bashbox_shopt_aliases_expand_only_with_expand_aliases_from_the_next_line_o
 # aliases expand only with expand_aliases, from the next line on
-### skip: aliases expand when the command runs, not when its line is read (limitations.md, Aliases row)
 alias e='echo hi'
 e there
 shopt -s expand_aliases

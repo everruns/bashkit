@@ -310,6 +310,32 @@ pub struct Word {
 }
 
 impl Word {
+    /// Append `next`, a word whose source text touches this one
+    /// (`x<(true)`). Per-part quote flags keep each side's quoting.
+    pub fn append_word(&mut self, next: Word) {
+        if self.quoted != next.quoted
+            || !self.part_quoted.is_empty()
+            || !next.part_quoted.is_empty()
+        {
+            if self.part_quoted.is_empty() {
+                self.part_quoted = vec![self.quoted; self.parts.len()];
+            }
+            if next.part_quoted.is_empty() {
+                self.part_quoted
+                    .extend(std::iter::repeat_n(next.quoted, next.parts.len()));
+            } else {
+                self.part_quoted.extend(next.part_quoted);
+            }
+        }
+        self.quoted |= next.quoted;
+        self.has_unquoted_glob |= next.has_unquoted_glob;
+        self.raw = match (self.raw.take(), next.raw) {
+            (Some(a), Some(b)) => Some(a + &b),
+            _ => None,
+        };
+        self.parts.extend(next.parts);
+    }
+
     /// Create a simple literal word.
     pub fn literal(s: impl Into<String>) -> Self {
         Self {

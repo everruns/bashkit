@@ -85,3 +85,11 @@ echo 'xaxxbx  c' | tr -ds x ' '
 ### expect
 ab c
 ### end
+
+### bashbox_tr_space_class_in_byte_order
+# space class in byte order
+printf '\t\n\v\f\r ' | tr '[:space:]' abcdef; echo; printf 'aA0 \t' | tr '[:alnum:][:blank:]' 'a-zA-Z0-9xy'; echo
+### expect
+abcdef
+Kkayx
+### end

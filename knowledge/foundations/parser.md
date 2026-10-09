@@ -187,6 +187,11 @@ break, so words and further redirects after it parse normally:
 `cat <<A <<B` (the last one is stdin), `paste - <<A 3<<B` (`N<<` is
 `Token::HereDocFd`; a non-zero fd does not feed stdin) and
 `done <<A >out`. The fd-redirect lookahead reads re-injected text first.
+While the re-injected rest is read, the lexer position walks that line again
+from where it was first read (`Lexer::heredoc_resume` holds the input
+position after the body, restored when the rest is used up), so spans,
+`$LINENO` and `Script::command_starts` after a heredoc match the source
+(`cat <<EOF; echo $LINENO` is the `cat` line, as in bash).
 `&>> file` parses as `>> file 2>&1`.
 
 **`[[` lexing.** `[[` is the keyword only when followed by a word break
@@ -203,7 +208,8 @@ is dropped). Words print as written: while parsing a function definition the
 parser turns on lexer raw capture, and every word built from a token keeps
 its source text in `Word::raw` (top-level words leave it `None`, so ordinary
 scripts pay nothing). Raw text is captured from consumed chars, not span
-offsets, because heredoc rest-of-line re-injection makes offsets drift.
+offsets, because re-injected text (alias values, a heredoc's rest of line)
+is read twice.
 Compound arrays print their elements joined by one space, `(( ))` and
 `for (( ))` keep their text (`ArithmeticForCommand::raw`), and
 `Redirect::heredoc_delim` keeps the delimiter (`'EOF'` when quoted). A word
@@ -237,7 +243,10 @@ anything else. `$(...)` keeps rejecting the script at parse time.
 **Process substitution end.** `<(...)`/`>(...)` bodies end where the shared
 `subst_scan` scanner closes them (`Lexer::skip_subst_body`), so
 `<(case a in a) ...;; esac)` keeps the pattern's `)`; the body is still
-sliced from the source, not copied (TM-DOS-021).
+sliced from the source, not copied (TM-DOS-021). A substitution whose
+source touches word text (`x<(true)`, `<(true)x`, `2<(true)`, `x=<(true)`)
+joins that word or assignment value (`Parser::join_adjacent_word`, by span
+adjacency), as bash reads it as one word.
 
 **Substitutions in `${x:-...}` operands.** Operand expansion is sync, so the
 `$(...)` parts of a `:-`/`:=`/`:?`/`:+` operand run ahead in
