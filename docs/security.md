@@ -24,6 +24,11 @@ bytes of stack padding; output capacity is admitted against
 `ExecutionLimits::max_live_intermediate_bytes` before fallible allocation.
 This memory budget applies to pipelines and redirected output too.
 
+`cd` searches `CDPATH` one candidate at a time. Temporary path and
+normalization storage is reserved against `max_live_intermediate_bytes`
+before allocation. Searches also consume the shared work budget and check
+cancellation and deadlines, including when every candidate is missing.
+
 Command hash entries (`hash -p FILE NAME...` and automatic PATH lookups) charge
 each retained name and pathname against the same live-byte budget before copying.
 Entries that survive between executions count toward the next execution's budget.

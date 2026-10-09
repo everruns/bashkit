@@ -88,6 +88,12 @@ When adding a new test file, default to placing it under
 `tests/<name>.rs` if the test trips one of the criteria above; document
 the reason in the file's module docstring.
 
+`cdpath_allocation_tests.rs` also needs its own binary: its process-wide
+counting allocator proves CDPATH peak heap usage stays below 256 KiB for a
+bounded 1,024-entry / 1,024-byte-target request that previously retained over
+1 MiB of candidate paths. It complements the shared-budget integration tests
+rather than substituting budget counters for an actual allocation measurement.
+
 Filtering still works as usual: `cargo test --test integration -- foo`
 matches `integration::*::foo*` test paths.
 
