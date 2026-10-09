@@ -86,3 +86,19 @@ false | true; echo "pipe ok"
 ### expect
 pipe ok
 ### end
+
+### errexit_child_shell_in_condition_keeps_its_own_set_e
+# A child `bash` is a new process: the parent's if/||/! context does not
+# disable `set -e` inside it (`if bash test.sh` harnesses rely on it).
+f=/tmp/errexit-child.sh
+printf '%s\n' 'set -e' 'g() { false; echo "g-after"; }' 'g' 'echo "script-end"' > "$f"
+if bash "$f"; then echo "if: rc=0"; else echo "if: rc=$?"; fi
+bash "$f" || echo "or: rc=$?"
+! bash "$f" && echo "not: negated"
+if bash -c 'set -e; false; echo c-after'; then echo "c: rc=0"; else echo "c: rc=$?"; fi
+### expect
+if: rc=1
+or: rc=1
+not: negated
+c: rc=1
+### end

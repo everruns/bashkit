@@ -388,6 +388,15 @@ fn format_stat(
                     'a' => result.push_str(&format!("{:o}", metadata.mode & 0o777)),
                     'A' => result.push_str(&format_permissions(metadata)),
                     'F' => result.push_str(&format_file_type(metadata.file_type)),
+                    // Modification time, seconds since the epoch.
+                    'Y' => result.push_str(
+                        &metadata
+                            .modified
+                            .duration_since(crate::time_compat::UNIX_EPOCH)
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0)
+                            .to_string(),
+                    ),
                     '%' => result.push('%'),
                     _ => {
                         result.push('%');

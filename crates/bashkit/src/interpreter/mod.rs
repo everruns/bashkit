@@ -6916,6 +6916,9 @@ impl Interpreter {
         // A new shell is outside any loop, function or sourced file.
         let saved_loop_depth = std::mem::replace(&mut self.loop_depth, 0);
         let saved_return_depth = std::mem::replace(&mut self.return_depth, 0);
+        // ...and outside the caller's `if`/`||`/`!` context: a child process
+        // keeps its own `set -e` (`if bash test.sh` must see test.sh fail).
+        let saved_condition_depth = std::mem::replace(&mut self.condition_sequence_depth, 0);
         // The child reads its own input: script file or stdin, line by line
         // (`bash -c` strings are not recorded in the history).
         let saved_reader = self.line_reader.take();
@@ -6964,6 +6967,7 @@ impl Interpreter {
         self.line_reader = saved_reader;
         self.loop_depth = saved_loop_depth;
         self.return_depth = saved_return_depth;
+        self.condition_sequence_depth = saved_condition_depth;
 
         self.interactive = saved_interactive;
         self.c_string_depth = saved_c_string_depth;
