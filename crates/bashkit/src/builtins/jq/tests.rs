@@ -1832,6 +1832,35 @@ async fn null_input_leaves_stream_to_input_and_inputs() {
     );
 }
 
+/// jq 1.7: with `-n`, stdin is only parsed when `input`/`inputs` reach it,
+/// so invalid JSON on stdin is ignored by a filter that never reads it.
+#[tokio::test]
+async fn null_input_ignores_unread_invalid_stdin() {
+    let result = run_jq_result_with_args(&["-n", "1"], "not json")
+        .await
+        .unwrap();
+    assert_eq!(result.stdout, "1\n");
+    assert_eq!(result.stderr, "");
+    assert_eq!(result.exit_code, 0);
+
+    // Values before the bad text are still readable.
+    let result = run_jq_result_with_args(&["-n", "input"], "1 x")
+        .await
+        .unwrap();
+    assert_eq!(result.stdout, "1\n");
+    assert_eq!(result.stderr, "");
+    assert_eq!(result.exit_code, 0);
+}
+
+#[tokio::test]
+async fn null_input_reports_invalid_stdin_once_reached() {
+    let result = run_jq_result_with_args(&["-nc", "[inputs]"], "1 x")
+        .await
+        .unwrap();
+    assert!(result.stderr.starts_with("jq: "), "{}", result.stderr);
+    assert_eq!(result.exit_code, 5);
+}
+
 #[tokio::test]
 async fn slurp_of_empty_input_is_empty_array() {
     assert_eq!(run_jq_with_args(&["-s", "."], "").await.unwrap(), "[]\n");

@@ -538,6 +538,10 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
     // THREAT[TM-DOS-110]: the meter aborts a run by unwinding where jaq
     // gives it no error channel (see jaq_json::meter::Abort).
     let input_error = std::cell::RefCell::new(None);
+    // Set once the filter pulls past the last parsed value. With `-n`, jq
+    // only parses stdin as `input`/`inputs` read it, so a parse error past
+    // the values the filter actually read is never reported.
+    let stream_exhausted = std::cell::Cell::new(false);
     let run_filter = std::panic::AssertUnwindSafe(|| -> Result<Option<ExecResult>> {
         let env_val = jq_to_val(&env_obj);
         let args_val = jq_to_val(&args_obj);
@@ -556,13 +560,20 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
             })
         });
         let mut value_iter: Box<dyn Iterator<Item = std::result::Result<Val, String>> + '_> =
-            Box::new(values.map(|value| {
-                value.map_err(|error| {
-                    let message = error.to_string();
-                    *input_error.borrow_mut() = Some(error);
-                    message
-                })
-            }));
+            Box::new(
+                values
+                    .map(|value| {
+                        value.map_err(|error| {
+                            let message = error.to_string();
+                            *input_error.borrow_mut() = Some(error);
+                            message
+                        })
+                    })
+                    .chain(std::iter::from_fn(|| {
+                        stream_exhausted.set(true);
+                        None
+                    })),
+            );
         if parsed.slurp && !parsed.raw_input && parse_error.is_none() {
             let mut values = jaq_json::meter::Metered::<Vec<Val>>::default();
             for value in value_iter {
@@ -752,7 +763,9 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
 
     stderr_out.push_str(&messages::take());
     let mut code = status.unwrap_or(if parsed.exit_status { 4 } else { 0 });
-    if let Some(e) = parse_error.filter(|_| halted.is_none()) {
+    if let Some(e) =
+        parse_error.filter(|_| halted.is_none() && (!null_input || stream_exhausted.get()))
+    {
         stderr_out.push_str(&e);
         stderr_out.push('\n');
         code = 5;
