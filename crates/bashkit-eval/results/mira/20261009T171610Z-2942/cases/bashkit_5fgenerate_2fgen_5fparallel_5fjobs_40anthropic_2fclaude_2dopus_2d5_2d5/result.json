@@ -1,0 +1,63 @@
+{
+  "eval": "bashkit_generate",
+  "sample": "gen_parallel_jobs",
+  "target": "anthropic/claude-opus-5-5",
+  "input": [
+    "Write a bash script that runs a set of job scripts in parallel.\n\nStarting files (all four are executable; /home/eval/jobs/logs does not exist):\n--- /home/eval/jobs/build.sh ---\n#!/bin/bash\necho \"build ok\"\n--- end ---\n--- /home/eval/jobs/lint.sh ---\n#!/bin/bash\necho \"lint: 2 warnings\"\nexit 0\n--- end ---\n--- /home/eval/jobs/test.sh ---\n#!/bin/bash\nsleep 1\necho \"test: 1 failed\"\nexit 3\n--- end ---\n--- /home/eval/jobs/docs.sh ---\n#!/bin/bash\necho \"docs ok\"\n--- end ---\n\nThe script must:\n1. Start every `*.sh` file in /home/eval/jobs in the background at the same time, sending each job's stdout to /home/eval/jobs/logs/<name>.log, where <name> is the file name without `.sh`.\n2. Wait for each job individually (by PID) and record its exit code.\n3. Write /home/eval/jobs/summary.txt: one line `<name> <exit code>` per job sorted by name, followed by a final line `failed=<number of jobs with non-zero exit>`.\n4. Exit with status 1 if any job failed, otherwise 0."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "The script starts all jobs, records each job's PID, then waits on each PID separately to get that job's exit code.\n\n```bash\n#!/bin/bash\n# Run every job script in /home/eval/jobs in parallel, log stdout per job,\n# collect exit codes, write a sorted summary, and exit 1 if any job failed.\n\njobs_dir=/home/eval/jobs\nlogs_dir=\"$jobs_dir/logs\"\nsummary=\"$jobs_dir/summary.txt\"\n\nmkdir -p \"$logs_dir\"\n\ndeclare -A pids=()\ndeclare -A codes=()\nnames=()\n\nshopt -s nullglob\n\n# 1. Start all jobs in the background\nfor f in \"$jobs_dir\"/*.sh; do\n    [[ -f \"$f\" ]] || continue\n    name=$(basename \"$f\" .sh)\n    bash \"$f\" > \"$logs_dir/$name.log\" &\n    pids[$name]=$!\n    names+=(\"$name\")\ndone\n\n# 2. Wait for each job individually by PID\nfor name in \"${names[@]}\"; do\n    wait \"${pids[$name]}\"\n    codes[$name]=$?\ndone\n\n# 3. Write sorted summary\nfailed=0\n: > \"$summary\"\nif (( ${#names[@]} > 0 )); then\n    while IFS= read -r name; do\n        [[ -z \"$name\" ]] && continue\n        code=${codes[$name]}\n        printf '%s %s\\n' \"$name\" \"$code\" >> \"$summary\"\n        if [[ \"$code\" != \"0\" ]]; then\n            failed=$((failed + 1))\n        fi\n    done < <(printf '%s\\n' \"${names[@]}\" | sort)\nfi\nprintf 'failed=%d\\n' \"$failed\" >> \"$summary\"\n\n# 4. Exit status\nif (( failed > 0 )); then\n    exit 1\nfi\nexit 0\n```\n\n**Notes:**\n- Each job is launched with `bash \"$f\"` rather than as `./name.sh`, in case the sandbox doesn't run scripts by their `#!` line.\n- With the given files, `summary.txt` should list `build 0`, `docs 0`, `lint 0` and `test 3`, then `failed=1`. The script should exit with status 1.",
+    "iterations": 1,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "#!/bin/bash\n# Run every job script in /home/eval/jobs in parallel, log stdout per job,\n# collect exit codes, write a sorted summary, and exit 1 if any job failed.\n\njobs_dir=/home/eval/jobs\nlogs_dir=\"$jobs_dir/logs\"\nsummary=\"$jobs_dir/summary.txt\"\n\nmkdir -p \"$logs_dir\"\n\ndeclare -A pids=()\ndeclare -A codes=()\nnames=()\n\nshopt -s nullglob\n\n# 1. Start all jobs in the background\nfor f in \"$jobs_dir\"/*.sh; do\n    [[ -f \"$f\" ]] || continue\n    name=$(basename \"$f\" .sh)\n    bash \"$f\" > \"$logs_dir/$name.log\" &\n    pids[$name]=$!\n    names+=(\"$name\")\ndone\n\n# 2. Wait for each job individually by PID\nfor name in \"${names[@]}\"; do\n    wait \"${pids[$name]}\"\n    codes[$name]=$?\ndone\n\n# 3. Write sorted summary\nfailed=0\n: > \"$summary\"\nif (( ${#names[@]} > 0 )); then\n    while IFS= read -r name; do\n        [[ -z \"$name\" ]] && continue\n        code=${codes[$name]}\n        printf '%s %s\\n' \"$name\" \"$code\" >> \"$summary\"\n        if [[ \"$code\" != \"0\" ]]; then\n            failed=$((failed + 1))\n        fi\n    done < <(printf '%s\\n' \"${names[@]}\" | sort)\nfi\nprintf 'failed=%d\\n' \"$failed\" >> \"$summary\"\n\n# 4. Exit status\nif (( failed > 0 )); then\n    exit 1\nfi\nexit 0\n"
+    ],
+    "usage": {
+      "input_tokens": 885,
+      "output_tokens": 1002,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 11219
+    },
+    "metrics": {
+      "exec_ms": 1017.0,
+      "exit_code": 1.0,
+      "extracted": 1.0,
+      "generate_ms": 10202.0,
+      "script_bytes": 1158.0,
+      "script_found": 1.0,
+      "timed_out": 0.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 1,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "#!/bin/bash\n# Run every job script in /home/eval/jobs in parallel, log stdout per job,\n# collect exit codes, write a sorted summary, and exit 1 if any job failed.\n\njobs_dir=/home/eval/jobs\nlogs_dir=\"$jobs_dir/logs\"\nsummary=\"$jobs_dir/summary.txt\"\n\nmkdir -p \"$logs_dir\"\n\ndeclare -A pids=()\ndeclare -A codes=()\nnames=()\n\nshopt -s nullglob\n\n# 1. Start all jobs in the background\nfor f in \"$jobs_dir\"/*.sh; do\n    [[ -f \"$f\" ]] || continue\n    name=$(basename \"$f\" .sh)\n    bash \"$f\" > \"$logs_dir/$name.log\" &\n    pids[$name]=$!\n    names+=(\"$name\")\ndone\n\n# 2. Wait for each job individually by PID\nfor name in \"${names[@]}\"; do\n    wait \"${pids[$name]}\"\n    codes[$name]=$?\ndone\n\n# 3. Write sorted summary\nfailed=0\n: > \"$summary\"\nif (( ${#names[@]} > 0 )); then\n    while IFS= read -r name; do\n        [[ -z \"$name\" ]] && continue\n        code=${codes[$name]}\n        printf '%s %s\\n' \"$name\" \"$code\" >> \"$summary\"\n        if [[ \"$code\" != \"0\" ]]; then\n            failed=$((failed + 1))\n        fi\n    done < <(printf '%s\\n' \"${names[@]}\" | sort)\nfi\nprintf 'failed=%d\\n' \"$failed\" >> \"$summary\"\n\n# 4. Exit status\nif (( failed > 0 )); then\n    exit 1\nfi\nexit 0\n",
+            "exit_code": 1,
+            "stderr": "",
+            "stdout": ""
+          }
+        ]
+      },
+      "generate": {
+        "extraction": "fenced",
+        "timed_out": false
+      }
+    }
+  },
+  "skipped": false
+}

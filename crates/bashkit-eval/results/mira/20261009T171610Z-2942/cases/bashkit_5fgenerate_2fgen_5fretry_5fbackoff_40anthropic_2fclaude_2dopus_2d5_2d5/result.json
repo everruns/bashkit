@@ -1,0 +1,50 @@
+{
+  "eval": "bashkit_generate",
+  "sample": "gen_retry_backoff",
+  "target": "anthropic/claude-opus-5-5",
+  "input": [
+    "Write a bash script with a retry helper.\n\nStarting files (/home/eval/bin/fetch.sh is executable; the directory /home/eval/state exists and is empty):\n--- /home/eval/bin/fetch.sh ---\n#!/bin/bash\n# usage: fetch.sh NAME -- fails until NAME's attempt counter reaches its threshold\nstate=/home/eval/state/$1.count\nn=$(( $(cat \"$state\" 2>/dev/null || echo 0) + 1 ))\necho \"$n\" > \"$state\"\ncase $1 in\n  alpha) need=3 ;;\n  beta) need=99 ;;\n  *) need=1 ;;\nesac\nif [ \"$n\" -lt \"$need\" ]; then\n  echo \"fetch $1: attempt $n failed\" >&2\n  exit 7\nfi\necho \"payload-$1\"\n--- end ---\n\n1. Define a function `retry MAX CMD [ARGS...]` that runs the command up to MAX times:\n   - On success, return 0 immediately (the command's stdout passes through to the function's stdout).\n   - After failed attempt N (exit code E), append one line to /home/eval/state/retry.log:\n     - if N < MAX: `attempt N/MAX failed (exit E), sleeping Ds` where D = 2^(N-1) (1, 2, 4, ...), then actually `sleep D` before retrying;\n     - if N = MAX: `attempt N/MAX failed (exit E), giving up` and return E (do not sleep).\n   - The command's stderr is discarded.\n2. Run `retry 4 /home/eval/bin/fetch.sh alpha > /home/eval/state/alpha.out` and then `retry 2 /home/eval/bin/fetch.sh beta > /home/eval/state/beta.out`, capturing each exit status (the script must keep going after a failure).\n3. Write `alpha=<status> beta=<status>` (one line) to /home/eval/state/summary.txt and exit 0."
+  ],
+  "passed": false,
+  "aggregate": 0.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": -0.0,
+      "pass": false,
+      "reason": "0/6 checks passed (weighted rate -0%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "",
+    "iterations": 1,
+    "tool_calls_count": 0,
+    "usage": {
+      "input_tokens": 1108,
+      "output_tokens": 0,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 1030
+    },
+    "metrics": {
+      "exec_ms": 0.0,
+      "generate_ms": 1030.0,
+      "script_found": 0.0,
+      "timed_out": 0.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": null,
+        "links": {},
+        "tool_outputs": []
+      },
+      "generate": {
+        "extraction": "none",
+        "timed_out": false
+      }
+    }
+  },
+  "skipped": false
+}

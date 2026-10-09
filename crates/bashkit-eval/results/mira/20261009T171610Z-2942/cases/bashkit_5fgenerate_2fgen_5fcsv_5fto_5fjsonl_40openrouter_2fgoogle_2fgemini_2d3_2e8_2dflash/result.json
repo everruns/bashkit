@@ -1,0 +1,63 @@
+{
+  "eval": "bashkit_generate",
+  "sample": "gen_csv_to_jsonl",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Write a bash script that converts a CSV file to JSON Lines.\n\nStarting files:\n--- /home/eval/data/users.csv (no trailing newline on the last line) ---\nid,name,email,active\n1,Alice Smith,alice@example.com,yes\n2,Bob Jones,bob@example.com,no\n3,Carol White,carol@example.com,yes\n--- end ---\n\nFields never contain commas or quotes.\n\nWrite /home/eval/data/users.jsonl with one compact JSON object per data row (no spaces), in input order, keys in this order: `id` (JSON number), `name` (string), `email` (string), `active` (JSON boolean: `yes` -> true, anything else -> false). Example line: `{\"id\":1,\"name\":\"Alice Smith\",\"email\":\"alice@example.com\",\"active\":true}`. Every row must be converted, including the last one.\n\nThen print `active=<number of active users>` to stdout and exit 0."
+  ],
+  "passed": false,
+  "aggregate": 0.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": -0.0,
+      "pass": false,
+      "reason": "0/3 checks passed (weighted rate -0%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "```bash\n#!/usr/bin/env bash\nset -euo pipefail\n\ninput_file=\"/home/eval/data/users.csv\"\noutput_file=\"/home/eval/data/users.jsonl\"\n\nactive_count=0\nfirst_line=1\n\n> \"$output_file\"\n\nwhile IFS=, read -r id name email active || [ -n \"$id\" ]; do\n    id=\"${id//$'\\r'/}\"\n    name=\"${name//$'\\r'/}\"\n    email=\"${email//$'\\r'/}\"\n    active=\"${active//$'\\r'/}\"\n\n    if [ \"$first_line\" -eq 1 ]; then\n        first_line=0\n        continue\n    fi\n\n    [ -z \"$id\" ] && continue\n\n    if [ \"$active\" = \"yes\" ]; then\n        bool_active=\"true\"\n        ((active_count++))\n    else\n        bool_active=\"false\"\n    fi\n\n    printf '{\"id\":%s,\"name\":\"%s\",\"email\":\"%s\",\"active\":%s}\\n' \"$id\" \"$name\" \"$email\" \"$bool_active\" >> \"$output_file\"\ndone < \"$input_file\"\n\necho \"active=$active_count\"\nexit 0\n```",
+    "iterations": 1,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "#!/usr/bin/env bash\nset -euo pipefail\n\ninput_file=\"/home/eval/data/users.csv\"\noutput_file=\"/home/eval/data/users.jsonl\"\n\nactive_count=0\nfirst_line=1\n\n> \"$output_file\"\n\nwhile IFS=, read -r id name email active || [ -n \"$id\" ]; do\n    id=\"${id//$'\\r'/}\"\n    name=\"${name//$'\\r'/}\"\n    email=\"${email//$'\\r'/}\"\n    active=\"${active//$'\\r'/}\"\n\n    if [ \"$first_line\" -eq 1 ]; then\n        first_line=0\n        continue\n    fi\n\n    [ -z \"$id\" ] && continue\n\n    if [ \"$active\" = \"yes\" ]; then\n        bool_active=\"true\"\n        ((active_count++))\n    else\n        bool_active=\"false\"\n    fi\n\n    printf '{\"id\":%s,\"name\":\"%s\",\"email\":\"%s\",\"active\":%s}\\n' \"$id\" \"$name\" \"$email\" \"$bool_active\" >> \"$output_file\"\ndone < \"$input_file\"\n\necho \"active=$active_count\"\nexit 0\n"
+    ],
+    "usage": {
+      "input_tokens": 517,
+      "output_tokens": 1787,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 13613
+    },
+    "metrics": {
+      "exec_ms": 2.0,
+      "exit_code": 1.0,
+      "extracted": 1.0,
+      "generate_ms": 13611.0,
+      "script_bytes": 762.0,
+      "script_found": 1.0,
+      "timed_out": 0.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 1,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "#!/usr/bin/env bash\nset -euo pipefail\n\ninput_file=\"/home/eval/data/users.csv\"\noutput_file=\"/home/eval/data/users.jsonl\"\n\nactive_count=0\nfirst_line=1\n\n> \"$output_file\"\n\nwhile IFS=, read -r id name email active || [ -n \"$id\" ]; do\n    id=\"${id//$'\\r'/}\"\n    name=\"${name//$'\\r'/}\"\n    email=\"${email//$'\\r'/}\"\n    active=\"${active//$'\\r'/}\"\n\n    if [ \"$first_line\" -eq 1 ]; then\n        first_line=0\n        continue\n    fi\n\n    [ -z \"$id\" ] && continue\n\n    if [ \"$active\" = \"yes\" ]; then\n        bool_active=\"true\"\n        ((active_count++))\n    else\n        bool_active=\"false\"\n    fi\n\n    printf '{\"id\":%s,\"name\":\"%s\",\"email\":\"%s\",\"active\":%s}\\n' \"$id\" \"$name\" \"$email\" \"$bool_active\" >> \"$output_file\"\ndone < \"$input_file\"\n\necho \"active=$active_count\"\nexit 0\n",
+            "exit_code": 1,
+            "stderr": "",
+            "stdout": ""
+          }
+        ]
+      },
+      "generate": {
+        "extraction": "fenced",
+        "timed_out": false
+      }
+    }
+  },
+  "skipped": false
+}

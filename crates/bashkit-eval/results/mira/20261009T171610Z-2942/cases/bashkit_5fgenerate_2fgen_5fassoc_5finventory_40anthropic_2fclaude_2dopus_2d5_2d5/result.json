@@ -1,0 +1,63 @@
+{
+  "eval": "bashkit_generate",
+  "sample": "gen_assoc_inventory",
+  "target": "anthropic/claude-opus-5-5",
+  "input": [
+    "Write a bash script (use bash associative arrays) that aggregates an inventory.\n\nStarting files:\n--- /home/eval/data/inventory.txt ---\n# warehouse sku qty\nberlin bolt 120\nparis nut 40\nberlin nut 15\nlyon bolt 30\nparis  bolt 5\nberlin washer 300\nlyon nut 0\n--- end ---\n\nLines starting with `#` are comments; fields are separated by one or more spaces.\n\n1. Write /home/eval/data/sku_totals.txt: one line `SKU TOTAL_QTY` per SKU, sorted by SKU.\n2. Write /home/eval/data/warehouses.txt: one line `WAREHOUSE N` per warehouse, sorted by warehouse, where N is the number of distinct SKUs that warehouse holds with qty > 0.\nExit 0."
+  ],
+  "passed": false,
+  "aggregate": 0.3333333333333333,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 0.3333333333333333,
+      "pass": false,
+      "reason": "1/3 checks passed (weighted rate 33%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "The script reads each line with `read`, which splits on runs of spaces. It accumulates the counts in associative arrays and writes both files through `LC_ALL=C sort` so the ordering is stable.\n\n```bash\n#!/usr/bin/env bash\nset -u\n\nin=/home/eval/data/inventory.txt\nout_sku=/home/eval/data/sku_totals.txt\nout_wh=/home/eval/data/warehouses.txt\n\ndeclare -A sku_total=()\ndeclare -A wh_sku_qty=()\ndeclare -A warehouses=()\n\nif [[ -f \"$in\" ]]; then\n  while IFS=$' \\t' read -r w s q rest || [[ -n \"${w:-}\" ]]; do\n    w=${w%$'\\r'}; s=${s:-}; s=${s%$'\\r'}; q=${q:-}; q=${q%$'\\r'}\n    [[ -z \"$w\" || \"$w\" == \\#* ]] && continue\n    [[ -z \"$s\" ]] && continue\n    [[ \"$q\" =~ ^-?[0-9]+$ ]] || continue\n    q=$((10#${q#-} * (${q:0:1} == \"-\" ? -1 : 1)))\n    sku_total[$s]=$(( ${sku_total[$s]:-0} + q ))\n    warehouses[$w]=1\n    key=\"$w|$s\"\n    wh_sku_qty[$key]=$(( ${wh_sku_qty[$key]:-0} + q ))\n  done < \"$in\"\nfi\n\ndeclare -A wh_count=()\nfor w in \"${!warehouses[@]}\"; do wh_count[$w]=0; done\nfor key in \"${!wh_sku_qty[@]}\"; do\n  if (( ${wh_sku_qty[$key]} > 0 )); then\n    w=${key%%|*}\n    wh_count[$w]=$(( ${wh_count[$w]} + 1 ))\n  fi\ndone\n\n{\n  for s in \"${!sku_total[@]}\"; do\n    printf '%s %s\\n' \"$s\" \"${sku_total[$s]}\"\n  done\n} | LC_ALL=C sort -k1,1 > \"$out_sku\"\n\n{\n  for w in \"${!wh_count[@]}\"; do\n    printf '%s %s\\n' \"$w\" \"${wh_count[$w]}\"\n  done\n} | LC_ALL=C sort -k1,1 > \"$out_wh\"\n\nexit 0\n```",
+    "iterations": 1,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "#!/usr/bin/env bash\nset -u\n\nin=/home/eval/data/inventory.txt\nout_sku=/home/eval/data/sku_totals.txt\nout_wh=/home/eval/data/warehouses.txt\n\ndeclare -A sku_total=()\ndeclare -A wh_sku_qty=()\ndeclare -A warehouses=()\n\nif [[ -f \"$in\" ]]; then\n  while IFS=$' \\t' read -r w s q rest || [[ -n \"${w:-}\" ]]; do\n    w=${w%$'\\r'}; s=${s:-}; s=${s%$'\\r'}; q=${q:-}; q=${q%$'\\r'}\n    [[ -z \"$w\" || \"$w\" == \\#* ]] && continue\n    [[ -z \"$s\" ]] && continue\n    [[ \"$q\" =~ ^-?[0-9]+$ ]] || continue\n    q=$((10#${q#-} * (${q:0:1} == \"-\" ? -1 : 1)))\n    sku_total[$s]=$(( ${sku_total[$s]:-0} + q ))\n    warehouses[$w]=1\n    key=\"$w|$s\"\n    wh_sku_qty[$key]=$(( ${wh_sku_qty[$key]:-0} + q ))\n  done < \"$in\"\nfi\n\ndeclare -A wh_count=()\nfor w in \"${!warehouses[@]}\"; do wh_count[$w]=0; done\nfor key in \"${!wh_sku_qty[@]}\"; do\n  if (( ${wh_sku_qty[$key]} > 0 )); then\n    w=${key%%|*}\n    wh_count[$w]=$(( ${wh_count[$w]} + 1 ))\n  fi\ndone\n\n{\n  for s in \"${!sku_total[@]}\"; do\n    printf '%s %s\\n' \"$s\" \"${sku_total[$s]}\"\n  done\n} | LC_ALL=C sort -k1,1 > \"$out_sku\"\n\n{\n  for w in \"${!wh_count[@]}\"; do\n    printf '%s %s\\n' \"$w\" \"${wh_count[$w]}\"\n  done\n} | LC_ALL=C sort -k1,1 > \"$out_wh\"\n\nexit 0\n"
+    ],
+    "usage": {
+      "input_tokens": 731,
+      "output_tokens": 989,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 8482
+    },
+    "metrics": {
+      "exec_ms": 9.0,
+      "exit_code": 0.0,
+      "extracted": 1.0,
+      "generate_ms": 8473.0,
+      "script_bytes": 1173.0,
+      "script_found": 1.0,
+      "timed_out": 0.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "#!/usr/bin/env bash\nset -u\n\nin=/home/eval/data/inventory.txt\nout_sku=/home/eval/data/sku_totals.txt\nout_wh=/home/eval/data/warehouses.txt\n\ndeclare -A sku_total=()\ndeclare -A wh_sku_qty=()\ndeclare -A warehouses=()\n\nif [[ -f \"$in\" ]]; then\n  while IFS=$' \\t' read -r w s q rest || [[ -n \"${w:-}\" ]]; do\n    w=${w%$'\\r'}; s=${s:-}; s=${s%$'\\r'}; q=${q:-}; q=${q%$'\\r'}\n    [[ -z \"$w\" || \"$w\" == \\#* ]] && continue\n    [[ -z \"$s\" ]] && continue\n    [[ \"$q\" =~ ^-?[0-9]+$ ]] || continue\n    q=$((10#${q#-} * (${q:0:1} == \"-\" ? -1 : 1)))\n    sku_total[$s]=$(( ${sku_total[$s]:-0} + q ))\n    warehouses[$w]=1\n    key=\"$w|$s\"\n    wh_sku_qty[$key]=$(( ${wh_sku_qty[$key]:-0} + q ))\n  done < \"$in\"\nfi\n\ndeclare -A wh_count=()\nfor w in \"${!warehouses[@]}\"; do wh_count[$w]=0; done\nfor key in \"${!wh_sku_qty[@]}\"; do\n  if (( ${wh_sku_qty[$key]} > 0 )); then\n    w=${key%%|*}\n    wh_count[$w]=$(( ${wh_count[$w]} + 1 ))\n  fi\ndone\n\n{\n  for s in \"${!sku_total[@]}\"; do\n    printf '%s %s\\n' \"$s\" \"${sku_total[$s]}\"\n  done\n} | LC_ALL=C sort -k1,1 > \"$out_sku\"\n\n{\n  for w in \"${!wh_count[@]}\"; do\n    printf '%s %s\\n' \"$w\" \"${wh_count[$w]}\"\n  done\n} | LC_ALL=C sort -k1,1 > \"$out_wh\"\n\nexit 0\n",
+            "exit_code": 0,
+            "stderr": "bash: line 18: 10#${q#-} * (${q:0:1} == \"-\" ? -1 : 1): syntax error: operand expected (error token is \"== - ? -1 : 1)\")\n",
+            "stdout": ""
+          }
+        ]
+      },
+      "generate": {
+        "extraction": "fenced",
+        "timed_out": false
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,63 @@
+{
+  "eval": "bashkit_generate",
+  "sample": "gen_jq_rollup",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "Write a bash script that summarises orders with jq.\n\nStarting files:\n--- /home/eval/data/orders.json ---\n[\n  {\n    \"id\": 1,\n    \"customer\": \"bob\",\n    \"items\": [\n      {\n        \"sku\": \"A\",\n        \"qty\": 2,\n        \"price\": 3.5\n      }\n    ],\n    \"status\": \"paid\"\n  },\n  {\n    \"id\": 2,\n    \"customer\": \"alice\",\n    \"items\": [\n      {\n        \"sku\": \"B\",\n        \"qty\": 1,\n        \"price\": 10\n      },\n      {\n        \"sku\": \"A\",\n        \"qty\": 1,\n        \"price\": 3.5\n      }\n    ],\n    \"status\": \"paid\"\n  },\n  {\n    \"id\": 3,\n    \"customer\": \"bob\",\n    \"items\": [\n      {\n        \"sku\": \"C\",\n        \"qty\": 3,\n        \"price\": 1.25\n      }\n    ],\n    \"status\": \"refunded\"\n  },\n  {\n    \"id\": 4,\n    \"customer\": \"carol\",\n    \"items\": [],\n    \"status\": \"paid\"\n  },\n  {\n    \"id\": 5,\n    \"customer\": \"alice\",\n    \"items\": [\n      {\n        \"sku\": \"C\",\n        \"qty\": 4,\n        \"price\": 1.25\n      }\n    ],\n    \"status\": \"paid\"\n  }\n]\n--- end ---\n\nOnly orders with `\"status\": \"paid\"` count. An order's value is the sum of qty * price over its items (an order with no items is worth 0).\n\n1. Write /home/eval/data/customers.jsonl: one compact JSON object per customer, `{\"customer\":NAME,\"orders\":COUNT,\"total\":VALUE}`, numbers as jq prints them (e.g. `7`, `18.5`), sorted by total descending, then customer ascending.\n2. Write /home/eval/data/top_sku.txt: one line `SKU QTY` for the SKU with the largest total quantity across paid orders.\nExit 0."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "3/3 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "```bash\n#!/bin/bash\nset -e\ncd /home/eval/data\n\njq -c '\n  [ .[] | select(.status == \"paid\")\n    | {customer, value: ([.items[] | .qty * .price] | add // 0)} ]\n  | group_by(.customer)\n  | map({customer: .[0].customer, orders: length, total: (map(.value) | add)})\n  | sort_by([-.total, .customer])\n  | .[]\n' orders.json > customers.jsonl\n\njq -r '\n  [ .[] | select(.status == \"paid\") | .items[] ]\n  | group_by(.sku)\n  | map({sku: .[0].sku, qty: (map(.qty) | add)})\n  | sort_by([-.qty, .sku])\n  | .[0] // empty\n  | \"\\(.sku) \\(.qty)\"\n' orders.json > top_sku.txt\n\nexit 0\n```",
+    "iterations": 1,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "#!/bin/bash\nset -e\ncd /home/eval/data\n\njq -c '\n  [ .[] | select(.status == \"paid\")\n    | {customer, value: ([.items[] | .qty * .price] | add // 0)} ]\n  | group_by(.customer)\n  | map({customer: .[0].customer, orders: length, total: (map(.value) | add)})\n  | sort_by([-.total, .customer])\n  | .[]\n' orders.json > customers.jsonl\n\njq -r '\n  [ .[] | select(.status == \"paid\") | .items[] ]\n  | group_by(.sku)\n  | map({sku: .[0].sku, qty: (map(.qty) | add)})\n  | sort_by([-.qty, .sku])\n  | .[0] // empty\n  | \"\\(.sku) \\(.qty)\"\n' orders.json > top_sku.txt\n\nexit 0\n"
+    ],
+    "usage": {
+      "input_tokens": 1072,
+      "output_tokens": 554,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 4524
+    },
+    "metrics": {
+      "exec_ms": 26.0,
+      "exit_code": 0.0,
+      "extracted": 1.0,
+      "generate_ms": 4498.0,
+      "script_bytes": 556.0,
+      "script_found": 1.0,
+      "timed_out": 0.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "#!/bin/bash\nset -e\ncd /home/eval/data\n\njq -c '\n  [ .[] | select(.status == \"paid\")\n    | {customer, value: ([.items[] | .qty * .price] | add // 0)} ]\n  | group_by(.customer)\n  | map({customer: .[0].customer, orders: length, total: (map(.value) | add)})\n  | sort_by([-.total, .customer])\n  | .[]\n' orders.json > customers.jsonl\n\njq -r '\n  [ .[] | select(.status == \"paid\") | .items[] ]\n  | group_by(.sku)\n  | map({sku: .[0].sku, qty: (map(.qty) | add)})\n  | sort_by([-.qty, .sku])\n  | .[0] // empty\n  | \"\\(.sku) \\(.qty)\"\n' orders.json > top_sku.txt\n\nexit 0\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          }
+        ]
+      },
+      "generate": {
+        "extraction": "fenced",
+        "timed_out": false
+      }
+    }
+  },
+  "skipped": false
+}

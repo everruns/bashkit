@@ -1,0 +1,63 @@
+{
+  "eval": "bashkit_generate",
+  "sample": "gen_log_rotate",
+  "target": "openrouter/meta/muse-spark-1.3-contributor",
+  "input": [
+    "Write a bash script that rotates numbered log files.\n\nStarting files in /home/eval/logs (nothing else is in that directory):\n--- /home/eval/logs/app.log ---\nline c\n--- end ---\n--- /home/eval/logs/app.log.1 ---\nline b\n--- end ---\n--- /home/eval/logs/app.log.2 ---\nline a\n--- end ---\n--- /home/eval/logs/app.log.3 ---\nline 0\n--- end ---\n--- /home/eval/logs/app.log.old ---\nmanual backup\n--- end ---\n--- /home/eval/logs/worker.log ---\nw2\n--- end ---\n--- /home/eval/logs/worker.log.1 ---\nw1\n--- end ---\n\nDefine a shell function `rotate LOGFILE KEEP` implementing classic numbered rotation:\n- `LOGFILE.N` becomes `LOGFILE.N+1` for every existing N, highest first, so nothing is overwritten.\n- Afterwards no numbered file above KEEP may remain (delete any that would end up numbered higher than KEEP).\n- `LOGFILE` itself becomes `LOGFILE.1`, and a new empty `LOGFILE` is created.\n- Files that are not exactly `LOGFILE` or `LOGFILE.<number>` (for example `app.log.old`) must not be touched.\n\nThen call it twice: `rotate /home/eval/logs/app.log 3` and `rotate /home/eval/logs/worker.log 2`. Exit 0."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "9/9 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "```bash\n#!/bin/bash\nrotate() {\n  local LOGFILE=\"$1\"\n  local KEEP=\"$2\"\n  local f suffix N\n  local ordered\n  ordered=$(for f in \"$LOGFILE\".*; do\n    [ -e \"$f\" ] || continue\n    suffix=${f#$LOGFILE.}\n    case \"$suffix\" in\n      \"\"|*[!0-9]*) continue ;;\n      *) echo \"$suffix\" ;;\n    esac\n  done | sort -rn)\n  if [ -n \"$ordered\" ]; then\n    echo \"$ordered\" | while IFS= read -r N; do\n      [ -n \"$N\" ] || continue\n      mv -f -- \"$LOGFILE.$N\" \"$LOGFILE.$((10#$N + 1))\"\n    done\n    for f in \"$LOGFILE\".*; do\n      [ -e \"$f\" ] || continue\n      suffix=${f#$LOGFILE.}\n      case \"$suffix\" in\n        \"\"|*[!0-9]*) continue ;;\n      esac\n      if [ \"$((10#$suffix))\" -gt \"$((10#$KEEP))\" ]; then\n        rm -f -- \"$f\"\n      fi\n    done\n  fi\n  if [ -e \"$LOGFILE\" ] || [ -L \"$LOGFILE\" ]; then\n    mv -f -- \"$LOGFILE\" \"$LOGFILE.1\"\n  fi\n  : > \"$LOGFILE\"\n}\nrotate /home/eval/logs/app.log 3\nrotate /home/eval/logs/worker.log 2\nexit 0\n```",
+    "iterations": 1,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "#!/bin/bash\nrotate() {\n  local LOGFILE=\"$1\"\n  local KEEP=\"$2\"\n  local f suffix N\n  local ordered\n  ordered=$(for f in \"$LOGFILE\".*; do\n    [ -e \"$f\" ] || continue\n    suffix=${f#$LOGFILE.}\n    case \"$suffix\" in\n      \"\"|*[!0-9]*) continue ;;\n      *) echo \"$suffix\" ;;\n    esac\n  done | sort -rn)\n  if [ -n \"$ordered\" ]; then\n    echo \"$ordered\" | while IFS= read -r N; do\n      [ -n \"$N\" ] || continue\n      mv -f -- \"$LOGFILE.$N\" \"$LOGFILE.$((10#$N + 1))\"\n    done\n    for f in \"$LOGFILE\".*; do\n      [ -e \"$f\" ] || continue\n      suffix=${f#$LOGFILE.}\n      case \"$suffix\" in\n        \"\"|*[!0-9]*) continue ;;\n      esac\n      if [ \"$((10#$suffix))\" -gt \"$((10#$KEEP))\" ]; then\n        rm -f -- \"$f\"\n      fi\n    done\n  fi\n  if [ -e \"$LOGFILE\" ] || [ -L \"$LOGFILE\" ]; then\n    mv -f -- \"$LOGFILE\" \"$LOGFILE.1\"\n  fi\n  : > \"$LOGFILE\"\n}\nrotate /home/eval/logs/app.log 3\nrotate /home/eval/logs/worker.log 2\nexit 0\n"
+    ],
+    "usage": {
+      "input_tokens": 607,
+      "output_tokens": 6014,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 45363
+    },
+    "metrics": {
+      "exec_ms": 12.0,
+      "exit_code": 0.0,
+      "extracted": 1.0,
+      "generate_ms": 45351.0,
+      "script_bytes": 912.0,
+      "script_found": 1.0,
+      "timed_out": 0.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "#!/bin/bash\nrotate() {\n  local LOGFILE=\"$1\"\n  local KEEP=\"$2\"\n  local f suffix N\n  local ordered\n  ordered=$(for f in \"$LOGFILE\".*; do\n    [ -e \"$f\" ] || continue\n    suffix=${f#$LOGFILE.}\n    case \"$suffix\" in\n      \"\"|*[!0-9]*) continue ;;\n      *) echo \"$suffix\" ;;\n    esac\n  done | sort -rn)\n  if [ -n \"$ordered\" ]; then\n    echo \"$ordered\" | while IFS= read -r N; do\n      [ -n \"$N\" ] || continue\n      mv -f -- \"$LOGFILE.$N\" \"$LOGFILE.$((10#$N + 1))\"\n    done\n    for f in \"$LOGFILE\".*; do\n      [ -e \"$f\" ] || continue\n      suffix=${f#$LOGFILE.}\n      case \"$suffix\" in\n        \"\"|*[!0-9]*) continue ;;\n      esac\n      if [ \"$((10#$suffix))\" -gt \"$((10#$KEEP))\" ]; then\n        rm -f -- \"$f\"\n      fi\n    done\n  fi\n  if [ -e \"$LOGFILE\" ] || [ -L \"$LOGFILE\" ]; then\n    mv -f -- \"$LOGFILE\" \"$LOGFILE.1\"\n  fi\n  : > \"$LOGFILE\"\n}\nrotate /home/eval/logs/app.log 3\nrotate /home/eval/logs/worker.log 2\nexit 0\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          }
+        ]
+      },
+      "generate": {
+        "extraction": "fenced",
+        "timed_out": false
+      }
+    }
+  },
+  "skipped": false
+}

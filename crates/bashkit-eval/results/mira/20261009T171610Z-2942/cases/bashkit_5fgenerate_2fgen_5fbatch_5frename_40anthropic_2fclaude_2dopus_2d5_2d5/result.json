@@ -1,0 +1,63 @@
+{
+  "eval": "bashkit_generate",
+  "sample": "gen_batch_rename",
+  "target": "anthropic/claude-opus-5-5",
+  "input": [
+    "Write a bash script that normalises photo file names.\n\nStarting files (contents shown; names contain spaces where shown):\n--- /home/eval/photos/IMG_0001.JPG ---\na\n--- end ---\n--- /home/eval/photos/IMG_0002.JPG ---\nb\n--- end ---\n--- /home/eval/photos/IMG 0003.JPG ---\nc\n--- end ---\n--- /home/eval/photos/notes.txt ---\nn\n--- end ---\n--- /home/eval/photos/Raw/IMG_0004.JPG ---\nd\n--- end ---\n--- /home/eval/photos/Raw/Old Shots/DSC 9.JPG ---\ne\n--- end ---\n\nFor every file whose name ends in `.JPG`, anywhere under /home/eval/photos (recursively), rename it in place (same directory) so that its file name is lowercase and every space in the file name becomes `_`. Directory names must NOT change (`Raw` and `Old Shots` keep their names). Other files are left alone. Exit 0."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "The script finds every file ending in `.JPG` and renames only the file name, so directories such as `Raw` and `Old Shots` keep their names.\n\n```bash\n#!/bin/bash\n# Normalise .JPG file names under /home/eval/photos:\n# lowercase the file name and turn spaces into underscores.\n# Directory names are left untouched.\n\nroot=\"/home/eval/photos\"\n\n# Collect matching files (names contain spaces but no newlines).\nlist=$(find \"$root\" -type f -name '*.JPG' 2>/dev/null)\n\nif [ -n \"$list\" ]; then\n  while IFS= read -r path; do\n    [ -z \"$path\" ] && continue\n    [ -f \"$path\" ] || continue\n    dir=$(dirname \"$path\")\n    base=$(basename \"$path\")\n    new=$(printf '%s' \"$base\" | tr 'A-Z' 'a-z')\n    new=\"${new// /_}\"\n    if [ \"$new\" != \"$base\" ]; then\n      mv -f \"$path\" \"$dir/$new\"\n    fi\n  done <<< \"$list\"\nfi\n\nexit 0\n```",
+    "iterations": 1,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "#!/bin/bash\n# Normalise .JPG file names under /home/eval/photos:\n# lowercase the file name and turn spaces into underscores.\n# Directory names are left untouched.\n\nroot=\"/home/eval/photos\"\n\n# Collect matching files (names contain spaces but no newlines).\nlist=$(find \"$root\" -type f -name '*.JPG' 2>/dev/null)\n\nif [ -n \"$list\" ]; then\n  while IFS= read -r path; do\n    [ -z \"$path\" ] && continue\n    [ -f \"$path\" ] || continue\n    dir=$(dirname \"$path\")\n    base=$(basename \"$path\")\n    new=$(printf '%s' \"$base\" | tr 'A-Z' 'a-z')\n    new=\"${new// /_}\"\n    if [ \"$new\" != \"$base\" ]; then\n      mv -f \"$path\" \"$dir/$new\"\n    fi\n  done <<< \"$list\"\nfi\n\nexit 0\n"
+    ],
+    "usage": {
+      "input_tokens": 792,
+      "output_tokens": 634,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 7364
+    },
+    "metrics": {
+      "exec_ms": 8.0,
+      "exit_code": 0.0,
+      "extracted": 1.0,
+      "generate_ms": 7356.0,
+      "script_bytes": 657.0,
+      "script_found": 1.0,
+      "timed_out": 0.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "#!/bin/bash\n# Normalise .JPG file names under /home/eval/photos:\n# lowercase the file name and turn spaces into underscores.\n# Directory names are left untouched.\n\nroot=\"/home/eval/photos\"\n\n# Collect matching files (names contain spaces but no newlines).\nlist=$(find \"$root\" -type f -name '*.JPG' 2>/dev/null)\n\nif [ -n \"$list\" ]; then\n  while IFS= read -r path; do\n    [ -z \"$path\" ] && continue\n    [ -f \"$path\" ] || continue\n    dir=$(dirname \"$path\")\n    base=$(basename \"$path\")\n    new=$(printf '%s' \"$base\" | tr 'A-Z' 'a-z')\n    new=\"${new// /_}\"\n    if [ \"$new\" != \"$base\" ]; then\n      mv -f \"$path\" \"$dir/$new\"\n    fi\n  done <<< \"$list\"\nfi\n\nexit 0\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          }
+        ]
+      },
+      "generate": {
+        "extraction": "fenced",
+        "timed_out": false
+      }
+    }
+  },
+  "skipped": false
+}
