@@ -444,3 +444,82 @@ async fn unbounded_recursive_cte_consumes_shared_work_budget() {
         .await,
     );
 }
+
+#[tokio::test]
+async fn cdpath_candidate_respects_live_byte_limit() {
+    let limits = ExecutionLimits::new().max_live_intermediate_bytes(256);
+    let mut bash = Bash::builder()
+        .env("CDPATH", ":".repeat(256))
+        .limits(limits)
+        .build();
+    // Bounded reproduction: the old collector allocates only about 25 KiB.
+    assert_budget_exhausted(bash.exec(&format!("cd {}", "x".repeat(64))).await);
+    assert_eq!(bash.exec("pwd").await.unwrap().exit_code, 0);
+}
+
+#[tokio::test]
+async fn cdpath_search_respects_work_limit() {
+    let limits = ExecutionLimits::new().max_work_units(64);
+    let mut bash = Bash::builder()
+        .env("CDPATH", ":".repeat(256))
+        .limits(limits)
+        .build();
+    assert_budget_exhausted(bash.exec("cd missing").await);
+}
+
+#[tokio::test]
+async fn cdpath_script_assignment_cannot_bypass_live_byte_limit() {
+    let limits = ExecutionLimits::new().max_live_intermediate_bytes(1_024);
+    let mut bash = Bash::builder().limits(limits).build();
+    let script = format!("CDPATH={}\ncd {}", ":".repeat(256), "x".repeat(64));
+    assert_budget_exhausted(bash.exec(&script).await);
+}
+
+#[tokio::test]
+async fn cdpath_releases_failed_candidate_workspace() {
+    let limits = ExecutionLimits::new().max_live_intermediate_bytes(1_024);
+    let mut bash = Bash::builder()
+        .env("CDPATH", ":".repeat(256))
+        .limits(limits)
+        .build();
+    let result = bash.exec("cd missing").await.unwrap();
+    assert_eq!(result.exit_code, 1);
+    assert!(result.stderr.contains("No such file or directory"));
+}
+
+#[tokio::test]
+async fn cdpath_stops_at_first_hit_under_small_budgets() {
+    let limits = ExecutionLimits::new()
+        .max_live_intermediate_bytes(1_024)
+        .max_work_units(64);
+    let mut bash = Bash::builder()
+        .env("CDPATH", format!("/tmp:{}", "missing:".repeat(1_024)))
+        .limits(limits)
+        .build();
+    bash.fs()
+        .mkdir(Path::new("/tmp/target"), false)
+        .await
+        .unwrap();
+    let result = bash.exec("cd target; pwd").await.unwrap();
+    assert_eq!(result.exit_code, 0);
+    assert_eq!(result.stdout, "/tmp/target\n/tmp/target\n");
+}
+
+#[tokio::test]
+async fn cdpath_search_yields_to_cancellation() {
+    use std::sync::atomic::Ordering;
+    let mut bash = Bash::builder().env("CDPATH", ":".repeat(1_024)).build();
+    let token = bash.cancellation_token();
+    let cancel = async {
+        for _ in 0..3 {
+            tokio::task::yield_now().await;
+        }
+        token.store(true, Ordering::Relaxed);
+    };
+    let (result, ()) = tokio::join!(bash.exec("cd missing"), cancel);
+    assert!(
+        result.is_err(),
+        "search completed without observing cancellation"
+    );
+    assert!(result.unwrap_err().to_string().contains("cancelled"));
+}

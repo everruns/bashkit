@@ -44,3 +44,19 @@ cd /; rm -rf $d
 /target
 link target
 ### end
+
+### cd_cdpath_empty_order_and_fallback
+d=/tmp/bk_cdpath_order_$$; mkdir -p $d/here/leaf $d/first/leaf $d/second/leaf
+cd $d/here; CDPATH=":$d/first:$d/second"; out=$(cd leaf); echo "empty=<$out>"
+CDPATH="$d/missing:$d/first:$d/second"; out=$(cd leaf); echo "hit=${out#$d}"
+CDPATH=$d/missing; cd leaf; echo "fallback=${PWD#$d}"
+cd $d/here; CDPATH=$d/first; cd ./leaf; echo "dot=${PWD#$d}"
+cd $d; echo "absolute=${PWD#$d}"
+cd /; rm -rf $d
+### expect
+empty=<>
+hit=/first/leaf
+fallback=/here/leaf
+dot=/here/leaf
+absolute=
+### end
