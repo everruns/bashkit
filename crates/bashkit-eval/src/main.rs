@@ -30,6 +30,11 @@ fn bashkit_repo() -> Eval {
 }
 
 #[eval]
+fn bashkit_hard() -> Eval {
+    mira_study::hard_eval()
+}
+
+#[eval]
 fn bashkit_scripting() -> Eval {
     mira_study::scripting_eval()
 }

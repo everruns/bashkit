@@ -37,6 +37,10 @@ pub const MAX_TURNS: usize = 10;
 /// (explore, run tests, fix, re-run, commit), so they get twice the default.
 pub const REPO_MAX_TURNS: usize = 20;
 
+/// Turn budget for `bashkit_hard`: several bugs revealed one at a time, golden
+/// outputs that usually need a second pass after checking edge cases.
+pub const HARD_MAX_TURNS: usize = 25;
+
 /// Default model matrix. Each target is gated on its provider's API-key env var,
 /// so an offline run skips them all (CI stays green) and a keyed run lights up
 /// the subset whose credentials are present. Select subsets with
@@ -414,6 +418,7 @@ fn parse_jsonl<T: serde::de::DeserializeOwned>(text: &str) -> Vec<T> {
 const EVAL_TASKS: &str = include_str!("../data/eval-tasks.jsonl");
 const SMOKE_TASKS: &str = include_str!("../data/smoke-test.jsonl");
 const REPO_TASKS: &str = include_str!("../data/repo-workflow.jsonl");
+const HARD_TASKS: &str = include_str!("../data/hard-tasks.jsonl");
 const SCRIPTING_MANY_TOOLS: &str = include_str!("../data/scripting-tool/many-tools.jsonl");
 const SCRIPTING_DISCOVERY: &str = include_str!("../data/scripting-tool/discovery.jsonl");
 const SCRIPTING_PAGINATED: &str = include_str!("../data/scripting-tool/paginated.jsonl");
@@ -462,6 +467,26 @@ pub fn repo_eval() -> Eval {
         .max_turns(REPO_MAX_TURNS)
         .targets(default_targets());
     for sample in bash_samples(REPO_TASKS) {
+        b = b.add_sample(sample);
+    }
+    b.build()
+}
+
+/// Hard tasks (`bashkit_hard`): added when `bashkit_bash` saturated (top
+/// models 55/58). Interacting bugs revealed one at a time, quoting/errexit
+/// traps, golden-output data reports, make dependency graphs. Same subject and
+/// scorer as `bashkit_repo`; every task has a CI-checked reference solution
+/// (`reference.rs`). Select a category with `--tag`.
+pub fn hard_eval() -> Eval {
+    let mut b = Eval::new("bashkit_hard")
+        .describe(
+            "Hard multi-turn tasks: hidden interacting bugs, quoting, errexit, golden reports",
+        )
+        .subject(bash_subject())
+        .scorer(expectations_scorer())
+        .max_turns(HARD_MAX_TURNS)
+        .targets(default_targets());
+    for sample in bash_samples(HARD_TASKS) {
         b = b.add_sample(sample);
     }
     b.build()
@@ -529,6 +554,23 @@ mod tests {
     }
 
     #[test]
+    fn hard_samples_load_with_categories() {
+        let samples = bash_samples(HARD_TASKS);
+        assert_eq!(samples.len(), 10);
+        let mut categories = std::collections::BTreeSet::new();
+        for s in &samples {
+            let task: EvalTask = serde_json::from_value(s.metadata["task"].clone()).unwrap();
+            assert!(task.id.starts_with("hard_"), "{}", s.id);
+            assert!(!expectations_from_sample(s).is_empty(), "{}", s.id);
+            categories.insert(task.category);
+        }
+        assert!(
+            categories.len() >= 8,
+            "hard set lost variety: {categories:?}"
+        );
+    }
+
+    #[test]
     fn scripting_samples_load_all_datasets() {
         let datasets = [
             ("many-tools", SCRIPTING_MANY_TOOLS),
@@ -550,6 +592,7 @@ mod tests {
         let _ = bash_eval();
         let _ = smoke_eval();
         let _ = repo_eval();
+        let _ = hard_eval();
         let _ = scripting_eval();
     }
 }

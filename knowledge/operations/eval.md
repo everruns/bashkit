@@ -110,7 +110,9 @@ loop and the reference-solution test build the starting state with
 `exit_code:N`, `stdout_contains:text`, `stdout_regex:pattern`,
 `stderr_empty`, `file_exists:/path`, `dir_exists:/path`,
 `file_contains:/path:text`, `file_not_contains:/path:text` (file must exist),
-`file_line_regex:/path:pattern`, `symlink:/path:target` (`/path` is a symlink;
+`file_line_regex:/path:pattern`, `file_equals:/path:content` (golden file:
+whole content equal, only trailing newlines forgiven; added for `bashkit_hard`),
+`symlink:/path:target` (`/path` is a symlink;
 its target resolves lexically to the same absolute path as `target`, so
 `releases/v2` and `/abs/releases/v2` both pass and a copied directory fails),
 `llm_judge:prompt` (stub, weight forced to 0). Semantics in
@@ -135,13 +137,14 @@ Implemented under `src/provider/`, selected by the mira target's `provider` id:
 
 ## Evals
 
-Three evals are advertised (`#[eval]` wrappers in `src/main.rs`):
+Five evals are advertised (`#[eval]` wrappers in `src/main.rs`):
 
 | Eval | Samples | Notes |
 |------|---------|-------|
 | `bashkit_bash` | 58 tasks across 15 categories | Samples tagged by category; select with `--tag <category>` |
 | `bashkit_smoke` | 3 tasks | Quick verification |
 | `bashkit_repo` | 8 `repo_workflow` tasks | Multi-turn fixture repos; 20-turn budget (`REPO_MAX_TURNS`) |
+| `bashkit_hard` | 10 hard tasks, 9 categories | Built not to saturate; 25-turn budget (`HARD_MAX_TURNS`) |
 | `bashkit_scripting` | scripting-tool tasks | `mode` axis: `scripted` vs `baseline` |
 
 ## CLI
@@ -157,7 +160,7 @@ mira --bin bashkit-eval run --format html --out report.html
 mira --bin bashkit-eval run --resume <run_id>
 ```
 
-`just eval`, `just eval-smoke`, `just eval-repo`, `just eval-scripting`, and
+`just eval`, `just eval-smoke`, `just eval-repo`, `just eval-hard`, `just eval-scripting`, and
 `just eval-list` wrap these.
 
 ## Output / Metrics
@@ -224,6 +227,48 @@ local-path `git clone` (see [Git Support](../integrations/git-support.md)).
 
 `bashkit-replay` looks up mira tasks in `eval-tasks.jsonl` only and runs no
 `setup`, so `bashkit_repo` runs are not in the gap corpus yet.
+
+## Hard Eval (`bashkit_hard`)
+
+Added 2026-10-09 when `bashkit_bash` saturated (top models 55/58). Ten tasks in
+`data/hard-tasks.jsonl`, aimed at a 30-50% failure rate for frontier models,
+still deterministic and solvable with bash, coreutils, awk, sed, jq, make and
+the sandboxed git (no python, no network). Same subject, scorer and
+`setup`-built starting state as `bashkit_repo`; 25-turn budget
+(`HARD_MAX_TURNS`). Category = `--tag`.
+
+| Task | Category | Why it is hard |
+|------|----------|----------------|
+| `hard_multi_bug_inventory` | `multi_bug_repo` | fail-fast runner shows one failing test at a time; 4 interacting bugs (`%d` cents, quoted CSV name with a comma, last line without newline, `[[ < ]]` string compare); tests/data frozen |
+| `hard_quoting_collect` | `quoting` | file mover vs names with spaces, `[`, `*`, `?`, leading `--`; `ls`-parsing, empty-glob, directory named `*.txt`, cumulative sorted INDEX |
+| `hard_pipefail_masking` | `error_handling` | `set -euo pipefail` defeated by `local x=$(..)`, `if ! f`, `\|\| echo`, truncating `> dist/..` in a failing pipeline; then a hidden `cut -f3,2` field-order bug |
+| `hard_csv_reconcile` | `data_reconciliation` | RFC 4180 quotes/`""`, thousands separators, DD/MM vs ISO dates, ref normalisation, duplicate rows, exact-cent sums (`300.1*100` float trap), golden report |
+| `hard_log_p95` | `log_analysis` | 3000-line generated log; query/trailing-slash normalisation, exclusions, malformed and `-` latency lines, nearest-rank p50/p95, 3-key ordering with real ties |
+| `hard_jq_rollup` | `json_processing` | null vs missing customer/discount, floor math, latest-name lookup, per-month object, stable multi-key sorts, one pretty file per customer |
+| `hard_rename_refactor` | `refactoring` | rename `get_cfg` but not `get_cfg_path`/`get_cfg_or`/`forget_cfg`, not frozen messages, yes inside `"$(..)"`, assoc-array dispatch values and `command -v` |
+| `hard_makefile_deps` | `build_system` | stale output from missing prerequisites (awk scripts, map file) and a hardcoded source list; `$^` trap; checked with `make -q` + `touch -d` on a scratch copy |
+| `hard_trap_publish` | `error_handling` | exit-code contract (2/3/4), EXIT trap reading a function `local`, overwritten trap, `exit 0` masking, `[a-z_]*=*` glob accepting `max conns=5`, last line without newline |
+| `hard_toposort` | `algorithms` | deterministic Kahn order (smallest ready first, not `tsort` order), messy input, deps-only nodes, cycle report listing every blocked package |
+
+Golden outputs (reports, jq files, orders) are computed independently by the
+generator from the task inputs, not from the reference solution, and checked
+with `file_equals`. Repo tasks also pin tests/data with `file_equals` so
+editing a test instead of the code fails, and check `.git/commits`. Test
+runners write intermediate values to logs (e.g. `total=53.13`) that are
+checked too, so writing `PASS` into the report by hand does not score.
+
+**Reference solutions** (`data/hard-tasks-solutions.jsonl`) run in `cargo test
+-p bashkit-eval` with the repo set (`reference.rs` iterates both datasets:
+references pass, untouched fixtures fail). Every reference was also replayed
+under real bash 5.2 (GNU make 4.3, jq 1.7, mawk, git stubbed out) with the
+same file results. Building the set found and fixed four bashkit gaps:
+`set -e` inside a child `bash script` was disabled when the caller ran it in
+an `if`/`||`/`!` context (`if bash test.sh` never saw test.sh fail),
+`dirname -- PATH` treated `--` as an operand, `ls -A` was rejected, and
+`stat -c %Y` printed `%Y` literally. Open gaps (tasks avoid them): `ls -a`
+omits `.` and `..`, `touch -d 'YYYY-MM-DD HH:MM:SS UTC'` is rejected (no
+zone suffix; ISO `...Z` and `@epoch` work), and under `set -eu` an unbound variable in a subshell's
+EXIT trap leaves the subshell's status 0 (bash: 1).
 
 ## Scripting-Tool Eval
 

@@ -314,6 +314,10 @@ eval-smoke *ARGS:
 eval-repo *ARGS:
     mira --bin bashkit-eval run bashkit_repo {{ARGS}}
 
+# Hard eval (bashkit_hard): 10 tasks built to not saturate; 25-turn budget.
+eval-hard *ARGS:
+    mira --bin bashkit-eval run bashkit_hard {{ARGS}}
+
 # Scripting-tool eval. The `mode` axis compares scripted vs baseline; select one
 # with `--axis mode=scripted` (omit to run both).
 eval-scripting *ARGS:

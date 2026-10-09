@@ -46,6 +46,7 @@ Results are written by mira under `./results/<run_id>/`.
 | `bashkit_bash` | 58 tasks, 15 categories | `--tag <category>`, `--samples <id>` |
 | `bashkit_smoke` | 3 tasks | quick verification |
 | `bashkit_repo` | 8 `repo_workflow` tasks | multi-turn fixture repos (`just eval-repo`) |
+| `bashkit_hard` | 10 hard tasks, 9 categories | built not to saturate; 25 turns (`just eval-hard`) |
 | `bashkit_scripting` | scripting-tool tasks | `--axis mode=scripted\|baseline` |
 
 Targets (model matrix) are defined in `src/mira_study.rs` and gated on
@@ -66,6 +67,15 @@ multi-turn tasks: a `setup` script builds a fixture git repo, the model runs
 `make test`, fixes the bug, and commits (symlinks, PATH, background jobs, jq,
 git). Reference solutions in `data/repo-workflow-solutions.jsonl` run in
 `cargo test -p bashkit-eval`, so every task stays solvable without an LLM.
+
+Hard dataset (`data/hard-tasks.jsonl`, eval `bashkit_hard`) has 10 tasks
+written after `bashkit_bash` saturated: interacting bugs revealed one test at
+a time, quoting/glob/leading-dash file names, masked `set -euo pipefail`
+failures, trap/exit-code contracts, Makefile dependency graphs, a rename that
+must spare lookalikes and frozen messages, and golden-output reports (CSV/TSV
+reconciliation, nearest-rank p95 over a generated log, jq rollups, a
+deterministic topological sort). Reference solutions in
+`data/hard-tasks-solutions.jsonl` run in `cargo test -p bashkit-eval`.
 
 ## Results
 
