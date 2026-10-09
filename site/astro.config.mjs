@@ -51,6 +51,7 @@ const DOC_LINKS = new Map([
   ["terminal.md", "/docs/terminal/"],
   ["threat-model.md", "/docs/security/"],
   ["typescript.md", "/docs/builtin_typescript/"],
+  ["wasm-coreutils.md", "/docs/wasm-coreutils/"],
 ]);
 
 function normalizeGuideMarkdown() {

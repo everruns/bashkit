@@ -241,6 +241,17 @@ export const DOC_META: DocMeta[] = [
     editPath: "crates/bashkit/docs/cpython.md",
   },
   {
+    slug: "wasm-coreutils",
+    title: "Wasm coreutils",
+    summary: "Real uutils coreutils compiled to WebAssembly, sandboxed per call.",
+    seoTitle: "Bashkit wasm coreutils: real uutils in a WebAssembly sandbox",
+    seoDescription:
+      "Run real uutils coreutils inside Bashkit, compiled to WebAssembly and precompiled at build time, with VFS access, resource limits, and per-call isolation.",
+    section: "Runtimes",
+    collection: "rustdocs",
+    editPath: "crates/bashkit/docs/wasm-coreutils.md",
+  },
+  {
     slug: "builtin_typescript",
     title: "TypeScript builtin",
     summary: "Embedded ZapCode TypeScript runtime shared with bash in-memory.",

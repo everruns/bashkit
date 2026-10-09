@@ -316,6 +316,11 @@ jobs:
           /tmp/http-diff/bin/pip install --quiet requests==2.34.2 httpx==0.28.1
           /tmp/http-diff/bin/python crates/bashkit-cpython-wasm/guest/tests/differential.py
 
+      # uutils coreutils as wasm guests on the shared WASI host: unit,
+      # integration and security tests. Feature-gated like CPython.
+      - name: Run wasm coreutils tests
+        run: cargo test -p bashkit --features wasm-coreutils --lib --test integration -- wasm_coreutils wasi_host
+
       # Same suites on the opt-in native-code build (`cpython-native`).
       - name: Run CPython tests (native code)
         run: cargo test -p bashkit --features cpython-native,http_client --lib --test integration -- cpython

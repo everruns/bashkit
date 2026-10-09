@@ -1,4 +1,4 @@
-//! Unit tests for the CPython builtin plumbing (limits, trap mapping).
+//! Unit tests for the CPython builtin plumbing (limits, runtime linking).
 
 use super::*;
 
@@ -25,19 +25,6 @@ fn limit_setters() {
 }
 
 #[test]
-fn trap_messages_are_display_only() {
-    let e = wasmtime::Error::from(wasmtime::Trap::StackOverflow);
-    assert_eq!(
-        trap_message(&e),
-        "python3: fatal error: stack overflow in the interpreter\n"
-    );
-    let e = wasmtime::Error::from(wasmtime::Trap::UnreachableCodeReached);
-    assert!(trap_message(&e).contains("aborted"));
-    let long = wasmtime::Error::msg("x".repeat(4096));
-    assert!(trap_message(&long).len() < 600);
-}
-
-#[test]
 fn runtime_loads() {
     CPython::warm_up().expect("embedded CPython loads");
 }
@@ -45,12 +32,28 @@ fn runtime_loads() {
 #[test]
 fn on_demand_fallback_links() {
     // The path taken when the pooled engine cannot reserve address space.
-    let rt = link(Engine::new(&runtime_config(false)).unwrap(), None).unwrap();
-    assert!(rt.slots.is_none());
+    let config = wasi_host::runtime_config(bashkit_cpython_wasm::engine_config(), &POOL, false);
+    let rt = GuestRuntime::link(
+        wasmtime::Engine::new(&config).unwrap(),
+        false,
+        &POOL,
+        bashkit_cpython_wasm::load_module,
+        http::add_to_linker,
+    )
+    .unwrap();
+    assert!(!rt.pooled());
 }
 
 #[test]
 fn pooled_engine_links() {
-    let rt = link(Engine::new(&runtime_config(true)).unwrap(), None).unwrap();
+    let config = wasi_host::runtime_config(bashkit_cpython_wasm::engine_config(), &POOL, true);
+    let rt = GuestRuntime::link(
+        wasmtime::Engine::new(&config).unwrap(),
+        true,
+        &POOL,
+        bashkit_cpython_wasm::load_module,
+        http::add_to_linker,
+    )
+    .unwrap();
     drop(rt);
 }

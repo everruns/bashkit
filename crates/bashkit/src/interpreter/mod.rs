@@ -203,6 +203,20 @@ impl ShellFeatures {
 /// Predicate selecting which default builtins a shell registers.
 pub(crate) type BuiltinFilter = Arc<dyn Fn(&str) -> bool + Send + Sync>;
 
+/// THREAT[TM-INF-018]: the virtual clock every time-reading builtin shares.
+/// Priority: fixed_epoch > epoch_offset > real clock.
+pub(crate) fn virtual_clock(fixed_epoch: Option<i64>, epoch_offset: Option<i64>) -> builtins::Date {
+    if let Some(epoch) = fixed_epoch {
+        builtins::Date::with_fixed_epoch(
+            chrono::DateTime::from_timestamp(epoch, 0).unwrap_or_default(),
+        )
+    } else if let Some(offset) = epoch_offset {
+        builtins::Date::with_offset_seconds(offset)
+    } else {
+        builtins::Date::new()
+    }
+}
+
 /// Best-effort source text of a command, for `jobs` and `ps`.
 fn describe_command(cmd: &Command) -> String {
     match cmd {
@@ -2278,14 +2292,7 @@ impl Interpreter {
         // THREAT[TM-INF-018]: Resolve the virtual clock mode for `date`.
         // Priority: fixed_epoch > epoch_offset > real clock.
         // printf's `%(fmt)T` shares the same clock.
-        let clock = if let Some(epoch) = fixed_epoch {
-            use chrono::DateTime;
-            builtins::Date::with_fixed_epoch(DateTime::from_timestamp(epoch, 0).unwrap_or_default())
-        } else if let Some(offset) = epoch_offset {
-            builtins::Date::with_offset_seconds(offset)
-        } else {
-            builtins::Date::new()
-        };
+        let clock = virtual_clock(fixed_epoch, epoch_offset);
         builtins.insert("date".to_string(), Arc::new(clock));
         builtins.insert(
             "printf".to_string(),

@@ -1,4 +1,5 @@
-//! WASI preview1 host for the embedded CPython guest, backed by bashkit's VFS.
+//! WASI preview1 host for embedded wasm guests (CPython, coreutils), backed by
+//! bashkit's VFS.
 //!
 //! Decisions:
 //! - Only `wasi_snapshot_preview1` is implemented, and only against bashkit
@@ -9,8 +10,8 @@
 //! - Files are opened as whole in-memory buffers and written back to the VFS on
 //!   close/sync/exit. Buffers are capped by the VFS `max_file_size` and the
 //!   per-call output budget, so a guest cannot grow host memory without bound.
-//! - The stdlib zip is a read-only overlay at a fixed path; the guest cannot
-//!   modify or shadow it.
+//! - A guest may get one read-only file overlay at a fixed path (CPython's
+//!   stdlib zip); the guest cannot modify or shadow it.
 //! - Paths are normalized lexically and clamped at `/`; `..` cannot escape the
 //!   VFS root (which is itself the whole sandbox).
 
@@ -42,6 +43,7 @@ const EILSEQ: Errno = 25;
 const EINVAL: Errno = 28;
 const EIO: Errno = 29;
 const EISDIR: Errno = 31;
+const ELOOP: Errno = 32;
 const EMFILE: Errno = 33;
 const ENAMETOOLONG: Errno = 37;
 const ENOENT: Errno = 44;
@@ -53,6 +55,7 @@ const EROFS: Errno = 69;
 const ESPIPE: Errno = 70;
 
 const FILETYPE_UNKNOWN: u8 = 0;
+const FILETYPE_CHARACTER_DEVICE: u8 = 2;
 const FILETYPE_DIRECTORY: u8 = 3;
 const FILETYPE_REGULAR_FILE: u8 = 4;
 const FILETYPE_SYMBOLIC_LINK: u8 = 7;
@@ -75,7 +78,6 @@ const FSTFLAGS_MTIM: u16 = 1 << 2;
 const FSTFLAGS_MTIM_NOW: u16 = 1 << 3;
 
 const CLOCK_REALTIME: u32 = 0;
-const CLOCK_MONOTONIC: u32 = 1;
 
 const EVENTTYPE_CLOCK: u8 = 0;
 const EVENTTYPE_FD_READ: u8 = 1;
@@ -101,6 +103,12 @@ pub(crate) struct Output {
 }
 
 impl Output {
+    /// Bytes still accepted before the cap.
+    fn room(&self) -> usize {
+        self.cap
+            .saturating_sub(self.stdout.len() + self.stderr.len())
+    }
+
     fn write(&mut self, fd: u32, data: &[u8]) {
         let used = self.stdout.len() + self.stderr.len();
         let room = self.cap.saturating_sub(used);
@@ -132,15 +140,66 @@ struct OpenDir {
     path: PathBuf,
     /// (name, filetype, inode); computed on first `fd_readdir`.
     entries: Option<Vec<(String, u8, u64)>>,
+    /// Bytes of `entries` charged to the open-file buffer budget.
+    charged: usize,
 }
 
 enum Fd {
     Stdin,
     Stdout,
     Stderr,
+    /// `/dev/null`: reads hit EOF, writes are discarded without buffering.
+    Null,
     Root,
     File(Box<OpenFile>),
     Dir(OpenDir),
+}
+
+/// Where guest clocks read time.
+///
+/// THREAT[TM-INF-018]/[TM-INF-033]: realtime follows the `Bash`'s virtual
+/// clock (`fixed_epoch` / `epoch_offset`, shared with `date`); monotonic time
+/// starts at zero for each call, so it reveals nothing about other calls or
+/// tenants; `coarse` rounds both to 100 ms (Hardened profile).
+#[derive(Clone, Copy, Default)]
+pub(crate) struct GuestClock {
+    /// `None` reads the host clock.
+    pub(crate) date: Option<crate::builtins::Date>,
+    pub(crate) coarse: bool,
+}
+
+impl GuestClock {
+    const BUCKET_NANOS: u64 = 100_000_000;
+
+    fn round(&self, ns: u64) -> u64 {
+        if self.coarse {
+            ns - ns % Self::BUCKET_NANOS
+        } else {
+            ns
+        }
+    }
+
+    fn realtime_nanos(&self) -> u64 {
+        let ns = match self.date {
+            Some(d) => {
+                let (secs, sub) = d.now_epoch();
+                u64::try_from(secs)
+                    .unwrap_or(0)
+                    .saturating_mul(1_000_000_000)
+                    .saturating_add(u64::from(sub))
+            }
+            None => nanos(SystemTime::now()),
+        };
+        self.round(ns)
+    }
+
+    fn system_time(&self) -> SystemTime {
+        UNIX_EPOCH + Duration::from_nanos(self.realtime_nanos())
+    }
+
+    fn monotonic_nanos(&self, started: crate::time_compat::Instant) -> u64 {
+        self.round(u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX))
+    }
 }
 
 /// Per-call configuration handed to [`GuestState::new`].
@@ -150,13 +209,15 @@ pub(crate) struct GuestConfig {
     pub(crate) stdin: Vec<u8>,
     pub(crate) output_cap: usize,
     pub(crate) max_memory: usize,
-    pub(crate) stdlib_path: &'static str,
-    pub(crate) stdlib: &'static [u8],
+    /// Read-only file served at a fixed guest path, over the VFS.
+    pub(crate) overlay: Option<(&'static str, &'static [u8])>,
     pub(crate) deadline: crate::time_compat::Instant,
-    pub(crate) http: super::http::HttpState,
+    pub(crate) clock: GuestClock,
+    #[cfg(feature = "cpython")]
+    pub(crate) http: crate::builtins::cpython::HttpState,
 }
 
-/// Everything one `python3` call's wasm instance can reach.
+/// Everything one guest call's wasm instance can reach.
 pub(crate) struct GuestState {
     fs: Arc<dyn FileSystem>,
     args: Vec<Vec<u8>>,
@@ -166,10 +227,13 @@ pub(crate) struct GuestState {
     pub(crate) output: Output,
     fds: Vec<Option<Fd>>,
     pub(crate) limits: StoreLimits,
-    stdlib_path: &'static Path,
-    stdlib: &'static [u8],
+    overlay_path: Option<&'static Path>,
+    overlay: &'static [u8],
     started: crate::time_compat::Instant,
     deadline: crate::time_compat::Instant,
+    clock: GuestClock,
+    /// Cached listing of the preopened root (fd 3), see `fd_readdir`.
+    root_entries: Option<Vec<(String, u8, u64)>>,
     /// Bytes held in open file buffers, bounded by `max_file_size` each and
     /// `buffer_cap` in total.
     buffered: usize,
@@ -177,8 +241,9 @@ pub(crate) struct GuestState {
     max_file_size: usize,
     /// Errno of the first failed write-back at exit, if any.
     pub(crate) flush_error: Option<Errno>,
-    /// HTTP bridge state (`bashkit.http_request`).
-    pub(crate) http: super::http::HttpState,
+    /// HTTP bridge state (`bashkit.http_request`, CPython only).
+    #[cfg(feature = "cpython")]
+    pub(crate) http: crate::builtins::cpython::HttpState,
 }
 
 /// Exit requested through `proc_exit`.
@@ -230,32 +295,37 @@ impl GuestState {
                 Some(Fd::Root),
             ],
             limits,
-            stdlib_path: Path::new(config.stdlib_path),
-            stdlib: config.stdlib,
+            overlay_path: config.overlay.map(|(p, _)| Path::new(p)),
+            overlay: config.overlay.map_or(&[][..], |(_, b)| b),
             started: crate::time_compat::Instant::now(),
             deadline: config.deadline,
+            clock: config.clock,
+            root_entries: None,
             buffered: 0,
             // Open-file buffers share the guest memory budget: a script can
             // keep at most as much file data in flight as it may allocate.
             buffer_cap: config.max_memory,
             max_file_size,
             flush_error: None,
+            #[cfg(feature = "cpython")]
             http: config.http,
         }
     }
 
-    /// Time left before the call deadline.
+    /// Time left before the call deadline (HTTP bridge timeouts).
+    #[cfg(feature = "cpython")]
     pub(crate) fn remaining(&self) -> Duration {
         self.deadline
             .saturating_duration_since(crate::time_compat::Instant::now())
     }
 
-    fn is_stdlib(&self, path: &Path) -> bool {
-        path == self.stdlib_path
+    fn is_overlay(&self, path: &Path) -> bool {
+        self.overlay_path == Some(path)
     }
 
-    fn is_stdlib_ancestor(&self, path: &Path) -> bool {
-        path != self.stdlib_path && self.stdlib_path.starts_with(path)
+    fn is_overlay_ancestor(&self, path: &Path) -> bool {
+        self.overlay_path
+            .is_some_and(|o| o != path && o.starts_with(path))
     }
 
     fn alloc_fd(&mut self, fd: Fd) -> Result<u32, Errno> {
@@ -329,12 +399,37 @@ impl GuestState {
             if let Some(Fd::File(file)) = slot
                 && file.dirty
             {
-                if let Err(e) = fs.write_file(&file.path, &file.data).await {
+                if let Err(e) = store(&fs, &file.path, &file.data, file.modified).await {
                     self.flush_error.get_or_insert(map_fs_error(&e));
                 }
                 file.dirty = false;
             }
         }
+    }
+}
+
+/// Write `data` to `path` and stamp it with the guest's clock (the VFS would
+/// otherwise stamp host time on every write, see TM-INF-018).
+async fn store(
+    fs: &Arc<dyn FileSystem>,
+    path: &Path,
+    data: &[u8],
+    modified: SystemTime,
+) -> crate::Result<()> {
+    fs.write_file(path, data).await?;
+    // Best effort: the data is already written.
+    let _ = fs.set_modified_time(path, modified).await;
+    Ok(())
+}
+
+/// The mtime a `*_filestat_set_times` call asks for, if any.
+fn set_time(c: &Caller<'_, GuestState>, mtim: i64, fst: u16) -> Option<SystemTime> {
+    if fst & FSTFLAGS_MTIM_NOW != 0 {
+        Some(c.data().clock.system_time())
+    } else if fst & FSTFLAGS_MTIM != 0 {
+        Some(UNIX_EPOCH + Duration::from_nanos(mtim as u64))
+    } else {
+        None
     }
 }
 
@@ -384,6 +479,28 @@ fn nanos(t: SystemTime) -> u64 {
 /// Map a bashkit VFS error to a WASI errno.
 fn map_fs_error(e: &crate::Error) -> Errno {
     use std::io::ErrorKind;
+    let msg = e.to_string().to_ascii_lowercase();
+    // VFS limits (`FsLimitExceeded`) and symlink loops arrive as
+    // InvalidInput / Other with a fixed message; match them first so the
+    // guest sees the errno a real kernel would return.
+    if msg.contains("file too large") {
+        return EFBIG;
+    }
+    if msg.contains("filesystem full")
+        || msg.contains("too many files")
+        || msg.contains("too many directories")
+    {
+        return ENOSPC;
+    }
+    if msg.contains("path too deep")
+        || msg.contains("path too long")
+        || msg.contains("filename too long")
+    {
+        return ENAMETOOLONG;
+    }
+    if msg.contains("levels of symbolic links") {
+        return ELOOP;
+    }
     if let crate::Error::Io(io) = e {
         match io.kind() {
             ErrorKind::NotFound => return ENOENT,
@@ -393,7 +510,6 @@ fn map_fs_error(e: &crate::Error) -> Errno {
             _ => {}
         }
     }
-    let msg = e.to_string().to_ascii_lowercase();
     if msg.contains("not found") || msg.contains("no such file") {
         ENOENT
     } else if msg.contains("is a directory") {
@@ -433,7 +549,7 @@ fn range(ptr: i32, len: u32, mem_len: usize) -> Result<std::ops::Range<usize>, E
     Ok(start..end)
 }
 
-pub(super) fn read_bytes(
+pub(crate) fn read_bytes(
     caller: &mut Caller<'_, GuestState>,
     ptr: i32,
     len: i32,
@@ -444,7 +560,7 @@ pub(super) fn read_bytes(
     Ok(data[r].to_vec())
 }
 
-pub(super) fn write_bytes(
+pub(crate) fn write_bytes(
     caller: &mut Caller<'_, GuestState>,
     ptr: i32,
     bytes: &[u8],
@@ -460,7 +576,7 @@ pub(super) fn write_bytes(
     Ok(())
 }
 
-pub(super) fn write_u32(
+pub(crate) fn write_u32(
     caller: &mut Caller<'_, GuestState>,
     ptr: i32,
     v: u32,
@@ -473,6 +589,14 @@ fn write_u64(caller: &mut Caller<'_, GuestState>, ptr: i32, v: u64) -> Result<()
 }
 
 /// Read an iovec array: `(buf_ptr, buf_len)` pairs.
+/// Copy a guest path, refusing lengths no path can have before allocating.
+fn read_path(caller: &mut Caller<'_, GuestState>, ptr: i32, len: i32) -> Result<Vec<u8>, Errno> {
+    if usize::try_from(len).map_err(|_| EINVAL)? > MAX_PATH_LEN {
+        return Err(ENAMETOOLONG);
+    }
+    read_bytes(caller, ptr, len)
+}
+
 fn read_iovs(
     caller: &mut Caller<'_, GuestState>,
     iovs: i32,
@@ -493,13 +617,21 @@ fn read_iovs(
         .collect())
 }
 
-fn gather(caller: &mut Caller<'_, GuestState>, iovs: &[(i32, u32)]) -> Result<Vec<u8>, Errno> {
+/// Copy at most `limit` bytes out of the iovecs. Every iovec is still
+/// bounds-checked, but host memory is bounded by `limit`, not by the sum of
+/// the iovec lengths (which may all name the same large region).
+fn gather(
+    caller: &mut Caller<'_, GuestState>,
+    iovs: &[(i32, u32)],
+    limit: usize,
+) -> Result<Vec<u8>, Errno> {
     let mem = memory(caller)?;
     let data = mem.data(&*caller);
     let mut out = Vec::new();
     for &(ptr, len) in iovs {
         let r = range(ptr, len, data.len())?;
-        out.extend_from_slice(&data[r]);
+        let take = r.len().min(limit - out.len());
+        out.extend_from_slice(&data[r.start..r.start + take]);
     }
     Ok(out)
 }
@@ -525,7 +657,8 @@ fn scatter(
 }
 
 fn total_len(iovs: &[(i32, u32)]) -> usize {
-    iovs.iter().map(|&(_, l)| l as usize).sum()
+    iovs.iter()
+        .fold(0usize, |acc, &(_, l)| acc.saturating_add(l as usize))
 }
 
 fn ret(r: Result<(), Errno>) -> i32 {
@@ -559,10 +692,10 @@ fn encode_filestat(s: &Stat) -> [u8; 64] {
 
 /// `follow` = stat semantics; otherwise lstat (a final symlink reports itself).
 async fn stat_path(state: &GuestState, path: &Path, follow: bool) -> Result<Stat, Errno> {
-    if state.is_stdlib(path) {
+    if state.is_overlay(path) {
         return Ok(Stat {
             filetype: FILETYPE_REGULAR_FILE,
-            size: state.stdlib.len() as u64,
+            size: state.overlay.len() as u64,
             mtime: 0,
             ino: inode(path),
         });
@@ -579,7 +712,7 @@ async fn stat_path(state: &GuestState, path: &Path, follow: bool) -> Result<Stat
             mtime: nanos(m.modified),
             ino: inode(path),
         }),
-        Err(e) if state.is_stdlib_ancestor(path) => {
+        Err(e) if state.is_overlay_ancestor(path) => {
             let _ = e;
             Ok(Stat {
                 filetype: FILETYPE_DIRECTORY,
@@ -636,17 +769,24 @@ pub(crate) fn add_to_linker(linker: &mut Linker<GuestState>) -> wasmtime::Result
     linker.func_wrap(
         MODULE,
         "clock_res_get",
-        |mut c: Caller<'_, GuestState>, _id: i32, out: i32| ret(write_u64(&mut c, out, 1_000)),
+        |mut c: Caller<'_, GuestState>, _id: i32, out: i32| {
+            let res = if c.data().clock.coarse {
+                GuestClock::BUCKET_NANOS
+            } else {
+                1_000
+            };
+            ret(write_u64(&mut c, out, res))
+        },
     )?;
     linker.func_wrap(
         MODULE,
         "clock_time_get",
         |mut c: Caller<'_, GuestState>, id: i32, _precision: i64, out: i32| {
             let now = match id as u32 {
-                CLOCK_REALTIME => nanos(SystemTime::now()),
-                CLOCK_MONOTONIC => monotonic_nanos(),
-                // Process/thread CPU clocks: time since this call started.
-                _ => u64::try_from(c.data().started.elapsed().as_nanos()).unwrap_or(u64::MAX),
+                CLOCK_REALTIME => c.data().clock.realtime_nanos(),
+                // Monotonic and process/thread CPU clocks: time since this
+                // call started.
+                _ => c.data().clock.monotonic_nanos(c.data().started),
             };
             ret(write_u64(&mut c, out, now))
         },
@@ -674,7 +814,8 @@ pub(crate) fn add_to_linker(linker: &mut Linker<GuestState>) -> wasmtime::Result
         MODULE,
         "proc_exit",
         |_c: Caller<'_, GuestState>, code: i32| -> wasmtime::Result<()> {
-            Err(wasmtime::Error::new(ProcExit(code)))
+            // A real exit status keeps only the low 8 bits.
+            Err(wasmtime::Error::new(ProcExit(code & 0xff)))
         },
     )?;
     linker.func_wrap_async(
@@ -764,6 +905,11 @@ pub(crate) fn add_to_linker(linker: &mut Linker<GuestState>) -> wasmtime::Result
                     // Pipes, not ttys: `isatty()` is false, like stdio in a bash pipeline.
                     Fd::Stdin => (FILETYPE_UNKNOWN, 0u16, RIGHTS_FD_READ),
                     Fd::Stdout | Fd::Stderr => (FILETYPE_UNKNOWN, 0, RIGHTS_FD_WRITE),
+                    Fd::Null => (
+                        FILETYPE_CHARACTER_DEVICE,
+                        0,
+                        RIGHTS_FD_READ | RIGHTS_FD_WRITE,
+                    ),
                     Fd::Root | Fd::Dir(_) => (FILETYPE_DIRECTORY, 0, RIGHTS_ALL),
                     Fd::File(f) => (
                         FILETYPE_REGULAR_FILE,
@@ -819,6 +965,12 @@ pub(crate) fn add_to_linker(linker: &mut Linker<GuestState>) -> wasmtime::Result
                             let path = d.path.clone();
                             stat_path(c.data(), &path, true).await?
                         }
+                        Fd::Null => Stat {
+                            filetype: FILETYPE_CHARACTER_DEVICE,
+                            size: 0,
+                            mtime: 0,
+                            ino: inode(Path::new("/dev/null")),
+                        },
                         Fd::Stdin | Fd::Stdout | Fd::Stderr => Stat {
                             filetype: FILETYPE_UNKNOWN,
                             size: 0,
@@ -863,10 +1015,32 @@ pub(crate) fn add_to_linker(linker: &mut Linker<GuestState>) -> wasmtime::Result
             ret(r)
         },
     )?;
-    linker.func_wrap(
+    linker.func_wrap_async(
         MODULE,
         "fd_filestat_set_times",
-        |_c: Caller<'_, GuestState>, _fd: i32, _atim: i64, _mtim: i64, _flags: i32| -> i32 { 0 },
+        |mut c: Caller<'_, GuestState>, (fd, _atim, mtim, fst): (i32, i64, i64, i32)| {
+            Box::new(async move {
+                let r = async {
+                    let when = set_time(&c, mtim, fst as u16);
+                    let state = c.data_mut();
+                    let fs = state.fs.clone();
+                    match state.fd_mut(fd as u32)? {
+                        Fd::File(f) => {
+                            if let Some(t) = when {
+                                f.modified = t;
+                                fs.set_modified_time(&f.path, t)
+                                    .await
+                                    .map_err(|e| map_fs_error(&e))?;
+                            }
+                            Ok(())
+                        }
+                        _ => Ok(()),
+                    }
+                }
+                .await;
+                ret(r)
+            })
+        },
     )?;
     linker.func_wrap(
         MODULE,
@@ -1007,7 +1181,7 @@ pub(crate) fn add_to_linker(linker: &mut Linker<GuestState>) -> wasmtime::Result
         )| {
             Box::new(async move {
                 let r = async {
-                    let raw = read_bytes(&mut c, path, path_len)?;
+                    let raw = read_path(&mut c, path, path_len)?;
                     let fd = path_open(
                         &mut c,
                         dirfd as u32,
@@ -1031,7 +1205,7 @@ pub(crate) fn add_to_linker(linker: &mut Linker<GuestState>) -> wasmtime::Result
          (dirfd, flags, path, path_len, buf): (i32, i32, i32, i32, i32)| {
             Box::new(async move {
                 let r = async {
-                    let raw = read_bytes(&mut c, path, path_len)?;
+                    let raw = read_path(&mut c, path, path_len)?;
                     let p = c.data().resolve(dirfd as u32, &raw)?;
                     let follow = flags & LOOKUPFLAGS_SYMLINK_FOLLOW != 0;
                     let stat = stat_path(c.data(), &p, follow).await?;
@@ -1049,19 +1223,13 @@ pub(crate) fn add_to_linker(linker: &mut Linker<GuestState>) -> wasmtime::Result
          (dirfd, _flags, path, path_len, _atim, mtim, fst): (i32, i32, i32, i32, i64, i64, i32)| {
             Box::new(async move {
                 let r = async {
-                    let raw = read_bytes(&mut c, path, path_len)?;
+                    let raw = read_path(&mut c, path, path_len)?;
                     let p = c.data().resolve(dirfd as u32, &raw)?;
                     let fst = fst as u16;
-                    if c.data().is_stdlib(&p) {
+                    if c.data().is_overlay(&p) {
                         return Err(EROFS);
                     }
-                    let when = if fst & FSTFLAGS_MTIM_NOW != 0 {
-                        Some(SystemTime::now())
-                    } else if fst & FSTFLAGS_MTIM != 0 {
-                        Some(UNIX_EPOCH + Duration::from_nanos(mtim as u64))
-                    } else {
-                        None
-                    };
+                    let when = set_time(&c, mtim, fst);
                     let fs = c.data().fs.clone();
                     fs.stat(&p).await.map_err(|e| map_fs_error(&e))?;
                     if let Some(t) = when {
@@ -1080,11 +1248,11 @@ pub(crate) fn add_to_linker(linker: &mut Linker<GuestState>) -> wasmtime::Result
         |mut c: Caller<'_, GuestState>, (dirfd, path, path_len): (i32, i32, i32)| {
             Box::new(async move {
                 let r = async {
-                    let raw = read_bytes(&mut c, path, path_len)?;
+                    let raw = read_path(&mut c, path, path_len)?;
                     let p = c.data().resolve(dirfd as u32, &raw)?;
-                    if c.data().is_stdlib(&p) || c.data().is_stdlib_ancestor(&p) {
+                    if c.data().is_overlay(&p) || c.data().is_overlay_ancestor(&p) {
                         let fs = c.data().fs.clone();
-                        if fs.stat(&p).await.is_ok() || c.data().is_stdlib(&p) {
+                        if fs.stat(&p).await.is_ok() || c.data().is_overlay(&p) {
                             return Err(EEXIST);
                         }
                     }
@@ -1105,9 +1273,9 @@ pub(crate) fn add_to_linker(linker: &mut Linker<GuestState>) -> wasmtime::Result
         |mut c: Caller<'_, GuestState>, (dirfd, path, path_len): (i32, i32, i32)| {
             Box::new(async move {
                 let r = async {
-                    let raw = read_bytes(&mut c, path, path_len)?;
+                    let raw = read_path(&mut c, path, path_len)?;
                     let p = c.data().resolve(dirfd as u32, &raw)?;
-                    if p == Path::new("/") || c.data().is_stdlib_ancestor(&p) {
+                    if p == Path::new("/") || c.data().is_overlay_ancestor(&p) {
                         return Err(EACCES);
                     }
                     let fs = c.data().fs.clone();
@@ -1132,9 +1300,9 @@ pub(crate) fn add_to_linker(linker: &mut Linker<GuestState>) -> wasmtime::Result
         |mut c: Caller<'_, GuestState>, (dirfd, path, path_len): (i32, i32, i32)| {
             Box::new(async move {
                 let r = async {
-                    let raw = read_bytes(&mut c, path, path_len)?;
+                    let raw = read_path(&mut c, path, path_len)?;
                     let p = c.data().resolve(dirfd as u32, &raw)?;
-                    if c.data().is_stdlib(&p) {
+                    if c.data().is_overlay(&p) {
                         return Err(EROFS);
                     }
                     let fs = c.data().fs.clone();
@@ -1156,11 +1324,11 @@ pub(crate) fn add_to_linker(linker: &mut Linker<GuestState>) -> wasmtime::Result
          (fd1, old, old_len, fd2, new, new_len): (i32, i32, i32, i32, i32, i32)| {
             Box::new(async move {
                 let r = async {
-                    let old_raw = read_bytes(&mut c, old, old_len)?;
-                    let new_raw = read_bytes(&mut c, new, new_len)?;
+                    let old_raw = read_path(&mut c, old, old_len)?;
+                    let new_raw = read_path(&mut c, new, new_len)?;
                     let from = c.data().resolve(fd1 as u32, &old_raw)?;
                     let to = c.data().resolve(fd2 as u32, &new_raw)?;
-                    if c.data().is_stdlib(&from) || c.data().is_stdlib(&to) {
+                    if c.data().is_overlay(&from) || c.data().is_overlay(&to) {
                         return Err(EROFS);
                     }
                     let fs = c.data().fs.clone();
@@ -1178,11 +1346,11 @@ pub(crate) fn add_to_linker(linker: &mut Linker<GuestState>) -> wasmtime::Result
          (old, old_len, dirfd, new, new_len): (i32, i32, i32, i32, i32)| {
             Box::new(async move {
                 let r = async {
-                    let target = read_bytes(&mut c, old, old_len)?;
+                    let target = read_path(&mut c, old, old_len)?;
                     let target = String::from_utf8(target).map_err(|_| EILSEQ)?;
-                    let new_raw = read_bytes(&mut c, new, new_len)?;
+                    let new_raw = read_path(&mut c, new, new_len)?;
                     let link = c.data().resolve(dirfd as u32, &new_raw)?;
-                    if c.data().is_stdlib(&link) {
+                    if c.data().is_overlay(&link) {
                         return Err(EROFS);
                     }
                     let fs = c.data().fs.clone();
@@ -1202,7 +1370,7 @@ pub(crate) fn add_to_linker(linker: &mut Linker<GuestState>) -> wasmtime::Result
          (dirfd, path, path_len, buf, buf_len, used): (i32, i32, i32, i32, i32, i32)| {
             Box::new(async move {
                 let r = async {
-                    let raw = read_bytes(&mut c, path, path_len)?;
+                    let raw = read_path(&mut c, path, path_len)?;
                     let p = c.data().resolve(dirfd as u32, &raw)?;
                     let fs = c.data().fs.clone();
                     let target = fs.read_link(&p).await.map_err(|e| map_fs_error(&e))?;
@@ -1230,12 +1398,6 @@ pub(crate) fn add_to_linker(linker: &mut Linker<GuestState>) -> wasmtime::Result
          -> i32 { i32::from(ENOTSUP) },
     )?;
     Ok(())
-}
-
-fn monotonic_nanos() -> u64 {
-    static BASE: std::sync::OnceLock<crate::time_compat::Instant> = std::sync::OnceLock::new();
-    let base = BASE.get_or_init(crate::time_compat::Instant::now);
-    u64::try_from(base.elapsed().as_nanos()).unwrap_or(u64::MAX)
 }
 
 fn write_string_table(
@@ -1269,6 +1431,7 @@ fn fd_read(
     let chunk: Vec<u8> = {
         let state = c.data_mut();
         match state.fd_mut(fd)? {
+            Fd::Null => Vec::new(),
             Fd::Stdin => {
                 if offset.is_some() {
                     return Err(ESPIPE);
@@ -1305,16 +1468,22 @@ fn fd_write(
     offset: Option<u64>,
 ) -> Result<usize, Errno> {
     let iovs = read_iovs(c, iovs, n)?;
-    let data = gather(c, &iovs)?;
+    let total = total_len(&iovs);
+    // THREAT[TM-WCU-002]: decide how many bytes may land before copying any,
+    // so host memory never exceeds the output cap or the file limits.
     let state = c.data_mut();
     let max = state.max_file_size;
-    match state.fd(fd)? {
+    let limit = match state.fd(fd)? {
         Fd::Stdout | Fd::Stderr => {
             if offset.is_some() {
                 return Err(ESPIPE);
             }
-            state.output.write(fd, &data);
-            return Ok(data.len());
+            state.output.room()
+        }
+        Fd::Null => {
+            // Bounds-check, then discard.
+            gather(c, &iovs, 0)?;
+            return Ok(total);
         }
         Fd::File(f) if f.write => {
             let pos = if f.append {
@@ -1323,16 +1492,31 @@ fn fd_write(
                 offset.unwrap_or(f.pos)
             };
             let start = usize::try_from(pos).map_err(|_| EFBIG)?;
-            let end = start.checked_add(data.len()).ok_or(EFBIG)?;
+            let end = start.checked_add(total).ok_or(EFBIG)?;
             if end > max {
                 return Err(EFBIG);
             }
             let grow = end.saturating_sub(f.data.len());
             state.reserve(grow)?;
+            total
         }
         Fd::File(_) => return Err(EBADF),
         Fd::Stdin => return Err(EBADF),
         Fd::Root | Fd::Dir(_) => return Err(EISDIR),
+    };
+    let data = gather(c, &iovs, limit)?;
+    let state = c.data_mut();
+    let now = state.clock.system_time();
+    match state.fd_mut(fd)? {
+        Fd::Stdout | Fd::Stderr => {
+            state.output.write(fd, &data);
+            if data.len() < total {
+                state.output.truncated = true;
+            }
+            return Ok(total);
+        }
+        Fd::File(_) => {}
+        _ => return Err(EBADF),
     }
     let Fd::File(f) = state.fd_mut(fd)? else {
         return Err(EBADF);
@@ -1349,7 +1533,7 @@ fn fd_write(
     }
     buf[pos..end].copy_from_slice(&data);
     f.dirty = true;
-    f.modified = SystemTime::now();
+    f.modified = now;
     if offset.is_none() {
         f.pos = end as u64;
     }
@@ -1360,6 +1544,9 @@ async fn fd_close(c: &mut Caller<'_, GuestState>, fd: u32) -> Result<(), Errno> 
     let state = c.data_mut();
     let slot = state.fds.get_mut(fd as usize).ok_or(EBADF)?;
     let entry = slot.take().ok_or(EBADF)?;
+    if let Fd::Dir(dir) = &entry {
+        state.release(dir.charged);
+    }
     if let Fd::File(file) = entry {
         let len = match &file.data {
             Cow::Owned(v) => v.len(),
@@ -1368,7 +1555,7 @@ async fn fd_close(c: &mut Caller<'_, GuestState>, fd: u32) -> Result<(), Errno> 
         state.release(len);
         if file.dirty {
             let fs = state.fs.clone();
-            fs.write_file(&file.path, &file.data)
+            store(&fs, &file.path, &file.data, file.modified)
                 .await
                 .map_err(|e| map_fs_error(&e))?;
         }
@@ -1382,7 +1569,7 @@ async fn fd_sync(c: &mut Caller<'_, GuestState>, fd: u32) -> Result<(), Errno> {
     if let Fd::File(f) = state.fd_mut(fd)?
         && f.dirty
     {
-        fs.write_file(&f.path, &f.data)
+        store(&fs, &f.path, &f.data, f.modified)
             .await
             .map_err(|e| map_fs_error(&e))?;
         f.dirty = false;
@@ -1398,74 +1585,92 @@ async fn fd_readdir(
     cookie: i64,
     used: i32,
 ) -> Result<(), Errno> {
-    let (path, cached) = match c.data().fd(fd)? {
-        Fd::Root => (PathBuf::from("/"), None),
-        Fd::Dir(d) => (d.path.clone(), d.entries.clone()),
+    let (path, root, cached) = match c.data().fd(fd)? {
+        Fd::Root => (PathBuf::from("/"), true, c.data().root_entries.is_some()),
+        Fd::Dir(d) => (d.path.clone(), false, d.entries.is_some()),
         _ => return Err(ENOTDIR),
     };
-    let entries = match cached {
-        Some(e) => e,
-        None => {
-            let state = c.data();
-            let mut list = vec![
-                (".".to_string(), FILETYPE_DIRECTORY, inode(&path)),
-                (
-                    "..".to_string(),
-                    FILETYPE_DIRECTORY,
-                    inode(path.parent().unwrap_or(&path)),
-                ),
-            ];
-            let mut names: Vec<(String, u8, u64)> = match state.fs.read_dir(&path).await {
-                Ok(items) => items
-                    .into_iter()
-                    .map(|e| {
-                        let child = crate::fs::vfs_join(&path, &e.name);
-                        (e.name, filetype_of(e.metadata.file_type), inode(&child))
-                    })
-                    .collect(),
-                Err(e) if state.is_stdlib_ancestor(&path) => {
-                    let _ = e;
-                    Vec::new()
-                }
-                Err(e) => return Err(map_fs_error(&e)),
-            };
-            // Surface the stdlib overlay in its parent listing.
-            if state.stdlib_path.parent() == Some(path.as_path())
-                && let Some(name) = state.stdlib_path.file_name().and_then(|n| n.to_str())
-                && !names.iter().any(|(n, _, _)| n == name)
-            {
-                names.push((
-                    name.to_string(),
-                    FILETYPE_REGULAR_FILE,
-                    inode(state.stdlib_path),
-                ));
-            }
-            names.sort_by(|a, b| a.0.cmp(&b.0));
-            list.extend(names);
-            if let Ok(Fd::Dir(d)) = c.data_mut().fd_mut(fd) {
-                d.entries = Some(list.clone());
-            }
-            list
+    if !cached {
+        let list = list_dir(c.data(), &path).await?;
+        // THREAT[TM-WCU-002]: cached listings are host memory; they share the
+        // open-file buffer budget and are released when the fd closes.
+        let bytes = list
+            .iter()
+            .fold(0usize, |acc, (n, _, _)| acc.saturating_add(n.len() + 24));
+        let state = c.data_mut();
+        state.reserve(bytes)?;
+        if root {
+            state.root_entries = Some(list);
+        } else if let Fd::Dir(d) = state.fd_mut(fd)? {
+            d.entries = Some(list);
+            d.charged = bytes;
         }
-    };
+    }
     let cap = usize::try_from(len).map_err(|_| EINVAL)?;
     let start = usize::try_from(cookie).map_err(|_| EINVAL)?;
-    let mut out = Vec::with_capacity(cap.min(64 * 1024));
-    for (i, (name, ty, ino)) in entries.iter().enumerate().skip(start) {
-        if out.len() >= cap {
-            break;
+    let out = {
+        let state = c.data();
+        let entries: &[(String, u8, u64)] = match state.fd(fd)? {
+            Fd::Root => state.root_entries.as_deref().unwrap_or_default(),
+            Fd::Dir(d) => d.entries.as_deref().unwrap_or_default(),
+            _ => return Err(ENOTDIR),
+        };
+        let mut out = Vec::with_capacity(cap.min(64 * 1024));
+        for (i, (name, ty, ino)) in entries.iter().enumerate().skip(start) {
+            if out.len() >= cap {
+                break;
+            }
+            let mut header = [0u8; 24];
+            header[0..8].copy_from_slice(&((i + 1) as u64).to_le_bytes());
+            header[8..16].copy_from_slice(&ino.to_le_bytes());
+            header[16..20].copy_from_slice(&(name.len() as u32).to_le_bytes());
+            header[20] = *ty;
+            out.extend_from_slice(&header);
+            out.extend_from_slice(name.as_bytes());
         }
-        let mut header = [0u8; 24];
-        header[0..8].copy_from_slice(&((i + 1) as u64).to_le_bytes());
-        header[8..16].copy_from_slice(&ino.to_le_bytes());
-        header[16..20].copy_from_slice(&(name.len() as u32).to_le_bytes());
-        header[20] = *ty;
-        out.extend_from_slice(&header);
-        out.extend_from_slice(name.as_bytes());
-    }
-    out.truncate(cap);
+        out.truncate(cap);
+        out
+    };
     write_bytes(c, buf, &out)?;
     write_u32(c, used, out.len() as u32)
+}
+
+/// A directory's entries as `fd_readdir` reports them: `.`, `..`, then the
+/// children sorted by name (plus the overlay file in its parent).
+async fn list_dir(state: &GuestState, path: &Path) -> Result<Vec<(String, u8, u64)>, Errno> {
+    let mut list = vec![
+        (".".to_string(), FILETYPE_DIRECTORY, inode(path)),
+        (
+            "..".to_string(),
+            FILETYPE_DIRECTORY,
+            inode(path.parent().unwrap_or(path)),
+        ),
+    ];
+    let mut names: Vec<(String, u8, u64)> = match state.fs.read_dir(path).await {
+        Ok(items) => items
+            .into_iter()
+            .map(|e| {
+                let child = crate::fs::vfs_join(path, &e.name);
+                (e.name, filetype_of(e.metadata.file_type), inode(&child))
+            })
+            .collect(),
+        Err(e) if state.is_overlay_ancestor(path) => {
+            let _ = e;
+            Vec::new()
+        }
+        Err(e) => return Err(map_fs_error(&e)),
+    };
+    // Surface the overlay file in its parent listing.
+    if let Some(overlay) = state.overlay_path
+        && overlay.parent() == Some(path)
+        && let Some(name) = overlay.file_name().and_then(|n| n.to_str())
+        && !names.iter().any(|(n, _, _)| n == name)
+    {
+        names.push((name.to_string(), FILETYPE_REGULAR_FILE, inode(overlay)));
+    }
+    names.sort_by(|a, b| a.0.cmp(&b.0));
+    list.extend(names);
+    Ok(list)
 }
 
 async fn path_open(
@@ -1485,7 +1690,7 @@ async fn path_open(
     let write = rights & RIGHTS_FD_WRITE != 0 || trunc || append;
     let read = rights & (RIGHTS_FD_READ | RIGHTS_FD_READDIR) != 0 || !write;
 
-    if c.data().is_stdlib(&path) {
+    if c.data().is_overlay(&path) {
         if write || creat || trunc {
             return Err(EROFS);
         }
@@ -1495,10 +1700,10 @@ async fn path_open(
         if creat && excl {
             return Err(EEXIST);
         }
-        let stdlib = c.data().stdlib;
+        let overlay = c.data().overlay;
         return c.data_mut().alloc_fd(Fd::File(Box::new(OpenFile {
             path,
-            data: Cow::Borrowed(stdlib),
+            data: Cow::Borrowed(overlay),
             pos: 0,
             read: true,
             write: false,
@@ -1506,6 +1711,15 @@ async fn path_open(
             dirty: false,
             modified: UNIX_EPOCH,
         })));
+    }
+
+    // THREAT[TM-WCU-002]: /dev/null is a sink, not a file buffered in host
+    // memory (and /dev/zero-style reads stay the VFS's finite file).
+    if path == Path::new("/dev/null") {
+        if want_dir {
+            return Err(ENOTDIR);
+        }
+        return c.data_mut().alloc_fd(Fd::Null);
     }
 
     let fs = c.data().fs.clone();
@@ -1521,6 +1735,7 @@ async fn path_open(
             c.data_mut().alloc_fd(Fd::Dir(OpenDir {
                 path,
                 entries: None,
+                charged: 0,
             }))
         }
         Ok(m) => {
@@ -1537,7 +1752,9 @@ async fn path_open(
                 c.data_mut().reserve(bytes.len())?;
                 bytes
             };
-            c.data_mut().alloc_fd(Fd::File(Box::new(OpenFile {
+            let charged = data.len();
+            let state = c.data_mut();
+            let fd = state.alloc_fd(Fd::File(Box::new(OpenFile {
                 path,
                 data: Cow::Owned(data),
                 pos: 0,
@@ -1546,14 +1763,19 @@ async fn path_open(
                 append,
                 dirty: trunc && m.size > 0,
                 modified: m.modified,
-            })))
+            })));
+            if fd.is_err() {
+                state.release(charged);
+            }
+            fd
         }
         Err(e) => {
-            if c.data().is_stdlib_ancestor(&path) {
+            if c.data().is_overlay_ancestor(&path) {
                 if want_dir || !write {
                     return c.data_mut().alloc_fd(Fd::Dir(OpenDir {
                         path,
                         entries: None,
+                        charged: 0,
                     }));
                 }
                 return Err(EISDIR);
@@ -1569,7 +1791,8 @@ async fn path_open(
                 Ok(_) => return Err(ENOTDIR),
                 Err(_) => return Err(ENOENT),
             }
-            fs.write_file(&path, b"")
+            let modified = c.data().clock.system_time();
+            store(&fs, &path, b"", modified)
                 .await
                 .map_err(|e| map_fs_error(&e))?;
             c.data_mut().alloc_fd(Fd::File(Box::new(OpenFile {
@@ -1580,7 +1803,7 @@ async fn path_open(
                 write,
                 append,
                 dirty: false,
-                modified: SystemTime::now(),
+                modified,
             })))
         }
     }
@@ -1609,9 +1832,9 @@ async fn poll_oneoff(
                 let flags = u16::from_le_bytes(sub[40..42].try_into().map_err(|_| EINVAL)?);
                 let wait = if flags & SUBCLOCKFLAGS_ABSTIME != 0 {
                     let now = if clock == CLOCK_REALTIME {
-                        nanos(SystemTime::now())
+                        c.data().clock.realtime_nanos()
                     } else {
-                        monotonic_nanos()
+                        c.data().clock.monotonic_nanos(c.data().started)
                     };
                     timeout.saturating_sub(now)
                 } else {
@@ -1708,5 +1931,49 @@ mod tests {
         assert_eq!(map_fs_error(&dir), EISDIR);
         let other: crate::Error = std::io::Error::other("boom").into();
         assert_eq!(map_fs_error(&other), EIO);
+    }
+
+    // VFS limit and loop errors carry their own errno, so the guest prints
+    // "File too large" / "No space left on device" / "Too many levels of
+    // symbolic links" instead of "Invalid argument" or a raw I/O error.
+    #[test]
+    fn limit_and_loop_errors_map_to_specific_errno() {
+        use crate::fs::FsLimitExceeded as L;
+        use std::io::{Error, ErrorKind};
+        let limit =
+            |e: L| -> crate::Error { Error::new(ErrorKind::InvalidInput, e.to_string()).into() };
+        assert_eq!(
+            map_fs_error(&limit(L::FileSize { size: 2, limit: 1 })),
+            EFBIG
+        );
+        let full = L::TotalBytes {
+            current: 1,
+            additional: 1,
+            limit: 1,
+        };
+        assert_eq!(map_fs_error(&limit(full)), ENOSPC);
+        assert_eq!(
+            map_fs_error(&limit(L::FileCount {
+                current: 1,
+                limit: 1
+            })),
+            ENOSPC
+        );
+        assert_eq!(
+            map_fs_error(&limit(L::DirCount {
+                current: 1,
+                limit: 1
+            })),
+            ENOSPC
+        );
+        assert_eq!(
+            map_fs_error(&limit(L::PathTooDeep { depth: 2, limit: 1 })),
+            ENAMETOOLONG
+        );
+        let lp: crate::Error = Error::other("Too many levels of symbolic links").into();
+        assert_eq!(map_fs_error(&lp), ELOOP);
+        // Plain invalid input stays EINVAL.
+        let inv: crate::Error = Error::new(ErrorKind::InvalidInput, "bad").into();
+        assert_eq!(map_fs_error(&inv), EINVAL);
     }
 }

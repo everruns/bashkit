@@ -159,6 +159,21 @@ updates:
         patterns:
           - "*"
 
+  # The wasm coreutils guest. Its lockfile pins what the committed
+  # artifacts/coreutils.wasm.xz was built from (uu_* = 0.12.0, reproducible
+  # hash in artifacts/MANIFEST), so a lockfile-only bump would desync the
+  # lockfile from the shipped bytes. Version updates are off
+  # (open-pull-requests-limit: 0); security updates still open PRs, and any
+  # bump means re-running guest/build.sh. See
+  # knowledge/runtimes/wasm-coreutils.md.
+  - package-ecosystem: "cargo"
+    directory: "/crates/bashkit-coreutils-wasm/guest"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 0
+    commit-message:
+      prefix: "chore(deps)"
+
   # npm / pnpm.
   #
   # Important decision: the five pnpm lockfiles in this repo had no

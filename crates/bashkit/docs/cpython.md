@@ -11,6 +11,7 @@ stdio.
 - [Embedded Python (Monty)](./python.md) - The lighter, Rust-native alternative
 - [Threat Model](./threat-model.md) - Security considerations (TM-PY-CPY-*)
 - [Compatibility Reference](./compatibility.md) - Bash feature support
+- [Wasm Coreutils](./wasm-coreutils.md) - Real uutils programs on the same WASI host
 - [`knowledge/runtimes/cpython-wasm.md`][spec] - Design, measurements and decisions
 
 ## Quick start

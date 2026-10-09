@@ -287,6 +287,10 @@ bench-python:
     ./scripts/bench-python.sh
     pnpm --dir site run data:performance
 
+# Wasm coreutils (uutils as WASI guests) vs native builtins: raw start, per call, throughput
+bench-wasm-coreutils:
+    ./scripts/bench-wasm-coreutils.sh
+
 # === Eval (mira study) ===
 # Evals run on the mira framework (github.com/everruns/mira). The crate is a
 # study binary the `mira` host CLI spawns over stdio; mira owns the model

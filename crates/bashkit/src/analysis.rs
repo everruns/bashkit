@@ -48,8 +48,20 @@ pub const MAX_ANALYSIS_NODES: usize = 4096;
 /// Not covered: wrappers that take a command in a non-prefix position
 /// (`find -exec`), or inside a language payload (`awk 'system(…)'`,
 /// `make`, `xargs -I{}` templates). Those need per-tool argument knowledge.
+/// `coreutils` is the `wasm-coreutils` multicall (`coreutils rm -rf /data`);
+/// its first argument is the utility that runs.
 pub const COMMAND_WRAPPERS: &[&str] = &[
-    "command", "doas", "env", "exec", "nice", "nohup", "setsid", "stdbuf", "sudo", "timeout",
+    "command",
+    "coreutils",
+    "doas",
+    "env",
+    "exec",
+    "nice",
+    "nohup",
+    "setsid",
+    "stdbuf",
+    "sudo",
+    "timeout",
     "xargs",
 ];
 
@@ -778,6 +790,15 @@ mod tests {
                 [*name]
             );
         }
+    }
+
+    #[test]
+    fn coreutils_multicall_is_a_wrapper() {
+        // TM-WCU-005: `coreutils rm` must not hide `rm` from an allowlist.
+        assert_eq!(
+            a("coreutils rm -rf /data").command_wrappers(),
+            ["coreutils"]
+        );
     }
 
     #[test]
