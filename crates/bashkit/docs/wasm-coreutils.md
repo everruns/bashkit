@@ -43,7 +43,7 @@ assert_eq!(r.stdout, "2\n1K\n3M\n");
 
 ## What gets registered
 
-- **`coreutils <utility> [args...]`**: runs any of the 71 embedded utilities;
+- **`coreutils <utility> [args...]`**: runs any of the 70 embedded utilities;
   `coreutils --list` prints them.
 - **Missing utilities by name**: `csplit`, `dir`, `dircolors`, `pathchk`,
   `ptx`, `shred`, `vdir` (the ones with no native builtin).
@@ -67,7 +67,8 @@ let bash = Bash::builder()
         WasmCoreutilsLimits::default()
             .max_duration(Duration::from_secs(2)) // wall clock per call (default 10 s)
             .max_memory(32 * 1024 * 1024)         // guest memory (default 64 MiB, max 256 MiB)
-            .max_output(1024 * 1024),             // stdout + stderr bytes (default 16 MiB)
+            .max_output(1024 * 1024)              // stdout + stderr bytes (default 16 MiB)
+            .max_concurrent(2),                   // guests this Bash runs at once (default 4)
     )
     .build();
 ```
@@ -78,7 +79,12 @@ let bash = Bash::builder()
 - **Memory**: allocation past the cap fails inside the program.
 - **Output**: bytes past the cap are dropped and stderr ends with
   `<util>: output truncated at N bytes`.
-- **Files**: Bashkit filesystem limits apply.
+- **Files**: Bashkit filesystem limits apply (`EFBIG`, `ENOSPC` and
+  `ENAMETOOLONG` inside the program).
+- **Work budget**: guest instructions count against `ExecutionLimits`
+  work units; a call stops mid-run when the budget runs out.
+- **Concurrency**: one `Bash` runs at most `max_concurrent` guests; more
+  wait for a turn within their own deadline (exit 124 if it passes).
 
 ## Isolation
 
@@ -88,10 +94,21 @@ virtual filesystem, captured stdin/stdout/stderr, clocks and a random
 source. Only exported shell variables are passed in; `PWD` becomes the
 working directory. A crash ends only that call (`<util>: fatal error: ...`).
 
+- **`builtin_filter`** applies to the guest utilities too, including
+  through `coreutils <utility>`. A builtin you register yourself keeps its
+  name. Script analysis reports `coreutils` as a command wrapper
+  (`ScriptAnalysis::command_wrappers()`), like `env` or `xargs`.
+- **Clock**: programs see the `Bash` virtual clock (`fixed_epoch`,
+  `epoch_offset`), also for file times they set; under the Hardened profile
+  it is rounded to 100 ms.
+
+See the [threat model](./threat-model.md) (TM-WCU) for the full list.
+
 ## Limitations
 
-- 71 utilities: uutils' WebAssembly-buildable set. `stat`, `du`, `df`, `id`,
-  `install`, `chown`, `timeout` and `tac` are not included.
+- 70 utilities: uutils' WebAssembly-buildable set. `stat`, `du`, `df`, `id`,
+  `install`, `chown`, `timeout`, `tac` and `dd` are not included (the native
+  `dd` builtin stays).
 - `ls -l` shows placeholder owners and permission bits (WASI has no file
   modes).
 - Output is captured, not streamed.
