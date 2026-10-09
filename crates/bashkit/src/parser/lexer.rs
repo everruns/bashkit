@@ -1696,6 +1696,14 @@ impl<'a> Lexer<'a> {
                         }
                     }
                 }
+                Some('`') => {
+                    // `"a"`cmd``: the backquoted form of `"a"$(cmd)`.
+                    flags.has_unquoted_expansion = true;
+                    if let Err(e) = self.read_backtick_into(content) {
+                        flags.error = Some(e);
+                        break;
+                    }
+                }
                 Some('\\') => {
                     // Backslash escape after a quoted segment: `'a'\''b'`.
                     self.advance();
