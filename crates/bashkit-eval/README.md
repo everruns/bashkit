@@ -19,12 +19,12 @@ cargo install mira-cli            # provides the `mira` binary
 mira --bin bashkit-eval list
 
 # Run the bash agent eval (set keys for the models you want; unkeyed targets skip)
-ANTHROPIC_API_KEY=... OPENAI_API_KEY=... \
+ANTHROPIC_API_KEY=... OPENROUTER_API_KEY=... \
   mira --bin bashkit-eval run bashkit_bash
 
-# A specific model + one category (--targets takes exact labels, comma-separated)
+# A specific model + one category (--targets takes comma-separated label globs)
 ANTHROPIC_API_KEY=... \
-  mira --bin bashkit-eval run bashkit_bash --targets anthropic/claude-opus-4-8 --tag json_processing
+  mira --bin bashkit-eval run bashkit_bash --targets anthropic/claude-opus-5-5 --tag json_processing
 
 # Scripting-tool eval, scripted mode only, self-contained HTML report
 OPENAI_API_KEY=... \
@@ -32,7 +32,7 @@ OPENAI_API_KEY=... \
 
 # Via just
 just eval-list
-just eval --targets anthropic/claude-opus-4-8
+just eval --targets anthropic/claude-opus-5-5
 just eval-smoke
 just eval-scripting
 ```
@@ -49,9 +49,12 @@ Results are written by mira under `./results/<run_id>/`.
 | `bashkit_scripting` | scripting-tool tasks | `--axis mode=scripted\|baseline` |
 
 Targets (model matrix) are defined in `src/mira_study.rs` and gated on
-`ANTHROPIC_API_KEY` / `OPENAI_API_KEY`; offline runs skip them all. Select a
-subset with `--targets <label>`, **exact** labels, comma-separated (globs are
-not supported), e.g. `--targets anthropic/claude-opus-4-8,openai/gpt-5.5`.
+`ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `OPENROUTER_API_KEY`; offline runs
+skip them all. OpenAI models run direct when `OPENAI_API_KEY` is set, else
+through OpenRouter (labels `openrouter/openai/<model>`); Gemini models always
+run through OpenRouter. Select a subset with `--targets <labels>`,
+comma-separated globs (mira 0.5+), e.g. `--targets 'anthropic/*'` or
+`--targets anthropic/claude-opus-5-5,openrouter/openai/gpt-5.6-sol`.
 
 ## Dataset
 

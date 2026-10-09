@@ -11,6 +11,63 @@ const inventory = JSON.parse(
 
 export const builtinCount = inventory.builtins.length;
 
+// Decision: the homepage eval table is derived from the generated performance
+// timeline (site/scripts/build-performance-data.mjs, fed by
+// crates/bashkit-eval/results), not hand-copied, so it can't lag the README.
+// It shows every model's latest full run from the newest eval lineup (runs
+// within LINEUP_WINDOW_DAYS of the newest one), best score first.
+type EvalRun = {
+  kind: string;
+  model: string;
+  timestamp: string | null;
+  date: string;
+  tasks: number;
+  passed: number;
+  scorePct: number;
+};
+const timeline = JSON.parse(
+  readFileSync(resolve(process.cwd(), "src/data/performance-timeline.json"), "utf8"),
+) as { evalRuns: EvalRun[] };
+
+const LINEUP_WINDOW_DAYS = 7;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+export function evalModelName(model: string): string {
+  const claude = model.match(/^claude-([a-z]+)-(\d+)-(\d+)/);
+  if (claude) {
+    const [, family, major, minor] = claude;
+    return `Claude ${family[0].toUpperCase()}${family.slice(1)} ${major}.${minor}`;
+  }
+  const gpt = model.match(/^gpt-([\d.]+)(?:-(.+))?$/);
+  if (gpt) {
+    const [, version, variant] = gpt;
+    if (!variant) return `GPT-${version}`;
+    if (variant === "codex") return `GPT-${version}-Codex`;
+    return `GPT-${version} ${variant[0].toUpperCase()}${variant.slice(1)}`;
+  }
+  const gemini = model.match(/^gemini-([\d.]+)-(.+)$/);
+  if (gemini) {
+    const [, version, variant] = gemini;
+    const words = variant.split("-").map((w) => w[0].toUpperCase() + w.slice(1));
+    return `Gemini ${version} ${words.join(" ")}`;
+  }
+  return model;
+}
+
+function latestEvalLineup(runs: EvalRun[]) {
+  const full = runs.filter((run) => run.kind === "llm-eval" && run.tasks >= 50 && run.timestamp);
+  const newest = Math.max(...full.map((run) => new Date(run.timestamp!).getTime()));
+  const byModel = new Map<string, EvalRun>();
+  for (const run of full) {
+    if (newest - new Date(run.timestamp!).getTime() > LINEUP_WINDOW_DAYS * DAY_MS) continue;
+    const prev = byModel.get(run.model);
+    if (!prev || new Date(run.timestamp!) > new Date(prev.timestamp!)) byModel.set(run.model, run);
+  }
+  return [...byModel.values()].sort((a, b) => b.scorePct - a.scorePct || b.passed - a.passed);
+}
+
+const evalLineup = latestEvalLineup(timeline.evalRuns);
+
 export const homeHero = {
   eyebrow: "Virtual bash for AI agents",
   title: "An awesomely fast virtual bash sandbox. Written in Rust.",
@@ -47,7 +104,7 @@ export const homeNavigation = [
 ];
 
 export const evalSnapshot = {
-  date: "2026-02-28",
+  date: evalLineup.map((run) => run.date).sort().at(-1) ?? "unknown",
   href: "https://github.com/everruns/bashkit/blob/main/crates/bashkit-eval/README.md",
 };
 
@@ -74,8 +131,8 @@ export const heroStats = [
     external: true,
   },
   {
-    label: "Haiku 4.5 eval",
-    value: "97%",
+    label: `${evalModelName(evalLineup[0]?.model ?? "")} eval`,
+    value: `${Math.round(evalLineup[0]?.scorePct ?? 0)}%`,
     href: evalSnapshot.href,
     external: true,
   },
@@ -275,13 +332,11 @@ export const defense = [
   },
 ];
 
-export const evals = [
-  { model: "Claude Haiku 4.5", score: "97%", passed: "54/58" },
-  { model: "Claude Sonnet 4.6", score: "93%", passed: "48/58" },
-  { model: "Claude Opus 4.6", score: "91%", passed: "50/58" },
-  { model: "GPT-5.3-Codex", score: "91%", passed: "51/58" },
-  { model: "GPT-5.2", score: "77%", passed: "41/58" },
-];
+export const evals = evalLineup.map((run) => ({
+  model: evalModelName(run.model),
+  score: `${Math.round(run.scorePct)}%`,
+  passed: `${run.passed}/${run.tasks}`,
+}));
 
 export const resources = [
   {

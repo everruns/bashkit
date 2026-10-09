@@ -40,17 +40,52 @@ pub const REPO_MAX_TURNS: usize = 20;
 /// Default model matrix. Each target is gated on its provider's API-key env var,
 /// so an offline run skips them all (CI stays green) and a keyed run lights up
 /// the subset whose credentials are present. Select subsets with
-/// `mira run --targets anthropic/claude-opus-4-8` (exact labels, comma-separated).
+/// `mira run --targets anthropic/claude-opus-5-5` (comma-separated label globs).
+///
+/// Decision: OpenAI models go direct when `OPENAI_API_KEY` is set, else through
+/// OpenRouter (`OPENROUTER_API_KEY`), never both, so `just eval` never runs a
+/// model twice. Gemini always goes through OpenRouter (bashkit has no Gemini
+/// provider). One `*-4-8` / `gpt-5.5` anchor each links runs across lineups.
 pub fn default_targets() -> Vec<Target> {
+    let openai_direct = env_set("OPENAI_API_KEY");
+    let openai = |model: &str| {
+        if openai_direct {
+            Target::openai(model)
+        } else {
+            openrouter(&format!("openai/{model}"))
+        }
+    };
     vec![
+        Target::anthropic("claude-opus-5-5"),
+        Target::anthropic("claude-sonnet-5-5"),
+        Target::anthropic("claude-haiku-5-5"),
+        Target::anthropic("claude-fable-5-1"),
         Target::anthropic("claude-opus-4-8"),
-        Target::anthropic("claude-haiku-4-5"),
-        Target::anthropic("claude-sonnet-4-6"),
-        Target::openai("gpt-5.5"),
-        // Codex models require the OpenAI Responses API; route on a custom
-        // provider id our subject understands, gated on the OpenAI key.
-        Target::cloud("openresponses", "gpt-5.3-codex", "OPENAI_API_KEY"),
+        openai("gpt-5.6-sol"),
+        openai("gpt-5.6-terra"),
+        openai("gpt-5.6-luna"),
+        openai("gpt-5.5"),
+        // Codex models require the OpenAI Responses API on the direct route;
+        // a custom provider id our subject understands, gated on the OpenAI key.
+        // OpenRouter serves them over Chat Completions.
+        if openai_direct {
+            Target::cloud("openresponses", "gpt-5.3-codex", "OPENAI_API_KEY")
+        } else {
+            openrouter("openai/gpt-5.3-codex")
+        },
+        openrouter("google/gemini-3.1-pro-preview"),
+        openrouter("google/gemini-3.8-flash"),
     ]
+}
+
+/// An OpenRouter target; `model` is the vendor-prefixed OpenRouter id, so the
+/// label reads `openrouter/openai/gpt-5.6-sol`.
+fn openrouter(model: &str) -> Target {
+    Target::cloud("openrouter", model, "OPENROUTER_API_KEY")
+}
+
+fn env_set(key: &str) -> bool {
+    std::env::var(key).is_ok_and(|v| !v.trim().is_empty())
 }
 
 /// Map a mira `Target` to a bashkit `Provider`. Errors surface as infra errors
@@ -60,6 +95,7 @@ fn provider_for(target: &Target) -> Result<Box<dyn Provider>, String> {
     let provider: Box<dyn Provider> = match target.provider.as_str() {
         "anthropic" => Box::new(AnthropicProvider::new(model).map_err(|e| e.to_string())?),
         "openai" => Box::new(OpenAiProvider::new(model).map_err(|e| e.to_string())?),
+        "openrouter" => Box::new(OpenAiProvider::openrouter(model).map_err(|e| e.to_string())?),
         "openresponses" => {
             Box::new(OpenAiResponsesProvider::new(model).map_err(|e| e.to_string())?)
         }

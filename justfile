@@ -292,7 +292,7 @@ bench-python:
 # study binary the `mira` host CLI spawns over stdio; mira owns the model
 # matrix, scheduling, and reporting. Install the host once:
 #   cargo install mira-cli      # provides the `mira` binary
-# Targets are gated on ANTHROPIC_API_KEY / OPENAI_API_KEY — set the keys for
+# Targets are gated on ANTHROPIC_API_KEY / OPENAI_API_KEY / OPENROUTER_API_KEY — set the keys for
 # the models you want to run; unkeyed targets are skipped. See knowledge/operations/eval.md.
 
 # List advertised evals, samples, scorers, and targets
@@ -300,8 +300,8 @@ eval-list:
     mira --bin bashkit-eval list
 
 # Run the bash agent eval. Pass extra mira flags through, e.g. (--targets takes
-# exact labels, comma-separated — globs are not supported):
-#   just eval --targets anthropic/claude-opus-4-8 --tag json_processing --format html --out report.html
+# comma-separated label globs, e.g. 'anthropic/*'):
+#   just eval --targets anthropic/claude-opus-5-5 --tag json_processing --format html --out report.html
 eval *ARGS:
     mira --bin bashkit-eval run bashkit_bash {{ARGS}}
 

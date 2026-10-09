@@ -123,6 +123,13 @@ Implemented under `src/provider/`, selected by the mira target's `provider` id:
 
 - **Anthropic Messages API**: target `Target::anthropic(model)`; `ANTHROPIC_API_KEY`.
 - **OpenAI Chat Completions**: target `Target::openai(model)`; `OPENAI_API_KEY`.
+- **OpenRouter** (same Chat Completions wire format, second endpoint on
+  `OpenAiProvider`): target `Target::cloud("openrouter", "<vendor>/<model>",
+  "OPENROUTER_API_KEY")`, label `openrouter/openai/gpt-5.6-sol`. OpenAI models
+  route here only when `OPENAI_API_KEY` is unset (never both, so a model never
+  runs twice); Gemini always routes here (no Gemini provider). Added
+  2026-10-09 when the OpenAI key ran out of credit and Gemini's host was
+  unreachable from the eval environment.
 - **OpenAI Responses API**: target `Target::cloud("openresponses", model,
   "OPENAI_API_KEY")`. Required for codex models (e.g. `gpt-5.3-codex`);
   multi-turn via manual input chaining; sets `reasoning.effort: "high"` for
@@ -146,7 +153,7 @@ Run through the `mira` host (install via `cargo install mira-cli`):
 ```
 mira --bin bashkit-eval list
 mira --bin bashkit-eval run bashkit_bash
-mira --bin bashkit-eval run bashkit_bash --targets anthropic/claude-opus-4-8 --tag json_processing
+mira --bin bashkit-eval run bashkit_bash --targets anthropic/claude-opus-5-5 --tag json_processing
 mira --bin bashkit-eval run bashkit_scripting --axis mode=scripted
 mira --bin bashkit-eval run --format html --out report.html
 mira --bin bashkit-eval run --resume <run_id>
