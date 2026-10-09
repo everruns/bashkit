@@ -2526,6 +2526,11 @@ impl Interpreter {
             crate::limits::ExecutionBudget::new(&self.limits, Arc::clone(&self.cancelled));
     }
 
+    /// Re-admit persistent command storage after installing the request guard.
+    pub(crate) fn bind_command_hash_budget(&mut self) -> Result<()> {
+        Arc::make_mut(&mut self.scoped.command_hash).bind_budget(&self.execution_budget)
+    }
+
     pub(crate) fn execution_budget(&self) -> &crate::limits::ExecutionBudget {
         &self.execution_budget
     }
@@ -9440,7 +9445,9 @@ impl Interpreter {
         // Clone the Arc out of the map so the call doesn't hold a borrow on
         // self.builtins while we take &mut self for the execution body.
         let builtin = self.builtins.get(name).unwrap().clone();
-        self.hash_builtin_use(name);
+        if let Err(error) = self.hash_builtin_use(name) {
+            return Box::pin(async move { Err(error) });
+        }
         self.execute_builtin_arc(
             name,
             builtin,
@@ -9454,7 +9461,7 @@ impl Interpreter {
     /// A registered builtin that real bash runs from `PATH` (`whoami`, `ls`)
     /// is hashed as bash hashes the program; its file is looked up only when
     /// `hash`/`type` shows it. Shell builtins never are; `set +h` stops it.
-    fn hash_builtin_use(&mut self, name: &str) {
+    fn hash_builtin_use(&mut self, name: &str) -> Result<()> {
         if self.temp_path
             || builtins::BASH_BUILTIN_NAMES.contains(&name)
             || ENV_SHELL_ONLY_BUILTINS.contains(&name)
@@ -9464,9 +9471,9 @@ impl Interpreter {
                 .get("SHOPT_h")
                 .is_some_and(|v| v == "0")
         {
-            return;
+            return Ok(());
         }
-        Arc::make_mut(&mut self.scoped.command_hash).hit(name, None);
+        Arc::make_mut(&mut self.scoped.command_hash).hit(name, None)
     }
 
     /// The operands after `-v` in a `test`/`[` call that name set variables
@@ -10220,7 +10227,7 @@ impl Interpreter {
             .scoped
             .command_hash
             .get(name)
-            .and_then(|e| e.path.clone())
+            .and_then(|e| e.path.as_deref().map(str::to_string))
         {
             return Some(path);
         }
@@ -10274,7 +10281,7 @@ impl Interpreter {
             .command_hash
             .get(name)
             .filter(|_| !self.temp_path)
-            .and_then(|e| e.path.clone());
+            .and_then(|e| e.path.as_deref().map(str::to_string));
         let found = match hashed {
             Some(path) => path,
             None => match self.search_path_file(name).await {
@@ -10289,7 +10296,7 @@ impl Interpreter {
                 .get("SHOPT_h")
                 .is_none_or(|v| v != "0")
         {
-            Arc::make_mut(&mut self.scoped.command_hash).hit(name, Some(found.clone()));
+            Arc::make_mut(&mut self.scoped.command_hash).hit(name, Some(&found))?;
         }
         let resolved = self.resolve_path(&found);
         let raw = match self.read_executable(&found, &resolved).await {

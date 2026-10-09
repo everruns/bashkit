@@ -339,3 +339,46 @@ mod jq {
         assert_eq!(r.stdout, "1988889\n50000\n");
     }
 }
+
+/// TM-DOS-129: a pathname must be leased for every retained hash entry.
+#[tokio::test]
+async fn command_hash_path_clones_hit_live_byte_budget() {
+    let mut bash = Bash::builder()
+        .limits(capped_limits().max_live_intermediate_bytes(16_384))
+        .build();
+    let error = bash
+        .exec("v=x; for ((i=0;i<10;i++)); do v=\"$v$v\"; done; hash -p \"$v\" n{1..32}")
+        .await
+        .expect_err("32 retained 1 KiB paths must exceed a 16 KiB budget");
+    assert!(
+        error.to_string().contains("live intermediate bytes"),
+        "{error}"
+    );
+    // A poisoned request must not prevent the next request from clearing state.
+    let result = bash
+        .exec("hash -r; hash -p /ok good; hash -t good")
+        .await
+        .unwrap();
+    assert_eq!(result.stdout, "/ok\n");
+}
+
+/// Retained hash entries must be admitted again under each host request budget.
+#[tokio::test]
+async fn command_hash_retention_is_charged_across_execs() {
+    let mut bash = Bash::builder()
+        .limits(capped_limits().max_live_intermediate_bytes(8_192))
+        .build();
+    let path = "x".repeat(1024);
+    for i in 0..4 {
+        bash.exec(&format!("hash -p {path} n{i}")).await.unwrap();
+    }
+    let error = bash
+        .exec(&format!("hash -p {path} n{{4..12}}"))
+        .await
+        .expect_err("persistent paths must share the new request budget");
+    assert!(
+        error.to_string().contains("live intermediate bytes"),
+        "{error}"
+    );
+    bash.exec("hash -r").await.unwrap();
+}
