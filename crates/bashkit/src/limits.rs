@@ -1313,7 +1313,8 @@ pub struct MemoryLimits {
     pub max_array_entries: usize,
     /// Maximum number of function definitions.
     pub max_function_count: usize,
-    /// Maximum total bytes of function body source text.
+    /// Maximum total bytes of function body source text and retained definition
+    /// filenames/metadata keys (charged per function, even for shared filenames).
     pub max_function_body_bytes: usize,
 }
 
@@ -1363,7 +1364,7 @@ impl MemoryLimits {
         self
     }
 
-    /// Set maximum function body bytes.
+    /// Set maximum function source and definition-metadata bytes.
     /// A value of 0 is a valid strict limit that prevents function bodies.
     pub fn max_function_body_bytes(mut self, bytes: usize) -> Self {
         self.max_function_body_bytes = bytes;
@@ -1400,7 +1401,7 @@ pub struct MemoryBudget {
     pub array_bytes: usize,
     /// Number of function definitions.
     pub function_count: usize,
-    /// Total bytes in function bodies.
+    /// Total bytes in function bodies and retained definition metadata.
     pub function_body_bytes: usize,
 }
 
@@ -1538,7 +1539,15 @@ impl MemoryBudget {
         // drifts so old_body_bytes exceeds the running total (e.g. after a
         // snapshot restore recomputes sizes differently), the check must not
         // underflow-panic.
-        let new_bytes = (self.function_body_bytes + body_bytes).saturating_sub(old_body_bytes);
+        let new_bytes = self
+            .function_body_bytes
+            .saturating_sub(old_body_bytes)
+            .checked_add(body_bytes);
+        let Some(new_bytes) = new_bytes else {
+            return Err(LimitExceeded::Memory(
+                "function byte accounting overflow".into(),
+            ));
+        };
         if new_bytes > limits.max_function_body_bytes {
             return Err(LimitExceeded::Memory(format!(
                 "function body byte limit ({}) exceeded",
@@ -1558,8 +1567,10 @@ impl MemoryBudget {
         if is_new {
             self.function_count += 1;
         }
-        self.function_body_bytes =
-            (self.function_body_bytes + body_bytes).saturating_sub(old_body_bytes);
+        self.function_body_bytes = self
+            .function_body_bytes
+            .saturating_sub(old_body_bytes)
+            .saturating_add(body_bytes);
     }
 
     /// Record a function removal.
@@ -1966,6 +1977,23 @@ mod tests {
             budget.consume_input(1).unwrap_err().to_string(),
             first.to_string()
         );
+    }
+
+    #[test]
+    fn function_budget_replacement_checks_final_size_without_overflow() {
+        let mut budget = MemoryBudget {
+            function_count: 1,
+            function_body_bytes: usize::MAX,
+            ..Default::default()
+        };
+        let limits = MemoryLimits::unlimited();
+        assert!(budget.check_function_insert(1, true, 0, &limits).is_err());
+        budget
+            .check_function_insert(1, false, usize::MAX, &limits)
+            .unwrap();
+        budget.record_function_insert(1, false, usize::MAX);
+        assert_eq!(budget.function_body_bytes, 1);
+        assert_eq!(budget.function_count, 1);
     }
 
     #[test]
