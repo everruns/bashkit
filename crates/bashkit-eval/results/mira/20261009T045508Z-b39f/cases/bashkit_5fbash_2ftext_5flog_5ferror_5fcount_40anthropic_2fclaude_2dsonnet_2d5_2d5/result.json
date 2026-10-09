@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "text_log_error_count",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "From the file /var/log/app.log, extract all lines containing the word ERROR and print the total count of ERROR lines."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "The file has 3 lines containing the word ERROR:\n\n```\n2024-01-01 08:05:12 ERROR Connection refused to database\n2024-01-01 08:05:20 ERROR Timeout waiting for response\n2024-01-01 09:15:33 ERROR Disk space critical\n```\n\n**Total ERROR lines: 3**\n\nI matched ERROR as a whole word (`grep -w`), so a word like \"ERRORS\" would not be counted.",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "grep -w ERROR /var/log/app.log; echo \"Total ERROR lines: $(grep -wc ERROR /var/log/app.log)\""
+    ],
+    "usage": {
+      "input_tokens": 1467,
+      "output_tokens": 247,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 2865
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "grep -w ERROR /var/log/app.log; echo \"Total ERROR lines: $(grep -wc ERROR /var/log/app.log)\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "2024-01-01 08:05:12 ERROR Connection refused to database\n2024-01-01 08:05:20 ERROR Timeout waiting for response\n2024-01-01 09:15:33 ERROR Disk space critical\nTotal ERROR lines: 3\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

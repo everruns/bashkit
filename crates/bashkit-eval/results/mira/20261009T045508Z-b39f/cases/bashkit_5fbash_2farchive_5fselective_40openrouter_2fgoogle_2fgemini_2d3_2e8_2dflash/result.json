@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "archive_selective",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Create files: /tmp/notes.txt with 'remember this', /tmp/data.csv with 'a,b,c', /tmp/script.sh with '#!/bin/bash'. Create a tar.gz archive /tmp/bundle.tar.gz containing all three files. Then list the archive contents. Finally extract only notes.txt to /output/ directory."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "3/3 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "The requested steps have been completed:\n\n1. Created `/tmp/notes.txt`, `/tmp/data.csv`, and `/tmp/script.sh`.\n2. Created `/tmp/bundle.tar.gz` containing all three files.\n3. Listed the archive contents:\n   ```\n   notes.txt\n   data.csv\n   script.sh\n   ```\n4. Extracted `notes.txt` from `/tmp/bundle.tar.gz` into `/output/`.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "echo 'remember this' > /tmp/notes.txt\necho 'a,b,c' > /tmp/data.csv\necho '#!/bin/bash' > /tmp/script.sh\n\ntar -czf /tmp/bundle.tar.gz -C /tmp notes.txt data.csv script.sh\n\ntar -tf /tmp/bundle.tar.gz\n\nmkdir -p /output\ntar -xzf /tmp/bundle.tar.gz -C /output notes.txt\n",
+      "ls -la /output/notes.txt && cat /output/notes.txt"
+    ],
+    "usage": {
+      "input_tokens": 989,
+      "output_tokens": 556,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 6883
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "echo 'remember this' > /tmp/notes.txt\necho 'a,b,c' > /tmp/data.csv\necho '#!/bin/bash' > /tmp/script.sh\n\ntar -czf /tmp/bundle.tar.gz -C /tmp notes.txt data.csv script.sh\n\ntar -tf /tmp/bundle.tar.gz\n\nmkdir -p /output\ntar -xzf /tmp/bundle.tar.gz -C /output notes.txt\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "notes.txt\ndata.csv\nscript.sh\n"
+          },
+          {
+            "commands": "ls -la /output/notes.txt && cat /output/notes.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       14 2026-10-09 04:57 /output/notes.txt\nremember this\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

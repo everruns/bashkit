@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "script_getopts_parser",
+  "target": "anthropic/claude-opus-5-5",
+  "input": [
+    "Create /scripts/report.sh that uses getopts to parse these options: -f <format> (output format: csv or json, default csv), -o <file> (output file, default stdout), -v (verbose mode flag), -h (print usage and exit). After parsing, the script should read /data/input.csv and: if format is csv, output it as-is; if format is json, convert each row to a JSON object. Run the script with: 'bash /scripts/report.sh -f json -v' to process the input in verbose mode. Verbose mode should print 'Verbose: processing N rows' before output."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I created `/scripts/report.sh` and ran `bash /scripts/report.sh -f json -v`. It printed:\n\n```\nVerbose: processing 3 rows\n[\n  {\"name\": \"alice\", \"score\": 95},\n  {\"name\": \"bob\", \"score\": 87},\n  {\"name\": \"carol\", \"score\": 92}\n]\n```\n\n**What the script does:**\n- **Options:** it uses `getopts` to read `-f <format>` (default `csv`), `-o <file>` (default: print to the screen), `-v` and `-h`.\n- **CSV format:** it outputs `/data/input.csv` exactly as it is.\n- **JSON format:** it uses the header row as field names and turns each data row into one object in a JSON array.\n  - Values that look like numbers (such as `95`) are written as numbers. Everything else is written as quoted text, with quotes and backslashes made safe for JSON.\n  - Blank lines and Windows-style line endings are ignored.\n- **Verbose mode:** the row count leaves out the header and blank lines. It's printed to the screen even when `-o` is used, so it never ends up in the output file. With `-o`, it also confirms where the output was written.\n- **Errors:**\n  - An unknown option, `-f` with no value, or a format other than `csv` or `json` prints an error and usage message and exits with status 1.\n  - The script also stops with an error if it can't read the input or write the output file.\n\n**Other checks I ran:** running with no options printed the CSV unchanged. `-o /tmp/o.json` wrote the JSON to that file. `-h` printed the usage message. `-f xml` was rejected with exit status 1.\n\n**Limitation:** the JSON conversion splits each line on every comma, so it doesn't handle quoted CSV fields that contain commas (for example `\"Smith, John\"`). Your current input doesn't have any of these.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "ls -la /data/ /scripts/ 2>&1; cat /data/input.csv 2>&1 | head -50",
+      "mkdir -p /scripts\ncat > /scripts/report.sh <<'EOF'\n#!/usr/bin/env bash\n# report.sh - output /data/input.csv as CSV or JSON\n\nINPUT=\"/data/input.csv\"\nformat=\"csv\"\noutfile=\"\"\nverbose=0\n\nusage() {\n    cat <<USAGE\nUsage: $(basename \"$0\") [-f csv|json] [-o file] [-v] [-h]\n  -f <format>  Output format: csv or json (default: csv)\n  -o <file>    Write output to file (default: stdout)\n  -v           Verbose mode\n  -h           Show this help and exit\nUSAGE\n}\n\nwhile getopts \":f:o:vh\" opt; do\n    case \"$opt\" in\n        f) format=\"$OPTARG\" ;;\n        o) outfile=\"$OPTARG\" ;;\n        v) verbose=1 ;;\n        h) usage; exit 0 ;;\n        :) echo \"Error: option -$OPTARG requires an argument\" >&2; usage >&2; exit 1 ;;\n        \\?) echo \"Error: invalid option -$OPTARG\" >&2; usage >&2; exit 1 ;;\n    esac\ndone\nshift $((OPTIND - 1))\n\ncase \"$format\" in\n    csv|json) ;;\n    *) echo \"Error: invalid format '$format' (must be csv or json)\" >&2; exit 1 ;;\nesac\n\nif [[ ! -r \"$INPUT\" ]]; then\n    echo \"Error: cannot read $INPUT\" >&2\n    exit 1\nfi\n\n# Escape a string for JSON\njson_escape() {\n    local s=\"$1\"\n    s=\"${s//\\\\/\\\\\\\\}\"\n    s=\"${s//\\\"/\\\\\\\"}\"\n    s=\"${s//$'\\t'/\\\\t}\"\n    printf '%s' \"$s\"\n}\n\n# Number of data rows (excluding header, ignoring blank lines)\nrows=$(tail -n +2 \"$INPUT\" | grep -c '[^[:space:]]')\n\nif (( verbose )); then\n    echo \"Verbose: processing $rows rows\"\nfi\n\ngenerate() {\n    if [[ \"$format\" == \"csv\" ]]; then\n        cat \"$INPUT\"\n        return\n    fi\n\n    local -a headers fields\n    local line first=1 i key val out\n    {\n        IFS= read -r line || true\n        line=\"${line%$'\\r'}\"\n        IFS=',' read -r -a headers <<< \"$line\"\n\n        echo \"[\"\n        while IFS= read -r line || [[ -n \"$line\" ]]; do\n            line=\"${line%$'\\r'}\"\n            [[ -z \"${line//[[:space:]]/}\" ]] && continue\n            IFS=',' read -r -a fields <<< \"$line\"\n            out=\"  {\"\n            for i in \"${!headers[@]}\"; do\n                key=$(json_escape \"${headers[i]}\")\n                val=\"${fields[i]-}\"\n                if [[ \"$val\" =~ ^-?(0|[1-9][0-9]*)(\\.[0-9]+)?$ ]]; then\n                    out+=\"\\\"$key\\\": $val\"\n                else\n                    out+=\"\\\"$key\\\": \\\"$(json_escape \"$val\")\\\"\"\n                fi\n                (( i < ${#headers[@]} - 1 )) && out+=\", \"\n            done\n            out+=\"}\"\n            (( first )) || echo \",\"\n            printf '%s' \"$out\"\n            first=0\n        done\n        (( first )) || echo\n        echo \"]\"\n    } < \"$INPUT\"\n}\n\nif [[ -n \"$outfile\" ]]; then\n    generate > \"$outfile\" || { echo \"Error: cannot write $outfile\" >&2; exit 1; }\n    (( verbose )) && echo \"Verbose: output written to $outfile\"\nelse\n    generate\nfi\nEOF\nchmod +x /scripts/report.sh\necho \"== -f json -v\"; bash /scripts/report.sh -f json -v; echo \"exit=$?\"\necho \"== default\"; bash /scripts/report.sh\necho \"== -o\"; bash /scripts/report.sh -f json -o /tmp/o.json -v; cat /tmp/o.json\necho \"== -h\"; bash /scripts/report.sh -h\necho \"== bad\"; bash /scripts/report.sh -f xml; echo \"exit=$?\""
+    ],
+    "usage": {
+      "input_tokens": 4430,
+      "output_tokens": 2578,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 22778
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /data/ /scripts/ 2>&1; cat /data/input.csv 2>&1 | head -50",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "ls: cannot access '/scripts/': No such file or directory\nname,score\nalice,95\nbob,87\ncarol,92\n"
+          },
+          {
+            "commands": "mkdir -p /scripts\ncat > /scripts/report.sh <<'EOF'\n#!/usr/bin/env bash\n# report.sh - output /data/input.csv as CSV or JSON\n\nINPUT=\"/data/input.csv\"\nformat=\"csv\"\noutfile=\"\"\nverbose=0\n\nusage() {\n    cat <<USAGE\nUsage: $(basename \"$0\") [-f csv|json] [-o file] [-v] [-h]\n  -f <format>  Output format: csv or json (default: csv)\n  -o <file>    Write output to file (default: stdout)\n  -v           Verbose mode\n  -h           Show this help and exit\nUSAGE\n}\n\nwhile getopts \":f:o:vh\" opt; do\n    case \"$opt\" in\n        f) format=\"$OPTARG\" ;;\n        o) outfile=\"$OPTARG\" ;;\n        v) verbose=1 ;;\n        h) usage; exit 0 ;;\n        :) echo \"Error: option -$OPTARG requires an argument\" >&2; usage >&2; exit 1 ;;\n        \\?) echo \"Error: invalid option -$OPTARG\" >&2; usage >&2; exit 1 ;;\n    esac\ndone\nshift $((OPTIND - 1))\n\ncase \"$format\" in\n    csv|json) ;;\n    *) echo \"Error: invalid format '$format' (must be csv or json)\" >&2; exit 1 ;;\nesac\n\nif [[ ! -r \"$INPUT\" ]]; then\n    echo \"Error: cannot read $INPUT\" >&2\n    exit 1\nfi\n\n# Escape a string for JSON\njson_escape() {\n    local s=\"$1\"\n    s=\"${s//\\\\/\\\\\\\\}\"\n    s=\"${s//\\\"/\\\\\\\"}\"\n    s=\"${s//$'\\t'/\\\\t}\"\n    printf '%s' \"$s\"\n}\n\n# Number of data rows (excluding header, ignoring blank lines)\nrows=$(tail -n +2 \"$INPUT\" | grep -c '[^[:space:]]')\n\nif (( verbose )); then\n    echo \"Verbose: processing $rows rows\"\nfi\n\ngenerate() {\n    if [[ \"$format\" == \"csv\" ]]; then\n        cat \"$INPUT\"\n        return\n    fi\n\n    local -a headers fields\n    local line first=1 i key val out\n    {\n        IFS= read -r line || true\n        line=\"${line%$'\\r'}\"\n        IFS=',' read -r -a headers <<< \"$line\"\n\n        echo \"[\"\n        while IFS= read -r line || [[ -n \"$line\" ]]; do\n            line=\"${line%$'\\r'}\"\n            [[ -z \"${line//[[:space:]]/}\" ]] && continue\n            IFS=',' read -r -a fields <<< \"$line\"\n            out=\"  {\"\n            for i in \"${!headers[@]}\"; do\n                key=$(json_escape \"${headers[i]}\")\n                val=\"${fields[i]-}\"\n                if [[ \"$val\" =~ ^-?(0|[1-9][0-9]*)(\\.[0-9]+)?$ ]]; then\n                    out+=\"\\\"$key\\\": $val\"\n                else\n                    out+=\"\\\"$key\\\": \\\"$(json_escape \"$val\")\\\"\"\n                fi\n                (( i < ${#headers[@]} - 1 )) && out+=\", \"\n            done\n            out+=\"}\"\n            (( first )) || echo \",\"\n            printf '%s' \"$out\"\n            first=0\n        done\n        (( first )) || echo\n        echo \"]\"\n    } < \"$INPUT\"\n}\n\nif [[ -n \"$outfile\" ]]; then\n    generate > \"$outfile\" || { echo \"Error: cannot write $outfile\" >&2; exit 1; }\n    (( verbose )) && echo \"Verbose: output written to $outfile\"\nelse\n    generate\nfi\nEOF\nchmod +x /scripts/report.sh\necho \"== -f json -v\"; bash /scripts/report.sh -f json -v; echo \"exit=$?\"\necho \"== default\"; bash /scripts/report.sh\necho \"== -o\"; bash /scripts/report.sh -f json -o /tmp/o.json -v; cat /tmp/o.json\necho \"== -h\"; bash /scripts/report.sh -h\necho \"== bad\"; bash /scripts/report.sh -f xml; echo \"exit=$?\"",
+            "exit_code": 0,
+            "stderr": "Error: invalid format 'xml' (must be csv or json)\n",
+            "stdout": "== -f json -v\nVerbose: processing 3 rows\n[\n  {\"name\": \"alice\", \"score\": 95},\n  {\"name\": \"bob\", \"score\": 87},\n  {\"name\": \"carol\", \"score\": 92}\n]\nexit=0\n== default\nname,score\nalice,95\nbob,87\ncarol,92\n== -o\nVerbose: processing 3 rows\nVerbose: output written to /tmp/o.json\n[\n  {\"name\": \"alice\", \"score\": 95},\n  {\"name\": \"bob\", \"score\": 87},\n  {\"name\": \"carol\", \"score\": 92}\n]\n== -h\nUsage: report.sh [-f csv|json] [-o file] [-v] [-h]\n  -f <format>  Output format: csv or json (default: csv)\n  -o <file>    Write output to file (default: stdout)\n  -v           Verbose mode\n  -h           Show this help and exit\n== bad\nexit=1\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

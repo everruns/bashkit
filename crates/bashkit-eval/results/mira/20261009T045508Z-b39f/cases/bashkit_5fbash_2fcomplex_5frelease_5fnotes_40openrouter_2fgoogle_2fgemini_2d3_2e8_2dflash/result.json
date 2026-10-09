@@ -1,0 +1,85 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_release_notes",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Read /data/commits.log containing conventional commit messages (one per line, format: 'type(scope): message'). Parse each line, group by type, and generate /release/CHANGELOG.md with sections: '## Features' for 'feat' commits, '## Bug Fixes' for 'fix' commits, and '## Other' for all remaining types. Under each section list items as '- scope: message'. Print the generated changelog."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "8/8 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Parsed `/data/commits.log`, grouped commits by type into the requested sections, and wrote the result to `/release/CHANGELOG.md`.\n\n### Generated Changelog\n\n```markdown\n## Features\n- auth: add OAuth2 support\n- ui: dark mode toggle\n- api: add pagination support\n- db: add connection pooling\n\n## Bug Fixes\n- api: handle null response body\n- auth: token refresh race condition\n- ui: button alignment on mobile\n- api: correct status code for 404\n\n## Other\n- deps: update lodash to 4.17.21\n- readme: update install instructions\n```",
+    "iterations": 6,
+    "tool_calls_count": 5,
+    "tool_calls": [
+      "ls -la /data /release 2>/dev/null || true\ncat /data/commits.log\n",
+      "which awk sed grep\nmkdir -p /release\n",
+      "cat << 'EOF' > /tmp/parse.awk\nBEGIN {\n    feat_cnt = 0\n    fix_cnt = 0\n    other_cnt = 0\n}\n{\n    line = $0\n    # format: 'type(scope): message'\n    if (match(line, /^([a-zA-Z0-9_-]+)\\(([^)]+)\\):[[:space:]]*(.*)$/, arr)) {\n        type = arr[1]\n        scope = arr[2]\n        msg = arr[3]\n        \n        item = \"- \" scope \": \" msg\n        \n        if (type == \"feat\") {\n            feats[feat_cnt++] = item\n        } else if (type == \"fix\") {\n            fixes[fix_cnt++] = item\n        } else {\n            others[other_cnt++] = item\n        }\n    }\n}\nEND {\n    print \"## Features\"\n    for (i = 0; i < feat_cnt; i++) {\n        print feats[i]\n    }\n    print \"\"\n    print \"## Bug Fixes\"\n    for (i = 0; i < fix_cnt; i++) {\n        print fixes[i]\n    }\n    print \"\"\n    print \"## Other\"\n    for (i = 0; i < other_cnt; i++) {\n        print others[i]\n    }\n}\nEOF\nawk -f /tmp/parse.awk /data/commits.log\n",
+      "awk -f /tmp/parse.awk /data/commits.log > /release/CHANGELOG.md\ncat /release/CHANGELOG.md\n",
+      "ls -l /release/CHANGELOG.md\n"
+    ],
+    "usage": {
+      "input_tokens": 3956,
+      "output_tokens": 806,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 13708
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 5.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 5.0,
+      "turns": 6.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /data /release 2>/dev/null || true\ncat /data/commits.log\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "feat(auth): add OAuth2 support\nfix(api): handle null response body\nfeat(ui): dark mode toggle\nchore(deps): update lodash to 4.17.21\nfix(auth): token refresh race condition\nfeat(api): add pagination support\nfix(ui): button alignment on mobile\ndocs(readme): update install instructions\nfeat(db): add connection pooling\nfix(api): correct status code for 404\n"
+          },
+          {
+            "commands": "which awk sed grep\nmkdir -p /release\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/usr/bin/awk\n/usr/bin/sed\n/usr/bin/grep\n"
+          },
+          {
+            "commands": "cat << 'EOF' > /tmp/parse.awk\nBEGIN {\n    feat_cnt = 0\n    fix_cnt = 0\n    other_cnt = 0\n}\n{\n    line = $0\n    # format: 'type(scope): message'\n    if (match(line, /^([a-zA-Z0-9_-]+)\\(([^)]+)\\):[[:space:]]*(.*)$/, arr)) {\n        type = arr[1]\n        scope = arr[2]\n        msg = arr[3]\n        \n        item = \"- \" scope \": \" msg\n        \n        if (type == \"feat\") {\n            feats[feat_cnt++] = item\n        } else if (type == \"fix\") {\n            fixes[fix_cnt++] = item\n        } else {\n            others[other_cnt++] = item\n        }\n    }\n}\nEND {\n    print \"## Features\"\n    for (i = 0; i < feat_cnt; i++) {\n        print feats[i]\n    }\n    print \"\"\n    print \"## Bug Fixes\"\n    for (i = 0; i < fix_cnt; i++) {\n        print fixes[i]\n    }\n    print \"\"\n    print \"## Other\"\n    for (i = 0; i < other_cnt; i++) {\n        print others[i]\n    }\n}\nEOF\nawk -f /tmp/parse.awk /data/commits.log\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "## Features\n- auth: add OAuth2 support\n- ui: dark mode toggle\n- api: add pagination support\n- db: add connection pooling\n\n## Bug Fixes\n- api: handle null response body\n- auth: token refresh race condition\n- ui: button alignment on mobile\n- api: correct status code for 404\n\n## Other\n- deps: update lodash to 4.17.21\n- readme: update install instructions\n"
+          },
+          {
+            "commands": "awk -f /tmp/parse.awk /data/commits.log > /release/CHANGELOG.md\ncat /release/CHANGELOG.md\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "## Features\n- auth: add OAuth2 support\n- ui: dark mode toggle\n- api: add pagination support\n- db: add connection pooling\n\n## Bug Fixes\n- api: handle null response body\n- auth: token refresh race condition\n- ui: button alignment on mobile\n- api: correct status code for 404\n\n## Other\n- deps: update lodash to 4.17.21\n- readme: update install instructions\n"
+          },
+          {
+            "commands": "ls -l /release/CHANGELOG.md\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--      354 2026-10-09 05:00 /release/CHANGELOG.md\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

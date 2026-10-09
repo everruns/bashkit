@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "script_trap_cleanup",
+  "target": "openrouter/meta/muse-spark-1.3-contributor",
+  "input": [
+    "Write a bash script /scripts/deploy.sh that: 1) Creates a temp directory using mktemp -d and stores path in TMPDIR. 2) Sets a trap on EXIT that removes the temp directory and prints 'Cleanup: removed temp dir'. 3) Copies /app/config.json to the temp dir. 4) Simulates work by creating /app/deploy.log with the line 'deployed at TMPDIR_PATH' (using actual path). 5) Exits with code 0. Run the script. After it runs, verify the temp directory was cleaned up by checking it no longer exists, and verify /app/deploy.log exists."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "All tasks completed and verified:\n\n**Script `/scripts/deploy.sh`:**\n```bash\n#!/bin/bash\nTMPDIR=$(mktemp -d)\ntrap 'rm -rf \"$TMPDIR\"; echo \"Cleanup: removed temp dir\"' EXIT\ncp /app/config.json \"$TMPDIR\"/\necho \"deployed at $TMPDIR\" > /app/deploy.log\nexit 0\n```\n\n**Verification:**\n- Script ran with exit code `0` and printed `Cleanup: removed temp dir` via EXIT trap.\n- `/app/deploy.log` contains `deployed at /tmp/tmp.JHgKMrSlxl` and exists.\n- Temp directory `/tmp/tmp.JHgKMrSlxl` (from log) no longer exists — cleanup confirmed.",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "ls -R /app 2>&1; echo \"---\"; ls -R /scripts 2>&1 || echo \"no scripts\"; cat /app/config.json 2>&1 || echo \"no config.json\"",
+      "mkdir -p /scripts\ncat > /scripts/deploy.sh <<'EOS'\n#!/bin/bash\nTMPDIR=$(mktemp -d)\ntrap 'rm -rf \"$TMPDIR\"; echo \"Cleanup: removed temp dir\"' EXIT\ncp /app/config.json \"$TMPDIR\"/\necho \"deployed at $TMPDIR\" > /app/deploy.log\nexit 0\nEOS\nchmod +x /scripts/deploy.sh\ncat /scripts/deploy.sh\nls -l /scripts/deploy.sh",
+      "/scripts/deploy.sh; echo \"exit code: $?\"\necho \"--- deploy.log ---\"\ncat /app/deploy.log\necho \"--- check temp cleanup ---\"\n# Extract TMPDIR path from deploy.log (format: deployed at /tmp/...)\nLOGGED_DIR=$(sed 's/^deployed at //' /app/deploy.log)\necho \"Logged TMPDIR: $LOGGED_DIR\"\nif [ -z \"$LOGGED_DIR\" ]; then echo \"FAIL: no dir logged\"; else if [ -e \"$LOGGED_DIR\" ]; then echo \"FAIL: temp dir still exists: $LOGGED_DIR\"; ls -l \"$LOGGED_DIR\"; else echo \"OK: temp dir cleaned up (no longer exists): $LOGGED_DIR\"; fi; fi\necho \"--- verify deploy.log exists ---\"\nif [ -f /app/deploy.log ]; then echo \"OK: /app/deploy.log exists\"; ls -l /app/deploy.log; else echo \"FAIL: missing\"; fi"
+    ],
+    "usage": {
+      "input_tokens": 4654,
+      "output_tokens": 1774,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 12673
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -R /app 2>&1; echo \"---\"; ls -R /scripts 2>&1 || echo \"no scripts\"; cat /app/config.json 2>&1 || echo \"no config.json\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/app:\nconfig.json\n---\nls: cannot access '/scripts': No such file or directory\nno scripts\n{\"version\":\"2.0\",\"env\":\"production\"}"
+          },
+          {
+            "commands": "mkdir -p /scripts\ncat > /scripts/deploy.sh <<'EOS'\n#!/bin/bash\nTMPDIR=$(mktemp -d)\ntrap 'rm -rf \"$TMPDIR\"; echo \"Cleanup: removed temp dir\"' EXIT\ncp /app/config.json \"$TMPDIR\"/\necho \"deployed at $TMPDIR\" > /app/deploy.log\nexit 0\nEOS\nchmod +x /scripts/deploy.sh\ncat /scripts/deploy.sh\nls -l /scripts/deploy.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "#!/bin/bash\nTMPDIR=$(mktemp -d)\ntrap 'rm -rf \"$TMPDIR\"; echo \"Cleanup: removed temp dir\"' EXIT\ncp /app/config.json \"$TMPDIR\"/\necho \"deployed at $TMPDIR\" > /app/deploy.log\nexit 0\n-rwxr-xr-x      178 2026-10-09 05:01 /scripts/deploy.sh\n"
+          },
+          {
+            "commands": "/scripts/deploy.sh; echo \"exit code: $?\"\necho \"--- deploy.log ---\"\ncat /app/deploy.log\necho \"--- check temp cleanup ---\"\n# Extract TMPDIR path from deploy.log (format: deployed at /tmp/...)\nLOGGED_DIR=$(sed 's/^deployed at //' /app/deploy.log)\necho \"Logged TMPDIR: $LOGGED_DIR\"\nif [ -z \"$LOGGED_DIR\" ]; then echo \"FAIL: no dir logged\"; else if [ -e \"$LOGGED_DIR\" ]; then echo \"FAIL: temp dir still exists: $LOGGED_DIR\"; ls -l \"$LOGGED_DIR\"; else echo \"OK: temp dir cleaned up (no longer exists): $LOGGED_DIR\"; fi; fi\necho \"--- verify deploy.log exists ---\"\nif [ -f /app/deploy.log ]; then echo \"OK: /app/deploy.log exists\"; ls -l /app/deploy.log; else echo \"FAIL: missing\"; fi",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Cleanup: removed temp dir\nexit code: 0\n--- deploy.log ---\ndeployed at /tmp/tmp.JHgKMrSlxl\n--- check temp cleanup ---\nLogged TMPDIR: /tmp/tmp.JHgKMrSlxl\nOK: temp dir cleaned up (no longer exists): /tmp/tmp.JHgKMrSlxl\n--- verify deploy.log exists ---\nOK: /app/deploy.log exists\n-rw-r--r--       32 2026-10-09 05:01 /app/deploy.log\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

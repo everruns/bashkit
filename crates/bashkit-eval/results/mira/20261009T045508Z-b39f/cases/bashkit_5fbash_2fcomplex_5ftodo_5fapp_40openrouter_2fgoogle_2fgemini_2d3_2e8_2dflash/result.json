@@ -1,0 +1,92 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_todo_app",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Build a command-line TODO app. Create /app/todo.sh that supports these subcommands: 'add <task>' appends a task to /app/tasks.txt, 'list' prints all tasks with line numbers, 'done <number>' removes that line from the file. Then demonstrate: add 'Buy groceries', add 'Write tests', add 'Deploy app', list all tasks, mark task 1 as done, list again to show remaining tasks."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "A command-line TODO app has been created at `/app/todo.sh` supporting `add`, `list`, and `done` subcommands using `/app/tasks.txt`.\n\n### Script Implementation (`/app/todo.sh`)\n\n```bash\n#!/usr/bin/env bash\nset -e\n\nTODO_FILE=\"/app/tasks.txt\"\ntouch \"$TODO_FILE\"\n\ncase \"$1\" in\n    add)\n        shift\n        if [ -z \"$*\" ]; then\n            echo \"Usage: todo.sh add <task>\" >&2\n            exit 1\n        fi\n        echo \"$*\" >> \"$TODO_FILE\"\n        ;;\n    list)\n        if [ -s \"$TODO_FILE\" ]; then\n            nl -ba -w1 -s'. ' \"$TODO_FILE\"\n        fi\n        ;;\n    done)\n        num=\"$2\"\n        if [ -z \"$num\" ] || ! [[ \"$num\" =~ ^[0-9]+$ ]]; then\n            echo \"Usage: todo.sh done <number>\" >&2\n            exit 1\n        fi\n        sed -i \"${num}d\" \"$TODO_FILE\"\n        ;;\n    *)\n        echo \"Usage: todo.sh {add <task>|list|done <number>}\" >&2\n        exit 1\n        ;;\nesac\n```\n\n### Demonstration\n\n1. **Add tasks:**\n   ```bash\n   /app/todo.sh add \"Buy groceries\"\n   /app/todo.sh add \"Write tests\"\n   /app/todo.sh add \"Deploy app\"\n   ```\n\n2. **List all tasks:**\n   ```bash\n   /app/todo.sh list\n   ```\n   Output:\n   ```text\n   1. Buy groceries\n   2. Write tests\n   3. Deploy app\n   ```\n\n3. **Mark task 1 as done:**\n   ```bash\n   /app/todo.sh done 1\n   ```\n\n4. **List remaining tasks:**\n   ```bash\n   /app/todo.sh list\n   ```\n   Output:\n   ```text\n   1. Write tests\n   2. Deploy app\n   ```",
+    "iterations": 7,
+    "tool_calls_count": 6,
+    "tool_calls": [
+      "mkdir -p /app",
+      "ls -la /app",
+      "find / -name \"*todo*\" 2>/dev/null",
+      "cat << 'EOF' > /app/todo.sh\n#!/usr/bin/env bash\nset -e\n\nTODO_FILE=\"/app/tasks.txt\"\n\ntouch \"$TODO_FILE\"\n\ncase \"$1\" in\n    add)\n        shift\n        if [ -z \"$*\" ]; then\n            echo \"Usage: todo.sh add <task>\" >&2\n            exit 1\n        fi\n        echo \"$*\" >> \"$TODO_FILE\"\n        ;;\n    list)\n        if [ -s \"$TODO_FILE\" ]; then\n            nl -ba -w1 -s'. ' \"$TODO_FILE\"\n        fi\n        ;;\n    done)\n        num=\"$2\"\n        if [ -z \"$num\" ] || ! [[ \"$num\" =~ ^[0-9]+$ ]]; then\n            echo \"Usage: todo.sh done <number>\" >&2\n            exit 1\n        fi\n        sed -i \"${num}d\" \"$TODO_FILE\"\n        ;;\n    *)\n        echo \"Usage: todo.sh {add <task>|list|done <number>}\" >&2\n        exit 1\n        ;;\nesac\nEOF\nchmod +x /app/todo.sh",
+      "/app/todo.sh add \"Buy groceries\"\n/app/todo.sh add \"Write tests\"\n/app/todo.sh add \"Deploy app\"\n/app/todo.sh list\n/app/todo.sh done 1\n/app/todo.sh list",
+      "cat /app/tasks.txt"
+    ],
+    "usage": {
+      "input_tokens": 3088,
+      "output_tokens": 2066,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 24768
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 6.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 6.0,
+      "turns": 7.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "mkdir -p /app",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "ls -la /app",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "find / -name \"*todo*\" 2>/dev/null",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "cat << 'EOF' > /app/todo.sh\n#!/usr/bin/env bash\nset -e\n\nTODO_FILE=\"/app/tasks.txt\"\n\ntouch \"$TODO_FILE\"\n\ncase \"$1\" in\n    add)\n        shift\n        if [ -z \"$*\" ]; then\n            echo \"Usage: todo.sh add <task>\" >&2\n            exit 1\n        fi\n        echo \"$*\" >> \"$TODO_FILE\"\n        ;;\n    list)\n        if [ -s \"$TODO_FILE\" ]; then\n            nl -ba -w1 -s'. ' \"$TODO_FILE\"\n        fi\n        ;;\n    done)\n        num=\"$2\"\n        if [ -z \"$num\" ] || ! [[ \"$num\" =~ ^[0-9]+$ ]]; then\n            echo \"Usage: todo.sh done <number>\" >&2\n            exit 1\n        fi\n        sed -i \"${num}d\" \"$TODO_FILE\"\n        ;;\n    *)\n        echo \"Usage: todo.sh {add <task>|list|done <number>}\" >&2\n        exit 1\n        ;;\nesac\nEOF\nchmod +x /app/todo.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "/app/todo.sh add \"Buy groceries\"\n/app/todo.sh add \"Write tests\"\n/app/todo.sh add \"Deploy app\"\n/app/todo.sh list\n/app/todo.sh done 1\n/app/todo.sh list",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "1. Buy groceries\n2. Write tests\n3. Deploy app\n1. Write tests\n2. Deploy app\n"
+          },
+          {
+            "commands": "cat /app/tasks.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Write tests\nDeploy app\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "db_csv_group_by",
+  "target": "openai/gpt-6.1-sol",
+  "input": [
+    "Read /data/sales.csv with columns: region, product, amount. Compute total amount per region (like SQL GROUP BY region, SUM(amount)). Print results as 'region: total' sorted by total descending."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "north: 850\nsouth: 750\neast: 650",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "ls -l /data/sales.csv; command -v ruby; command -v node; command -v awk; head -n 5 /data/sales.csv",
+      "awk -F',' 'NR > 1 {sub(/\\r$/, \"\", $3); totals[$1] += $3} END {for (region in totals) printf \"%s: %.10g\\n\", region, totals[region]}' /data/sales.csv | sort -t':' -k2,2nr -k1,1"
+    ],
+    "usage": {
+      "input_tokens": 1009,
+      "output_tokens": 172,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 7675
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -l /data/sales.csv; command -v ruby; command -v node; command -v awk; head -n 5 /data/sales.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--      158 2026-10-09 05:03 /data/sales.csv\n/usr/bin/awk\nregion,product,amount\nnorth,widgets,500\nsouth,gadgets,300\nnorth,bolts,200\neast,widgets,400\n"
+          },
+          {
+            "commands": "awk -F',' 'NR > 1 {sub(/\\r$/, \"\", $3); totals[$1] += $3} END {for (region in totals) printf \"%s: %.10g\\n\", region, totals[region]}' /data/sales.csv | sort -t':' -k2,2nr -k1,1",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "north: 850\nsouth: 750\neast: 650\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "data_csv_to_json",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "Convert /data/users.csv to a JSON array where each row becomes an object with the column headers as keys. Print the resulting JSON to stdout."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I converted `/data/users.csv` to a JSON array with `jq`, one object per row, using the header names (`name`, `age`, `city`) as keys:\n\n```json\n[\n  {\n    \"name\": \"alice\",\n    \"age\": \"30\",\n    \"city\": \"seattle\"\n  },\n  {\n    \"name\": \"bob\",\n    \"age\": \"25\",\n    \"city\": \"portland\"\n  },\n  {\n    \"name\": \"charlie\",\n    \"age\": \"35\",\n    \"city\": \"denver\"\n  }\n]\n```\n\nAll values come out as strings, including `age` (`\"30\"` rather than `30`). The command splits each line on commas, so it would break on quoted fields that contain commas. This file has none.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat /data/users.csv; which jq awk",
+      "jq -R -s 'split(\"\\n\") | map(select(length>0) | split(\",\")) | .[0] as $h | .[1:] | map([$h, .] | transpose | map({(.[0]): .[1]}) | add)' /data/users.csv"
+    ],
+    "usage": {
+      "input_tokens": 2413,
+      "output_tokens": 403,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 4966
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /data/users.csv; which jq awk",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "name,age,city\nalice,30,seattle\nbob,25,portland\ncharlie,35,denver\n/usr/bin/jq\n/usr/bin/awk\n"
+          },
+          {
+            "commands": "jq -R -s 'split(\"\\n\") | map(select(length>0) | split(\",\")) | .[0] as $h | .[1:] | map([$h, .] | transpose | map({(.[0]): .[1]}) | add)' /data/users.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[\n  {\n    \"name\": \"alice\",\n    \"age\": \"30\",\n    \"city\": \"seattle\"\n  },\n  {\n    \"name\": \"bob\",\n    \"age\": \"25\",\n    \"city\": \"portland\"\n  },\n  {\n    \"name\": \"charlie\",\n    \"age\": \"35\",\n    \"city\": \"denver\"\n  }\n]\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

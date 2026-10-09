@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "file_ops_backup_rename",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Make a backup of /data/config.yaml at /data/config.yaml.bak, then append the line 'updated: true' to the original /data/config.yaml file."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "A backup of `/data/config.yaml` has been created at `/data/config.yaml.bak`, and `updated: true` has been appended to the original `/data/config.yaml`.",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "ls -l /data/config.yaml\ncat /data/config.yaml",
+      "cp -p /data/config.yaml /data/config.yaml.bak\necho \"updated: true\" >> /data/config.yaml",
+      "cat /data/config.yaml.bak\necho \"---\"\ncat /data/config.yaml"
+    ],
+    "usage": {
+      "input_tokens": 1118,
+      "output_tokens": 338,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 7875
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -l /data/config.yaml\ncat /data/config.yaml",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       39 2026-10-09 04:55 /data/config.yaml\nversion: 1\nmode: production\nretries: 3\n"
+          },
+          {
+            "commands": "cp -p /data/config.yaml /data/config.yaml.bak\necho \"updated: true\" >> /data/config.yaml",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "cat /data/config.yaml.bak\necho \"---\"\ncat /data/config.yaml",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "version: 1\nmode: production\nretries: 3\n---\nversion: 1\nmode: production\nretries: 3\nupdated: true\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

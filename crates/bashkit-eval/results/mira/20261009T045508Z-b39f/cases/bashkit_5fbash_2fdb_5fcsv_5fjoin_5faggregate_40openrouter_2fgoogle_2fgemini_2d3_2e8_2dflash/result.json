@@ -1,0 +1,85 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "db_csv_join_aggregate",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Join /data/orders.csv and /data/products.csv on product_id. For each category, compute the total revenue (quantity * price). Print 'category: total_revenue' sorted by revenue descending."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "The total revenue by category computed from `/data/orders.csv` and `/data/products.csv`, sorted by revenue descending:\n\n```\nelectronics: 450\nhardware: 165\n```",
+    "iterations": 6,
+    "tool_calls_count": 5,
+    "tool_calls": [
+      "head -n 5 /data/orders.csv /data/products.csv",
+      "wc -l /data/orders.csv /data/products.csv",
+      "cat /data/orders.csv\necho \"---\"\ncat /data/products.csv",
+      "awk -F',' '\nBEGIN { OFS=\": \" }\nNR==FNR {\n    if (NR > 1) {\n        cat[$1] = $3\n        price[$1] = $4\n    }\n    next\n}\nFNR > 1 {\n    pid = $2\n    qty = $3\n    if (pid in cat) {\n        rev[cat[pid]] += qty * price[pid]\n    }\n}\nEND {\n    for (c in rev) {\n        print c, rev[c]\n    }\n}' /data/products.csv /data/orders.csv | sort -t':' -k2 -nr",
+      "awk -F',' '\nNR==FNR {\n    if (NR > 1) {\n        cat[$1] = $3\n        price[$1] = $4\n    }\n    next\n}\nFNR > 1 {\n    pid = $2\n    qty = $3\n    if (pid in cat) {\n        rev[cat[pid]] += qty * price[pid]\n    }\n}\nEND {\n    for (c in rev) {\n        printf \"%s: %s\\n\", c, rev[c]\n    }\n}' /data/products.csv /data/orders.csv | sort -t':' -k2,2nr"
+    ],
+    "usage": {
+      "input_tokens": 2922,
+      "output_tokens": 827,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 14330
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 5.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 5.0,
+      "turns": 6.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "head -n 5 /data/orders.csv /data/products.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "==> /data/orders.csv <==\norder_id,product_id,quantity\n1,101,3\n2,102,5\n3,101,2\n4,103,1\n\n==> /data/products.csv <==\nproduct_id,name,category,price\n101,Widget,hardware,25\n102,Gadget,electronics,50\n103,Bolt,hardware,10\n"
+          },
+          {
+            "commands": "wc -l /data/orders.csv /data/products.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "  7 /data/orders.csv\n  4 /data/products.csv\n 11 total\n"
+          },
+          {
+            "commands": "cat /data/orders.csv\necho \"---\"\ncat /data/products.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "order_id,product_id,quantity\n1,101,3\n2,102,5\n3,101,2\n4,103,1\n5,102,4\n6,103,3\n---\nproduct_id,name,category,price\n101,Widget,hardware,25\n102,Gadget,electronics,50\n103,Bolt,hardware,10\n"
+          },
+          {
+            "commands": "awk -F',' '\nBEGIN { OFS=\": \" }\nNR==FNR {\n    if (NR > 1) {\n        cat[$1] = $3\n        price[$1] = $4\n    }\n    next\n}\nFNR > 1 {\n    pid = $2\n    qty = $3\n    if (pid in cat) {\n        rev[cat[pid]] += qty * price[pid]\n    }\n}\nEND {\n    for (c in rev) {\n        print c, rev[c]\n    }\n}' /data/products.csv /data/orders.csv | sort -t':' -k2 -nr",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "electronics: 450\nhardware: 165\n"
+          },
+          {
+            "commands": "awk -F',' '\nNR==FNR {\n    if (NR > 1) {\n        cat[$1] = $3\n        price[$1] = $4\n    }\n    next\n}\nFNR > 1 {\n    pid = $2\n    qty = $3\n    if (pid in cat) {\n        rev[cat[pid]] += qty * price[pid]\n    }\n}\nEND {\n    for (c in rev) {\n        printf \"%s: %s\\n\", c, rev[c]\n    }\n}' /data/products.csv /data/orders.csv | sort -t':' -k2,2nr",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "electronics: 450\nhardware: 165\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,92 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "data_csv_join",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Join /data/employees.csv and /data/departments.csv on the department_id field. Produce /data/report.csv with columns: name, department_name, salary. Include a header row. Print the result."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "The joined report has been written to `/data/report.csv`.\n\nResult:\n```csv\nname,department_name,salary\nAlice,Engineering,120000\nBob,Marketing,95000\nCarol,Engineering,115000\nDave,Sales,88000\nEve,Marketing,92000\n```",
+    "iterations": 7,
+    "tool_calls_count": 6,
+    "tool_calls": [
+      "head -n 20 /data/employees.csv /data/departments.csv",
+      "which awk sqlite3 python3 perl",
+      "cat /data/departments.csv",
+      "cat /data/employees.csv",
+      "awk -F, 'BEGIN{OFS=\",\"}\nNR==FNR {\n    if (FNR > 1) {\n        dept[$1] = $2\n    }\n    next\n}\nFNR == 1 {\n    print \"name,department_name,salary\"\n    next\n}\n{\n    print $1, dept[$2], $3\n}' /data/departments.csv /data/employees.csv > /data/report.csv\n\ncat /data/report.csv",
+      "ls -l /data/report.csv"
+    ],
+    "usage": {
+      "input_tokens": 3073,
+      "output_tokens": 459,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 16161
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 6.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 5.0,
+      "turns": 7.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "head -n 20 /data/employees.csv /data/departments.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "==> /data/employees.csv <==\nname,department_id,salary\nAlice,1,120000\nBob,2,95000\nCarol,1,115000\nDave,3,88000\nEve,2,92000\n\n==> /data/departments.csv <==\ndepartment_id,department_name\n1,Engineering\n2,Marketing\n3,Sales\n"
+          },
+          {
+            "commands": "which awk sqlite3 python3 perl",
+            "exit_code": 1,
+            "stderr": "",
+            "stdout": "/usr/bin/awk\n"
+          },
+          {
+            "commands": "cat /data/departments.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "department_id,department_name\n1,Engineering\n2,Marketing\n3,Sales\n"
+          },
+          {
+            "commands": "cat /data/employees.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "name,department_id,salary\nAlice,1,120000\nBob,2,95000\nCarol,1,115000\nDave,3,88000\nEve,2,92000\n"
+          },
+          {
+            "commands": "awk -F, 'BEGIN{OFS=\",\"}\nNR==FNR {\n    if (FNR > 1) {\n        dept[$1] = $2\n    }\n    next\n}\nFNR == 1 {\n    print \"name,department_name,salary\"\n    next\n}\n{\n    print $1, dept[$2], $3\n}' /data/departments.csv /data/employees.csv > /data/report.csv\n\ncat /data/report.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "name,department_name,salary\nAlice,Engineering,120000\nBob,Marketing,95000\nCarol,Engineering,115000\nDave,Sales,88000\nEve,Marketing,92000\n"
+          },
+          {
+            "commands": "ls -l /data/report.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--      135 2026-10-09 05:00 /data/report.csv\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

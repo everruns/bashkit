@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "text_comm_setops",
+  "target": "openrouter/meta/muse-spark-1.3-contributor",
+  "input": [
+    "Given /data/team_a.txt and /data/team_b.txt containing member names (one per line, already sorted), use the comm command to find: 1) Members only in Team A (print under 'Only Team A:'). 2) Members only in Team B (print under 'Only Team B:'). 3) Members in both teams (print under 'Both teams:'). Print the count of each group."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Results using `comm` on sorted files `/data/team_a.txt` and `/data/team_b.txt`:\n\n```\nOnly Team A:\nalice\ndave\neve\nCount: 3\n\nOnly Team B:\nfrank\ngrace\nCount: 2\n\nBoth teams:\nbob\ncarol\nCount: 2\n```\n\nCommands used:\n- Only in Team A: `comm -23 /data/team_a.txt /data/team_b.txt`\n- Only in Team B: `comm -13 /data/team_a.txt /data/team_b.txt`\n- In both teams: `comm -12 /data/team_a.txt /data/team_b.txt`\n- Counts via `| wc -l`\n",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat /data/team_a.txt; echo \"---\"; cat /data/team_b.txt; echo \"---\"; ls -l /data/",
+      "echo \"Only Team A:\"\ncomm -23 /data/team_a.txt /data/team_b.txt\necho \"Count: $(comm -23 /data/team_a.txt /data/team_b.txt | wc -l)\"\necho \"\"\necho \"Only Team B:\"\ncomm -13 /data/team_a.txt /data/team_b.txt\necho \"Count: $(comm -13 /data/team_a.txt /data/team_b.txt | wc -l)\"\necho \"\"\necho \"Both teams:\"\ncomm -12 /data/team_a.txt /data/team_b.txt\necho \"Count: $(comm -12 /data/team_a.txt /data/team_b.txt | wc -l)\""
+    ],
+    "usage": {
+      "input_tokens": 2925,
+      "output_tokens": 1594,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 11604
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /data/team_a.txt; echo \"---\"; cat /data/team_b.txt; echo \"---\"; ls -l /data/",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "alice\nbob\ncarol\ndave\neve\n---\nbob\ncarol\nfrank\ngrace\n---\n-rw-r--r--       25 2026-10-09 05:02 team_a.txt\n-rw-r--r--       22 2026-10-09 05:02 team_b.txt\n"
+          },
+          {
+            "commands": "echo \"Only Team A:\"\ncomm -23 /data/team_a.txt /data/team_b.txt\necho \"Count: $(comm -23 /data/team_a.txt /data/team_b.txt | wc -l)\"\necho \"\"\necho \"Only Team B:\"\ncomm -13 /data/team_a.txt /data/team_b.txt\necho \"Count: $(comm -13 /data/team_a.txt /data/team_b.txt | wc -l)\"\necho \"\"\necho \"Both teams:\"\ncomm -12 /data/team_a.txt /data/team_b.txt\necho \"Count: $(comm -12 /data/team_a.txt /data/team_b.txt | wc -l)\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Only Team A:\nalice\ndave\neve\nCount: 3\n\nOnly Team B:\nfrank\ngrace\nCount: 2\n\nBoth teams:\nbob\ncarol\nCount: 2\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,78 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "build_script_generator",
+  "target": "openrouter/meta/muse-spark-1.3-contributor",
+  "input": [
+    "Read /project/deps.txt which lists build targets and their dependencies (format: 'target: dep1 dep2'). Generate /project/build.sh that builds targets in correct dependency order (dependencies before dependents). Then run the build script, which should create each target as a file in /project/out/ containing 'built: <target>'. Print the build order."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Done. Built all targets in topological order (dependencies before dependents).\n\n**Dependencies (`/project/deps.txt`):**\n```\napp: lib utils\nlib: core\nutils: core\ncore:\n```\n\n**Build order:** `core lib utils app`\n- `core` (no deps) first\n- `lib` and `utils` (both depend on `core`) next (alphabetical)\n- `app` (depends on `lib utils`) last\n\n**Generated `/project/build.sh`:**\n```bash\n#!/bin/bash\nset -e\nmkdir -p /project/out\n# Build order (topologically sorted from /project/deps.txt, dependencies before dependents):\n# core -> lib, utils -> app\nORDER=\"core lib utils app\"\nfor target in $ORDER; do\n  echo \"Building $target...\"\n  echo \"built: $target\" > \"/project/out/$target\"\ndone\necho \"Build order: $ORDER\"\n```\n\n**Run output:**\n```\nBuilding core...\nBuilding lib...\nBuilding utils...\nBuilding app...\nBuild order: core lib utils app\n```\n\n**Verified `/project/out/`:**\n- `core` contains `built: core`\n- `lib` contains `built: lib`\n- `utils` contains `built: utils`\n- `app` contains `built: app`\n",
+    "iterations": 5,
+    "tool_calls_count": 4,
+    "tool_calls": [
+      "cat /project/deps.txt; echo \"---\"; ls -R /project 2>&1",
+      "cat -A /project/deps.txt; echo \"===\"; ls -l /project/src/*/ 2>&1; cat /project/src/* 2>&1 | head -n 100",
+      "cat > /tmp/topo.sh <<'EOS'\n#!/bin/bash\nset -e\nDEPS_FILE=\"/project/deps.txt\"\ndeclare -A indeg\ndeclare -A dep_list\ndeclare -A is_target\ntargets=()\n# parse\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  # trim leading/trailing whitespace, skip empty/comment\n  # remove carriage return\n  line=$(echo \"$line\" | tr -d '\\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')\n  [[ -z \"$line\" ]] && continue\n  [[ \"$line\" == \\#* ]] && continue\n  # split at first colon\n  target=$(echo \"$line\" | cut -d: -f1 | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')\n  deps=$(echo \"$line\" | cut -d: -f2- | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')\n  [[ -z \"$target\" ]] && continue\n  targets+=(\"$target\")\n  is_target[\"$target\"]=1\n  dep_list[\"$target\"]=\"$deps\"\ndone < \"$DEPS_FILE\"\n\n# init indegree 0\nfor t in \"${targets[@]}\"; do indeg[\"$t\"]=0; done\n# compute indegree: number of dependencies that are also targets\nfor t in \"${targets[@]}\"; do\n  dstr=\"${dep_list[$t]}\"\n  [[ -z \"$dstr\" ]] && continue\n  for d in $dstr; do\n    if [[ -n \"${is_target[$d]:-}\" ]]; then\n      indeg[\"$t\"]=$(( ${indeg[$t]} + 1 ))\n    fi\n  done\ndone\n\n# Kahn's algorithm with deterministic alphabetical tie-break\norder=()\n# queue = nodes with indeg 0, sorted\nqueue=()\nfor t in \"${targets[@]}\"; do\n  if [[ ${indeg[$t]} -eq 0 ]]; then queue+=(\"$t\"); fi\ndone\nIFS=$'\\n' queue=($(sort <<<\"${queue[*]}\")); unset IFS\n\nwhile [[ ${#queue[@]} -gt 0 ]]; do\n  n=\"${queue[0]}\"\n  queue=(\"${queue[@]:1}\")\n  order+=(\"$n\")\n  # for each target m where n is a dependency of m, decrement\n  for m in \"${targets[@]}\"; do\n    dstr=\" ${dep_list[$m]} \"\n    # check if n in deps: need word match\n    found=0\n    for d in ${dep_list[$m]}; do\n      if [[ \"$d\" == \"$n\" ]]; then found=1; break; fi\n    done\n    if [[ $found -eq 1 ]]; then\n      indeg[\"$m\"]=$(( ${indeg[$m]} - 1 ))\n      if [[ ${indeg[$m]} -eq 0 ]]; then\n        queue+=(\"$m\")\n        IFS=$'\\n' queue=($(sort <<<\"${queue[*]}\")); unset IFS\n      fi\n    fi\n  done\ndone\n\nif [[ ${#order[@]} -ne ${#targets[@]} ]]; then\n  echo \"ERROR: cycle detected or missing deps\" >&2\n  echo \"order so far: ${order[*]}\" >&2\n  exit 1\nfi\necho \"${order[@]}\"\nEOS\nchmod +x /tmp/topo.sh\n/tmp/topo.sh\necho \"exit:$?\"",
+      "cat > /project/build.sh <<'EOS'\n#!/bin/bash\nset -e\nmkdir -p /project/out\n# Build order (topologically sorted from /project/deps.txt, dependencies before dependents):\n# core -> lib, utils -> app\nORDER=\"core lib utils app\"\nfor target in $ORDER; do\n  echo \"Building $target...\"\n  echo \"built: $target\" > \"/project/out/$target\"\ndone\necho \"Build order: $ORDER\"\nEOS\nchmod +x /project/build.sh\ncat /project/build.sh\necho \"--- running ---\"\n/project/build.sh\necho \"--- verify ---\"\nls -l /project/out/\nfor f in /project/out/*; do echo \"== $f ==\"; cat \"$f\"; done"
+    ],
+    "usage": {
+      "input_tokens": 7016,
+      "output_tokens": 3401,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 46249
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 4.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 4.0,
+      "turns": 5.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /project/deps.txt; echo \"---\"; ls -R /project 2>&1",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "app: lib utils\nlib: core\nutils: core\ncore:\n---\n/project:\ndeps.txt\nsrc\n\n/project/src:\napp\ncore\nlib\nutils\n"
+          },
+          {
+            "commands": "cat -A /project/deps.txt; echo \"===\"; ls -l /project/src/*/ 2>&1; cat /project/src/* 2>&1 | head -n 100",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "app: lib utils$\nlib: core$\nutils: core$\ncore:$\n===\nls: cannot access '/project/src/*/': No such file or directory\napp source\ncore source\nlib source\nutils source\n"
+          },
+          {
+            "commands": "cat > /tmp/topo.sh <<'EOS'\n#!/bin/bash\nset -e\nDEPS_FILE=\"/project/deps.txt\"\ndeclare -A indeg\ndeclare -A dep_list\ndeclare -A is_target\ntargets=()\n# parse\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  # trim leading/trailing whitespace, skip empty/comment\n  # remove carriage return\n  line=$(echo \"$line\" | tr -d '\\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')\n  [[ -z \"$line\" ]] && continue\n  [[ \"$line\" == \\#* ]] && continue\n  # split at first colon\n  target=$(echo \"$line\" | cut -d: -f1 | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')\n  deps=$(echo \"$line\" | cut -d: -f2- | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')\n  [[ -z \"$target\" ]] && continue\n  targets+=(\"$target\")\n  is_target[\"$target\"]=1\n  dep_list[\"$target\"]=\"$deps\"\ndone < \"$DEPS_FILE\"\n\n# init indegree 0\nfor t in \"${targets[@]}\"; do indeg[\"$t\"]=0; done\n# compute indegree: number of dependencies that are also targets\nfor t in \"${targets[@]}\"; do\n  dstr=\"${dep_list[$t]}\"\n  [[ -z \"$dstr\" ]] && continue\n  for d in $dstr; do\n    if [[ -n \"${is_target[$d]:-}\" ]]; then\n      indeg[\"$t\"]=$(( ${indeg[$t]} + 1 ))\n    fi\n  done\ndone\n\n# Kahn's algorithm with deterministic alphabetical tie-break\norder=()\n# queue = nodes with indeg 0, sorted\nqueue=()\nfor t in \"${targets[@]}\"; do\n  if [[ ${indeg[$t]} -eq 0 ]]; then queue+=(\"$t\"); fi\ndone\nIFS=$'\\n' queue=($(sort <<<\"${queue[*]}\")); unset IFS\n\nwhile [[ ${#queue[@]} -gt 0 ]]; do\n  n=\"${queue[0]}\"\n  queue=(\"${queue[@]:1}\")\n  order+=(\"$n\")\n  # for each target m where n is a dependency of m, decrement\n  for m in \"${targets[@]}\"; do\n    dstr=\" ${dep_list[$m]} \"\n    # check if n in deps: need word match\n    found=0\n    for d in ${dep_list[$m]}; do\n      if [[ \"$d\" == \"$n\" ]]; then found=1; break; fi\n    done\n    if [[ $found -eq 1 ]]; then\n      indeg[\"$m\"]=$(( ${indeg[$m]} - 1 ))\n      if [[ ${indeg[$m]} -eq 0 ]]; then\n        queue+=(\"$m\")\n        IFS=$'\\n' queue=($(sort <<<\"${queue[*]}\")); unset IFS\n      fi\n    fi\n  done\ndone\n\nif [[ ${#order[@]} -ne ${#targets[@]} ]]; then\n  echo \"ERROR: cycle detected or missing deps\" >&2\n  echo \"order so far: ${order[*]}\" >&2\n  exit 1\nfi\necho \"${order[@]}\"\nEOS\nchmod +x /tmp/topo.sh\n/tmp/topo.sh\necho \"exit:$?\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "core lib utils app\nexit:0\n"
+          },
+          {
+            "commands": "cat > /project/build.sh <<'EOS'\n#!/bin/bash\nset -e\nmkdir -p /project/out\n# Build order (topologically sorted from /project/deps.txt, dependencies before dependents):\n# core -> lib, utils -> app\nORDER=\"core lib utils app\"\nfor target in $ORDER; do\n  echo \"Building $target...\"\n  echo \"built: $target\" > \"/project/out/$target\"\ndone\necho \"Build order: $ORDER\"\nEOS\nchmod +x /project/build.sh\ncat /project/build.sh\necho \"--- running ---\"\n/project/build.sh\necho \"--- verify ---\"\nls -l /project/out/\nfor f in /project/out/*; do echo \"== $f ==\"; cat \"$f\"; done",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "#!/bin/bash\nset -e\nmkdir -p /project/out\n# Build order (topologically sorted from /project/deps.txt, dependencies before dependents):\n# core -> lib, utils -> app\nORDER=\"core lib utils app\"\nfor target in $ORDER; do\n  echo \"Building $target...\"\n  echo \"built: $target\" > \"/project/out/$target\"\ndone\necho \"Build order: $ORDER\"\n--- running ---\nBuilding core...\nBuilding lib...\nBuilding utils...\nBuilding app...\nBuild order: core lib utils app\n--- verify ---\n-rw-r--r--       11 2026-10-09 05:05 app\n-rw-r--r--       12 2026-10-09 05:05 core\n-rw-r--r--       11 2026-10-09 05:05 lib\n-rw-r--r--       13 2026-10-09 05:05 utils\n== /project/out/app ==\nbuilt: app\n== /project/out/core ==\nbuilt: core\n== /project/out/lib ==\nbuilt: lib\n== /project/out/utils ==\nbuilt: utils\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

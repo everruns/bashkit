@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "script_health_check",
+  "target": "anthropic/claude-opus-5-5",
+  "input": [
+    "Write /scripts/healthcheck.sh that checks three conditions: 1) /app/config.json exists and contains valid JSON, 2) /var/log directory exists, 3) /app/data directory contains at least 2 files. For each check print 'PASS: <description>' or 'FAIL: <description>'. Exit 0 if all checks pass, exit 1 if any fail. Then run the script."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I wrote `/scripts/healthcheck.sh` and ran it. All three checks passed and it exited with code 0:\n\n```\nPASS: /app/config.json exists and contains valid JSON\nPASS: /var/log directory exists\nPASS: /app/data contains at least 2 files\nexit code: 0\n```\n\n**What each check does:**\n1. **Config file:** confirms `/app/config.json` is a regular file, then uses `jq` to check that it's valid JSON. It currently holds `{\"version\":\"1.0\",\"enabled\":true}`.\n2. **Log directory:** confirms `/var/log` is a directory.\n3. **Data files:** counts the regular files in `/app/data`, including hidden ones but not subdirectories. It passes if there are at least 2; there are 3 now (`file1.txt`, `file2.txt`, `file3.txt`).\n\nThe script runs every check, even after one fails, and prints a PASS or FAIL line for each. It exits with 1 if any check failed and 0 otherwise.\n\nI didn't run the script in a failing setup. As a partial check, I confirmed that `jq` gives a non-zero result on a broken JSON file, which is what the config check needs to catch bad JSON.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "ls -la /app /app/data /var/log 2>&1; cat /app/config.json 2>&1; which jq",
+      "mkdir -p /scripts\ncat > /scripts/healthcheck.sh <<'EOF'\n#!/bin/bash\n# Health check script: validates config, log dir, and data files.\n\nfailures=0\n\ncheck() {\n    # $1 = description, remaining args = command to evaluate\n    local desc=\"$1\"; shift\n    if \"$@\"; then\n        echo \"PASS: $desc\"\n    else\n        echo \"FAIL: $desc\"\n        failures=$((failures + 1))\n    fi\n}\n\nconfig_valid() {\n    [[ -f /app/config.json ]] && jq empty /app/config.json >/dev/null 2>&1\n}\n\nlog_dir_exists() {\n    [[ -d /var/log ]]\n}\n\ndata_has_files() {\n    [[ -d /app/data ]] || return 1\n    local count=0 f\n    for f in /app/data/* /app/data/.*; do\n        [[ -f \"$f\" ]] && count=$((count + 1))\n    done\n    (( count >= 2 ))\n}\n\ncheck \"/app/config.json exists and contains valid JSON\" config_valid\ncheck \"/var/log directory exists\" log_dir_exists\ncheck \"/app/data contains at least 2 files\" data_has_files\n\nif (( failures > 0 )); then\n    exit 1\nfi\nexit 0\nEOF\nchmod +x /scripts/healthcheck.sh\n/scripts/healthcheck.sh; echo \"exit code: $?\"\n# quick negative test\necho '{bad' > /tmp/bad.json; jq empty /tmp/bad.json >/dev/null 2>&1; echo \"invalid json jq rc: $?\""
+    ],
+    "usage": {
+      "input_tokens": 3425,
+      "output_tokens": 1081,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 10487
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /app /app/data /var/log 2>&1; cat /app/config.json 2>&1; which jq",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/app:\n-rw-r--r--       32 2026-10-09 04:59 config.json\ndrwxr-xr-x        0 2026-10-09 04:59 data\n\n/app/data:\n-rw-r--r--        5 2026-10-09 04:59 file1.txt\n-rw-r--r--        5 2026-10-09 04:59 file2.txt\n-rw-r--r--        5 2026-10-09 04:59 file3.txt\n\n/var/log:\n-rw-r--r--        0 2026-10-09 04:59 .keep\n{\"version\":\"1.0\",\"enabled\":true}/usr/bin/jq\n"
+          },
+          {
+            "commands": "mkdir -p /scripts\ncat > /scripts/healthcheck.sh <<'EOF'\n#!/bin/bash\n# Health check script: validates config, log dir, and data files.\n\nfailures=0\n\ncheck() {\n    # $1 = description, remaining args = command to evaluate\n    local desc=\"$1\"; shift\n    if \"$@\"; then\n        echo \"PASS: $desc\"\n    else\n        echo \"FAIL: $desc\"\n        failures=$((failures + 1))\n    fi\n}\n\nconfig_valid() {\n    [[ -f /app/config.json ]] && jq empty /app/config.json >/dev/null 2>&1\n}\n\nlog_dir_exists() {\n    [[ -d /var/log ]]\n}\n\ndata_has_files() {\n    [[ -d /app/data ]] || return 1\n    local count=0 f\n    for f in /app/data/* /app/data/.*; do\n        [[ -f \"$f\" ]] && count=$((count + 1))\n    done\n    (( count >= 2 ))\n}\n\ncheck \"/app/config.json exists and contains valid JSON\" config_valid\ncheck \"/var/log directory exists\" log_dir_exists\ncheck \"/app/data contains at least 2 files\" data_has_files\n\nif (( failures > 0 )); then\n    exit 1\nfi\nexit 0\nEOF\nchmod +x /scripts/healthcheck.sh\n/scripts/healthcheck.sh; echo \"exit code: $?\"\n# quick negative test\necho '{bad' > /tmp/bad.json; jq empty /tmp/bad.json >/dev/null 2>&1; echo \"invalid json jq rc: $?\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "PASS: /app/config.json exists and contains valid JSON\nPASS: /var/log directory exists\nPASS: /app/data contains at least 2 files\nexit code: 0\ninvalid json jq rc: 5\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

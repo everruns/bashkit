@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "text_hostname_replace",
+  "target": "anthropic/claude-opus-5-5",
+  "input": [
+    "In the file /etc/app.conf, replace all occurrences of 'localhost' with 'db.prod.internal'. Write the result back to the same file and verify the change."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I replaced both occurrences of `localhost` with `db.prod.internal` in `/etc/app.conf` and saved the file in place using `sed -i`.\n\n**Updated file:**\n```\ndb_host=db.prod.internal\ndb_port=5432\ndb_name=myapp\ncache_host=db.prod.internal\nlog_level=info\n```\n\n**Check:** A search now finds no `localhost` in the file (there were 2 before) and finds `db.prod.internal` twice. The other lines are unchanged.\n\n`cache_host` also pointed to `localhost`, so it now points to `db.prod.internal` as well. If your cache runs on a different server from the database, set that line back by hand.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat /etc/app.conf; echo ---; grep -c localhost /etc/app.conf",
+      "sed -i 's/localhost/db.prod.internal/g' /etc/app.conf && cat /etc/app.conf; echo ---; grep -c localhost /etc/app.conf; grep -c db.prod.internal /etc/app.conf"
+    ],
+    "usage": {
+      "input_tokens": 2394,
+      "output_tokens": 425,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 6110
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /etc/app.conf; echo ---; grep -c localhost /etc/app.conf",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "db_host=localhost\ndb_port=5432\ndb_name=myapp\ncache_host=localhost\nlog_level=info\n---\n2\n"
+          },
+          {
+            "commands": "sed -i 's/localhost/db.prod.internal/g' /etc/app.conf && cat /etc/app.conf; echo ---; grep -c localhost /etc/app.conf; grep -c db.prod.internal /etc/app.conf",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "db_host=db.prod.internal\ndb_port=5432\ndb_name=myapp\ncache_host=db.prod.internal\nlog_level=info\n---\n0\n2\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

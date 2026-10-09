@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "config_env_template",
+  "target": "openai/gpt-6.1-sol",
+  "input": [
+    "Read /config/template.env which has lines like 'KEY=${VALUE:-default}'. For each line, check if the key exists in /config/overrides.txt (format: KEY=value). If it does, use the override value; otherwise use the default from the template. Write the final KEY=value pairs to /app/.env and print the result."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Written to `/app/.env`:\n\n```env\nDB_HOST=db.prod.internal\nDB_PORT=5432\nDB_NAME=myapp\nREDIS_URL=redis://localhost:6379\nLOG_LEVEL=warn\n```",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat /config/template.env; printf '\\n--- overrides ---\\n'; cat /config/overrides.txt",
+      "mkdir -p /app\nawk '\nFNR == NR {\n    pos = index($0, \"=\")\n    if (pos) {\n        key = substr($0, 1, pos - 1)\n        overrides[key] = substr($0, pos + 1)\n    }\n    next\n}\n{\n    pos = index($0, \"=\")\n    if (!pos) next\n    key = substr($0, 1, pos - 1)\n    value = substr($0, pos + 1)\n    if (key in overrides) {\n        value = overrides[key]\n    } else if (value ~ /^\\$\\{[^:}]+:-.*\\}$/) {\n        sub(/^\\$\\{[^:}]+:-/, \"\", value)\n        sub(/\\}$/, \"\", value)\n    }\n    print key \"=\" value\n}\n' /config/overrides.txt /config/template.env > /app/.env\ncat /app/.env"
+    ],
+    "usage": {
+      "input_tokens": 1238,
+      "output_tokens": 342,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 10665
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /config/template.env; printf '\\n--- overrides ---\\n'; cat /config/overrides.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "DB_HOST=${DB_HOST:-localhost}\nDB_PORT=${DB_PORT:-5432}\nDB_NAME=${DB_NAME:-myapp}\nREDIS_URL=${REDIS_URL:-redis://localhost:6379}\nLOG_LEVEL=${LOG_LEVEL:-info}\n\n--- overrides ---\nDB_HOST=db.prod.internal\nLOG_LEVEL=warn\n"
+          },
+          {
+            "commands": "mkdir -p /app\nawk '\nFNR == NR {\n    pos = index($0, \"=\")\n    if (pos) {\n        key = substr($0, 1, pos - 1)\n        overrides[key] = substr($0, pos + 1)\n    }\n    next\n}\n{\n    pos = index($0, \"=\")\n    if (!pos) next\n    key = substr($0, 1, pos - 1)\n    value = substr($0, pos + 1)\n    if (key in overrides) {\n        value = overrides[key]\n    } else if (value ~ /^\\$\\{[^:}]+:-.*\\}$/) {\n        sub(/^\\$\\{[^:}]+:-/, \"\", value)\n        sub(/\\}$/, \"\", value)\n    }\n    print key \"=\" value\n}\n' /config/overrides.txt /config/template.env > /app/.env\ncat /app/.env",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "DB_HOST=db.prod.internal\nDB_PORT=5432\nDB_NAME=myapp\nREDIS_URL=redis://localhost:6379\nLOG_LEVEL=warn\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

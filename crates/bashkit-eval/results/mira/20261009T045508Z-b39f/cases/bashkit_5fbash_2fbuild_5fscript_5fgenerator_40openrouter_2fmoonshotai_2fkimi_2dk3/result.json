@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "build_script_generator",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Read /project/deps.txt which lists build targets and their dependencies (format: 'target: dep1 dep2'). Generate /project/build.sh that builds targets in correct dependency order (dependencies before dependents). Then run the build script, which should create each target as a file in /project/out/ containing 'built: <target>'. Print the build order."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Done. Summary of what was accomplished:\n\n**`/project/build.sh`** — a bash script that:\n1. Parses `deps.txt` into a target → dependency-list map\n2. Performs a topological sort (repeatedly building any target whose dependencies are already built, with cycle detection)\n3. Writes each target as a file in `/project/out/` containing `built: <target>`\n\n**Build order:** `core → lib → utils → app`\n\nThis is correct because:\n- `core` has no dependencies, so it builds first\n- `lib` and `utils` only need `core`, so they build next (either order would be valid)\n- `app` needs both `lib` and `utils`, so it builds last\n\n**Verified outputs:**\n```\n/project/out/core:  built: core\n/project/out/lib:   built: lib\n/project/out/utils: built: utils\n/project/out/app:   built: app\n```",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat /project/deps.txt",
+      "cat > /project/build.sh << 'EOF'\n#!/usr/bin/env bash\nset -euo pipefail\n\nDEPS_FILE=\"/project/deps.txt\"\nOUT_DIR=\"/project/out\"\nmkdir -p \"$OUT_DIR\"\n\n# Parse \"target: dep1 dep2\" lines\ndeclare -A deps\ntargets=()\nwhile IFS=: read -r target dep_list; do\n    target=\"${target// /}\"\n    [ -z \"$target\" ] && continue\n    targets+=(\"$target\")\n    deps[$target]=\"${dep_list# }\"\ndone < \"$DEPS_FILE\"\n\n# Topological sort: repeatedly build targets whose deps are all built\ndeclare -A built\norder=()\nremaining=${#targets[@]}\nwhile [ \"$remaining\" -gt 0 ]; do\n    progress=0\n    for t in \"${targets[@]}\"; do\n        [ -n \"${built[$t]:-}\" ] && continue\n        ready=1\n        for d in ${deps[$t]}; do\n            [ -z \"${built[$d]:-}\" ] && { ready=0; break; }\n        done\n        if [ \"$ready\" -eq 1 ]; then\n            echo \"built: $t\" > \"$OUT_DIR/$t\"\n            built[$t]=1\n            order+=(\"$t\")\n            remaining=$((remaining - 1))\n            progress=1\n        fi\n    done\n    [ \"$progress\" -eq 0 ] && { echo \"error: dependency cycle\" >&2; exit 1; }\ndone\n\necho \"Build order: ${order[*]}\"\nEOF\nchmod +x /project/build.sh\n/project/build.sh\necho \"---\"\nfor f in /project/out/*; do echo \"$f: $(cat \"$f\")\"; done"
+    ],
+    "usage": {
+      "input_tokens": 1847,
+      "output_tokens": 1381,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 17685
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /project/deps.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "app: lib utils\nlib: core\nutils: core\ncore:\n"
+          },
+          {
+            "commands": "cat > /project/build.sh << 'EOF'\n#!/usr/bin/env bash\nset -euo pipefail\n\nDEPS_FILE=\"/project/deps.txt\"\nOUT_DIR=\"/project/out\"\nmkdir -p \"$OUT_DIR\"\n\n# Parse \"target: dep1 dep2\" lines\ndeclare -A deps\ntargets=()\nwhile IFS=: read -r target dep_list; do\n    target=\"${target// /}\"\n    [ -z \"$target\" ] && continue\n    targets+=(\"$target\")\n    deps[$target]=\"${dep_list# }\"\ndone < \"$DEPS_FILE\"\n\n# Topological sort: repeatedly build targets whose deps are all built\ndeclare -A built\norder=()\nremaining=${#targets[@]}\nwhile [ \"$remaining\" -gt 0 ]; do\n    progress=0\n    for t in \"${targets[@]}\"; do\n        [ -n \"${built[$t]:-}\" ] && continue\n        ready=1\n        for d in ${deps[$t]}; do\n            [ -z \"${built[$d]:-}\" ] && { ready=0; break; }\n        done\n        if [ \"$ready\" -eq 1 ]; then\n            echo \"built: $t\" > \"$OUT_DIR/$t\"\n            built[$t]=1\n            order+=(\"$t\")\n            remaining=$((remaining - 1))\n            progress=1\n        fi\n    done\n    [ \"$progress\" -eq 0 ] && { echo \"error: dependency cycle\" >&2; exit 1; }\ndone\n\necho \"Build order: ${order[*]}\"\nEOF\nchmod +x /project/build.sh\n/project/build.sh\necho \"---\"\nfor f in /project/out/*; do echo \"$f: $(cat \"$f\")\"; done",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Build order: core lib utils app\n---\n/project/out/app: built: app\n/project/out/core: built: core\n/project/out/lib: built: lib\n/project/out/utils: built: utils\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

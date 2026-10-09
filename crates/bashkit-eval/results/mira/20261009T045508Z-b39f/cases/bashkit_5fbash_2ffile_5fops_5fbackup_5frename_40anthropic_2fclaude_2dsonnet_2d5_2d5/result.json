@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "file_ops_backup_rename",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "Make a backup of /data/config.yaml at /data/config.yaml.bak, then append the line 'updated: true' to the original /data/config.yaml file."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I copied `/data/config.yaml` to `/data/config.yaml.bak`, then appended `updated: true` to the original file.\n\nThe original now ends with these lines:\n\n```\nversion: 1\nmode: production\nretries: 3\nupdated: true\n```\n\nThe backup is 39 bytes and the updated file is 53 bytes. That fits the 14 bytes added by the new line, and the backup was made before the append, so it holds the original contents.",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "cp /data/config.yaml /data/config.yaml.bak && echo 'updated: true' >> /data/config.yaml; echo $?; tail -c 200 /data/config.yaml; ls -l /data"
+    ],
+    "usage": {
+      "input_tokens": 1506,
+      "output_tokens": 254,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 3173
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cp /data/config.yaml /data/config.yaml.bak && echo 'updated: true' >> /data/config.yaml; echo $?; tail -c 200 /data/config.yaml; ls -l /data",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "0\nversion: 1\nmode: production\nretries: 3\nupdated: true\n-rw-r--r--       53 2026-10-09 04:55 config.yaml\n-rw-r--r--       39 2026-10-09 04:55 config.yaml.bak\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

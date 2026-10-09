@@ -1,0 +1,642 @@
+{
+  "generated_at": "2026-10-09T05:18:32Z",
+  "bashkit_version": "0.18.2",
+  "sessions": 1895,
+  "calls": 6246,
+  "calls_unchanged": 3357,
+  "recorded": {
+    "gap_calls": 336,
+    "failed_calls": 785
+  },
+  "now": {
+    "gap_calls": 73,
+    "failed_calls": 195
+  },
+  "top": [
+    {
+      "kind": "parse_error",
+      "key": "unterminated command substitution",
+      "now": 24,
+      "recorded": 30,
+      "example": "bash /scripts/broken.sh"
+    },
+    {
+      "kind": "parse_error",
+      "key": "in conditional expression: unexpected token `)'",
+      "now": 13,
+      "recorded": 1,
+      "example": "mkdir -p /release"
+    },
+    {
+      "kind": "missing_command",
+      "key": "python3",
+      "now": 5,
+      "recorded": 6,
+      "example": "python3 << 'EOF'"
+    },
+    {
+      "kind": "unknown_option",
+      "key": "diff r",
+      "now": 5,
+      "recorded": 4,
+      "example": "diff -r /project /backup/project && echo \"MATCH: /backup/project is identical to /project\" || echo \"…"
+    },
+    {
+      "kind": "parse_error",
+      "key": "in conditional expression: unexpected token `token'",
+      "now": 4,
+      "recorded": 0,
+      "example": "cat > /tmp/merge_ini.sh << 'EOF'"
+    },
+    {
+      "kind": "parse_error",
+      "key": "(no detail)",
+      "now": 3,
+      "recorded": 12,
+      "example": "mkdir -p /release"
+    },
+    {
+      "kind": "missing_command",
+      "key": "node",
+      "now": 3,
+      "recorded": 4,
+      "example": "cd /app && node -e '"
+    },
+    {
+      "kind": "missing_command",
+      "key": "perl",
+      "now": 3,
+      "recorded": 3,
+      "example": "perl -0777 -pe 's/.*/$&/'}"
+    },
+    {
+      "kind": "missing_command",
+      "key": "python",
+      "now": 3,
+      "recorded": 2,
+      "example": "python - <<'PY'"
+    },
+    {
+      "kind": "parse_error",
+      "key": "near unexpected token `|'",
+      "now": 2,
+      "recorded": 0,
+      "example": "cat > /tmp/organize_files.sh << 'EOF'"
+    },
+    {
+      "kind": "parse_error",
+      "key": "unexpected EOF while looking for matching `''",
+      "now": 2,
+      "recorded": 0,
+      "example": "awk -F, '"
+    },
+    {
+      "kind": "unknown_option",
+      "key": "Error -x.",
+      "now": 1,
+      "recorded": 1,
+      "example": ""
+    },
+    {
+      "kind": "unsupported",
+      "key": "Error",
+      "now": 1,
+      "recorded": 1,
+      "example": ""
+    },
+    {
+      "kind": "unknown_option",
+      "key": "Error -z",
+      "now": 1,
+      "recorded": 0,
+      "example": ""
+    },
+    {
+      "kind": "unknown_option",
+      "key": "awk W",
+      "now": 1,
+      "recorded": 0,
+      "example": "which awk && ls -l $(which awk) && awk -W version"
+    },
+    {
+      "kind": "unknown_option",
+      "key": "diff --normal",
+      "now": 1,
+      "recorded": 0,
+      "example": "diff --version"
+    },
+    {
+      "kind": "unknown_option",
+      "key": "diff --unchanged-line-format=",
+      "now": 1,
+      "recorded": 0,
+      "example": "diff --unchanged-line-format=\"\" \\"
+    },
+    {
+      "kind": "unknown_option",
+      "key": "tar --transform",
+      "now": 1,
+      "recorded": 0,
+      "example": "tar -czf /tmp/project.tar.gz --transform='s,^project/,,' project"
+    },
+    {
+      "kind": "unknown_option",
+      "key": "tar --wildcards",
+      "now": 1,
+      "recorded": 0,
+      "example": "tar -xzf /tmp/bundle.tar.gz -C /output --wildcards \"notes.txt\""
+    },
+    {
+      "kind": "unknown_option",
+      "key": "tar h",
+      "now": 1,
+      "recorded": 0,
+      "example": "tar -h | head -50"
+    }
+  ],
+  "fixed": [
+    {
+      "kind": "parse_error",
+      "key": "expected 'done'",
+      "now": 0,
+      "recorded": 38,
+      "example": "cat > /tmp/create_toc.sh << 'EOF'"
+    },
+    {
+      "kind": "unknown_option",
+      "key": "tar C",
+      "now": 0,
+      "recorded": 30,
+      "example": "tar -czf /tmp/project.tar.gz -C / project"
+    },
+    {
+      "kind": "unknown_option",
+      "key": "find -delete",
+      "now": 0,
+      "recorded": 15,
+      "example": "find /workspace -name \"*.tmp\" -type f -delete && find /workspace -name \"*.tmp\" -type f 2>/dev/null |…"
+    },
+    {
+      "kind": "unsupported",
+      "key": "env",
+      "now": 0,
+      "recorded": 13,
+      "example": "echo \"=== Run 1: No environment variables set (defaults) ===\""
+    },
+    {
+      "kind": "missing_command",
+      "key": "to_upper",
+      "now": 0,
+      "recorded": 12,
+      "example": "echo \"=== Demonstrating to_upper function ===\""
+    },
+    {
+      "kind": "missing_command",
+      "key": "/app/todo.sh",
+      "now": 0,
+      "recorded": 10,
+      "example": "/app/todo.sh add \"Buy groceries\""
+    },
+    {
+      "kind": "parse_error",
+      "key": "parser fuel exhausted (N operations, max N)",
+      "now": 0,
+      "recorded": 9,
+      "example": "find /workspace -name \"*.tmp\" -type f -exec rm {} \\; && echo \"Successfully deleted all .tmp files\""
+    },
+    {
+      "kind": "parse_error",
+      "key": "expected 'then'",
+      "now": 0,
+      "recorded": 7,
+      "example": "rm -f /app/tasks.txt"
+    },
+    {
+      "kind": "unsupported",
+      "key": "ls",
+      "now": 0,
+      "recorded": 7,
+      "example": "find /home/eval/myproject -exec ls -ld {} \\;"
+    },
+    {
+      "kind": "missing_command",
+      "key": "sudo",
+      "now": 0,
+      "recorded": 7,
+      "example": "sudo tee /etc/env.conf > /dev/null << 'EOF'"
+    },
+    {
+      "kind": "missing_command",
+      "key": "sum=470",
+      "now": 0,
+      "recorded": 7,
+      "example": ""
+    },
+    {
+      "kind": "parse_error",
+      "key": "unexpected end of input in [[ ]]",
+      "now": 0,
+      "recorded": 7,
+      "example": "cat > /tmp/create_toc.sh << 'EOFSCRIPT'"
+    },
+    {
+      "kind": "missing_command",
+      "key": "./fizzbuzz.sh",
+      "now": 0,
+      "recorded": 6,
+      "example": "./fizzbuzz.sh"
+    },
+    {
+      "kind": "missing_command",
+      "key": "/scripts/healthcheck.sh",
+      "now": 0,
+      "recorded": 6,
+      "example": "/scripts/healthcheck.sh"
+    },
+    {
+      "kind": "missing_command",
+      "key": "join",
+      "now": 0,
+      "recorded": 6,
+      "example": "join -t',' -1 2 -2 1 <(tail -n +2 /data/orders.csv | sort -t',' -k2) <(tail -n +2 /data/products.csv…"
+    },
+    {
+      "kind": "unknown_option",
+      "key": "ls d",
+      "now": 0,
+      "recorded": 6,
+      "example": "ls -lh /tmp/project.tar.gz"
+    },
+    {
+      "kind": "missing_command",
+      "key": "which",
+      "now": 0,
+      "recorded": 6,
+      "example": "which jq"
+    },
+    {
+      "kind": "unknown_option",
+      "key": "find -exec",
+      "now": 0,
+      "recorded": 5,
+      "example": "find /project -type f -exec ls -la {} \\;"
+    },
+    {
+      "kind": "missing_command",
+      "key": "tree",
+      "now": 0,
+      "recorded": 5,
+      "example": "tree /backup 2>/dev/null || find /backup | sort"
+    },
+    {
+      "kind": "parse_error",
+      "key": "unexpected token",
+      "now": 0,
+      "recorded": 4,
+      "example": "cat > /tmp/merge_ini.sh << 'EOF'"
+    },
+    {
+      "kind": "missing_command",
+      "key": "command",
+      "now": 0,
+      "recorded": 3,
+      "example": "command -v awk || true; command -v busybox || true"
+    },
+    {
+      "kind": "missing_command",
+      "key": "other_sum=0",
+      "now": 0,
+      "recorded": 3,
+      "example": ""
+    },
+    {
+      "kind": "missing_command",
+      "key": "total=470",
+      "now": 0,
+      "recorded": 3,
+      "example": ""
+    },
+    {
+      "kind": "missing_command",
+      "key": "type",
+      "now": 0,
+      "recorded": 3,
+      "example": "type source"
+    },
+    {
+      "kind": "missing_command",
+      "key": "./script.sh",
+      "now": 0,
+      "recorded": 2,
+      "example": "./script.sh"
+    },
+    {
+      "kind": "missing_command",
+      "key": "/tmp/compare_conf.sh",
+      "now": 0,
+      "recorded": 2,
+      "example": "cat > /tmp/compare_conf.sh << 'EOF'"
+    },
+    {
+      "kind": "missing_command",
+      "key": "/tmp/fizzbuzz.sh",
+      "now": 0,
+      "recorded": 2,
+      "example": "cat > /tmp/fizzbuzz.sh << 'EOF'"
+    },
+    {
+      "kind": "missing_command",
+      "key": "/tmp/generate_toc.sh",
+      "now": 0,
+      "recorded": 2,
+      "example": "cat > /tmp/generate_toc.sh << 'EOF'"
+    },
+    {
+      "kind": "missing_command",
+      "key": "TOTAL_ERRORS=3",
+      "now": 0,
+      "recorded": 2,
+      "example": ""
+    },
+    {
+      "kind": "parse_error",
+      "key": "empty then clause",
+      "now": 0,
+      "recorded": 2,
+      "example": "bash /scripts/report.sh -f json -v"
+    },
+    {
+      "kind": "parse_error",
+      "key": "expected ')' in function definition",
+      "now": 0,
+      "recorded": 2,
+      "example": "mkdir -p /release"
+    },
+    {
+      "kind": "parse_error",
+      "key": "expected 'fi'",
+      "now": 0,
+      "recorded": 2,
+      "example": "echo \"==========================================\""
+    },
+    {
+      "kind": "unknown_option",
+      "key": "find -ls",
+      "now": 0,
+      "recorded": 2,
+      "example": "find /backup -ls"
+    },
+    {
+      "kind": "missing_command",
+      "key": "sum=0",
+      "now": 0,
+      "recorded": 2,
+      "example": ""
+    },
+    {
+      "kind": "unknown_option",
+      "key": "xargs I{}",
+      "now": 0,
+      "recorded": 2,
+      "example": "find /workspace -type f -name \"*.log\" | sort | xargs -I{} sh -c 'echo \"=== {} ===\"; cat {}'"
+    },
+    {
+      "kind": "missing_command",
+      "key": "!",
+      "now": 0,
+      "recorded": 1,
+      "example": "grep -n 'db\\.prod\\.internal' /etc/app.conf && ! grep -n 'localhost' /etc/app.conf"
+    },
+    {
+      "kind": "missing_command",
+      "key": "./app/todo.sh",
+      "now": 0,
+      "recorded": 1,
+      "example": "./app/todo.sh add \"Buy groceries\""
+    },
+    {
+      "kind": "missing_command",
+      "key": "./compute_stats.sh",
+      "now": 0,
+      "recorded": 1,
+      "example": "chmod +x compute_stats.sh && ./compute_stats.sh"
+    },
+    {
+      "kind": "missing_command",
+      "key": "./scripts/healthcheck.sh",
+      "now": 0,
+      "recorded": 1,
+      "example": "./scripts/healthcheck.sh || true"
+    },
+    {
+      "kind": "missing_command",
+      "key": "/bin/sh",
+      "now": 0,
+      "recorded": 1,
+      "example": "ls -l /usr/bin/env /bin/sh 2>/dev/null || true"
+    },
+    {
+      "kind": "missing_command",
+      "key": "/tmp/csv_to_json.sh",
+      "now": 0,
+      "recorded": 1,
+      "example": "cat > /tmp/csv_to_json.sh << 'EOF'"
+    },
+    {
+      "kind": "missing_command",
+      "key": "/tmp/generate_changelog.sh",
+      "now": 0,
+      "recorded": 1,
+      "example": "cat > /tmp/generate_changelog.sh << 'EOF'"
+    },
+    {
+      "kind": "missing_command",
+      "key": "/tmp/merge.sh",
+      "now": 0,
+      "recorded": 1,
+      "example": "cat > /tmp/merge.sh << 'EOF'"
+    },
+    {
+      "kind": "missing_command",
+      "key": "/tmp/parse_commits.sh",
+      "now": 0,
+      "recorded": 1,
+      "example": "cat > /tmp/parse_commits.sh << 'EOF'"
+    },
+    {
+      "kind": "missing_command",
+      "key": "/tmp/stats.sh",
+      "now": 0,
+      "recorded": 1,
+      "example": "cat > /tmp/stats.sh << 'EOF'"
+    },
+    {
+      "kind": "missing_command",
+      "key": "TOTAL_ERRORS=0",
+      "now": 0,
+      "recorded": 1,
+      "example": ""
+    },
+    {
+      "kind": "missing_command",
+      "key": "TOTAL_LOG_LINES=0",
+      "now": 0,
+      "recorded": 1,
+      "example": ""
+    },
+    {
+      "kind": "missing_command",
+      "key": "[US]=",
+      "now": 0,
+      "recorded": 1,
+      "example": "[US]='United States'"
+    },
+    {
+      "kind": "missing_command",
+      "key": "[host]=",
+      "now": 0,
+      "recorded": 1,
+      "example": ""
+    },
+    {
+      "kind": "missing_command",
+      "key": "cmp",
+      "now": 0,
+      "recorded": 1,
+      "example": "if cmp -s \"/project/$rel\" \"/backup/project/$rel\"; then"
+    },
+    {
+      "kind": "missing_command",
+      "key": "declare",
+      "now": 0,
+      "recorded": 1,
+      "example": "bash -c 'set -x; . /lib/utils.sh; echo after_source; declare -f to_upper || echo nofunc'"
+    },
+    {
+      "kind": "missing_command",
+      "key": "diff",
+      "now": 0,
+      "recorded": 1,
+      "example": "diff /project/README.md /backup/project/README.md && echo \"README.md: ✅ MATCH\" || echo \"README.md: ❌…"
+    },
+    {
+      "kind": "unsupported",
+      "key": "error",
+      "now": 0,
+      "recorded": 1,
+      "example": ""
+    },
+    {
+      "kind": "parse_error",
+      "key": "expected ')' after case pattern",
+      "now": 0,
+      "recorded": 1,
+      "example": "set -eu"
+    },
+    {
+      "kind": "parse_error",
+      "key": "expected 'do'",
+      "now": 0,
+      "recorded": 1,
+      "example": "cat > /tmp/organize_files.sh << 'EOF'"
+    },
+    {
+      "kind": "parse_error",
+      "key": "expected word",
+      "now": 0,
+      "recorded": 1,
+      "example": "exec 3< /data/users.csv"
+    },
+    {
+      "kind": "unknown_option",
+      "key": "find -empty",
+      "now": 0,
+      "recorded": 1,
+      "example": "find . -type f -exec mv {} . \\; 2>/dev/null"
+    },
+    {
+      "kind": "unknown_option",
+      "key": "find -o",
+      "now": 0,
+      "recorded": 1,
+      "example": "find /backup/project -maxdepth 2 -type f -o -type d -print"
+    },
+    {
+      "kind": "missing_command",
+      "key": "gawk",
+      "now": 0,
+      "recorded": 1,
+      "example": "gawk -F',' '"
+    },
+    {
+      "kind": "missing_command",
+      "key": "mapfile",
+      "now": 0,
+      "recorded": 1,
+      "example": "mapfile -t lines < /data/users.csv"
+    },
+    {
+      "kind": "missing_command",
+      "key": "nl",
+      "now": 0,
+      "recorded": 1,
+      "example": "nl -w1 -s'. ' \"$TASKS_FILE\" || true"
+    },
+    {
+      "kind": "missing_command",
+      "key": "result=470",
+      "now": 0,
+      "recorded": 1,
+      "example": ""
+    },
+    {
+      "kind": "missing_command",
+      "key": "sum_val=470",
+      "now": 0,
+      "recorded": 1,
+      "example": ""
+    },
+    {
+      "kind": "unknown_option",
+      "key": "tar -",
+      "now": 0,
+      "recorded": 1,
+      "example": "tar -xzf /tmp/bundle.tar.gz -C /output -- notes.txt"
+    },
+    {
+      "kind": "unknown_option",
+      "key": "tar O",
+      "now": 0,
+      "recorded": 1,
+      "example": "tar -xzf /tmp/bundle.tar.gz -O /tmp/notes.txt > /output/notes.txt"
+    },
+    {
+      "kind": "unknown_option",
+      "key": "tar P",
+      "now": 0,
+      "recorded": 1,
+      "example": "tar -xzf /tmp/project.tar.gz -P"
+    },
+    {
+      "kind": "unknown_option",
+      "key": "tar T",
+      "now": 0,
+      "recorded": 1,
+      "example": "rm -f /tmp/project.tar.gz"
+    },
+    {
+      "kind": "missing_command",
+      "key": "total=42",
+      "now": 0,
+      "recorded": 1,
+      "example": ""
+    },
+    {
+      "kind": "parse_error",
+      "key": "unterminated single quote",
+      "now": 0,
+      "recorded": 1,
+      "example": "awk -F, '"
+    }
+  ]
+}

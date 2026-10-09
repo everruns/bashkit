@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "archive_create_extract",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "Create a tar.gz archive of the /project directory and save it as /tmp/project.tar.gz. Then create /backup directory and extract the archive there. Verify the files exist in /backup."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Created `/tmp/project.tar.gz`, extracted it into `/backup`, and verified that `/backup/project` and its files (including `README.md` and `src/main.sh`) exist.",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "tar -czf /tmp/project.tar.gz -C / project && mkdir -p /backup && tar -xzf /tmp/project.tar.gz -C /backup && ls -la /backup && find /backup -maxdepth 3 -type f | head -50 && test -d /backup/project && echo 'Verified: /backup/project exists'"
+    ],
+    "usage": {
+      "input_tokens": 557,
+      "output_tokens": 136,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 2775
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "tar -czf /tmp/project.tar.gz -C / project && mkdir -p /backup && tar -xzf /tmp/project.tar.gz -C /backup && ls -la /backup && find /backup -maxdepth 3 -type f | head -50 && test -d /backup/project && echo 'Verified: /backup/project exists'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "drwxr-xr-x        0 2026-10-09 04:57 project\n/backup/project/README.md\n/backup/project/src/main.sh\nVerified: /backup/project exists\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

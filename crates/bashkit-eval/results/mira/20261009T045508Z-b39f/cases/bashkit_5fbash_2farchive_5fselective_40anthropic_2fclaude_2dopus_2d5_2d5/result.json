@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "archive_selective",
+  "target": "anthropic/claude-opus-5-5",
+  "input": [
+    "Create files: /tmp/notes.txt with 'remember this', /tmp/data.csv with 'a,b,c', /tmp/script.sh with '#!/bin/bash'. Create a tar.gz archive /tmp/bundle.tar.gz containing all three files. Then list the archive contents. Finally extract only notes.txt to /output/ directory."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "3/3 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I created the three files and archived them in `/tmp/bundle.tar.gz`, then extracted only `notes.txt` to `/output/`.\n\n1. **Files created in `/tmp`:**\n   - `notes.txt` contains `remember this`\n   - `data.csv` contains `a,b,c`\n   - `script.sh` contains `#!/bin/bash`\n\n2. **Archive:** I made `/tmp/bundle.tar.gz` with `tar -czf`. Listing it with `tar -tzf` shows:\n   ```\n   notes.txt\n   data.csv\n   script.sh\n   ```\n\n3. **Extraction:** I created `/output/` and ran `tar -xzf bundle.tar.gz -C /output notes.txt`. `notes.txt` is the only file in `/output/`, and it contains `remember this`.",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "cd /tmp && echo 'remember this' > notes.txt && echo 'a,b,c' > data.csv && echo '#!/bin/bash' > script.sh && tar -czf bundle.tar.gz notes.txt data.csv script.sh && echo \"--- contents:\" && tar -tzf bundle.tar.gz && mkdir -p /output && tar -xzf bundle.tar.gz -C /output notes.txt; echo \"exit=$?\"; echo \"--- /output:\"; ls -la /output; cat /output/notes.txt"
+    ],
+    "usage": {
+      "input_tokens": 1735,
+      "output_tokens": 501,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 5985
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cd /tmp && echo 'remember this' > notes.txt && echo 'a,b,c' > data.csv && echo '#!/bin/bash' > script.sh && tar -czf bundle.tar.gz notes.txt data.csv script.sh && echo \"--- contents:\" && tar -tzf bundle.tar.gz && mkdir -p /output && tar -xzf bundle.tar.gz -C /output notes.txt; echo \"exit=$?\"; echo \"--- /output:\"; ls -la /output; cat /output/notes.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "--- contents:\nnotes.txt\ndata.csv\nscript.sh\nexit=0\n--- /output:\n-rw-r--r--       14 2026-10-09 04:57 notes.txt\nremember this\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

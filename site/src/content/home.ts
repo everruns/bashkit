@@ -51,6 +51,14 @@ export function evalModelName(model: string): string {
     const words = variant.split("-").map((w) => w[0].toUpperCase() + w.slice(1));
     return `Gemini ${version} ${words.join(" ")}`;
   }
+  const kimi = model.match(/^kimi-k([\d.]+)$/);
+  if (kimi) return `Kimi K${kimi[1]}`;
+  const muse = model.match(/^muse-([a-z]+)-([\d.]+)(?:-(.+))?$/);
+  if (muse) {
+    const [, line, version, variant] = muse;
+    const cap = (w: string) => w[0].toUpperCase() + w.slice(1);
+    return `Muse ${cap(line)} ${version}${variant ? ` ${cap(variant)}` : ""}`;
+  }
   return model;
 }
 

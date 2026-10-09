@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "script_health_check",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "Write /scripts/healthcheck.sh that checks three conditions: 1) /app/config.json exists and contains valid JSON, 2) /var/log directory exists, 3) /app/data directory contains at least 2 files. For each check print 'PASS: <description>' or 'FAIL: <description>'. Exit 0 if all checks pass, exit 1 if any fail. Then run the script."
+  ],
+  "passed": false,
+  "aggregate": 0.75,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 0.75,
+      "pass": false,
+      "reason": "3/4 checks passed (weighted rate 75%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Created `/scripts/healthcheck.sh` and ran it.\n\n- PASS: `/app/config.json` exists and contains valid JSON\n- PASS: `/var/log` directory exists\n- FAIL: `/app/data` directory contains at least 2 files\n\nThe script exited with status **1** because `/app/data` has fewer than two files.",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "mkdir -p /scripts\ncat > /scripts/healthcheck.sh <<'EOF'\n#!/usr/bin/env bash\n\nall_passed=0\n\nif [[ -f /app/config.json ]] && python3 -m json.tool /app/config.json >/dev/null 2>&1; then\n  printf 'PASS: /app/config.json exists and contains valid JSON\\n'\nelse\n  printf 'FAIL: /app/config.json exists and contains valid JSON\\n'\n  all_passed=1\nfi\n\nif [[ -d /var/log ]]; then\n  printf 'PASS: /var/log directory exists\\n'\nelse\n  printf 'FAIL: /var/log directory exists\\n'\n  all_passed=1\nfi\n\nfile_count=0\nif [[ -d /app/data ]]; then\n  while IFS= read -r -d '' file; do\n    ((file_count += 1))\n  done < <(find /app/data -maxdepth 1 -type f -print0 2>/dev/null)\nfi\n\nif (( file_count >= 2 )); then\n  printf 'PASS: /app/data directory contains at least 2 files\\n'\nelse\n  printf 'FAIL: /app/data directory contains at least 2 files\\n'\n  all_passed=1\nfi\n\nexit \"$all_passed\"\nEOF\nchmod +x /scripts/healthcheck.sh\n/scripts/healthcheck.sh",
+      "for cmd in jq node ruby php json_pp; do command -v \"$cmd\" || true; done\ncommand -v python3 || true\nls -ld /app /app/config.json /app/data 2>&1",
+      "sed -i 's/python3 -m json.tool \\/app\\/config.json/jq empty \\/app\\/config.json/' /scripts/healthcheck.sh\n/scripts/healthcheck.sh"
+    ],
+    "usage": {
+      "input_tokens": 2589,
+      "output_tokens": 819,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 9670
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 2.0,
+      "tool_calls_ok": 1.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 1,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "mkdir -p /scripts\ncat > /scripts/healthcheck.sh <<'EOF'\n#!/usr/bin/env bash\n\nall_passed=0\n\nif [[ -f /app/config.json ]] && python3 -m json.tool /app/config.json >/dev/null 2>&1; then\n  printf 'PASS: /app/config.json exists and contains valid JSON\\n'\nelse\n  printf 'FAIL: /app/config.json exists and contains valid JSON\\n'\n  all_passed=1\nfi\n\nif [[ -d /var/log ]]; then\n  printf 'PASS: /var/log directory exists\\n'\nelse\n  printf 'FAIL: /var/log directory exists\\n'\n  all_passed=1\nfi\n\nfile_count=0\nif [[ -d /app/data ]]; then\n  while IFS= read -r -d '' file; do\n    ((file_count += 1))\n  done < <(find /app/data -maxdepth 1 -type f -print0 2>/dev/null)\nfi\n\nif (( file_count >= 2 )); then\n  printf 'PASS: /app/data directory contains at least 2 files\\n'\nelse\n  printf 'FAIL: /app/data directory contains at least 2 files\\n'\n  all_passed=1\nfi\n\nexit \"$all_passed\"\nEOF\nchmod +x /scripts/healthcheck.sh\n/scripts/healthcheck.sh",
+            "exit_code": 1,
+            "stderr": "",
+            "stdout": "FAIL: /app/config.json exists and contains valid JSON\nPASS: /var/log directory exists\nFAIL: /app/data directory contains at least 2 files\n"
+          },
+          {
+            "commands": "for cmd in jq node ruby php json_pp; do command -v \"$cmd\" || true; done\ncommand -v python3 || true\nls -ld /app /app/config.json /app/data 2>&1",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/usr/bin/jq\ndrwxr-xr-x        0 2026-10-09 04:59 /app\n-rw-r--r--       32 2026-10-09 04:59 /app/config.json\ndrwxr-xr-x        0 2026-10-09 04:59 /app/data\n"
+          },
+          {
+            "commands": "sed -i 's/python3 -m json.tool \\/app\\/config.json/jq empty \\/app\\/config.json/' /scripts/healthcheck.sh\n/scripts/healthcheck.sh",
+            "exit_code": 1,
+            "stderr": "",
+            "stdout": "PASS: /app/config.json exists and contains valid JSON\nPASS: /var/log directory exists\nFAIL: /app/data directory contains at least 2 files\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

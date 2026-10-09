@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "script_function_lib",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "Create a file /lib/utils.sh with these bash functions: 'to_upper' that reads stdin and converts to uppercase, 'count_lines' that takes a filename argument and prints the line count, 'file_size' that takes a filename and prints byte count. Then source /lib/utils.sh and demonstrate each function: use to_upper on the string 'hello world', count_lines on /data/sample.txt, and file_size on /data/sample.txt."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Created `/lib/utils.sh` with the three functions and sourced it. The demonstrations returned:\n\n```text\nHELLO WORLD\n5\n49\n```\n\n`count_lines` and `file_size` were run on `/data/sample.txt`.",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "mkdir -p /lib; cat > /lib/utils.sh <<'EOF'\nto_upper() {\n  tr '[:lower:]' '[:upper:]'\n}\n\ncount_lines() {\n  wc -l < \"$1\"\n}\n\nfile_size() {\n  wc -c < \"$1\"\n}\nEOF\nsource /lib/utils.sh\nprintf '%s\\n' 'hello world' | to_upper\ncount_lines /data/sample.txt\nfile_size /data/sample.txt"
+    ],
+    "usage": {
+      "input_tokens": 658,
+      "output_tokens": 239,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 3520
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "mkdir -p /lib; cat > /lib/utils.sh <<'EOF'\nto_upper() {\n  tr '[:lower:]' '[:upper:]'\n}\n\ncount_lines() {\n  wc -l < \"$1\"\n}\n\nfile_size() {\n  wc -c < \"$1\"\n}\nEOF\nsource /lib/utils.sh\nprintf '%s\\n' 'hello world' | to_upper\ncount_lines /data/sample.txt\nfile_size /data/sample.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "HELLO WORLD\n5\n49\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

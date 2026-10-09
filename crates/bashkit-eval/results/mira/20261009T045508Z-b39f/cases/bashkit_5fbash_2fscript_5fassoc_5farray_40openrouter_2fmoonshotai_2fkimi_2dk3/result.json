@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "script_assoc_array",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Use a bash associative array (declare -A) to build a country-code lookup. Map: US='United States', GB='United Kingdom', DE='Germany', JP='Japan', FR='France'. Then read /data/visitors.csv (columns: name,country_code) and for each row, look up the full country name and print 'name visited from FULL_COUNTRY_NAME'. At the end, print a count per country sorted by count descending as 'FULL_NAME: N visitors'."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "The script works as expected. Here's what it does:\n\n**1. Lookup table** — `declare -A countries` maps each code to its full name (`US='United States'`, `GB='United Kingdom'`, etc.).\n\n**2. Per-row lookup** — Reading `/data/visitors.csv` with `IFS=, read -r name code` splits each line on the comma. The first iteration is skipped to discard the `name,country_code` header. `${countries[$code]:-Unknown Country}` resolves the code (with a fallback for unexpected codes), and each result is printed as `name visited from FULL_COUNTRY_NAME`.\n\n**3. Counting** — A second associative array, `counts`, increments per full country name with `(( counts[$full] += 1 ))`.\n\n**4. Sorted summary** — The counts are emitted as tab-separated `name\\tcount` pairs, piped through `sort -t$'\\t' -k2,2nr` (numeric, reverse, on the count field), then reformatted as `FULL_NAME: N visitors`.\n\n**Output:**\n```\nAlice visited from United States\nBob visited from United Kingdom\nCarol visited from United States\nDave visited from Japan\nEve visited from Germany\nFrank visited from United States\nGrace visited from United Kingdom\n\n--- Visitors per country ---\nUnited States: 3 visitors\nUnited Kingdom: 2 visitors\nGermany: 1 visitors\nJapan: 1 visitors\n```\n\nThe script is saved at `/home/eval/lookup.sh` if you want to rerun or adapt it.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat /data/visitors.csv",
+      "cat << 'EOF' > /home/eval/lookup.sh\n#!/usr/bin/env bash\n\n# Associative array: country code -> full country name\ndeclare -A countries=(\n  [US]='United States'\n  [GB]='United Kingdom'\n  [DE]='Germany'\n  [JP]='Japan'\n  [FR]='France'\n)\n\n# Associative array for counting visitors per country\ndeclare -A counts=()\n\nfirst=1\nwhile IFS=, read -r name code; do\n  # skip header row\n  if (( first )); then first=0; continue; fi\n\n  full=\"${countries[$code]:-Unknown Country}\"\n  echo \"$name visited from $full\"\n  (( counts[$full] += 1 ))\ndone < /data/visitors.csv\n\necho\necho \"--- Visitors per country ---\"\n\n# Sort by count descending\nfor full in \"${!counts[@]}\"; do\n  printf '%s\\t%d\\n' \"$full\" \"${counts[$full]}\"\ndone | sort -t$'\\t' -k2,2nr | while IFS=$'\\t' read -r full n; do\n  echo \"$full: $n visitors\"\ndone\nEOF\nbash /home/eval/lookup.sh"
+    ],
+    "usage": {
+      "input_tokens": 1867,
+      "output_tokens": 761,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 15495
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /data/visitors.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "name,country_code\nAlice,US\nBob,GB\nCarol,US\nDave,JP\nEve,DE\nFrank,US\nGrace,GB\n"
+          },
+          {
+            "commands": "cat << 'EOF' > /home/eval/lookup.sh\n#!/usr/bin/env bash\n\n# Associative array: country code -> full country name\ndeclare -A countries=(\n  [US]='United States'\n  [GB]='United Kingdom'\n  [DE]='Germany'\n  [JP]='Japan'\n  [FR]='France'\n)\n\n# Associative array for counting visitors per country\ndeclare -A counts=()\n\nfirst=1\nwhile IFS=, read -r name code; do\n  # skip header row\n  if (( first )); then first=0; continue; fi\n\n  full=\"${countries[$code]:-Unknown Country}\"\n  echo \"$name visited from $full\"\n  (( counts[$full] += 1 ))\ndone < /data/visitors.csv\n\necho\necho \"--- Visitors per country ---\"\n\n# Sort by count descending\nfor full in \"${!counts[@]}\"; do\n  printf '%s\\t%d\\n' \"$full\" \"${counts[$full]}\"\ndone | sort -t$'\\t' -k2,2nr | while IFS=$'\\t' read -r full n; do\n  echo \"$full: $n visitors\"\ndone\nEOF\nbash /home/eval/lookup.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Alice visited from United States\nBob visited from United Kingdom\nCarol visited from United States\nDave visited from Japan\nEve visited from Germany\nFrank visited from United States\nGrace visited from United Kingdom\n\n--- Visitors per country ---\nUnited States: 3 visitors\nUnited Kingdom: 2 visitors\nGermany: 1 visitors\nJapan: 1 visitors\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

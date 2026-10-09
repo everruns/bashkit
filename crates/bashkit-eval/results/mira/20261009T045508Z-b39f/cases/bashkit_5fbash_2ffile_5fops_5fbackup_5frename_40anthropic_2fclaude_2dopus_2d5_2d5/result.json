@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "file_ops_backup_rename",
+  "target": "anthropic/claude-opus-5-5",
+  "input": [
+    "Make a backup of /data/config.yaml at /data/config.yaml.bak, then append the line 'updated: true' to the original /data/config.yaml file."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I backed up the file to `/data/config.yaml.bak`, then added `updated: true` as a new last line of `/data/config.yaml`. Comparing the two files shows that line is the only difference.\n\nThe updated `/data/config.yaml` now reads:\n```yaml\nversion: 1\nmode: production\nretries: 3\nupdated: true\n```",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cp /data/config.yaml /data/config.yaml.bak && tail -c1 /data/config.yaml | od -c | head -1",
+      "echo 'updated: true' >> /data/config.yaml && diff /data/config.yaml.bak /data/config.yaml; echo ---; cat /data/config.yaml"
+    ],
+    "usage": {
+      "input_tokens": 2313,
+      "output_tokens": 316,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 5168
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cp /data/config.yaml /data/config.yaml.bak && tail -c1 /data/config.yaml | od -c | head -1",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "0000000  \\n\n"
+          },
+          {
+            "commands": "echo 'updated: true' >> /data/config.yaml && diff /data/config.yaml.bak /data/config.yaml; echo ---; cat /data/config.yaml",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "3a4\n> updated: true\n---\nversion: 1\nmode: production\nretries: 3\nupdated: true\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

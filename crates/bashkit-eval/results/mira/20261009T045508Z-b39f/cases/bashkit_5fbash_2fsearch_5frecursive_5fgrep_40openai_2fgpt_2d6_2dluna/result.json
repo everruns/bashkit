@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "search_recursive_grep",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "Search all .py files under /project for functions that contain the word 'validate'. For each match, print the filename and line number in the format 'filename:linenum: matched_line'. Then count the total number of matches and print 'Total matches: N'."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "app/auth.py:1: def validate_token(token):\napp/forms.py:1: def validate_email(email):\napp/forms.py:4: def validate_name(name):\ntests/test_auth.py:3: def test_validate_token():\nTotal matches: 4",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cd /project && grep -RIn --include='*.py' 'validate' . | sed 's#^\\./##' ; count=$(grep -RIn --include='*.py' 'validate' . | wc -l); printf 'Total matches: %s\\n' \"$count\"",
+      "cd /project && grep -RInE --include='*.py' '^[[:space:]]*def[[:space:]]+[^ (]*validate[^ (]*[[:space:]]*\\(' . | sed 's#^\\./##' ; count=$(grep -RIE --include='*.py' '^[[:space:]]*def[[:space:]]+[^ (]*validate[^ (]*[[:space:]]*\\(' . | wc -l); printf 'Total matches: %s\\n' \"$count\""
+    ],
+    "usage": {
+      "input_tokens": 1278,
+      "output_tokens": 377,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 5793
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cd /project && grep -RIn --include='*.py' 'validate' . | sed 's#^\\./##' ; count=$(grep -RIn --include='*.py' 'validate' . | wc -l); printf 'Total matches: %s\\n' \"$count\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "app/auth.py:1:def validate_token(token):\napp/auth.py:8:    return validate_token(token)\napp/forms.py:1:def validate_email(email):\napp/forms.py:4:def validate_name(name):\napp/forms.py:8:    if validate_email(data['email']):\ntests/test_auth.py:1:from app.auth import validate_token\ntests/test_auth.py:3:def test_validate_token():\ntests/test_auth.py:4:    assert validate_token('abcdefghijk')\ntests/test_auth.py:5:    assert not validate_token('')\nTotal matches: 9\n"
+          },
+          {
+            "commands": "cd /project && grep -RInE --include='*.py' '^[[:space:]]*def[[:space:]]+[^ (]*validate[^ (]*[[:space:]]*\\(' . | sed 's#^\\./##' ; count=$(grep -RIE --include='*.py' '^[[:space:]]*def[[:space:]]+[^ (]*validate[^ (]*[[:space:]]*\\(' . | wc -l); printf 'Total matches: %s\\n' \"$count\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "app/auth.py:1:def validate_token(token):\napp/forms.py:1:def validate_email(email):\napp/forms.py:4:def validate_name(name):\ntests/test_auth.py:3:def test_validate_token():\nTotal matches: 4\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

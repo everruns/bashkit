@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "sysinfo_env_report",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "Print a system report with four lines: 'user: <whoami output>', 'host: <hostname output>', 'cwd: <pwd output>', 'shell: bash'. Use the actual commands to get the values."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "user: eval\nhost: bashkit-eval\ncwd: /home/user\nshell: bash",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "printf 'user: %s\\nhost: %s\\ncwd: %s\\nshell: bash\\n' \"$(whoami)\" \"$(hostname)\" \"$(pwd)\""
+    ],
+    "usage": {
+      "input_tokens": 515,
+      "output_tokens": 89,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 2384
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "printf 'user: %s\\nhost: %s\\ncwd: %s\\nshell: bash\\n' \"$(whoami)\" \"$(hostname)\" \"$(pwd)\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "user: eval\nhost: bashkit-eval\ncwd: /home/user\nshell: bash\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,120 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "pipe_process_sub",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Use process substitution to compare two sorted lists without creating temporary files. /data/installed.txt contains currently installed packages. /data/required.txt contains required packages. Use diff with process substitution (diff <(sort file1) <(sort file2)) to find: 1) packages in installed but not required (to remove), 2) packages in required but not installed (to install). Print 'To install:' followed by missing packages, and 'To remove:' followed by extra packages."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "",
+    "iterations": 10,
+    "tool_calls_count": 10,
+    "tool_calls": [
+      "ls -la /data",
+      "cat /data/installed.txt\necho \"---\"\ncat /data/required.txt",
+      "pwd\nls -la\ngit status 2>&1",
+      "ls -la /\nls -la /home",
+      "ls -la /home/eval",
+      "ps aux",
+      "history | tail -n 20",
+      "diff <(sort /data/installed.txt) <(sort /data/required.txt)",
+      "echo \"To install:\"\ndiff <(sort /data/installed.txt) <(sort /data/required.txt) | grep '^>' | sed 's/^> //'\necho \"To remove:\"\ndiff <(sort /data/installed.txt) <(sort /data/required.txt) | grep '^<' | sed 's/^< //'",
+      "comm -13 <(sort /data/installed.txt) <(sort /data/required.txt)\ncomm -23 <(sort /data/installed.txt) <(sort /data/required.txt)"
+    ],
+    "usage": {
+      "input_tokens": 6821,
+      "output_tokens": 798,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 17271
+    },
+    "metrics": {
+      "natural_stop": 0.0,
+      "tool_calls": 10.0,
+      "tool_calls_err": 2.0,
+      "tool_calls_ok": 8.0,
+      "turns": 10.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /data",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       32 2026-10-09 05:02 installed.txt\n-rw-r--r--       35 2026-10-09 05:02 required.txt\n"
+          },
+          {
+            "commands": "cat /data/installed.txt\necho \"---\"\ncat /data/required.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "curl\ngit\nnginx\nvim\nwget\npython3\n---\ncurl\ngit\nnodejs\npython3\nwget\nredis\n"
+          },
+          {
+            "commands": "pwd\nls -la\ngit status 2>&1",
+            "exit_code": 128,
+            "stderr": "",
+            "stdout": "/home/user\ninternal error: fatal: not a git repository: /home/user\n"
+          },
+          {
+            "commands": "ls -la /\nls -la /home",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "drwxr-xr-x        0 2026-10-09 04:55 bin\ndrwxr-xr-x        0 2026-10-09 05:02 data\ndrwxr-xr-x        0 2026-10-09 05:02 dev\ndrwxr-xr-x        0 2026-10-09 04:55 etc\ndrwxr-xr-x        0 2026-10-09 05:02 home\ndrwxr-xr-x        0 2026-10-09 04:55 proc\ndrwxr-xr-x        0 2026-10-09 04:55 root\ndrwxrwxrwx        0 2026-10-09 05:02 tmp\ndrwxr-xr-x        0 2026-10-09 04:55 usr\ndrwxr-xr-x        0 2026-10-09 05:02 eval\ndrwxr-xr-x        0 2026-10-09 05:02 user\n"
+          },
+          {
+            "commands": "ls -la /home/eval",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "ps aux",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "USER         PID %CPU %MEM    VSZ   RSS TTY      STAT START   TIME COMMAND\neval           1  0.0  0.0      0     0 pts/0    S    00:00   0:00 bash\n"
+          },
+          {
+            "commands": "history | tail -n 20",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "    1  ls -la /data\n    2  cat /data/installed.txt\n    3  echo \"---\"\n    4  cat /data/required.txt\n    5  pwd\n    6  ls -la\n    7  git status 2>&1\n    8  ls -la /\n    9  ls -la /home\n   10  ls -la /home/eval\n   11  ps aux\n"
+          },
+          {
+            "commands": "diff <(sort /data/installed.txt) <(sort /data/required.txt)",
+            "exit_code": 1,
+            "stderr": "",
+            "stdout": "3c3\n< nginx\n---\n> nodejs\n5c5\n< vim\n---\n> redis\n"
+          },
+          {
+            "commands": "echo \"To install:\"\ndiff <(sort /data/installed.txt) <(sort /data/required.txt) | grep '^>' | sed 's/^> //'\necho \"To remove:\"\ndiff <(sort /data/installed.txt) <(sort /data/required.txt) | grep '^<' | sed 's/^< //'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "To install:\nnodejs\nredis\nTo remove:\nnginx\nvim\n"
+          },
+          {
+            "commands": "comm -13 <(sort /data/installed.txt) <(sort /data/required.txt)\ncomm -23 <(sort /data/installed.txt) <(sort /data/required.txt)",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "nodejs\nredis\nnginx\nvim\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

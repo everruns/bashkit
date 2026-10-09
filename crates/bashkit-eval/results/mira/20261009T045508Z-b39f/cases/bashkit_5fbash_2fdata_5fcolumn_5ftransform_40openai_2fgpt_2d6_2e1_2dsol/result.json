@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "data_column_transform",
+  "target": "openai/gpt-6.1-sol",
+  "input": [
+    "Read /data/export.tsv which is tab-separated with columns: id, last_name, first_name, email, department. Convert it to /data/import.csv (comma-separated) with columns reordered to: email, first_name, last_name, department (dropping the id column). Include a header row. Print the result."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Created `/data/import.csv`:\n\n```csv\nemail,first_name,last_name,department\nalice@co.com,Alice,Smith,Eng\nbob@co.com,Bob,Jones,Sales\ncarol@co.com,Carol,Davis,Eng\ndave@co.com,Dave,Wilson,HR\n```",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "ls -l /data/export.tsv; cat /data/export.tsv; command -v ruby; command -v node; command -v awk",
+      "awk 'BEGIN { FS=\"\\t\"; OFS=\",\"; print \"email,first_name,last_name,department\" } function csv(s) { if (s ~ /[\",\\r\\n]/) { gsub(/\"/, \"\\\"\\\"\", s); return \"\\\"\" s \"\\\"\" } return s } NR > 1 { sub(/\\r$/, \"\", $0); print csv($4), csv($3), csv($2), csv($5) }' /data/export.tsv > /data/import.csv\ncat /data/import.csv"
+    ],
+    "usage": {
+      "input_tokens": 1207,
+      "output_tokens": 266,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 7816
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -l /data/export.tsv; cat /data/export.tsv; command -v ruby; command -v node; command -v awk",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--      161 2026-10-09 04:59 /data/export.tsv\nid\tlast_name\tfirst_name\temail\tdepartment\n1\tSmith\tAlice\talice@co.com\tEng\n2\tJones\tBob\tbob@co.com\tSales\n3\tDavis\tCarol\tcarol@co.com\tEng\n4\tWilson\tDave\tdave@co.com\tHR\n/usr/bin/awk\n"
+          },
+          {
+            "commands": "awk 'BEGIN { FS=\"\\t\"; OFS=\",\"; print \"email,first_name,last_name,department\" } function csv(s) { if (s ~ /[\",\\r\\n]/) { gsub(/\"/, \"\\\"\\\"\", s); return \"\\\"\" s \"\\\"\" } return s } NR > 1 { sub(/\\r$/, \"\", $0); print csv($4), csv($3), csv($2), csv($5) }' /data/export.tsv > /data/import.csv\ncat /data/import.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "email,first_name,last_name,department\nalice@co.com,Alice,Smith,Eng\nbob@co.com,Bob,Jones,Sales\ncarol@co.com,Carol,Davis,Eng\ndave@co.com,Dave,Wilson,HR\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

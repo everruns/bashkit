@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "pipe_process_sub",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "Use process substitution to compare two sorted lists without creating temporary files. /data/installed.txt contains currently installed packages. /data/required.txt contains required packages. Use diff with process substitution (diff <(sort file1) <(sort file2)) to find: 1) packages in installed but not required (to remove), 2) packages in required but not installed (to install). Print 'To install:' followed by missing packages, and 'To remove:' followed by extra packages."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "To install:\nnodejs\nredis\nTo remove:\nnginx\nvim",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "diff <(sort /data/installed.txt) <(sort /data/required.txt) | awk '\n/^> / { install[++ni] = substr($0, 3) }\n/^< / { remove[++nr] = substr($0, 3) }\nEND {\n  print \"To install:\"\n  for (i = 1; i <= ni; i++) print install[i]\n  print \"To remove:\"\n  for (i = 1; i <= nr; i++) print remove[i]\n}'"
+    ],
+    "usage": {
+      "input_tokens": 697,
+      "output_tokens": 510,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 9797
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "diff <(sort /data/installed.txt) <(sort /data/required.txt) | awk '\n/^> / { install[++ni] = substr($0, 3) }\n/^< / { remove[++nr] = substr($0, 3) }\nEND {\n  print \"To install:\"\n  for (i = 1; i <= ni; i++) print install[i]\n  print \"To remove:\"\n  for (i = 1; i <= nr; i++) print remove[i]\n}'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "To install:\nnodejs\nredis\nTo remove:\nnginx\nvim\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

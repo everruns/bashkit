@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "build_script_generator",
+  "target": "anthropic/claude-opus-5-5",
+  "input": [
+    "Read /project/deps.txt which lists build targets and their dependencies (format: 'target: dep1 dep2'). Generate /project/build.sh that builds targets in correct dependency order (dependencies before dependents). Then run the build script, which should create each target as a file in /project/out/ containing 'built: <target>'. Print the build order."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I created `/project/build.sh` and ran it. It built all four targets, each one after the things it depends on.\n\n**Build order:**\n1. core\n2. lib\n3. utils\n4. app\n\n`core` depends on nothing. `lib` and `utils` both need only `core`, and `app` needs both `lib` and `utils`. Each target now has a file in `/project/out/` that says `built: <target>`; I checked all four.\n\nThe script reads `deps.txt` each time it runs, so changes to that file are picked up automatically. If the file has a dependency loop or names a target that isn't defined, the script stops with an error instead of building.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat /project/deps.txt; ls -la /project",
+      "cat > /project/build.sh <<'EOF'\n#!/usr/bin/env bash\n# Builds targets from deps.txt in dependency order (DFS topological sort).\nset -euo pipefail\nDIR=\"$(cd \"$(dirname \"$0\")\" && pwd)\"\nDEPS_FILE=\"$DIR/deps.txt\"\nOUT=\"$DIR/out\"\nmkdir -p \"$OUT\"\n\ndeclare -A DEPS STATE\nTARGETS=()\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  [[ -z \"${line// }\" || \"$line\" == \\#* ]] && continue\n  t=\"${line%%:*}\"; t=\"${t// /}\"\n  d=\"${line#*:}\"\n  DEPS[$t]=\"$d\"\n  TARGETS+=(\"$t\")\ndone < \"$DEPS_FILE\"\n\nORDER=()\nvisit() {\n  local n=\"$1\"\n  case \"${STATE[$n]:-}\" in\n    done) return 0 ;;\n    visiting) echo \"Error: dependency cycle detected at '$n'\" >&2; exit 1 ;;\n  esac\n  STATE[$n]=visiting\n  local d\n  for d in ${DEPS[$n]:-}; do\n    if [[ -z \"${DEPS[$d]+x}\" ]]; then\n      echo \"Error: '$n' depends on unknown target '$d'\" >&2; exit 1\n    fi\n    visit \"$d\"\n  done\n  STATE[$n]=done\n  ORDER+=(\"$n\")\n}\nfor t in \"${TARGETS[@]}\"; do visit \"$t\"; done\n\necho \"Build order:\"\ni=1\nfor t in \"${ORDER[@]}\"; do\n  echo \"built: $t\" > \"$OUT/$t\"\n  echo \"  $i. $t\"\n  i=$((i+1))\ndone\nEOF\nchmod +x /project/build.sh\ncd /project && ./build.sh && echo --- && for f in out/*; do echo \"$f: $(cat $f)\"; done"
+    ],
+    "usage": {
+      "input_tokens": 3197,
+      "output_tokens": 1023,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 10015
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /project/deps.txt; ls -la /project",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "app: lib utils\nlib: core\nutils: core\ncore:\n-rw-r--r--       43 2026-10-09 05:04 deps.txt\ndrwxr-xr-x        0 2026-10-09 05:04 src\n"
+          },
+          {
+            "commands": "cat > /project/build.sh <<'EOF'\n#!/usr/bin/env bash\n# Builds targets from deps.txt in dependency order (DFS topological sort).\nset -euo pipefail\nDIR=\"$(cd \"$(dirname \"$0\")\" && pwd)\"\nDEPS_FILE=\"$DIR/deps.txt\"\nOUT=\"$DIR/out\"\nmkdir -p \"$OUT\"\n\ndeclare -A DEPS STATE\nTARGETS=()\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  [[ -z \"${line// }\" || \"$line\" == \\#* ]] && continue\n  t=\"${line%%:*}\"; t=\"${t// /}\"\n  d=\"${line#*:}\"\n  DEPS[$t]=\"$d\"\n  TARGETS+=(\"$t\")\ndone < \"$DEPS_FILE\"\n\nORDER=()\nvisit() {\n  local n=\"$1\"\n  case \"${STATE[$n]:-}\" in\n    done) return 0 ;;\n    visiting) echo \"Error: dependency cycle detected at '$n'\" >&2; exit 1 ;;\n  esac\n  STATE[$n]=visiting\n  local d\n  for d in ${DEPS[$n]:-}; do\n    if [[ -z \"${DEPS[$d]+x}\" ]]; then\n      echo \"Error: '$n' depends on unknown target '$d'\" >&2; exit 1\n    fi\n    visit \"$d\"\n  done\n  STATE[$n]=done\n  ORDER+=(\"$n\")\n}\nfor t in \"${TARGETS[@]}\"; do visit \"$t\"; done\n\necho \"Build order:\"\ni=1\nfor t in \"${ORDER[@]}\"; do\n  echo \"built: $t\" > \"$OUT/$t\"\n  echo \"  $i. $t\"\n  i=$((i+1))\ndone\nEOF\nchmod +x /project/build.sh\ncd /project && ./build.sh && echo --- && for f in out/*; do echo \"$f: $(cat $f)\"; done",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Build order:\n  1. core\n  2. lib\n  3. utils\n  4. app\n---\nout/app: built: app\nout/core: built: core\nout/lib: built: lib\nout/utils: built: utils\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

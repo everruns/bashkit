@@ -1,0 +1,120 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "config_env_template",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Read /config/template.env which has lines like 'KEY=${VALUE:-default}'. For each line, check if the key exists in /config/overrides.txt (format: KEY=value). If it does, use the override value; otherwise use the default from the template. Write the final KEY=value pairs to /app/.env and print the result."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "",
+    "iterations": 10,
+    "tool_calls_count": 10,
+    "tool_calls": [
+      "ls -la /config /app",
+      "ls -la /; ls -la /config",
+      "cat /config/template.env\necho \"--- overrides ---\"\ncat /config/overrides.txt",
+      "cat /config/template.env; echo \"===\"; cat /config/overrides.txt",
+      "od -c /config/template.env\necho \"===\"\nod -c /config/overrides.txt",
+      "which python python3 perl awk sed bash",
+      "mkdir -p /app",
+      "awk -F= '\nNR==FNR {\n    # reading overrides.txt\n    if ($0 ~ /=/) {\n        k = $1\n        # value might contain =\n        v = substr($0, length(k) + 2)\n        override[k] = v\n        has_override[k] = 1\n    }\n    next\n}\n{\n    # reading template.env\n    # lines like KEY=${VALUE:-default}\n    # let us parse KEY and default\n    if ($0 ~ /^[A-Za-z0-9_]+=/) {\n        k = $1\n        rest = substr($0, length(k) + 2)\n        # rest is ${VALUE:-default}\n        # extract default: find :- and closing }\n        sub(/^\\$\\{[^:]*:-/, \"\", rest)\n        sub(/\\}$/, \"\", rest)\n        if (has_override[k]) {\n            val = override[k]\n        } else {\n            val = rest\n        }\n        print k \"=\" val\n    }\n}\n' /config/overrides.txt /config/template.env",
+      "awk -F= '\nNR==FNR {\n    if ($0 ~ /=/) {\n        k = $1\n        v = substr($0, length(k) + 2)\n        override[k] = v\n        has_override[k] = 1\n    }\n    next\n}\n{\n    if ($0 ~ /^[A-Za-z0-9_]+=/) {\n        k = $1\n        rest = substr($0, length(k) + 2)\n        sub(/^\\$\\{[^:]*:-/, \"\", rest)\n        sub(/\\}$/, \"\", rest)\n        if (has_override[k]) {\n            val = override[k]\n        } else {\n            val = rest\n        }\n        print k \"=\" val\n    }\n}\n' /config/overrides.txt /config/template.env > /app/.env\n\ncat /app/.env",
+      "ls -la /app/.env"
+    ],
+    "usage": {
+      "input_tokens": 9923,
+      "output_tokens": 923,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 22696
+    },
+    "metrics": {
+      "natural_stop": 0.0,
+      "tool_calls": 10.0,
+      "tool_calls_err": 2.0,
+      "tool_calls_ok": 8.0,
+      "turns": 10.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /config /app",
+            "exit_code": 2,
+            "stderr": "ls: cannot access '/app': No such file or directory\n",
+            "stdout": ""
+          },
+          {
+            "commands": "ls -la /; ls -la /config",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "drwxr-xr-x        0 2026-10-09 04:55 bin\ndrwxr-xr-x        0 2026-10-09 05:04 config\ndrwxr-xr-x        0 2026-10-09 05:04 dev\ndrwxr-xr-x        0 2026-10-09 04:55 etc\ndrwxr-xr-x        0 2026-10-09 05:04 home\ndrwxr-xr-x        0 2026-10-09 04:55 proc\ndrwxr-xr-x        0 2026-10-09 04:55 root\ndrwxrwxrwx        0 2026-10-09 05:04 tmp\ndrwxr-xr-x        0 2026-10-09 04:55 usr\n-rw-r--r--       40 2026-10-09 05:04 overrides.txt\n-rw-r--r--      157 2026-10-09 05:04 template.env\n"
+          },
+          {
+            "commands": "cat /config/template.env\necho \"--- overrides ---\"\ncat /config/overrides.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "DB_HOST=${DB_HOST:-localhost}\nDB_PORT=${DB_PORT:-5432}\nDB_NAME=${DB_NAME:-myapp}\nREDIS_URL=${REDIS_URL:-redis://localhost:6379}\nLOG_LEVEL=${LOG_LEVEL:-info}\n--- overrides ---\nDB_HOST=db.prod.internal\nLOG_LEVEL=warn\n"
+          },
+          {
+            "commands": "cat /config/template.env; echo \"===\"; cat /config/overrides.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "DB_HOST=${DB_HOST:-localhost}\nDB_PORT=${DB_PORT:-5432}\nDB_NAME=${DB_NAME:-myapp}\nREDIS_URL=${REDIS_URL:-redis://localhost:6379}\nLOG_LEVEL=${LOG_LEVEL:-info}\n===\nDB_HOST=db.prod.internal\nLOG_LEVEL=warn\n"
+          },
+          {
+            "commands": "od -c /config/template.env\necho \"===\"\nod -c /config/overrides.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "0000000   D   B   _   H   O   S   T   =   $   {   D   B   _   H   O   S\n0000020   T   :   -   l   o   c   a   l   h   o   s   t   }  \\n   D   B\n0000040   _   P   O   R   T   =   $   {   D   B   _   P   O   R   T   :\n0000060   -   5   4   3   2   }  \\n   D   B   _   N   A   M   E   =   $\n0000100   {   D   B   _   N   A   M   E   :   -   m   y   a   p   p   }\n0000120  \\n   R   E   D   I   S   _   U   R   L   =   $   {   R   E   D\n0000140   I   S   _   U   R   L   :   -   r   e   d   i   s   :   /   /\n0000160   l   o   c   a   l   h   o   s   t   :   6   3   7   9   }  \\n\n0000200   L   O   G   _   L   E   V   E   L   =   $   {   L   O   G   _\n0000220   L   E   V   E   L   :   -   i   n   f   o   }  \\n\n0000235\n===\n0000000   D   B   _   H   O   S   T   =   d   b   .   p   r   o   d   .\n0000020   i   n   t   e   r   n   a   l  \\n   L   O   G   _   L   E   V\n0000040   E   L   =   w   a   r   n  \\n\n0000050\n"
+          },
+          {
+            "commands": "which python python3 perl awk sed bash",
+            "exit_code": 1,
+            "stderr": "",
+            "stdout": "/usr/bin/awk\n/usr/bin/sed\n/usr/bin/bash\n"
+          },
+          {
+            "commands": "mkdir -p /app",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "awk -F= '\nNR==FNR {\n    # reading overrides.txt\n    if ($0 ~ /=/) {\n        k = $1\n        # value might contain =\n        v = substr($0, length(k) + 2)\n        override[k] = v\n        has_override[k] = 1\n    }\n    next\n}\n{\n    # reading template.env\n    # lines like KEY=${VALUE:-default}\n    # let us parse KEY and default\n    if ($0 ~ /^[A-Za-z0-9_]+=/) {\n        k = $1\n        rest = substr($0, length(k) + 2)\n        # rest is ${VALUE:-default}\n        # extract default: find :- and closing }\n        sub(/^\\$\\{[^:]*:-/, \"\", rest)\n        sub(/\\}$/, \"\", rest)\n        if (has_override[k]) {\n            val = override[k]\n        } else {\n            val = rest\n        }\n        print k \"=\" val\n    }\n}\n' /config/overrides.txt /config/template.env",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "DB_HOST=db.prod.internal\nDB_PORT=5432\nDB_NAME=myapp\nREDIS_URL=redis://localhost:6379\nLOG_LEVEL=warn\n"
+          },
+          {
+            "commands": "awk -F= '\nNR==FNR {\n    if ($0 ~ /=/) {\n        k = $1\n        v = substr($0, length(k) + 2)\n        override[k] = v\n        has_override[k] = 1\n    }\n    next\n}\n{\n    if ($0 ~ /^[A-Za-z0-9_]+=/) {\n        k = $1\n        rest = substr($0, length(k) + 2)\n        sub(/^\\$\\{[^:]*:-/, \"\", rest)\n        sub(/\\}$/, \"\", rest)\n        if (has_override[k]) {\n            val = override[k]\n        } else {\n            val = rest\n        }\n        print k \"=\" val\n    }\n}\n' /config/overrides.txt /config/template.env > /app/.env\n\ncat /app/.env",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "DB_HOST=db.prod.internal\nDB_PORT=5432\nDB_NAME=myapp\nREDIS_URL=redis://localhost:6379\nLOG_LEVEL=warn\n"
+          },
+          {
+            "commands": "ls -la /app/.env",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--      100 2026-10-09 05:04 /app/.env\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

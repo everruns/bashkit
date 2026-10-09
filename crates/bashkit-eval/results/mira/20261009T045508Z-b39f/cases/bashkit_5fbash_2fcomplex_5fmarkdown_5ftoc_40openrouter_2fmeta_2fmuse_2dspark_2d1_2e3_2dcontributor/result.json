@@ -1,0 +1,92 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_markdown_toc",
+  "target": "openrouter/meta/muse-spark-1.3-contributor",
+  "input": [
+    "Read /doc/README.md and generate a table of contents from its headings (lines starting with # or ##). Insert the TOC after the first heading, formatted as a markdown list with '- [Heading Text](#anchor)' where anchor is the heading text lowercased with spaces replaced by hyphens. Write the result back to the file."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "TOC inserted into `/doc/README.md` after the first heading:\n\n```markdown\n# Project Alpha\n\n- [Project Alpha](#project-alpha)\n- [Installation](#installation)\n- [Usage](#usage)\n- [API Reference](#api-reference)\n- [Contributing](#contributing)\n\nIntroduction to the project.\n\n## Installation\n\nRun the installer.\n\n## Usage\n\nHow to use it.\n\n## API Reference\n\nEndpoint documentation.\n\n## Contributing\n\nPR guidelines.\n```\n\nAll headings (`#`/`##` lines) were converted to `- [Text](#anchor)` with anchors lowercased and spaces replaced by hyphens, and the result was written back to the file.",
+    "iterations": 7,
+    "tool_calls_count": 6,
+    "tool_calls": [
+      "cat /doc/README.md; echo \"---EXIT---\"; ls -l /doc/README.md",
+      "ls -R /doc 2>&1; echo \"---\"; cat -A /doc/README.md",
+      "cat /doc/README.md\necho \"===\"\ngrep '^#' /doc/README.md | cat -A",
+      "file=\"/doc/README.md\"\n# Find first heading line number\nfirst=$(grep -n -m1 '^#' \"$file\" | cut -d: -f1)\necho \"first heading line: $first\"\n# Generate TOC\ngrep '^#' \"$file\" | while IFS= read -r line; do\n  text=$(echo \"$line\" | sed -E 's/^#+ *//; s/[[:space:]]*$//')\n  anchor=$(echo \"$text\" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')\n  echo \"- [$text](#$anchor)\"\ndone | tee /tmp/toc.txt\necho \"---TOC GENERATED---\"\ncat /tmp/toc.txt",
+      "nl -ba /doc/README.md | cat -A\necho \"---\"\nwc -l /doc/README.md",
+      "file=\"/doc/README.md\"\ntoc=\"/tmp/toc.txt\"\n# Regenerate TOC to be safe (overwrite)\ngrep '^#' \"$file\" | while IFS= read -r line; do\n  text=$(echo \"$line\" | sed -E 's/^#+ *//; s/[[:space:]]*$//')\n  anchor=$(echo \"$text\" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')\n  echo \"- [$text](#$anchor)\"\ndone > \"$toc\"\ncat \"$toc\"\necho \"---\"\nfirst=$(grep -n -m1 '^#' \"$file\" | cut -d: -f1)\necho \"first=$first\"\n\n# Build new file: heading + blank + TOC + blank + rest (without duplicate blank)\nhead -n \"$first\" \"$file\" > /tmp/new.md\necho \"\" >> /tmp/new.md\ncat \"$toc\" >> /tmp/new.md\necho \"\" >> /tmp/new.md\n# tail from first+1, strip a single leading blank line if present to avoid double blank\ntail -n +\"$((first+1))\" \"$file\" | sed -e '1{/^$/d}' >> /tmp/new.md\n\necho \"=== NEW FILE ===\"\ncat /tmp/new.md\necho \"=== CAT -A ===\"\ncat -A /tmp/new.md\n\ncat /tmp/new.md > \"$file\"\necho \"=== WRITTEN ===\"\ncat /doc/README.md"
+    ],
+    "usage": {
+      "input_tokens": 9846,
+      "output_tokens": 7991,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 100073
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 6.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 6.0,
+      "turns": 7.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /doc/README.md; echo \"---EXIT---\"; ls -l /doc/README.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Project Alpha\n\nIntroduction to the project.\n\n## Installation\n\nRun the installer.\n\n## Usage\n\nHow to use it.\n\n## API Reference\n\nEndpoint documentation.\n\n## Contributing\n\nPR guidelines.\n---EXIT---\n-rw-r--r--      185 2026-10-09 04:58 /doc/README.md\n"
+          },
+          {
+            "commands": "ls -R /doc 2>&1; echo \"---\"; cat -A /doc/README.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/doc:\nREADME.md\n---\n# Project Alpha$\n$\nIntroduction to the project.$\n$\n## Installation$\n$\nRun the installer.$\n$\n## Usage$\n$\nHow to use it.$\n$\n## API Reference$\n$\nEndpoint documentation.$\n$\n## Contributing$\n$\nPR guidelines.$\n"
+          },
+          {
+            "commands": "cat /doc/README.md\necho \"===\"\ngrep '^#' /doc/README.md | cat -A",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Project Alpha\n\nIntroduction to the project.\n\n## Installation\n\nRun the installer.\n\n## Usage\n\nHow to use it.\n\n## API Reference\n\nEndpoint documentation.\n\n## Contributing\n\nPR guidelines.\n===\n# Project Alpha$\n## Installation$\n## Usage$\n## API Reference$\n## Contributing$\n"
+          },
+          {
+            "commands": "file=\"/doc/README.md\"\n# Find first heading line number\nfirst=$(grep -n -m1 '^#' \"$file\" | cut -d: -f1)\necho \"first heading line: $first\"\n# Generate TOC\ngrep '^#' \"$file\" | while IFS= read -r line; do\n  text=$(echo \"$line\" | sed -E 's/^#+ *//; s/[[:space:]]*$//')\n  anchor=$(echo \"$text\" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')\n  echo \"- [$text](#$anchor)\"\ndone | tee /tmp/toc.txt\necho \"---TOC GENERATED---\"\ncat /tmp/toc.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "first heading line: 1\n- [Project Alpha](#project-alpha)\n- [Installation](#installation)\n- [Usage](#usage)\n- [API Reference](#api-reference)\n- [Contributing](#contributing)\n---TOC GENERATED---\n- [Project Alpha](#project-alpha)\n- [Installation](#installation)\n- [Usage](#usage)\n- [API Reference](#api-reference)\n- [Contributing](#contributing)\n"
+          },
+          {
+            "commands": "nl -ba /doc/README.md | cat -A\necho \"---\"\nwc -l /doc/README.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "     1^I# Project Alpha$\n     2^I$\n     3^IIntroduction to the project.$\n     4^I$\n     5^I## Installation$\n     6^I$\n     7^IRun the installer.$\n     8^I$\n     9^I## Usage$\n    10^I$\n    11^IHow to use it.$\n    12^I$\n    13^I## API Reference$\n    14^I$\n    15^IEndpoint documentation.$\n    16^I$\n    17^I## Contributing$\n    18^I$\n    19^IPR guidelines.$\n---\n19 /doc/README.md\n"
+          },
+          {
+            "commands": "file=\"/doc/README.md\"\ntoc=\"/tmp/toc.txt\"\n# Regenerate TOC to be safe (overwrite)\ngrep '^#' \"$file\" | while IFS= read -r line; do\n  text=$(echo \"$line\" | sed -E 's/^#+ *//; s/[[:space:]]*$//')\n  anchor=$(echo \"$text\" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')\n  echo \"- [$text](#$anchor)\"\ndone > \"$toc\"\ncat \"$toc\"\necho \"---\"\nfirst=$(grep -n -m1 '^#' \"$file\" | cut -d: -f1)\necho \"first=$first\"\n\n# Build new file: heading + blank + TOC + blank + rest (without duplicate blank)\nhead -n \"$first\" \"$file\" > /tmp/new.md\necho \"\" >> /tmp/new.md\ncat \"$toc\" >> /tmp/new.md\necho \"\" >> /tmp/new.md\n# tail from first+1, strip a single leading blank line if present to avoid double blank\ntail -n +\"$((first+1))\" \"$file\" | sed -e '1{/^$/d}' >> /tmp/new.md\n\necho \"=== NEW FILE ===\"\ncat /tmp/new.md\necho \"=== CAT -A ===\"\ncat -A /tmp/new.md\n\ncat /tmp/new.md > \"$file\"\necho \"=== WRITTEN ===\"\ncat /doc/README.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "- [Project Alpha](#project-alpha)\n- [Installation](#installation)\n- [Usage](#usage)\n- [API Reference](#api-reference)\n- [Contributing](#contributing)\n---\nfirst=1\n=== NEW FILE ===\n# Project Alpha\n\n- [Project Alpha](#project-alpha)\n- [Installation](#installation)\n- [Usage](#usage)\n- [API Reference](#api-reference)\n- [Contributing](#contributing)\n\nIntroduction to the project.\n\n## Installation\n\nRun the installer.\n\n## Usage\n\nHow to use it.\n\n## API Reference\n\nEndpoint documentation.\n\n## Contributing\n\nPR guidelines.\n=== CAT -A ===\n# Project Alpha$\n$\n- [Project Alpha](#project-alpha)$\n- [Installation](#installation)$\n- [Usage](#usage)$\n- [API Reference](#api-reference)$\n- [Contributing](#contributing)$\n$\nIntroduction to the project.$\n$\n## Installation$\n$\nRun the installer.$\n$\n## Usage$\n$\nHow to use it.$\n$\n## API Reference$\n$\nEndpoint documentation.$\n$\n## Contributing$\n$\nPR guidelines.$\n=== WRITTEN ===\n# Project Alpha\n\n- [Project Alpha](#project-alpha)\n- [Installation](#installation)\n- [Usage](#usage)\n- [API Reference](#api-reference)\n- [Contributing](#contributing)\n\nIntroduction to the project.\n\n## Installation\n\nRun the installer.\n\n## Usage\n\nHow to use it.\n\n## API Reference\n\nEndpoint documentation.\n\n## Contributing\n\nPR guidelines.\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

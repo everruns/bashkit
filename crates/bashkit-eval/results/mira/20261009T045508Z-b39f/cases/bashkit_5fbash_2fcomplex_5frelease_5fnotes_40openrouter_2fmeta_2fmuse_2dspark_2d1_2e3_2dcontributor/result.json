@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_release_notes",
+  "target": "openrouter/meta/muse-spark-1.3-contributor",
+  "input": [
+    "Read /data/commits.log containing conventional commit messages (one per line, format: 'type(scope): message'). Parse each line, group by type, and generate /release/CHANGELOG.md with sections: '## Features' for 'feat' commits, '## Bug Fixes' for 'fix' commits, and '## Other' for all remaining types. Under each section list items as '- scope: message'. Print the generated changelog."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "8/8 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Generated `/release/CHANGELOG.md`:\n\n```\n## Features\n- auth: add OAuth2 support\n- ui: dark mode toggle\n- api: add pagination support\n- db: add connection pooling\n\n## Bug Fixes\n- api: handle null response body\n- auth: token refresh race condition\n- ui: button alignment on mobile\n- api: correct status code for 404\n\n## Other\n- deps: update lodash to 4.17.21\n- readme: update install instructions\n```\n",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat /data/commits.log; echo \"---EXIT:$?---\"; ls -R /data 2>&1; ls -R /release 2>&1 || echo \"no release dir\"",
+      "mkdir -p /release\nawk '\n{\n  # match type(scope): message\n  # find positions\n  line=$0\n  # extract type: before \"(\"\n  p1=index(line, \"(\")\n  p2=index(line, \"):\")\n  if (p1>0 && p2>p1) {\n    type=substr(line,1,p1-1)\n    scope=substr(line,p1+1,p2-p1-1)\n    message=substr(line,p2+2)\n    # trim leading spaces/colon spaces\n    sub(/^:[[:space:]]*/, \"\", message)\n    sub(/^[[:space:]]+/, \"\", message)\n    sub(/^[[:space:]]+/, \"\", type)\n    sub(/[[:space:]]+$/, \"\", type)\n    item=\"- \" scope \": \" message\n    if (type==\"feat\") {\n      feats[++nf]=item\n    } else if (type==\"fix\") {\n      fixes[++nx]=item\n    } else {\n      others[++no]=item\n    }\n  }\n}\nEND {\n  print \"## Features\" > \"/release/CHANGELOG.md\"\n  for (i=1;i<=nf;i++) print feats[i] >> \"/release/CHANGELOG.md\"\n  print \"\" >> \"/release/CHANGELOG.md\"\n  print \"## Bug Fixes\" >> \"/release/CHANGELOG.md\"\n  for (i=1;i<=nx;i++) print fixes[i] >> \"/release/CHANGELOG.md\"\n  print \"\" >> \"/release/CHANGELOG.md\"\n  print \"## Other\" >> \"/release/CHANGELOG.md\"\n  for (i=1;i<=no;i++) print others[i] >> \"/release/CHANGELOG.md\"\n}\n' /data/commits.log\ncat /release/CHANGELOG.md"
+    ],
+    "usage": {
+      "input_tokens": 3326,
+      "output_tokens": 1986,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 18564
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /data/commits.log; echo \"---EXIT:$?---\"; ls -R /data 2>&1; ls -R /release 2>&1 || echo \"no release dir\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "feat(auth): add OAuth2 support\nfix(api): handle null response body\nfeat(ui): dark mode toggle\nchore(deps): update lodash to 4.17.21\nfix(auth): token refresh race condition\nfeat(api): add pagination support\nfix(ui): button alignment on mobile\ndocs(readme): update install instructions\nfeat(db): add connection pooling\nfix(api): correct status code for 404\n---EXIT:0---\n/data:\ncommits.log\nls: cannot access '/release': No such file or directory\nno release dir\n"
+          },
+          {
+            "commands": "mkdir -p /release\nawk '\n{\n  # match type(scope): message\n  # find positions\n  line=$0\n  # extract type: before \"(\"\n  p1=index(line, \"(\")\n  p2=index(line, \"):\")\n  if (p1>0 && p2>p1) {\n    type=substr(line,1,p1-1)\n    scope=substr(line,p1+1,p2-p1-1)\n    message=substr(line,p2+2)\n    # trim leading spaces/colon spaces\n    sub(/^:[[:space:]]*/, \"\", message)\n    sub(/^[[:space:]]+/, \"\", message)\n    sub(/^[[:space:]]+/, \"\", type)\n    sub(/[[:space:]]+$/, \"\", type)\n    item=\"- \" scope \": \" message\n    if (type==\"feat\") {\n      feats[++nf]=item\n    } else if (type==\"fix\") {\n      fixes[++nx]=item\n    } else {\n      others[++no]=item\n    }\n  }\n}\nEND {\n  print \"## Features\" > \"/release/CHANGELOG.md\"\n  for (i=1;i<=nf;i++) print feats[i] >> \"/release/CHANGELOG.md\"\n  print \"\" >> \"/release/CHANGELOG.md\"\n  print \"## Bug Fixes\" >> \"/release/CHANGELOG.md\"\n  for (i=1;i<=nx;i++) print fixes[i] >> \"/release/CHANGELOG.md\"\n  print \"\" >> \"/release/CHANGELOG.md\"\n  print \"## Other\" >> \"/release/CHANGELOG.md\"\n  for (i=1;i<=no;i++) print others[i] >> \"/release/CHANGELOG.md\"\n}\n' /data/commits.log\ncat /release/CHANGELOG.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "## Features\n- auth: add OAuth2 support\n- ui: dark mode toggle\n- api: add pagination support\n- db: add connection pooling\n\n## Bug Fixes\n- api: handle null response body\n- auth: token refresh race condition\n- ui: button alignment on mobile\n- api: correct status code for 404\n\n## Other\n- deps: update lodash to 4.17.21\n- readme: update install instructions\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

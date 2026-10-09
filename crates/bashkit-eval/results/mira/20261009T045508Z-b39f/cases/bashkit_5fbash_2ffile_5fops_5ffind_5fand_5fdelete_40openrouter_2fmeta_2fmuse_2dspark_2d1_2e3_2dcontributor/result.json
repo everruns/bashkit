@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "file_ops_find_and_delete",
+  "target": "openrouter/meta/muse-spark-1.3-contributor",
+  "input": [
+    "Find all .tmp files under /workspace and delete them. Print the number of .tmp files deleted."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Deleted 3 .tmp files under /workspace:\n\n- /workspace/a.tmp\n- /workspace/sub/c.tmp\n- /workspace/sub/deep/d.tmp\n\n**Number of .tmp files deleted: 3**\n",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "ls -R /workspace 2>&1 | head -n 200; echo \"---\"; find /workspace -type f -name \"*.tmp\" 2>&1 | head -n 100",
+      "find /workspace -type f -name \"*.tmp\" -print -delete | tee /tmp/deleted_list.txt; echo \"---COUNT---\"; wc -l < /tmp/deleted_list.txt; echo \"---VERIFY---\"; find /workspace -type f -name \"*.tmp\" 2>&1; ls -R /workspace"
+    ],
+    "usage": {
+      "input_tokens": 2638,
+      "output_tokens": 599,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 8063
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -R /workspace 2>&1 | head -n 200; echo \"---\"; find /workspace -type f -name \"*.tmp\" 2>&1 | head -n 100",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/workspace:\na.tmp\nb.txt\nsub\n\n/workspace/sub:\nc.tmp\ndeep\n\n/workspace/sub/deep:\nd.tmp\ne.log\n---\n/workspace/a.tmp\n/workspace/sub/c.tmp\n/workspace/sub/deep/d.tmp\n"
+          },
+          {
+            "commands": "find /workspace -type f -name \"*.tmp\" -print -delete | tee /tmp/deleted_list.txt; echo \"---COUNT---\"; wc -l < /tmp/deleted_list.txt; echo \"---VERIFY---\"; find /workspace -type f -name \"*.tmp\" 2>&1; ls -R /workspace",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/workspace/a.tmp\n/workspace/sub/c.tmp\n/workspace/sub/deep/d.tmp\n---COUNT---\n3\n---VERIFY---\n/workspace:\nb.txt\nsub\n\n/workspace/sub:\ndeep\n\n/workspace/sub/deep:\ne.log\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

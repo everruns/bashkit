@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "text_log_error_count",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "From the file /var/log/app.log, extract all lines containing the word ERROR and print the total count of ERROR lines."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "2024-01-01 08:05:12 ERROR Connection refused to database  \n2024-01-01 08:05:20 ERROR Timeout waiting for response  \n2024-01-01 09:15:33 ERROR Disk space critical  \n\nTotal: 3 ERROR lines.",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "grep 'ERROR' /var/log/app.log | tee /dev/stderr | wc -l"
+    ],
+    "usage": {
+      "input_tokens": 492,
+      "output_tokens": 164,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 4005
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "grep 'ERROR' /var/log/app.log | tee /dev/stderr | wc -l",
+            "exit_code": 0,
+            "stderr": "2024-01-01 08:05:12 ERROR Connection refused to database\n2024-01-01 08:05:20 ERROR Timeout waiting for response\n2024-01-01 09:15:33 ERROR Disk space critical\n",
+            "stdout": "3\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

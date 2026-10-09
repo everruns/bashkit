@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "script_health_check",
+  "target": "openai/gpt-6.1-sol",
+  "input": [
+    "Write /scripts/healthcheck.sh that checks three conditions: 1) /app/config.json exists and contains valid JSON, 2) /var/log directory exists, 3) /app/data directory contains at least 2 files. For each check print 'PASS: <description>' or 'FAIL: <description>'. Exit 0 if all checks pass, exit 1 if any fail. Then run the script."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Created and ran `/scripts/healthcheck.sh`.\n\n```text\nPASS: /app/config.json exists and contains valid JSON\nPASS: /var/log directory exists\nPASS: /app/data directory contains at least 2 files\n```\n\nExit code: `0`.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "command -v jq; command -v node; command -v ruby; ls -ld /scripts /app /var/log 2>/dev/null; command -v find",
+      "mkdir -p /scripts\ncat > /scripts/healthcheck.sh <<'EOF'\n#!/bin/bash\n\nstatus=0\n\nif [[ -f /app/config.json ]] && jq -e -s 'length == 1' /app/config.json >/dev/null 2>&1; then\n    echo 'PASS: /app/config.json exists and contains valid JSON'\nelse\n    echo 'FAIL: /app/config.json exists and contains valid JSON'\n    status=1\nfi\n\nif [[ -d /var/log ]]; then\n    echo 'PASS: /var/log directory exists'\nelse\n    echo 'FAIL: /var/log directory exists'\n    status=1\nfi\n\nfile_count=0\nif [[ -d /app/data ]]; then\n    file_count=$(find /app/data -maxdepth 1 -type f -printf 'x' 2>/dev/null | wc -c)\nfi\nif (( file_count >= 2 )); then\n    echo 'PASS: /app/data directory contains at least 2 files'\nelse\n    echo 'FAIL: /app/data directory contains at least 2 files'\n    status=1\nfi\n\nexit \"$status\"\nEOF\nchmod +x /scripts/healthcheck.sh\n/scripts/healthcheck.sh"
+    ],
+    "usage": {
+      "input_tokens": 1249,
+      "output_tokens": 487,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 12062
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "command -v jq; command -v node; command -v ruby; ls -ld /scripts /app /var/log 2>/dev/null; command -v find",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/usr/bin/jq\n/usr/bin/find\n"
+          },
+          {
+            "commands": "mkdir -p /scripts\ncat > /scripts/healthcheck.sh <<'EOF'\n#!/bin/bash\n\nstatus=0\n\nif [[ -f /app/config.json ]] && jq -e -s 'length == 1' /app/config.json >/dev/null 2>&1; then\n    echo 'PASS: /app/config.json exists and contains valid JSON'\nelse\n    echo 'FAIL: /app/config.json exists and contains valid JSON'\n    status=1\nfi\n\nif [[ -d /var/log ]]; then\n    echo 'PASS: /var/log directory exists'\nelse\n    echo 'FAIL: /var/log directory exists'\n    status=1\nfi\n\nfile_count=0\nif [[ -d /app/data ]]; then\n    file_count=$(find /app/data -maxdepth 1 -type f -printf 'x' 2>/dev/null | wc -c)\nfi\nif (( file_count >= 2 )); then\n    echo 'PASS: /app/data directory contains at least 2 files'\nelse\n    echo 'FAIL: /app/data directory contains at least 2 files'\n    status=1\nfi\n\nexit \"$status\"\nEOF\nchmod +x /scripts/healthcheck.sh\n/scripts/healthcheck.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "PASS: /app/config.json exists and contains valid JSON\nPASS: /var/log directory exists\nPASS: /app/data directory contains at least 2 files\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

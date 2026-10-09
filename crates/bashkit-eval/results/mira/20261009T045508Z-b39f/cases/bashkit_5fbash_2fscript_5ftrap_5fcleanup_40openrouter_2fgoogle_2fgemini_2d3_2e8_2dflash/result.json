@@ -1,0 +1,92 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "script_trap_cleanup",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Write a bash script /scripts/deploy.sh that: 1) Creates a temp directory using mktemp -d and stores path in TMPDIR. 2) Sets a trap on EXIT that removes the temp directory and prints 'Cleanup: removed temp dir'. 3) Copies /app/config.json to the temp dir. 4) Simulates work by creating /app/deploy.log with the line 'deployed at TMPDIR_PATH' (using actual path). 5) Exits with code 0. Run the script. After it runs, verify the temp directory was cleaned up by checking it no longer exists, and verify /app/deploy.log exists."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "The script `/scripts/deploy.sh` has been created and verified.\n\n### Implementation Details\n- Created `/scripts/deploy.sh` with permissions `+x`.\n- Creates a temporary directory using `TMPDIR=$(mktemp -d)`.\n- Traps the `EXIT` signal to remove `$TMPDIR` and print `Cleanup: removed temp dir`.\n- Copies `/app/config.json` into `$TMPDIR`.\n- Writes `deployed at $TMPDIR` to `/app/deploy.log`.\n- Exits with status code `0`.\n\n### Verification Results\n1. Executed `/scripts/deploy.sh`:\n   - Output: `Cleanup: removed temp dir`\n   - Exit code: `0`\n2. Verified log contents: `/app/deploy.log` contains `deployed at /tmp/tmp.wvKxdaB11G`.\n3. Verified cleanup: Checked `/tmp/tmp.wvKxdaB11G`, confirming the temporary directory no longer exists.\n4. Verified existence: Confirmed `/app/deploy.log` exists.",
+    "iterations": 7,
+    "tool_calls_count": 6,
+    "tool_calls": [
+      "ls -la /\nls -la /app || true\nls -la /scripts || true",
+      "ls -la /app",
+      "mkdir -p /scripts\ncat << 'EOF' > /scripts/deploy.sh\n#!/bin/bash\nset -e\n\nTMPDIR=$(mktemp -d)\ntrap 'rm -rf \"$TMPDIR\"; echo \"Cleanup: removed temp dir\"' EXIT\n\ncp /app/config.json \"$TMPDIR/\"\necho \"deployed at $TMPDIR\" > /app/deploy.log\nexit 0\nEOF\n\nchmod +x /scripts/deploy.sh",
+      "/scripts/deploy.sh",
+      "cat /app/deploy.log\nDEPLOYED_PATH=$(cat /app/deploy.log | sed 's/deployed at //')\necho \"Extracted path: $DEPLOYED_PATH\"\nif [ ! -e \"$DEPLOYED_PATH\" ]; then\n    echo \"Verification success: Temp directory no longer exists.\"\nelse\n    echo \"Verification failed: Temp directory still exists.\"\nfi\nif [ -f /app/deploy.log ]; then\n    echo \"Verification success: /app/deploy.log exists.\"\nelse\n    echo \"Verification failed: /app/deploy.log does not exist.\"\nfi",
+      "cat /scripts/deploy.sh"
+    ],
+    "usage": {
+      "input_tokens": 5147,
+      "output_tokens": 1379,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 16572
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 6.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 6.0,
+      "turns": 7.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /\nls -la /app || true\nls -la /scripts || true",
+            "exit_code": 0,
+            "stderr": "ls: cannot access '/scripts': No such file or directory\n",
+            "stdout": "drwxr-xr-x        0 2026-10-09 05:01 app\ndrwxr-xr-x        0 2026-10-09 04:55 bin\ndrwxr-xr-x        0 2026-10-09 05:01 dev\ndrwxr-xr-x        0 2026-10-09 04:55 etc\ndrwxr-xr-x        0 2026-10-09 05:01 home\ndrwxr-xr-x        0 2026-10-09 04:55 proc\ndrwxr-xr-x        0 2026-10-09 04:55 root\ndrwxrwxrwx        0 2026-10-09 05:01 tmp\ndrwxr-xr-x        0 2026-10-09 04:55 usr\n-rw-r--r--       36 2026-10-09 05:01 config.json\n"
+          },
+          {
+            "commands": "ls -la /app",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       36 2026-10-09 05:01 config.json\n"
+          },
+          {
+            "commands": "mkdir -p /scripts\ncat << 'EOF' > /scripts/deploy.sh\n#!/bin/bash\nset -e\n\nTMPDIR=$(mktemp -d)\ntrap 'rm -rf \"$TMPDIR\"; echo \"Cleanup: removed temp dir\"' EXIT\n\ncp /app/config.json \"$TMPDIR/\"\necho \"deployed at $TMPDIR\" > /app/deploy.log\nexit 0\nEOF\n\nchmod +x /scripts/deploy.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "/scripts/deploy.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Cleanup: removed temp dir\n"
+          },
+          {
+            "commands": "cat /app/deploy.log\nDEPLOYED_PATH=$(cat /app/deploy.log | sed 's/deployed at //')\necho \"Extracted path: $DEPLOYED_PATH\"\nif [ ! -e \"$DEPLOYED_PATH\" ]; then\n    echo \"Verification success: Temp directory no longer exists.\"\nelse\n    echo \"Verification failed: Temp directory still exists.\"\nfi\nif [ -f /app/deploy.log ]; then\n    echo \"Verification success: /app/deploy.log exists.\"\nelse\n    echo \"Verification failed: /app/deploy.log does not exist.\"\nfi",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "deployed at /tmp/tmp.wvKxdaB11G\nExtracted path: /tmp/tmp.wvKxdaB11G\nVerification success: Temp directory no longer exists.\nVerification success: /app/deploy.log exists.\n"
+          },
+          {
+            "commands": "cat /scripts/deploy.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "#!/bin/bash\nset -e\n\nTMPDIR=$(mktemp -d)\ntrap 'rm -rf \"$TMPDIR\"; echo \"Cleanup: removed temp dir\"' EXIT\n\ncp /app/config.json \"$TMPDIR/\"\necho \"deployed at $TMPDIR\" > /app/deploy.log\nexit 0\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

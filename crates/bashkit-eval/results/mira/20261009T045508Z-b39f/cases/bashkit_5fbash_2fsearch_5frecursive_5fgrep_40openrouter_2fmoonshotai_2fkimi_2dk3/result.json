@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "search_recursive_grep",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Search all .py files under /project for functions that contain the word 'validate'. For each match, print the filename and line number in the format 'filename:linenum: matched_line'. Then count the total number of matches and print 'Total matches: N'."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Here are the results — **9 matches** for `validate` across the 4 Python files in `/project`:\n\n| File | Line | Matched Line |\n|---|---|---|\n| `/project/app/auth.py` | 1 | `def validate_token(token):` |\n| `/project/app/auth.py` | 8 | `    return validate_token(token)` |\n| `/project/app/forms.py` | 1 | `def validate_email(email):` |\n| `/project/app/forms.py` | 4 | `def validate_name(name):` |\n| `/project/app/forms.py` | 8 | `    if validate_email(data['email']):` |\n| `/project/tests/test_auth.py` | 1 | `from app.auth import validate_token` |\n| `/project/tests/test_auth.py` | 3 | `def test_validate_token():` |\n| `/project/tests/test_auth.py` | 4 | `    assert validate_token('abcdefghijk')` |\n| `/project/tests/test_auth.py` | 5 | `    assert not validate_token('')` |\n\n**Total matches: 9**",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "ls /project && echo \"---\" && find /project -name \"*.py\" | head -50",
+      "grep -n \"validate\" /project/app/auth.py /project/app/forms.py /project/app/utils.py /project/tests/test_auth.py",
+      "find /project -name \"*.py\" -print0 | xargs -0 grep -nH \"validate\" | sed 's/:/:/1; s/:/: /2' | awk -F: '{print $1\":\"$2\":\" substr($0, index($0,$3))}'\necho \"---\"\ncount=$(find /project -name \"*.py\" -print0 | xargs -0 grep -nH \"validate\" | wc -l)\necho \"Total matches: $count\""
+    ],
+    "usage": {
+      "input_tokens": 2560,
+      "output_tokens": 1250,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 12108
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls /project && echo \"---\" && find /project -name \"*.py\" | head -50",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "app\ntests\n---\n/project/app/auth.py\n/project/app/forms.py\n/project/app/utils.py\n/project/tests/test_auth.py\n"
+          },
+          {
+            "commands": "grep -n \"validate\" /project/app/auth.py /project/app/forms.py /project/app/utils.py /project/tests/test_auth.py",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/project/app/auth.py:1:def validate_token(token):\n/project/app/auth.py:8:    return validate_token(token)\n/project/app/forms.py:1:def validate_email(email):\n/project/app/forms.py:4:def validate_name(name):\n/project/app/forms.py:8:    if validate_email(data['email']):\n/project/tests/test_auth.py:1:from app.auth import validate_token\n/project/tests/test_auth.py:3:def test_validate_token():\n/project/tests/test_auth.py:4:    assert validate_token('abcdefghijk')\n/project/tests/test_auth.py:5:    assert not validate_token('')\n"
+          },
+          {
+            "commands": "find /project -name \"*.py\" -print0 | xargs -0 grep -nH \"validate\" | sed 's/:/:/1; s/:/: /2' | awk -F: '{print $1\":\"$2\":\" substr($0, index($0,$3))}'\necho \"---\"\ncount=$(find /project -name \"*.py\" -print0 | xargs -0 grep -nH \"validate\" | wc -l)\necho \"Total matches: $count\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/project/app/auth.py:1: def validate_token(token):\n/project/app/auth.py:8:     return validate_token(token)\n/project/app/forms.py:1: def validate_email(email):\n/project/app/forms.py:4: def validate_name(name):\n/project/app/forms.py:8:     if validate_email(data['email']):\n/project/tests/test_auth.py:1: from app.auth import validate_token\n/project/tests/test_auth.py:3: def test_validate_token():\n/project/tests/test_auth.py:4:     assert validate_token('abcdefghijk')\n/project/tests/test_auth.py:5:     assert not validate_token('')\n---\nTotal matches: 9\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

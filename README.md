@@ -511,19 +511,21 @@ just pre-pr       # Pre-PR checks
 
 Bashkit includes a [mira eval study](crates/bashkit-eval/) that measures how well LLMs use bashkit as a bash tool in agentic workloads, 58 tasks across 15 categories.
 
-_Latest run: 2026-06-27, on the mira eval framework (58 tasks)._
+_Latest run: 2026-10-09, on the mira eval framework (58 tasks, plus 8 multi-turn repo tasks)._
 
-| Model | Score | Tasks Passed | Tool Call Success | Duration |
-|-------|-------|-------------|-------------------|----------|
-| Claude Opus 4.8 | **95%** | **55/58** | **96%** | 12.8 min |
-| Claude Haiku 4.5 | **95%** | **55/58** | 94% | **7.4 min** |
-| GPT-5.3-Codex | 93% | 54/58 | 85% | 12.1 min |
-| GPT-5.5 | 88% | 51/58 | 90% | 8.2 min |
-| Claude Sonnet 4.6 | 84% | 49/58 | 93% | 19.9 min |
+| Model | Score | Tasks Passed | Repo Tasks | Tool Call Success | Duration |
+|-------|-------|-------------|------------|-------------------|----------|
+| Claude Sonnet 5.5 | **100%** | **58/58** | **8/8** | 95% | **5.7 min** |
+| Kimi K3 | **100%** | **58/58** | **8/8** | **96%** | 11.2 min |
+| Muse Spark 1.3 Contributor | **100%** | **58/58** | 6/8 | **96%** | 28.0 min |
+| Claude Opus 5.5 | 98% | 57/58 | 7/8 | 95% | 8.1 min |
+| GPT-6.1 Sol | 93% | 54/58 | 5/8 | 91% | 8.0 min |
+| Gemini 3.8 Flash | 93% | 54/58 | 3/8 | 93% | 14.5 min |
+| GPT-6 Luna | 88% | 51/58 | 3/8 | 93% | 5.8 min |
 
-Opus 4.8 and Haiku 4.5 lead at 55/58, Haiku matches Opus in ~⅗ the wall-clock
-time. Two tasks trip every model (`file_path_organizer`, `script_getopts_parser`).
-See the [detailed analysis](crates/bashkit-eval/README.md#results).
+Three models now clear all 58 tasks, so the 8 multi-turn repo tasks (fix a
+fixture repo, run `make test`, commit) separate the field: only Sonnet 5.5 and
+Kimi K3 pass all of them. See the [detailed analysis](crates/bashkit-eval/README.md#results).
 
 ```bash
 cargo install mira-cli       # one-time: the `mira` host CLI

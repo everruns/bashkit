@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-07T19:23:22.000Z",
+  "generatedAt": "2026-10-09T04:55:08.000Z",
   "sources": {
     "bench": "crates/bashkit-bench/results/*.json",
     "criterion": "crates/bashkit/benches/results/*.md",
@@ -10,7 +10,7 @@
   "summary": {
     "benchRuns": 10,
     "criterionRuns": 18,
-    "evalRuns": 43,
+    "evalRuns": 50,
     "latestBench": {
       "id": "bench-mykhailosmac-macos-aarch64-1788629833",
       "kind": "bashkit-bench",
@@ -125,54 +125,36 @@
       ]
     },
     "latestEval": {
-      "id": "mira-20260627T003205Z-8e70-openresponses-gpt-5.3-codex",
+      "id": "mira-20261009T045508Z-b39f-openrouter-meta-muse-spark-1.3-contributor",
       "kind": "llm-eval",
-      "provider": "openresponses",
-      "model": "gpt-5.3-codex",
+      "provider": "openrouter",
+      "model": "muse-spark-1.3-contributor",
       "baseline": null,
-      "label": "openresponses/gpt-5.3-codex",
-      "date": "2026-06-27",
-      "timestamp": "2026-06-27T00:32:05.000Z",
-      "source": "crates/bashkit-eval/results/mira/20260627T003205Z-8e70/report.json",
-      "reportSource": "crates/bashkit-eval/results/mira/20260627T003205Z-8e70/report.html",
+      "label": "openrouter/meta/muse-spark-1.3-contributor",
+      "date": "2026-10-09",
+      "timestamp": "2026-10-09T04:55:08.000Z",
+      "source": "crates/bashkit-eval/results/mira/20261009T045508Z-b39f/report.json",
+      "reportSource": "crates/bashkit-eval/results/mira/20261009T045508Z-b39f/report.html",
       "tasks": 58,
-      "passed": 54,
-      "scorePct": 93.1,
-      "toolSuccessPct": 84.6,
-      "avgTurns": 3.43,
-      "avgToolCalls": 2.47,
-      "avgDurationMs": 12567,
-      "inputTokens": 116889,
-      "outputTokens": 57704,
+      "passed": 58,
+      "scorePct": 100,
+      "toolSuccessPct": 95.7,
+      "avgTurns": 3.79,
+      "avgToolCalls": 2.81,
+      "avgDurationMs": 29004,
+      "inputTokens": 292635,
+      "outputTokens": 128421,
       "categories": [
-        {
-          "tasks": 2,
-          "passed": 1,
-          "category": "system_info",
-          "rate": 50
-        },
-        {
-          "tasks": 4,
-          "passed": 3,
-          "category": "file_operations",
-          "rate": 75
-        },
-        {
-          "tasks": 5,
-          "passed": 4,
-          "category": "pipelines",
-          "rate": 80
-        },
-        {
-          "tasks": 7,
-          "passed": 6,
-          "category": "scripting",
-          "rate": 85.7
-        },
         {
           "tasks": 8,
           "passed": 8,
           "category": "json_processing",
+          "rate": 100
+        },
+        {
+          "tasks": 7,
+          "passed": 7,
+          "category": "scripting",
           "rate": 100
         },
         {
@@ -194,9 +176,27 @@
           "rate": 100
         },
         {
+          "tasks": 5,
+          "passed": 5,
+          "category": "pipelines",
+          "rate": 100
+        },
+        {
+          "tasks": 4,
+          "passed": 4,
+          "category": "file_operations",
+          "rate": 100
+        },
+        {
           "tasks": 2,
           "passed": 2,
           "category": "error_recovery",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "system_info",
           "rate": 100
         },
         {
@@ -5455,6 +5455,797 @@
           "rate": 100
         }
       ]
+    },
+    {
+      "id": "mira-20261009T045508Z-b39f-anthropic-claude-opus-5-5",
+      "kind": "llm-eval",
+      "provider": "anthropic",
+      "model": "claude-opus-5-5",
+      "baseline": null,
+      "label": "anthropic/claude-opus-5-5",
+      "date": "2026-10-09",
+      "timestamp": "2026-10-09T04:55:08.000Z",
+      "source": "crates/bashkit-eval/results/mira/20261009T045508Z-b39f/report.json",
+      "reportSource": "crates/bashkit-eval/results/mira/20261009T045508Z-b39f/report.html",
+      "tasks": 58,
+      "passed": 57,
+      "scorePct": 98.3,
+      "toolSuccessPct": 94.6,
+      "avgTurns": 2.91,
+      "avgToolCalls": 1.91,
+      "avgDurationMs": 8343,
+      "inputTokens": 164051,
+      "outputTokens": 40194,
+      "categories": [
+        {
+          "tasks": 6,
+          "passed": 5,
+          "category": "complex_tasks",
+          "rate": 83.3
+        },
+        {
+          "tasks": 8,
+          "passed": 8,
+          "category": "json_processing",
+          "rate": 100
+        },
+        {
+          "tasks": 7,
+          "passed": 7,
+          "category": "scripting",
+          "rate": 100
+        },
+        {
+          "tasks": 6,
+          "passed": 6,
+          "category": "text_processing",
+          "rate": 100
+        },
+        {
+          "tasks": 6,
+          "passed": 6,
+          "category": "data_transformation",
+          "rate": 100
+        },
+        {
+          "tasks": 5,
+          "passed": 5,
+          "category": "pipelines",
+          "rate": 100
+        },
+        {
+          "tasks": 4,
+          "passed": 4,
+          "category": "file_operations",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "error_recovery",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "system_info",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "archive_operations",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "code_search",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "environment",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "database_operations",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "config_management",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "build_simulation",
+          "rate": 100
+        }
+      ]
+    },
+    {
+      "id": "mira-20261009T045508Z-b39f-anthropic-claude-sonnet-5-5",
+      "kind": "llm-eval",
+      "provider": "anthropic",
+      "model": "claude-sonnet-5-5",
+      "baseline": null,
+      "label": "anthropic/claude-sonnet-5-5",
+      "date": "2026-10-09",
+      "timestamp": "2026-10-09T04:55:08.000Z",
+      "source": "crates/bashkit-eval/results/mira/20261009T045508Z-b39f/report.json",
+      "reportSource": "crates/bashkit-eval/results/mira/20261009T045508Z-b39f/report.html",
+      "tasks": 58,
+      "passed": 58,
+      "scorePct": 100,
+      "toolSuccessPct": 94.7,
+      "avgTurns": 2.91,
+      "avgToolCalls": 1.97,
+      "avgDurationMs": 5852,
+      "inputTokens": 158602,
+      "outputTokens": 30449,
+      "categories": [
+        {
+          "tasks": 8,
+          "passed": 8,
+          "category": "json_processing",
+          "rate": 100
+        },
+        {
+          "tasks": 7,
+          "passed": 7,
+          "category": "scripting",
+          "rate": 100
+        },
+        {
+          "tasks": 6,
+          "passed": 6,
+          "category": "text_processing",
+          "rate": 100
+        },
+        {
+          "tasks": 6,
+          "passed": 6,
+          "category": "data_transformation",
+          "rate": 100
+        },
+        {
+          "tasks": 6,
+          "passed": 6,
+          "category": "complex_tasks",
+          "rate": 100
+        },
+        {
+          "tasks": 5,
+          "passed": 5,
+          "category": "pipelines",
+          "rate": 100
+        },
+        {
+          "tasks": 4,
+          "passed": 4,
+          "category": "file_operations",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "error_recovery",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "system_info",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "archive_operations",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "code_search",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "environment",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "database_operations",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "config_management",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "build_simulation",
+          "rate": 100
+        }
+      ]
+    },
+    {
+      "id": "mira-20261009T045508Z-b39f-openai-gpt-6.1-sol",
+      "kind": "llm-eval",
+      "provider": "openai",
+      "model": "gpt-6.1-sol",
+      "baseline": null,
+      "label": "openai/gpt-6.1-sol",
+      "date": "2026-10-09",
+      "timestamp": "2026-10-09T04:55:08.000Z",
+      "source": "crates/bashkit-eval/results/mira/20261009T045508Z-b39f/report.json",
+      "reportSource": "crates/bashkit-eval/results/mira/20261009T045508Z-b39f/report.html",
+      "tasks": 58,
+      "passed": 54,
+      "scorePct": 93.1,
+      "toolSuccessPct": 91.4,
+      "avgTurns": 2.4,
+      "avgToolCalls": 1.4,
+      "avgDurationMs": 8229,
+      "inputTokens": 51483,
+      "outputTokens": 15576,
+      "categories": [
+        {
+          "tasks": 2,
+          "passed": 1,
+          "category": "code_search",
+          "rate": 50
+        },
+        {
+          "tasks": 7,
+          "passed": 5,
+          "category": "scripting",
+          "rate": 71.4
+        },
+        {
+          "tasks": 4,
+          "passed": 3,
+          "category": "file_operations",
+          "rate": 75
+        },
+        {
+          "tasks": 8,
+          "passed": 8,
+          "category": "json_processing",
+          "rate": 100
+        },
+        {
+          "tasks": 6,
+          "passed": 6,
+          "category": "text_processing",
+          "rate": 100
+        },
+        {
+          "tasks": 6,
+          "passed": 6,
+          "category": "data_transformation",
+          "rate": 100
+        },
+        {
+          "tasks": 6,
+          "passed": 6,
+          "category": "complex_tasks",
+          "rate": 100
+        },
+        {
+          "tasks": 5,
+          "passed": 5,
+          "category": "pipelines",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "error_recovery",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "system_info",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "archive_operations",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "environment",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "database_operations",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "config_management",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "build_simulation",
+          "rate": 100
+        }
+      ]
+    },
+    {
+      "id": "mira-20261009T045508Z-b39f-openai-gpt-6-luna",
+      "kind": "llm-eval",
+      "provider": "openai",
+      "model": "gpt-6-luna",
+      "baseline": null,
+      "label": "openai/gpt-6-luna",
+      "date": "2026-10-09",
+      "timestamp": "2026-10-09T04:55:08.000Z",
+      "source": "crates/bashkit-eval/results/mira/20261009T045508Z-b39f/report.json",
+      "reportSource": "crates/bashkit-eval/results/mira/20261009T045508Z-b39f/report.html",
+      "tasks": 58,
+      "passed": 51,
+      "scorePct": 87.9,
+      "toolSuccessPct": 92.9,
+      "avgTurns": 2.45,
+      "avgToolCalls": 1.45,
+      "avgDurationMs": 6044,
+      "inputTokens": 60252,
+      "outputTokens": 19916,
+      "categories": [
+        {
+          "tasks": 2,
+          "passed": 1,
+          "category": "code_search",
+          "rate": 50
+        },
+        {
+          "tasks": 7,
+          "passed": 5,
+          "category": "scripting",
+          "rate": 71.4
+        },
+        {
+          "tasks": 4,
+          "passed": 3,
+          "category": "file_operations",
+          "rate": 75
+        },
+        {
+          "tasks": 5,
+          "passed": 4,
+          "category": "pipelines",
+          "rate": 80
+        },
+        {
+          "tasks": 6,
+          "passed": 5,
+          "category": "data_transformation",
+          "rate": 83.3
+        },
+        {
+          "tasks": 8,
+          "passed": 7,
+          "category": "json_processing",
+          "rate": 87.5
+        },
+        {
+          "tasks": 6,
+          "passed": 6,
+          "category": "text_processing",
+          "rate": 100
+        },
+        {
+          "tasks": 6,
+          "passed": 6,
+          "category": "complex_tasks",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "error_recovery",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "system_info",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "archive_operations",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "environment",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "database_operations",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "config_management",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "build_simulation",
+          "rate": 100
+        }
+      ]
+    },
+    {
+      "id": "mira-20261009T045508Z-b39f-openrouter-google-gemini-3.8-flash",
+      "kind": "llm-eval",
+      "provider": "openrouter",
+      "model": "gemini-3.8-flash",
+      "baseline": null,
+      "label": "openrouter/google/gemini-3.8-flash",
+      "date": "2026-10-09",
+      "timestamp": "2026-10-09T04:55:08.000Z",
+      "source": "crates/bashkit-eval/results/mira/20261009T045508Z-b39f/report.json",
+      "reportSource": "crates/bashkit-eval/results/mira/20261009T045508Z-b39f/report.html",
+      "tasks": 58,
+      "passed": 54,
+      "scorePct": 93.1,
+      "toolSuccessPct": 92.9,
+      "avgTurns": 6.38,
+      "avgToolCalls": 5.55,
+      "avgDurationMs": 15039,
+      "inputTokens": 229352,
+      "outputTokens": 46678,
+      "categories": [
+        {
+          "tasks": 2,
+          "passed": 1,
+          "category": "code_search",
+          "rate": 50
+        },
+        {
+          "tasks": 4,
+          "passed": 3,
+          "category": "file_operations",
+          "rate": 75
+        },
+        {
+          "tasks": 6,
+          "passed": 5,
+          "category": "text_processing",
+          "rate": 83.3
+        },
+        {
+          "tasks": 7,
+          "passed": 6,
+          "category": "scripting",
+          "rate": 85.7
+        },
+        {
+          "tasks": 8,
+          "passed": 8,
+          "category": "json_processing",
+          "rate": 100
+        },
+        {
+          "tasks": 6,
+          "passed": 6,
+          "category": "data_transformation",
+          "rate": 100
+        },
+        {
+          "tasks": 6,
+          "passed": 6,
+          "category": "complex_tasks",
+          "rate": 100
+        },
+        {
+          "tasks": 5,
+          "passed": 5,
+          "category": "pipelines",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "error_recovery",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "system_info",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "archive_operations",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "environment",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "database_operations",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "config_management",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "build_simulation",
+          "rate": 100
+        }
+      ]
+    },
+    {
+      "id": "mira-20261009T045508Z-b39f-openrouter-moonshotai-kimi-k3",
+      "kind": "llm-eval",
+      "provider": "openrouter",
+      "model": "kimi-k3",
+      "baseline": null,
+      "label": "openrouter/moonshotai/kimi-k3",
+      "date": "2026-10-09",
+      "timestamp": "2026-10-09T04:55:08.000Z",
+      "source": "crates/bashkit-eval/results/mira/20261009T045508Z-b39f/report.json",
+      "reportSource": "crates/bashkit-eval/results/mira/20261009T045508Z-b39f/report.html",
+      "tasks": 58,
+      "passed": 58,
+      "scorePct": 100,
+      "toolSuccessPct": 95.8,
+      "avgTurns": 3.76,
+      "avgToolCalls": 2.84,
+      "avgDurationMs": 11586,
+      "inputTokens": 173765,
+      "outputTokens": 53109,
+      "categories": [
+        {
+          "tasks": 8,
+          "passed": 8,
+          "category": "json_processing",
+          "rate": 100
+        },
+        {
+          "tasks": 7,
+          "passed": 7,
+          "category": "scripting",
+          "rate": 100
+        },
+        {
+          "tasks": 6,
+          "passed": 6,
+          "category": "text_processing",
+          "rate": 100
+        },
+        {
+          "tasks": 6,
+          "passed": 6,
+          "category": "data_transformation",
+          "rate": 100
+        },
+        {
+          "tasks": 6,
+          "passed": 6,
+          "category": "complex_tasks",
+          "rate": 100
+        },
+        {
+          "tasks": 5,
+          "passed": 5,
+          "category": "pipelines",
+          "rate": 100
+        },
+        {
+          "tasks": 4,
+          "passed": 4,
+          "category": "file_operations",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "error_recovery",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "system_info",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "archive_operations",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "code_search",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "environment",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "database_operations",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "config_management",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "build_simulation",
+          "rate": 100
+        }
+      ]
+    },
+    {
+      "id": "mira-20261009T045508Z-b39f-openrouter-meta-muse-spark-1.3-contributor",
+      "kind": "llm-eval",
+      "provider": "openrouter",
+      "model": "muse-spark-1.3-contributor",
+      "baseline": null,
+      "label": "openrouter/meta/muse-spark-1.3-contributor",
+      "date": "2026-10-09",
+      "timestamp": "2026-10-09T04:55:08.000Z",
+      "source": "crates/bashkit-eval/results/mira/20261009T045508Z-b39f/report.json",
+      "reportSource": "crates/bashkit-eval/results/mira/20261009T045508Z-b39f/report.html",
+      "tasks": 58,
+      "passed": 58,
+      "scorePct": 100,
+      "toolSuccessPct": 95.7,
+      "avgTurns": 3.79,
+      "avgToolCalls": 2.81,
+      "avgDurationMs": 29004,
+      "inputTokens": 292635,
+      "outputTokens": 128421,
+      "categories": [
+        {
+          "tasks": 8,
+          "passed": 8,
+          "category": "json_processing",
+          "rate": 100
+        },
+        {
+          "tasks": 7,
+          "passed": 7,
+          "category": "scripting",
+          "rate": 100
+        },
+        {
+          "tasks": 6,
+          "passed": 6,
+          "category": "text_processing",
+          "rate": 100
+        },
+        {
+          "tasks": 6,
+          "passed": 6,
+          "category": "data_transformation",
+          "rate": 100
+        },
+        {
+          "tasks": 6,
+          "passed": 6,
+          "category": "complex_tasks",
+          "rate": 100
+        },
+        {
+          "tasks": 5,
+          "passed": 5,
+          "category": "pipelines",
+          "rate": 100
+        },
+        {
+          "tasks": 4,
+          "passed": 4,
+          "category": "file_operations",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "error_recovery",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "system_info",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "archive_operations",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "code_search",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "environment",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "database_operations",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "config_management",
+          "rate": 100
+        },
+        {
+          "tasks": 2,
+          "passed": 2,
+          "category": "build_simulation",
+          "rate": 100
+        }
+      ]
     }
   ],
   "pythonStartup": [
@@ -5508,164 +6299,185 @@
         "gapCallsRecorded": 319,
         "failedCallsNow": 231,
         "failedCallsRecorded": 723
+      },
+      {
+        "id": "gaps-20261009T051832Z",
+        "date": "2026-10-09",
+        "timestamp": "2026-10-09T05:18:32Z",
+        "source": "crates/bashkit-eval/results/gaps/gaps-20261009T051832Z.json",
+        "reportSource": "crates/bashkit-eval/results/gaps/gaps-20261009T051832Z.md",
+        "version": "0.18.2",
+        "sessions": 1895,
+        "calls": 6246,
+        "gapCallsNow": 73,
+        "gapCallsRecorded": 336,
+        "failedCallsNow": 195,
+        "failedCallsRecorded": 785
       }
     ],
     "latest": {
-      "id": "gaps-20261007T075044Z",
-      "date": "2026-10-07",
-      "timestamp": "2026-10-07T07:50:44Z",
-      "source": "crates/bashkit-eval/results/gaps/gaps-20261007T075044Z.json",
-      "reportSource": "crates/bashkit-eval/results/gaps/gaps-20261007T075044Z.md",
+      "id": "gaps-20261009T051832Z",
+      "date": "2026-10-09",
+      "timestamp": "2026-10-09T05:18:32Z",
+      "source": "crates/bashkit-eval/results/gaps/gaps-20261009T051832Z.json",
+      "reportSource": "crates/bashkit-eval/results/gaps/gaps-20261009T051832Z.md",
       "version": "0.18.2",
-      "sessions": 1493,
-      "calls": 5206,
-      "gapCallsNow": 125,
-      "gapCallsRecorded": 319,
-      "failedCallsNow": 231,
-      "failedCallsRecorded": 723,
+      "sessions": 1895,
+      "calls": 6246,
+      "gapCallsNow": 73,
+      "gapCallsRecorded": 336,
+      "failedCallsNow": 195,
+      "failedCallsRecorded": 785,
       "top": [
         {
           "kind": "parse_error",
-          "key": "expected 'done'",
-          "now": 23,
-          "recorded": 38,
-          "example": "cat > /tmp/generate_toc.sh << 'EOF'"
-        },
-        {
-          "kind": "parse_error",
           "key": "unterminated command substitution",
-          "now": 18,
-          "recorded": 23,
+          "now": 24,
+          "recorded": 30,
           "example": "bash /scripts/broken.sh"
         },
         {
-          "kind": "missing_command",
-          "key": "busybox",
-          "now": 10,
-          "recorded": 0,
-          "example": "busybox tar --help 2>&1 | head -n 40"
-        },
-        {
-          "kind": "unknown_option",
-          "key": "tar -",
-          "now": 9,
-          "recorded": 1,
-          "example": "tar -xzf /tmp/project.tar.gz -C /backup --strip-components=0"
-        },
-        {
           "kind": "parse_error",
-          "key": "unexpected end of input in [[ ]]",
-          "now": 8,
-          "recorded": 7,
-          "example": "{"
-        },
-        {
-          "kind": "missing_command",
-          "key": "sudo",
-          "now": 7,
-          "recorded": 7,
-          "example": "sudo tee /etc/env.conf > /dev/null << 'EOF'"
+          "key": "in conditional expression: unexpected token `)'",
+          "now": 13,
+          "recorded": 1,
+          "example": "mkdir -p /release"
         },
         {
           "kind": "missing_command",
           "key": "python3",
-          "now": 6,
+          "now": 5,
           "recorded": 6,
           "example": "python3 << 'EOF'"
         },
         {
           "kind": "unknown_option",
-          "key": "grep I",
-          "now": 6,
-          "recorded": 0,
-          "example": "grep -RIn --include='*.py' -E '^\\s*def\\s+.*validate.*\\(' . | tee /tmp/validate_matches.txt"
-        },
-        {
-          "kind": "missing_command",
-          "key": "gawk",
+          "key": "diff r",
           "now": 5,
-          "recorded": 1,
-          "example": "gawk --version 2>&1 || echo \"no gawk\""
+          "recorded": 4,
+          "example": "diff -r /project /backup/project && echo \"MATCH: /backup/project is identical to /project\" || echo \"…"
         },
         {
-          "kind": "missing_command",
-          "key": "perl",
+          "kind": "parse_error",
+          "key": "in conditional expression: unexpected token `token'",
           "now": 4,
-          "recorded": 3,
-          "example": "perl -0777 -pe 's/.*/$&/'}"
+          "recorded": 0,
+          "example": "cat > /tmp/merge_ini.sh << 'EOF'"
         },
         {
           "kind": "parse_error",
           "key": "(no detail)",
           "now": 3,
-          "recorded": 11,
-          "example": "("
-        },
-        {
-          "kind": "parse_error",
-          "key": "unexpected token",
-          "now": 3,
-          "recorded": 4,
-          "example": "cat > /tmp/merge_ini.sh << 'EOF'"
-        },
-        {
-          "kind": "unknown_option",
-          "key": "join o",
-          "now": 3,
-          "recorded": 0,
-          "example": "join -t $'\\t' -a1 -a2 -e '' -o '0,1.2,2.2' /tmp/v1.tsv /tmp/v2.tsv > /tmp/joined.tsv"
+          "recorded": 12,
+          "example": "mkdir -p /release"
         },
         {
           "kind": "missing_command",
           "key": "node",
-          "now": 2,
-          "recorded": 2,
+          "now": 3,
+          "recorded": 4,
           "example": "cd /app && node -e '"
         },
         {
-          "kind": "unknown_option",
-          "key": "find -ls",
-          "now": 2,
-          "recorded": 2,
-          "example": "find /backup -ls"
+          "kind": "missing_command",
+          "key": "perl",
+          "now": 3,
+          "recorded": 3,
+          "example": "perl -0777 -pe 's/.*/$&/'}"
         },
         {
           "kind": "missing_command",
           "key": "python",
-          "now": 2,
-          "recorded": 1,
+          "now": 3,
+          "recorded": 2,
           "example": "python - <<'PY'"
         },
         {
           "kind": "parse_error",
-          "key": "unterminated single quote",
+          "key": "near unexpected token `|'",
           "now": 2,
-          "recorded": 1,
+          "recorded": 0,
+          "example": "cat > /tmp/organize_files.sh << 'EOF'"
+        },
+        {
+          "kind": "parse_error",
+          "key": "unexpected EOF while looking for matching `''",
+          "now": 2,
+          "recorded": 0,
           "example": "awk -F, '"
         },
         {
-          "kind": "missing_command",
-          "key": "mawk",
-          "now": 2,
-          "recorded": 0,
-          "example": "mawk --version 2>&1 || echo \"no mawk\""
+          "kind": "unknown_option",
+          "key": "Error -x.",
+          "now": 1,
+          "recorded": 1,
+          "example": ""
+        },
+        {
+          "kind": "unsupported",
+          "key": "Error",
+          "now": 1,
+          "recorded": 1,
+          "example": ""
         },
         {
           "kind": "unknown_option",
-          "key": "gzip c",
-          "now": 2,
+          "key": "Error -z",
+          "now": 1,
           "recorded": 0,
-          "example": "gzip -f /dist/release.tar 2>&1"
+          "example": ""
         },
         {
           "kind": "unknown_option",
-          "key": "xargs r",
-          "now": 2,
+          "key": "awk W",
+          "now": 1,
           "recorded": 0,
-          "example": "cd /home/eval && find src -type f -name '*.js' -print0 | xargs -0 -r grep -l 'console\\.log' | while …"
+          "example": "which awk && ls -l $(which awk) && awk -W version"
+        },
+        {
+          "kind": "unknown_option",
+          "key": "diff --normal",
+          "now": 1,
+          "recorded": 0,
+          "example": "diff --version"
+        },
+        {
+          "kind": "unknown_option",
+          "key": "diff --unchanged-line-format=",
+          "now": 1,
+          "recorded": 0,
+          "example": "diff --unchanged-line-format=\"\" \\"
+        },
+        {
+          "kind": "unknown_option",
+          "key": "tar --transform",
+          "now": 1,
+          "recorded": 0,
+          "example": "tar -czf /tmp/project.tar.gz --transform='s,^project/,,' project"
+        },
+        {
+          "kind": "unknown_option",
+          "key": "tar --wildcards",
+          "now": 1,
+          "recorded": 0,
+          "example": "tar -xzf /tmp/bundle.tar.gz -C /output --wildcards \"notes.txt\""
+        },
+        {
+          "kind": "unknown_option",
+          "key": "tar h",
+          "now": 1,
+          "recorded": 0,
+          "example": "tar -h | head -50"
         }
       ],
       "fixed": [
+        {
+          "kind": "parse_error",
+          "key": "expected 'done'",
+          "now": 0,
+          "recorded": 38,
+          "example": "cat > /tmp/create_toc.sh << 'EOF'"
+        },
         {
           "kind": "unknown_option",
           "key": "tar C",
@@ -5716,25 +6528,18 @@
           "example": "rm -f /app/tasks.txt"
         },
         {
-          "kind": "missing_command",
-          "key": "sum=470",
+          "kind": "unsupported",
+          "key": "ls",
           "now": 0,
           "recorded": 7,
-          "example": ""
+          "example": "find /home/eval/myproject -exec ls -ld {} \\;"
         },
         {
           "kind": "missing_command",
-          "key": "./fizzbuzz.sh",
+          "key": "sudo",
           "now": 0,
-          "recorded": 6,
-          "example": "./fizzbuzz.sh"
-        },
-        {
-          "kind": "missing_command",
-          "key": "/scripts/healthcheck.sh",
-          "now": 0,
-          "recorded": 6,
-          "example": "/scripts/healthcheck.sh"
+          "recorded": 7,
+          "example": "sudo tee /etc/env.conf > /dev/null << 'EOF'"
         }
       ]
     }
@@ -6118,6 +6923,18 @@
       ]
     },
     {
+      "model": "claude-opus-5-5",
+      "points": [
+        {
+          "date": "2026-10-09",
+          "timestamp": "2026-10-09T04:55:08.000Z",
+          "scorePct": 98.3,
+          "passed": 57,
+          "tasks": 58
+        }
+      ]
+    },
+    {
       "model": "claude-sonnet-4-20250514",
       "points": [
         {
@@ -6165,6 +6982,30 @@
           "timestamp": "2026-06-26T21:56:32.000Z",
           "scorePct": 84.5,
           "passed": 49,
+          "tasks": 58
+        }
+      ]
+    },
+    {
+      "model": "claude-sonnet-5-5",
+      "points": [
+        {
+          "date": "2026-10-09",
+          "timestamp": "2026-10-09T04:55:08.000Z",
+          "scorePct": 100,
+          "passed": 58,
+          "tasks": 58
+        }
+      ]
+    },
+    {
+      "model": "gemini-3.8-flash",
+      "points": [
+        {
+          "date": "2026-10-09",
+          "timestamp": "2026-10-09T04:55:08.000Z",
+          "scorePct": 93.1,
+          "passed": 54,
           "tasks": 58
         }
       ]
@@ -6264,6 +7105,54 @@
           "timestamp": "2026-06-27T00:32:05.000Z",
           "scorePct": 87.9,
           "passed": 51,
+          "tasks": 58
+        }
+      ]
+    },
+    {
+      "model": "gpt-6-luna",
+      "points": [
+        {
+          "date": "2026-10-09",
+          "timestamp": "2026-10-09T04:55:08.000Z",
+          "scorePct": 87.9,
+          "passed": 51,
+          "tasks": 58
+        }
+      ]
+    },
+    {
+      "model": "gpt-6.1-sol",
+      "points": [
+        {
+          "date": "2026-10-09",
+          "timestamp": "2026-10-09T04:55:08.000Z",
+          "scorePct": 93.1,
+          "passed": 54,
+          "tasks": 58
+        }
+      ]
+    },
+    {
+      "model": "kimi-k3",
+      "points": [
+        {
+          "date": "2026-10-09",
+          "timestamp": "2026-10-09T04:55:08.000Z",
+          "scorePct": 100,
+          "passed": 58,
+          "tasks": 58
+        }
+      ]
+    },
+    {
+      "model": "muse-spark-1.3-contributor",
+      "points": [
+        {
+          "date": "2026-10-09",
+          "timestamp": "2026-10-09T04:55:08.000Z",
+          "scorePct": 100,
+          "passed": 58,
           "tasks": 58
         }
       ]
@@ -6899,6 +7788,69 @@
       "detail": "single_bash_new at 68.29 us median",
       "metric": 17490,
       "source": "crates/bashkit/benches/results/criterion-parallel-vm-linux-x86_64-1791401002.md"
+    },
+    {
+      "date": "2026-10-09",
+      "timestamp": "2026-10-09T04:55:08.000Z",
+      "kind": "Eval",
+      "title": "claude-opus-5-5: 98.3%",
+      "detail": "57/58 tasks passed. Weakest category: complex_tasks (83.3%).",
+      "metric": 98.3,
+      "source": "crates/bashkit-eval/results/mira/20261009T045508Z-b39f/report.json"
+    },
+    {
+      "date": "2026-10-09",
+      "timestamp": "2026-10-09T04:55:08.000Z",
+      "kind": "Eval",
+      "title": "claude-sonnet-5-5: 100%",
+      "detail": "58/58 tasks passed. Weakest category: json_processing (100%).",
+      "metric": 100,
+      "source": "crates/bashkit-eval/results/mira/20261009T045508Z-b39f/report.json"
+    },
+    {
+      "date": "2026-10-09",
+      "timestamp": "2026-10-09T04:55:08.000Z",
+      "kind": "Eval",
+      "title": "gpt-6.1-sol: 93.1%",
+      "detail": "54/58 tasks passed. Weakest category: code_search (50%).",
+      "metric": 93.1,
+      "source": "crates/bashkit-eval/results/mira/20261009T045508Z-b39f/report.json"
+    },
+    {
+      "date": "2026-10-09",
+      "timestamp": "2026-10-09T04:55:08.000Z",
+      "kind": "Eval",
+      "title": "gpt-6-luna: 87.9%",
+      "detail": "51/58 tasks passed. Weakest category: code_search (50%).",
+      "metric": 87.9,
+      "source": "crates/bashkit-eval/results/mira/20261009T045508Z-b39f/report.json"
+    },
+    {
+      "date": "2026-10-09",
+      "timestamp": "2026-10-09T04:55:08.000Z",
+      "kind": "Eval",
+      "title": "gemini-3.8-flash: 93.1%",
+      "detail": "54/58 tasks passed. Weakest category: code_search (50%).",
+      "metric": 93.1,
+      "source": "crates/bashkit-eval/results/mira/20261009T045508Z-b39f/report.json"
+    },
+    {
+      "date": "2026-10-09",
+      "timestamp": "2026-10-09T04:55:08.000Z",
+      "kind": "Eval",
+      "title": "kimi-k3: 100%",
+      "detail": "58/58 tasks passed. Weakest category: json_processing (100%).",
+      "metric": 100,
+      "source": "crates/bashkit-eval/results/mira/20261009T045508Z-b39f/report.json"
+    },
+    {
+      "date": "2026-10-09",
+      "timestamp": "2026-10-09T04:55:08.000Z",
+      "kind": "Eval",
+      "title": "muse-spark-1.3-contributor: 100%",
+      "detail": "58/58 tasks passed. Weakest category: json_processing (100%).",
+      "metric": 100,
+      "source": "crates/bashkit-eval/results/mira/20261009T045508Z-b39f/report.json"
     }
   ]
 }

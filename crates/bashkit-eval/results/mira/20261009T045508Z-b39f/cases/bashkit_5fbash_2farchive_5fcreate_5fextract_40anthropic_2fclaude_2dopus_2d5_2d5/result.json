@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "archive_create_extract",
+  "target": "anthropic/claude-opus-5-5",
+  "input": [
+    "Create a tar.gz archive of the /project directory and save it as /tmp/project.tar.gz. Then create /backup directory and extract the archive there. Verify the files exist in /backup."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I archived `/project` to `/tmp/project.tar.gz`, created `/backup`, extracted the archive there, and confirmed the files are present and unchanged.\n\n1. **Archive:** I ran `tar -czf /tmp/project.tar.gz project` from `/`, which made a 230-byte file. Listing its contents showed `project/`, `project/src/`, `project/src/main.sh` and `project/README.md`.\n2. **Extract:** I ran `mkdir -p /backup` and then `tar -xzf /tmp/project.tar.gz -C /backup`.\n3. **Check:** Both files are in `/backup`, at the same sizes as the originals:\n   ```\n   /backup/project/\n   ├── README.md      (37 bytes)\n   └── src/\n       └── main.sh    (38 bytes)\n   ```\n   The `diff` here doesn't support comparing whole folders, so I compared the two files one at a time. Both match the originals exactly.\n\nThe files are under `/backup/project/`, not directly in `/backup`, because the archive keeps the `project` folder name.",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "ls -laR /project 2>&1 | head -50",
+      "cd / && tar -czf /tmp/project.tar.gz project && ls -l /tmp/project.tar.gz && tar -tzf /tmp/project.tar.gz\nmkdir -p /backup && tar -xzf /tmp/project.tar.gz -C /backup && ls -laR /backup\ndiff -r /project /backup/project && echo \"IDENTICAL\"",
+      "for f in README.md src/main.sh; do diff /project/$f /backup/project/$f && echo \"$f: identical\"; done"
+    ],
+    "usage": {
+      "input_tokens": 4031,
+      "output_tokens": 744,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 9424
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 2.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -laR /project 2>&1 | head -50",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/project:\n-rw-r--r--       37 2026-10-09 04:57 README.md\ndrwxr-xr-x        0 2026-10-09 04:57 src\n\n/project/src:\n-rw-r--r--       38 2026-10-09 04:57 main.sh\n"
+          },
+          {
+            "commands": "cd / && tar -czf /tmp/project.tar.gz project && ls -l /tmp/project.tar.gz && tar -tzf /tmp/project.tar.gz\nmkdir -p /backup && tar -xzf /tmp/project.tar.gz -C /backup && ls -laR /backup\ndiff -r /project /backup/project && echo \"IDENTICAL\"",
+            "exit_code": 2,
+            "stderr": "diff: invalid option -- 'r'\n",
+            "stdout": "-rw-r--r--      230 2026-10-09 04:57 /tmp/project.tar.gz\nproject/\nproject/src/\nproject/src/main.sh\nproject/README.md\n/backup:\ndrwxr-xr-x        0 2026-10-09 04:57 project\n\n/backup/project:\n-rw-r--r--       37 2026-10-09 04:57 README.md\ndrwxr-xr-x        0 2026-10-09 04:57 src\n\n/backup/project/src:\n-rw-r--r--       38 2026-10-09 04:57 main.sh\n"
+          },
+          {
+            "commands": "for f in README.md src/main.sh; do diff /project/$f /backup/project/$f && echo \"$f: identical\"; done",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "README.md: identical\nsrc/main.sh: identical\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

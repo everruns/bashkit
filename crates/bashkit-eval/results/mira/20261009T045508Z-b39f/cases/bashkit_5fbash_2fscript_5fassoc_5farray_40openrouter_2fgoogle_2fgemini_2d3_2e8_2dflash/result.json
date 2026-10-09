@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "script_assoc_array",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Use a bash associative array (declare -A) to build a country-code lookup. Map: US='United States', GB='United Kingdom', DE='Germany', JP='Japan', FR='France'. Then read /data/visitors.csv (columns: name,country_code) and for each row, look up the full country name and print 'name visited from FULL_COUNTRY_NAME'. At the end, print a count per country sorted by count descending as 'FULL_NAME: N visitors'."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Here is the Bash script to accomplish this task:\n\n```bash\n#!/usr/bin/env bash\n\n# Declare associative array for country codes\ndeclare -A countries=(\n    [US]=\"United States\"\n    [GB]=\"United Kingdom\"\n    [DE]=\"Germany\"\n    [JP]=\"Japan\"\n    [FR]=\"France\"\n)\n\n# Declare associative array to track visitor counts\ndeclare -A counts=()\n\n# Read /data/visitors.csv, skipping header\n{\n    read -r _ # skip header line\n    while IFS=, read -r name code || [[ -n \"$name\" ]]; do\n        # Strip potential carriage returns\n        name=\"${name%$'\\r'}\"\n        code=\"${code%$'\\r'}\"\n        \n        full_name=\"${countries[$code]}\"\n        echo \"$name visited from $full_name\"\n        ((counts[\"$full_name\"]++))\n    done\n} < /data/visitors.csv\n\n# Print counts sorted descending\nfor country in \"${!counts[@]}\"; do\n    echo \"${counts[$country]}|$country\"\ndone | sort -t'|' -k1,1nr -k2,2 | while IFS='|' read -r count country; do\n    echo \"$country: $count visitors\"\ndone\n```\n\n### Output\n\n```\nAlice visited from United States\nBob visited from United Kingdom\nCarol visited from United States\nDave visited from Japan\nEve visited from Germany\nFrank visited from United States\nGrace visited from United Kingdom\nUnited States: 3 visitors\nUnited Kingdom: 2 visitors\nGermany: 1 visitors\nJapan: 1 visitors\n```",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "ls -la /data",
+      "cat /data/visitors.csv",
+      "bash -c '\ndeclare -A countries=(\n    [US]=\"United States\"\n    [GB]=\"United Kingdom\"\n    [DE]=\"Germany\"\n    [JP]=\"Japan\"\n    [FR]=\"France\"\n)\ndeclare -A counts=()\n\n# Skip header and read visitors.csv\n{\n    read -r header\n    while IFS=, read -r name code || [[ -n \"$name\" ]]; do\n        # Trim carriage returns if any\n        name=\"${name%$'\\r'}\"\n        code=\"${code%$'\\r'}\"\n        full=\"${countries[$code]}\"\n        echo \"$name visited from $full\"\n        ((counts[\"$full\"]++))\n    done\n} < /data/visitors.csv\n\nfor country in \"${!counts[@]}\"; do\n    echo \"${counts[$country]}|$country\"\ndone | sort -t\"|\" -k1,1nr -k2,2 | while IFS=\"|\" read -r count country; do\n    echo \"$country: $count visitors\"\ndone\n'"
+    ],
+    "usage": {
+      "input_tokens": 1530,
+      "output_tokens": 793,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 10244
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /data",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       76 2026-10-09 05:01 visitors.csv\n"
+          },
+          {
+            "commands": "cat /data/visitors.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "name,country_code\nAlice,US\nBob,GB\nCarol,US\nDave,JP\nEve,DE\nFrank,US\nGrace,GB\n"
+          },
+          {
+            "commands": "bash -c '\ndeclare -A countries=(\n    [US]=\"United States\"\n    [GB]=\"United Kingdom\"\n    [DE]=\"Germany\"\n    [JP]=\"Japan\"\n    [FR]=\"France\"\n)\ndeclare -A counts=()\n\n# Skip header and read visitors.csv\n{\n    read -r header\n    while IFS=, read -r name code || [[ -n \"$name\" ]]; do\n        # Trim carriage returns if any\n        name=\"${name%$'\\r'}\"\n        code=\"${code%$'\\r'}\"\n        full=\"${countries[$code]}\"\n        echo \"$name visited from $full\"\n        ((counts[\"$full\"]++))\n    done\n} < /data/visitors.csv\n\nfor country in \"${!counts[@]}\"; do\n    echo \"${counts[$country]}|$country\"\ndone | sort -t\"|\" -k1,1nr -k2,2 | while IFS=\"|\" read -r count country; do\n    echo \"$country: $count visitors\"\ndone\n'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Alice visited from United States\nBob visited from United Kingdom\nCarol visited from United States\nDave visited from Japan\nEve visited from Germany\nFrank visited from United States\nGrace visited from United Kingdom\nUnited States: 3 visitors\nUnited Kingdom: 2 visitors\nGermany: 1 visitors\nJapan: 1 visitors\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

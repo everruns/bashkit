@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "db_csv_group_by",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "Read /data/sales.csv with columns: region, product, amount. Compute total amount per region (like SQL GROUP BY region, SUM(amount)). Print results as 'region: total' sorted by total descending."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "north: 850\nsouth: 750\neast: 650",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "awk -F, 'NR>1 {sum[$1]+=$3} END {for (r in sum) print r \": \" sum[r]}' /data/sales.csv | sort -t: -k2,2nr"
+    ],
+    "usage": {
+      "input_tokens": 514,
+      "output_tokens": 90,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 2907
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "awk -F, 'NR>1 {sum[$1]+=$3} END {for (r in sum) print r \": \" sum[r]}' /data/sales.csv | sort -t: -k2,2nr",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "north: 850\nsouth: 750\neast: 650\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "build_script_generator",
+  "target": "openai/gpt-6.1-sol",
+  "input": [
+    "Read /project/deps.txt which lists build targets and their dependencies (format: 'target: dep1 dep2'). Generate /project/build.sh that builds targets in correct dependency order (dependencies before dependents). Then run the build script, which should create each target as a file in /project/out/ containing 'built: <target>'. Print the build order."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Created and ran `/project/build.sh`.\n\nBuild order: `core → lib → utils → app`\n\nEach target file in `/project/out/` contains `built: <target>`.",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "cat /project/deps.txt; ls -la /project",
+      "cat > /project/build.sh <<'EOF'\n#!/usr/bin/env bash\nset -euo pipefail\ncd -- \"$(dirname -- \"${BASH_SOURCE[0]}\")\"\n\ndeclare -A dependencies=() state=()\ndeclare -a targets=() order=()\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n    [[ \"$line\" =~ ^[[:space:]]*$ ]] && continue\n    if [[ ! \"$line\" =~ ^[[:space:]]*([a-zA-Z0-9_-][a-zA-Z0-9_.-]*)[[:space:]]*:[[:space:]]*(.*)$ ]]; then\n        printf 'Invalid dependency line: %s\\n' \"$line\" >&2\n        exit 1\n    fi\n    target=${BASH_REMATCH[1]}\n    deps=${BASH_REMATCH[2]}\n    targets+=(\"$target\")\n    dependencies[\"$target\"]=$deps\ndone < deps.txt\n\nvisit() {\n    local target=$1 dep\n    local -a deps=()\n    case ${state[$target]:-} in\n        done) return 0 ;;\n        visiting) printf 'Dependency cycle at: %s\\n' \"$target\" >&2; exit 1 ;;\n    esac\n    state[\"$target\"]=visiting\n    read -r -a deps <<< \"${dependencies[$target]:-}\"\n    for dep in \"${deps[@]}\"; do\n        if [[ ! \"$dep\" =~ ^[a-zA-Z0-9_-][a-zA-Z0-9_.-]*$ ]]; then\n            printf 'Invalid dependency: %s\\n' \"$dep\" >&2\n            exit 1\n        fi\n        visit \"$dep\"\n    done\n    state[\"$target\"]=done\n    order+=(\"$target\")\n}\n\nfor target in \"${targets[@]}\"; do\n    visit \"$target\"\ndone\nmkdir -p out\nfor target in \"${order[@]}\"; do\n    printf 'built: %s\\n' \"$target\" > \"out/$target\"\ndone\nprintf 'Build order:'\nprintf ' %s' \"${order[@]}\"\nprintf '\\n'\nEOF\nchmod +x /project/build.sh\n/project/build.sh\nfor target in core lib utils app; do printf '%s: ' \"$target\"; cat \"/project/out/$target\"; done",
+      "sed -i 's|^cd -- .*|cd /project|' /project/build.sh\nbash /project/build.sh\nfor target in core lib utils app; do printf '%s: ' \"$target\"; cat \"/project/out/$target\"; done"
+    ],
+    "usage": {
+      "input_tokens": 2732,
+      "output_tokens": 888,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 23264
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 2.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /project/deps.txt; ls -la /project",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "app: lib utils\nlib: core\nutils: core\ncore:\n-rw-r--r--       43 2026-10-09 05:04 deps.txt\ndrwxr-xr-x        0 2026-10-09 05:04 src\n"
+          },
+          {
+            "commands": "cat > /project/build.sh <<'EOF'\n#!/usr/bin/env bash\nset -euo pipefail\ncd -- \"$(dirname -- \"${BASH_SOURCE[0]}\")\"\n\ndeclare -A dependencies=() state=()\ndeclare -a targets=() order=()\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n    [[ \"$line\" =~ ^[[:space:]]*$ ]] && continue\n    if [[ ! \"$line\" =~ ^[[:space:]]*([a-zA-Z0-9_-][a-zA-Z0-9_.-]*)[[:space:]]*:[[:space:]]*(.*)$ ]]; then\n        printf 'Invalid dependency line: %s\\n' \"$line\" >&2\n        exit 1\n    fi\n    target=${BASH_REMATCH[1]}\n    deps=${BASH_REMATCH[2]}\n    targets+=(\"$target\")\n    dependencies[\"$target\"]=$deps\ndone < deps.txt\n\nvisit() {\n    local target=$1 dep\n    local -a deps=()\n    case ${state[$target]:-} in\n        done) return 0 ;;\n        visiting) printf 'Dependency cycle at: %s\\n' \"$target\" >&2; exit 1 ;;\n    esac\n    state[\"$target\"]=visiting\n    read -r -a deps <<< \"${dependencies[$target]:-}\"\n    for dep in \"${deps[@]}\"; do\n        if [[ ! \"$dep\" =~ ^[a-zA-Z0-9_-][a-zA-Z0-9_.-]*$ ]]; then\n            printf 'Invalid dependency: %s\\n' \"$dep\" >&2\n            exit 1\n        fi\n        visit \"$dep\"\n    done\n    state[\"$target\"]=done\n    order+=(\"$target\")\n}\n\nfor target in \"${targets[@]}\"; do\n    visit \"$target\"\ndone\nmkdir -p out\nfor target in \"${order[@]}\"; do\n    printf 'built: %s\\n' \"$target\" > \"out/$target\"\ndone\nprintf 'Build order:'\nprintf ' %s' \"${order[@]}\"\nprintf '\\n'\nEOF\nchmod +x /project/build.sh\n/project/build.sh\nfor target in core lib utils app; do printf '%s: ' \"$target\"; cat \"/project/out/$target\"; done",
+            "exit_code": 1,
+            "stderr": "/project/build.sh: line 2: cd: .\n/project: No such file or directory\ncat: /project/out/core: No such file or directory\ncat: /project/out/lib: No such file or directory\ncat: /project/out/utils: No such file or directory\ncat: /project/out/app: No such file or directory\n",
+            "stdout": "core: lib: utils: app: "
+          },
+          {
+            "commands": "sed -i 's|^cd -- .*|cd /project|' /project/build.sh\nbash /project/build.sh\nfor target in core lib utils app; do printf '%s: ' \"$target\"; cat \"/project/out/$target\"; done",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Build order: core lib utils app\ncore: built: core\nlib: built: lib\nutils: built: utils\napp: built: app\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

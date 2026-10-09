@@ -1,0 +1,85 @@
+{
+  "eval": "bashkit_repo",
+  "sample": "repo_report_sort_regression",
+  "target": "anthropic/claude-opus-5-5",
+  "input": [
+    "`make test` fails in the git repo /home/eval/report: the top-customers report no longer matches the golden file tests/expected.txt. The golden file is correct. Fix the report script, make sure `make test` passes, and commit with a message starting with `fix:`."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I fixed the report script, `make test` now passes (it prints `report OK`), and the fix is committed.\n\n**Cause:** `bin/top-customers` sorted the customer totals as text instead of as numbers (`sort -t, -k2 -r`). Compared as text, totals starting with \"9\" come before totals starting with \"1\", so `hooli,99` and `umbrella,95` ended up above `globex,1240`.\n\n**Fix:** I changed that line to `sort -t, -k2,2nr`, so it sorts only the total column, as numbers, from largest to smallest. The top 3 are now `globex,1240`, `acme,1200` and `initech,1100`, which matches `tests/expected.txt`.\n\n**Commit:** `fix: sort top-customers numerically by total spend`. It only includes `bin/top-customers`. The test writes its output to `build/actual.txt`, which is untracked; I left it out of the commit.\n\n**Possible follow-up:** if two customers ever have the same total, their order in the report isn't fixed. Adding `-k1,1` as a second sort key would make it predictable. I didn't add it because the current data has no ties.",
+    "iterations": 6,
+    "tool_calls_count": 5,
+    "tool_calls": [
+      "cd /home/eval/report && git log --oneline | head && ls -R && cat Makefile && make test; git status",
+      "cd /home/eval/report && cat bin/top-customers; cat data/orders.csv; cat .gitignore",
+      "cd /home/eval/report && sed -i 's/sort -t, -k2 -r/sort -t, -k2,2nr/' bin/top-customers && make test && git add bin/top-customers && git commit -qm \"fix: sort top-customers numerically by total spend\" && git status --short && git log --oneline | head -3",
+      "cd /home/eval/report && git log --format='%h %s' && git show --stat HEAD | tail -3",
+      "cd /home/eval/report && git diff HEAD; git show HEAD:bin/top-customers 2>/dev/null || cat bin/top-customers"
+    ],
+    "usage": {
+      "input_tokens": 8985,
+      "output_tokens": 926,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 10906
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 5.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 4.0,
+      "turns": 6.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cd /home/eval/report && git log --oneline | head && ls -R && cat Makefile && make test; git status",
+            "exit_code": 0,
+            "stderr": "make: *** [Makefile:4: test] Error 1\n",
+            "stdout": "commit b465c861\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 05:07:26 2026 +0000\n\n    initial import\n\n.:\nMakefile\nbin\ndata\ntests\n\n./bin:\ntop-customers\n\n./data:\norders.csv\n\n./tests:\nexpected.txt\ntest:\n\t@mkdir -p build\n\t@bin/top-customers data/orders.csv 3 > build/actual.txt\n\t@diff -u tests/expected.txt build/actual.txt && echo 'report OK'\n--- tests/expected.txt\n+++ build/actual.txt\n@@ -1,3 +1,3 @@\n+hooli,99\n+umbrella,95\n globex,1240\n-acme,1200\n-initech,1100\nOn branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/actual.txt\n"
+          },
+          {
+            "commands": "cd /home/eval/report && cat bin/top-customers; cat data/orders.csv; cat .gitignore",
+            "exit_code": 1,
+            "stderr": "cat: .gitignore: No such file or directory\n",
+            "stdout": "#!/bin/bash\n# usage: top-customers ORDERS.csv N -> top N customers by total spend\nawk -F, 'NR > 1 { total[$2] += $3 } END { for (c in total) print c \",\" total[c] }' \"$1\" \\\n  | sort -t, -k2 -r \\\n  | head -n \"$2\"\nid,customer,amount\n1,acme,900\n2,globex,1200\n3,initech,450\n4,acme,300\n5,umbrella,95\n6,globex,40\n7,initech,650\n8,hooli,99\n"
+          },
+          {
+            "commands": "cd /home/eval/report && sed -i 's/sort -t, -k2 -r/sort -t, -k2,2nr/' bin/top-customers && make test && git add bin/top-customers && git commit -qm \"fix: sort top-customers numerically by total spend\" && git status --short && git log --oneline | head -3",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "report OK\n[master b465c87] fix: sort top-customers numerically by total spend\nOn branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/actual.txt\ncommit b465c87d\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 05:07:30 2026 +0000\n"
+          },
+          {
+            "commands": "cd /home/eval/report && git log --format='%h %s' && git show --stat HEAD | tail -3",
+            "exit_code": 0,
+            "stderr": "internal error: fatal: bad object --stat\n",
+            "stdout": "commit b465c87d\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 05:07:30 2026 +0000\n\n    fix: sort top-customers numerically by total spend\n\ncommit b465c861\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 05:07:26 2026 +0000\n\n    initial import\n\n"
+          },
+          {
+            "commands": "cd /home/eval/report && git diff HEAD; git show HEAD:bin/top-customers 2>/dev/null || cat bin/top-customers",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Diff output (simplified in virtual mode)\n#!/bin/bash\n# usage: top-customers ORDERS.csv N -> top N customers by total spend\nawk -F, 'NR > 1 { total[$2] += $3 } END { for (c in total) print c \",\" total[c] }' \"$1\" \\\n  | sort -t, -k2,2nr \\\n  | head -n \"$2\"\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

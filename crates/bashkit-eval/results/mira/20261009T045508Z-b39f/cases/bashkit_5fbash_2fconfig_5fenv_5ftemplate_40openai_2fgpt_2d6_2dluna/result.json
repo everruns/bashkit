@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "config_env_template",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "Read /config/template.env which has lines like 'KEY=${VALUE:-default}'. For each line, check if the key exists in /config/overrides.txt (format: KEY=value). If it does, use the override value; otherwise use the default from the template. Write the final KEY=value pairs to /app/.env and print the result."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Wrote the final values to `/app/.env`:\n\n```env\nDB_HOST=db.prod.internal\nDB_PORT=5432\nDB_NAME=myapp\nREDIS_URL=redis://localhost:6379\nLOG_LEVEL=warn\n```",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat /config/template.env; printf '\\n--- overrides ---\\n'; cat /config/overrides.txt; printf '\\n--- status ---\\n'; ls -la /app /config",
+      "mkdir -p /app\nbash <<'EOF'\ndeclare -A overrides\nwhile IFS= read -r line || [[ -n $line ]]; do\n  [[ -z $line ]] && continue\n  key=${line%%=*}\n  value=${line#*=}\n  overrides[\"$key\"]=$value\ndone < /config/overrides.txt\n: > /app/.env\nwhile IFS= read -r line || [[ -n $line ]]; do\n  [[ -z $line ]] && continue\n  key=${line%%=*}\n  expr=${line#*=}\n  prefix='${'\"$key\"':-'\n  if [[ $expr == \"$prefix\"*'}' ]]; then\n    default=${expr#\"$prefix\"}\n    default=${default%\\}}\n  else\n    printf 'Invalid template line: %s\\n' \"$line\" >&2\n    exit 1\n  fi\n  if [[ ${overrides[$key]+present} ]]; then\n    value=${overrides[$key]}\n  else\n    value=$default\n  fi\n  printf '%s=%s\\n' \"$key\" \"$value\" >> /app/.env\ndone < /config/template.env\ncat /app/.env\nEOF"
+    ],
+    "usage": {
+      "input_tokens": 1374,
+      "output_tokens": 539,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 10268
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 1.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /config/template.env; printf '\\n--- overrides ---\\n'; cat /config/overrides.txt; printf '\\n--- status ---\\n'; ls -la /app /config",
+            "exit_code": 2,
+            "stderr": "ls: cannot access '/app': No such file or directory\n",
+            "stdout": "DB_HOST=${DB_HOST:-localhost}\nDB_PORT=${DB_PORT:-5432}\nDB_NAME=${DB_NAME:-myapp}\nREDIS_URL=${REDIS_URL:-redis://localhost:6379}\nLOG_LEVEL=${LOG_LEVEL:-info}\n\n--- overrides ---\nDB_HOST=db.prod.internal\nLOG_LEVEL=warn\n\n--- status ---\n"
+          },
+          {
+            "commands": "mkdir -p /app\nbash <<'EOF'\ndeclare -A overrides\nwhile IFS= read -r line || [[ -n $line ]]; do\n  [[ -z $line ]] && continue\n  key=${line%%=*}\n  value=${line#*=}\n  overrides[\"$key\"]=$value\ndone < /config/overrides.txt\n: > /app/.env\nwhile IFS= read -r line || [[ -n $line ]]; do\n  [[ -z $line ]] && continue\n  key=${line%%=*}\n  expr=${line#*=}\n  prefix='${'\"$key\"':-'\n  if [[ $expr == \"$prefix\"*'}' ]]; then\n    default=${expr#\"$prefix\"}\n    default=${default%\\}}\n  else\n    printf 'Invalid template line: %s\\n' \"$line\" >&2\n    exit 1\n  fi\n  if [[ ${overrides[$key]+present} ]]; then\n    value=${overrides[$key]}\n  else\n    value=$default\n  fi\n  printf '%s=%s\\n' \"$key\" \"$value\" >> /app/.env\ndone < /config/template.env\ncat /app/.env\nEOF",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "DB_HOST=db.prod.internal\nDB_PORT=5432\nDB_NAME=myapp\nREDIS_URL=redis://localhost:6379\nLOG_LEVEL=warn\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}
