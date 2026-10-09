@@ -93,7 +93,43 @@ Smoke test dataset (`data/smoke-test.jsonl`) has 3 tasks for quick verification.
 > `results/mira/<run_id>/`). Earlier entries were produced by the original
 > (pre-mira) harness and are retained as a record.
 
-### 2026-10-09, 7-model lineup (58 tasks + 8 repo + 10 hard, latest)
+### 2026-10-09, tagged 88-task dataset + generate eval (latest)
+
+First run of the merged, tagged `bashkit_bash` dataset (mode=agent|runtime,
+difficulty=basic|repo|hard) and of `bashkit_generate`. Run folders:
+`results/mira/20261009T173925Z-a0a7` (`bashkit_bash`) and
+`results/mira/20261009T171610Z-2942` (`bashkit_generate`). GPT-6.1 Sol and
+GPT-6 Luna are not in this run: the OpenAI key ran out of credit mid-run, so
+resume both run folders with `mira run ... --resume <run_id>` once it is
+topped up.
+
+| Metric | Opus 5.5 | Kimi K3 | Sonnet 5.5 | Muse Spark 1.3 | Gemini 3.8 Flash |
+|--------|----------|---------|------------|----------------|------------------|
+| bashkit_bash (88) | **87/88** | 86/88 | 85/88 | 84/88 | 74/88 |
+| basic (58) | **58/58** | 57/58 | 56/58 | **58/58** | 55/58 |
+| repo (8) | 7/8 | **8/8** | **8/8** | 5/8 | 4/8 |
+| hard (10) | **10/10** | 9/10 | 9/10 | 9/10 | 6/10 |
+| runtime (12) | **12/12** | **12/12** | **12/12** | **12/12** | 9/12 |
+| bashkit_generate (15) | 13/15 | **15/15** | **15/15** | **15/15** | 13/15 |
+| Tool-call success | 92% | 92% | 92% | **97%** | 94% |
+| Tokens (in/out) | 628K / 102K | 974K / 192K | **519K / 79K** | 2639K / 679K | 1619K / 127K |
+| Duration | 18.3 min | 40.9 min | **13.1 min** | 119.3 min | 56.1 min |
+
+Duration is the sum of per-task wall-clock time for `bashkit_bash`.
+
+#### Highlights
+
+1. **`hard_makefile_deps` is the hardest task**: Sonnet, Kimi, Muse and Gemini
+   all miss it; only Opus 5.5 solves it.
+2. **Runtime tasks are near-saturated** for the top four (12/12). Gemini misses
+   `rt_sqlite_hr_report`, `rt_state_csvq_tool` and `rt_state_ledger_ingest`.
+3. **Repo tasks still split the field**: `repo_parallel_runner_masks_failure`
+   (masked background-job failures) defeats Opus, Muse and Gemini.
+4. **Generate**: Opus misses `gen_assoc_inventory` and `gen_retry_backoff`
+   (one reply had no script fence); Gemini misses `gen_csv_to_jsonl` and
+   `gen_semver_bump`.
+
+### 2026-10-09, 7-model lineup (58 tasks + 8 repo + 10 hard)
 
 Lineup refreshed to current models: Claude Opus 5.5 and Sonnet 5.5, GPT-6.1 Sol
 and GPT-6 Luna (Responses API: GPT-6 rejects function tools on Chat Completions
