@@ -50,9 +50,8 @@ Results are written by mira under `./results/<run_id>/`.
 
 Targets (model matrix) are defined in `src/mira_study.rs` and gated on
 `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `OPENROUTER_API_KEY`; offline runs
-skip them all. OpenAI models run direct when `OPENAI_API_KEY` is set, else
-through OpenRouter (labels `openrouter/openai/<model>`); Gemini models always
-run through OpenRouter. Select a subset with `--targets <labels>`,
+skip them all. Models with no bashkit provider (Kimi, Meta Muse, Gemini) run
+through OpenRouter, labelled `openrouter/<vendor>/<model>`. Select a subset with `--targets <labels>`,
 comma-separated globs (mira 0.5+), e.g. `--targets 'anthropic/*'` or
 `--targets anthropic/claude-opus-5-5,openrouter/openai/gpt-5.6-sol`.
 

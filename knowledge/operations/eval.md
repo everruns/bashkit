@@ -125,11 +125,9 @@ Implemented under `src/provider/`, selected by the mira target's `provider` id:
 - **OpenAI Chat Completions**: target `Target::openai(model)`; `OPENAI_API_KEY`.
 - **OpenRouter** (same Chat Completions wire format, second endpoint on
   `OpenAiProvider`): target `Target::cloud("openrouter", "<vendor>/<model>",
-  "OPENROUTER_API_KEY")`, label `openrouter/openai/gpt-5.6-sol`. OpenAI models
-  route here only when `OPENAI_API_KEY` is unset (never both, so a model never
-  runs twice); Gemini always routes here (no Gemini provider). Added
-  2026-10-09 when the OpenAI key ran out of credit and Gemini's host was
-  unreachable from the eval environment.
+  "OPENROUTER_API_KEY")`, label `openrouter/moonshotai/kimi-k3`. Used for
+  models bashkit has no provider for (Kimi, Meta Muse) and for Gemini, whose
+  own host is unreachable from the cloud eval environment. Added 2026-10-09.
 - **OpenAI Responses API**: target `Target::cloud("openresponses", model,
   "OPENAI_API_KEY")`. Required for codex models (e.g. `gpt-5.3-codex`);
   multi-turn via manual input chaining; sets `reasoning.effort: "high"` for

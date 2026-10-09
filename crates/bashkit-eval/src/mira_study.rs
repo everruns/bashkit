@@ -40,52 +40,35 @@ pub const REPO_MAX_TURNS: usize = 20;
 /// Default model matrix. Each target is gated on its provider's API-key env var,
 /// so an offline run skips them all (CI stays green) and a keyed run lights up
 /// the subset whose credentials are present. Select subsets with
-/// `mira run --targets anthropic/claude-opus-5-5` (comma-separated label globs).
+/// `mira run --targets 'anthropic/*'` (comma-separated label globs).
 ///
-/// Decision: OpenAI models go direct when `OPENAI_API_KEY` is set, else through
-/// OpenRouter (`OPENROUTER_API_KEY`), never both, so `just eval` never runs a
-/// model twice. Gemini always goes through OpenRouter (bashkit has no Gemini
-/// provider). One `*-4-8` / `gpt-5.5` anchor each links runs across lineups.
+/// Decision: Anthropic and OpenAI go direct. Models without a bashkit provider
+/// (Kimi, Meta Muse, Gemini) go through OpenRouter's Chat Completions API;
+/// Gemini too because its own host is unreachable from the eval environment.
+/// GPT-6 models reject function tools on Chat Completions while reasoning is
+/// on, so OpenAI targets use the Responses API. Lineup chosen 2026-10-09.
 pub fn default_targets() -> Vec<Target> {
-    let openai_direct = env_set("OPENAI_API_KEY");
-    let openai = |model: &str| {
-        if openai_direct {
-            Target::openai(model)
-        } else {
-            openrouter(&format!("openai/{model}"))
-        }
-    };
     vec![
         Target::anthropic("claude-opus-5-5"),
         Target::anthropic("claude-sonnet-5-5"),
-        Target::anthropic("claude-haiku-5-5"),
-        Target::anthropic("claude-fable-5-1"),
-        Target::anthropic("claude-opus-4-8"),
-        openai("gpt-5.6-sol"),
-        openai("gpt-5.6-terra"),
-        openai("gpt-5.6-luna"),
-        openai("gpt-5.5"),
-        // Codex models require the OpenAI Responses API on the direct route;
-        // a custom provider id our subject understands, gated on the OpenAI key.
-        // OpenRouter serves them over Chat Completions.
-        if openai_direct {
-            Target::cloud("openresponses", "gpt-5.3-codex", "OPENAI_API_KEY")
-        } else {
-            openrouter("openai/gpt-5.3-codex")
-        },
-        openrouter("google/gemini-3.1-pro-preview"),
+        openai_responses("gpt-6.1-sol"),
+        openai_responses("gpt-6-luna"),
         openrouter("google/gemini-3.8-flash"),
+        openrouter("moonshotai/kimi-k3"),
+        openrouter("meta/muse-spark-1.3-contributor"),
     ]
+}
+
+/// An OpenAI model on the Responses API (custom provider id our subject
+/// understands), labelled `openai/<model>` so reports read like the provider.
+fn openai_responses(model: &str) -> Target {
+    Target::cloud("openresponses", model, "OPENAI_API_KEY").label(format!("openai/{model}"))
 }
 
 /// An OpenRouter target; `model` is the vendor-prefixed OpenRouter id, so the
 /// label reads `openrouter/openai/gpt-5.6-sol`.
 fn openrouter(model: &str) -> Target {
     Target::cloud("openrouter", model, "OPENROUTER_API_KEY")
-}
-
-fn env_set(key: &str) -> bool {
-    std::env::var(key).is_ok_and(|v| !v.trim().is_empty())
 }
 
 /// Map a mira `Target` to a bashkit `Provider`. Errors surface as infra errors
