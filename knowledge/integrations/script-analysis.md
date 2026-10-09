@@ -52,7 +52,8 @@ cannot see through:
 - interpreter re-entry, `eval`, `source`, `.`, and any nested `bash`/`sh` (inline `-c` text, a script file, or stdin)
 - shell functions and aliases that rebind a name
 - wrapper commands that run other commands named in their arguments,
-  `xargs`, `env`, `timeout`, `find -exec`, `awk 'system(…)'`. These are **not**
+  `xargs`, `env`, `timeout`, `coreutils` (wasm multicall), `find -exec`,
+  `awk 'system(…)'`. These are **not**
   flagged opaque: they analyze as ordinary commands, so a host that allowlists
   one must treat its arguments as commands itself. `ScriptAnalysis::command_wrappers()`
   reports which prefix-style wrappers a script uses, and `analysis::COMMAND_WRAPPERS` /

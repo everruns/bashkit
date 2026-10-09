@@ -163,7 +163,7 @@ Boundaries of the uutils WebAssembly guests; see
 
 | ID | Limitation | Why | Evidence |
 |----|------------|-----|----------|
-| L-WCU-001 | Only uutils' WASI-buildable set (71 utilities); `stat`, `du`, `df`, `id`, `install`, `chown`, `timeout`, `tac` are not in the guest | They need host APIs WASI preview1 lacks (or `tac` panics on `std::env::temp_dir`) | `guest/gen.py`, stance |
+| L-WCU-001 | Only uutils' WASI-buildable set (70 utilities); `stat`, `du`, `df`, `id`, `install`, `chown`, `timeout`, `tac`, `dd` are not in the guest | They need host APIs WASI preview1 lacks (`tac` panics on `std::env::temp_dir`, `dd` spawns a thread per copy; native `dd` remains) | `guest/gen.py`, stance |
 | L-WCU-002 | `ls -l` and similar show placeholder owner and permission bits | WASI `filestat` has no mode or uid/gid | stance |
 | L-WCU-003 | Output is captured, not streamed: a pipeline stage runs to completion first, and redirected output counts against `max_output` | Same buffered model as the CPython guest | `output_is_capped` |
 | L-WCU-004 | Wasm utilities run on the Pulley interpreter, much slower than native builtins on large inputs | No run-time compile (startup is a product feature); native AOT is a possible opt-in like `cpython-native` | `criterion-wasm-coreutils-*` |
