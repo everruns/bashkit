@@ -246,6 +246,33 @@ when the operator uses the operand, so an unused default never executes.
 `${x:-$(echo })}`: the lexer and `read_brace_operand` let a substitution own
 its braces.
 
+**Aliases expand at parse time, per line.** The interpreter hands the
+parser a `ParseOptions` (alias table under `expand_aliases`, `extglob`).
+When a command word is a plain (unquoted, unexpanded) alias name, the parser
+pushes the value to the front of the lexer's reinject buffer (alias text does
+not move source positions) and lexes on, so a value may hold `{`, `(`,
+keywords or half a loop. `alias_stack` stops recursion, a value ending in a
+blank makes the next word a candidate, and every expansion ticks the parser's
+fuel (TM-DOS-030/031). A here-doc started inside an alias reads its body from
+the next real input line. The script records each top-level command's start
+(`Script::command_starts`, with the source; both `#[serde(skip)]`, so the
+snapshot AST format is unchanged). When `alias`/`unalias`/`shopt extglob`
+changes the options mid-script, the body loop re-parses the rest from the
+next command that starts a new line (`reread_script_rest`), as bash reads
+line by line: `alias e=..; e` on one line misses `e`, the next line sees
+it. At the top level `;`/`&` followed by a newline ends the command, so the
+next line can be re-read. `eval` and `source` go through the same loop.
+
+**`!(` needs extglob.** `!(` lexes as an extglob group only when `extglob` is
+on (a re-read after `shopt -s extglob` picks it up); otherwise it is `!` then
+a subshell. The right operand of `==`/`!=`/`=` in `[[ ]]` always lexes
+extglob, like bash.
+
+**Compound array arguments.** `name=(...)` as an argument is a declaration
+operand only after an unquoted literal `declare`, `typeset`, `local`,
+`export`, `readonly`, `let` or `eval`; `builtin declare a=(x)` and
+`command declare a=(x)` are syntax errors, as in bash.
+
 ## Alternatives Considered
 
 - PEG (pest, pom): rejected, bash grammar is context-sensitive, here-docs awkward, manual parser gives better errors.

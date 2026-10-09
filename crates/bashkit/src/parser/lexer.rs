@@ -15,6 +15,12 @@ pub struct SpannedToken {
     /// Source text of a word token, only while raw capture is on (function
     /// bodies, for `type`/`declare -f` printing).
     pub raw: Option<String>,
+    /// A word lexed with no quoting or escapes (only tracked while alias
+    /// expansion is on): only such a word can name an alias.
+    pub plain: bool,
+    /// The word follows an alias whose value ends in a blank, so it is
+    /// checked for alias expansion too (bash `alias e='echo '`).
+    pub after_blank_alias: bool,
 }
 
 /// Maximum nesting depth for command substitution in the lexer.
@@ -88,6 +94,22 @@ pub struct Lexer<'a> {
     /// reserved word or an assignment): `a[1 + 2]=x` keeps the blanks
     /// inside its subscript.
     spaced_subscript: bool,
+    /// Alias expansion is on: word tokens record whether they are plain.
+    track_plain: bool,
+    /// How many characters at the front of `reinject_buf` are alias text.
+    /// They do not move the source position (spans and `$LINENO` stay on
+    /// the line that named the alias).
+    alias_front: usize,
+    /// Aliases whose text is still being read: name, the `alias_front`
+    /// value under which that text is used up, and whether it ends in a blank.
+    alias_stack: Vec<(String, usize, bool)>,
+    /// A blank-ending alias was just used up: the next word is checked too.
+    blank_alias_pending: bool,
+    /// `!(` starts an extglob group. Off when the shell runs without
+    /// `shopt -s extglob`: then `!(a && b)` is `!` and a subshell. The other
+    /// groups (`@(`, `+(`, ...) always lex as patterns, where bash would
+    /// report a syntax error instead.
+    extglob_bang: bool,
 }
 
 impl<'a> Lexer<'a> {
@@ -108,6 +130,11 @@ impl<'a> Lexer<'a> {
             capture_raw: false,
             raw_buf: String::new(),
             spaced_subscript: true,
+            track_plain: false,
+            alias_front: 0,
+            alias_stack: Vec::new(),
+            blank_alias_pending: false,
+            extglob_bang: true,
         }
     }
 
@@ -141,18 +168,103 @@ impl<'a> Lexer<'a> {
     }
 
     fn advance(&mut self) -> Option<char> {
+        let mut from_alias = false;
         let ch = if !self.reinject_buf.is_empty() {
+            if self.alias_front > 0 {
+                self.alias_front -= 1;
+                from_alias = true;
+            }
             self.reinject_buf.pop_front()
         } else {
             self.chars.next()
         };
         if let Some(c) = ch {
-            self.position.advance(c);
-            if self.capture_raw {
+            if from_alias {
+                self.finish_used_aliases();
+            } else {
+                self.position.advance(c);
+            }
+            if self.capture_raw || self.track_plain {
                 self.raw_buf.push(c);
             }
         }
         ch
+    }
+
+    /// Whether `!(` starts an extglob group (`shopt -s extglob`).
+    pub(crate) fn set_extglob_bang(&mut self, on: bool) {
+        self.extglob_bang = on;
+    }
+
+    pub(crate) fn extglob_bang(&self) -> bool {
+        self.extglob_bang
+    }
+
+    /// Turn on plain-word tracking (alias expansion is on).
+    pub(crate) fn set_track_plain(&mut self, on: bool) {
+        self.track_plain = on;
+    }
+
+    /// Whether alias `name` is being expanded now (its text is still being
+    /// read): bash never expands an alias inside its own text.
+    pub(crate) fn alias_active(&self, name: &str) -> bool {
+        self.alias_stack
+            .iter()
+            .any(|(n, end, _)| n == name && self.alias_front > *end)
+    }
+
+    /// Read `text`, the value of alias `name`, before the rest of the input.
+    pub(crate) fn push_alias(&mut self, name: &str, text: &str) {
+        let end = self.alias_front;
+        let blank = text.ends_with([' ', '\t']);
+        // bash checks the first word of a blank-ending value as well as the
+        // word after it (`alias eye2='eye1 '`).
+        self.blank_alias_pending |= blank;
+        let mut n = 0;
+        for ch in text.chars().rev() {
+            self.reinject_buf.push_front(ch);
+            n += 1;
+        }
+        self.alias_front += n;
+        self.alias_stack.push((name.to_string(), end, blank));
+        // An empty value is used up at once.
+        self.finish_used_aliases();
+    }
+
+    /// Pop aliases whose text is fully read; a blank-ending one makes the
+    /// next word an alias candidate.
+    fn finish_used_aliases(&mut self) {
+        while let Some((_, end, blank)) = self.alias_stack.last() {
+            if self.alias_front > *end {
+                break;
+            }
+            if *blank {
+                self.blank_alias_pending = true;
+            }
+            self.alias_stack.pop();
+        }
+    }
+
+    /// Hand back alias text not read yet (a here-document body comes from
+    /// the input, never from the alias: bash reads the rest of the alias
+    /// as commands after the body).
+    fn detach_alias_text(&mut self) -> Vec<char> {
+        let n = self.alias_front.min(self.reinject_buf.len());
+        if n == 0 {
+            return Vec::new();
+        }
+        let mut text: Vec<char> = self.reinject_buf.drain(..n).collect();
+        self.alias_front = 0;
+        self.alias_stack.clear();
+        // The rest of the input line follows the alias text too; the body
+        // starts on the next input line.
+        while let Some(ch) = self.advance() {
+            text.push(ch);
+            if ch == '\n' {
+                break;
+            }
+        }
+        text
     }
 
     /// Upcoming characters without consuming them: re-injected text first
@@ -274,6 +386,7 @@ impl<'a> Lexer<'a> {
         self.skip_whitespace();
         let start = self.position;
         self.raw_buf.clear();
+        let after_blank_alias = std::mem::take(&mut self.blank_alias_pending);
         let token = self.next_token_inner()?;
         // A word is lexed in assignment position after an operator, a
         // reserved word or another assignment, never after a command name.
@@ -285,6 +398,7 @@ impl<'a> Lexer<'a> {
             _ => true,
         };
         let end = self.position;
+        let plain = self.track_plain && matches!(&token, Token::Word(w) if *w == self.raw_buf);
         let raw = (self.capture_raw
             && matches!(
                 token,
@@ -298,6 +412,8 @@ impl<'a> Lexer<'a> {
             token,
             span: Span::from_positions(start, end),
             raw,
+            plain,
+            after_blank_alias,
         })
     }
 
@@ -912,6 +1028,9 @@ impl<'a> Lexer<'a> {
         // quoted glob characters stay literal (see the end of this function).
         let mut quoted_ranges: Vec<(usize, usize)> = Vec::new();
         let mut has_unquoted_expansion = false;
+        // An extglob group held quoted or escaped text, kept as `\x`: the
+        // word must drop those escapes when it matches nothing.
+        let mut extglob_escaped = false;
         // A blank inside `name[...]` was checked to close with `]=` ahead.
         let mut spaced_ok = false;
 
@@ -1261,9 +1380,13 @@ impl<'a> Lexer<'a> {
                 } else {
                     word.push('\\');
                 }
-            } else if ch == '(' && word.ends_with(['@', '?', '*', '+', '!']) {
+            } else if ch == '('
+                && (word.ends_with(['@', '?', '*', '+'])
+                    || (self.extglob_bang && word.ends_with('!')))
+            {
                 // Extglob: @(...), ?(...), *(...), +(...), !(...)
                 // Consume through matching ) including nested parens
+                let group_start = word.len();
                 word.push(ch);
                 self.advance();
                 let mut depth = 1;
@@ -1320,6 +1443,7 @@ impl<'a> Lexer<'a> {
                         _ => {}
                     }
                 }
+                extglob_escaped |= word[group_start..].contains('\\');
             } else if ch == '}' {
                 // An unmatched `}` inside a word is a literal. `}` is a
                 // reserved word, not a metacharacter, so it only terminates a
@@ -1350,6 +1474,15 @@ impl<'a> Lexer<'a> {
             }
         }
 
+        // `a[` / `a[5 +` in assignment position: bash reads on for the
+        // `]` that closes the subscript and hits end of input.
+        if self.spaced_subscript
+            && Self::open_subscript_depth(&word) > 0
+            && !self.lookahead().any(|c| c == ']')
+        {
+            return Some(Token::Error("unterminated subscript".to_string()));
+        }
+
         // Quoted or escaped glob characters are literal (`a"*"`, `a\*`,
         // `a'?'`). With an unquoted glob in the same word they are escaped
         // in place, the QuotedGlobWord convention also used for words that
@@ -1359,9 +1492,19 @@ impl<'a> Lexer<'a> {
         let quoted_glob = quoted_ranges.iter().any(|&(start, end)| {
             // `(`, `)` and `|` count too: `*\(\)` must not become the
             // extglob `*()`. So does `\`: `[\\]` stays one bracket.
-            word[start..end].contains(['*', '?', '[', '{', '}', ',', '(', ')', '|', '\\'])
+            word[start..end].contains(['*', '?', '[', ']', '{', '}', ',', '(', ')', '|', '\\'])
         });
-        if quoted_glob && has_unquoted_glob {
+        // A quoted `-` only matters next to an unquoted glob, where it must
+        // stay a literal inside a bracket: `*.[C\-D]` matches `foo.-`.
+        let quoted_dash =
+            has_unquoted_glob && quoted_ranges.iter().any(|&(s, e)| word[s..e].contains('-'));
+        if (quoted_glob || quoted_dash) && has_unquoted_glob {
+            return Some(Token::QuotedGlobWord(
+                Self::escape_glob_metas_in_quoted_ranges(&word, &quoted_ranges),
+            ));
+        }
+        if extglob_escaped && !has_unquoted_expansion && !has_quoted_expansion {
+            // `@(a|'*')` with no match prints `@(a|*)` (quote removal).
             return Some(Token::QuotedGlobWord(
                 Self::escape_glob_metas_in_quoted_ranges(&word, &quoted_ranges),
             ));
@@ -1550,6 +1693,34 @@ impl<'a> Lexer<'a> {
                         }
                         None => content.push('\\'),
                     }
+                }
+                Some('(')
+                    if content.ends_with(['@', '?', '*', '+'])
+                        || (self.extglob_bang && content.ends_with('!')) =>
+                {
+                    // `"$*"*@(.py|cc)`: an extglob group after a quoted start.
+                    let mut depth = 0usize;
+                    while let Some(c) = self.peek_char() {
+                        content.push(c);
+                        self.advance();
+                        match c {
+                            '(' => depth += 1,
+                            ')' => {
+                                depth -= 1;
+                                if depth == 0 {
+                                    break;
+                                }
+                            }
+                            '\\' => {
+                                if let Some(e) = self.peek_char() {
+                                    content.push(e);
+                                    self.advance();
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    flags.has_unquoted_glob = true;
                 }
                 Some(ch) if self.is_word_char(ch) || matches!(ch, '{' | '}') => {
                     // `{` marks possible brace expansion, like a glob char.
@@ -2040,7 +2211,20 @@ impl<'a> Lexer<'a> {
     fn is_glob_escape_char(ch: char) -> bool {
         matches!(
             ch,
-            '\\' | '*' | '?' | '[' | ']' | '{' | '}' | ',' | '@' | '!' | '+' | '(' | ')' | '|'
+            '\\' | '*'
+                | '?'
+                | '['
+                | ']'
+                | '{'
+                | '}'
+                | ','
+                | '@'
+                | '!'
+                | '+'
+                | '('
+                | ')'
+                | '|'
+                | '-'
         )
     }
 
@@ -2315,6 +2499,17 @@ impl<'a> Lexer<'a> {
                         i += 2;
                         continue;
                     }
+                    // `"$*"*`, `"$@"x*`, `"$?"`: a special parameter's
+                    // name is not a glob character.
+                    if let Some(&(_, next)) = char_vec.get(i + 1)
+                        && matches!(next, '*' | '@' | '?' | '!' | '-')
+                        && (i == 0 || char_vec[i - 1].1 != '\x00')
+                    {
+                        result.push(ch);
+                        result.push(next);
+                        i += 2;
+                        continue;
+                    }
                 } else if !expansion_stack.is_empty() {
                     // Track nesting: ${ … { … } … } and $( … ( … ) … )
                     let top = *expansion_stack.last().unwrap();
@@ -2349,6 +2544,7 @@ impl<'a> Lexer<'a> {
                             | '('
                             | ')'
                             | '|'
+                            | '-'
                     )
                 {
                     result.push('\\');
@@ -2595,6 +2791,33 @@ impl<'a> Lexer<'a> {
             if matches!(ch, ' ' | '\t' | '\n' | ';' | '&' | '|' | '<' | '>') {
                 break;
             }
+            if matches!(ch, '"' | '\'' | '$' | '`') {
+                // `[hello"]"`, `[$(echo abc)]`: quotes and expansions are
+                // read as in any word (a quoted `]` closes nothing).
+                return self.read_word_starting_with(&word);
+            }
+            if ch == '(' && word.ends_with(['@', '?', '*', '+', '!']) {
+                // `[+(])`: an extglob group inside the brackets.
+                let mut depth = 0usize;
+                while let Some(c) = self.peek_char() {
+                    if c == '\n' {
+                        break;
+                    }
+                    word.push(c);
+                    self.advance();
+                    match c {
+                        '(' => depth += 1,
+                        ')' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                continue;
+            }
             word.push(ch);
             self.advance();
             if ch == ']' {
@@ -2822,6 +3045,7 @@ impl<'a> Lexer<'a> {
             }
             rest_of_line.push(ch);
         }
+        let alias_rest = self.detach_alias_text();
 
         // Read lines until we find the delimiter
         loop {
@@ -2873,6 +3097,7 @@ impl<'a> Lexer<'a> {
             self.reinject_buf.push_back(ch);
         }
         self.reinject_buf.push_back('\n');
+        self.reinject_buf.extend(alias_rest);
 
         (content, rest_of_line_chars)
     }

@@ -1,0 +1,2330 @@
+{
+ "schema": 1,
+ "oils_repo": "https://github.com/oils-for-unix/oils",
+ "oils_rev": "57d3f0d088c36340bc4b3038208e58ea02acf15c",
+ "bashkit_commit": "298bf8f9cfd1",
+ "bash_version": "5.2.21(1)-release",
+ "timestamp": "2026-10-09T01:02:44Z",
+ "platform": "linux-x86_64",
+ "jobs": 4,
+ "timeout_secs": 10,
+ "elapsed_secs": 21.4,
+ "files_run": 132,
+ "files_skipped": 91,
+ "total": {
+  "cases": 2759,
+  "bashkit_pass": 2628,
+  "bashkit_pass_pct": 95.3,
+  "bash_pass": 2692,
+  "bash_pass_pct": 97.6,
+  "bashkit_pass_of_bash": 2618,
+  "pass_rate": 97.3
+ },
+ "failure_classes": {
+  "behavior": 48,
+  "processes": 10,
+  "signals": 5,
+  "host": 7,
+  "interactive": 4
+ },
+ "files": {
+  "background": {
+   "summary": {
+    "cases": 27,
+    "bashkit_pass": 20,
+    "bashkit_pass_pct": 74.1,
+    "bash_pass": 27,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 20,
+    "pass_rate": 74.1
+   },
+   "missed": [
+    {
+     "case": 1,
+     "name": "wait -n with arguments - arguments are respected",
+     "class": "processes",
+     "on": "stdout"
+    },
+    {
+     "case": 5,
+     "name": "wait with invalid arg",
+     "class": "processes",
+     "on": "status"
+    },
+    {
+     "case": 7,
+     "name": "wait for N parallel jobs and check failure",
+     "class": "processes",
+     "on": "stdout"
+    },
+    {
+     "case": 11,
+     "name": "Start background pipeline, wait %job_spec",
+     "class": "processes",
+     "on": "stdout"
+    },
+    {
+     "case": 12,
+     "name": "Wait for job and PIPESTATUS",
+     "class": "processes",
+     "on": "stdout"
+    },
+    {
+     "case": 13,
+     "name": "Wait for job and PIPESTATUS - cat",
+     "class": "processes",
+     "on": "stdout"
+    },
+    {
+     "case": 26,
+     "name": "Signal message for killed background job",
+     "class": "signals",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "bugs": {
+   "summary": {
+    "cases": 29,
+    "bashkit_pass": 24,
+    "bashkit_pass_pct": 82.8,
+    "bash_pass": 29,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 24,
+    "pass_rate": 82.8
+   },
+   "missed": [
+    {
+     "case": 10,
+     "name": "file with NUL byte",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 12,
+     "name": "'echo' and printf fail on writing to full disk",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 13,
+     "name": "other builtins fail on writing to full disk",
+     "class": "processes",
+     "on": "stdout"
+    },
+    {
+     "case": 19,
+     "name": "command execution $(echo 42 | tee PWNED) not allowed",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 21,
+     "name": "unset doesn't allow command execution",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "builtin-trap": {
+   "summary": {
+    "cases": 33,
+    "bashkit_pass": 29,
+    "bashkit_pass_pct": 87.9,
+    "bash_pass": 33,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 29,
+    "pass_rate": 87.9
+   },
+   "missed": [
+    {
+     "case": 24,
+     "name": "exit codes for traps are isolated",
+     "class": "signals",
+     "on": "stdout"
+    },
+    {
+     "case": 25,
+     "name": "traps are cleared in subshell (started with &)",
+     "class": "signals",
+     "on": "stdout"
+    },
+    {
+     "case": 26,
+     "name": "trap USR1, sleep, SIGINT: non-interactively",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 28,
+     "name": "trap EXIT, sleep, SIGINT: non-interactively",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "brace-expansion": {
+   "summary": {
+    "cases": 55,
+    "bashkit_pass": 52,
+    "bashkit_pass_pct": 94.5,
+    "bash_pass": 55,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 52,
+    "pass_rate": 94.5
+   },
+   "missed": [
+    {
+     "case": 11,
+     "name": "double expansion with simple var -- bash bug",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 13,
+     "name": "double expansion with literal and simple var",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 42,
+     "name": "Mixed case char expansion is invalid",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "builtin-meta": {
+   "summary": {
+    "cases": 18,
+    "bashkit_pass": 15,
+    "bashkit_pass_pct": 83.3,
+    "bash_pass": 18,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 15,
+    "pass_rate": 83.3
+   },
+   "missed": [
+    {
+     "case": 3,
+     "name": "command -v doesn't find non-executable file",
+     "class": "host",
+     "on": "stdout"
+    },
+    {
+     "case": 10,
+     "name": "command -p (override existing program)",
+     "class": "host",
+     "on": "stdout"
+    },
+    {
+     "case": 11,
+     "name": "command -p (hide tool in custom path)",
+     "class": "host",
+     "on": "status"
+    }
+   ],
+   "bash_fails": []
+  },
+  "builtin-trap-bash": {
+   "summary": {
+    "cases": 23,
+    "bashkit_pass": 20,
+    "bashkit_pass_pct": 87.0,
+    "bash_pass": 23,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 20,
+    "pass_rate": 87.0
+   },
+   "missed": [
+    {
+     "case": 20,
+     "name": "Combine DEBUG trap and USR1 trap",
+     "class": "signals",
+     "on": "stdout"
+    },
+    {
+     "case": 21,
+     "name": "Combine ERR trap and USR1 trap",
+     "class": "signals",
+     "on": "stdout"
+    },
+    {
+     "case": 22,
+     "name": "Combine DEBUG trap and ERR trap",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "sh-options": {
+   "summary": {
+    "cases": 39,
+    "bashkit_pass": 36,
+    "bashkit_pass_pct": 92.3,
+    "bash_pass": 39,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 36,
+    "pass_rate": 92.3
+   },
+   "missed": [
+    {
+     "case": 1,
+     "name": "$- with pipefail",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 9,
+     "name": "interactive shell starts with emacs mode on",
+     "class": "interactive",
+     "on": "stdout"
+    },
+    {
+     "case": 20,
+     "name": "noclobber on <>",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "assign-extended": {
+   "summary": {
+    "cases": 39,
+    "bashkit_pass": 33,
+    "bashkit_pass_pct": 84.6,
+    "bash_pass": 35,
+    "bash_pass_pct": 89.7,
+    "bashkit_pass_of_bash": 33,
+    "pass_rate": 94.3
+   },
+   "missed": [
+    {
+     "case": 4,
+     "name": "declare -F with shopt -s extdebug prints more info",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 5,
+     "name": "declare -F with shopt -s extdebug and main file",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": [
+    7,
+    8,
+    10,
+    11
+   ]
+  },
+  "builtin-read": {
+   "summary": {
+    "cases": 64,
+    "bashkit_pass": 62,
+    "bashkit_pass_pct": 96.9,
+    "bash_pass": 64,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 62,
+    "pass_rate": 96.9
+   },
+   "missed": [
+    {
+     "case": 48,
+     "name": "mapfile from directory (bash doesn't handle errors)",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 63,
+     "name": "read bash bug",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "builtin-trap-err": {
+   "summary": {
+    "cases": 23,
+    "bashkit_pass": 20,
+    "bashkit_pass_pct": 87.0,
+    "bash_pass": 22,
+    "bash_pass_pct": 95.7,
+    "bashkit_pass_of_bash": 20,
+    "pass_rate": 90.9
+   },
+   "missed": [
+    {
+     "case": 6,
+     "name": "trap ERR pipelines without simple commands",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 12,
+     "name": "set -o errtrace: trap ERR with &",
+     "class": "processes",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": [
+    18
+   ]
+  },
+  "builtin-umask": {
+   "summary": {
+    "cases": 24,
+    "bashkit_pass": 22,
+    "bashkit_pass_pct": 91.7,
+    "bash_pass": 24,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 22,
+    "pass_rate": 91.7
+   },
+   "missed": [
+    {
+     "case": 10,
+     "name": "'umask 0002' sets the umask",
+     "class": "host",
+     "on": "stdout"
+    },
+    {
+     "case": 11,
+     "name": "set umask with symbolic mode: g-w,o-w",
+     "class": "host",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "fatal-errors": {
+   "summary": {
+    "cases": 5,
+    "bashkit_pass": 3,
+    "bashkit_pass_pct": 60.0,
+    "bash_pass": 5,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 3,
+    "pass_rate": 60.0
+   },
+   "missed": [
+    {
+     "case": 3,
+     "name": "Unrecoverable: ${undef?message}",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 4,
+     "name": "${undef} with nounset",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "nameref": {
+   "summary": {
+    "cases": 32,
+    "bashkit_pass": 30,
+    "bashkit_pass_pct": 93.8,
+    "bash_pass": 32,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 30,
+    "pass_rate": 93.8
+   },
+   "missed": [
+    {
+     "case": 26,
+     "name": "a[expr] in nameref",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 27,
+     "name": "a[@] in nameref",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "redirect": {
+   "summary": {
+    "cases": 41,
+    "bashkit_pass": 39,
+    "bashkit_pass_pct": 95.1,
+    "bash_pass": 41,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 39,
+    "pass_rate": 95.1
+   },
+   "missed": [
+    {
+     "case": 27,
+     "name": "1>&2- (Bash bug: fail to restore closed fd)",
+     "class": "processes",
+     "on": "stdout"
+    },
+    {
+     "case": 29,
+     "name": "<> for read/write named pipes",
+     "class": "host",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "serialize": {
+   "summary": {
+    "cases": 10,
+    "bashkit_pass": 8,
+    "bashkit_pass_pct": 80.0,
+    "bash_pass": 10,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 8,
+    "pass_rate": 80.0
+   },
+   "missed": [
+    {
+     "case": 3,
+     "name": "printf %q unprintable",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 5,
+     "name": "printf %q invalid unicode",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "sh-usage": {
+   "summary": {
+    "cases": 24,
+    "bashkit_pass": 22,
+    "bashkit_pass_pct": 91.7,
+    "bash_pass": 24,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 22,
+    "pass_rate": 91.7
+   },
+   "missed": [
+    {
+     "case": 15,
+     "name": "Set LC_ALL LC_CTYPE LC_COLLATE LANG - affects glob ?",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 16,
+     "name": "LC_CTYPE=invalid",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "var-op-len": {
+   "summary": {
+    "cases": 9,
+    "bashkit_pass": 7,
+    "bashkit_pass_pct": 77.8,
+    "bash_pass": 8,
+    "bash_pass_pct": 88.9,
+    "bashkit_pass_of_bash": 6,
+    "pass_rate": 75.0
+   },
+   "missed": [
+    {
+     "case": 3,
+     "name": "String length with incomplete utf-8",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 4,
+     "name": "String length with invalid utf-8 continuation bytes",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": [
+    8
+   ]
+  },
+  "var-op-patsub": {
+   "summary": {
+    "cases": 28,
+    "bashkit_pass": 26,
+    "bashkit_pass_pct": 92.9,
+    "bash_pass": 28,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 26,
+    "pass_rate": 92.9
+   },
+   "missed": [
+    {
+     "case": 19,
+     "name": "When LC_ALL=C, pattern ? doesn't match multibyte character",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 23,
+     "name": "patsub with [^]]",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "var-ref": {
+   "summary": {
+    "cases": 31,
+    "bashkit_pass": 28,
+    "bashkit_pass_pct": 90.3,
+    "bash_pass": 30,
+    "bash_pass_pct": 96.8,
+    "bashkit_pass_of_bash": 28,
+    "pass_rate": 93.3
+   },
+   "missed": [
+    {
+     "case": 19,
+     "name": "var ref TO array with arbitrary subscripts",
+     "class": "behavior",
+     "on": "stdout"
+    },
+    {
+     "case": 26,
+     "name": "Var Ref Code Injection $(tee PWNED)",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": [
+    12
+   ]
+  },
+  "array-assign": {
+   "summary": {
+    "cases": 11,
+    "bashkit_pass": 10,
+    "bashkit_pass_pct": 90.9,
+    "bash_pass": 11,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 10,
+    "pass_rate": 90.9
+   },
+   "missed": [
+    {
+     "case": 4,
+     "name": "LHS array is protected with shopt -s eval_unsafe_arith, e.g. 'a[$(echo 2)]'",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "array-assoc": {
+   "summary": {
+    "cases": 42,
+    "bashkit_pass": 35,
+    "bashkit_pass_pct": 83.3,
+    "bash_pass": 36,
+    "bash_pass_pct": 85.7,
+    "bashkit_pass_of_bash": 35,
+    "pass_rate": 97.2
+   },
+   "missed": [
+    {
+     "case": 19,
+     "name": "Indexed array as key of associative array coerces to string (without shopt -s strict_array)",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": [
+    1,
+    2,
+    21,
+    26,
+    34,
+    41
+   ]
+  },
+  "assign": {
+   "summary": {
+    "cases": 48,
+    "bashkit_pass": 44,
+    "bashkit_pass_pct": 91.7,
+    "bash_pass": 45,
+    "bash_pass_pct": 93.8,
+    "bashkit_pass_of_bash": 44,
+    "pass_rate": 97.8
+   },
+   "missed": [
+    {
+     "case": 8,
+     "name": "Escaped = in command name",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": [
+    24,
+    27,
+    46
+   ]
+  },
+  "ble-idioms": {
+   "summary": {
+    "cases": 26,
+    "bashkit_pass": 25,
+    "bashkit_pass_pct": 96.2,
+    "bash_pass": 26,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 25,
+    "pass_rate": 96.2
+   },
+   "missed": [
+    {
+     "case": 5,
+     "name": "recursive arith: recursion",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "ble-unset": {
+   "summary": {
+    "cases": 5,
+    "bashkit_pass": 4,
+    "bashkit_pass_pct": 80.0,
+    "bash_pass": 5,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 4,
+    "pass_rate": 80.0
+   },
+   "missed": [
+    {
+     "case": 1,
+     "name": "[bash_unset] local-unset / dynamic-unset for localvar on nested-context",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "builtin-bracket": {
+   "summary": {
+    "cases": 52,
+    "bashkit_pass": 49,
+    "bashkit_pass_pct": 94.2,
+    "bash_pass": 50,
+    "bash_pass_pct": 96.2,
+    "bashkit_pass_of_bash": 49,
+    "pass_rate": 98.0
+   },
+   "missed": [
+    {
+     "case": 41,
+     "name": "-ef",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": [
+    25,
+    26
+   ]
+  },
+  "builtin-cd": {
+   "summary": {
+    "cases": 30,
+    "bashkit_pass": 27,
+    "bashkit_pass_pct": 90.0,
+    "bash_pass": 28,
+    "bash_pass_pct": 93.3,
+    "bashkit_pass_of_bash": 27,
+    "pass_rate": 96.4
+   },
+   "missed": [
+    {
+     "case": 14,
+     "name": "pwd in symlinked dir on shell initialization",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": [
+    24,
+    25
+   ]
+  },
+  "builtin-printf": {
+   "summary": {
+    "cases": 63,
+    "bashkit_pass": 60,
+    "bashkit_pass_pct": 95.2,
+    "bash_pass": 58,
+    "bash_pass_pct": 92.1,
+    "bashkit_pass_of_bash": 57,
+    "pass_rate": 98.3
+   },
+   "missed": [
+    {
+     "case": 33,
+     "name": "printf octal backslash escapes",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": [
+    26,
+    27,
+    46,
+    47,
+    48
+   ]
+  },
+  "builtin-process": {
+   "summary": {
+    "cases": 26,
+    "bashkit_pass": 24,
+    "bashkit_pass_pct": 92.3,
+    "bash_pass": 24,
+    "bash_pass_pct": 92.3,
+    "bashkit_pass_of_bash": 23,
+    "pass_rate": 95.8
+   },
+   "missed": [
+    {
+     "case": 25,
+     "name": "ulimit -n limits file descriptors",
+     "class": "processes",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": [
+    9,
+    22
+   ]
+  },
+  "builtin-type": {
+   "summary": {
+    "cases": 6,
+    "bashkit_pass": 5,
+    "bashkit_pass_pct": 83.3,
+    "bash_pass": 6,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 5,
+    "pass_rate": 83.3
+   },
+   "missed": [
+    {
+     "case": 2,
+     "name": "type of relative path",
+     "class": "host",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "divergence": {
+   "summary": {
+    "cases": 4,
+    "bashkit_pass": 3,
+    "bashkit_pass_pct": 75.0,
+    "bash_pass": 4,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 3,
+    "pass_rate": 75.0
+   },
+   "missed": [
+    {
+     "case": 3,
+     "name": "builtin cat crashes a subshell (#2530)",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "glob": {
+   "summary": {
+    "cases": 39,
+    "bashkit_pass": 36,
+    "bashkit_pass_pct": 92.3,
+    "bash_pass": 37,
+    "bash_pass_pct": 94.9,
+    "bashkit_pass_of_bash": 36,
+    "pass_rate": 97.3
+   },
+   "missed": [
+    {
+     "case": 7,
+     "name": "glob can expand to command and arg",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": [
+    23,
+    31
+   ]
+  },
+  "history-expand": {
+   "summary": {
+    "cases": 1,
+    "bashkit_pass": 0,
+    "bashkit_pass_pct": 0.0,
+    "bash_pass": 1,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 0,
+    "pass_rate": 0.0
+   },
+   "missed": [
+    {
+     "case": 0,
+     "name": "!! expansion",
+     "class": "interactive",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "parse-errors": {
+   "summary": {
+    "cases": 27,
+    "bashkit_pass": 24,
+    "bashkit_pass_pct": 88.9,
+    "bash_pass": 25,
+    "bash_pass_pct": 92.6,
+    "bashkit_pass_of_bash": 24,
+    "pass_rate": 96.0
+   },
+   "missed": [
+    {
+     "case": 22,
+     "name": "array literal inside array is a parse error",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": [
+    0,
+    1
+   ]
+  },
+  "pipeline": {
+   "summary": {
+    "cases": 26,
+    "bashkit_pass": 24,
+    "bashkit_pass_pct": 92.3,
+    "bash_pass": 25,
+    "bash_pass_pct": 96.2,
+    "bashkit_pass_of_bash": 24,
+    "pass_rate": 96.0
+   },
+   "missed": [
+    {
+     "case": 6,
+     "name": "Initial value of PIPESTATUS is empty string",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": [
+    10
+   ]
+  },
+  "process-sub": {
+   "summary": {
+    "cases": 9,
+    "bashkit_pass": 8,
+    "bashkit_pass_pct": 88.9,
+    "bash_pass": 8,
+    "bash_pass_pct": 88.9,
+    "bashkit_pass_of_bash": 7,
+    "pass_rate": 87.5
+   },
+   "missed": [
+    {
+     "case": 2,
+     "name": "Process sub from shell to stdin",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": [
+    4
+   ]
+  },
+  "quote": {
+   "summary": {
+    "cases": 35,
+    "bashkit_pass": 34,
+    "bashkit_pass_pct": 97.1,
+    "bash_pass": 35,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 34,
+    "pass_rate": 97.1
+   },
+   "missed": [
+    {
+     "case": 27,
+     "name": "$'' octal escapes don't have leading 0",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "toysh": {
+   "summary": {
+    "cases": 8,
+    "bashkit_pass": 7,
+    "bashkit_pass_pct": 87.5,
+    "bash_pass": 8,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 7,
+    "pass_rate": 87.5
+   },
+   "missed": [
+    {
+     "case": 3,
+     "name": "char class / extglob",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "unicode": {
+   "summary": {
+    "cases": 7,
+    "bashkit_pass": 1,
+    "bashkit_pass_pct": 14.3,
+    "bash_pass": 2,
+    "bash_pass_pct": 28.6,
+    "bashkit_pass_of_bash": 1,
+    "pass_rate": 50.0
+   },
+   "missed": [
+    {
+     "case": 0,
+     "name": "OSH source code doesn't have to be valid Unicode (like other shells)",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": [
+    2,
+    3,
+    4,
+    5,
+    6
+   ]
+  },
+  "var-sub-quote": {
+   "summary": {
+    "cases": 41,
+    "bashkit_pass": 40,
+    "bashkit_pass_pct": 97.6,
+    "bash_pass": 41,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 40,
+    "pass_rate": 97.6
+   },
+   "missed": [
+    {
+     "case": 18,
+     "name": "part_value tree with multiple words",
+     "class": "behavior",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "vars-bash": {
+   "summary": {
+    "cases": 1,
+    "bashkit_pass": 0,
+    "bashkit_pass_pct": 0.0,
+    "bash_pass": 1,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 0,
+    "pass_rate": 0.0
+   },
+   "missed": [
+    {
+     "case": 0,
+     "name": "$SHELL is set to what is in /etc/passwd",
+     "class": "interactive",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": []
+  },
+  "vars-special": {
+   "summary": {
+    "cases": 42,
+    "bashkit_pass": 39,
+    "bashkit_pass_pct": 92.9,
+    "bash_pass": 40,
+    "bash_pass_pct": 95.2,
+    "bashkit_pass_of_bash": 39,
+    "pass_rate": 97.5
+   },
+   "missed": [
+    {
+     "case": 3,
+     "name": "$HOME is NOT set",
+     "class": "interactive",
+     "on": "stdout"
+    }
+   ],
+   "bash_fails": [
+    34,
+    40
+   ]
+  },
+  "alias": {
+   "summary": {
+    "cases": 48,
+    "bashkit_pass": 48,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 48,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 48,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "append": {
+   "summary": {
+    "cases": 20,
+    "bashkit_pass": 20,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 20,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 20,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "arg-parse": {
+   "summary": {
+    "cases": 3,
+    "bashkit_pass": 3,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 3,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 3,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "arith": {
+   "summary": {
+    "cases": 74,
+    "bashkit_pass": 74,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 74,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 74,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "arith-context": {
+   "summary": {
+    "cases": 16,
+    "bashkit_pass": 16,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 16,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 16,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "arith-dynamic": {
+   "summary": {
+    "cases": 4,
+    "bashkit_pass": 4,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 4,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 4,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "array": {
+   "summary": {
+    "cases": 78,
+    "bashkit_pass": 78,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 78,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 78,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "array-basic": {
+   "summary": {
+    "cases": 5,
+    "bashkit_pass": 5,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 5,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 5,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "array-compat": {
+   "summary": {
+    "cases": 12,
+    "bashkit_pass": 12,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 12,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 12,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "array-literal": {
+   "summary": {
+    "cases": 19,
+    "bashkit_pass": 19,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 19,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 19,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "array-sparse": {
+   "summary": {
+    "cases": 40,
+    "bashkit_pass": 40,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 40,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 40,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "assign-deferred": {
+   "summary": {
+    "cases": 9,
+    "bashkit_pass": 9,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 9,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 9,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "assign-dialects": {
+   "summary": {
+    "cases": 4,
+    "bashkit_pass": 4,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 4,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 4,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "ble-features": {
+   "summary": {
+    "cases": 9,
+    "bashkit_pass": 9,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 9,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 9,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "blog1": {
+   "summary": {
+    "cases": 9,
+    "bashkit_pass": 9,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 9,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 9,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "blog2": {
+   "summary": {
+    "cases": 8,
+    "bashkit_pass": 8,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 8,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 8,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "bool-parse": {
+   "summary": {
+    "cases": 8,
+    "bashkit_pass": 8,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 8,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 8,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "builtin-bash": {
+   "summary": {
+    "cases": 13,
+    "bashkit_pass": 13,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 13,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 13,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "builtin-bind": {
+   "summary": {
+    "cases": 9,
+    "bashkit_pass": 9,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 9,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 9,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "builtin-completion": {
+   "summary": {
+    "cases": 51,
+    "bashkit_pass": 51,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 51,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 51,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "builtin-dirs": {
+   "summary": {
+    "cases": 18,
+    "bashkit_pass": 18,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 18,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 18,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "builtin-echo": {
+   "summary": {
+    "cases": 27,
+    "bashkit_pass": 27,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 27,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 27,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "builtin-eval-source": {
+   "summary": {
+    "cases": 23,
+    "bashkit_pass": 21,
+    "bashkit_pass_pct": 91.3,
+    "bash_pass": 21,
+    "bash_pass_pct": 91.3,
+    "bashkit_pass_of_bash": 21,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": [
+    13,
+    14
+   ]
+  },
+  "builtin-fc": {
+   "summary": {
+    "cases": 14,
+    "bashkit_pass": 14,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 14,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 14,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "builtin-getopts": {
+   "summary": {
+    "cases": 31,
+    "bashkit_pass": 31,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 31,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 31,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "builtin-history": {
+   "summary": {
+    "cases": 17,
+    "bashkit_pass": 17,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 17,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 17,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "builtin-kill": {
+   "summary": {
+    "cases": 20,
+    "bashkit_pass": 20,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 19,
+    "bash_pass_pct": 95.0,
+    "bashkit_pass_of_bash": 19,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": [
+    16
+   ]
+  },
+  "builtin-meta-assign": {
+   "summary": {
+    "cases": 11,
+    "bashkit_pass": 11,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 11,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 11,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "builtin-misc": {
+   "summary": {
+    "cases": 7,
+    "bashkit_pass": 7,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 7,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 7,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "builtin-set": {
+   "summary": {
+    "cases": 24,
+    "bashkit_pass": 24,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 24,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 24,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "builtin-special": {
+   "summary": {
+    "cases": 12,
+    "bashkit_pass": 12,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 12,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 12,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "builtin-times": {
+   "summary": {
+    "cases": 1,
+    "bashkit_pass": 1,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 1,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 1,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "builtin-type-bash": {
+   "summary": {
+    "cases": 31,
+    "bashkit_pass": 31,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 31,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 31,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "builtin-vars": {
+   "summary": {
+    "cases": 41,
+    "bashkit_pass": 39,
+    "bashkit_pass_pct": 95.1,
+    "bash_pass": 39,
+    "bash_pass_pct": 95.1,
+    "bashkit_pass_of_bash": 39,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": [
+    26,
+    32
+   ]
+  },
+  "case_": {
+   "summary": {
+    "cases": 13,
+    "bashkit_pass": 13,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 13,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 13,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "command-parsing": {
+   "summary": {
+    "cases": 5,
+    "bashkit_pass": 5,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 5,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 5,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "command-sub": {
+   "summary": {
+    "cases": 30,
+    "bashkit_pass": 28,
+    "bashkit_pass_pct": 93.3,
+    "bash_pass": 28,
+    "bash_pass_pct": 93.3,
+    "bashkit_pass_of_bash": 28,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": [
+    11,
+    12
+   ]
+  },
+  "command_": {
+   "summary": {
+    "cases": 16,
+    "bashkit_pass": 16,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 16,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 16,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "comments": {
+   "summary": {
+    "cases": 2,
+    "bashkit_pass": 2,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 2,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 2,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "dbracket": {
+   "summary": {
+    "cases": 49,
+    "bashkit_pass": 49,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 49,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 49,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "dparen": {
+   "summary": {
+    "cases": 15,
+    "bashkit_pass": 14,
+    "bashkit_pass_pct": 93.3,
+    "bash_pass": 14,
+    "bash_pass_pct": 93.3,
+    "bashkit_pass_of_bash": 14,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": [
+    10
+   ]
+  },
+  "empty-bodies": {
+   "summary": {
+    "cases": 3,
+    "bashkit_pass": 3,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 3,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 3,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "errexit": {
+   "summary": {
+    "cases": 35,
+    "bashkit_pass": 35,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 35,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 35,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "errexit-osh": {
+   "summary": {
+    "cases": 35,
+    "bashkit_pass": 35,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 35,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 35,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "exit-status": {
+   "summary": {
+    "cases": 11,
+    "bashkit_pass": 11,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 11,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 11,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "explore-parsing": {
+   "summary": {
+    "cases": 5,
+    "bashkit_pass": 5,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 5,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 5,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "extglob-files": {
+   "summary": {
+    "cases": 23,
+    "bashkit_pass": 23,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 23,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 23,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "extglob-match": {
+   "summary": {
+    "cases": 29,
+    "bashkit_pass": 29,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 29,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 29,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "for-expr": {
+   "summary": {
+    "cases": 9,
+    "bashkit_pass": 8,
+    "bashkit_pass_pct": 88.9,
+    "bash_pass": 8,
+    "bash_pass_pct": 88.9,
+    "bashkit_pass_of_bash": 8,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": [
+    6
+   ]
+  },
+  "func-parsing": {
+   "summary": {
+    "cases": 15,
+    "bashkit_pass": 15,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 15,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 15,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "glob-bash": {
+   "summary": {
+    "cases": 8,
+    "bashkit_pass": 8,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 8,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 8,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "globignore": {
+   "summary": {
+    "cases": 18,
+    "bashkit_pass": 18,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 18,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 18,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "globstar": {
+   "summary": {
+    "cases": 5,
+    "bashkit_pass": 5,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 5,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 5,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "here-doc": {
+   "summary": {
+    "cases": 36,
+    "bashkit_pass": 36,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 36,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 36,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "if_": {
+   "summary": {
+    "cases": 5,
+    "bashkit_pass": 5,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 5,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 5,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "interactive": {
+   "summary": {
+    "cases": 18,
+    "bashkit_pass": 18,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 18,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 18,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "introspect": {
+   "summary": {
+    "cases": 13,
+    "bashkit_pass": 12,
+    "bashkit_pass_pct": 92.3,
+    "bash_pass": 12,
+    "bash_pass_pct": 92.3,
+    "bashkit_pass_of_bash": 12,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": [
+    8
+   ]
+  },
+  "known-differences": {
+   "summary": {
+    "cases": 2,
+    "bashkit_pass": 2,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 2,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 2,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "let": {
+   "summary": {
+    "cases": 2,
+    "bashkit_pass": 2,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 2,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 2,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "loop": {
+   "summary": {
+    "cases": 29,
+    "bashkit_pass": 29,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 29,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 29,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "nix-idioms": {
+   "summary": {
+    "cases": 6,
+    "bashkit_pass": 6,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 6,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 6,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "nocasematch-match": {
+   "summary": {
+    "cases": 6,
+    "bashkit_pass": 6,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 6,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 6,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "nul-bytes": {
+   "summary": {
+    "cases": 16,
+    "bashkit_pass": 16,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 16,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 16,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "paren-ambiguity": {
+   "summary": {
+    "cases": 9,
+    "bashkit_pass": 9,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 9,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 9,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "posix": {
+   "summary": {
+    "cases": 15,
+    "bashkit_pass": 15,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 15,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 15,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "print-source-code": {
+   "summary": {
+    "cases": 4,
+    "bashkit_pass": 4,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 4,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 4,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "prompt": {
+   "summary": {
+    "cases": 33,
+    "bashkit_pass": 32,
+    "bashkit_pass_pct": 97.0,
+    "bash_pass": 29,
+    "bash_pass_pct": 87.9,
+    "bashkit_pass_of_bash": 29,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": [
+    0,
+    1,
+    3,
+    32
+   ]
+  },
+  "redirect-command": {
+   "summary": {
+    "cases": 23,
+    "bashkit_pass": 23,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 23,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 23,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "redirect-multi": {
+   "summary": {
+    "cases": 13,
+    "bashkit_pass": 13,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 13,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 13,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "regex": {
+   "summary": {
+    "cases": 37,
+    "bashkit_pass": 37,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 37,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 37,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "sh-func": {
+   "summary": {
+    "cases": 12,
+    "bashkit_pass": 12,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 12,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 12,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "sh-options-bash": {
+   "summary": {
+    "cases": 9,
+    "bashkit_pass": 9,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 9,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 9,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "smoke": {
+   "summary": {
+    "cases": 18,
+    "bashkit_pass": 18,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 18,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 18,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "strict-options": {
+   "summary": {
+    "cases": 17,
+    "bashkit_pass": 15,
+    "bashkit_pass_pct": 88.2,
+    "bash_pass": 15,
+    "bash_pass_pct": 88.2,
+    "bashkit_pass_of_bash": 15,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": [
+    3,
+    5
+   ]
+  },
+  "subshell": {
+   "summary": {
+    "cases": 2,
+    "bashkit_pass": 2,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 2,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 2,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "temp-binding": {
+   "summary": {
+    "cases": 4,
+    "bashkit_pass": 4,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 4,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 4,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "tilde": {
+   "summary": {
+    "cases": 14,
+    "bashkit_pass": 14,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 14,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 14,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "toysh-posix": {
+   "summary": {
+    "cases": 23,
+    "bashkit_pass": 23,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 23,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 23,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "type-compat": {
+   "summary": {
+    "cases": 7,
+    "bashkit_pass": 5,
+    "bashkit_pass_pct": 71.4,
+    "bash_pass": 5,
+    "bash_pass_pct": 71.4,
+    "bashkit_pass_of_bash": 5,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": [
+    3,
+    5
+   ]
+  },
+  "var-num": {
+   "summary": {
+    "cases": 7,
+    "bashkit_pass": 7,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 7,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 7,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "var-op-bash": {
+   "summary": {
+    "cases": 27,
+    "bashkit_pass": 26,
+    "bashkit_pass_pct": 96.3,
+    "bash_pass": 26,
+    "bash_pass_pct": 96.3,
+    "bashkit_pass_of_bash": 26,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": [
+    3
+   ]
+  },
+  "var-op-slice": {
+   "summary": {
+    "cases": 22,
+    "bashkit_pass": 22,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 22,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 22,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "var-op-strip": {
+   "summary": {
+    "cases": 29,
+    "bashkit_pass": 29,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 29,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 29,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "var-op-test": {
+   "summary": {
+    "cases": 37,
+    "bashkit_pass": 37,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 37,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 37,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "var-sub": {
+   "summary": {
+    "cases": 6,
+    "bashkit_pass": 6,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 6,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 6,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "whitespace": {
+   "summary": {
+    "cases": 5,
+    "bashkit_pass": 0,
+    "bashkit_pass_pct": 0.0,
+    "bash_pass": 0,
+    "bash_pass_pct": 0.0,
+    "bashkit_pass_of_bash": 0,
+    "pass_rate": 0.0
+   },
+   "missed": [],
+   "bash_fails": [
+    0,
+    1,
+    2,
+    3,
+    4
+   ]
+  },
+  "word-eval": {
+   "summary": {
+    "cases": 8,
+    "bashkit_pass": 8,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 8,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 8,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "word-split": {
+   "summary": {
+    "cases": 55,
+    "bashkit_pass": 53,
+    "bashkit_pass_pct": 96.4,
+    "bash_pass": 53,
+    "bash_pass_pct": 96.4,
+    "bashkit_pass_of_bash": 53,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": [
+    24,
+    25
+   ]
+  },
+  "xtrace": {
+   "summary": {
+    "cases": 19,
+    "bashkit_pass": 19,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 19,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 19,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  },
+  "ysh-builtin-private": {
+   "summary": {
+    "cases": 23,
+    "bashkit_pass": 22,
+    "bashkit_pass_pct": 95.7,
+    "bash_pass": 22,
+    "bash_pass_pct": 95.7,
+    "bashkit_pass_of_bash": 22,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": [
+    18
+   ]
+  },
+  "zsh-idioms": {
+   "summary": {
+    "cases": 3,
+    "bashkit_pass": 3,
+    "bashkit_pass_pct": 100.0,
+    "bash_pass": 3,
+    "bash_pass_pct": 100.0,
+    "bashkit_pass_of_bash": 3,
+    "pass_rate": 100.0
+   },
+   "missed": [],
+   "bash_fails": []
+  }
+ }
+}

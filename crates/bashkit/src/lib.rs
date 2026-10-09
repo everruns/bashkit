@@ -1052,6 +1052,8 @@ impl Bash {
         }
 
         let parser_timeout = self.parser_timeout;
+        // Aliases and extglob from earlier calls shape this parse.
+        let parse_options = self.interpreter.parse_options();
         let max_ast_depth = self.max_ast_depth;
         let max_parser_operations = self.max_parser_operations;
 
@@ -1093,7 +1095,8 @@ impl Bash {
                 max_parser_operations,
                 Some(parser_timeout),
             )
-            .with_execution_budget(self.interpreter.execution_budget().clone());
+            .with_execution_budget(self.interpreter.execution_budget().clone())
+            .with_options(parse_options.clone());
             recover_partial_parse(parser.parse_recovering(), &syntax_who, script)?
         };
 
@@ -1103,7 +1106,8 @@ impl Bash {
         #[cfg(not(target_family = "wasm"))]
         let ast = if input_len <= SPAWN_BLOCKING_THRESHOLD {
             let parser = Parser::with_limits(script, max_ast_depth, max_parser_operations)
-                .with_execution_budget(self.interpreter.execution_budget().clone());
+                .with_execution_budget(self.interpreter.execution_budget().clone())
+                .with_options(parse_options.clone());
             match recover_partial_parse(parser.parse_recovering(), &syntax_who, script) {
                 Ok(ast) => {
                     #[cfg(feature = "logging")]
@@ -1120,11 +1124,13 @@ impl Bash {
             let script_owned = script.to_owned();
             let execution_budget = self.interpreter.execution_budget().clone();
             let who = syntax_who.clone();
+            let parse_options = parse_options.clone();
             let parse_result = tokio::time::timeout(parser_timeout, async {
                 tokio::task::spawn_blocking(move || {
                     let parser =
                         Parser::with_limits(&script_owned, max_ast_depth, max_parser_operations)
-                            .with_execution_budget(execution_budget);
+                            .with_execution_budget(execution_budget)
+                            .with_options(parse_options);
                     recover_partial_parse(parser.parse_recovering(), &who, &script_owned)
                 })
                 .await

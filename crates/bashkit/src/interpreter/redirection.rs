@@ -23,7 +23,8 @@ use crate::error::io_error_reason;
 
 /// A redirect target that brace expansion, word splitting or pathname
 /// expansion could turn into other than one word (`> $f`, `> out-*`,
-/// `> a-{1,2}`). Plain and quoted words skip the field pass.
+/// `> a-{1,2}`), or one with a quoted expansion. Plain words skip the
+/// field pass.
 fn redirect_target_may_split(redirect: &Redirect) -> bool {
     if !matches!(
         redirect.kind,
@@ -41,7 +42,13 @@ fn redirect_target_may_split(redirect: &Redirect) -> bool {
     }
     let word = &redirect.target;
     if word.quoted && !word.has_unquoted_glob {
-        return false;
+        // Quoted expansions resolve up front too: `"$@"` may still give
+        // several words (ambiguous), and a compound's or function's target
+        // expands before its body runs (`f() {..} >"f$((i++))"`).
+        return word
+            .parts
+            .iter()
+            .any(|p| !matches!(p, WordPart::Literal(_)));
     }
     word.parts.iter().any(|part| match part {
         WordPart::Literal(text) => text.contains(['*', '?', '[', '{', '(', '\\']),
