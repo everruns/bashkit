@@ -39,6 +39,23 @@ option spelling matches GNU; builtins on a ported clap surface (see
 Obsolete forms GNU still accepts (`head -5`, `fold -5`) are rewritten to the
 modern option before getopt runs, never when they are an option's value.
 
+### Navigation resource accounting
+
+`cd` borrows its target and `CDPATH` rather than cloning them. It searches
+colon-separated entries in order, retains one candidate at a time, and keeps
+the direct-path fallback. Empty entries use the current directory without
+printing; non-empty hits print the resolved directory.
+
+Before constructing each candidate, `lease_path_workspace` reserves a checked,
+conservative bound for joined paths, logical resolution, and normalization's
+component vector from the shared live-intermediate budget (TM-DOS-096).
+The lease drops on each failed candidate. Candidate length charges aggregate
+work; every 64 candidates yield cooperatively, and filesystem awaits run under
+the request's cancellation/deadline gate. The final failure diagnostic uses
+the same reservation. `execution_budget_tests::cdpath_*` cover script and
+environment inputs, memory/work exhaustion, lease release, early success, and
+cancellation; `cd-builtin.test.sh` covers Bash semantics.
+
 ### Command Dispatch Order
 
 functions → special commands → builtins → path execution → $PATH search →
