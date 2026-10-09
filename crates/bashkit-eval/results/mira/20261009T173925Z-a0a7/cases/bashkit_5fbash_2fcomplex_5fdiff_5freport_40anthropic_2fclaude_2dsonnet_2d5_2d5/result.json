@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_diff_report",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "Compare /data/v1.conf and /data/v2.conf. Produce a human-readable summary showing: which keys were added, which were removed, and which had their values changed. Print the summary to stdout."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Differences between `/data/v1.conf` and `/data/v2.conf`:\n\n**Added**\n- `timeout = 30`\n\n**Removed**\n- `max_connections` (was 100)\n\n**Changed**\n- `host`: localhost → 0.0.0.0\n- `log_level`: info → debug\n- `port`: 8080 → 9090\n\n**Unchanged**\n- `workers` (still 4)",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cd /data; ls -la; echo ---; cat v1.conf; echo ---; cat v2.conf",
+      "cd /data; python3 - <<'E'\ndef load(f):\n    d={}\n    for l in open(f):\n        l=l.strip()\n        if not l or l[0] in '#;': continue\n        k,_,v=l.partition('=')\n        d[k.strip()]=v.strip()\n    return d\na,b=load('v1.conf'),load('v2.conf')\nprint(\"Added:\")\nfor k in sorted(b.keys()-a.keys()): print(f\"  + {k} = {b[k]}\")\nprint(\"Removed:\")\nfor k in sorted(a.keys()-b.keys()): print(f\"  - {k} (was {a[k]})\")\nprint(\"Changed:\")\nfor k in sorted(a.keys()&b.keys()):\n    if a[k]!=b[k]: print(f\"  ~ {k}: {a[k]} -> {b[k]}\")\nprint(\"Unchanged:\", \", \".join(k for k in sorted(a.keys()&b.keys()) if a[k]==b[k]))\nE"
+    ],
+    "usage": {
+      "input_tokens": 3949,
+      "output_tokens": 583,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 5657
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cd /data; ls -la; echo ---; cat v1.conf; echo ---; cat v2.conf",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       70 2026-10-09 17:41 v1.conf\n-rw-r--r--       60 2026-10-09 17:41 v2.conf\n---\nport=8080\nhost=localhost\nlog_level=info\nworkers=4\nmax_connections=100\n---\nport=9090\nhost=0.0.0.0\nlog_level=debug\nworkers=4\ntimeout=30\n"
+          },
+          {
+            "commands": "cd /data; python3 - <<'E'\ndef load(f):\n    d={}\n    for l in open(f):\n        l=l.strip()\n        if not l or l[0] in '#;': continue\n        k,_,v=l.partition('=')\n        d[k.strip()]=v.strip()\n    return d\na,b=load('v1.conf'),load('v2.conf')\nprint(\"Added:\")\nfor k in sorted(b.keys()-a.keys()): print(f\"  + {k} = {b[k]}\")\nprint(\"Removed:\")\nfor k in sorted(a.keys()-b.keys()): print(f\"  - {k} (was {a[k]})\")\nprint(\"Changed:\")\nfor k in sorted(a.keys()&b.keys()):\n    if a[k]!=b[k]: print(f\"  ~ {k}: {a[k]} -> {b[k]}\")\nprint(\"Unchanged:\", \", \".join(k for k in sorted(a.keys()&b.keys()) if a[k]==b[k]))\nE",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Added:\n  + timeout = 30\nRemoved:\n  - max_connections (was 100)\nChanged:\n  ~ host: localhost -> 0.0.0.0\n  ~ log_level: info -> debug\n  ~ port: 8080 -> 9090\nUnchanged: workers\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

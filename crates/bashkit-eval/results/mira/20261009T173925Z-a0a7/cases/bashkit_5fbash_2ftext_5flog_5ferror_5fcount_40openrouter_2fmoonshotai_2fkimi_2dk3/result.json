@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "text_log_error_count",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "From the file /var/log/app.log, extract all lines containing the word ERROR and print the total count of ERROR lines."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Done. Here's the result:\n\n**ERROR lines found in `/var/log/app.log`:**\n```\n2024-01-01 08:05:12 ERROR Connection refused to database\n2024-01-01 08:05:20 ERROR Timeout waiting for response\n2024-01-01 09:15:33 ERROR Disk space critical\n```\n\n**Total count of ERROR lines: 3**\n\nCommands used:\n- `grep \"ERROR\" /var/log/app.log` — prints all lines containing the word ERROR\n- `grep -c \"ERROR\" /var/log/app.log` — prints the total count (3)",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "ls -la /var/log/app.log && echo \"---\" && cat /var/log/app.log",
+      "grep \"ERROR\" /var/log/app.log; echo \"---\"; grep -c \"ERROR\" /var/log/app.log"
+    ],
+    "usage": {
+      "input_tokens": 2281,
+      "output_tokens": 374,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 12887
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /var/log/app.log && echo \"---\" && cat /var/log/app.log",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--      339 2026-10-09 17:39 /var/log/app.log\n---\n2024-01-01 08:00:01 INFO Application started\n2024-01-01 08:05:12 ERROR Connection refused to database\n2024-01-01 08:05:15 WARN Retrying connection\n2024-01-01 08:05:20 ERROR Timeout waiting for response\n2024-01-01 09:00:00 INFO Scheduled job completed\n2024-01-01 09:15:33 ERROR Disk space critical\n2024-01-01 10:00:00 INFO Backup completed\n"
+          },
+          {
+            "commands": "grep \"ERROR\" /var/log/app.log; echo \"---\"; grep -c \"ERROR\" /var/log/app.log",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "2024-01-01 08:05:12 ERROR Connection refused to database\n2024-01-01 08:05:20 ERROR Timeout waiting for response\n2024-01-01 09:15:33 ERROR Disk space critical\n---\n3\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,99 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "rt_py_large_log",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "/data/app.log is a large access log; valid lines look like `2026-10-01T00:00:00Z GET /api/items/42?x=1 200 35ms` (timestamp, method, path, status, latency). Any line not matching that shape is malformed.\n\nGroup valid lines by method and normalised path: drop the query string, drop one trailing '/' (except for the root path '/'), and replace every path segment made only of digits with `:id`. For each group compute count, p50 and p95 latency (integer ms, nearest-rank: the value at position ceil(p/100 * count) in ascending order) and error_pct = percentage of lines with status >= 500, rounded half up to 1 decimal.\n\nWrite /out/endpoints.tsv (tab-separated) with header method, path, count, p50, p95, error_pct, sorted by count descending, then method, then path; error_pct always printed with 1 decimal. Write /out/malformed.txt with just the number of malformed lines."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "All checks pass. Both output files are written and verified:\n\n**`/out/endpoints.tsv`** — 28 groups with header `method\tpath\tcount\tp50\tp95\terror_pct`, tab-separated, sorted by count descending → method → path. Spot verification against an independent `awk`-based recomputation of `GET /api/items/:id` confirmed count=1711, p50=470, p95=863, and error_pct (68/1711 = 3.97% → `4.0`, rounded half up with `Decimal`/`ROUND_HALF_UP` to avoid float issues).\n\n**`/out/malformed.txt`** — `13` (all truncated lines like `2026-10-01T00:13:00Z GET`, caught by a strict full-line regex requiring timestamp, method, path, 3-digit status, and `Nms` latency).\n\nNormalization details implemented:\n- Query string dropped (`/api/search?q=a1` → `/api/search`)\n- One trailing `/` removed except root (`/api/items/0/` → `/api/items/0`; `/` stays `/`)\n- All-digit segments → `:id` (`/api/users/862/orders` → `/api/users/:id/orders`)\n- Percentiles via nearest-rank: value at index `ceil(p/100 · n)` in ascending order\n- Totals reconcile: 11,987 valid + 13 malformed = 12,000 lines",
+    "iterations": 8,
+    "tool_calls_count": 7,
+    "tool_calls": [
+      "ls -la /data/ && wc -l /data/app.log && head -30 /data/app.log",
+      "tail -20 /data/app.log && echo \"---\" && grep -v -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z [A-Z]+ /[^ ]* [0-9]{3} [0-9]+ms$' /data/app.log | head -40",
+      "grep -v -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z [A-Z]+ /[^ ]* [0-9]{3} [0-9]+ms$' /data/app.log | sort -u | head -60 && echo \"=== count ===\" && grep -cv -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z [A-Z]+ /[^ ]* [0-9]{3} [0-9]+ms$' /data/app.log",
+      "awk 'NF != 5 {c[NF]++} END {for (n in c) print n\" fields:\", c[n]}' /data/app.log; echo \"---blank lines:\"; grep -c '^$' /data/app.log; echo \"---methods:\"; awk 'NF==5 {print $2}' /data/app.log | sort -u; echo \"---statuses:\"; awk 'NF==5 {print $4}' /data/app.log | sort -u | head; echo \"---paths sample (unique, stripped):\"; awk 'NF==5 {print $3}' /data/app.log | sed 's/?.*//' | sort -u | head -40; echo \"---trailing chars check:\"; grep -c $'\\r' /data/app.log || true; grep -c '  ' /data/app.log || true",
+      "mkdir -p /out && cat > /out/process.py <<'EOF'\nimport re\nfrom collections import defaultdict\nfrom decimal import Decimal, ROUND_HALF_UP\n\nLINE_RE = re.compile(\n    r'^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z\\s+'  # timestamp\n    r'([A-Z]+)\\s+'                                # method\n    r'(/\\S*)\\s+'                                  # path (must start with /, no spaces)\n    r'(\\d{3})\\s+'                                 # status\n    r'(\\d+)ms$'                                   # latency\n)\n\ndef normalize(path: str) -> str:\n    path = path.split('?', 1)[0]  # drop query string\n    if len(path) > 1 and path.endswith('/'):\n        path = path[:-1]          # drop ONE trailing slash (root '/' untouched)\n    segs = path.split('/')\n    segs = [':id' if s.isdigit() and s != '' else s for s in segs]\n    return '/'.join(segs)\n\ndef nearest_rank(lat, pct):\n    lat.sort()\n    n = len(lat)\n    k = (pct * n + 99) // 100   # ceil(pct/100 * n)\n    return lat[k - 1]\n\ngroups = defaultdict(list)      # (method, norm_path) -> list of latencies\nerrors = defaultdict(int)       # (method, norm_path) -> count of status >= 500\nmalformed = 0\n\nwith open('/data/app.log', 'r') as f:\n    for line in f:\n        line = line.rstrip('\\n')\n        m = LINE_RE.match(line)\n        if not m:\n            malformed += 1\n            continue\n        method, path, status, lat = m.group(1), m.group(2), int(m.group(3)), int(m.group(4))\n        key = (method, normalize(path))\n        groups[key].append(lat)\n        if status >= 500:\n            errors[key] += 1\n\nrows = []\nfor (method, path), lats in groups.items():\n    count = len(lats)\n    p50 = nearest_rank(lats[:], 50)\n    p95 = nearest_rank(lats, 95)\n    err = Decimal(errors[(method, path)] * 100) / Decimal(count)\n    err = err.quantize(Decimal('0.1'), rounding=ROUND_HALF_UP)\n    rows.append((method, path, count, p50, p95, err))\n\nrows.sort(key=lambda r: (-r[2], r[0], r[1]))\n\nwith open('/out/endpoints.tsv', 'w') as f:\n    f.write('method\\tpath\\tcount\\tp50\\tp95\\terror_pct\\n')\n    for method, path, count, p50, p95, err in rows:\n        f.write(f'{method}\\t{path}\\t{count}\\t{p50}\\t{p95}\\t{err}\\n')\n\nwith open('/out/malformed.txt', 'w') as f:\n    f.write(str(malformed) + '\\n')\n\nprint('malformed:', malformed)\nprint('valid:', sum(len(v) for v in groups.values()))\nprint('groups:', len(rows))\nEOF\npython3 /out/process.py",
+      "cat /out/endpoints.tsv && echo \"=== malformed.txt ===\" && cat /out/malformed.txt",
+      "echo \"=== sum of counts (should be 11987):\" && awk -F'\\t' 'NR>1 {s+=$3} END {print s}' /out/endpoints.tsv\necho \"=== independent check: GET /api/items/561 200 780ms style lines -> GET /api/items/:id group\"\n# Extract latencies for GET /api/items/<digits> (with optional trailing slash/query) independently\nawk '$2==\"GET\" && $3 ~ /^\\/api\\/items\\/[0-9]+\\/?(\\?.*)?$/ {sub(/ms$/,\"\",$5); print $5}' /data/app.log | sort -n > /tmp/lats.txt\nwc -l /tmp/lats.txt\nn=$(wc -l < /tmp/lats.txt)\np50_idx=$(( (50*n + 99) / 100 )); p95_idx=$(( (95*n + 99) / 100 ))\necho \"n=$n p50_idx=$p50_idx p95_idx=$p95_idx\"\nsed -n \"${p50_idx}p\" /tmp/lats.txt; sed -n \"${p95_idx}p\" /tmp/lats.txt\necho \"=== error pct check for GET /api/items/:id:\"\nawk '$2==\"GET\" && $3 ~ /^\\/api\\/items\\/[0-9]+\\/?(\\?.*)?$/ {tot++; if ($4>=500) err++} END {printf \"tot=%d err=%d pct=%.4f\\n\", tot, err, err*100/tot}' /data/app.log\necho \"=== root path preserved? lines with path '/' or '/?...':\"\nawk '$3 == \"/\" || $3 ~ /^\\/\\?/ {c++} END {print c+0}' /data/app.log\necho \"=== verify sort order:\"\npython3 - <<'EOF'\nrows = [l.rstrip('\\n').split('\\t') for l in open('/out/endpoints.tsv')][1:]\nkeys = [(-int(r[2]), r[0], r[1]) for r in rows]\nprint(\"sorted correctly:\", keys == sorted(keys))\nprint(\"all error_pct have 1 decimal:\", all(len(r[5].split('.')[1])==1 for r in rows))\nprint(\"header ok:\", open('/out/endpoints.tsv').readline().rstrip('\\n') == 'method\\tpath\\tcount\\tp50\\tp95\\terror_pct')\nEOF"
+    ],
+    "usage": {
+      "input_tokens": 26332,
+      "output_tokens": 3466,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 61467
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 7.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 7.0,
+      "turns": 8.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /data/ && wc -l /data/app.log && head -30 /data/app.log",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--   600216 2026-10-09 18:16 app.log\n12000 /data/app.log\n2026-10-01T00:00:00Z GET /health 502 203ms\n2026-10-01T00:00:01Z POST /health 200 751ms\n2026-10-01T00:00:02Z GET /api/users/862/orders?page=4 200 31ms\n2026-10-01T00:00:03Z GET /api/search?q=a1 200 50ms\n2026-10-01T00:00:04Z DELETE /api/items/0/ 200 300ms\n2026-10-01T00:00:05Z GET /api/items/561 200 780ms\n2026-10-01T00:00:06Z DELETE /api/items/797 200 498ms\n2026-10-01T00:00:07Z PUT /api/items/260 200 430ms\n2026-10-01T00:00:08Z POST /health 200 310ms\n2026-10-01T00:00:09Z GET /api/users/30/orders?page=1 501 815ms\n2026-10-01T00:00:10Z GET /api/items/519/ 200 459ms\n2026-10-01T00:00:11Z GET /api/items/0 200 200ms\n2026-10-01T00:00:12Z GET /static/app.js?v=2 200 490ms\n2026-10-01T00:13:00Z GET\n2026-10-01T00:00:14Z POST /api/items/54/ 200 727ms\n2026-10-01T00:00:15Z GET /api/items/360 200 580ms\n2026-10-01T00:00:16Z PUT /static/app.js?v=2 200 529ms\n2026-10-01T00:00:17Z PUT /api/items/206 200 703ms\n2026-10-01T00:00:18Z DELETE /api/search?q=a0 200 180ms\n2026-10-01T00:00:19Z POST /health 200 597ms\n2026-10-01T00:00:20Z GET /api/items 200 713ms\n2026-10-01T00:00:21Z PUT /api/search?q=a2 200 316ms\n2026-10-01T00:00:22Z PUT /static/app.js?v=0 200 652ms\n2026-10-01T00:00:23Z GET /static/app.js?v=2 200 145ms\n2026-10-01T00:00:24Z GET /api/search?q=a2 200 651ms\n2026-10-01T00:00:25Z PUT / 200 618ms\n2026-10-01T00:00:26Z PUT /api/users/90/orders?page=3 200 845ms\n2026-10-01T00:00:27Z GET /api/search?q=a2 200 619ms\n2026-10-01T00:00:28Z PUT /api/users/624/orders?page=1 200 712ms\n2026-10-01T00:00:29Z DELETE /api/items/775 200 787ms\n"
+          },
+          {
+            "commands": "tail -20 /data/app.log && echo \"---\" && grep -v -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z [A-Z]+ /[^ ]* [0-9]{3} [0-9]+ms$' /data/app.log | head -40",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "2026-10-01T03:19:40Z POST / 200 876ms\n2026-10-01T03:19:41Z PUT /api/items/668 404 834ms\n2026-10-01T03:19:42Z POST /api/users/82/orders?page=3 200 441ms\n2026-10-01T03:19:43Z PUT /health 200 802ms\n2026-10-01T03:19:44Z DELETE /api/items/798 200 199ms\n2026-10-01T03:19:45Z GET /static/app.js?v=1 200 461ms\n2026-10-01T03:19:46Z DELETE /api/items/573 200 486ms\n2026-10-01T03:19:47Z DELETE /api/users/735/orders?page=3 200 367ms\n2026-10-01T03:19:48Z GET / 502 535ms\n2026-10-01T03:19:49Z GET / 404 522ms\n2026-10-01T03:19:50Z GET /static/app.js?v=3 200 418ms\n2026-10-01T03:19:51Z GET /api/items/119/ 200 859ms\n2026-10-01T03:19:52Z GET /static/app.js?v=4 200 349ms\n2026-10-01T03:19:53Z GET /health 200 508ms\n2026-10-01T03:19:54Z GET /static/app.js?v=2 200 111ms\n2026-10-01T03:19:55Z GET /api/search?q=a1 200 485ms\n2026-10-01T03:19:56Z GET /api/items/676 200 238ms\n2026-10-01T03:19:57Z GET /api/users/867/orders?page=4 200 633ms\n2026-10-01T03:19:58Z DELETE / 200 542ms\n2026-10-01T03:19:59Z PUT /static/app.js?v=0 200 133ms\n---\n2026-10-01T00:13:00Z GET\n2026-10-01T00:50:00Z GET\n2026-10-01T00:27:00Z GET\n2026-10-01T00:04:00Z GET\n2026-10-01T00:41:00Z GET\n2026-10-01T00:18:00Z GET\n2026-10-01T00:55:00Z GET\n2026-10-01T00:32:00Z GET\n2026-10-01T00:09:00Z GET\n2026-10-01T00:46:00Z GET\n2026-10-01T00:23:00Z GET\n2026-10-01T00:00:00Z GET\n2026-10-01T00:37:00Z GET\n"
+          },
+          {
+            "commands": "grep -v -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z [A-Z]+ /[^ ]* [0-9]{3} [0-9]+ms$' /data/app.log | sort -u | head -60 && echo \"=== count ===\" && grep -cv -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z [A-Z]+ /[^ ]* [0-9]{3} [0-9]+ms$' /data/app.log",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "2026-10-01T00:00:00Z GET\n2026-10-01T00:04:00Z GET\n2026-10-01T00:09:00Z GET\n2026-10-01T00:13:00Z GET\n2026-10-01T00:18:00Z GET\n2026-10-01T00:23:00Z GET\n2026-10-01T00:27:00Z GET\n2026-10-01T00:32:00Z GET\n2026-10-01T00:37:00Z GET\n2026-10-01T00:41:00Z GET\n2026-10-01T00:46:00Z GET\n2026-10-01T00:50:00Z GET\n2026-10-01T00:55:00Z GET\n=== count ===\n13\n"
+          },
+          {
+            "commands": "awk 'NF != 5 {c[NF]++} END {for (n in c) print n\" fields:\", c[n]}' /data/app.log; echo \"---blank lines:\"; grep -c '^$' /data/app.log; echo \"---methods:\"; awk 'NF==5 {print $2}' /data/app.log | sort -u; echo \"---statuses:\"; awk 'NF==5 {print $4}' /data/app.log | sort -u | head; echo \"---paths sample (unique, stripped):\"; awk 'NF==5 {print $3}' /data/app.log | sed 's/?.*//' | sort -u | head -40; echo \"---trailing chars check:\"; grep -c $'\\r' /data/app.log || true; grep -c '  ' /data/app.log || true",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "2 fields: 13\n---blank lines:\n0\n---methods:\nDELETE\nGET\nPOST\nPUT\n---statuses:\n200\n404\n500\n501\n502\n503\n---paths sample (unique, stripped):\n/\n/api/items\n/api/items/0\n/api/items/0/\n/api/items/10\n/api/items/10/\n/api/items/100\n/api/items/100/\n/api/items/101\n/api/items/102\n/api/items/102/\n/api/items/103\n/api/items/103/\n/api/items/104\n/api/items/104/\n/api/items/105/\n/api/items/106\n/api/items/106/\n/api/items/107\n/api/items/107/\n/api/items/108\n/api/items/108/\n/api/items/109\n/api/items/109/\n/api/items/11\n/api/items/110\n/api/items/110/\n/api/items/112/\n/api/items/113\n/api/items/113/\n/api/items/114\n/api/items/114/\n/api/items/115\n/api/items/115/\n/api/items/116\n/api/items/116/\n/api/items/117\n/api/items/117/\n/api/items/118/\n/api/items/119\n---trailing chars check:\n0\n0\n"
+          },
+          {
+            "commands": "mkdir -p /out && cat > /out/process.py <<'EOF'\nimport re\nfrom collections import defaultdict\nfrom decimal import Decimal, ROUND_HALF_UP\n\nLINE_RE = re.compile(\n    r'^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z\\s+'  # timestamp\n    r'([A-Z]+)\\s+'                                # method\n    r'(/\\S*)\\s+'                                  # path (must start with /, no spaces)\n    r'(\\d{3})\\s+'                                 # status\n    r'(\\d+)ms$'                                   # latency\n)\n\ndef normalize(path: str) -> str:\n    path = path.split('?', 1)[0]  # drop query string\n    if len(path) > 1 and path.endswith('/'):\n        path = path[:-1]          # drop ONE trailing slash (root '/' untouched)\n    segs = path.split('/')\n    segs = [':id' if s.isdigit() and s != '' else s for s in segs]\n    return '/'.join(segs)\n\ndef nearest_rank(lat, pct):\n    lat.sort()\n    n = len(lat)\n    k = (pct * n + 99) // 100   # ceil(pct/100 * n)\n    return lat[k - 1]\n\ngroups = defaultdict(list)      # (method, norm_path) -> list of latencies\nerrors = defaultdict(int)       # (method, norm_path) -> count of status >= 500\nmalformed = 0\n\nwith open('/data/app.log', 'r') as f:\n    for line in f:\n        line = line.rstrip('\\n')\n        m = LINE_RE.match(line)\n        if not m:\n            malformed += 1\n            continue\n        method, path, status, lat = m.group(1), m.group(2), int(m.group(3)), int(m.group(4))\n        key = (method, normalize(path))\n        groups[key].append(lat)\n        if status >= 500:\n            errors[key] += 1\n\nrows = []\nfor (method, path), lats in groups.items():\n    count = len(lats)\n    p50 = nearest_rank(lats[:], 50)\n    p95 = nearest_rank(lats, 95)\n    err = Decimal(errors[(method, path)] * 100) / Decimal(count)\n    err = err.quantize(Decimal('0.1'), rounding=ROUND_HALF_UP)\n    rows.append((method, path, count, p50, p95, err))\n\nrows.sort(key=lambda r: (-r[2], r[0], r[1]))\n\nwith open('/out/endpoints.tsv', 'w') as f:\n    f.write('method\\tpath\\tcount\\tp50\\tp95\\terror_pct\\n')\n    for method, path, count, p50, p95, err in rows:\n        f.write(f'{method}\\t{path}\\t{count}\\t{p50}\\t{p95}\\t{err}\\n')\n\nwith open('/out/malformed.txt', 'w') as f:\n    f.write(str(malformed) + '\\n')\n\nprint('malformed:', malformed)\nprint('valid:', sum(len(v) for v in groups.values()))\nprint('groups:', len(rows))\nEOF\npython3 /out/process.py",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "malformed: 13\nvalid: 11987\ngroups: 28\n"
+          },
+          {
+            "commands": "cat /out/endpoints.tsv && echo \"=== malformed.txt ===\" && cat /out/malformed.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "method\tpath\tcount\tp50\tp95\terror_pct\nGET\t/api/items/:id\t1711\t470\t863\t4.0\nGET\t/health\t890\t440\t860\t4.5\nGET\t/\t880\t475\t860\t4.1\nGET\t/static/app.js\t878\t447\t871\t5.4\nGET\t/api/items\t858\t453\t866\t3.6\nGET\t/api/search\t843\t474\t862\t4.2\nGET\t/api/users/:id/orders\t828\t444\t859\t4.6\nPOST\t/api/items/:id\t446\t468\t860\t4.5\nPUT\t/api/items/:id\t420\t447\t861\t3.6\nDELETE\t/api/items/:id\t406\t496\t852\t3.9\nPOST\t/api/search\t238\t459\t832\t4.6\nDELETE\t/api/items\t237\t458\t879\t3.4\nDELETE\t/api/users/:id/orders\t235\t446\t875\t6.0\nPOST\t/static/app.js\t226\t445\t859\t4.4\nPOST\t/api/users/:id/orders\t218\t484\t851\t6.0\nPUT\t/api/users/:id/orders\t218\t475\t859\t7.3\nDELETE\t/health\t217\t437\t846\t4.1\nPUT\t/static/app.js\t215\t433\t845\t5.1\nPUT\t/api/search\t213\t483\t865\t2.8\nDELETE\t/\t209\t425\t868\t3.8\nPOST\t/\t207\t406\t862\t5.8\nPUT\t/\t207\t489\t869\t6.3\nDELETE\t/api/search\t206\t431\t866\t6.3\nPOST\t/api/items\t201\t404\t850\t4.0\nPUT\t/health\t199\t461\t881\t6.0\nPUT\t/api/items\t197\t402\t859\t7.6\nPOST\t/health\t194\t459\t820\t3.1\nDELETE\t/static/app.js\t190\t448\t866\t4.2\n=== malformed.txt ===\n13\n"
+          },
+          {
+            "commands": "echo \"=== sum of counts (should be 11987):\" && awk -F'\\t' 'NR>1 {s+=$3} END {print s}' /out/endpoints.tsv\necho \"=== independent check: GET /api/items/561 200 780ms style lines -> GET /api/items/:id group\"\n# Extract latencies for GET /api/items/<digits> (with optional trailing slash/query) independently\nawk '$2==\"GET\" && $3 ~ /^\\/api\\/items\\/[0-9]+\\/?(\\?.*)?$/ {sub(/ms$/,\"\",$5); print $5}' /data/app.log | sort -n > /tmp/lats.txt\nwc -l /tmp/lats.txt\nn=$(wc -l < /tmp/lats.txt)\np50_idx=$(( (50*n + 99) / 100 )); p95_idx=$(( (95*n + 99) / 100 ))\necho \"n=$n p50_idx=$p50_idx p95_idx=$p95_idx\"\nsed -n \"${p50_idx}p\" /tmp/lats.txt; sed -n \"${p95_idx}p\" /tmp/lats.txt\necho \"=== error pct check for GET /api/items/:id:\"\nawk '$2==\"GET\" && $3 ~ /^\\/api\\/items\\/[0-9]+\\/?(\\?.*)?$/ {tot++; if ($4>=500) err++} END {printf \"tot=%d err=%d pct=%.4f\\n\", tot, err, err*100/tot}' /data/app.log\necho \"=== root path preserved? lines with path '/' or '/?...':\"\nawk '$3 == \"/\" || $3 ~ /^\\/\\?/ {c++} END {print c+0}' /data/app.log\necho \"=== verify sort order:\"\npython3 - <<'EOF'\nrows = [l.rstrip('\\n').split('\\t') for l in open('/out/endpoints.tsv')][1:]\nkeys = [(-int(r[2]), r[0], r[1]) for r in rows]\nprint(\"sorted correctly:\", keys == sorted(keys))\nprint(\"all error_pct have 1 decimal:\", all(len(r[5].split('.')[1])==1 for r in rows))\nprint(\"header ok:\", open('/out/endpoints.tsv').readline().rstrip('\\n') == 'method\\tpath\\tcount\\tp50\\tp95\\terror_pct')\nEOF",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== sum of counts (should be 11987):\n11987\n=== independent check: GET /api/items/561 200 780ms style lines -> GET /api/items/:id group\n1711 /tmp/lats.txt\nn=1711 p50_idx=856 p95_idx=1626\n470\n863\n=== error pct check for GET /api/items/:id:\ntot=1711 err=68 pct=3.9743\n=== root path preserved? lines with path '/' or '/?...':\n1503\n=== verify sort order:\nsorted correctly: True\nall error_pct have 1 decimal: True\nheader ok: True\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,32 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "rt_py_toml_render",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "Render per-environment configs: for every /config/env/*.toml file, merge it over /config/base.toml and write /out/<name>.json (dev.toml -> /out/dev.json). Merge rules: tables merge recursively; any other value (scalars, arrays, arrays of tables) in the override replaces the base value; an override value equal to the string \"__unset__\" removes that key. TOML dates and datetimes become strings via Python's isoformat(). JSON: 2-space indent, keys sorted, non-ASCII characters written as-is (not \\u escapes), trailing newline. Also write /out/index.txt listing the environment names, sorted, one per line."
+  ],
+  "passed": false,
+  "aggregate": 0.0,
+  "scores": [
+    {
+      "scorer": "infra",
+      "value": 0.0,
+      "pass": false,
+      "na": true,
+      "reason": "agent loop failed: provider chat failed: Anthropic API error (400 Bad Request): Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits."
+    }
+  ],
+  "transcript": {
+    "final_response": "",
+    "iterations": 0,
+    "tool_calls_count": 0,
+    "usage": {
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": 0.0
+    },
+    "error": "agent loop failed: provider chat failed: Anthropic API error (400 Bad Request): Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.",
+    "error_kind": "infra"
+  },
+  "skipped": false
+}

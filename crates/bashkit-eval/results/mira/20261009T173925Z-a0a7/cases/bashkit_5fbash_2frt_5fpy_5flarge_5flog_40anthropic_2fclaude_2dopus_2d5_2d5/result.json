@@ -1,0 +1,32 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "rt_py_large_log",
+  "target": "anthropic/claude-opus-5-5",
+  "input": [
+    "/data/app.log is a large access log; valid lines look like `2026-10-01T00:00:00Z GET /api/items/42?x=1 200 35ms` (timestamp, method, path, status, latency). Any line not matching that shape is malformed.\n\nGroup valid lines by method and normalised path: drop the query string, drop one trailing '/' (except for the root path '/'), and replace every path segment made only of digits with `:id`. For each group compute count, p50 and p95 latency (integer ms, nearest-rank: the value at position ceil(p/100 * count) in ascending order) and error_pct = percentage of lines with status >= 500, rounded half up to 1 decimal.\n\nWrite /out/endpoints.tsv (tab-separated) with header method, path, count, p50, p95, error_pct, sorted by count descending, then method, then path; error_pct always printed with 1 decimal. Write /out/malformed.txt with just the number of malformed lines."
+  ],
+  "passed": false,
+  "aggregate": 0.0,
+  "scores": [
+    {
+      "scorer": "infra",
+      "value": 0.0,
+      "pass": false,
+      "na": true,
+      "reason": "agent loop failed: provider chat failed: Anthropic API error (400 Bad Request): Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits."
+    }
+  ],
+  "transcript": {
+    "final_response": "",
+    "iterations": 0,
+    "tool_calls_count": 0,
+    "usage": {
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": 0.0
+    },
+    "error": "agent loop failed: provider chat failed: Anthropic API error (400 Bad Request): Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.",
+    "error_kind": "infra"
+  },
+  "skipped": false
+}

@@ -1,0 +1,78 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "rt_py_sqlite_stats",
+  "target": "openrouter/meta/muse-spark-1.3-contributor",
+  "input": [
+    "/data/shop.db is a SQLite database with a table orders(id, customer, category, amount_cents). Write /out/category_stats.json: a JSON object keyed by category whose values are objects with orders (count), total_cents, median_cents and top_customer. median_cents is the median amount; for an even count it is the mean of the two middle amounts rounded half up to an integer. top_customer is the customer with the largest total amount in that category (ties: alphabetically first). Format: 2-space indentation, keys sorted at every level, trailing newline (what Python's json.dumps(obj, indent=2, sort_keys=True) prints)."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "1/1 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Wrote `/out/category_stats.json` with per-category `orders`, `total_cents`, `median_cents` (half-up rounding for even counts), and `top_customer` (ties broken alphabetically), formatted with `json.dumps(obj, indent=2, sort_keys=True)` plus trailing newline.",
+    "iterations": 5,
+    "tool_calls_count": 4,
+    "tool_calls": [
+      "ls -R /data 2>&1; echo \"---\"; ls -R /out 2>&1; echo \"---\"; sqlite3 /data/shop.db \"SELECT sql FROM sqlite_master; SELECT COUNT(*) FROM orders; SELECT * FROM orders LIMIT 5;\" 2>&1 || sqlite /data/shop.db \"SELECT sql FROM sqlite_master; SELECT COUNT(*) FROM orders; SELECT * FROM orders LIMIT 5;\" 2>&1\n",
+      "sqlite3 /data/shop.db \"SELECT * FROM orders ORDER BY category, amount_cents; SELECT DISTINCT category FROM orders; SELECT DISTINCT customer FROM orders;\" 2>&1\npython3 -c \"import sqlite3; db=sqlite3.connect('/data/shop.db'); print(list(db.execute('SELECT * FROM orders ORDER BY category, amount_cents')))\"\n",
+      "mkdir -p /out\npython3 << 'PY'\nimport sqlite3, json, collections\n\ndb = sqlite3.connect('/data/shop.db')\n# get categories\ncats = [r[0] for r in db.execute(\"SELECT DISTINCT category FROM orders\")]\nresult = {}\nfor cat in cats:\n    amounts = [r[0] for r in db.execute(\"SELECT amount_cents FROM orders WHERE category=? ORDER BY amount_cents\", (cat,))]\n    n = len(amounts)\n    total = sum(amounts)\n    # median\n    if n % 2 == 1:\n        median = amounts[n//2]\n    else:\n        a = amounts[n//2 - 1]\n        b = amounts[n//2]\n        s = a + b\n        # mean rounded half up\n        median = (s + 1)//2 if s % 2 == 1 else s//2\n        # equivalent to (s+1)//2 for integer sums? check: s even -> s//2 ; (s+1)//2 == s//2 when s even. So just (s+1)//2\n        # assert median == (s+1)//2\n    # top customer\n    rows = db.execute(\"SELECT customer, SUM(amount_cents) as t FROM orders WHERE category=? GROUP BY customer\", (cat,))\n    # ties alphabetically first: sort by (-total, customer)\n    best = sorted(rows, key=lambda x: (-x[1], x[0]))[0][0]\n    result[cat] = {\"orders\": n, \"total_cents\": total, \"median_cents\": median, \"top_customer\": best}\n\nprint(result)\nwith open('/out/category_stats.json','w') as f:\n    f.write(json.dumps(result, indent=2, sort_keys=True) + \"\\n\")\n\nprint(open('/out/category_stats.json').read())\nPY\ncat /out/category_stats.json\n",
+      "tail -c2 /out/category_stats.json | xxd; python3 -c \"import json; d=json.load(open('/out/category_stats.json')); print(d); data=open('/out/category_stats.json').read(); assert data==json.dumps(d,indent=2,sort_keys=True)+'\\n', 'format mismatch'; print('format OK, trailing newline OK')\"\nls -l /out/"
+    ],
+    "usage": {
+      "input_tokens": 9753,
+      "output_tokens": 2284,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 20608
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 4.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 4.0,
+      "turns": 5.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -R /data 2>&1; echo \"---\"; ls -R /out 2>&1; echo \"---\"; sqlite3 /data/shop.db \"SELECT sql FROM sqlite_master; SELECT COUNT(*) FROM orders; SELECT * FROM orders LIMIT 5;\" 2>&1 || sqlite /data/shop.db \"SELECT sql FROM sqlite_master; SELECT COUNT(*) FROM orders; SELECT * FROM orders LIMIT 5;\" 2>&1\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/data:\nshop.db\n---\nls: cannot access '/out': No such file or directory\n---\nCREATE TABLE orders (id INTEGER PRIMARY KEY, customer TEXT NOT NULL, category TEXT NOT NULL, amount_cents INTEGER NOT NULL)\n13\n1|kim|books|1200\n2|lee|books|800\n3|kim|books|1500\n4|ann|books|905\n5|lee|games|5999\n"
+          },
+          {
+            "commands": "sqlite3 /data/shop.db \"SELECT * FROM orders ORDER BY category, amount_cents; SELECT DISTINCT category FROM orders; SELECT DISTINCT customer FROM orders;\" 2>&1\npython3 -c \"import sqlite3; db=sqlite3.connect('/data/shop.db'); print(list(db.execute('SELECT * FROM orders ORDER BY category, amount_cents')))\"\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "2|lee|books|800\n4|ann|books|905\n1|kim|books|1200\n3|kim|books|1500\n13|ann|games|2\n7|bob|games|1000\n5|lee|games|5999\n6|ann|games|5999\n10|amy|music|101\n11|zed|music|101\n8|zed|music|350\n9|amy|music|350\n12|bob|toys|777\nbooks\ngames\nmusic\ntoys\nkim\nlee\nann\nbob\nzed\namy\n[(2, 'lee', 'books', 800), (4, 'ann', 'books', 905), (1, 'kim', 'books', 1200), (3, 'kim', 'books', 1500), (13, 'ann', 'games', 2), (7, 'bob', 'games', 1000), (5, 'lee', 'games', 5999), (6, 'ann', 'games', 5999), (10, 'amy', 'music', 101), (11, 'zed', 'music', 101), (8, 'zed', 'music', 350), (9, 'amy', 'music', 350), (12, 'bob', 'toys', 777)]\n"
+          },
+          {
+            "commands": "mkdir -p /out\npython3 << 'PY'\nimport sqlite3, json, collections\n\ndb = sqlite3.connect('/data/shop.db')\n# get categories\ncats = [r[0] for r in db.execute(\"SELECT DISTINCT category FROM orders\")]\nresult = {}\nfor cat in cats:\n    amounts = [r[0] for r in db.execute(\"SELECT amount_cents FROM orders WHERE category=? ORDER BY amount_cents\", (cat,))]\n    n = len(amounts)\n    total = sum(amounts)\n    # median\n    if n % 2 == 1:\n        median = amounts[n//2]\n    else:\n        a = amounts[n//2 - 1]\n        b = amounts[n//2]\n        s = a + b\n        # mean rounded half up\n        median = (s + 1)//2 if s % 2 == 1 else s//2\n        # equivalent to (s+1)//2 for integer sums? check: s even -> s//2 ; (s+1)//2 == s//2 when s even. So just (s+1)//2\n        # assert median == (s+1)//2\n    # top customer\n    rows = db.execute(\"SELECT customer, SUM(amount_cents) as t FROM orders WHERE category=? GROUP BY customer\", (cat,))\n    # ties alphabetically first: sort by (-total, customer)\n    best = sorted(rows, key=lambda x: (-x[1], x[0]))[0][0]\n    result[cat] = {\"orders\": n, \"total_cents\": total, \"median_cents\": median, \"top_customer\": best}\n\nprint(result)\nwith open('/out/category_stats.json','w') as f:\n    f.write(json.dumps(result, indent=2, sort_keys=True) + \"\\n\")\n\nprint(open('/out/category_stats.json').read())\nPY\ncat /out/category_stats.json\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "{'books': {'orders': 4, 'total_cents': 4405, 'median_cents': 1053, 'top_customer': 'kim'}, 'games': {'orders': 4, 'total_cents': 13000, 'median_cents': 3500, 'top_customer': 'ann'}, 'music': {'orders': 4, 'total_cents': 902, 'median_cents': 226, 'top_customer': 'amy'}, 'toys': {'orders': 1, 'total_cents': 777, 'median_cents': 777, 'top_customer': 'bob'}}\n{\n  \"books\": {\n    \"median_cents\": 1053,\n    \"orders\": 4,\n    \"top_customer\": \"kim\",\n    \"total_cents\": 4405\n  },\n  \"games\": {\n    \"median_cents\": 3500,\n    \"orders\": 4,\n    \"top_customer\": \"ann\",\n    \"total_cents\": 13000\n  },\n  \"music\": {\n    \"median_cents\": 226,\n    \"orders\": 4,\n    \"top_customer\": \"amy\",\n    \"total_cents\": 902\n  },\n  \"toys\": {\n    \"median_cents\": 777,\n    \"orders\": 1,\n    \"top_customer\": \"bob\",\n    \"total_cents\": 777\n  }\n}\n\n{\n  \"books\": {\n    \"median_cents\": 1053,\n    \"orders\": 4,\n    \"top_customer\": \"kim\",\n    \"total_cents\": 4405\n  },\n  \"games\": {\n    \"median_cents\": 3500,\n    \"orders\": 4,\n    \"top_customer\": \"ann\",\n    \"total_cents\": 13000\n  },\n  \"music\": {\n    \"median_cents\": 226,\n    \"orders\": 4,\n    \"top_customer\": \"amy\",\n    \"total_cents\": 902\n  },\n  \"toys\": {\n    \"median_cents\": 777,\n    \"orders\": 1,\n    \"top_customer\": \"bob\",\n    \"total_cents\": 777\n  }\n}\n"
+          },
+          {
+            "commands": "tail -c2 /out/category_stats.json | xxd; python3 -c \"import json; d=json.load(open('/out/category_stats.json')); print(d); data=open('/out/category_stats.json').read(); assert data==json.dumps(d,indent=2,sort_keys=True)+'\\n', 'format mismatch'; print('format OK, trailing newline OK')\"\nls -l /out/",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "00000000: 7d0a                                     }.\n{'books': {'median_cents': 1053, 'orders': 4, 'top_customer': 'kim', 'total_cents': 4405}, 'games': {'median_cents': 3500, 'orders': 4, 'top_customer': 'ann', 'total_cents': 13000}, 'music': {'median_cents': 226, 'orders': 4, 'top_customer': 'amy', 'total_cents': 902}, 'toys': {'median_cents': 777, 'orders': 1, 'top_customer': 'bob', 'total_cents': 777}}\nformat OK, trailing newline OK\n-rw-r--r--      447 2026-10-09 18:13 category_stats.json\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

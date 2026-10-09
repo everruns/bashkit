@@ -1,0 +1,85 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "archive_create_extract",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Create a tar.gz archive of the /project directory and save it as /tmp/project.tar.gz. Then create /backup directory and extract the archive there. Verify the files exist in /backup."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "All steps completed and verified successfully:\n\n1. **Archive created** — `/tmp/project.tar.gz` (229 bytes) containing the `/project` directory, created with `tar -czf /tmp/project.tar.gz -C / project`\n2. **Backup directory created** — `mkdir -p /backup`\n3. **Archive extracted** — `tar -xzf /tmp/project.tar.gz -C /backup`\n4. **Verification passed**:\n   - Files found: `/backup/project/README.md` and `/backup/project/src/main.sh`\n   - MD5 checksums of the extracted files match the originals exactly (`1c82cc...` for README.md, `8c91ca...` for main.sh)\n\nThe archive round-trip is confirmed — all files exist in `/backup` with identical contents to the original `/project` directory.",
+    "iterations": 6,
+    "tool_calls_count": 5,
+    "tool_calls": [
+      "ls -la /project && find /project -type f | head -50",
+      "tar -czf /tmp/project.tar.gz -C / project && ls -la /tmp/project.tar.gz && tar -tzf /tmp/project.tar.gz",
+      "mkdir -p /backup && tar -xzf /tmp/project.tar.gz -C /backup && echo \"--- Extraction done ---\"",
+      "find /backup -type f && echo \"--- Content check ---\" && cat /backup/project/README.md && echo \"--- Diff against original ---\" && diff -r /project /backup/project && echo \"VERIFIED: files match original\"",
+      "cd /project && md5sum README.md src/main.sh; echo \"--- backup copies ---\"; cd /backup/project && md5sum README.md src/main.sh"
+    ],
+    "usage": {
+      "input_tokens": 5746,
+      "output_tokens": 737,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 10755
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 5.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 4.0,
+      "turns": 6.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /project && find /project -type f | head -50",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       37 2026-10-09 17:41 README.md\ndrwxr-xr-x        0 2026-10-09 17:41 src\n/project/README.md\n/project/src/main.sh\n"
+          },
+          {
+            "commands": "tar -czf /tmp/project.tar.gz -C / project && ls -la /tmp/project.tar.gz && tar -tzf /tmp/project.tar.gz",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--      229 2026-10-09 17:41 /tmp/project.tar.gz\nproject/\nproject/src/\nproject/src/main.sh\nproject/README.md\n"
+          },
+          {
+            "commands": "mkdir -p /backup && tar -xzf /tmp/project.tar.gz -C /backup && echo \"--- Extraction done ---\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "--- Extraction done ---\n"
+          },
+          {
+            "commands": "find /backup -type f && echo \"--- Content check ---\" && cat /backup/project/README.md && echo \"--- Diff against original ---\" && diff -r /project /backup/project && echo \"VERIFIED: files match original\"",
+            "exit_code": 2,
+            "stderr": "diff: invalid option -- 'r'\n",
+            "stdout": "/backup/project/README.md\n/backup/project/src/main.sh\n--- Content check ---\n# My Project\nThis is a test project.\n--- Diff against original ---\n"
+          },
+          {
+            "commands": "cd /project && md5sum README.md src/main.sh; echo \"--- backup copies ---\"; cd /backup/project && md5sum README.md src/main.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "1c82ccade136af7e42ad254f4a7737b1  README.md\n8c91ca82e3a33c074811a70d26237bcc  src/main.sh\n--- backup copies ---\n1c82ccade136af7e42ad254f4a7737b1  README.md\n8c91ca82e3a33c074811a70d26237bcc  src/main.sh\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

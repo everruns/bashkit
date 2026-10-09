@@ -1,0 +1,32 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "hard_log_p95",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "/home/eval/logs/access.log is an HTTP access log. Each well-formed line is: <timestamp> <method> <path> <status> <latency>ms, separated by single spaces. Produce /home/eval/logs/out/report.tsv with per-endpoint latency statistics.\n\nRules:\n- Skip lines that do not have exactly those 5 fields or whose latency is not a number followed by \"ms\" (e.g. truncation markers, or \"-\" for timed-out requests).\n- endpoint = path with any query string (\"?...\" onwards) removed, then a trailing \"/\" removed (unless the path is just \"/\").\n- Exclude /healthz and every path under /static/.\n- For each endpoint: count = number of requests, p50 and p95 = latency percentiles in ms using the nearest-rank method (sort latencies ascending; the p-th percentile is the value at 1-based position ceil(p/100 * count)), err_permille = floor(1000 * (requests with status >= 500) / count).\n- Output: tab-separated, a header line `endpoint\tcount\tp50\tp95\terr_permille`, then the top 5 endpoints ordered by p95 descending, then count descending, then endpoint ascending (byte order). Integers only, no padding."
+  ],
+  "passed": false,
+  "aggregate": 0.0,
+  "scores": [
+    {
+      "scorer": "infra",
+      "value": 0.0,
+      "pass": false,
+      "na": true,
+      "reason": "agent loop failed: provider chat failed: Anthropic API error (400 Bad Request): Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits."
+    }
+  ],
+  "transcript": {
+    "final_response": "",
+    "iterations": 0,
+    "tool_calls_count": 0,
+    "usage": {
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": 0.0
+    },
+    "error": "agent loop failed: provider chat failed: Anthropic API error (400 Bad Request): Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.",
+    "error_kind": "infra"
+  },
+  "skipped": false
+}

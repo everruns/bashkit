@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "data_regex_extract",
+  "target": "anthropic/claude-opus-5-5",
+  "input": [
+    "Read /data/access.log where each line has format '[TIMESTAMP] STATUS_CODE METHOD URL DURATION_MS'. Use bash regex matching ([[ =~ ]]) with BASH_REMATCH to extract each field. Find all requests that took longer than 500ms. Print them as 'SLOW: METHOD URL took DURATIONms (STATUS)'. At the end, print 'Slow requests: N of M total'."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "4 of the 8 requests in `/data/access.log` took longer than 500ms:\n\n```\nSLOW: POST /api/orders took 850ms (200)\nSLOW: GET /api/reports took 1200ms (200)\nSLOW: POST /api/payments took 2000ms (500)\nSLOW: PUT /api/users took 620ms (200)\nSlow requests: 4 of 8 total\n```\n\nThe slowest was `POST /api/payments` at 2000ms, and it also returned a 500 error.\n\nThe script is saved at `/tmp/slow.sh`. It reads the log line by line and matches each line against this bash regex:\n\n```bash\nre='^\\[([^]]+)\\][[:space:]]+([0-9]{3})[[:space:]]+([A-Z]+)[[:space:]]+([^[:space:]]+)[[:space:]]+([0-9]+)[[:space:]]*$'\n```\n\nFor each match, `BASH_REMATCH[1..5]` holds the timestamp, status, method, URL and duration. If the duration is over 500, it prints the SLOW line, and it prints the summary at the end.\n\nIt also handles a few things your log doesn't currently need:\n- **Messy lines:** it handles a last line without a final line break, Windows line endings and blank lines.\n- **Leading zeros:** it compares durations with `10#$dur`, so a value like `0800` is read as 800 rather than as an invalid octal number.\n- **Bad lines:** any line that doesn't match the format triggers a warning and isn't counted. All 8 lines in this log matched.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat -A /data/access.log | head -50; wc -l /data/access.log",
+      "cat > /tmp/slow.sh <<'EOF'\n#!/bin/bash\nre='^\\[([^]]+)\\][[:space:]]+([0-9]{3})[[:space:]]+([A-Z]+)[[:space:]]+([^[:space:]]+)[[:space:]]+([0-9]+)[[:space:]]*$'\ntotal=0; slow=0\nwhile IFS= read -r line || [[ -n $line ]]; do\n  [[ -z ${line//[[:space:]]/} ]] && continue\n  line=${line%$'\\r'}\n  if [[ $line =~ $re ]]; then\n    ((total++))\n    status=${BASH_REMATCH[2]} method=${BASH_REMATCH[3]} url=${BASH_REMATCH[4]} dur=${BASH_REMATCH[5]}\n    if (( 10#$dur > 500 )); then\n      ((slow++))\n      echo \"SLOW: $method $url took ${dur}ms ($status)\"\n    fi\n  else\n    echo \"WARN: unparseable line: $line\" >&2\n  fi\ndone < /data/access.log\necho \"Slow requests: $slow of $total total\"\nEOF\nbash /tmp/slow.sh"
+    ],
+    "usage": {
+      "input_tokens": 4515,
+      "output_tokens": 1065,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 10104
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat -A /data/access.log | head -50; wc -l /data/access.log",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[2024-01-15T10:00:01] 200 GET /api/users 150$\n[2024-01-15T10:00:02] 200 POST /api/orders 850$\n[2024-01-15T10:00:03] 404 GET /api/missing 50$\n[2024-01-15T10:00:04] 200 GET /api/reports 1200$\n[2024-01-15T10:00:05] 500 POST /api/payments 2000$\n[2024-01-15T10:00:06] 200 GET /api/health 30$\n[2024-01-15T10:00:07] 200 GET /api/products 450$\n[2024-01-15T10:00:08] 200 PUT /api/users 620$\n8 /data/access.log\n"
+          },
+          {
+            "commands": "cat > /tmp/slow.sh <<'EOF'\n#!/bin/bash\nre='^\\[([^]]+)\\][[:space:]]+([0-9]{3})[[:space:]]+([A-Z]+)[[:space:]]+([^[:space:]]+)[[:space:]]+([0-9]+)[[:space:]]*$'\ntotal=0; slow=0\nwhile IFS= read -r line || [[ -n $line ]]; do\n  [[ -z ${line//[[:space:]]/} ]] && continue\n  line=${line%$'\\r'}\n  if [[ $line =~ $re ]]; then\n    ((total++))\n    status=${BASH_REMATCH[2]} method=${BASH_REMATCH[3]} url=${BASH_REMATCH[4]} dur=${BASH_REMATCH[5]}\n    if (( 10#$dur > 500 )); then\n      ((slow++))\n      echo \"SLOW: $method $url took ${dur}ms ($status)\"\n    fi\n  else\n    echo \"WARN: unparseable line: $line\" >&2\n  fi\ndone < /data/access.log\necho \"Slow requests: $slow of $total total\"\nEOF\nbash /tmp/slow.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "SLOW: POST /api/orders took 850ms (200)\nSLOW: GET /api/reports took 1200ms (200)\nSLOW: POST /api/payments took 2000ms (500)\nSLOW: PUT /api/users took 620ms (200)\nSlow requests: 4 of 8 total\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

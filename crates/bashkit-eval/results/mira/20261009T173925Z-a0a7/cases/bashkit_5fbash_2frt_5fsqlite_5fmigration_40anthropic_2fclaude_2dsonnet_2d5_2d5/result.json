@@ -1,0 +1,32 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "rt_sqlite_migration",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "/app/app.db is a schema version 1 SQLite database created from /app/schema_v1.sql. Write the migration /app/migrations/002_users_v2.sql and apply it to /app/app.db with `sqlite3 /app/app.db < /app/migrations/002_users_v2.sql`. The file must be plain SQL that upgrades ANY version 1 database (it will also be run against other v1 databases with different rows).\n\nVersion 2:\n- users has exactly the columns (id INTEGER PRIMARY KEY, first_name TEXT NOT NULL, last_name TEXT NOT NULL, email TEXT NOT NULL UNIQUE, signup_date TEXT NOT NULL), in that order, keeping user ids.\n- From full_name with surrounding spaces trimmed: first_name is the text before the first space, last_name the rest with surrounding spaces trimmed ('' when there is no space).\n- email is trimmed and lowercased. Users whose emails are equal after that are merged: keep only the lowest id, and orders of the removed users now belong to the kept user.\n- signup (MM/DD/YYYY) becomes signup_date YYYY-MM-DD.\n- meta schema_version is '2'.\norders keeps its columns and rows (only user_id may change)."
+  ],
+  "passed": false,
+  "aggregate": 0.0,
+  "scores": [
+    {
+      "scorer": "infra",
+      "value": 0.0,
+      "pass": false,
+      "na": true,
+      "reason": "agent loop failed: provider chat failed: Anthropic API error (400 Bad Request): Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits."
+    }
+  ],
+  "transcript": {
+    "final_response": "",
+    "iterations": 0,
+    "tool_calls_count": 0,
+    "usage": {
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": 0.0
+    },
+    "error": "agent loop failed: provider chat failed: Anthropic API error (400 Bad Request): Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.",
+    "error_kind": "infra"
+  },
+  "skipped": false
+}

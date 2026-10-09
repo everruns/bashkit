@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "config_env_template",
+  "target": "openrouter/meta/muse-spark-1.3-contributor",
+  "input": [
+    "Read /config/template.env which has lines like 'KEY=${VALUE:-default}'. For each line, check if the key exists in /config/overrides.txt (format: KEY=value). If it does, use the override value; otherwise use the default from the template. Write the final KEY=value pairs to /app/.env and print the result."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Final `KEY=value` pairs written to `/app/.env`:\n\n```\nDB_HOST=db.prod.internal\nDB_PORT=5432\nDB_NAME=myapp\nREDIS_URL=redis://localhost:6379\nLOG_LEVEL=warn\n```\n\n- `DB_HOST` and `LOG_LEVEL` taken from `/config/overrides.txt`\n- `DB_PORT`, `DB_NAME`, `REDIS_URL` taken from defaults in `/config/template.env`\n",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat /config/template.env; echo \"---\"; cat /config/overrides.txt; echo \"---\"; ls -l /app/ 2>&1; cat /app/.env 2>&1 || echo \"no .env yet\"",
+      "mkdir -p /app\n# Parse template.env + overrides.txt -> /app/.env\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  # Skip empty lines and comments\n  [[ -z \"$line\" ]] && continue\n  [[ \"$line\" =~ ^[[:space:]]*# ]] && continue\n\n  # Extract KEY (before first =)\n  key=\"${line%%=*}\"\n  # Trim whitespace from key\n  key=\"$(echo \"$key\" | xargs)\"\n  [[ -z \"$key\" ]] && continue\n\n  # Extract template expression (after first =): e.g. ${DB_HOST:-localhost}\n  expr=\"${line#*=}\"\n\n  # Extract default: content after :- up to trailing }\n  # Remove leading ${VAR:-  and trailing }\n  # General approach: take substring after ':-', remove trailing '}'\n  if [[ \"$expr\" == *\":-\"* ]]; then\n    default=\"${expr#*:-}\"\n    # Remove last } (and anything after? should just be })\n    default=\"${default%\\}}\"\n  else\n    # Fallback: no default pattern, use expr as-is\n    default=\"$expr\"\n  fi\n\n  # Check overrides.txt for KEY=\n  override=\"\"\n  found=0\n  if [[ -f /config/overrides.txt ]]; then\n    # grep for exact key match\n    ov_line=$(grep -E \"^${key}=\" /config/overrides.txt | head -n 1)\n    if [[ -n \"$ov_line\" ]]; then\n      override=\"${ov_line#*=}\"\n      found=1\n    fi\n  fi\n\n  if [[ $found -eq 1 ]]; then\n    echo \"${key}=${override}\" >> /app/.env\n  else\n    echo \"${key}=${default}\" >> /app/.env\n  fi\ndone < /config/template.env\n\necho \"=== /app/.env ===\"\ncat /app/.env"
+    ],
+    "usage": {
+      "input_tokens": 3842,
+      "output_tokens": 1378,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 10792
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /config/template.env; echo \"---\"; cat /config/overrides.txt; echo \"---\"; ls -l /app/ 2>&1; cat /app/.env 2>&1 || echo \"no .env yet\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "DB_HOST=${DB_HOST:-localhost}\nDB_PORT=${DB_PORT:-5432}\nDB_NAME=${DB_NAME:-myapp}\nREDIS_URL=${REDIS_URL:-redis://localhost:6379}\nLOG_LEVEL=${LOG_LEVEL:-info}\n---\nDB_HOST=db.prod.internal\nLOG_LEVEL=warn\n---\nls: cannot access '/app/': No such file or directory\ncat: /app/.env: No such file or directory\nno .env yet\n"
+          },
+          {
+            "commands": "mkdir -p /app\n# Parse template.env + overrides.txt -> /app/.env\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  # Skip empty lines and comments\n  [[ -z \"$line\" ]] && continue\n  [[ \"$line\" =~ ^[[:space:]]*# ]] && continue\n\n  # Extract KEY (before first =)\n  key=\"${line%%=*}\"\n  # Trim whitespace from key\n  key=\"$(echo \"$key\" | xargs)\"\n  [[ -z \"$key\" ]] && continue\n\n  # Extract template expression (after first =): e.g. ${DB_HOST:-localhost}\n  expr=\"${line#*=}\"\n\n  # Extract default: content after :- up to trailing }\n  # Remove leading ${VAR:-  and trailing }\n  # General approach: take substring after ':-', remove trailing '}'\n  if [[ \"$expr\" == *\":-\"* ]]; then\n    default=\"${expr#*:-}\"\n    # Remove last } (and anything after? should just be })\n    default=\"${default%\\}}\"\n  else\n    # Fallback: no default pattern, use expr as-is\n    default=\"$expr\"\n  fi\n\n  # Check overrides.txt for KEY=\n  override=\"\"\n  found=0\n  if [[ -f /config/overrides.txt ]]; then\n    # grep for exact key match\n    ov_line=$(grep -E \"^${key}=\" /config/overrides.txt | head -n 1)\n    if [[ -n \"$ov_line\" ]]; then\n      override=\"${ov_line#*=}\"\n      found=1\n    fi\n  fi\n\n  if [[ $found -eq 1 ]]; then\n    echo \"${key}=${override}\" >> /app/.env\n  else\n    echo \"${key}=${default}\" >> /app/.env\n  fi\ndone < /config/template.env\n\necho \"=== /app/.env ===\"\ncat /app/.env",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== /app/.env ===\nDB_HOST=db.prod.internal\nDB_PORT=5432\nDB_NAME=myapp\nREDIS_URL=redis://localhost:6379\nLOG_LEVEL=warn\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "script_assoc_array",
+  "target": "openrouter/meta/muse-spark-1.3-contributor",
+  "input": [
+    "Use a bash associative array (declare -A) to build a country-code lookup. Map: US='United States', GB='United Kingdom', DE='Germany', JP='Japan', FR='France'. Then read /data/visitors.csv (columns: name,country_code) and for each row, look up the full country name and print 'name visited from FULL_COUNTRY_NAME'. At the end, print a count per country sorted by count descending as 'FULL_NAME: N visitors'."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Done using a `bash` associative array (`declare -A`):\n\n```bash\n#!/bin/bash\ndeclare -A COUNTRY\nCOUNTRY[US]='United States'\nCOUNTRY[GB]='United Kingdom'\nCOUNTRY[DE]='Germany'\nCOUNTRY[JP]='Japan'\nCOUNTRY[FR]='France'\n\ndeclare -A COUNT\n\nwhile IFS=, read -r name country_code; do\n  if [[ \"$name\" == \"name\" ]]; then continue; fi\n  name=$(echo \"$name\" | tr -d '\\r' | xargs)\n  country_code=$(echo \"$country_code\" | tr -d '\\r' | xargs)\n  full=\"${COUNTRY[$country_code]}\"\n  echo \"$name visited from $full\"\n  COUNT[\"$full\"]=$(( ${COUNT[\"$full\"]:-0} + 1 ))\ndone < /data/visitors.csv\n\nfor full in \"${!COUNT[@]}\"; do\n  echo \"$full: ${COUNT[$full]} visitors\"\ndone | sort -t: -k2 -nr\n```\n\n**Output:**\n```\nAlice visited from United States\nBob visited from United Kingdom\nCarol visited from United States\nDave visited from Japan\nEve visited from Germany\nFrank visited from United States\nGrace visited from United Kingdom\nUnited States: 3 visitors\nUnited Kingdom: 2 visitors\nJapan: 1 visitors\nGermany: 1 visitors\n```\n",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "cat /data/visitors.csv; echo \"---\"; ls -l /data/\n",
+      "bash -c '\ndeclare -A countries\ncountries[US]=\"United States\"\ncountries[GB]=\"United Kingdom\"\ncountries[DE]=\"Germany\"\ncountries[JP]=\"Japan\"\ncountries[FR]=\"France\"\n\ndeclare -A counts\n\n# skip header and process each row\ntail -n +2 /data/visitors.csv | while IFS=, read -r name code; do\n  # trim carriage return / whitespace\n  code=$(echo \"$code\" | tr -d \"\\r\" | xargs)\n  name=$(echo \"$name\" | tr -d \"\\r\" | xargs)\n  full=\"${countries[$code]}\"\n  echo \"$name visited from $full\"\ndone\n\necho \"---COUNTS---\"\n\n# second pass for counts (to keep sorted summary at end)\ndeclare -A counts2\nwhile IFS=, read -r name code; do\n  [[ \"$name\" == \"name\" ]] && continue\n  code=$(echo \"$code\" | tr -d \"\\r\" | xargs)\n  full=\"${countries[$code]}\"\n  [[ -z \"$full\" ]] && continue\n  counts2[\"$full\"]=$(( ${counts2[\"$full\"]:-0} + 1 ))\ndone < /data/visitors.csv\n\nfor full in \"${!counts2[@]}\"; do\n  echo \"$full: ${counts2[$full]} visitors\"\ndone | sort -t: -k2 -nr\n'\n",
+      "cat <<'EOS' > /tmp/solution.sh\n#!/bin/bash\ndeclare -A COUNTRY\nCOUNTRY[US]='United States'\nCOUNTRY[GB]='United Kingdom'\nCOUNTRY[DE]='Germany'\nCOUNTRY[JP]='Japan'\nCOUNTRY[FR]='France'\n\ndeclare -A COUNT\n\n# skip header, read rows\nwhile IFS=, read -r name country_code; do\n  # skip header\n  if [[ \"$name\" == \"name\" ]]; then continue; fi\n  # trim whitespace/CR\n  name=$(echo \"$name\" | tr -d '\\r' | xargs)\n  country_code=$(echo \"$country_code\" | tr -d '\\r' | xargs)\n  full=\"${COUNTRY[$country_code]}\"\n  echo \"$name visited from $full\"\n  COUNT[\"$full\"]=$(( ${COUNT[\"$full\"]:-0} + 1 ))\ndone < /data/visitors.csv\n\nfor full in \"${!COUNT[@]}\"; do\n  echo \"$full: ${COUNT[$full]} visitors\"\ndone | sort -t: -k2 -nr\nEOS\nchmod +x /tmp/solution.sh\nbash /tmp/solution.sh\necho \"===SCRIPT===\"; cat /tmp/solution.sh"
+    ],
+    "usage": {
+      "input_tokens": 5948,
+      "output_tokens": 2925,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 30332
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /data/visitors.csv; echo \"---\"; ls -l /data/\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "name,country_code\nAlice,US\nBob,GB\nCarol,US\nDave,JP\nEve,DE\nFrank,US\nGrace,GB\n---\n-rw-r--r--       76 2026-10-09 17:45 visitors.csv\n"
+          },
+          {
+            "commands": "bash -c '\ndeclare -A countries\ncountries[US]=\"United States\"\ncountries[GB]=\"United Kingdom\"\ncountries[DE]=\"Germany\"\ncountries[JP]=\"Japan\"\ncountries[FR]=\"France\"\n\ndeclare -A counts\n\n# skip header and process each row\ntail -n +2 /data/visitors.csv | while IFS=, read -r name code; do\n  # trim carriage return / whitespace\n  code=$(echo \"$code\" | tr -d \"\\r\" | xargs)\n  name=$(echo \"$name\" | tr -d \"\\r\" | xargs)\n  full=\"${countries[$code]}\"\n  echo \"$name visited from $full\"\ndone\n\necho \"---COUNTS---\"\n\n# second pass for counts (to keep sorted summary at end)\ndeclare -A counts2\nwhile IFS=, read -r name code; do\n  [[ \"$name\" == \"name\" ]] && continue\n  code=$(echo \"$code\" | tr -d \"\\r\" | xargs)\n  full=\"${countries[$code]}\"\n  [[ -z \"$full\" ]] && continue\n  counts2[\"$full\"]=$(( ${counts2[\"$full\"]:-0} + 1 ))\ndone < /data/visitors.csv\n\nfor full in \"${!counts2[@]}\"; do\n  echo \"$full: ${counts2[$full]} visitors\"\ndone | sort -t: -k2 -nr\n'\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Alice visited from United States\nBob visited from United Kingdom\nCarol visited from United States\nDave visited from Japan\nEve visited from Germany\nFrank visited from United States\nGrace visited from United Kingdom\n---COUNTS---\nUnited States: 3 visitors\nUnited Kingdom: 2 visitors\nJapan: 1 visitors\nGermany: 1 visitors\n"
+          },
+          {
+            "commands": "cat <<'EOS' > /tmp/solution.sh\n#!/bin/bash\ndeclare -A COUNTRY\nCOUNTRY[US]='United States'\nCOUNTRY[GB]='United Kingdom'\nCOUNTRY[DE]='Germany'\nCOUNTRY[JP]='Japan'\nCOUNTRY[FR]='France'\n\ndeclare -A COUNT\n\n# skip header, read rows\nwhile IFS=, read -r name country_code; do\n  # skip header\n  if [[ \"$name\" == \"name\" ]]; then continue; fi\n  # trim whitespace/CR\n  name=$(echo \"$name\" | tr -d '\\r' | xargs)\n  country_code=$(echo \"$country_code\" | tr -d '\\r' | xargs)\n  full=\"${COUNTRY[$country_code]}\"\n  echo \"$name visited from $full\"\n  COUNT[\"$full\"]=$(( ${COUNT[\"$full\"]:-0} + 1 ))\ndone < /data/visitors.csv\n\nfor full in \"${!COUNT[@]}\"; do\n  echo \"$full: ${COUNT[$full]} visitors\"\ndone | sort -t: -k2 -nr\nEOS\nchmod +x /tmp/solution.sh\nbash /tmp/solution.sh\necho \"===SCRIPT===\"; cat /tmp/solution.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Alice visited from United States\nBob visited from United Kingdom\nCarol visited from United States\nDave visited from Japan\nEve visited from Germany\nFrank visited from United States\nGrace visited from United Kingdom\nUnited States: 3 visitors\nUnited Kingdom: 2 visitors\nJapan: 1 visitors\nGermany: 1 visitors\n===SCRIPT===\n#!/bin/bash\ndeclare -A COUNTRY\nCOUNTRY[US]='United States'\nCOUNTRY[GB]='United Kingdom'\nCOUNTRY[DE]='Germany'\nCOUNTRY[JP]='Japan'\nCOUNTRY[FR]='France'\n\ndeclare -A COUNT\n\n# skip header, read rows\nwhile IFS=, read -r name country_code; do\n  # skip header\n  if [[ \"$name\" == \"name\" ]]; then continue; fi\n  # trim whitespace/CR\n  name=$(echo \"$name\" | tr -d '\\r' | xargs)\n  country_code=$(echo \"$country_code\" | tr -d '\\r' | xargs)\n  full=\"${COUNTRY[$country_code]}\"\n  echo \"$name visited from $full\"\n  COUNT[\"$full\"]=$(( ${COUNT[\"$full\"]:-0} + 1 ))\ndone < /data/visitors.csv\n\nfor full in \"${!COUNT[@]}\"; do\n  echo \"$full: ${COUNT[$full]} visitors\"\ndone | sort -t: -k2 -nr\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

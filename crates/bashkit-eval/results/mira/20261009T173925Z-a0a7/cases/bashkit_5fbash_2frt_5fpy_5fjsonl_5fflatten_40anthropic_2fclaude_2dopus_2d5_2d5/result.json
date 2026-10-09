@@ -1,0 +1,32 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "rt_py_jsonl_flatten",
+  "target": "anthropic/claude-opus-5-5",
+  "input": [
+    "Convert /data/events.jsonl (one JSON value per line) to /out/events.csv.\n- One CSV row per line that is a JSON object, in input order. Blank or whitespace-only lines are skipped silently.\n- Nested objects are flattened with '.' ({\"a\":{\"b\":1}} gives column a.b); an empty nested object adds no column. Arrays are not flattened.\n- Columns: the union of flattened keys over all rows, sorted by plain string comparison, as the header row.\n- Cells: strings verbatim; booleans true/false; null or missing key -> empty; numbers as Python's json.dumps prints the parsed value (2.50 -> 2.5, 1e3 -> 1000.0); arrays as compact JSON with no spaces and non-ASCII characters kept literally.\n- CSV uses ',' and '\\n' line endings and quotes a field only when it contains a comma, double quote or newline (embedded quotes doubled).\nWrite /out/errors.txt with one line `line N` (1-based line number) for every non-blank line that is not valid JSON or not a JSON object."
+  ],
+  "passed": false,
+  "aggregate": 0.0,
+  "scores": [
+    {
+      "scorer": "infra",
+      "value": 0.0,
+      "pass": false,
+      "na": true,
+      "reason": "agent loop failed: provider chat failed: Anthropic API error (400 Bad Request): Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits."
+    }
+  ],
+  "transcript": {
+    "final_response": "",
+    "iterations": 0,
+    "tool_calls_count": 0,
+    "usage": {
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": 0.0
+    },
+    "error": "agent loop failed: provider chat failed: Anthropic API error (400 Bad Request): Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.",
+    "error_kind": "infra"
+  },
+  "skipped": false
+}

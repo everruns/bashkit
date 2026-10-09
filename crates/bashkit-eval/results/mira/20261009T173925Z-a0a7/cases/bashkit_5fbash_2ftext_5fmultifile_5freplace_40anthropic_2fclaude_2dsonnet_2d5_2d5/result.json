@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "text_multifile_replace",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "Rename the function 'getData' to 'fetchRecords' in all .py files under /src/. Print which files were modified and how many replacements were made in each file."
+  ],
+  "passed": false,
+  "aggregate": 0.8,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 0.8,
+      "pass": false,
+      "reason": "4/5 checks passed (weighted rate 80%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I renamed `getData` to `fetchRecords` in three files under `/src/`. A follow-up grep found no remaining `getData` references in any `.py` file.\n\n| File | Replacements |\n|---|---|\n| `/src/main.py` | 2 |\n| `/src/tests/test_utils.py` | 2 |\n| `/src/utils.py` | 2 |\n\nI matched `getData` as a whole word, so names that merely contain it, such as `getDataFrame`, were left alone. The tool reported exit code 1 only because the final grep found nothing to match.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cd /src 2>/dev/null && grep -rwc 'getData' --include=*.py . | grep -v ':0$'",
+      "python3 - <<'E'\nimport re,pathlib\nfor p in sorted(pathlib.Path('/src').rglob('*.py')):\n    s=p.read_text()\n    n,c=re.subn(r'\\bgetData\\b','fetchRecords',s)\n    if c:\n        p.write_text(n); print(f\"{p}: {c} replacement(s)\")\nE\ngrep -rw getData /src --include=*.py"
+    ],
+    "usage": {
+      "input_tokens": 3519,
+      "output_tokens": 487,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 5405
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 1.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 1,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cd /src 2>/dev/null && grep -rwc 'getData' --include=*.py . | grep -v ':0$'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "./main.py:2\n./utils.py:2\n./tests/test_utils.py:2\n"
+          },
+          {
+            "commands": "python3 - <<'E'\nimport re,pathlib\nfor p in sorted(pathlib.Path('/src').rglob('*.py')):\n    s=p.read_text()\n    n,c=re.subn(r'\\bgetData\\b','fetchRecords',s)\n    if c:\n        p.write_text(n); print(f\"{p}: {c} replacement(s)\")\nE\ngrep -rw getData /src --include=*.py",
+            "exit_code": 1,
+            "stderr": "",
+            "stdout": "/src/main.py: 2 replacement(s)\n/src/tests/test_utils.py: 2 replacement(s)\n/src/utils.py: 2 replacement(s)\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

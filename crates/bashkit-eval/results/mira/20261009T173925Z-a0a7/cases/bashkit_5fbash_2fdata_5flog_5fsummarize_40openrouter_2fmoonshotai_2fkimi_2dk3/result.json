@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "data_log_summarize",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Analyze /var/log/app.log and produce a count per log level (INFO, WARN, ERROR). Print each as 'LEVEL: N' on its own line."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Analysis of `/var/log/app.log` (10 lines total, format `LEVEL: message`):\n\n```\nINFO: 5\nWARN: 2\nERROR: 3\n```\n\nBreakdown:\n- **INFO: 5** — routine events (startup, db connect, retry success, request completion, shutdown)\n- **WARN: 2** — slow query detected, high memory usage\n- **ERROR: 3** — two connection timeouts and one write failure\n\nCounts were derived with `grep -c \"^LEVEL:\"` per level, and they sum to the file's total line count (10), confirming all lines were accounted for.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "ls -la /var/log/app.log && head -20 /var/log/app.log && wc -l /var/log/app.log",
+      "for level in INFO WARN ERROR; do echo \"$level: $(grep -c \"^$level:\" /var/log/app.log)\"; done"
+    ],
+    "usage": {
+      "input_tokens": 2106,
+      "output_tokens": 335,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 4312
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /var/log/app.log && head -20 /var/log/app.log && wc -l /var/log/app.log",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--      228 2026-10-09 17:40 /var/log/app.log\nINFO: app started\nINFO: connected to db\nWARN: slow query detected\nERROR: connection timeout\nINFO: retry succeeded\nWARN: high memory usage\nERROR: write failed\nINFO: request completed\nERROR: connection timeout\nINFO: shutting down\n10 /var/log/app.log\n"
+          },
+          {
+            "commands": "for level in INFO WARN ERROR; do echo \"$level: $(grep -c \"^$level:\" /var/log/app.log)\"; done",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "INFO: 5\nWARN: 2\nERROR: 3\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "text_multifile_replace",
+  "target": "openrouter/meta/muse-spark-1.3-contributor",
+  "input": [
+    "Rename the function 'getData' to 'fetchRecords' in all .py files under /src/. Print which files were modified and how many replacements were made in each file."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Renamed `getData` → `fetchRecords` in all `.py` files under `/src/`:\n\n- `/src/main.py`: 2 replacement(s)\n- `/src/tests/test_utils.py`: 3 replacement(s)\n- `/src/utils.py`: 2 replacement(s)\n\nVerified no remaining occurrences of `getData` — all replaced with `fetchRecords`.",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "ls -R /src 2>&1; echo \"---\"; pwd; ls -la\n",
+      "cat /src/main.py; echo \"===== /src/utils.py =====\"; cat /src/utils.py; echo \"===== /src/tests/test_utils.py =====\"; cat /src/tests/test_utils.py\n",
+      "find /src -type f -name \"*.py\" -print0 | while IFS= read -r -d '' f; do\n  count=$(grep -o 'getData' \"$f\" | wc -l)\n  if [ \"$count\" -gt 0 ]; then\n    sed -i 's/getData/fetchRecords/g' \"$f\"\n    echo \"$f: $count replacement(s)\"\n  fi\ndone\necho \"--- verification ---\"\ngrep -rn 'getData\\|fetchRecords' /src/ || echo \"no matches\"\necho \"--- file contents ---\"\nfor f in $(find /src -type f -name \"*.py\" | sort); do echo \"===== $f =====\"; cat \"$f\"; echo; done"
+    ],
+    "usage": {
+      "input_tokens": 4995,
+      "output_tokens": 2086,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 30075
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -R /src 2>&1; echo \"---\"; pwd; ls -la\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/src:\nmain.py\ntests\nutils.py\n\n/src/tests:\ntest_utils.py\n---\n/home/user\n"
+          },
+          {
+            "commands": "cat /src/main.py; echo \"===== /src/utils.py =====\"; cat /src/utils.py; echo \"===== /src/tests/test_utils.py =====\"; cat /src/tests/test_utils.py\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "from utils import getData\n\ndef run():\n    result = getData()\n    print(result)\n===== /src/utils.py =====\ndef getData():\n    return [1, 2, 3]\n\ndef processData():\n    data = getData()\n    return [x * 2 for x in data]\n===== /src/tests/test_utils.py =====\nfrom utils import getData\n\ndef test_getData():\n    assert getData() == [1, 2, 3]\n"
+          },
+          {
+            "commands": "find /src -type f -name \"*.py\" -print0 | while IFS= read -r -d '' f; do\n  count=$(grep -o 'getData' \"$f\" | wc -l)\n  if [ \"$count\" -gt 0 ]; then\n    sed -i 's/getData/fetchRecords/g' \"$f\"\n    echo \"$f: $count replacement(s)\"\n  fi\ndone\necho \"--- verification ---\"\ngrep -rn 'getData\\|fetchRecords' /src/ || echo \"no matches\"\necho \"--- file contents ---\"\nfor f in $(find /src -type f -name \"*.py\" | sort); do echo \"===== $f =====\"; cat \"$f\"; echo; done",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/src/main.py: 2 replacement(s)\n/src/tests/test_utils.py: 3 replacement(s)\n/src/utils.py: 2 replacement(s)\n--- verification ---\n/src/main.py:1:from utils import fetchRecords\n/src/main.py:4:    result = fetchRecords()\n/src/utils.py:1:def fetchRecords():\n/src/utils.py:5:    data = fetchRecords()\n/src/tests/test_utils.py:1:from utils import fetchRecords\n/src/tests/test_utils.py:3:def test_fetchRecords():\n/src/tests/test_utils.py:4:    assert fetchRecords() == [1, 2, 3]\n--- file contents ---\n===== /src/main.py =====\nfrom utils import fetchRecords\n\ndef run():\n    result = fetchRecords()\n    print(result)\n\n===== /src/tests/test_utils.py =====\nfrom utils import fetchRecords\n\ndef test_fetchRecords():\n    assert fetchRecords() == [1, 2, 3]\n\n===== /src/utils.py =====\ndef fetchRecords():\n    return [1, 2, 3]\n\ndef processData():\n    data = fetchRecords()\n    return [x * 2 for x in data]\n\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

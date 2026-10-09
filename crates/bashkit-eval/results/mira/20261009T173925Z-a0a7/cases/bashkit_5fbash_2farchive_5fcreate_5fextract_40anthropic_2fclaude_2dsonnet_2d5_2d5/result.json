@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "archive_create_extract",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "Create a tar.gz archive of the /project directory and save it as /tmp/project.tar.gz. Then create /backup directory and extract the archive there. Verify the files exist in /backup."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I archived `/project` as `/tmp/project.tar.gz` (232 bytes). I then created `/backup` and extracted the archive there.\n\nThe extracted files are in `/backup/project/`:\n- `README.md`\n- `src/main.sh`\n\nI compared both files with the originals in `/project` using `cmp`, and they are identical. `diff -r` isn't supported in this environment, so I didn't run a recursive diff.",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "ls -la /project; tar -czf /tmp/project.tar.gz -C / project && ls -l /tmp/project.tar.gz && mkdir -p /backup && tar -xzf /tmp/project.tar.gz -C /backup && find /backup | head -50",
+      "diff -r /project /backup/project && echo identical",
+      "for f in README.md src/main.sh; do cmp /project/$f /backup/project/$f && echo \"$f ok\"; done"
+    ],
+    "usage": {
+      "input_tokens": 5179,
+      "output_tokens": 422,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 6080
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 2.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /project; tar -czf /tmp/project.tar.gz -C / project && ls -l /tmp/project.tar.gz && mkdir -p /backup && tar -xzf /tmp/project.tar.gz -C /backup && find /backup | head -50",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       37 2026-10-09 17:40 README.md\ndrwxr-xr-x        0 2026-10-09 17:40 src\n-rw-r--r--      232 2026-10-09 17:40 /tmp/project.tar.gz\n/backup\n/backup/project\n/backup/project/README.md\n/backup/project/src\n/backup/project/src/main.sh\n"
+          },
+          {
+            "commands": "diff -r /project /backup/project && echo identical",
+            "exit_code": 2,
+            "stderr": "diff: invalid option -- 'r'\n",
+            "stdout": ""
+          },
+          {
+            "commands": "for f in README.md src/main.sh; do cmp /project/$f /backup/project/$f && echo \"$f ok\"; done",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "README.md ok\nsrc/main.sh ok\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

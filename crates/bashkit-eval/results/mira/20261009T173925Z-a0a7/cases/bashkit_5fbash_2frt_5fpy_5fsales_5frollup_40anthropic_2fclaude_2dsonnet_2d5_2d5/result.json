@@ -1,0 +1,32 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "rt_py_sales_rollup",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "Roll up March 2026 revenue per region from /data/sales.csv (columns order_id,date,region,currency,amount,status; fields may be double-quoted) using the USD conversion rates in /data/rates.json (USD is 1).\n\nRules, applied in this order:\n1. Reject a data row if its amount is not digits with an optional 1-2 digit decimal part once ',' thousands separators are removed, if its currency (case-insensitive) is not USD or a key of rates.json, or if its date is not a real calendar date in YYYY-MM-DD or MM/DD/YYYY form. Rejected rows are otherwise ignored.\n2. When an order_id appears more than once among the remaining rows, only its last row counts.\n3. Count only rows with status paid (case-insensitive) dated in March 2026.\n4. Convert each order to USD and round it to cents (half up) before summing. Region names are trimmed and capitalized (first letter upper, rest lower).\n\nWrite /out/region_revenue.csv with header region,orders,revenue_usd, one row per region (revenue with exactly 2 decimals) sorted by revenue descending then region, followed by a final row TOTAL,<orders>,<revenue>.\nWrite /out/rejects.txt with one line <line_number>,<order_id> per rejected row in file order (the header is line 1)."
+  ],
+  "passed": false,
+  "aggregate": 0.0,
+  "scores": [
+    {
+      "scorer": "infra",
+      "value": 0.0,
+      "pass": false,
+      "na": true,
+      "reason": "agent loop failed: provider chat failed: Anthropic API error (400 Bad Request): Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits."
+    }
+  ],
+  "transcript": {
+    "final_response": "",
+    "iterations": 0,
+    "tool_calls_count": 0,
+    "usage": {
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": 0.0
+    },
+    "error": "agent loop failed: provider chat failed: Anthropic API error (400 Bad Request): Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.",
+    "error_kind": "infra"
+  },
+  "skipped": false
+}

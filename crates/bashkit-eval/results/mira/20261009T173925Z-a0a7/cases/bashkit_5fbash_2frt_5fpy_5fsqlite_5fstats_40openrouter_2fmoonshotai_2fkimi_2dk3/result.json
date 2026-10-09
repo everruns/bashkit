@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "rt_py_sqlite_stats",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "/data/shop.db is a SQLite database with a table orders(id, customer, category, amount_cents). Write /out/category_stats.json: a JSON object keyed by category whose values are objects with orders (count), total_cents, median_cents and top_customer. median_cents is the median amount; for an even count it is the mean of the two middle amounts rounded half up to an integer. top_customer is the customer with the largest total amount in that category (ties: alphabetically first). Format: 2-space indentation, keys sorted at every level, trailing newline (what Python's json.dumps(obj, indent=2, sort_keys=True) prints)."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "1/1 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "`/out/category_stats.json` is written and verified:\n\n```json\n{\n  \"books\": {\n    \"median_cents\": 1053,\n    \"orders\": 4,\n    \"top_customer\": \"kim\",\n    \"total_cents\": 4405\n  },\n  \"games\": {\n    \"median_cents\": 3500,\n    \"orders\": 4,\n    \"top_customer\": \"ann\",\n    \"total_cents\": 13000\n  },\n  \"music\": {\n    \"median_cents\": 226,\n    \"orders\": 4,\n    \"top_customer\": \"amy\",\n    \"total_cents\": 902\n  },\n  \"toys\": {\n    \"median_cents\": 777,\n    \"orders\": 1,\n    \"top_customer\": \"bob\",\n    \"total_cents\": 777\n  }\n}\n```\n\n**Implementation notes:**\n- **Median with half-up rounding**: used `Decimal` with `ROUND_HALF_UP` so exact `.5` means (e.g., books: (905+1200)/2 = 1052.5 → 1053; games: (1000+5999)/2 = 3499.5 → 3500) round up — Python's `round()` would have used banker's rounding and produced wrong results here.\n- **Top customer ties**: resolved by `min(..., key=lambda c: (-total, c))` — this correctly picks `amy` over `zed` in music, where both total 451.\n- **Format**: `json.dumps(stats, indent=2, sort_keys=True)` plus a trailing newline, confirmed via byte inspection.",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "ls -la /data/shop.db && sqlite3 /data/shop.db \".schema orders\" \"SELECT COUNT(*) FROM orders;\" \"SELECT * FROM orders LIMIT 5;\"",
+      "mkdir -p /out && cat > /tmp/stats.py <<'EOF'\nimport json, sqlite3\nfrom collections import defaultdict\nfrom decimal import Decimal, ROUND_HALF_UP\n\ncon = sqlite3.connect(\"/data/shop.db\")\nrows = con.execute(\"SELECT customer, category, amount_cents FROM orders\").fetchall()\ncon.close()\n\namounts = defaultdict(list)   # category -> [amount_cents]\ntotals = defaultdict(lambda: defaultdict(int))  # category -> customer -> total\n\nfor customer, category, amount in rows:\n    amounts[category].append(amount)\n    totals[category][customer] += amount\n\nstats = {}\nfor cat, amts in amounts.items():\n    amts_sorted = sorted(amts)\n    n = len(amts_sorted)\n    mid = n // 2\n    if n % 2 == 1:\n        median = amts_sorted[mid]\n    else:\n        mean = (Decimal(amts_sorted[mid - 1]) + Decimal(amts_sorted[mid])) / 2\n        median = int(mean.quantize(Decimal(\"1\"), rounding=ROUND_HALF_UP))\n    cust_totals = totals[cat]\n    top_customer = min(cust_totals, key=lambda c: (-cust_totals[c], c))\n    stats[cat] = {\n        \"orders\": n,\n        \"total_cents\": sum(amts),\n        \"median_cents\": median,\n        \"top_customer\": top_customer,\n    }\n\nwith open(\"/out/category_stats.json\", \"w\") as f:\n    f.write(json.dumps(stats, indent=2, sort_keys=True) + \"\\n\")\n\nprint(json.dumps(stats, indent=2, sort_keys=True))\nEOF\npython3 /tmp/stats.py",
+      "sqlite3 /data/shop.db \"SELECT category, amount_cents FROM orders ORDER BY category, amount_cents;\" \"SELECT category, customer, SUM(amount_cents) t FROM orders GROUP BY category, customer ORDER BY category, t DESC, customer;\"\necho \"---\"\ntail -c 20 /out/category_stats.json | od -c | tail -3\npython3 -c \"import json; d=json.load(open('/out/category_stats.json')); print('valid json,', len(d), 'categories')\""
+    ],
+    "usage": {
+      "input_tokens": 4745,
+      "output_tokens": 2091,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 22650
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /data/shop.db && sqlite3 /data/shop.db \".schema orders\" \"SELECT COUNT(*) FROM orders;\" \"SELECT * FROM orders LIMIT 5;\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--     8192 2026-10-09 18:12 /data/shop.db\nCREATE TABLE orders (id INTEGER PRIMARY KEY, customer TEXT NOT NULL, category TEXT NOT NULL, amount_cents INTEGER NOT NULL);\n13\n1|kim|books|1200\n2|lee|books|800\n3|kim|books|1500\n4|ann|books|905\n5|lee|games|5999\n"
+          },
+          {
+            "commands": "mkdir -p /out && cat > /tmp/stats.py <<'EOF'\nimport json, sqlite3\nfrom collections import defaultdict\nfrom decimal import Decimal, ROUND_HALF_UP\n\ncon = sqlite3.connect(\"/data/shop.db\")\nrows = con.execute(\"SELECT customer, category, amount_cents FROM orders\").fetchall()\ncon.close()\n\namounts = defaultdict(list)   # category -> [amount_cents]\ntotals = defaultdict(lambda: defaultdict(int))  # category -> customer -> total\n\nfor customer, category, amount in rows:\n    amounts[category].append(amount)\n    totals[category][customer] += amount\n\nstats = {}\nfor cat, amts in amounts.items():\n    amts_sorted = sorted(amts)\n    n = len(amts_sorted)\n    mid = n // 2\n    if n % 2 == 1:\n        median = amts_sorted[mid]\n    else:\n        mean = (Decimal(amts_sorted[mid - 1]) + Decimal(amts_sorted[mid])) / 2\n        median = int(mean.quantize(Decimal(\"1\"), rounding=ROUND_HALF_UP))\n    cust_totals = totals[cat]\n    top_customer = min(cust_totals, key=lambda c: (-cust_totals[c], c))\n    stats[cat] = {\n        \"orders\": n,\n        \"total_cents\": sum(amts),\n        \"median_cents\": median,\n        \"top_customer\": top_customer,\n    }\n\nwith open(\"/out/category_stats.json\", \"w\") as f:\n    f.write(json.dumps(stats, indent=2, sort_keys=True) + \"\\n\")\n\nprint(json.dumps(stats, indent=2, sort_keys=True))\nEOF\npython3 /tmp/stats.py",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "{\n  \"books\": {\n    \"median_cents\": 1053,\n    \"orders\": 4,\n    \"top_customer\": \"kim\",\n    \"total_cents\": 4405\n  },\n  \"games\": {\n    \"median_cents\": 3500,\n    \"orders\": 4,\n    \"top_customer\": \"ann\",\n    \"total_cents\": 13000\n  },\n  \"music\": {\n    \"median_cents\": 226,\n    \"orders\": 4,\n    \"top_customer\": \"amy\",\n    \"total_cents\": 902\n  },\n  \"toys\": {\n    \"median_cents\": 777,\n    \"orders\": 1,\n    \"top_customer\": \"bob\",\n    \"total_cents\": 777\n  }\n}\n"
+          },
+          {
+            "commands": "sqlite3 /data/shop.db \"SELECT category, amount_cents FROM orders ORDER BY category, amount_cents;\" \"SELECT category, customer, SUM(amount_cents) t FROM orders GROUP BY category, customer ORDER BY category, t DESC, customer;\"\necho \"---\"\ntail -c 20 /out/category_stats.json | od -c | tail -3\npython3 -c \"import json; d=json.load(open('/out/category_stats.json')); print('valid json,', len(d), 'categories')\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "books|800\nbooks|905\nbooks|1200\nbooks|1500\ngames|2\ngames|1000\ngames|5999\ngames|5999\nmusic|101\nmusic|101\nmusic|350\nmusic|350\ntoys|777\nbooks|kim|2700\nbooks|ann|905\nbooks|lee|800\ngames|ann|6001\ngames|lee|5999\ngames|bob|1000\nmusic|amy|451\nmusic|zed|451\ntoys|bob|777\n---\n0000000   l   _   c   e   n   t   s   \"   :       7   7   7  \\n        \n0000020   }  \\n   }  \\n\n0000024\nvalid json, 4 categories\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "text_heredoc_config",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "Set these variables: APP_NAME='myservice', APP_PORT=8080, DB_HOST='db.prod.internal', DB_PORT=5432, LOG_LEVEL='warn'. Then use a heredoc (cat <<EOF) to generate /etc/app/config.yaml with these variables interpolated into a YAML structure with sections 'app:' (name, port), 'database:' (host, port), and 'logging:' (level). Print the generated file contents."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "8/8 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I set the five variables and used a heredoc to write `/etc/app/config.yaml` with their values filled in. I created `/etc/app` first. The file contains:\n\n```yaml\napp:\n  name: myservice\n  port: 8080\ndatabase:\n  host: db.prod.internal\n  port: 5432\nlogging:\n  level: warn\n```",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "APP_NAME='myservice'; APP_PORT=8080; DB_HOST='db.prod.internal'; DB_PORT=5432; LOG_LEVEL='warn'\nmkdir -p /etc/app\ncat > /etc/app/config.yaml <<EOF\napp:\n  name: ${APP_NAME}\n  port: ${APP_PORT}\ndatabase:\n  host: ${DB_HOST}\n  port: ${DB_PORT}\nlogging:\n  level: ${LOG_LEVEL}\nEOF\ncat /etc/app/config.yaml"
+    ],
+    "usage": {
+      "input_tokens": 2512,
+      "output_tokens": 343,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 3797
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "APP_NAME='myservice'; APP_PORT=8080; DB_HOST='db.prod.internal'; DB_PORT=5432; LOG_LEVEL='warn'\nmkdir -p /etc/app\ncat > /etc/app/config.yaml <<EOF\napp:\n  name: ${APP_NAME}\n  port: ${APP_PORT}\ndatabase:\n  host: ${DB_HOST}\n  port: ${DB_PORT}\nlogging:\n  level: ${LOG_LEVEL}\nEOF\ncat /etc/app/config.yaml",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "app:\n  name: myservice\n  port: 8080\ndatabase:\n  host: db.prod.internal\n  port: 5432\nlogging:\n  level: warn\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

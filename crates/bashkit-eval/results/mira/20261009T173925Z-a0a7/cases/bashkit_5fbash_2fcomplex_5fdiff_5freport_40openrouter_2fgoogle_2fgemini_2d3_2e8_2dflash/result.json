@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_diff_report",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Compare /data/v1.conf and /data/v2.conf. Produce a human-readable summary showing: which keys were added, which were removed, and which had their values changed. Print the summary to stdout."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Here is the comparison between `/data/v1.conf` and `/data/v2.conf`:\n\n### Added Keys\n* `timeout`: `30`\n\n### Removed Keys\n* `max_connections`: `100`\n\n### Changed Values\n* `host`: `localhost` → `0.0.0.0`\n* `log_level`: `info` → `debug`\n* `port`: `8080` → `9090`\n\n### Unchanged Keys\n* `workers`: `4`",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "ls -la /data",
+      "cat /data/v1.conf\necho \"---\"\ncat /data/v2.conf",
+      "ls -la /"
+    ],
+    "usage": {
+      "input_tokens": 2394,
+      "output_tokens": 790,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 32808
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /data",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       70 2026-10-09 17:41 v1.conf\n-rw-r--r--       60 2026-10-09 17:41 v2.conf\n"
+          },
+          {
+            "commands": "cat /data/v1.conf\necho \"---\"\ncat /data/v2.conf",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "port=8080\nhost=localhost\nlog_level=info\nworkers=4\nmax_connections=100\n---\nport=9090\nhost=0.0.0.0\nlog_level=debug\nworkers=4\ntimeout=30\n"
+          },
+          {
+            "commands": "ls -la /",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "drwxr-xr-x        0 2026-10-09 17:39 bin\ndrwxr-xr-x        0 2026-10-09 17:41 data\ndrwxr-xr-x        0 2026-10-09 17:41 dev\ndrwxr-xr-x        0 2026-10-09 17:39 etc\ndrwxr-xr-x        0 2026-10-09 17:41 home\ndrwxr-xr-x        0 2026-10-09 17:39 proc\ndrwxr-xr-x        0 2026-10-09 17:39 root\ndrwxrwxrwx        0 2026-10-09 17:41 tmp\ndrwxr-xr-x        0 2026-10-09 17:39 usr\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

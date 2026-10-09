@@ -1,0 +1,92 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "config_env_defaults",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Write /scripts/start.sh that configures a service. It should read these environment variables and fall back to defaults when they're not set: DB_HOST (default 'localhost'), DB_PORT (default '5432'), DB_NAME (default 'myapp'), LOG_LEVEL (default 'info'). Print the resolved config as 'key=value' lines. If DB_HOST is explicitly set, also print 'custom_db=true'. Run the script twice: first with no env vars set (to test defaults), then with DB_HOST=db.prod.internal to test the override."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "The script `/scripts/start.sh` has been created and configured with the required default values, environment variable overrides, and conditional flag.\n\n### Script Details (`/scripts/start.sh`)\n```bash\n#!/usr/bin/env bash\nset -e\n\n# Track if DB_HOST was explicitly set\ncustom_db=false\nif [ -n \"${DB_HOST+x}\" ]; then\n  custom_db=true\nfi\n\n# Fall back to defaults\nDB_HOST=\"${DB_HOST:-localhost}\"\nDB_PORT=\"${DB_PORT:-5432}\"\nDB_NAME=\"${DB_NAME:-myapp}\"\nLOG_LEVEL=\"${LOG_LEVEL:-info}\"\n\n# Print resolved config\necho \"DB_HOST=${DB_HOST}\"\necho \"DB_PORT=${DB_PORT}\"\necho \"DB_NAME=${DB_NAME}\"\necho \"LOG_LEVEL=${LOG_LEVEL}\"\n\nif [ \"$custom_db\" = true ]; then\n  echo \"custom_db=true\"\nfi\n```\n\n### Execution Outputs\n\n**1. Run with defaults (no env vars set):**\n```bash\nenv -u DB_HOST -u DB_PORT -u DB_NAME -u LOG_LEVEL /scripts/start.sh\n```\nOutput:\n```text\nDB_HOST=localhost\nDB_PORT=5432\nDB_NAME=myapp\nLOG_LEVEL=info\n```\n\n**2. Run with `DB_HOST=db.prod.internal`:**\n```bash\nenv -u DB_PORT -u DB_NAME -u LOG_LEVEL DB_HOST=db.prod.internal /scripts/start.sh\n```\nOutput:\n```text\nDB_HOST=db.prod.internal\nDB_PORT=5432\nDB_NAME=myapp\nLOG_LEVEL=info\ncustom_db=true\n```",
+    "iterations": 7,
+    "tool_calls_count": 6,
+    "tool_calls": [
+      "ls -la /\nls -la /scripts 2>/dev/null || true",
+      "bash -c '\nunset DB_HOST\nif [ \"${DB_HOST+set}\" = \"set\" ]; then echo \"set\"; else echo \"unset\"; fi\nDB_HOST=db.prod.internal\nif [ \"${DB_HOST+set}\" = \"set\" ]; then echo \"set\"; else echo \"unset\"; fi\n'",
+      "mkdir -p /scripts\ncat << 'EOF' > /scripts/start.sh\n#!/usr/bin/env bash\nset -e\n\n# Track if DB_HOST was explicitly set\ncustom_db=false\nif [ -n \"${DB_HOST+x}\" ]; then\n  custom_db=true\nfi\n\n# Fall back to defaults\nDB_HOST=\"${DB_HOST:-localhost}\"\nDB_PORT=\"${DB_PORT:-5432}\"\nDB_NAME=\"${DB_NAME:-myapp}\"\nLOG_LEVEL=\"${LOG_LEVEL:-info}\"\n\n# Print resolved config\necho \"DB_HOST=${DB_HOST}\"\necho \"DB_PORT=${DB_PORT}\"\necho \"DB_NAME=${DB_NAME}\"\necho \"LOG_LEVEL=${LOG_LEVEL}\"\n\nif [ \"$custom_db\" = true ]; then\n  echo \"custom_db=true\"\nfi\nEOF\n\nchmod +x /scripts/start.sh",
+      "env -i /scripts/start.sh\nenv -i DB_HOST=db.prod.internal /scripts/start.sh",
+      "# Run first with no relevant env vars set\nenv -u DB_HOST -u DB_PORT -u DB_NAME -u LOG_LEVEL /scripts/start.sh\n\necho \"---\"\n\n# Run with DB_HOST override\nenv -u DB_PORT -u DB_NAME -u LOG_LEVEL DB_HOST=db.prod.internal /scripts/start.sh",
+      "cat /scripts/start.sh"
+    ],
+    "usage": {
+      "input_tokens": 6980,
+      "output_tokens": 5125,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 53376
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 6.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 6.0,
+      "turns": 7.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /\nls -la /scripts 2>/dev/null || true",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "drwxr-xr-x        0 2026-10-09 17:39 bin\ndrwxr-xr-x        0 2026-10-09 17:43 dev\ndrwxr-xr-x        0 2026-10-09 17:39 etc\ndrwxr-xr-x        0 2026-10-09 17:43 home\ndrwxr-xr-x        0 2026-10-09 17:39 proc\ndrwxr-xr-x        0 2026-10-09 17:39 root\ndrwxrwxrwx        0 2026-10-09 17:43 tmp\ndrwxr-xr-x        0 2026-10-09 17:39 usr\n"
+          },
+          {
+            "commands": "bash -c '\nunset DB_HOST\nif [ \"${DB_HOST+set}\" = \"set\" ]; then echo \"set\"; else echo \"unset\"; fi\nDB_HOST=db.prod.internal\nif [ \"${DB_HOST+set}\" = \"set\" ]; then echo \"set\"; else echo \"unset\"; fi\n'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "unset\nset\n"
+          },
+          {
+            "commands": "mkdir -p /scripts\ncat << 'EOF' > /scripts/start.sh\n#!/usr/bin/env bash\nset -e\n\n# Track if DB_HOST was explicitly set\ncustom_db=false\nif [ -n \"${DB_HOST+x}\" ]; then\n  custom_db=true\nfi\n\n# Fall back to defaults\nDB_HOST=\"${DB_HOST:-localhost}\"\nDB_PORT=\"${DB_PORT:-5432}\"\nDB_NAME=\"${DB_NAME:-myapp}\"\nLOG_LEVEL=\"${LOG_LEVEL:-info}\"\n\n# Print resolved config\necho \"DB_HOST=${DB_HOST}\"\necho \"DB_PORT=${DB_PORT}\"\necho \"DB_NAME=${DB_NAME}\"\necho \"LOG_LEVEL=${LOG_LEVEL}\"\n\nif [ \"$custom_db\" = true ]; then\n  echo \"custom_db=true\"\nfi\nEOF\n\nchmod +x /scripts/start.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "env -i /scripts/start.sh\nenv -i DB_HOST=db.prod.internal /scripts/start.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "DB_HOST=localhost\nDB_PORT=5432\nDB_NAME=myapp\nLOG_LEVEL=info\nDB_HOST=db.prod.internal\nDB_PORT=5432\nDB_NAME=myapp\nLOG_LEVEL=info\ncustom_db=true\n"
+          },
+          {
+            "commands": "# Run first with no relevant env vars set\nenv -u DB_HOST -u DB_PORT -u DB_NAME -u LOG_LEVEL /scripts/start.sh\n\necho \"---\"\n\n# Run with DB_HOST override\nenv -u DB_PORT -u DB_NAME -u LOG_LEVEL DB_HOST=db.prod.internal /scripts/start.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "DB_HOST=localhost\nDB_PORT=5432\nDB_NAME=myapp\nLOG_LEVEL=info\n---\nDB_HOST=db.prod.internal\nDB_PORT=5432\nDB_NAME=myapp\nLOG_LEVEL=info\ncustom_db=true\n"
+          },
+          {
+            "commands": "cat /scripts/start.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "#!/usr/bin/env bash\nset -e\n\n# Track if DB_HOST was explicitly set\ncustom_db=false\nif [ -n \"${DB_HOST+x}\" ]; then\n  custom_db=true\nfi\n\n# Fall back to defaults\nDB_HOST=\"${DB_HOST:-localhost}\"\nDB_PORT=\"${DB_PORT:-5432}\"\nDB_NAME=\"${DB_NAME:-myapp}\"\nLOG_LEVEL=\"${LOG_LEVEL:-info}\"\n\n# Print resolved config\necho \"DB_HOST=${DB_HOST}\"\necho \"DB_PORT=${DB_PORT}\"\necho \"DB_NAME=${DB_NAME}\"\necho \"LOG_LEVEL=${LOG_LEVEL}\"\n\nif [ \"$custom_db\" = true ]; then\n  echo \"custom_db=true\"\nfi\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

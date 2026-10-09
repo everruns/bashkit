@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "sysinfo_date_calc",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Print today's date in YYYY-MM-DD format. Then compute and print what the date was 30 days ago, also in YYYY-MM-DD format."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "**Today's date:** 2026-10-09\n\n**30 days ago:** 2026-09-09",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "date +%Y-%m-%d; date -d \"30 days ago\" +%Y-%m-%d 2>/dev/null || python3 -c \"import datetime; print(datetime.date.today()); print(datetime.date.today() - datetime.timedelta(days=30))\""
+    ],
+    "usage": {
+      "input_tokens": 1217,
+      "output_tokens": 357,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 9493
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "date +%Y-%m-%d; date -d \"30 days ago\" +%Y-%m-%d 2>/dev/null || python3 -c \"import datetime; print(datetime.date.today()); print(datetime.date.today() - datetime.timedelta(days=30))\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "2026-10-09\n2026-09-09\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

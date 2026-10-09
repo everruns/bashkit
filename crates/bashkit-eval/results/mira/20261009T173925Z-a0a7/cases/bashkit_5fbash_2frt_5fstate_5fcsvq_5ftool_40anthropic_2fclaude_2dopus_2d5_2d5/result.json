@@ -1,0 +1,32 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "rt_state_csvq_tool",
+  "target": "anthropic/claude-opus-5-5",
+  "input": [
+    "Build a reusable command-line tool `csvq` in Python at /home/eval/bin/csvq. It must be executable and runnable as plain `csvq ...` once /home/eval/bin is on PATH (it will be used again later on other files).\n\nUsage: csvq [--where COL=VALUE]... [--select COL,COL,...] [--sort COL [--numeric] [--desc]] FILE\n- FILE is CSV with a header row; fields may be quoted (including embedded commas, quotes and newlines).\n- --where may repeat; keep rows where every COL equals VALUE exactly (split at the first '=').\n- --select picks and orders the output columns (default: all columns in file order).\n- --sort orders rows by COL as text; with --numeric, by numeric value, and rows whose value is not a number (including empty) go last in their original order. --desc sorts descending (non-numeric rows still go last). The sort is stable: equal keys keep their input order, also with --desc.\n- Output: CSV on stdout with the header row, '\\n' line endings, fields quoted only when they contain a comma, quote or newline.\n- If any option names a column not in the header, print `csvq: unknown column: NAME` to stderr, print nothing on stdout and exit 2.\n\nThen use csvq on /data/staff.csv to write /out/eng_top.csv (dept eng; columns name,salary; sorted by salary numerically, highest first) and /out/by_city.csv (columns city,name sorted by city)."
+  ],
+  "passed": false,
+  "aggregate": 0.0,
+  "scores": [
+    {
+      "scorer": "infra",
+      "value": 0.0,
+      "pass": false,
+      "na": true,
+      "reason": "agent loop failed: provider chat failed: Anthropic API error (400 Bad Request): Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits."
+    }
+  ],
+  "transcript": {
+    "final_response": "",
+    "iterations": 0,
+    "tool_calls_count": 0,
+    "usage": {
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": 0.0
+    },
+    "error": "agent loop failed: provider chat failed: Anthropic API error (400 Bad Request): Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.",
+    "error_kind": "infra"
+  },
+  "skipped": false
+}

@@ -1,0 +1,32 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "rt_py_encodings",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "/data/legacy holds text files in mixed encodings. For every file whose name ends in `.txt` (case-sensitive), write a normalised copy with the same name to /out/clean/: UTF-8 without BOM, line endings \\r\\n and lone \\r converted to \\n, and ending with exactly one added \\n if the text did not already end with \\n.\nDetect each file's encoding in this order: starts with a UTF-16 BOM (FF FE or FE FF) -> utf-16; starts with the UTF-8 BOM -> utf-8-sig; decodes as UTF-8 -> utf-8 (plain ASCII included); otherwise latin-1.\nWrite /out/manifest.tsv (tab-separated, header name, encoding, lines, chars) with one row per file sorted by name, where lines is the number of \\n and chars the number of Unicode characters in the normalised text (newlines included, BOM excluded)."
+  ],
+  "passed": false,
+  "aggregate": 0.0,
+  "scores": [
+    {
+      "scorer": "infra",
+      "value": 0.0,
+      "pass": false,
+      "na": true,
+      "reason": "agent loop failed: provider chat failed: Anthropic API error (400 Bad Request): Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits."
+    }
+  ],
+  "transcript": {
+    "final_response": "",
+    "iterations": 0,
+    "tool_calls_count": 0,
+    "usage": {
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": 0.0
+    },
+    "error": "agent loop failed: provider chat failed: Anthropic API error (400 Bad Request): Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.",
+    "error_kind": "infra"
+  },
+  "skipped": false
+}

@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "text_comm_setops",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Given /data/team_a.txt and /data/team_b.txt containing member names (one per line, already sorted), use the comm command to find: 1) Members only in Team A (print under 'Only Team A:'). 2) Members only in Team B (print under 'Only Team B:'). 3) Members in both teams (print under 'Both teams:'). Print the count of each group."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Results using `comm` on the two sorted files:\n\n**How it works:** `comm file1 file2` outputs 3 columns: lines only in file1 (col 1), lines only in file2 (col 2), and lines in both (col 3). The flags `-1`, `-2`, `-3` suppress each respective column:\n\n- `comm -23` → only in Team A (suppress cols 2 and 3)\n- `comm -13` → only in Team B (suppress cols 1 and 3)\n- `comm -12` → in both teams (suppress cols 1 and 2)\n\n**Output:**\n\n```\nOnly Team A:\nalice\ndave\neve\nCount: 3\n\nOnly Team B:\nfrank\ngrace\nCount: 2\n\nBoth teams:\nbob\ncarol\nCount: 2\n```\n\n**Verification:** Team A has 5 members (3 unique + 2 shared ✓) and Team B has 4 members (2 unique + 2 shared ✓).",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "ls -la /data/team_a.txt /data/team_b.txt && echo \"--- team_a.txt ---\" && cat /data/team_a.txt && echo \"--- team_b.txt ---\" && cat /data/team_b.txt",
+      "only_a=$(comm -23 /data/team_a.txt /data/team_b.txt)\nonly_b=$(comm -13 /data/team_a.txt /data/team_b.txt)\nboth=$(comm -12 /data/team_a.txt /data/team_b.txt)\n\ncount_a=$(printf '%s\\n' \"$only_a\" | grep -c .)\ncount_b=$(printf '%s\\n' \"$only_b\" | grep -c .)\ncount_both=$(printf '%s\\n' \"$both\" | grep -c .)\n\necho \"Only Team A:\"\nprintf '%s\\n' \"$only_a\"\necho \"Count: $count_a\"\necho\necho \"Only Team B:\"\nprintf '%s\\n' \"$only_b\"\necho \"Count: $count_b\"\necho\necho \"Both teams:\"\nprintf '%s\\n' \"$both\"\necho \"Count: $count_both\""
+    ],
+    "usage": {
+      "input_tokens": 2517,
+      "output_tokens": 693,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 10514
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /data/team_a.txt /data/team_b.txt && echo \"--- team_a.txt ---\" && cat /data/team_a.txt && echo \"--- team_b.txt ---\" && cat /data/team_b.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       25 2026-10-09 17:46 /data/team_a.txt\n-rw-r--r--       22 2026-10-09 17:46 /data/team_b.txt\n--- team_a.txt ---\nalice\nbob\ncarol\ndave\neve\n--- team_b.txt ---\nbob\ncarol\nfrank\ngrace\n"
+          },
+          {
+            "commands": "only_a=$(comm -23 /data/team_a.txt /data/team_b.txt)\nonly_b=$(comm -13 /data/team_a.txt /data/team_b.txt)\nboth=$(comm -12 /data/team_a.txt /data/team_b.txt)\n\ncount_a=$(printf '%s\\n' \"$only_a\" | grep -c .)\ncount_b=$(printf '%s\\n' \"$only_b\" | grep -c .)\ncount_both=$(printf '%s\\n' \"$both\" | grep -c .)\n\necho \"Only Team A:\"\nprintf '%s\\n' \"$only_a\"\necho \"Count: $count_a\"\necho\necho \"Only Team B:\"\nprintf '%s\\n' \"$only_b\"\necho \"Count: $count_b\"\necho\necho \"Both teams:\"\nprintf '%s\\n' \"$both\"\necho \"Count: $count_both\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Only Team A:\nalice\ndave\neve\nCount: 3\n\nOnly Team B:\nfrank\ngrace\nCount: 2\n\nBoth teams:\nbob\ncarol\nCount: 2\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

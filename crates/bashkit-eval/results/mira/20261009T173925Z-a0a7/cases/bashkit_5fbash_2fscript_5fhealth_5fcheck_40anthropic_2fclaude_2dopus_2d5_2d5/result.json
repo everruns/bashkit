@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "script_health_check",
+  "target": "anthropic/claude-opus-5-5",
+  "input": [
+    "Write /scripts/healthcheck.sh that checks three conditions: 1) /app/config.json exists and contains valid JSON, 2) /var/log directory exists, 3) /app/data directory contains at least 2 files. For each check print 'PASS: <description>' or 'FAIL: <description>'. Exit 0 if all checks pass, exit 1 if any fail. Then run the script."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I wrote `/scripts/healthcheck.sh` and ran it. All three checks passed and it exited with code 0:\n\n```\nPASS: /app/config.json exists and contains valid JSON\nPASS: /var/log directory exists\nPASS: /app/data directory contains at least 2 files\nexit code: 0\n```\n\n**How each check works:**\n1. **Config file:** confirms `/app/config.json` is a regular file, then checks that it's valid JSON. It uses `jq` if that's installed and falls back to Python's JSON parser if not.\n2. **Log directory:** confirms `/var/log` exists and is a directory.\n3. **Data files:** counts the regular files in `/app/data`, including hidden ones but not subdirectories, and passes if there are at least 2. Right now there are 3: `file1.txt`, `file2.txt` and `file3.txt`.\n\nThe script runs every check even after one fails, so you see all the results. It exits with 1 if any check failed and 0 otherwise.\n\n**Failure test:** I also tested the failure path by temporarily putting invalid JSON in the config file and leaving only one file in `/app/data`. The script reported FAIL for both of those checks and exited with 1. I then put the original files back, and it passes again.",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "mkdir -p /scripts; ls -la /app /app/data /var/log 2>&1; cat /app/config.json 2>&1",
+      "cat > /scripts/healthcheck.sh <<'EOF'\n#!/bin/bash\n# Health check script\n\nfailed=0\n\npass() { echo \"PASS: $1\"; }\nfail() { echo \"FAIL: $1\"; failed=1; }\n\nvalid_json() {\n    if command -v jq >/dev/null 2>&1; then\n        jq empty \"$1\" >/dev/null 2>&1\n    else\n        python3 -c 'import json,sys; json.load(open(sys.argv[1]))' \"$1\" >/dev/null 2>&1\n    fi\n}\n\n# Check 1: /app/config.json exists and is valid JSON\ndesc=\"/app/config.json exists and contains valid JSON\"\nif [[ -f /app/config.json ]] && valid_json /app/config.json; then\n    pass \"$desc\"\nelse\n    fail \"$desc\"\nfi\n\n# Check 2: /var/log directory exists\ndesc=\"/var/log directory exists\"\nif [[ -d /var/log ]]; then\n    pass \"$desc\"\nelse\n    fail \"$desc\"\nfi\n\n# Check 3: /app/data contains at least 2 files\ndesc=\"/app/data directory contains at least 2 files\"\ncount=0\nif [[ -d /app/data ]]; then\n    for f in /app/data/* /app/data/.*; do\n        [[ -f \"$f\" ]] && count=$((count + 1))\n    done\nfi\nif (( count >= 2 )); then\n    pass \"$desc\"\nelse\n    fail \"$desc\"\nfi\n\nexit $failed\nEOF\nchmod +x /scripts/healthcheck.sh\n/scripts/healthcheck.sh; echo \"exit code: $?\"",
+      "cp /app/config.json /tmp/c.bak; echo '{bad' > /app/config.json; mv /app/data/file2.txt /app/data/file3.txt /tmp/\n/scripts/healthcheck.sh; echo \"exit code: $?\"\ncp /tmp/c.bak /app/config.json; mv /tmp/file2.txt /tmp/file3.txt /app/data/\n/scripts/healthcheck.sh; echo \"exit code: $?\""
+    ],
+    "usage": {
+      "input_tokens": 6885,
+      "output_tokens": 1450,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 14790
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "mkdir -p /scripts; ls -la /app /app/data /var/log 2>&1; cat /app/config.json 2>&1",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/app:\n-rw-r--r--       32 2026-10-09 17:42 config.json\ndrwxr-xr-x        0 2026-10-09 17:42 data\n\n/app/data:\n-rw-r--r--        5 2026-10-09 17:42 file1.txt\n-rw-r--r--        5 2026-10-09 17:42 file2.txt\n-rw-r--r--        5 2026-10-09 17:42 file3.txt\n\n/var/log:\n-rw-r--r--        0 2026-10-09 17:42 .keep\n{\"version\":\"1.0\",\"enabled\":true}"
+          },
+          {
+            "commands": "cat > /scripts/healthcheck.sh <<'EOF'\n#!/bin/bash\n# Health check script\n\nfailed=0\n\npass() { echo \"PASS: $1\"; }\nfail() { echo \"FAIL: $1\"; failed=1; }\n\nvalid_json() {\n    if command -v jq >/dev/null 2>&1; then\n        jq empty \"$1\" >/dev/null 2>&1\n    else\n        python3 -c 'import json,sys; json.load(open(sys.argv[1]))' \"$1\" >/dev/null 2>&1\n    fi\n}\n\n# Check 1: /app/config.json exists and is valid JSON\ndesc=\"/app/config.json exists and contains valid JSON\"\nif [[ -f /app/config.json ]] && valid_json /app/config.json; then\n    pass \"$desc\"\nelse\n    fail \"$desc\"\nfi\n\n# Check 2: /var/log directory exists\ndesc=\"/var/log directory exists\"\nif [[ -d /var/log ]]; then\n    pass \"$desc\"\nelse\n    fail \"$desc\"\nfi\n\n# Check 3: /app/data contains at least 2 files\ndesc=\"/app/data directory contains at least 2 files\"\ncount=0\nif [[ -d /app/data ]]; then\n    for f in /app/data/* /app/data/.*; do\n        [[ -f \"$f\" ]] && count=$((count + 1))\n    done\nfi\nif (( count >= 2 )); then\n    pass \"$desc\"\nelse\n    fail \"$desc\"\nfi\n\nexit $failed\nEOF\nchmod +x /scripts/healthcheck.sh\n/scripts/healthcheck.sh; echo \"exit code: $?\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "PASS: /app/config.json exists and contains valid JSON\nPASS: /var/log directory exists\nPASS: /app/data directory contains at least 2 files\nexit code: 0\n"
+          },
+          {
+            "commands": "cp /app/config.json /tmp/c.bak; echo '{bad' > /app/config.json; mv /app/data/file2.txt /app/data/file3.txt /tmp/\n/scripts/healthcheck.sh; echo \"exit code: $?\"\ncp /tmp/c.bak /app/config.json; mv /tmp/file2.txt /tmp/file3.txt /app/data/\n/scripts/healthcheck.sh; echo \"exit code: $?\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "FAIL: /app/config.json exists and contains valid JSON\nPASS: /var/log directory exists\nFAIL: /app/data directory contains at least 2 files\nexit code: 1\nPASS: /app/config.json exists and contains valid JSON\nPASS: /var/log directory exists\nPASS: /app/data directory contains at least 2 files\nexit code: 0\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

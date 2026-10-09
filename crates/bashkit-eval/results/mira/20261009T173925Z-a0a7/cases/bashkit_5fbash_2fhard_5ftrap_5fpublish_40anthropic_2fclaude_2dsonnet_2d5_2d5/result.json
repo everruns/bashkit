@@ -1,0 +1,32 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "hard_trap_publish",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "In the git repository /home/eval/publisher, bin/publish violates the contract in its header comment (wrong exit codes, leftover temporary files, sloppy validation). Fix bin/publish so `make test` passes; do not edit tests/. Then use it to publish /home/eval/publisher/etc/prod.conf to /home/eval/publisher/site/config.txt (run `bash bin/publish etc/prod.conf site/config.txt` from /home/eval/publisher), and commit your fix with a message starting with `fix:`."
+  ],
+  "passed": false,
+  "aggregate": 0.0,
+  "scores": [
+    {
+      "scorer": "infra",
+      "value": 0.0,
+      "pass": false,
+      "na": true,
+      "reason": "agent loop failed: provider chat failed: Anthropic API error (400 Bad Request): Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits."
+    }
+  ],
+  "transcript": {
+    "final_response": "",
+    "iterations": 0,
+    "tool_calls_count": 0,
+    "usage": {
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": 0.0
+    },
+    "error": "agent loop failed: provider chat failed: Anthropic API error (400 Bad Request): Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.",
+    "error_kind": "infra"
+  },
+  "skipped": false
+}

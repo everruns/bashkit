@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "file_ops_find_and_delete",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "Find all .tmp files under /workspace and delete them. Print the number of .tmp files deleted."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I deleted 3 `.tmp` files under `/workspace`. A second search afterward found 0 `.tmp` files left.\n\nThe search matched regular files whose names end in `.tmp`. A directory with a name ending in `.tmp` would not have been counted or deleted.",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "cd /workspace 2>&1 || exit; n=$(find /workspace -type f -name '*.tmp' | wc -l); find /workspace -type f -name '*.tmp' -delete; echo \"Deleted: $n\"; find /workspace -name '*.tmp' | wc -l"
+    ],
+    "usage": {
+      "input_tokens": 2136,
+      "output_tokens": 230,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 3022
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cd /workspace 2>&1 || exit; n=$(find /workspace -type f -name '*.tmp' | wc -l); find /workspace -type f -name '*.tmp' -delete; echo \"Deleted: $n\"; find /workspace -name '*.tmp' | wc -l",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Deleted: 3\n0\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

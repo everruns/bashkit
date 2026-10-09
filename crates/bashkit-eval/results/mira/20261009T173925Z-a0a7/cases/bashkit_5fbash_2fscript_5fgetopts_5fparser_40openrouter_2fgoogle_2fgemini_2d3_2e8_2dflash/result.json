@@ -1,0 +1,120 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "script_getopts_parser",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Create /scripts/report.sh that uses getopts to parse these options: -f <format> (output format: csv or json, default csv), -o <file> (output file, default stdout), -v (verbose mode flag), -h (print usage and exit). After parsing, the script should read /data/input.csv and: if format is csv, output it as-is; if format is json, convert each row to a JSON object. Run the script with: 'bash /scripts/report.sh -f json -v' to process the input in verbose mode. Verbose mode should print 'Verbose: processing N rows' before output."
+  ],
+  "passed": false,
+  "aggregate": 0.8,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 0.8,
+      "pass": false,
+      "reason": "4/5 checks passed (weighted rate 80%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "",
+    "iterations": 10,
+    "tool_calls_count": 10,
+    "tool_calls": [
+      "ls -la /\nls -la /data || true\nls -la /scripts || true",
+      "ls -la /data\ncat /data/input.csv 2>/dev/null || cat /input.csv",
+      "ls -la /data/",
+      "cat /data/input.csv",
+      "which jq python3 awk sed",
+      "cat << 'EOF' > /tmp/test_json.py\nimport csv, json, sys\n\nwith open('/data/input.csv', 'r') as f:\n    reader = csv.DictReader(f)\n    rows = list(reader)\n\nprint(\"Rows:\", len(rows))\nfor r in rows:\n    print(json.dumps(r))\n\nprint(\"Array:\")\nprint(json.dumps(rows, indent=2))\nEOF\npython3 /tmp/test_json.py",
+      "grep -ri \"report.sh\" /root /etc /tmp /home 2>/dev/null || true",
+      "python3 -c \"\nimport csv, json\nwith open('/data/input.csv') as f:\n    for row in csv.DictReader(f):\n        print(json.dumps(row))\n\"",
+      "mkdir -p /scripts\ncat << 'EOF' > /scripts/report.sh\n#!/bin/bash\n\nformat=\"csv\"\noutput_file=\"\"\nverbose=0\n\nusage() {\n    echo \"Usage: $0 [-f format] [-o file] [-v] [-h]\"\n    echo \"  -f <format>  Output format: csv or json (default: csv)\"\n    echo \"  -o <file>    Output file (default: stdout)\"\n    echo \"  -v           Verbose mode\"\n    echo \"  -h           Print usage and exit\"\n    exit 0\n}\n\nwhile getopts \":f:o:vh\" opt; do\n    case \"$opt\" in\n        f)\n            format=\"$OPTARG\"\n            ;;\n        o)\n            output_file=\"$OPTARG\"\n            ;;\n        v)\n            verbose=1\n            ;;\n        h)\n            usage\n            ;;\n        \\?)\n            echo \"Invalid option: -$OPTARG\" >&2\n            usage\n            ;;\n        :)\n            echo \"Option -$OPTARG requires an argument.\" >&2\n            usage\n            ;;\n    esac\ndone\n\ninput_file=\"/data/input.csv\"\n\nif [ ! -f \"$input_file\" ]; then\n    echo \"Input file $input_file not found.\" >&2\n    exit 1\nfi\n\ntotal_lines=$(wc -l < \"$input_file\")\nif [ \"$total_lines\" -gt 0 ]; then\n    row_count=$((total_lines - 1))\nelse\n    row_count=0\nfi\n\nif [ \"$verbose\" -eq 1 ]; then\n    echo \"Verbose: processing $row_count rows\"\nfi\n\ngenerate_output() {\n    if [ \"$format\" = \"csv\" ]; then\n        cat \"$input_file\"\n    elif [ \"$format\" = \"json\" ]; then\n        python3 -c \"\nimport csv, json\nwith open('$input_file', mode='r', newline='') as f:\n    reader = csv.DictReader(f)\n    for row in reader:\n        print(json.dumps(row))\n\"\n    else\n        echo \"Unsupported format: $format\" >&2\n        exit 1\n    fi\n}\n\nif [ -n \"$output_file\" ]; then\n    generate_output > \"$output_file\"\nelse\n    generate_output\nfi\nEOF\nchmod +x /scripts/report.sh",
+      "bash /scripts/report.sh -h"
+    ],
+    "usage": {
+      "input_tokens": 10768,
+      "output_tokens": 1168,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 22612
+    },
+    "metrics": {
+      "natural_stop": 0.0,
+      "tool_calls": 10.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 10.0,
+      "turns": 10.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /\nls -la /data || true\nls -la /scripts || true",
+            "exit_code": 0,
+            "stderr": "ls: cannot access '/scripts': No such file or directory\n",
+            "stdout": "drwxr-xr-x        0 2026-10-09 17:39 bin\ndrwxr-xr-x        0 2026-10-09 17:44 data\ndrwxr-xr-x        0 2026-10-09 17:44 dev\ndrwxr-xr-x        0 2026-10-09 17:39 etc\ndrwxr-xr-x        0 2026-10-09 17:44 home\ndrwxr-xr-x        0 2026-10-09 17:39 proc\ndrwxr-xr-x        0 2026-10-09 17:39 root\ndrwxrwxrwx        0 2026-10-09 17:44 tmp\ndrwxr-xr-x        0 2026-10-09 17:39 usr\n-rw-r--r--       36 2026-10-09 17:44 input.csv\n"
+          },
+          {
+            "commands": "ls -la /data\ncat /data/input.csv 2>/dev/null || cat /input.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       36 2026-10-09 17:44 input.csv\nname,score\nalice,95\nbob,87\ncarol,92\n"
+          },
+          {
+            "commands": "ls -la /data/",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       36 2026-10-09 17:44 input.csv\n"
+          },
+          {
+            "commands": "cat /data/input.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "name,score\nalice,95\nbob,87\ncarol,92\n"
+          },
+          {
+            "commands": "which jq python3 awk sed",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/usr/bin/jq\n/usr/bin/python3\n/usr/bin/awk\n/usr/bin/sed\n"
+          },
+          {
+            "commands": "cat << 'EOF' > /tmp/test_json.py\nimport csv, json, sys\n\nwith open('/data/input.csv', 'r') as f:\n    reader = csv.DictReader(f)\n    rows = list(reader)\n\nprint(\"Rows:\", len(rows))\nfor r in rows:\n    print(json.dumps(r))\n\nprint(\"Array:\")\nprint(json.dumps(rows, indent=2))\nEOF\npython3 /tmp/test_json.py",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Rows: 3\n{\"name\": \"alice\", \"score\": \"95\"}\n{\"name\": \"bob\", \"score\": \"87\"}\n{\"name\": \"carol\", \"score\": \"92\"}\nArray:\n[\n  {\n    \"name\": \"alice\",\n    \"score\": \"95\"\n  },\n  {\n    \"name\": \"bob\",\n    \"score\": \"87\"\n  },\n  {\n    \"name\": \"carol\",\n    \"score\": \"92\"\n  }\n]\n"
+          },
+          {
+            "commands": "grep -ri \"report.sh\" /root /etc /tmp /home 2>/dev/null || true",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "python3 -c \"\nimport csv, json\nwith open('/data/input.csv') as f:\n    for row in csv.DictReader(f):\n        print(json.dumps(row))\n\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "{\"name\": \"alice\", \"score\": \"95\"}\n{\"name\": \"bob\", \"score\": \"87\"}\n{\"name\": \"carol\", \"score\": \"92\"}\n"
+          },
+          {
+            "commands": "mkdir -p /scripts\ncat << 'EOF' > /scripts/report.sh\n#!/bin/bash\n\nformat=\"csv\"\noutput_file=\"\"\nverbose=0\n\nusage() {\n    echo \"Usage: $0 [-f format] [-o file] [-v] [-h]\"\n    echo \"  -f <format>  Output format: csv or json (default: csv)\"\n    echo \"  -o <file>    Output file (default: stdout)\"\n    echo \"  -v           Verbose mode\"\n    echo \"  -h           Print usage and exit\"\n    exit 0\n}\n\nwhile getopts \":f:o:vh\" opt; do\n    case \"$opt\" in\n        f)\n            format=\"$OPTARG\"\n            ;;\n        o)\n            output_file=\"$OPTARG\"\n            ;;\n        v)\n            verbose=1\n            ;;\n        h)\n            usage\n            ;;\n        \\?)\n            echo \"Invalid option: -$OPTARG\" >&2\n            usage\n            ;;\n        :)\n            echo \"Option -$OPTARG requires an argument.\" >&2\n            usage\n            ;;\n    esac\ndone\n\ninput_file=\"/data/input.csv\"\n\nif [ ! -f \"$input_file\" ]; then\n    echo \"Input file $input_file not found.\" >&2\n    exit 1\nfi\n\ntotal_lines=$(wc -l < \"$input_file\")\nif [ \"$total_lines\" -gt 0 ]; then\n    row_count=$((total_lines - 1))\nelse\n    row_count=0\nfi\n\nif [ \"$verbose\" -eq 1 ]; then\n    echo \"Verbose: processing $row_count rows\"\nfi\n\ngenerate_output() {\n    if [ \"$format\" = \"csv\" ]; then\n        cat \"$input_file\"\n    elif [ \"$format\" = \"json\" ]; then\n        python3 -c \"\nimport csv, json\nwith open('$input_file', mode='r', newline='') as f:\n    reader = csv.DictReader(f)\n    for row in reader:\n        print(json.dumps(row))\n\"\n    else\n        echo \"Unsupported format: $format\" >&2\n        exit 1\n    fi\n}\n\nif [ -n \"$output_file\" ]; then\n    generate_output > \"$output_file\"\nelse\n    generate_output\nfi\nEOF\nchmod +x /scripts/report.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "bash /scripts/report.sh -h",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Usage: /scripts/report.sh [-f format] [-o file] [-v] [-h]\n  -f <format>  Output format: csv or json (default: csv)\n  -o <file>    Output file (default: stdout)\n  -v           Verbose mode\n  -h           Print usage and exit\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

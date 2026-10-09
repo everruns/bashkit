@@ -1,0 +1,32 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "rt_py_sessionize",
+  "target": "anthropic/claude-opus-5-5",
+  "input": [
+    "/data/access.log has lines `<timestamp> user=<name> path=<path> status=<3 digits>` in no particular order. A valid timestamp is ISO 8601 `YYYY-MM-DDTHH:MM:SS` followed by `Z` or a `+HH:MM`/`-HH:MM` offset; a line with any other timestamp (no offset, a space instead of T, an impossible time) or not matching the format exactly is skipped. Duplicate lines are separate events.\n\nSplit each user's events, ordered by instant, into sessions: a new session starts when the gap to the previous event is more than 30 minutes (a gap of exactly 30:00 stays in the same session).\n\nWrite /out/sessions.tsv (tab-separated) with header user, session, start, end, events, seconds: one row per session, sorted by user then start; session numbers start at 1 per user; start/end are UTC as YYYY-MM-DDTHH:MM:SSZ; seconds = end minus start.\nWrite /out/summary.txt with the single line `users=U sessions=S events=E skipped=K`."
+  ],
+  "passed": false,
+  "aggregate": 0.0,
+  "scores": [
+    {
+      "scorer": "infra",
+      "value": 0.0,
+      "pass": false,
+      "na": true,
+      "reason": "agent loop failed: provider chat failed: Anthropic API error (400 Bad Request): Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits."
+    }
+  ],
+  "transcript": {
+    "final_response": "",
+    "iterations": 0,
+    "tool_calls_count": 0,
+    "usage": {
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": 0.0
+    },
+    "error": "agent loop failed: provider chat failed: Anthropic API error (400 Bad Request): Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.",
+    "error_kind": "infra"
+  },
+  "skipped": false
+}

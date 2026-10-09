@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "error_missing_file",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Read the file /data/input.txt. If it does not exist, create the directory /data if needed, then create the file with the content 'default data', and finally read and print the file contents."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Done. Here's what happened:\n\n1. **Checked** `/data/input.txt` — it did **not** exist.\n2. **Created** the `/data` directory (`mkdir -p`, so it would be a no-op if it already existed).\n3. **Created** the file with the content `default data`.\n4. **Read and printed** the file contents:\n\n```\ndefault data\n```",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "if [ ! -f /data/input.txt ]; then\n  mkdir -p /data\n  printf 'default data' > /data/input.txt\n  echo \"File did not exist; created /data/input.txt with default content.\"\nfi\necho \"--- File contents ---\"\ncat /data/input.txt\necho"
+    ],
+    "usage": {
+      "input_tokens": 1252,
+      "output_tokens": 283,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 6841
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "if [ ! -f /data/input.txt ]; then\n  mkdir -p /data\n  printf 'default data' > /data/input.txt\n  echo \"File did not exist; created /data/input.txt with default content.\"\nfi\necho \"--- File contents ---\"\ncat /data/input.txt\necho",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "File did not exist; created /data/input.txt with default content.\n--- File contents ---\ndefault data\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

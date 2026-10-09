@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "script_function_lib",
+  "target": "anthropic/claude-opus-5-5",
+  "input": [
+    "Create a file /lib/utils.sh with these bash functions: 'to_upper' that reads stdin and converts to uppercase, 'count_lines' that takes a filename argument and prints the line count, 'file_size' that takes a filename and prints byte count. Then source /lib/utils.sh and demonstrate each function: use to_upper on the string 'hello world', count_lines on /data/sample.txt, and file_size on /data/sample.txt."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I created `/lib/utils.sh` with the three functions, sourced it, and ran each demo. All three gave the expected results.\n\n**`/lib/utils.sh`:**\n```bash\n#!/usr/bin/env bash\n# Utility functions\n\n# to_upper: read stdin, write uppercase to stdout\nto_upper() {\n    tr '[:lower:]' '[:upper:]'\n}\n\n# count_lines FILE: print number of lines in FILE\ncount_lines() {\n    if [[ $# -ne 1 || ! -f \"$1\" ]]; then\n        echo \"count_lines: usage: count_lines FILE (file must exist)\" >&2\n        return 1\n    fi\n    wc -l < \"$1\" | tr -d ' '\n}\n\n# file_size FILE: print size of FILE in bytes\nfile_size() {\n    if [[ $# -ne 1 || ! -f \"$1\" ]]; then\n        echo \"file_size: usage: file_size FILE (file must exist)\" >&2\n        return 1\n    fi\n    wc -c < \"$1\" | tr -d ' '\n}\n```\n\n**Demo:**\n```bash\nsource /lib/utils.sh\necho 'hello world' | to_upper      # HELLO WORLD\ncount_lines /data/sample.txt       # 5\nfile_size /data/sample.txt         # 49\n```\n\nThese numbers match the file: `/data/sample.txt` has 5 lines (\"line one\" to \"line five\") and is 49 bytes, which matches what `ls` showed.\n\n- **Missing folder:** `/lib` didn't exist, so I created it first.\n- **Error checks:** `count_lines` and `file_size` print a usage message and return 1 if they don't get exactly one argument or the file doesn't exist.\n- **Clean output:** `tr -d ' '` removes the spaces some versions of `wc` add before the number.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "ls -la /data/ 2>&1; cat /data/sample.txt 2>&1 | head; ls -d /lib 2>&1",
+      "mkdir -p /lib\ncat > /lib/utils.sh <<'EOF'\n#!/usr/bin/env bash\n# Utility functions\n\n# to_upper: read stdin, write uppercase to stdout\nto_upper() {\n    tr '[:lower:]' '[:upper:]'\n}\n\n# count_lines FILE: print number of lines in FILE\ncount_lines() {\n    if [[ $# -ne 1 || ! -f \"$1\" ]]; then\n        echo \"count_lines: usage: count_lines FILE (file must exist)\" >&2\n        return 1\n    fi\n    wc -l < \"$1\" | tr -d ' '\n}\n\n# file_size FILE: print size of FILE in bytes\nfile_size() {\n    if [[ $# -ne 1 || ! -f \"$1\" ]]; then\n        echo \"file_size: usage: file_size FILE (file must exist)\" >&2\n        return 1\n    fi\n    wc -c < \"$1\" | tr -d ' '\n}\nEOF\nsource /lib/utils.sh\necho \"to_upper:    $(echo 'hello world' | to_upper)\"\necho \"count_lines: $(count_lines /data/sample.txt)\"\necho \"file_size:   $(file_size /data/sample.txt)\""
+    ],
+    "usage": {
+      "input_tokens": 4188,
+      "output_tokens": 1181,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 11090
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 1.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /data/ 2>&1; cat /data/sample.txt 2>&1 | head; ls -d /lib 2>&1",
+            "exit_code": 2,
+            "stderr": "",
+            "stdout": "-rw-r--r--       49 2026-10-09 17:40 sample.txt\nline one\nline two\nline three\nline four\nline five\nls: cannot access '/lib': No such file or directory\n"
+          },
+          {
+            "commands": "mkdir -p /lib\ncat > /lib/utils.sh <<'EOF'\n#!/usr/bin/env bash\n# Utility functions\n\n# to_upper: read stdin, write uppercase to stdout\nto_upper() {\n    tr '[:lower:]' '[:upper:]'\n}\n\n# count_lines FILE: print number of lines in FILE\ncount_lines() {\n    if [[ $# -ne 1 || ! -f \"$1\" ]]; then\n        echo \"count_lines: usage: count_lines FILE (file must exist)\" >&2\n        return 1\n    fi\n    wc -l < \"$1\" | tr -d ' '\n}\n\n# file_size FILE: print size of FILE in bytes\nfile_size() {\n    if [[ $# -ne 1 || ! -f \"$1\" ]]; then\n        echo \"file_size: usage: file_size FILE (file must exist)\" >&2\n        return 1\n    fi\n    wc -c < \"$1\" | tr -d ' '\n}\nEOF\nsource /lib/utils.sh\necho \"to_upper:    $(echo 'hello world' | to_upper)\"\necho \"count_lines: $(count_lines /data/sample.txt)\"\necho \"file_size:   $(file_size /data/sample.txt)\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "to_upper:    HELLO WORLD\ncount_lines: 5\nfile_size:   49\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

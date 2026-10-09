@@ -1,0 +1,32 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "hard_pipefail_masking",
+  "target": "anthropic/claude-opus-5-5",
+  "input": [
+    "In the git repository /home/eval/pipeline, bin/build.sh is supposed to fail loudly: its header comment states the contract. Today it exits 0 even when a stage fails, and its output is wrong. Fix bin/build.sh so that `make test` passes, without editing tests/ or data/ and without reading tests/expected-summary.txt from the script. Then run `bash bin/build.sh` once more so dist/summary.txt is current, and commit your change with a message that starts with `fix:`."
+  ],
+  "passed": false,
+  "aggregate": 0.0,
+  "scores": [
+    {
+      "scorer": "infra",
+      "value": 0.0,
+      "pass": false,
+      "na": true,
+      "reason": "agent loop failed: provider chat failed: Anthropic API error (400 Bad Request): Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits."
+    }
+  ],
+  "transcript": {
+    "final_response": "",
+    "iterations": 0,
+    "tool_calls_count": 0,
+    "usage": {
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": 0.0
+    },
+    "error": "agent loop failed: provider chat failed: Anthropic API error (400 Bad Request): Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.",
+    "error_kind": "infra"
+  },
+  "skipped": false
+}

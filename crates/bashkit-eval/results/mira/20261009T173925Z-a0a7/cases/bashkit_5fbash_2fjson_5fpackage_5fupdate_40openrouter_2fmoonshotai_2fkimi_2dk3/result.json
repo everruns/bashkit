@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "json_package_update",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Update /app/package.json: bump the version from '1.2.3' to '2.0.0', add a new dependency 'lodash' with version '^4.17.21' to the dependencies object, and change the 'main' field from 'src/index.js' to 'dist/index.js'. Save the updated JSON back to /app/package.json and print it."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "All three updates have been applied and saved to `/app/package.json`:\n\n1. **Version**: `1.2.3` → `2.0.0`\n2. **New dependency**: `lodash` at `^4.17.21` added to `dependencies` (appended after the existing entries, preserving their order)\n3. **Main field**: `src/index.js` → `dist/index.js`\n\nAll other fields (`name`, `scripts`, `devDependencies`, and the existing `express`/`cors` dependencies) remain unchanged. The output above shows the final file contents.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat /app/package.json",
+      "python3 - <<'EOF'\nimport json\n\npath = '/app/package.json'\nwith open(path) as f:\n    data = json.load(f)\n\ndata['version'] = '2.0.0'\ndata['main'] = 'dist/index.js'\ndata['dependencies']['lodash'] = '^4.17.21'\n\nwith open(path, 'w') as f:\n    json.dump(data, f, separators=(',', ':'))\n    f.write('\\n')\n\nprint(open(path).read())\nEOF"
+    ],
+    "usage": {
+      "input_tokens": 2330,
+      "output_tokens": 467,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 6741
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /app/package.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "{\"name\":\"my-service\",\"version\":\"1.2.3\",\"main\":\"src/index.js\",\"scripts\":{\"build\":\"tsc\",\"test\":\"jest\"},\"dependencies\":{\"express\":\"^4.18.0\",\"cors\":\"^2.8.5\"},\"devDependencies\":{\"typescript\":\"^5.0.0\",\"jest\":\"^29.0.0\"}}"
+          },
+          {
+            "commands": "python3 - <<'EOF'\nimport json\n\npath = '/app/package.json'\nwith open(path) as f:\n    data = json.load(f)\n\ndata['version'] = '2.0.0'\ndata['main'] = 'dist/index.js'\ndata['dependencies']['lodash'] = '^4.17.21'\n\nwith open(path, 'w') as f:\n    json.dump(data, f, separators=(',', ':'))\n    f.write('\\n')\n\nprint(open(path).read())\nEOF",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "{\"name\":\"my-service\",\"version\":\"2.0.0\",\"main\":\"dist/index.js\",\"scripts\":{\"build\":\"tsc\",\"test\":\"jest\"},\"dependencies\":{\"express\":\"^4.18.0\",\"cors\":\"^2.8.5\",\"lodash\":\"^4.17.21\"},\"devDependencies\":{\"typescript\":\"^5.0.0\",\"jest\":\"^29.0.0\"}}\n\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

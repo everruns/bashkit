@@ -1,0 +1,120 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "config_env_template",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Read /config/template.env which has lines like 'KEY=${VALUE:-default}'. For each line, check if the key exists in /config/overrides.txt (format: KEY=value). If it does, use the override value; otherwise use the default from the template. Write the final KEY=value pairs to /app/.env and print the result."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "",
+    "iterations": 10,
+    "tool_calls_count": 10,
+    "tool_calls": [
+      "ls -la /config /app || true\ncat /config/template.env || true\ncat /config/overrides.txt || true",
+      "python3 -c \"\nwith open('/config/template.env') as f:\n    print('TEMPLATE:')\n    print(f.read())\n\nwith open('/config/overrides.txt') as f:\n    print('OVERRIDES:')\n    print(f.read())\n\"",
+      "python3 -c \"\nimport reprlib\nt = open('/config/template.env').read()\no = open('/config/overrides.txt').read()\nprint('T:', repr(t))\nprint('O:', repr(o))\n\"",
+      "ls -la /app",
+      "python3 -c \"\nimport os\nimport re\n\n# Read overrides\noverrides = {}\nwith open('/config/overrides.txt') as f:\n    for line in f:\n        line = line.strip()\n        if not line or line.startswith('#'):\n            continue\n        if '=' in line:\n            k, v = line.split('=', 1)\n            overrides[k.strip()] = v.strip()\n\n# Pattern for KEY=${VALUE:-default} or KEY=${KEY:-default}\n# Notice template: DB_HOST=${DB_HOST:-localhost}\n# Let's inspect the template lines carefully\nresults = []\nwith open('/config/template.env') as f:\n    for line in f:\n        line = line.strip()\n        if not line or line.startswith('#'):\n            continue\n        # Format: KEY=${VAR:-default}\n        # e.g. REDIS_URL=${REDIS_URL:-redis://localhost:6379}\n        m = re.match(r'^([^=]+)=\\$\\{[^:]*?:-(.*)\\}$', line)\n        if m:\n            key = m.group(1).strip()\n            default_val = m.group(2)\n            val = overrides.get(key, default_val)\n            results.append(f'{key}={val}')\n        else:\n            print('Could not match line:', line)\n\nos.makedirs('/app', exist_ok=True)\noutput_content = '\\n'.join(results) + '\\n'\nwith open('/app/.env', 'w') as f:\n    f.write(output_content)\n\nprint(output_content, end='')\n\"",
+      "python3 -c \"\nwith open('/config/template.env') as f:\n    for idx, l in enumerate(f):\n        print(idx, repr(l))\n\"",
+      "python3 -c \"\nimport sys\nsys.stdout.write('TEST_NO_DOLLAR\\n')\n\"",
+      "cat << 'EOF' > /tmp/solution.py\nimport os\nimport re\n\noverrides = {}\nwith open('/config/overrides.txt') as f:\n    for line in f:\n        line = line.strip()\n        if not line or line.startswith('#'):\n            continue\n        if '=' in line:\n            k, v = line.split('=', 1)\n            overrides[k] = v\n\npattern = re.compile(r'^([A-Za-z_][A-Za-z0-9_]*)=\\$\\{[^:]*?:-(.*)\\}$')\n\nresults = []\nwith open('/config/template.env') as f:\n    for line in f:\n        line = line.strip()\n        if not line or line.startswith('#'):\n            continue\n        m = pattern.match(line)\n        if m:\n            key, default_val = m.groups()\n            final_val = overrides.get(key, default_val)\n            results.append(f\"{key}={final_val}\")\n        else:\n            raise ValueError(f\"Unrecognized line format: {line}\")\n\nos.makedirs('/app', exist_ok=True)\ncontent = '\\n'.join(results) + '\\n'\nwith open('/app/.env', 'w') as f:\n    f.write(content)\n\nprint(content, end='')\nEOF\npython3 /tmp/solution.py",
+      "python3 -c \"\nwith open('/app/.env') as f:\n    print(repr(f.read()))\n\"",
+      "rm -f /tmp/solution.py"
+    ],
+    "usage": {
+      "input_tokens": 10897,
+      "output_tokens": 1418,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 23636
+    },
+    "metrics": {
+      "natural_stop": 0.0,
+      "tool_calls": 10.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 9.0,
+      "turns": 10.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /config /app || true\ncat /config/template.env || true\ncat /config/overrides.txt || true",
+            "exit_code": 0,
+            "stderr": "ls: cannot access '/app': No such file or directory\n",
+            "stdout": "DB_HOST=${DB_HOST:-localhost}\nDB_PORT=${DB_PORT:-5432}\nDB_NAME=${DB_NAME:-myapp}\nREDIS_URL=${REDIS_URL:-redis://localhost:6379}\nLOG_LEVEL=${LOG_LEVEL:-info}\nDB_HOST=db.prod.internal\nLOG_LEVEL=warn\n"
+          },
+          {
+            "commands": "python3 -c \"\nwith open('/config/template.env') as f:\n    print('TEMPLATE:')\n    print(f.read())\n\nwith open('/config/overrides.txt') as f:\n    print('OVERRIDES:')\n    print(f.read())\n\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "TEMPLATE:\nDB_HOST=${DB_HOST:-localhost}\nDB_PORT=${DB_PORT:-5432}\nDB_NAME=${DB_NAME:-myapp}\nREDIS_URL=${REDIS_URL:-redis://localhost:6379}\nLOG_LEVEL=${LOG_LEVEL:-info}\n\nOVERRIDES:\nDB_HOST=db.prod.internal\nLOG_LEVEL=warn\n\n"
+          },
+          {
+            "commands": "python3 -c \"\nimport reprlib\nt = open('/config/template.env').read()\no = open('/config/overrides.txt').read()\nprint('T:', repr(t))\nprint('O:', repr(o))\n\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "T: 'DB_HOST=${DB_HOST:-localhost}\\nDB_PORT=${DB_PORT:-5432}\\nDB_NAME=${DB_NAME:-myapp}\\nREDIS_URL=${REDIS_URL:-redis://localhost:6379}\\nLOG_LEVEL=${LOG_LEVEL:-info}\\n'\nO: 'DB_HOST=db.prod.internal\\nLOG_LEVEL=warn\\n'\n"
+          },
+          {
+            "commands": "ls -la /app",
+            "exit_code": 2,
+            "stderr": "ls: cannot access '/app': No such file or directory\n",
+            "stdout": ""
+          },
+          {
+            "commands": "python3 -c \"\nimport os\nimport re\n\n# Read overrides\noverrides = {}\nwith open('/config/overrides.txt') as f:\n    for line in f:\n        line = line.strip()\n        if not line or line.startswith('#'):\n            continue\n        if '=' in line:\n            k, v = line.split('=', 1)\n            overrides[k.strip()] = v.strip()\n\n# Pattern for KEY=${VALUE:-default} or KEY=${KEY:-default}\n# Notice template: DB_HOST=${DB_HOST:-localhost}\n# Let's inspect the template lines carefully\nresults = []\nwith open('/config/template.env') as f:\n    for line in f:\n        line = line.strip()\n        if not line or line.startswith('#'):\n            continue\n        # Format: KEY=${VAR:-default}\n        # e.g. REDIS_URL=${REDIS_URL:-redis://localhost:6379}\n        m = re.match(r'^([^=]+)=\\$\\{[^:]*?:-(.*)\\}$', line)\n        if m:\n            key = m.group(1).strip()\n            default_val = m.group(2)\n            val = overrides.get(key, default_val)\n            results.append(f'{key}={val}')\n        else:\n            print('Could not match line:', line)\n\nos.makedirs('/app', exist_ok=True)\noutput_content = '\\n'.join(results) + '\\n'\nwith open('/app/.env', 'w') as f:\n    f.write(output_content)\n\nprint(output_content, end='')\n\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Could not match line: DB_HOST=${DB_HOST:-localhost}\nCould not match line: DB_PORT=${DB_PORT:-5432}\nCould not match line: DB_NAME=${DB_NAME:-myapp}\nCould not match line: REDIS_URL=${REDIS_URL:-redis://localhost:6379}\nCould not match line: LOG_LEVEL=${LOG_LEVEL:-info}\n\n"
+          },
+          {
+            "commands": "python3 -c \"\nwith open('/config/template.env') as f:\n    for idx, l in enumerate(f):\n        print(idx, repr(l))\n\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "0 'DB_HOST=${DB_HOST:-localhost}\\n'\n1 'DB_PORT=${DB_PORT:-5432}\\n'\n2 'DB_NAME=${DB_NAME:-myapp}\\n'\n3 'REDIS_URL=${REDIS_URL:-redis://localhost:6379}\\n'\n4 'LOG_LEVEL=${LOG_LEVEL:-info}\\n'\n"
+          },
+          {
+            "commands": "python3 -c \"\nimport sys\nsys.stdout.write('TEST_NO_DOLLAR\\n')\n\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "TEST_NO_DOLLAR\n"
+          },
+          {
+            "commands": "cat << 'EOF' > /tmp/solution.py\nimport os\nimport re\n\noverrides = {}\nwith open('/config/overrides.txt') as f:\n    for line in f:\n        line = line.strip()\n        if not line or line.startswith('#'):\n            continue\n        if '=' in line:\n            k, v = line.split('=', 1)\n            overrides[k] = v\n\npattern = re.compile(r'^([A-Za-z_][A-Za-z0-9_]*)=\\$\\{[^:]*?:-(.*)\\}$')\n\nresults = []\nwith open('/config/template.env') as f:\n    for line in f:\n        line = line.strip()\n        if not line or line.startswith('#'):\n            continue\n        m = pattern.match(line)\n        if m:\n            key, default_val = m.groups()\n            final_val = overrides.get(key, default_val)\n            results.append(f\"{key}={final_val}\")\n        else:\n            raise ValueError(f\"Unrecognized line format: {line}\")\n\nos.makedirs('/app', exist_ok=True)\ncontent = '\\n'.join(results) + '\\n'\nwith open('/app/.env', 'w') as f:\n    f.write(content)\n\nprint(content, end='')\nEOF\npython3 /tmp/solution.py",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "DB_HOST=db.prod.internal\nDB_PORT=5432\nDB_NAME=myapp\nREDIS_URL=redis://localhost:6379\nLOG_LEVEL=warn\n"
+          },
+          {
+            "commands": "python3 -c \"\nwith open('/app/.env') as f:\n    print(repr(f.read()))\n\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "'DB_HOST=db.prod.internal\\nDB_PORT=5432\\nDB_NAME=myapp\\nREDIS_URL=redis://localhost:6379\\nLOG_LEVEL=warn\\n'\n"
+          },
+          {
+            "commands": "rm -f /tmp/solution.py",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,197 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "rt_sqlite_migration",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "/app/app.db is a schema version 1 SQLite database created from /app/schema_v1.sql. Write the migration /app/migrations/002_users_v2.sql and apply it to /app/app.db with `sqlite3 /app/app.db < /app/migrations/002_users_v2.sql`. The file must be plain SQL that upgrades ANY version 1 database (it will also be run against other v1 databases with different rows).\n\nVersion 2:\n- users has exactly the columns (id INTEGER PRIMARY KEY, first_name TEXT NOT NULL, last_name TEXT NOT NULL, email TEXT NOT NULL UNIQUE, signup_date TEXT NOT NULL), in that order, keeping user ids.\n- From full_name with surrounding spaces trimmed: first_name is the text before the first space, last_name the rest with surrounding spaces trimmed ('' when there is no space).\n- email is trimmed and lowercased. Users whose emails are equal after that are merged: keep only the lowest id, and orders of the removed users now belong to the kept user.\n- signup (MM/DD/YYYY) becomes signup_date YYYY-MM-DD.\n- meta schema_version is '2'.\norders keeps its columns and rows (only user_id may change)."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "The schema migration file `/app/migrations/002_users_v2.sql` has been created and applied to `/app/app.db`.\n\n### Summary of Changes\n- Created `/app/migrations/002_users_v2.sql` containing plain SQL to upgrade any v1 database:\n  - Computed canonical `user_id` values by partitioning by `LOWER(TRIM(email))` and taking `MIN(id)`.\n  - Reassigned `orders.user_id` referencing duplicate user records to the retained minimum `id`.\n  - Created a new `users_v2` table with schema `(id INTEGER PRIMARY KEY, first_name TEXT NOT NULL, last_name TEXT NOT NULL, email TEXT NOT NULL UNIQUE, signup_date TEXT NOT NULL)`.\n  - Populated `users_v2` parsing `full_name` into `first_name` (before the first space) and `last_name` (remaining text trimmed, or empty string `''` if no spaces), formatting `signup` dates from `MM/DD/YYYY` to `YYYY-MM-DD`, and storing lowercased, trimmed emails for retained user IDs.\n  - Replaced the original `users` table via `DROP TABLE users` and `ALTER TABLE users_v2 RENAME TO users`.\n  - Updated `meta` `schema_version` to `'2'`.\n- Executed migration using `sqlite3 /app/app.db < /app/migrations/002_users_v2.sql`.\n\n### Verification\n- Confirmed table schema via `.schema` matches the required structure and column ordering.\n- Verified rows in `users`: duplicate email user `Ada L.` (id 4) merged into `Ada Lovelace` (id 1), names correctly split, and dates converted.\n- Verified rows in `orders`: order 101 and 104 successfully remapped from `user_id` 4 to `user_id` 1.\n- Verified `meta` table reports `schema_version` as `2`.\n- Tested against edge cases (single names without spaces, names with multiple consecutive spaces, varying email casing/padding).",
+    "iterations": 22,
+    "tool_calls_count": 21,
+    "tool_calls": [
+      "ls -la /app",
+      "cat /app/schema_v1.sql",
+      "ls -la /app\nmkdir -p /app/migrations",
+      "sqlite3 --version",
+      "sqlite3 :memory: \"SELECT instr('Grace  Brewster Hopper', ' ');\"",
+      "python3 -c \"import sqlite3; print(sqlite3.sqlite_version)\"",
+      "sqlite3 :memory: \"\nCREATE TABLE t (name TEXT);\nINSERT INTO t VALUES (' Ada Lovelace '), (' Grace  Brewster Hopper'), ('Linus'), ('  Leading and trailing  ');\nSELECT\n  name,\n  TRIM(name) as trimmed,\n  CASE\n    WHEN INSTR(TRIM(name), ' ') > 0\n    THEN SUBSTR(TRIM(name), 1, INSTR(TRIM(name), ' ') - 1)\n    ELSE TRIM(name)\n  END as first_name,\n  CASE\n    WHEN INSTR(TRIM(name), ' ') > 0\n    THEN TRIM(SUBSTR(TRIM(name), INSTR(TRIM(name), ' ') + 1))\n    ELSE ''\n  END as last_name\nFROM t;\n\"",
+      "sqlite3 :memory: \"\nSELECT\n  SUBSTR('12/10/2023', 7, 4) || '-' || SUBSTR('12/10/2023', 1, 2) || '-' || SUBSTR('12/10/2023', 4, 2);\n\"",
+      "cat << 'EOF' > /tmp/test_migration.sql\n-- Create mapping of old user id to canonical (min) user id\nCREATE TEMP TABLE user_mapping AS\nSELECT\n  id AS old_id,\n  MIN(id) OVER (PARTITION BY LOWER(TRIM(email))) AS new_id\nFROM users;\n\n-- Update orders to point to the canonical user id\nUPDATE orders\nSET user_id = (SELECT new_id FROM user_mapping WHERE old_id = orders.user_id)\nWHERE user_id IN (SELECT old_id FROM user_mapping WHERE old_id != new_id);\n\n-- Create new users table\nCREATE TABLE users_v2 (\n  id INTEGER PRIMARY KEY,\n  first_name TEXT NOT NULL,\n  last_name TEXT NOT NULL,\n  email TEXT NOT NULL UNIQUE,\n  signup_date TEXT NOT NULL\n);\n\n-- Insert into users_v2 only the kept users\nINSERT INTO users_v2 (id, first_name, last_name, email, signup_date)\nSELECT\n  id,\n  CASE\n    WHEN INSTR(TRIM(full_name), ' ') > 0\n    THEN SUBSTR(TRIM(full_name), 1, INSTR(TRIM(full_name), ' ') - 1)\n    ELSE TRIM(full_name)\n  END AS first_name,\n  CASE\n    WHEN INSTR(TRIM(full_name), ' ') > 0\n    THEN TRIM(SUBSTR(TRIM(full_name), INSTR(TRIM(full_name), ' ') + 1))\n    ELSE ''\n  END AS last_name,\n  LOWER(TRIM(email)) AS email,\n  SUBSTR(signup, 7, 4) || '-' || SUBSTR(signup, 1, 2) || '-' || SUBSTR(signup, 4, 2) AS signup_date\nFROM users\nWHERE id IN (SELECT DISTINCT new_id FROM user_mapping);\n\n-- Replace old users table\nDROP TABLE users;\nALTER TABLE users_v2 RENAME TO users;\n\n-- Clean up temp table\nDROP TABLE user_mapping;\n\n-- Update schema version\nUPDATE meta SET value = '2' WHERE key = 'schema_version';\nEOF\n\nsqlite3 :memory: < /app/schema_v1.sql\nsqlite3 /tmp/test.db < /app/schema_v1.sql\nsqlite3 /tmp/test.db < /tmp/test_migration.sql\n",
+      "sqlite3 /tmp/test.db \".schema\"",
+      "sqlite3 /tmp/test.db \"SELECT * FROM users;\"",
+      "sqlite3 /tmp/test.db \"SELECT * FROM orders;\"",
+      "sqlite3 /tmp/test.db \"SELECT * FROM meta;\"",
+      "sqlite3 /tmp/test.db \"PRAGMA table_info(users);\"",
+      "python3 -c \"\nimport sqlite3\n\nconn = sqlite3.connect('/tmp/test.db')\ncursor = conn.cursor()\ncursor.execute('PRAGMA table_info(users)')\ncols = cursor.fetchall()\nprint(cols)\n\"",
+      "python3 -c \"\nimport sqlite3\n\ndb = sqlite3.connect(':memory:')\ndb.executescript('''\nCREATE TABLE users(id INTEGER PRIMARY KEY, full_name TEXT NOT NULL, email TEXT NOT NULL, signup TEXT NOT NULL);\nCREATE TABLE orders(id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, total_cents INTEGER NOT NULL);\nCREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);\nINSERT INTO meta VALUES ('schema_version', '1');\n\n-- Multiple duplicates, different order of ids\nINSERT INTO users VALUES (10, 'John Doe', 'john@test.com', '01/01/2020');\nINSERT INTO users VALUES (5, 'Johnny D', '  JOHN@test.com ', '02/02/2021');\nINSERT INTO users VALUES (12, 'Jon Doe', 'John@Test.COM', '03/03/2022');\nINSERT INTO users VALUES (20, 'Single Name', 'single@test.com', '12/31/2019');\nINSERT INTO users VALUES (30, '   Spaced    Name   ', 'spaced@test.com', '05/15/2023');\nINSERT INTO users VALUES (40, 'NoSpace', 'nospace@test.com', '10/10/2020');\n\nINSERT INTO orders VALUES (1, 10, 100);\nINSERT INTO orders VALUES (2, 5, 200);\nINSERT INTO orders VALUES (3, 12, 300);\nINSERT INTO orders VALUES (4, 20, 400);\nINSERT INTO orders VALUES (5, 999, 500); -- order with nonexistent user, should it remain 999?\n''')\n\nwith open('/tmp/test_migration.sql') as f:\n    migration_sql = f.read()\n\ndb.executescript(migration_sql)\n\nprint('Users:')\nfor row in db.execute('SELECT * FROM users ORDER BY id'):\n    print(row)\n\nprint('Orders:')\nfor row in db.execute('SELECT * FROM orders ORDER BY id'):\n    print(row)\n\nprint('Meta:')\nfor row in db.execute('SELECT * FROM meta'):\n    print(row)\n\"",
+      "cat << 'EOF' > /app/migrations/002_users_v2.sql\n-- Create mapping of old user id to canonical (min) user id\nCREATE TEMP TABLE user_mapping AS\nSELECT\n  id AS old_id,\n  MIN(id) OVER (PARTITION BY LOWER(TRIM(email))) AS new_id\nFROM users;\n\n-- Update orders to point to the canonical user id\nUPDATE orders\nSET user_id = (SELECT new_id FROM user_mapping WHERE old_id = orders.user_id)\nWHERE user_id IN (SELECT old_id FROM user_mapping WHERE old_id != new_id);\n\n-- Create new users table\nCREATE TABLE users_v2 (\n  id INTEGER PRIMARY KEY,\n  first_name TEXT NOT NULL,\n  last_name TEXT NOT NULL,\n  email TEXT NOT NULL UNIQUE,\n  signup_date TEXT NOT NULL\n);\n\n-- Insert into users_v2 only the kept users\nINSERT INTO users_v2 (id, first_name, last_name, email, signup_date)\nSELECT\n  id,\n  CASE\n    WHEN INSTR(TRIM(full_name), ' ') > 0\n    THEN SUBSTR(TRIM(full_name), 1, INSTR(TRIM(full_name), ' ') - 1)\n    ELSE TRIM(full_name)\n  END AS first_name,\n  CASE\n    WHEN INSTR(TRIM(full_name), ' ') > 0\n    THEN TRIM(SUBSTR(TRIM(full_name), INSTR(TRIM(full_name), ' ') + 1))\n    ELSE ''\n  END AS last_name,\n  LOWER(TRIM(email)) AS email,\n  SUBSTR(signup, 7, 4) || '-' || SUBSTR(signup, 1, 2) || '-' || SUBSTR(signup, 4, 2) AS signup_date\nFROM users\nWHERE id IN (SELECT DISTINCT new_id FROM user_mapping);\n\n-- Replace old users table\nDROP TABLE users;\nALTER TABLE users_v2 RENAME TO users;\n\n-- Clean up temp table\nDROP TABLE user_mapping;\n\n-- Update schema version\nUPDATE meta SET value = '2' WHERE key = 'schema_version';\nEOF",
+      "sqlite3 /app/app.db < /app/migrations/002_users_v2.sql",
+      "sqlite3 /app/app.db \".schema\"",
+      "sqlite3 /app/app.db \"SELECT * FROM users;\"\nsqlite3 /app/app.db \"SELECT * FROM orders;\"\nsqlite3 /app/app.db \"SELECT * FROM meta;\"",
+      "rm -f /tmp/test_migration.sql /tmp/test.db"
+    ],
+    "usage": {
+      "input_tokens": 51968,
+      "output_tokens": 4425,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 67767
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 21.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 21.0,
+      "turns": 22.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /app",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--    20480 2026-10-09 18:11 app.db\n-rw-r--r--      924 2026-10-09 18:11 schema_v1.sql\n"
+          },
+          {
+            "commands": "cat /app/schema_v1.sql",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "CREATE TABLE users(id INTEGER PRIMARY KEY, full_name TEXT NOT NULL, email TEXT NOT NULL, signup TEXT NOT NULL);\nCREATE TABLE orders(id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, total_cents INTEGER NOT NULL);\nCREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);\nINSERT INTO meta VALUES ('schema_version', '1');\nINSERT INTO users VALUES (1, 'Ada Lovelace', 'ada@example.com', '12/10/2023');\nINSERT INTO users VALUES (2, ' Grace  Brewster Hopper', 'Grace@Navy.mil ', '01/05/2024');\nINSERT INTO users VALUES (3, 'Linus', 'linus@kernel.org', '07/04/2024');\nINSERT INTO users VALUES (4, 'Ada L.', 'ADA@example.com', '02/29/2024');\nINSERT INTO users VALUES (5, 'Alan Turing', 'alan@bletchley.uk', '06/23/2024');\nINSERT INTO orders VALUES (100, 1, 1500);\nINSERT INTO orders VALUES (101, 4, 2500);\nINSERT INTO orders VALUES (102, 2, 999);\nINSERT INTO orders VALUES (103, 5, 120);\nINSERT INTO orders VALUES (104, 4, 1);\n"
+          },
+          {
+            "commands": "ls -la /app\nmkdir -p /app/migrations",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--    20480 2026-10-09 18:11 app.db\n-rw-r--r--      924 2026-10-09 18:11 schema_v1.sql\n"
+          },
+          {
+            "commands": "sqlite3 --version",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "sqlite (turso 0.5)\n"
+          },
+          {
+            "commands": "sqlite3 :memory: \"SELECT instr('Grace  Brewster Hopper', ' ');\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "6\n"
+          },
+          {
+            "commands": "python3 -c \"import sqlite3; print(sqlite3.sqlite_version)\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "3.50.4\n"
+          },
+          {
+            "commands": "sqlite3 :memory: \"\nCREATE TABLE t (name TEXT);\nINSERT INTO t VALUES (' Ada Lovelace '), (' Grace  Brewster Hopper'), ('Linus'), ('  Leading and trailing  ');\nSELECT\n  name,\n  TRIM(name) as trimmed,\n  CASE\n    WHEN INSTR(TRIM(name), ' ') > 0\n    THEN SUBSTR(TRIM(name), 1, INSTR(TRIM(name), ' ') - 1)\n    ELSE TRIM(name)\n  END as first_name,\n  CASE\n    WHEN INSTR(TRIM(name), ' ') > 0\n    THEN TRIM(SUBSTR(TRIM(name), INSTR(TRIM(name), ' ') + 1))\n    ELSE ''\n  END as last_name\nFROM t;\n\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": " Ada Lovelace |Ada Lovelace|Ada|Lovelace\n Grace  Brewster Hopper|Grace  Brewster Hopper|Grace|Brewster Hopper\nLinus|Linus|Linus|\n  Leading and trailing  |Leading and trailing|Leading|and trailing\n"
+          },
+          {
+            "commands": "sqlite3 :memory: \"\nSELECT\n  SUBSTR('12/10/2023', 7, 4) || '-' || SUBSTR('12/10/2023', 1, 2) || '-' || SUBSTR('12/10/2023', 4, 2);\n\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "2023-12-10\n"
+          },
+          {
+            "commands": "cat << 'EOF' > /tmp/test_migration.sql\n-- Create mapping of old user id to canonical (min) user id\nCREATE TEMP TABLE user_mapping AS\nSELECT\n  id AS old_id,\n  MIN(id) OVER (PARTITION BY LOWER(TRIM(email))) AS new_id\nFROM users;\n\n-- Update orders to point to the canonical user id\nUPDATE orders\nSET user_id = (SELECT new_id FROM user_mapping WHERE old_id = orders.user_id)\nWHERE user_id IN (SELECT old_id FROM user_mapping WHERE old_id != new_id);\n\n-- Create new users table\nCREATE TABLE users_v2 (\n  id INTEGER PRIMARY KEY,\n  first_name TEXT NOT NULL,\n  last_name TEXT NOT NULL,\n  email TEXT NOT NULL UNIQUE,\n  signup_date TEXT NOT NULL\n);\n\n-- Insert into users_v2 only the kept users\nINSERT INTO users_v2 (id, first_name, last_name, email, signup_date)\nSELECT\n  id,\n  CASE\n    WHEN INSTR(TRIM(full_name), ' ') > 0\n    THEN SUBSTR(TRIM(full_name), 1, INSTR(TRIM(full_name), ' ') - 1)\n    ELSE TRIM(full_name)\n  END AS first_name,\n  CASE\n    WHEN INSTR(TRIM(full_name), ' ') > 0\n    THEN TRIM(SUBSTR(TRIM(full_name), INSTR(TRIM(full_name), ' ') + 1))\n    ELSE ''\n  END AS last_name,\n  LOWER(TRIM(email)) AS email,\n  SUBSTR(signup, 7, 4) || '-' || SUBSTR(signup, 1, 2) || '-' || SUBSTR(signup, 4, 2) AS signup_date\nFROM users\nWHERE id IN (SELECT DISTINCT new_id FROM user_mapping);\n\n-- Replace old users table\nDROP TABLE users;\nALTER TABLE users_v2 RENAME TO users;\n\n-- Clean up temp table\nDROP TABLE user_mapping;\n\n-- Update schema version\nUPDATE meta SET value = '2' WHERE key = 'schema_version';\nEOF\n\nsqlite3 :memory: < /app/schema_v1.sql\nsqlite3 /tmp/test.db < /app/schema_v1.sql\nsqlite3 /tmp/test.db < /tmp/test_migration.sql\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "sqlite3 /tmp/test.db \".schema\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "CREATE TABLE meta (\"key\" TEXT PRIMARY KEY, value TEXT NOT NULL);\nCREATE TABLE orders (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, total_cents INTEGER NOT NULL);\nCREATE TABLE users (id INTEGER PRIMARY KEY, first_name TEXT NOT NULL, last_name TEXT NOT NULL, email TEXT NOT NULL UNIQUE, signup_date TEXT NOT NULL);\n"
+          },
+          {
+            "commands": "sqlite3 /tmp/test.db \"SELECT * FROM users;\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "1|Ada|Lovelace|ada@example.com|2023-12-10\n2|Grace|Brewster Hopper|grace@navy.mil|2024-01-05\n3|Linus||linus@kernel.org|2024-07-04\n5|Alan|Turing|alan@bletchley.uk|2024-06-23\n"
+          },
+          {
+            "commands": "sqlite3 /tmp/test.db \"SELECT * FROM orders;\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "100|1|1500\n101|1|2500\n102|2|999\n103|5|120\n104|1|1\n"
+          },
+          {
+            "commands": "sqlite3 /tmp/test.db \"SELECT * FROM meta;\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "schema_version|2\n"
+          },
+          {
+            "commands": "sqlite3 /tmp/test.db \"PRAGMA table_info(users);\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "0|id|INTEGER|0||1\n1|first_name|TEXT|1||0\n2|last_name|TEXT|1||0\n3|email|TEXT|1||0\n4|signup_date|TEXT|1||0\n"
+          },
+          {
+            "commands": "python3 -c \"\nimport sqlite3\n\nconn = sqlite3.connect('/tmp/test.db')\ncursor = conn.cursor()\ncursor.execute('PRAGMA table_info(users)')\ncols = cursor.fetchall()\nprint(cols)\n\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[(0, 'id', 'INTEGER', 0, None, 1), (1, 'first_name', 'TEXT', 1, None, 0), (2, 'last_name', 'TEXT', 1, None, 0), (3, 'email', 'TEXT', 1, None, 0), (4, 'signup_date', 'TEXT', 1, None, 0)]\n"
+          },
+          {
+            "commands": "python3 -c \"\nimport sqlite3\n\ndb = sqlite3.connect(':memory:')\ndb.executescript('''\nCREATE TABLE users(id INTEGER PRIMARY KEY, full_name TEXT NOT NULL, email TEXT NOT NULL, signup TEXT NOT NULL);\nCREATE TABLE orders(id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, total_cents INTEGER NOT NULL);\nCREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);\nINSERT INTO meta VALUES ('schema_version', '1');\n\n-- Multiple duplicates, different order of ids\nINSERT INTO users VALUES (10, 'John Doe', 'john@test.com', '01/01/2020');\nINSERT INTO users VALUES (5, 'Johnny D', '  JOHN@test.com ', '02/02/2021');\nINSERT INTO users VALUES (12, 'Jon Doe', 'John@Test.COM', '03/03/2022');\nINSERT INTO users VALUES (20, 'Single Name', 'single@test.com', '12/31/2019');\nINSERT INTO users VALUES (30, '   Spaced    Name   ', 'spaced@test.com', '05/15/2023');\nINSERT INTO users VALUES (40, 'NoSpace', 'nospace@test.com', '10/10/2020');\n\nINSERT INTO orders VALUES (1, 10, 100);\nINSERT INTO orders VALUES (2, 5, 200);\nINSERT INTO orders VALUES (3, 12, 300);\nINSERT INTO orders VALUES (4, 20, 400);\nINSERT INTO orders VALUES (5, 999, 500); -- order with nonexistent user, should it remain 999?\n''')\n\nwith open('/tmp/test_migration.sql') as f:\n    migration_sql = f.read()\n\ndb.executescript(migration_sql)\n\nprint('Users:')\nfor row in db.execute('SELECT * FROM users ORDER BY id'):\n    print(row)\n\nprint('Orders:')\nfor row in db.execute('SELECT * FROM orders ORDER BY id'):\n    print(row)\n\nprint('Meta:')\nfor row in db.execute('SELECT * FROM meta'):\n    print(row)\n\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Users:\n(5, 'Johnny', 'D', 'john@test.com', '2021-02-02')\n(20, 'Single', 'Name', 'single@test.com', '2019-12-31')\n(30, 'Spaced', 'Name', 'spaced@test.com', '2023-05-15')\n(40, 'NoSpace', '', 'nospace@test.com', '2020-10-10')\nOrders:\n(1, 5, 100)\n(2, 5, 200)\n(3, 5, 300)\n(4, 20, 400)\n(5, 999, 500)\nMeta:\n('schema_version', '2')\n"
+          },
+          {
+            "commands": "cat << 'EOF' > /app/migrations/002_users_v2.sql\n-- Create mapping of old user id to canonical (min) user id\nCREATE TEMP TABLE user_mapping AS\nSELECT\n  id AS old_id,\n  MIN(id) OVER (PARTITION BY LOWER(TRIM(email))) AS new_id\nFROM users;\n\n-- Update orders to point to the canonical user id\nUPDATE orders\nSET user_id = (SELECT new_id FROM user_mapping WHERE old_id = orders.user_id)\nWHERE user_id IN (SELECT old_id FROM user_mapping WHERE old_id != new_id);\n\n-- Create new users table\nCREATE TABLE users_v2 (\n  id INTEGER PRIMARY KEY,\n  first_name TEXT NOT NULL,\n  last_name TEXT NOT NULL,\n  email TEXT NOT NULL UNIQUE,\n  signup_date TEXT NOT NULL\n);\n\n-- Insert into users_v2 only the kept users\nINSERT INTO users_v2 (id, first_name, last_name, email, signup_date)\nSELECT\n  id,\n  CASE\n    WHEN INSTR(TRIM(full_name), ' ') > 0\n    THEN SUBSTR(TRIM(full_name), 1, INSTR(TRIM(full_name), ' ') - 1)\n    ELSE TRIM(full_name)\n  END AS first_name,\n  CASE\n    WHEN INSTR(TRIM(full_name), ' ') > 0\n    THEN TRIM(SUBSTR(TRIM(full_name), INSTR(TRIM(full_name), ' ') + 1))\n    ELSE ''\n  END AS last_name,\n  LOWER(TRIM(email)) AS email,\n  SUBSTR(signup, 7, 4) || '-' || SUBSTR(signup, 1, 2) || '-' || SUBSTR(signup, 4, 2) AS signup_date\nFROM users\nWHERE id IN (SELECT DISTINCT new_id FROM user_mapping);\n\n-- Replace old users table\nDROP TABLE users;\nALTER TABLE users_v2 RENAME TO users;\n\n-- Clean up temp table\nDROP TABLE user_mapping;\n\n-- Update schema version\nUPDATE meta SET value = '2' WHERE key = 'schema_version';\nEOF",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "sqlite3 /app/app.db < /app/migrations/002_users_v2.sql",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "sqlite3 /app/app.db \".schema\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "CREATE TABLE meta (\"key\" TEXT PRIMARY KEY, value TEXT NOT NULL);\nCREATE TABLE orders (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, total_cents INTEGER NOT NULL);\nCREATE TABLE users (id INTEGER PRIMARY KEY, first_name TEXT NOT NULL, last_name TEXT NOT NULL, email TEXT NOT NULL UNIQUE, signup_date TEXT NOT NULL);\n"
+          },
+          {
+            "commands": "sqlite3 /app/app.db \"SELECT * FROM users;\"\nsqlite3 /app/app.db \"SELECT * FROM orders;\"\nsqlite3 /app/app.db \"SELECT * FROM meta;\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "1|Ada|Lovelace|ada@example.com|2023-12-10\n2|Grace|Brewster Hopper|grace@navy.mil|2024-01-05\n3|Linus||linus@kernel.org|2024-07-04\n5|Alan|Turing|alan@bletchley.uk|2024-06-23\n100|1|1500\n101|1|2500\n102|2|999\n103|5|120\n104|1|1\nschema_version|2\n"
+          },
+          {
+            "commands": "rm -f /tmp/test_migration.sql /tmp/test.db",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

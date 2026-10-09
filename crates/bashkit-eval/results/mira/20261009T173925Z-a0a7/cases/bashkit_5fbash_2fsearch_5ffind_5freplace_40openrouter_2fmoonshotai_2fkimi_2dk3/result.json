@@ -1,0 +1,78 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "search_find_replace",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Search all .js files under /src for the string 'console.log'. Replace every occurrence with 'logger.info' in-place. Print each modified filename and how many replacements were made per file. At the end, print 'Files modified: N' with the total count of files changed."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Done. All `console.log` occurrences in the 4 `.js` files under `/src` were replaced in-place with `logger.info`:\n\n- `/src/app.js`: 1 replacement(s)\n- `/src/index.js`: 2 replacement(s)\n- `/src/middleware.js`: 2 replacement(s)\n- `/src/utils.js`: 0 replacements (no matches)\n\n**Files modified: 3**\n\nVerification confirms zero remaining `console.log` occurrences and all 5 replacements now read `logger.info`.",
+    "iterations": 5,
+    "tool_calls_count": 4,
+    "tool_calls": [
+      "ls /src 2>&1; echo '---'; find /src -type f -name '*.js' 2>&1 | head -50",
+      "grep -n 'console\\.log' /src/*.js | head -40",
+      "total=0\nwhile IFS= read -r f; do\n  count=$(grep -o 'console\\.log' \"$f\" | wc -l)\n  if [ \"$count\" -gt 0 ]; then\n    sed -i 's/console\\.log/logger.info/g' \"$f\"\n    echo \"$f: $count replacement(s)\"\n    total=$((total + 1))\n  fi\ndone < <(find /src -type f -name '*.js')\necho \"Files modified: $total\"",
+      "grep -rn 'console\\.log' /src --include='*.js'; echo \"remaining console.log occurrences: $?\"; grep -n 'logger\\.info' /src/*.js"
+    ],
+    "usage": {
+      "input_tokens": 4465,
+      "output_tokens": 580,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 7510
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 4.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 4.0,
+      "turns": 5.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls /src 2>&1; echo '---'; find /src -type f -name '*.js' 2>&1 | head -50",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "app.js\nindex.js\nmiddleware.js\nutils.js\n---\n/src/app.js\n/src/index.js\n/src/middleware.js\n/src/utils.js\n"
+          },
+          {
+            "commands": "grep -n 'console\\.log' /src/*.js | head -40",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/src/app.js:5:  console.log('Request received');\n/src/index.js:2:console.log('Server starting');\n/src/index.js:4:console.log('Listening on port 3000');\n/src/middleware.js:2:  console.log('Auth check');\n/src/middleware.js:6:    console.log('Auth failed');\n"
+          },
+          {
+            "commands": "total=0\nwhile IFS= read -r f; do\n  count=$(grep -o 'console\\.log' \"$f\" | wc -l)\n  if [ \"$count\" -gt 0 ]; then\n    sed -i 's/console\\.log/logger.info/g' \"$f\"\n    echo \"$f: $count replacement(s)\"\n    total=$((total + 1))\n  fi\ndone < <(find /src -type f -name '*.js')\necho \"Files modified: $total\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/src/app.js: 1 replacement(s)\n/src/index.js: 2 replacement(s)\n/src/middleware.js: 2 replacement(s)\nFiles modified: 3\n"
+          },
+          {
+            "commands": "grep -rn 'console\\.log' /src --include='*.js'; echo \"remaining console.log occurrences: $?\"; grep -n 'logger\\.info' /src/*.js",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "remaining console.log occurrences: 1\n/src/app.js:5:  logger.info('Request received');\n/src/index.js:2:logger.info('Server starting');\n/src/index.js:4:logger.info('Listening on port 3000');\n/src/middleware.js:2:  logger.info('Auth check');\n/src/middleware.js:6:    logger.info('Auth failed');\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

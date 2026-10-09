@@ -1,0 +1,61 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "file_ops_project_scaffold",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Create a Python project at /home/eval/myproject with the following structure: src/ directory with __init__.py, tests/ directory with __init__.py, docs/ directory, and a README.md at the project root with the text '# My Project'."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "The Python project has been created at `/home/eval/myproject` with the requested structure:\n\n```\n/home/eval/myproject/\n├── README.md\n├── docs/\n├── src/\n│   └── __init__.py\n└── tests/\n    └── __init__.py\n```\n\n`README.md` contains the text `# My Project`.",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "mkdir -p /home/eval/myproject/src /home/eval/myproject/tests /home/eval/myproject/docs\ntouch /home/eval/myproject/src/__init__.py\ntouch /home/eval/myproject/tests/__init__.py\necho '# My Project' > /home/eval/myproject/README.md\nfind /home/eval/myproject -maxdepth 2\ncat /home/eval/myproject/README.md"
+    ],
+    "usage": {
+      "input_tokens": 1016,
+      "output_tokens": 281,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 5086
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/home/eval/myproject/docs",
+          "/home/eval/myproject/src",
+          "/home/eval/myproject/tests"
+        ],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "mkdir -p /home/eval/myproject/src /home/eval/myproject/tests /home/eval/myproject/docs\ntouch /home/eval/myproject/src/__init__.py\ntouch /home/eval/myproject/tests/__init__.py\necho '# My Project' > /home/eval/myproject/README.md\nfind /home/eval/myproject -maxdepth 2\ncat /home/eval/myproject/README.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/home/eval/myproject\n/home/eval/myproject/README.md\n/home/eval/myproject/docs\n/home/eval/myproject/src\n/home/eval/myproject/src/__init__.py\n/home/eval/myproject/tests\n/home/eval/myproject/tests/__init__.py\n# My Project\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

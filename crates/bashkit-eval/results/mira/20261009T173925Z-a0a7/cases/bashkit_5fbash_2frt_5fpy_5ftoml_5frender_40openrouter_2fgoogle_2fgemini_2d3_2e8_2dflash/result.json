@@ -1,0 +1,99 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "rt_py_toml_render",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Render per-environment configs: for every /config/env/*.toml file, merge it over /config/base.toml and write /out/<name>.json (dev.toml -> /out/dev.json). Merge rules: tables merge recursively; any other value (scalars, arrays, arrays of tables) in the override replaces the base value; an override value equal to the string \"__unset__\" removes that key. TOML dates and datetimes become strings via Python's isoformat(). JSON: 2-space indent, keys sorted, non-ASCII characters written as-is (not \\u escapes), trailing newline. Also write /out/index.txt listing the environment names, sorted, one per line."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "3/3 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Per-environment configuration rendering has been implemented and executed.\n\n### Changes Summary\n- Parsed `/config/base.toml` and each environment configuration in `/config/env/*.toml` using Python's standard `tomllib`.\n- Implemented recursive merging rules:\n  - Nested dictionary tables are merged recursively.\n  - Non-dict values (scalars, lists, arrays of tables) override the base value.\n  - Keys with value `\"__unset__\"` are removed.\n- Converted date and datetime objects to ISO 8601 strings using `.isoformat()`.\n- Wrote formatted JSON configurations to `/out/<name>.json` (e.g. `/out/dev.json`, `/out/prod.json`) with 2-space indentation, sorted keys, UTF-8 non-ASCII characters preserved, and trailing newlines.\n- Generated `/out/index.txt` listing sorted environment names (`dev`, `prod`), one per line with a trailing newline.\n\n### Verification\n- Validated output files in `/out/`:\n  - `dev.json`: verified recursive merge of `server` and `db.pool`, removal of `server.tls.cert` via `\"__unset__\"`, retention of Unicode greeting `\"Привіт, світ\"`, and stringification of `maintenance` and `released`.\n  - `prod.json`: verified removal of `maintenance`, replacement of `routes` list, override of `db.url` and `server.workers`.\n  - `index.txt`: confirmed sorted list containing `dev` and `prod`.",
+    "iterations": 8,
+    "tool_calls_count": 7,
+    "tool_calls": [
+      "python3 -c \"import tomllib; print(tomllib.__name__)\"\nls -la /config\nls -la /config/env\n",
+      "cat /config/base.toml\necho \"--- dev.toml ---\"\ncat /config/env/dev.toml\necho \"--- prod.toml ---\"\ncat /config/env/prod.toml\n",
+      "python3 -c \"\nimport tomllib\nwith open('/config/base.toml', 'rb') as f:\n    d = tomllib.load(f)\nprint(d)\nfor k, v in d.items():\n    print(k, type(v), v)\n\"",
+      "python3 -c \"\nimport tomllib\nimport datetime\n\ns = '''\nd = 2026-09-30\ndt = 2026-10-12T02:00:00+02:00\nt = 07:32:00\n'''\ndata = tomllib.loads(s)\nfor k, v in data.items():\n    print(k, type(v), repr(v))\n\"",
+      "ls -la /\nls -la /out 2>/dev/null || echo \"/out does not exist yet\"\n",
+      "python3 -c \"\nimport glob, json, os, tomllib\nfrom datetime import date, datetime, time\n\ndef deep_merge(base, override):\n    result = dict(base)\n    for key, val in override.items():\n        if val == '__unset__':\n            result.pop(key, None)\n        elif isinstance(val, dict) and isinstance(result.get(key), dict):\n            result[key] = deep_merge(result[key], val)\n        else:\n            result[key] = val\n    return result\n\ndef convert_dates(obj):\n    if isinstance(obj, dict):\n        return {k: convert_dates(v) for k, v in obj.items()}\n    elif isinstance(obj, list):\n        return [convert_dates(x) for x in obj]\n    elif isinstance(obj, (datetime, date, time)):\n        return obj.isoformat()\n    return obj\n\nos.makedirs('/out', exist_ok=True)\n\nwith open('/config/base.toml', 'rb') as f:\n    base_data = tomllib.load(f)\n\nenv_files = sorted(glob.glob('/config/env/*.toml'))\nnames = []\n\nfor env_path in env_files:\n    fname = os.path.basename(env_path)\n    name, _ = os.path.splitext(fname)\n    names.append(name)\n\n    with open(env_path, 'rb') as f:\n        override_data = tomllib.load(f)\n\n    merged = deep_merge(base_data, override_data)\n    converted = convert_dates(merged)\n\n    out_path = f'/out/{name}.json'\n    with open(out_path, 'w', encoding='utf-8') as f:\n        json.dump(converted, f, indent=2, sort_keys=True, ensure_ascii=False)\n        f.write('\\n')\n\nwith open('/out/index.txt', 'w', encoding='utf-8') as f:\n    for n in sorted(names):\n        f.write(f'{n}\\n')\n\"",
+      "ls -la /out\necho \"=== index.txt ===\"\ncat /out/index.txt\necho \"=== dev.json ===\"\ncat /out/dev.json\necho \"=== prod.json ===\"\ncat /out/prod.json\n"
+    ],
+    "usage": {
+      "input_tokens": 13422,
+      "output_tokens": 1311,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 20933
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 7.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 7.0,
+      "turns": 8.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "python3 -c \"import tomllib; print(tomllib.__name__)\"\nls -la /config\nls -la /config/env\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "tomllib\n-rw-r--r--      363 2026-10-09 18:17 base.toml\ndrwxr-xr-x        0 2026-10-09 18:17 env\n-rw-r--r--       27 2026-10-09 18:17 README.md\n-rw-r--r--      138 2026-10-09 18:17 dev.toml\n-rw-r--r--      220 2026-10-09 18:17 prod.toml\n"
+          },
+          {
+            "commands": "cat /config/base.toml\necho \"--- dev.toml ---\"\ncat /config/env/dev.toml\necho \"--- prod.toml ---\"\ncat /config/env/prod.toml\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "name = \"shop\"\ndebug = false\nreleased = 2026-09-30\nmaintenance = 2026-10-12T02:00:00+02:00\n\n[server]\nhost = \"0.0.0.0\"\nport = 8080\nworkers = 4\ntags = [\"web\", \"api\"]\n\n[server.tls]\nenabled = false\ncert = \"/etc/ssl/shop.pem\"\n\n[db]\nurl = \"postgres://db/shop\"\npool = { min = 1, max = 10 }\n\n[[routes]]\npath = \"/\"\nbackend = \"web\"\n\n[[routes]]\npath = \"/api\"\nbackend = \"api\"\n--- dev.toml ---\ndebug = true\ngreeting = \"Привіт, світ\"\n\n[server]\nport = 3000\ntags = [\"dev\"]\n\n[server.tls]\ncert = \"__unset__\"\n\n[db.pool]\nmax = 2\n--- prod.toml ---\nmaintenance = \"__unset__\"\n\n[server]\nworkers = 16\n\n[server.tls]\nenabled = true\n\n[db]\nurl = \"postgres://prod-db:5432/shop\"\nreplica = { url = \"postgres://replica/shop\", lag_ms = 250 }\n\n[[routes]]\npath = \"/\"\nbackend = \"cdn\"\n"
+          },
+          {
+            "commands": "python3 -c \"\nimport tomllib\nwith open('/config/base.toml', 'rb') as f:\n    d = tomllib.load(f)\nprint(d)\nfor k, v in d.items():\n    print(k, type(v), v)\n\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "{'name': 'shop', 'debug': False, 'released': datetime.date(2026, 9, 30), 'maintenance': datetime.datetime(2026, 10, 12, 2, 0, tzinfo=datetime.timezone(datetime.timedelta(seconds=7200))), 'server': {'host': '0.0.0.0', 'port': 8080, 'workers': 4, 'tags': ['web', 'api'], 'tls': {'enabled': False, 'cert': '/etc/ssl/shop.pem'}}, 'db': {'url': 'postgres://db/shop', 'pool': {'min': 1, 'max': 10}}, 'routes': [{'path': '/', 'backend': 'web'}, {'path': '/api', 'backend': 'api'}]}\nname <class 'str'> shop\ndebug <class 'bool'> False\nreleased <class 'datetime.date'> 2026-09-30\nmaintenance <class 'datetime.datetime'> 2026-10-12 02:00:00+02:00\nserver <class 'dict'> {'host': '0.0.0.0', 'port': 8080, 'workers': 4, 'tags': ['web', 'api'], 'tls': {'enabled': False, 'cert': '/etc/ssl/shop.pem'}}\ndb <class 'dict'> {'url': 'postgres://db/shop', 'pool': {'min': 1, 'max': 10}}\nroutes <class 'list'> [{'path': '/', 'backend': 'web'}, {'path': '/api', 'backend': 'api'}]\n"
+          },
+          {
+            "commands": "python3 -c \"\nimport tomllib\nimport datetime\n\ns = '''\nd = 2026-09-30\ndt = 2026-10-12T02:00:00+02:00\nt = 07:32:00\n'''\ndata = tomllib.loads(s)\nfor k, v in data.items():\n    print(k, type(v), repr(v))\n\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "d <class 'datetime.date'> datetime.date(2026, 9, 30)\ndt <class 'datetime.datetime'> datetime.datetime(2026, 10, 12, 2, 0, tzinfo=datetime.timezone(datetime.timedelta(seconds=7200)))\nt <class 'datetime.time'> datetime.time(7, 32)\n"
+          },
+          {
+            "commands": "ls -la /\nls -la /out 2>/dev/null || echo \"/out does not exist yet\"\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "drwxr-xr-x        0 2026-10-09 18:05 bin\ndrwxr-xr-x        0 2026-10-09 18:17 config\ndrwxr-xr-x        0 2026-10-09 18:17 dev\ndrwxr-xr-x        0 2026-10-09 18:05 etc\ndrwxr-xr-x        0 2026-10-09 18:17 home\ndrwxr-xr-x        0 2026-10-09 18:05 proc\ndrwxr-xr-x        0 2026-10-09 18:05 root\ndrwxrwxrwx        0 2026-10-09 18:17 tmp\ndrwxr-xr-x        0 2026-10-09 18:05 usr\n/out does not exist yet\n"
+          },
+          {
+            "commands": "python3 -c \"\nimport glob, json, os, tomllib\nfrom datetime import date, datetime, time\n\ndef deep_merge(base, override):\n    result = dict(base)\n    for key, val in override.items():\n        if val == '__unset__':\n            result.pop(key, None)\n        elif isinstance(val, dict) and isinstance(result.get(key), dict):\n            result[key] = deep_merge(result[key], val)\n        else:\n            result[key] = val\n    return result\n\ndef convert_dates(obj):\n    if isinstance(obj, dict):\n        return {k: convert_dates(v) for k, v in obj.items()}\n    elif isinstance(obj, list):\n        return [convert_dates(x) for x in obj]\n    elif isinstance(obj, (datetime, date, time)):\n        return obj.isoformat()\n    return obj\n\nos.makedirs('/out', exist_ok=True)\n\nwith open('/config/base.toml', 'rb') as f:\n    base_data = tomllib.load(f)\n\nenv_files = sorted(glob.glob('/config/env/*.toml'))\nnames = []\n\nfor env_path in env_files:\n    fname = os.path.basename(env_path)\n    name, _ = os.path.splitext(fname)\n    names.append(name)\n\n    with open(env_path, 'rb') as f:\n        override_data = tomllib.load(f)\n\n    merged = deep_merge(base_data, override_data)\n    converted = convert_dates(merged)\n\n    out_path = f'/out/{name}.json'\n    with open(out_path, 'w', encoding='utf-8') as f:\n        json.dump(converted, f, indent=2, sort_keys=True, ensure_ascii=False)\n        f.write('\\n')\n\nwith open('/out/index.txt', 'w', encoding='utf-8') as f:\n    for n in sorted(names):\n        f.write(f'{n}\\n')\n\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "ls -la /out\necho \"=== index.txt ===\"\ncat /out/index.txt\necho \"=== dev.json ===\"\ncat /out/dev.json\necho \"=== prod.json ===\"\ncat /out/prod.json\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--      535 2026-10-09 18:18 dev.json\n-rw-r--r--        9 2026-10-09 18:18 index.txt\n-rw-r--r--      535 2026-10-09 18:18 prod.json\n=== index.txt ===\ndev\nprod\n=== dev.json ===\n{\n  \"db\": {\n    \"pool\": {\n      \"max\": 2,\n      \"min\": 1\n    },\n    \"url\": \"postgres://db/shop\"\n  },\n  \"debug\": true,\n  \"greeting\": \"Привіт, світ\",\n  \"maintenance\": \"2026-10-12T02:00:00+02:00\",\n  \"name\": \"shop\",\n  \"released\": \"2026-09-30\",\n  \"routes\": [\n    {\n      \"backend\": \"web\",\n      \"path\": \"/\"\n    },\n    {\n      \"backend\": \"api\",\n      \"path\": \"/api\"\n    }\n  ],\n  \"server\": {\n    \"host\": \"0.0.0.0\",\n    \"port\": 3000,\n    \"tags\": [\n      \"dev\"\n    ],\n    \"tls\": {\n      \"enabled\": false\n    },\n    \"workers\": 4\n  }\n}\n=== prod.json ===\n{\n  \"db\": {\n    \"pool\": {\n      \"max\": 10,\n      \"min\": 1\n    },\n    \"replica\": {\n      \"lag_ms\": 250,\n      \"url\": \"postgres://replica/shop\"\n    },\n    \"url\": \"postgres://prod-db:5432/shop\"\n  },\n  \"debug\": false,\n  \"name\": \"shop\",\n  \"released\": \"2026-09-30\",\n  \"routes\": [\n    {\n      \"backend\": \"cdn\",\n      \"path\": \"/\"\n    }\n  ],\n  \"server\": {\n    \"host\": \"0.0.0.0\",\n    \"port\": 8080,\n    \"tags\": [\n      \"web\",\n      \"api\"\n    ],\n    \"tls\": {\n      \"cert\": \"/etc/ssl/shop.pem\",\n      \"enabled\": true\n    },\n    \"workers\": 16\n  }\n}\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

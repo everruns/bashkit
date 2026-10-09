@@ -1,0 +1,78 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "json_order_totals",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Read /data/orders.json containing an array of order objects with fields: customer, product, amount. Group orders by customer and compute the total amount spent per customer. Print each result as 'customer: total' with one line per customer, sorted by total descending."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "globex: 500\nacme: 325\ninitech: 75",
+    "iterations": 5,
+    "tool_calls_count": 4,
+    "tool_calls": [
+      "python3 -c \"\nimport json\nwith open('/data/orders.json') as f:\n    data = json.load(f)\nprint('Count:', len(data))\nprint('Sample:', data[:3])\n\"",
+      "python3 -c \"\nimport json\nfrom collections import defaultdict\n\nwith open('/data/orders.json') as f:\n    data = json.load(f)\n\ntotals = defaultdict(float)\nall_int = True\nfor item in data:\n    if not isinstance(item['amount'], int):\n        all_int = False\n    totals[item['customer']] += item['amount']\n\nprint('All amounts int?', all_int)\nprint(totals)\n\"",
+      "python3 -c \"\nwith open('/data/orders.json') as f:\n    print(f.read())\n\"",
+      "python3 -c \"\nimport json\nfrom collections import defaultdict\n\nwith open('/data/orders.json') as f:\n    orders = json.load(f)\n\ntotals = defaultdict(int)\nfor o in orders:\n    totals[o['customer']] += o['amount']\n\nsorted_totals = sorted(totals.items(), key=lambda x: x[1], reverse=True)\nfor cust, total in sorted_totals:\n    print(f'{cust}: {total}')\n\""
+    ],
+    "usage": {
+      "input_tokens": 3406,
+      "output_tokens": 635,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 22557
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 4.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 4.0,
+      "turns": 5.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "python3 -c \"\nimport json\nwith open('/data/orders.json') as f:\n    data = json.load(f)\nprint('Count:', len(data))\nprint('Sample:', data[:3])\n\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Count: 7\nSample: [{'customer': 'acme', 'product': 'widgets', 'amount': 150}, {'customer': 'globex', 'product': 'gadgets', 'amount': 200}, {'customer': 'acme', 'product': 'bolts', 'amount': 75}]\n"
+          },
+          {
+            "commands": "python3 -c \"\nimport json\nfrom collections import defaultdict\n\nwith open('/data/orders.json') as f:\n    data = json.load(f)\n\ntotals = defaultdict(float)\nall_int = True\nfor item in data:\n    if not isinstance(item['amount'], int):\n        all_int = False\n    totals[item['customer']] += item['amount']\n\nprint('All amounts int?', all_int)\nprint(totals)\n\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "All amounts int? True\ndefaultdict(<class 'float'>, {'acme': 325.0, 'globex': 500.0, 'initech': 75.0})\n"
+          },
+          {
+            "commands": "python3 -c \"\nwith open('/data/orders.json') as f:\n    print(f.read())\n\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[{\"customer\":\"acme\",\"product\":\"widgets\",\"amount\":150},{\"customer\":\"globex\",\"product\":\"gadgets\",\"amount\":200},{\"customer\":\"acme\",\"product\":\"bolts\",\"amount\":75},{\"customer\":\"initech\",\"product\":\"paper\",\"amount\":50},{\"customer\":\"globex\",\"product\":\"widgets\",\"amount\":300},{\"customer\":\"acme\",\"product\":\"nuts\",\"amount\":100},{\"customer\":\"initech\",\"product\":\"staples\",\"amount\":25}]\n"
+          },
+          {
+            "commands": "python3 -c \"\nimport json\nfrom collections import defaultdict\n\nwith open('/data/orders.json') as f:\n    orders = json.load(f)\n\ntotals = defaultdict(int)\nfor o in orders:\n    totals[o['customer']] += o['amount']\n\nsorted_totals = sorted(totals.items(), key=lambda x: x[1], reverse=True)\nfor cust, total in sorted_totals:\n    print(f'{cust}: {total}')\n\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "globex: 500\nacme: 325\ninitech: 75\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

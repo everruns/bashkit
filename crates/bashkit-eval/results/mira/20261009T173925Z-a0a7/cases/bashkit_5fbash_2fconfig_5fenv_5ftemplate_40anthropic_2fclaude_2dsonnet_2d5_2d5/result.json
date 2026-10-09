@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "config_env_template",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "Read /config/template.env which has lines like 'KEY=${VALUE:-default}'. For each line, check if the key exists in /config/overrides.txt (format: KEY=value). If it does, use the override value; otherwise use the default from the template. Write the final KEY=value pairs to /app/.env and print the result."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I wrote the final values to `/app/.env`. I had to create the `/app` directory first, since it didn't exist. The file contains:\n\n```\nDB_HOST=db.prod.internal\nDB_PORT=5432\nDB_NAME=myapp\nREDIS_URL=redis://localhost:6379\nLOG_LEVEL=warn\n```\n\n`DB_HOST` and `LOG_LEVEL` come from `/config/overrides.txt`. The other three keys use the defaults from the template.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat /config/template.env; echo ----; cat /config/overrides.txt; ls -la /app",
+      "mkdir -p /app\nwhile IFS= read -r line || [ -n \"$line\" ]; do\n  [[ -z \"$line\" || \"$line\" == \\#* ]] && continue\n  key=\"${line%%=*}\"\n  rest=\"${line#*=}\"\n  def=\"\"\n  if [[ \"$rest\" =~ ^\\$\\{[^:}]+:-(.*)\\}$ ]]; then def=\"${BASH_REMATCH[1]}\"; else def=\"$rest\"; fi\n  ov=$(grep -m1 \"^${key}=\" /config/overrides.txt)\n  if [ -n \"$ov\" ]; then echo \"$key=${ov#*=}\"; else echo \"$key=$def\"; fi\ndone < /config/template.env > /app/.env\ncat /app/.env"
+    ],
+    "usage": {
+      "input_tokens": 4080,
+      "output_tokens": 540,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 5996
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 1.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /config/template.env; echo ----; cat /config/overrides.txt; ls -la /app",
+            "exit_code": 2,
+            "stderr": "ls: cannot access '/app': No such file or directory\n",
+            "stdout": "DB_HOST=${DB_HOST:-localhost}\nDB_PORT=${DB_PORT:-5432}\nDB_NAME=${DB_NAME:-myapp}\nREDIS_URL=${REDIS_URL:-redis://localhost:6379}\nLOG_LEVEL=${LOG_LEVEL:-info}\n----\nDB_HOST=db.prod.internal\nLOG_LEVEL=warn\n"
+          },
+          {
+            "commands": "mkdir -p /app\nwhile IFS= read -r line || [ -n \"$line\" ]; do\n  [[ -z \"$line\" || \"$line\" == \\#* ]] && continue\n  key=\"${line%%=*}\"\n  rest=\"${line#*=}\"\n  def=\"\"\n  if [[ \"$rest\" =~ ^\\$\\{[^:}]+:-(.*)\\}$ ]]; then def=\"${BASH_REMATCH[1]}\"; else def=\"$rest\"; fi\n  ov=$(grep -m1 \"^${key}=\" /config/overrides.txt)\n  if [ -n \"$ov\" ]; then echo \"$key=${ov#*=}\"; else echo \"$key=$def\"; fi\ndone < /config/template.env > /app/.env\ncat /app/.env",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "DB_HOST=db.prod.internal\nDB_PORT=5432\nDB_NAME=myapp\nREDIS_URL=redis://localhost:6379\nLOG_LEVEL=warn\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

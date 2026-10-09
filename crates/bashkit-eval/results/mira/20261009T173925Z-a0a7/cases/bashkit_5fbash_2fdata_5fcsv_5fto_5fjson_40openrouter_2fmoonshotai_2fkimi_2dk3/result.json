@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "data_csv_to_json",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Convert /data/users.csv to a JSON array where each row becomes an object with the column headers as keys. Print the resulting JSON to stdout."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "The conversion is complete. The script used Python's `csv.DictReader` to map each row to an object keyed by the column headers (`name`, `age`, `city`), then printed the result as a JSON array.\n\nOne thing to note: since CSV is plain text, all values—including `age`—are strings in the output. If you'd like numbers converted to proper JSON types, I can add type inference:\n\n```bash\npython3 -c \"\nimport csv, json\ndef coerce(v):\n    try: return int(v)\n    except ValueError:\n        try: return float(v)\n        except ValueError: return v\nwith open('/data/users.csv', newline='') as f:\n    rows = [{k: coerce(v) for k, v in row.items()} for row in csv.DictReader(f)]\nprint(json.dumps(rows, indent=2))\n\"\n```\n\nThis would output `\"age\": 30` as a number instead of a string.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat /data/users.csv",
+      "python3 -c \"\nimport csv, json\nwith open('/data/users.csv', newline='') as f:\n    rows = list(csv.DictReader(f))\nprint(json.dumps(rows, indent=2))\n\""
+    ],
+    "usage": {
+      "input_tokens": 2078,
+      "output_tokens": 462,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 7231
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /data/users.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "name,age,city\nalice,30,seattle\nbob,25,portland\ncharlie,35,denver\n"
+          },
+          {
+            "commands": "python3 -c \"\nimport csv, json\nwith open('/data/users.csv', newline='') as f:\n    rows = list(csv.DictReader(f))\nprint(json.dumps(rows, indent=2))\n\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[\n  {\n    \"name\": \"alice\",\n    \"age\": \"30\",\n    \"city\": \"seattle\"\n  },\n  {\n    \"name\": \"bob\",\n    \"age\": \"25\",\n    \"city\": \"portland\"\n  },\n  {\n    \"name\": \"charlie\",\n    \"age\": \"35\",\n    \"city\": \"denver\"\n  }\n]\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

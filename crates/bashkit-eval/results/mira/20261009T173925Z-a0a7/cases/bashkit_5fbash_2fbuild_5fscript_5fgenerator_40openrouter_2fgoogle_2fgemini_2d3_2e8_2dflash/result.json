@@ -1,0 +1,106 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "build_script_generator",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Read /project/deps.txt which lists build targets and their dependencies (format: 'target: dep1 dep2'). Generate /project/build.sh that builds targets in correct dependency order (dependencies before dependents). Then run the build script, which should create each target as a file in /project/out/ containing 'built: <target>'. Print the build order."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "The dependency graph defined in `/project/deps.txt` was resolved to determine the topological build order.\n\n### Generated `/project/build.sh`\n```bash\n#!/bin/bash\nset -e\nmkdir -p /project/out\necho 'built: core' > /project/out/core\necho 'built: lib' > /project/out/lib\necho 'built: utils' > /project/out/utils\necho 'built: app' > /project/out/app\n```\n\nThe script was executed, generating each target in `/project/out/` containing `built: <target>`.\n\n### Build Order\n1. `core`\n2. `lib`\n3. `utils`\n4. `app`",
+    "iterations": 9,
+    "tool_calls_count": 8,
+    "tool_calls": [
+      "ls -la /project\ncat /project/deps.txt",
+      "ls -la /project/src",
+      "head -n 20 /project/src/*",
+      "python3 -c \"\nwith open('/project/deps.txt') as f:\n    lines = [line.strip() for line in f if line.strip()]\n\ngraph = {}\nfor line in lines:\n    parts = line.split(':')\n    target = parts[0].strip()\n    deps = parts[1].strip().split() if len(parts) > 1 and parts[1].strip() else []\n    graph[target] = deps\n\nprint('Graph:', graph)\n\n# Topological sort\n# dependencies before dependents\n# If A depends on B, B must be built before A. So in build order, B comes before A.\n# Let's check graph:\n# app depends on lib, utils\n# lib depends on core\n# utils depends on core\n# core depends on (nothing)\n\nfrom collections import defaultdict, deque\n\nin_degree = {node: 0 for node in graph}\nadj = defaultdict(list) # dep -> dependents\n\nfor target, deps in graph.items():\n    for dep in deps:\n        if dep not in in_degree:\n            in_degree[dep] = 0\n        adj[dep].append(target)\n        in_degree[target] += 1\n\nq = deque([node for node in in_degree if in_degree[node] == 0])\norder = []\nwhile q:\n    curr = q.popleft()\n    order.append(curr)\n    for neighbor in adj[curr]:\n        in_degree[neighbor] -= 1\n        if in_degree[neighbor] == 0:\n            q.append(neighbor)\n\nprint('Build order:', order)\n\"",
+      "cat << 'EOF' > /tmp/gen_build.py\nimport sys\nfrom collections import defaultdict, deque\n\ndeps_file = \"/project/deps.txt\"\nbuild_sh_file = \"/project/build.sh\"\n\ngraph = {}\nwith open(deps_file) as f:\n    for line in f:\n        line = line.strip()\n        if not line:\n            continue\n        parts = line.split(\":\")\n        target = parts[0].strip()\n        deps = parts[1].strip().split() if len(parts) > 1 and parts[1].strip() else []\n        graph[target] = deps\n\n# All targets and deps\nall_nodes = set(graph.keys())\nfor deps in graph.values():\n    all_nodes.update(deps)\n\n# In-degree for topological sort: target depends on deps, so deps must be done before target.\n# Edge: dep -> target.\nin_degree = {node: 0 for node in all_nodes}\nadj = defaultdict(list)\n\nfor target, deps in graph.items():\n    for dep in deps:\n        adj[dep].append(target)\n        in_degree[target] += 1\n\n# Deterministic topological sort: sort initial nodes\nq = deque(sorted([node for node in all_nodes if in_degree[node] == 0]))\norder = []\nwhile q:\n    curr = q.popleft()\n    order.append(curr)\n    # Sort neighbors for deterministic order\n    for nxt in sorted(adj[curr]):\n        in_degree[nxt] -= 1\n        if in_degree[nxt] == 0:\n            q.append(nxt)\n\nif len(order) != len(all_nodes):\n    print(\"Cycle detected!\", file=sys.stderr)\n    sys.exit(1)\n\n# Generate /project/build.sh\nlines = [\n    \"#!/bin/bash\",\n    \"set -e\",\n    \"mkdir -p /project/out\",\n]\n\nfor target in order:\n    lines.append(f\"echo 'built: {target}' > /project/out/{target}\")\n\nwith open(build_sh_file, \"w\") as f:\n    f.write(\"\\n\".join(lines) + \"\\n\")\n\nimport os\nos.chmod(build_sh_file, 0o755)\n\nprint(\"Build order:\")\nfor target in order:\n    print(target)\nEOF\npython3 /tmp/gen_build.py\n",
+      "cat /project/build.sh",
+      "bash /project/build.sh\nls -la /project/out\nfor f in /project/out/*; do\n    echo \"$f: $(cat $f)\"\ndone",
+      "rm -f /tmp/gen_build.py"
+    ],
+    "usage": {
+      "input_tokens": 11236,
+      "output_tokens": 1460,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 34628
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 8.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 8.0,
+      "turns": 9.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /project\ncat /project/deps.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       43 2026-10-09 17:47 deps.txt\ndrwxr-xr-x        0 2026-10-09 17:47 src\napp: lib utils\nlib: core\nutils: core\ncore:\n"
+          },
+          {
+            "commands": "ls -la /project/src",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       11 2026-10-09 17:47 app\n-rw-r--r--       12 2026-10-09 17:47 core\n-rw-r--r--       11 2026-10-09 17:47 lib\n-rw-r--r--       13 2026-10-09 17:47 utils\n"
+          },
+          {
+            "commands": "head -n 20 /project/src/*",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "==> /project/src/app <==\napp source\n\n==> /project/src/core <==\ncore source\n\n==> /project/src/lib <==\nlib source\n\n==> /project/src/utils <==\nutils source\n"
+          },
+          {
+            "commands": "python3 -c \"\nwith open('/project/deps.txt') as f:\n    lines = [line.strip() for line in f if line.strip()]\n\ngraph = {}\nfor line in lines:\n    parts = line.split(':')\n    target = parts[0].strip()\n    deps = parts[1].strip().split() if len(parts) > 1 and parts[1].strip() else []\n    graph[target] = deps\n\nprint('Graph:', graph)\n\n# Topological sort\n# dependencies before dependents\n# If A depends on B, B must be built before A. So in build order, B comes before A.\n# Let's check graph:\n# app depends on lib, utils\n# lib depends on core\n# utils depends on core\n# core depends on (nothing)\n\nfrom collections import defaultdict, deque\n\nin_degree = {node: 0 for node in graph}\nadj = defaultdict(list) # dep -> dependents\n\nfor target, deps in graph.items():\n    for dep in deps:\n        if dep not in in_degree:\n            in_degree[dep] = 0\n        adj[dep].append(target)\n        in_degree[target] += 1\n\nq = deque([node for node in in_degree if in_degree[node] == 0])\norder = []\nwhile q:\n    curr = q.popleft()\n    order.append(curr)\n    for neighbor in adj[curr]:\n        in_degree[neighbor] -= 1\n        if in_degree[neighbor] == 0:\n            q.append(neighbor)\n\nprint('Build order:', order)\n\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Graph: {'app': ['lib', 'utils'], 'lib': ['core'], 'utils': ['core'], 'core': []}\nBuild order: ['core', 'lib', 'utils', 'app']\n"
+          },
+          {
+            "commands": "cat << 'EOF' > /tmp/gen_build.py\nimport sys\nfrom collections import defaultdict, deque\n\ndeps_file = \"/project/deps.txt\"\nbuild_sh_file = \"/project/build.sh\"\n\ngraph = {}\nwith open(deps_file) as f:\n    for line in f:\n        line = line.strip()\n        if not line:\n            continue\n        parts = line.split(\":\")\n        target = parts[0].strip()\n        deps = parts[1].strip().split() if len(parts) > 1 and parts[1].strip() else []\n        graph[target] = deps\n\n# All targets and deps\nall_nodes = set(graph.keys())\nfor deps in graph.values():\n    all_nodes.update(deps)\n\n# In-degree for topological sort: target depends on deps, so deps must be done before target.\n# Edge: dep -> target.\nin_degree = {node: 0 for node in all_nodes}\nadj = defaultdict(list)\n\nfor target, deps in graph.items():\n    for dep in deps:\n        adj[dep].append(target)\n        in_degree[target] += 1\n\n# Deterministic topological sort: sort initial nodes\nq = deque(sorted([node for node in all_nodes if in_degree[node] == 0]))\norder = []\nwhile q:\n    curr = q.popleft()\n    order.append(curr)\n    # Sort neighbors for deterministic order\n    for nxt in sorted(adj[curr]):\n        in_degree[nxt] -= 1\n        if in_degree[nxt] == 0:\n            q.append(nxt)\n\nif len(order) != len(all_nodes):\n    print(\"Cycle detected!\", file=sys.stderr)\n    sys.exit(1)\n\n# Generate /project/build.sh\nlines = [\n    \"#!/bin/bash\",\n    \"set -e\",\n    \"mkdir -p /project/out\",\n]\n\nfor target in order:\n    lines.append(f\"echo 'built: {target}' > /project/out/{target}\")\n\nwith open(build_sh_file, \"w\") as f:\n    f.write(\"\\n\".join(lines) + \"\\n\")\n\nimport os\nos.chmod(build_sh_file, 0o755)\n\nprint(\"Build order:\")\nfor target in order:\n    print(target)\nEOF\npython3 /tmp/gen_build.py\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Build order:\ncore\nlib\nutils\napp\n"
+          },
+          {
+            "commands": "cat /project/build.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "#!/bin/bash\nset -e\nmkdir -p /project/out\necho 'built: core' > /project/out/core\necho 'built: lib' > /project/out/lib\necho 'built: utils' > /project/out/utils\necho 'built: app' > /project/out/app\n"
+          },
+          {
+            "commands": "bash /project/build.sh\nls -la /project/out\nfor f in /project/out/*; do\n    echo \"$f: $(cat $f)\"\ndone",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       11 2026-10-09 17:47 app\n-rw-r--r--       12 2026-10-09 17:47 core\n-rw-r--r--       11 2026-10-09 17:47 lib\n-rw-r--r--       13 2026-10-09 17:47 utils\n/project/out/app: built: app\n/project/out/core: built: core\n/project/out/lib: built: lib\n/project/out/utils: built: utils\n"
+          },
+          {
+            "commands": "rm -f /tmp/gen_build.py",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

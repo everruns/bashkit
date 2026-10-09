@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "error_graceful_parse",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Read /data/broken.json. It contains invalid JSON (a trailing comma before the closing brace). Fix the JSON by removing the trailing comma, save the fixed version back to the same file, and then parse it to print the 'name' field."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Done. Here's what happened:\n\n1. **Read the file** — it contained `{\"name\": \"test-app\", \"version\": \"1.0\", \"debug\": true, }` with a trailing comma before the closing `}`.\n2. **Fixed it** — removed the trailing comma and saved the valid JSON back to `/data/broken.json`.\n3. **Parsed and printed the `name` field** — output: `test-app`\n\nThe file now contains valid JSON: `{\"name\": \"test-app\", \"version\": \"1.0\", \"debug\": true}`",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "cat /data/broken.json",
+      "python3 - <<'EOF'\nimport json, re\n\nwith open('/data/broken.json') as f:\n    content = f.read()\n\n# Remove trailing commas before closing braces/brackets\nfixed = re.sub(r',\\s*([}\\]])', r'\\1', content)\n\nwith open('/data/broken.json', 'w') as f:\n    f.write(fixed)\n\ndata = json.loads(fixed)\nprint(data['name'])\nEOF",
+      "cat /data/broken.json"
+    ],
+    "usage": {
+      "input_tokens": 3008,
+      "output_tokens": 458,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 5671
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /data/broken.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "{\"name\": \"test-app\", \"version\": \"1.0\", \"debug\": true, }"
+          },
+          {
+            "commands": "python3 - <<'EOF'\nimport json, re\n\nwith open('/data/broken.json') as f:\n    content = f.read()\n\n# Remove trailing commas before closing braces/brackets\nfixed = re.sub(r',\\s*([}\\]])', r'\\1', content)\n\nwith open('/data/broken.json', 'w') as f:\n    f.write(fixed)\n\ndata = json.loads(fixed)\nprint(data['name'])\nEOF",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "test-app\n"
+          },
+          {
+            "commands": "cat /data/broken.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "{\"name\": \"test-app\", \"version\": \"1.0\", \"debug\": true}"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

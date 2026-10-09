@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "json_config_merge",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Merge /config/defaults.json with /config/production.json where production values override defaults. Perform a deep merge so that keys present only in defaults are preserved while keys in production take precedence. Save the merged result to /config/merged.json and print it."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "8/8 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Done. The deep merge worked as expected:\n\n**Production overrides applied:**\n- `app.port`: 3000 → **8080**\n- `app.debug`: true → **false**\n- `db.host`: localhost → **db.prod.internal**\n- `db.pool_size`: 5 → **20**\n- `log.level`: debug → **warn**\n- `log.format`: text → **json**\n\n**Defaults preserved (keys only in defaults):**\n- `app.name`: **myservice**\n- `db.port`: **5432**\n\nThe merge logic recursively combines nested dictionaries: when both files have a dict at the same key, it merges them key-by-key rather than replacing the whole subtree. Scalar values (or type mismatches) in production simply replace the defaults. The result was saved to `/config/merged.json` with pretty-printing.",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "ls -la /config/ 2>&1; echo \"---DEFAULTS---\"; cat /config/defaults.json 2>&1; echo \"---PRODUCTION---\"; cat /config/production.json 2>&1",
+      "cat > /home/eval/merge.py << 'EOF'\nimport json\n\ndef deep_merge(base, override):\n    \"\"\"Recursively merge override into base. Override values take precedence;\n    dict values present in both are merged recursively; everything else is replaced.\"\"\"\n    if isinstance(base, dict) and isinstance(override, dict):\n        result = dict(base)\n        for key, value in override.items():\n            if key in result:\n                result[key] = deep_merge(result[key], value)\n            else:\n                result[key] = value\n        return result\n    # Non-dict on either side (or type mismatch): override wins\n    return override\n\nwith open(\"/config/defaults.json\") as f:\n    defaults = json.load(f)\nwith open(\"/config/production.json\") as f:\n    production = json.load(f)\n\nmerged = deep_merge(defaults, production)\n\nwith open(\"/config/merged.json\", \"w\") as f:\n    json.dump(merged, f, indent=2)\n    f.write(\"\\n\")\n\nprint(json.dumps(merged, indent=2))\nEOF\npython3 /home/eval/merge.py",
+      "cat /config/merged.json"
+    ],
+    "usage": {
+      "input_tokens": 3975,
+      "output_tokens": 931,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 11802
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /config/ 2>&1; echo \"---DEFAULTS---\"; cat /config/defaults.json 2>&1; echo \"---PRODUCTION---\"; cat /config/production.json 2>&1",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--      145 2026-10-09 17:42 defaults.json\n-rw-r--r--      122 2026-10-09 17:42 production.json\n---DEFAULTS---\n{\"app\":{\"name\":\"myservice\",\"port\":3000,\"debug\":true},\"db\":{\"host\":\"localhost\",\"port\":5432,\"pool_size\":5},\"log\":{\"level\":\"debug\",\"format\":\"text\"}}---PRODUCTION---\n{\"app\":{\"port\":8080,\"debug\":false},\"db\":{\"host\":\"db.prod.internal\",\"pool_size\":20},\"log\":{\"level\":\"warn\",\"format\":\"json\"}}"
+          },
+          {
+            "commands": "cat > /home/eval/merge.py << 'EOF'\nimport json\n\ndef deep_merge(base, override):\n    \"\"\"Recursively merge override into base. Override values take precedence;\n    dict values present in both are merged recursively; everything else is replaced.\"\"\"\n    if isinstance(base, dict) and isinstance(override, dict):\n        result = dict(base)\n        for key, value in override.items():\n            if key in result:\n                result[key] = deep_merge(result[key], value)\n            else:\n                result[key] = value\n        return result\n    # Non-dict on either side (or type mismatch): override wins\n    return override\n\nwith open(\"/config/defaults.json\") as f:\n    defaults = json.load(f)\nwith open(\"/config/production.json\") as f:\n    production = json.load(f)\n\nmerged = deep_merge(defaults, production)\n\nwith open(\"/config/merged.json\", \"w\") as f:\n    json.dump(merged, f, indent=2)\n    f.write(\"\\n\")\n\nprint(json.dumps(merged, indent=2))\nEOF\npython3 /home/eval/merge.py",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "{\n  \"app\": {\n    \"name\": \"myservice\",\n    \"port\": 8080,\n    \"debug\": false\n  },\n  \"db\": {\n    \"host\": \"db.prod.internal\",\n    \"port\": 5432,\n    \"pool_size\": 20\n  },\n  \"log\": {\n    \"level\": \"warn\",\n    \"format\": \"json\"\n  }\n}\n"
+          },
+          {
+            "commands": "cat /config/merged.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "{\n  \"app\": {\n    \"name\": \"myservice\",\n    \"port\": 8080,\n    \"debug\": false\n  },\n  \"db\": {\n    \"host\": \"db.prod.internal\",\n    \"port\": 5432,\n    \"pool_size\": 20\n  },\n  \"log\": {\n    \"level\": \"warn\",\n    \"format\": \"json\"\n  }\n}\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

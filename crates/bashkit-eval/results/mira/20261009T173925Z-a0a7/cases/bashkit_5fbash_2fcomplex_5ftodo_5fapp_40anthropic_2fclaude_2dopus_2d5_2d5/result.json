@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_todo_app",
+  "target": "anthropic/claude-opus-5-5",
+  "input": [
+    "Build a command-line TODO app. Create /app/todo.sh that supports these subcommands: 'add <task>' appends a task to /app/tasks.txt, 'list' prints all tasks with line numbers, 'done <number>' removes that line from the file. Then demonstrate: add 'Buy groceries', add 'Write tests', add 'Deploy app', list all tasks, mark task 1 as done, list again to show remaining tasks."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I created `/app/todo.sh` and ran the full demo. Every step worked as expected.\n\n**How it works:**\n- **`add <task>`** adds the task to the end of `/app/tasks.txt` (creating the file if needed). It shows an error if you don't give a task.\n- **`list`** prints every task with its line number, or \"No tasks.\" if the file is empty.\n- **`done <number>`** removes that line and shows which task was completed. It shows an error if the number isn't a positive whole number or is higher than the number of tasks.\n- Any other command shows a usage message.\n\n**Demo output:**\n```\nAdded: Buy groceries\nAdded: Write tests\nAdded: Deploy app\n--- list ---\n1. Buy groceries\n2. Write tests\n3. Deploy app\n--- done 1 ---\nCompleted: Buy groceries\n--- list ---\n1. Write tests\n2. Deploy app\n```\n\nAfter task 1 is removed, the remaining tasks are numbered again from 1. A task's number can therefore change after another task is marked done, so it's worth running `list` before using `done`.\n\nUsage: `/app/todo.sh add \"Some task\"`, `/app/todo.sh list`, `/app/todo.sh done 2`.",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "mkdir -p /app\ncat > /app/todo.sh <<'EOF'\n#!/usr/bin/env bash\n# Simple TODO app\nTASKS_FILE=\"/app/tasks.txt\"\ntouch \"$TASKS_FILE\"\n\nusage() {\n  echo \"Usage: $0 {add <task>|list|done <number>}\" >&2\n  exit 1\n}\n\ncase \"$1\" in\n  add)\n    shift\n    [ $# -eq 0 ] && { echo \"Error: no task given\" >&2; exit 1; }\n    echo \"$*\" >> \"$TASKS_FILE\"\n    echo \"Added: $*\"\n    ;;\n  list)\n    if [ ! -s \"$TASKS_FILE\" ]; then\n      echo \"No tasks.\"\n    else\n      n=0\n      while IFS= read -r line; do\n        n=$((n+1))\n        echo \"$n. $line\"\n      done < \"$TASKS_FILE\"\n    fi\n    ;;\n  done)\n    num=\"$2\"\n    if ! [[ \"$num\" =~ ^[1-9][0-9]*$ ]]; then\n      echo \"Error: invalid task number\" >&2; exit 1\n    fi\n    total=$(wc -l < \"$TASKS_FILE\")\n    if [ \"$num\" -gt \"$total\" ]; then\n      echo \"Error: task $num does not exist\" >&2; exit 1\n    fi\n    task=$(sed -n \"${num}p\" \"$TASKS_FILE\")\n    sed \"${num}d\" \"$TASKS_FILE\" > \"$TASKS_FILE.tmp\" && mv \"$TASKS_FILE.tmp\" \"$TASKS_FILE\"\n    echo \"Completed: $task\"\n    ;;\n  *)\n    usage\n    ;;\nesac\nEOF\nchmod +x /app/todo.sh\nrm -f /app/tasks.txt\ncd /app\n./todo.sh add 'Buy groceries'\n./todo.sh add 'Write tests'\n./todo.sh add 'Deploy app'\necho \"--- list ---\"\n./todo.sh list\necho \"--- done 1 ---\"\n./todo.sh done 1\necho \"--- list ---\"\n./todo.sh list"
+    ],
+    "usage": {
+      "input_tokens": 3081,
+      "output_tokens": 1174,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 11271
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "mkdir -p /app\ncat > /app/todo.sh <<'EOF'\n#!/usr/bin/env bash\n# Simple TODO app\nTASKS_FILE=\"/app/tasks.txt\"\ntouch \"$TASKS_FILE\"\n\nusage() {\n  echo \"Usage: $0 {add <task>|list|done <number>}\" >&2\n  exit 1\n}\n\ncase \"$1\" in\n  add)\n    shift\n    [ $# -eq 0 ] && { echo \"Error: no task given\" >&2; exit 1; }\n    echo \"$*\" >> \"$TASKS_FILE\"\n    echo \"Added: $*\"\n    ;;\n  list)\n    if [ ! -s \"$TASKS_FILE\" ]; then\n      echo \"No tasks.\"\n    else\n      n=0\n      while IFS= read -r line; do\n        n=$((n+1))\n        echo \"$n. $line\"\n      done < \"$TASKS_FILE\"\n    fi\n    ;;\n  done)\n    num=\"$2\"\n    if ! [[ \"$num\" =~ ^[1-9][0-9]*$ ]]; then\n      echo \"Error: invalid task number\" >&2; exit 1\n    fi\n    total=$(wc -l < \"$TASKS_FILE\")\n    if [ \"$num\" -gt \"$total\" ]; then\n      echo \"Error: task $num does not exist\" >&2; exit 1\n    fi\n    task=$(sed -n \"${num}p\" \"$TASKS_FILE\")\n    sed \"${num}d\" \"$TASKS_FILE\" > \"$TASKS_FILE.tmp\" && mv \"$TASKS_FILE.tmp\" \"$TASKS_FILE\"\n    echo \"Completed: $task\"\n    ;;\n  *)\n    usage\n    ;;\nesac\nEOF\nchmod +x /app/todo.sh\nrm -f /app/tasks.txt\ncd /app\n./todo.sh add 'Buy groceries'\n./todo.sh add 'Write tests'\n./todo.sh add 'Deploy app'\necho \"--- list ---\"\n./todo.sh list\necho \"--- done 1 ---\"\n./todo.sh done 1\necho \"--- list ---\"\n./todo.sh list",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Added: Buy groceries\nAdded: Write tests\nAdded: Deploy app\n--- list ---\n1. Buy groceries\n2. Write tests\n3. Deploy app\n--- done 1 ---\nCompleted: Buy groceries\n--- list ---\n1. Write tests\n2. Deploy app\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

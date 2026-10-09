@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "file_ops_backup_rename",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Make a backup of /data/config.yaml at /data/config.yaml.bak, then append the line 'updated: true' to the original /data/config.yaml file."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Done. Here's a summary of what happened:\n\n1. **Backup created** — `/data/config.yaml` was copied to `/data/config.yaml.bak` before any changes were made.\n2. **Line appended** — `updated: true` was added to the end of the original `/data/config.yaml`.\n\n**Verification:**\n- `/data/config.yaml` now contains the original 3 lines plus `updated: true`\n- `/data/config.yaml.bak` contains only the original 3 lines, untouched",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "cp /data/config.yaml /data/config.yaml.bak && echo 'updated: true' >> /data/config.yaml && echo \"--- config.yaml ---\" && cat /data/config.yaml && echo \"--- config.yaml.bak ---\" && cat /data/config.yaml.bak"
+    ],
+    "usage": {
+      "input_tokens": 1272,
+      "output_tokens": 327,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 3368
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cp /data/config.yaml /data/config.yaml.bak && echo 'updated: true' >> /data/config.yaml && echo \"--- config.yaml ---\" && cat /data/config.yaml && echo \"--- config.yaml.bak ---\" && cat /data/config.yaml.bak",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "--- config.yaml ---\nversion: 1\nmode: production\nretries: 3\nupdated: true\n--- config.yaml.bak ---\nversion: 1\nmode: production\nretries: 3\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

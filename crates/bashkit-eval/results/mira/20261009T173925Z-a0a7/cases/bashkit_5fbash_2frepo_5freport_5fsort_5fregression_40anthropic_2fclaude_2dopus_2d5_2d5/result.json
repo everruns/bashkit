@@ -1,0 +1,78 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "repo_report_sort_regression",
+  "target": "anthropic/claude-opus-5-5",
+  "input": [
+    "`make test` fails in the git repo /home/eval/report: the top-customers report no longer matches the golden file tests/expected.txt. The golden file is correct. Fix the report script, make sure `make test` passes, and commit with a message starting with `fix:`."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I fixed the report script, `make test` now passes (\"report OK\"), and the fix is committed as `fix: sort top-customers totals numerically`.\n\n**Cause:** `bin/top-customers` sorted the totals as text, not as numbers, using `sort -t, -k2 -r`. Compared character by character, \"99\" and \"95\" come out above \"1240\", so hooli and umbrella showed up as the top two customers.\n\n**Fix:** I changed the sort to `sort -t, -k2,2nr`. The `n` makes it compare numbers, `r` puts the largest first, and `2,2` limits the sort to the totals column. The top 3 is now globex 1240, acme 1200 and initech 1100, which matches `tests/expected.txt`.\n\nRunning the test creates `build/actual.txt`, which git now lists as an untracked file. I didn't commit it; you could add `build/` to `.gitignore` if you want to keep it out of `git status`.",
+    "iterations": 5,
+    "tool_calls_count": 4,
+    "tool_calls": [
+      "cd /home/eval/report && git status && git log --oneline | head && ls -R | head -30 && cat Makefile && make test 2>&1 | tail -30",
+      "cd /home/eval/report && cat bin/top-customers; cat data/orders.csv",
+      "cd /home/eval/report && sed -i 's/sort -t, -k2 -r/sort -t, -k2,2nr/' bin/top-customers && make test && git commit -am \"fix: sort top-customers totals numerically\" && git log --oneline | head -2",
+      "cd /home/eval/report && git log -2 --format='%h %s' && git status --short"
+    ],
+    "usage": {
+      "input_tokens": 8273,
+      "output_tokens": 802,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 12800
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 4.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 4.0,
+      "turns": 5.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cd /home/eval/report && git status && git log --oneline | head && ls -R | head -30 && cat Makefile && make test 2>&1 | tail -30",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "On branch master\n\nnothing to commit, working tree clean\ncommit b4649665\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 17:46:50 2026 +0000\n\n    initial import\n\n.:\nMakefile\nbin\ndata\ntests\n\n./bin:\ntop-customers\n\n./data:\norders.csv\n\n./tests:\nexpected.txt\ntest:\n\t@mkdir -p build\n\t@bin/top-customers data/orders.csv 3 > build/actual.txt\n\t@diff -u tests/expected.txt build/actual.txt && echo 'report OK'\n--- tests/expected.txt\n+++ build/actual.txt\n@@ -1,3 +1,3 @@\n+hooli,99\n+umbrella,95\n globex,1240\n-acme,1200\n-initech,1100\nmake: *** [Makefile:4: test] Error 1\n"
+          },
+          {
+            "commands": "cd /home/eval/report && cat bin/top-customers; cat data/orders.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "#!/bin/bash\n# usage: top-customers ORDERS.csv N -> top N customers by total spend\nawk -F, 'NR > 1 { total[$2] += $3 } END { for (c in total) print c \",\" total[c] }' \"$1\" \\\n  | sort -t, -k2 -r \\\n  | head -n \"$2\"\nid,customer,amount\n1,acme,900\n2,globex,1200\n3,initech,450\n4,acme,300\n5,umbrella,95\n6,globex,40\n7,initech,650\n8,hooli,99\n"
+          },
+          {
+            "commands": "cd /home/eval/report && sed -i 's/sort -t, -k2 -r/sort -t, -k2,2nr/' bin/top-customers && make test && git commit -am \"fix: sort top-customers totals numerically\" && git log --oneline | head -2",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "report OK\n[master b464966] fix: sort top-customers totals numerically\ncommit b4649660\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\n"
+          },
+          {
+            "commands": "cd /home/eval/report && git log -2 --format='%h %s' && git status --short",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "commit b4649660\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 17:46:55 2026 +0000\n\n    fix: sort top-customers totals numerically\n\ncommit b4649665\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 17:46:50 2026 +0000\n\n    initial import\n\nOn branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/actual.txt\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

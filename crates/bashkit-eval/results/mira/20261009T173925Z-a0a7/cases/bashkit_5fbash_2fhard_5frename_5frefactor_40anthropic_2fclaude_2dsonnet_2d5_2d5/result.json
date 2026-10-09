@@ -1,0 +1,32 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "hard_rename_refactor",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "In the git repository /home/eval/cfgtool, rename the shell function get_cfg to config_get everywhere it is used as code under lib/ and bin/: its definition, every call (including calls inside $(...) and inside double-quoted strings), and anywhere the name is used to refer to the function. Do not rename the different functions get_cfg_path, get_cfg_or and forget_cfg (keep their names; their bodies must call config_get). Text that is printed to users (echo/printf messages, usage text) is frozen because log parsers depend on it: keep it byte-for-byte, even where it mentions get_cfg. Do not edit docs/ or tests/; the tests already use the new name. Make `make test` pass, then commit with a message starting with `refactor:`."
+  ],
+  "passed": false,
+  "aggregate": 0.0,
+  "scores": [
+    {
+      "scorer": "infra",
+      "value": 0.0,
+      "pass": false,
+      "na": true,
+      "reason": "agent loop failed: provider chat failed: Anthropic API error (400 Bad Request): Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits."
+    }
+  ],
+  "transcript": {
+    "final_response": "",
+    "iterations": 0,
+    "tool_calls_count": 0,
+    "usage": {
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": 0.0
+    },
+    "error": "agent loop failed: provider chat failed: Anthropic API error (400 Bad Request): Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.",
+    "error_kind": "infra"
+  },
+  "skipped": false
+}

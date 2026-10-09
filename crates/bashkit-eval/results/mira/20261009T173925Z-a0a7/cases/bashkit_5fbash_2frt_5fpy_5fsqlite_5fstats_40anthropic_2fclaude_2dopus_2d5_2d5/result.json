@@ -1,0 +1,32 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "rt_py_sqlite_stats",
+  "target": "anthropic/claude-opus-5-5",
+  "input": [
+    "/data/shop.db is a SQLite database with a table orders(id, customer, category, amount_cents). Write /out/category_stats.json: a JSON object keyed by category whose values are objects with orders (count), total_cents, median_cents and top_customer. median_cents is the median amount; for an even count it is the mean of the two middle amounts rounded half up to an integer. top_customer is the customer with the largest total amount in that category (ties: alphabetically first). Format: 2-space indentation, keys sorted at every level, trailing newline (what Python's json.dumps(obj, indent=2, sort_keys=True) prints)."
+  ],
+  "passed": false,
+  "aggregate": 0.0,
+  "scores": [
+    {
+      "scorer": "infra",
+      "value": 0.0,
+      "pass": false,
+      "na": true,
+      "reason": "agent loop failed: provider chat failed: Anthropic API error (400 Bad Request): Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits."
+    }
+  ],
+  "transcript": {
+    "final_response": "",
+    "iterations": 0,
+    "tool_calls_count": 0,
+    "usage": {
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": 0.0
+    },
+    "error": "agent loop failed: provider chat failed: Anthropic API error (400 Bad Request): Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.",
+    "error_kind": "infra"
+  },
+  "skipped": false
+}

@@ -1,0 +1,78 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "rt_py_encodings",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "/data/legacy holds text files in mixed encodings. For every file whose name ends in `.txt` (case-sensitive), write a normalised copy with the same name to /out/clean/: UTF-8 without BOM, line endings \\r\\n and lone \\r converted to \\n, and ending with exactly one added \\n if the text did not already end with \\n.\nDetect each file's encoding in this order: starts with a UTF-16 BOM (FF FE or FE FF) -> utf-16; starts with the UTF-8 BOM -> utf-8-sig; decodes as UTF-8 -> utf-8 (plain ASCII included); otherwise latin-1.\nWrite /out/manifest.tsv (tab-separated, header name, encoding, lines, chars) with one row per file sorted by name, where lines is the number of \\n and chars the number of Unicode characters in the normalised text (newlines included, BOM excluded)."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "8/8 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Done. All 6 `.txt` files were processed (g.TXT was excluded — case-sensitive match) and every output passed validation.\n\n**Results in /out/manifest.tsv:**\n\n| name | encoding | lines | chars | notes |\n|---|---|---|---|---|\n| a.txt | utf-8 | 2 | 24 | plain UTF-8, already `\\n`-terminated |\n| b.txt | utf-8-sig | 2 | 26 | UTF-8 BOM stripped, `\\r\\n` → `\\n` |\n| c.txt | latin-1 | 2 | 23 | invalid UTF-8 → latin-1 (Señor, Müller, À) |\n| d.txt | utf-16 | 3 | 16 | FF FE BOM → decoded as UTF-16-LE, `\\r\\n` → `\\n` |\n| e.txt | utf-8 | 2 | 30 | plain ASCII, missing final newline added |\n| f.txt | latin-1 | 3 | 17 | lone `\\r` → `\\n`; `£` byte made UTF-8 decode fail → latin-1 |\n\n**Verification confirmed for every output in /out/clean/:**\n- Valid UTF-8, no BOM\n- No `\\r` bytes remain (both `\\r\\n` and lone `\\r` converted)\n- Ends with exactly one `\\n` (no double newline, none missing)\n- `lines` = count of `\\n`, `chars` = Unicode character count including newlines, excluding BOM\n\nThe manifest is tab-separated with the `name\tencoding\tlines\tchars` header, rows sorted by filename.",
+    "iterations": 5,
+    "tool_calls_count": 4,
+    "tool_calls": [
+      "ls -la /data/legacy/ 2>&1 | head -50; echo \"---\"; ls /data/legacy/ | wc -l",
+      "for f in /data/legacy/*; do echo \"== $f ==\"; xxd \"$f\" | head -4; done",
+      "mkdir -p /out/clean && cat > /tmp/clean.py <<'EOF'\nimport os\n\nSRC = \"/data/legacy\"\nDST = \"/out/clean\"\nMANIFEST = \"/out/manifest.tsv\"\n\ndef detect_and_decode(raw: bytes):\n    if raw.startswith(b\"\\xff\\xfe\") or raw.startswith(b\"\\xfe\\xff\"):\n        return \"utf-16\", raw.decode(\"utf-16\")  # codec strips BOM\n    if raw.startswith(b\"\\xef\\xbb\\xbf\"):\n        return \"utf-8-sig\", raw.decode(\"utf-8-sig\")  # strips BOM\n    try:\n        return \"utf-8\", raw.decode(\"utf-8\")\n    except UnicodeDecodeError:\n        return \"latin-1\", raw.decode(\"latin-1\")\n\ndef normalize(text: str) -> str:\n    text = text.replace(\"\\r\\n\", \"\\n\").replace(\"\\r\", \"\\n\")\n    if not text.endswith(\"\\n\"):\n        text += \"\\n\"\n    return text\n\nrows = []\nfor name in sorted(os.listdir(SRC)):\n    if not name.endswith(\".txt\"):\n        continue\n    path = os.path.join(SRC, name)\n    if not os.path.isfile(path):\n        continue\n    with open(path, \"rb\") as fh:\n        raw = fh.read()\n    enc, text = detect_and_decode(raw)\n    norm = normalize(text)\n    with open(os.path.join(DST, name), \"wb\") as fh:\n        fh.write(norm.encode(\"utf-8\"))  # utf-8, no BOM\n    rows.append((name, enc, norm.count(\"\\n\"), len(norm)))\n\nwith open(MANIFEST, \"w\", encoding=\"utf-8\", newline=\"\") as fh:\n    fh.write(\"name\\tencoding\\tlines\\tchars\\n\")\n    for r in rows:\n        fh.write(\"%s\\t%s\\t%d\\t%d\\n\" % r)\n\nprint(\"processed:\", [r[0] for r in rows])\nEOF\npython3 /tmp/clean.py",
+      "echo \"=== manifest ===\"; cat -A /out/manifest.tsv\necho; echo \"=== outputs ===\"; ls -la /out/clean/\necho; echo \"=== validation ===\"\npython3 - <<'EOF'\nimport os\nfor name in sorted(os.listdir(\"/out/clean\")):\n    raw = open(os.path.join(\"/out/clean\", name), \"rb\").read()\n    ok_utf8 = True\n    try:\n        text = raw.decode(\"utf-8\")\n    except UnicodeDecodeError:\n        ok_utf8 = False; text = raw.decode(\"utf-8\", \"replace\")\n    checks = {\n        \"valid_utf8\": ok_utf8,\n        \"no_BOM\": not raw.startswith(b\"\\xef\\xbb\\xbf\"),\n        \"no_CR\": b\"\\r\" not in raw,\n        \"ends_one_LF\": raw.endswith(b\"\\n\") and not raw.endswith(b\"\\n\\n\"),\n        \"lines\": text.count(\"\\n\"),\n        \"chars\": len(text),\n    }\n    print(name, checks)\n    print(\"  content:\", repr(text))\nEOF"
+    ],
+    "usage": {
+      "input_tokens": 8433,
+      "output_tokens": 1466,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 9407
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 4.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 4.0,
+      "turns": 5.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /data/legacy/ 2>&1 | head -50; echo \"---\"; ls /data/legacy/ | wc -l",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       29 2026-10-09 18:17 a.txt\n-rw-r--r--       32 2026-10-09 18:17 b.txt\n-rw-r--r--       22 2026-10-09 18:17 c.txt\n-rw-r--r--       40 2026-10-09 18:17 d.txt\n-rw-r--r--       29 2026-10-09 18:17 e.txt\n-rw-r--r--       17 2026-10-09 18:17 f.txt\n-rw-r--r--       28 2026-10-09 18:17 g.TXT\n---\n7\n"
+          },
+          {
+            "commands": "for f in /data/legacy/*; do echo \"== $f ==\"; xxd \"$f\" | head -4; done",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "== /data/legacy/a.txt ==\n00000000: 4361 66c3 a920 6372 c3a8 6d65 0a6e 61c3  Caf.. cr..me.na.\n00000010: af76 6520 72c3 a973 756d c3a9 0a         .ve r..sum...\n== /data/legacy/b.txt ==\n00000000: efbb bf42 4f4d 206c 696e 6520 310d 0a7a  ...BOM line 1..z\n00000010: 7765 6974 6520 5a65 696c 6520 c3bc 0d0a  weite Zeile ....\n== /data/legacy/c.txt ==\n00000000: 5365 f16f 7220 4dfc 6c6c 6572 0ac0 2062  Se.or M.ller.. b\n00000010: 6965 6e74 f474                           ient.t\n== /data/legacy/d.txt ==\n00000000: fffe a903 6d00 6500 6700 6100 0d00 0a00  ....m.e.g.a.....\n00000010: ba03 cc03 c303 bc03 b503 0d00 0a00 6500  ..............e.\n00000020: 6e00 6400 0d00 0a00                      n.d.....\n== /data/legacy/e.txt ==\n00000000: 706c 6169 6e20 6173 6369 690a 6e6f 206e  plain ascii.no n\n00000010: 6577 6c69 6e65 2061 7420 656e 64         ewline at end\n== /data/legacy/f.txt ==\n00000000: 6f6c 640d 6d61 630d 7374 796c 6520 a335  old.mac.style .5\n00000010: 0d                                       .\n== /data/legacy/g.TXT ==\n00000000: 6967 6e6f 7265 6420 7570 7065 722d 6361  ignored upper-ca\n00000010: 7365 2065 7874 656e 7369 6f6e            se extension\n"
+          },
+          {
+            "commands": "mkdir -p /out/clean && cat > /tmp/clean.py <<'EOF'\nimport os\n\nSRC = \"/data/legacy\"\nDST = \"/out/clean\"\nMANIFEST = \"/out/manifest.tsv\"\n\ndef detect_and_decode(raw: bytes):\n    if raw.startswith(b\"\\xff\\xfe\") or raw.startswith(b\"\\xfe\\xff\"):\n        return \"utf-16\", raw.decode(\"utf-16\")  # codec strips BOM\n    if raw.startswith(b\"\\xef\\xbb\\xbf\"):\n        return \"utf-8-sig\", raw.decode(\"utf-8-sig\")  # strips BOM\n    try:\n        return \"utf-8\", raw.decode(\"utf-8\")\n    except UnicodeDecodeError:\n        return \"latin-1\", raw.decode(\"latin-1\")\n\ndef normalize(text: str) -> str:\n    text = text.replace(\"\\r\\n\", \"\\n\").replace(\"\\r\", \"\\n\")\n    if not text.endswith(\"\\n\"):\n        text += \"\\n\"\n    return text\n\nrows = []\nfor name in sorted(os.listdir(SRC)):\n    if not name.endswith(\".txt\"):\n        continue\n    path = os.path.join(SRC, name)\n    if not os.path.isfile(path):\n        continue\n    with open(path, \"rb\") as fh:\n        raw = fh.read()\n    enc, text = detect_and_decode(raw)\n    norm = normalize(text)\n    with open(os.path.join(DST, name), \"wb\") as fh:\n        fh.write(norm.encode(\"utf-8\"))  # utf-8, no BOM\n    rows.append((name, enc, norm.count(\"\\n\"), len(norm)))\n\nwith open(MANIFEST, \"w\", encoding=\"utf-8\", newline=\"\") as fh:\n    fh.write(\"name\\tencoding\\tlines\\tchars\\n\")\n    for r in rows:\n        fh.write(\"%s\\t%s\\t%d\\t%d\\n\" % r)\n\nprint(\"processed:\", [r[0] for r in rows])\nEOF\npython3 /tmp/clean.py",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "processed: ['a.txt', 'b.txt', 'c.txt', 'd.txt', 'e.txt', 'f.txt']\n"
+          },
+          {
+            "commands": "echo \"=== manifest ===\"; cat -A /out/manifest.tsv\necho; echo \"=== outputs ===\"; ls -la /out/clean/\necho; echo \"=== validation ===\"\npython3 - <<'EOF'\nimport os\nfor name in sorted(os.listdir(\"/out/clean\")):\n    raw = open(os.path.join(\"/out/clean\", name), \"rb\").read()\n    ok_utf8 = True\n    try:\n        text = raw.decode(\"utf-8\")\n    except UnicodeDecodeError:\n        ok_utf8 = False; text = raw.decode(\"utf-8\", \"replace\")\n    checks = {\n        \"valid_utf8\": ok_utf8,\n        \"no_BOM\": not raw.startswith(b\"\\xef\\xbb\\xbf\"),\n        \"no_CR\": b\"\\r\" not in raw,\n        \"ends_one_LF\": raw.endswith(b\"\\n\") and not raw.endswith(b\"\\n\\n\"),\n        \"lines\": text.count(\"\\n\"),\n        \"chars\": len(text),\n    }\n    print(name, checks)\n    print(\"  content:\", repr(text))\nEOF",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== manifest ===\nname^Iencoding^Ilines^Ichars$\na.txt^Iutf-8^I2^I24$\nb.txt^Iutf-8-sig^I2^I26$\nc.txt^Ilatin-1^I2^I23$\nd.txt^Iutf-16^I3^I16$\ne.txt^Iutf-8^I2^I30$\nf.txt^Ilatin-1^I3^I17$\n\n=== outputs ===\n-rw-r--r--       29 2026-10-09 18:17 a.txt\n-rw-r--r--       27 2026-10-09 18:17 b.txt\n-rw-r--r--       27 2026-10-09 18:17 c.txt\n-rw-r--r--       22 2026-10-09 18:17 d.txt\n-rw-r--r--       30 2026-10-09 18:17 e.txt\n-rw-r--r--       18 2026-10-09 18:17 f.txt\n\n=== validation ===\na.txt {'valid_utf8': True, 'no_BOM': True, 'no_CR': True, 'ends_one_LF': True, 'lines': 2, 'chars': 24}\n  content: 'Café crème\\nnaïve résumé\\n'\nb.txt {'valid_utf8': True, 'no_BOM': True, 'no_CR': True, 'ends_one_LF': True, 'lines': 2, 'chars': 26}\n  content: 'BOM line 1\\nzweite Zeile ü\\n'\nc.txt {'valid_utf8': True, 'no_BOM': True, 'no_CR': True, 'ends_one_LF': True, 'lines': 2, 'chars': 23}\n  content: 'Señor Müller\\nÀ bientôt\\n'\nd.txt {'valid_utf8': True, 'no_BOM': True, 'no_CR': True, 'ends_one_LF': True, 'lines': 3, 'chars': 16}\n  content: 'Ωmega\\nκόσμε\\nend\\n'\ne.txt {'valid_utf8': True, 'no_BOM': True, 'no_CR': True, 'ends_one_LF': True, 'lines': 2, 'chars': 30}\n  content: 'plain ascii\\nno newline at end\\n'\nf.txt {'valid_utf8': True, 'no_BOM': True, 'no_CR': True, 'ends_one_LF': True, 'lines': 3, 'chars': 17}\n  content: 'old\\nmac\\nstyle £5\\n'\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

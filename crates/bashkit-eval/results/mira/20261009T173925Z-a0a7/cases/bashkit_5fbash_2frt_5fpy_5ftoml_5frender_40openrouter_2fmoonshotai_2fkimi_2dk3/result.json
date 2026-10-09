@@ -1,0 +1,85 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "rt_py_toml_render",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Render per-environment configs: for every /config/env/*.toml file, merge it over /config/base.toml and write /out/<name>.json (dev.toml -> /out/dev.json). Merge rules: tables merge recursively; any other value (scalars, arrays, arrays of tables) in the override replaces the base value; an override value equal to the string \"__unset__\" removes that key. TOML dates and datetimes become strings via Python's isoformat(). JSON: 2-space indent, keys sorted, non-ASCII characters written as-is (not \\u escapes), trailing newline. Also write /out/index.txt listing the environment names, sorted, one per line."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "3/3 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Done. All outputs are in `/out/`:\n\n**Files written**\n- `/out/dev.json` — base merged with `dev.toml`\n- `/out/prod.json` — base merged with `prod.toml`\n- `/out/index.txt` — `dev` and `prod`, one per line\n\n**Merge behavior verified**\n- **dev**: `server.port` 8080→3000 (scalar replace), `server.tags` → `[\"dev\"]` (array replace), `db.pool.max` 10→2 while `db.pool.min: 1` survives (recursive table merge), `server.tls.cert` removed via `\"__unset__\"` (`enabled` kept), new key `greeting` added with Cyrillic text written as-is (no `\\u` escapes), and base's `routes` array-of-tables untouched.\n- **prod**: `maintenance` datetime removed via `\"__unset__\"`, `server.tls.enabled` flipped to true (deep merge kept `cert`), new inline table `db.replica` added, and base's `[[routes]]` (2 entries) fully replaced by the single override entry.\n- **Dates**: `released` → `\"2026-09-30\"` and `maintenance` → `\"2026-10-12T02:00:00+02:00\"` via `isoformat()` (offset preserved).\n\n**Formatting confirmed**: 2-space indent, keys sorted, `ensure_ascii=False`, and every file (including `index.txt`) ends with a trailing newline. Both JSON files parse cleanly. The TOML was parsed with Python 3.14's stdlib `tomllib`, and only `*.toml` files were picked up (the `README.md` in `/config/env/` was ignored).",
+    "iterations": 6,
+    "tool_calls_count": 5,
+    "tool_calls": [
+      "ls -la /config/ /config/env/ 2>&1; echo \"---\"; ls -la /out 2>&1",
+      "cat /config/base.toml; echo \"=== dev ===\"; cat /config/env/dev.toml; echo \"=== prod ===\"; cat /config/env/prod.toml; echo \"=== readme ===\"; cat /config/env/README.md; echo; python3 --version; python3 -c \"import tomllib; print('tomllib ok')\"",
+      "mkdir -p /out && cat > /tmp/render.py <<'EOF'\nimport copy\nimport json\nimport tomllib\nfrom datetime import date, datetime, time\nfrom pathlib import Path\n\nUNSET = \"__unset__\"\nBASE = Path(\"/config/base.toml\")\nENVDIR = Path(\"/config/env\")\nOUTDIR = Path(\"/out\")\n\n\ndef merge(base, override):\n    \"\"\"Merge override onto base (both already plain Python objects).\"\"\"\n    if isinstance(base, dict) and isinstance(override, dict):\n        result = copy.deepcopy(base)\n        for k, v in override.items():\n            if v == UNSET and isinstance(v, str):\n                result.pop(k, None)\n            elif k in result:\n                result[k] = merge(result[k], v)\n            else:\n                result[k] = copy.deepcopy(v)\n        return result\n    if isinstance(override, str) and override == UNSET:\n        return None  # key absence handled by caller only for dict members\n    return copy.deepcopy(override)\n\n\ndef to_jsonable(obj):\n    if isinstance(obj, dict):\n        return {k: to_jsonable(v) for k, v in obj.items()}\n    if isinstance(obj, list):\n        return [to_jsonable(v) for v in obj]\n    if isinstance(obj, (datetime, date, time)):\n        return obj.isoformat()\n    return obj\n\n\ndef main():\n    with BASE.open(\"rb\") as f:\n        base = tomllib.load(f)\n\n    names = sorted(p.stem for p in ENVDIR.glob(\"*.toml\"))\n    for name in names:\n        with (ENVDIR / f\"{name}.toml\").open(\"rb\") as f:\n            override = tomllib.load(f)\n        merged = to_jsonable(merge(base, override))\n        text = json.dumps(merged, indent=2, sort_keys=True, ensure_ascii=False)\n        (OUTDIR / f\"{name}.json\").write_text(text + \"\\n\", encoding=\"utf-8\")\n\n    (OUTDIR / \"index.txt\").write_text(\"\".join(n + \"\\n\" for n in names), encoding=\"utf-8\")\n    print(\"wrote:\", \", \".join(names) or \"(none)\")\n\n\nif __name__ == \"__main__\":\n    main()\nEOF\npython3 /tmp/render.py",
+      "ls -la /out/; echo \"=== dev.json ===\"; cat /out/dev.json; echo \"=== prod.json ===\"; cat /out/prod.json; echo \"=== index.txt ===\"; cat /out/index.txt",
+      "for f in /out/dev.json /out/prod.json; do python3 -m json.tool \"$f\" > /dev/null && echo \"$f: valid JSON\"; tail -c1 \"$f\" | od -c | head -1; done; tail -c1 /out/index.txt | od -c | head -1"
+    ],
+    "usage": {
+      "input_tokens": 9905,
+      "output_tokens": 2483,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 52974
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 5.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 4.0,
+      "turns": 6.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /config/ /config/env/ 2>&1; echo \"---\"; ls -la /out 2>&1",
+            "exit_code": 2,
+            "stderr": "",
+            "stdout": "/config/:\n-rw-r--r--      363 2026-10-09 18:18 base.toml\ndrwxr-xr-x        0 2026-10-09 18:18 env\n\n/config/env/:\n-rw-r--r--       27 2026-10-09 18:18 README.md\n-rw-r--r--      138 2026-10-09 18:18 dev.toml\n-rw-r--r--      220 2026-10-09 18:18 prod.toml\n---\nls: cannot access '/out': No such file or directory\n"
+          },
+          {
+            "commands": "cat /config/base.toml; echo \"=== dev ===\"; cat /config/env/dev.toml; echo \"=== prod ===\"; cat /config/env/prod.toml; echo \"=== readme ===\"; cat /config/env/README.md; echo; python3 --version; python3 -c \"import tomllib; print('tomllib ok')\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "name = \"shop\"\ndebug = false\nreleased = 2026-09-30\nmaintenance = 2026-10-12T02:00:00+02:00\n\n[server]\nhost = \"0.0.0.0\"\nport = 8080\nworkers = 4\ntags = [\"web\", \"api\"]\n\n[server.tls]\nenabled = false\ncert = \"/etc/ssl/shop.pem\"\n\n[db]\nurl = \"postgres://db/shop\"\npool = { min = 1, max = 10 }\n\n[[routes]]\npath = \"/\"\nbackend = \"web\"\n\n[[routes]]\npath = \"/api\"\nbackend = \"api\"\n=== dev ===\ndebug = true\ngreeting = \"Привіт, світ\"\n\n[server]\nport = 3000\ntags = [\"dev\"]\n\n[server.tls]\ncert = \"__unset__\"\n\n[db.pool]\nmax = 2\n=== prod ===\nmaintenance = \"__unset__\"\n\n[server]\nworkers = 16\n\n[server.tls]\nenabled = true\n\n[db]\nurl = \"postgres://prod-db:5432/shop\"\nreplica = { url = \"postgres://replica/shop\", lag_ms = 250 }\n\n[[routes]]\npath = \"/\"\nbackend = \"cdn\"\n=== readme ===\nPer-environment overrides.\n\nPython 3.14.8\ntomllib ok\n"
+          },
+          {
+            "commands": "mkdir -p /out && cat > /tmp/render.py <<'EOF'\nimport copy\nimport json\nimport tomllib\nfrom datetime import date, datetime, time\nfrom pathlib import Path\n\nUNSET = \"__unset__\"\nBASE = Path(\"/config/base.toml\")\nENVDIR = Path(\"/config/env\")\nOUTDIR = Path(\"/out\")\n\n\ndef merge(base, override):\n    \"\"\"Merge override onto base (both already plain Python objects).\"\"\"\n    if isinstance(base, dict) and isinstance(override, dict):\n        result = copy.deepcopy(base)\n        for k, v in override.items():\n            if v == UNSET and isinstance(v, str):\n                result.pop(k, None)\n            elif k in result:\n                result[k] = merge(result[k], v)\n            else:\n                result[k] = copy.deepcopy(v)\n        return result\n    if isinstance(override, str) and override == UNSET:\n        return None  # key absence handled by caller only for dict members\n    return copy.deepcopy(override)\n\n\ndef to_jsonable(obj):\n    if isinstance(obj, dict):\n        return {k: to_jsonable(v) for k, v in obj.items()}\n    if isinstance(obj, list):\n        return [to_jsonable(v) for v in obj]\n    if isinstance(obj, (datetime, date, time)):\n        return obj.isoformat()\n    return obj\n\n\ndef main():\n    with BASE.open(\"rb\") as f:\n        base = tomllib.load(f)\n\n    names = sorted(p.stem for p in ENVDIR.glob(\"*.toml\"))\n    for name in names:\n        with (ENVDIR / f\"{name}.toml\").open(\"rb\") as f:\n            override = tomllib.load(f)\n        merged = to_jsonable(merge(base, override))\n        text = json.dumps(merged, indent=2, sort_keys=True, ensure_ascii=False)\n        (OUTDIR / f\"{name}.json\").write_text(text + \"\\n\", encoding=\"utf-8\")\n\n    (OUTDIR / \"index.txt\").write_text(\"\".join(n + \"\\n\" for n in names), encoding=\"utf-8\")\n    print(\"wrote:\", \", \".join(names) or \"(none)\")\n\n\nif __name__ == \"__main__\":\n    main()\nEOF\npython3 /tmp/render.py",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "wrote: dev, prod\n"
+          },
+          {
+            "commands": "ls -la /out/; echo \"=== dev.json ===\"; cat /out/dev.json; echo \"=== prod.json ===\"; cat /out/prod.json; echo \"=== index.txt ===\"; cat /out/index.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--      535 2026-10-09 18:18 dev.json\n-rw-r--r--        9 2026-10-09 18:18 index.txt\n-rw-r--r--      535 2026-10-09 18:18 prod.json\n=== dev.json ===\n{\n  \"db\": {\n    \"pool\": {\n      \"max\": 2,\n      \"min\": 1\n    },\n    \"url\": \"postgres://db/shop\"\n  },\n  \"debug\": true,\n  \"greeting\": \"Привіт, світ\",\n  \"maintenance\": \"2026-10-12T02:00:00+02:00\",\n  \"name\": \"shop\",\n  \"released\": \"2026-09-30\",\n  \"routes\": [\n    {\n      \"backend\": \"web\",\n      \"path\": \"/\"\n    },\n    {\n      \"backend\": \"api\",\n      \"path\": \"/api\"\n    }\n  ],\n  \"server\": {\n    \"host\": \"0.0.0.0\",\n    \"port\": 3000,\n    \"tags\": [\n      \"dev\"\n    ],\n    \"tls\": {\n      \"enabled\": false\n    },\n    \"workers\": 4\n  }\n}\n=== prod.json ===\n{\n  \"db\": {\n    \"pool\": {\n      \"max\": 10,\n      \"min\": 1\n    },\n    \"replica\": {\n      \"lag_ms\": 250,\n      \"url\": \"postgres://replica/shop\"\n    },\n    \"url\": \"postgres://prod-db:5432/shop\"\n  },\n  \"debug\": false,\n  \"name\": \"shop\",\n  \"released\": \"2026-09-30\",\n  \"routes\": [\n    {\n      \"backend\": \"cdn\",\n      \"path\": \"/\"\n    }\n  ],\n  \"server\": {\n    \"host\": \"0.0.0.0\",\n    \"port\": 8080,\n    \"tags\": [\n      \"web\",\n      \"api\"\n    ],\n    \"tls\": {\n      \"cert\": \"/etc/ssl/shop.pem\",\n      \"enabled\": true\n    },\n    \"workers\": 16\n  }\n}\n=== index.txt ===\ndev\nprod\n"
+          },
+          {
+            "commands": "for f in /out/dev.json /out/prod.json; do python3 -m json.tool \"$f\" > /dev/null && echo \"$f: valid JSON\"; tail -c1 \"$f\" | od -c | head -1; done; tail -c1 /out/index.txt | od -c | head -1",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/out/dev.json: valid JSON\n0000000  \\n\n/out/prod.json: valid JSON\n0000000  \\n\n0000000  \\n\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

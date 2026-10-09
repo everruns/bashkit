@@ -1,0 +1,32 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "rt_sqlite_hr_report",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "Load /data/employees.csv and /data/departments.csv (CSV with header rows; fields may be double-quoted) into a new SQLite database /data/hr.db using the sqlite3 command, with tables:\n  departments(id INTEGER PRIMARY KEY, name TEXT NOT NULL)\n  employees(id INTEGER PRIMARY KEY, name TEXT NOT NULL, dept_id INTEGER, salary INTEGER NOT NULL, hired TEXT NOT NULL)\nEvery CSV row must be loaded with its values unchanged.\n\nThen produce /out/dept_report.csv from a query on hr.db: header department,headcount,avg_salary,top_earner; one row per department including departments with no employees (headcount 0, avg_salary and top_earner empty), plus a row named (none) for employees whose dept_id matches no department. avg_salary has exactly 2 decimals; top_earner is the highest-paid employee, ties broken by name alphabetically. Sort by headcount descending, then department name. Use standard CSV quoting (quote only fields containing a comma, quote or newline) and \\n line endings."
+  ],
+  "passed": false,
+  "aggregate": 0.0,
+  "scores": [
+    {
+      "scorer": "infra",
+      "value": 0.0,
+      "pass": false,
+      "na": true,
+      "reason": "agent loop failed: provider chat failed: Anthropic API error (400 Bad Request): Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits."
+    }
+  ],
+  "transcript": {
+    "final_response": "",
+    "iterations": 0,
+    "tool_calls_count": 0,
+    "usage": {
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": 0.0
+    },
+    "error": "agent loop failed: provider chat failed: Anthropic API error (400 Bad Request): Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.",
+    "error_kind": "infra"
+  },
+  "skipped": false
+}

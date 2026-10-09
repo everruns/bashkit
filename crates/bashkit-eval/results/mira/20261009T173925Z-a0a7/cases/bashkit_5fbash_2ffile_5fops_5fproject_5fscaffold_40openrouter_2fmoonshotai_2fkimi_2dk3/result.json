@@ -1,0 +1,68 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "file_ops_project_scaffold",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Create a Python project at /home/eval/myproject with the following structure: src/ directory with __init__.py, tests/ directory with __init__.py, docs/ directory, and a README.md at the project root with the text '# My Project'."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "The project has been created at `/home/eval/myproject` with the following structure:\n\n```\nmyproject/\n├── README.md          # contains \"# My Project\"\n├── docs/\n├── src/\n│   └── __init__.py\n└── tests/\n    └── __init__.py\n```\n\nAll directories and files are in place, verified by the listing above.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "mkdir -p /home/eval/myproject/src /home/eval/myproject/tests /home/eval/myproject/docs && touch /home/eval/myproject/src/__init__.py /home/eval/myproject/tests/__init__.py && echo '# My Project' > /home/eval/myproject/README.md",
+      "find /home/eval/myproject -type f -o -type d | sort && echo '---' && cat /home/eval/myproject/README.md"
+    ],
+    "usage": {
+      "input_tokens": 2101,
+      "output_tokens": 324,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 4242
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/home/eval/myproject/docs",
+          "/home/eval/myproject/src",
+          "/home/eval/myproject/tests"
+        ],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "mkdir -p /home/eval/myproject/src /home/eval/myproject/tests /home/eval/myproject/docs && touch /home/eval/myproject/src/__init__.py /home/eval/myproject/tests/__init__.py && echo '# My Project' > /home/eval/myproject/README.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "find /home/eval/myproject -type f -o -type d | sort && echo '---' && cat /home/eval/myproject/README.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/home/eval/myproject\n/home/eval/myproject/README.md\n/home/eval/myproject/docs\n/home/eval/myproject/src\n/home/eval/myproject/src/__init__.py\n/home/eval/myproject/tests\n/home/eval/myproject/tests/__init__.py\n---\n# My Project\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

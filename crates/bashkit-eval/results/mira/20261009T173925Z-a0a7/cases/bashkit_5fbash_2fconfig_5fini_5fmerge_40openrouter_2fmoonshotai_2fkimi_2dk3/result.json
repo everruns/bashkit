@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "config_ini_merge",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Merge /config/defaults.ini and /config/custom.ini. Custom values should override defaults within the same section. Keys only in defaults should be preserved. Write the merged result to /config/merged.ini and print it. Sections are denoted by [section_name] headers."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Done. The merged configuration has been written to `/config/merged.ini`:\n\n```ini\n[server]\nhost=0.0.0.0\nport=9090\nworkers=8\n\n[database]\nhost=localhost\nport=5432\npool_size=5\n\n[logging]\nlevel=debug\nformat=json\n```\n\n**How the merge worked:**\n- **Custom overrides applied**: `[server]` got `port=9090` and `workers=8` (replacing `8080`/`4`); `[logging]` got `level=debug` and `format=json` (replacing `info`/`text`).\n- **Defaults preserved**: `host=0.0.0.0` in `[server]` (not present in custom) was kept, and the entire `[database]` section (absent from custom) carried over unchanged.\n- **Order preserved**: Sections and keys retain the order from the defaults file, with overridden values updated in place. Any sections existing only in `custom.ini` would be appended at the end (none in this case).\n\nAll verification checks passed — no stale default values remain, and every default-only key/section is intact.",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "ls -la /config/ && echo \"=== defaults.ini ===\" && cat /config/defaults.ini && echo \"=== custom.ini ===\" && cat /config/custom.ini",
+      "cat > /home/eval/merge_ini.py << 'EOF'\nfrom collections import OrderedDict\n\ndef parse_ini(path):\n    \"\"\"Parse an INI file into an OrderedDict of sections -> OrderedDict of key->value.\n    Preserves order of sections and keys.\"\"\"\n    sections = OrderedDict()\n    current = None\n    with open(path) as f:\n        for raw in f:\n            line = raw.strip()\n            if not line or line.startswith(('#', ';')):\n                continue\n            if line.startswith('[') and line.endswith(']'):\n                current = line[1:-1].strip()\n                sections.setdefault(current, OrderedDict())\n            elif '=' in line and current is not None:\n                key, value = line.split('=', 1)\n                sections[current][key.strip()] = value.strip()\n    return sections\n\ndefaults = parse_ini('/config/defaults.ini')\ncustom = parse_ini('/config/custom.ini')\n\nmerged = defaults  # already an OrderedDict; mutate in place\nfor section, kv in custom.items():\n    if section not in merged:\n        merged[section] = OrderedDict()\n    for key, value in kv.items():\n        merged[section][key] = value  # overrides existing key, keeps original position\n\nlines = []\nfor i, (section, kv) in enumerate(merged.items()):\n    if i:\n        lines.append('')\n    lines.append(f'[{section}]')\n    for key, value in kv.items():\n        lines.append(f'{key}={value}')\n\nwith open('/config/merged.ini', 'w') as f:\n    f.write('\\n'.join(lines) + '\\n')\n\nprint('Merge complete.')\nEOF\npython3 /home/eval/merge_ini.py && echo \"=== merged.ini ===\" && cat /config/merged.ini",
+      "python3 - << 'EOF'\n# Verification checks\nwith open('/config/merged.ini') as f:\n    content = f.read()\n\nchecks = {\n    \"custom overrides server.port\":      \"port=9090\" in content,\n    \"custom overrides server.workers\":   \"workers=8\" in content,\n    \"custom overrides logging.level\":    \"level=debug\" in content,\n    \"custom overrides logging.format\":   \"format=json\" in content,\n    \"defaults-only key server.host kept\":\"host=0.0.0.0\" in content,\n    \"defaults-only section [database]\":  \"[database]\" in content and \"pool_size=5\" in content,\n    \"no stale default values\":           \"port=8080\" not in content and \"level=info\" not in content and \"format=text\" not in content and \"workers=4\" not in content,\n}\nfor name, ok in checks.items():\n    print(f\"{'PASS' if ok else 'FAIL'}: {name}\")\nassert all(checks.values()), \"Some checks failed!\"\nprint(\"\\nAll checks passed ✔\")\nEOF"
+    ],
+    "usage": {
+      "input_tokens": 4455,
+      "output_tokens": 1434,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 17130
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /config/ && echo \"=== defaults.ini ===\" && cat /config/defaults.ini && echo \"=== custom.ini ===\" && cat /config/custom.ini",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       64 2026-10-09 17:46 custom.ini\n-rw-r--r--      125 2026-10-09 17:46 defaults.ini\n=== defaults.ini ===\n[server]\nhost=0.0.0.0\nport=8080\nworkers=4\n\n[database]\nhost=localhost\nport=5432\npool_size=5\n\n[logging]\nlevel=info\nformat=text\n=== custom.ini ===\n[server]\nport=9090\nworkers=8\n\n[logging]\nlevel=debug\nformat=json\n"
+          },
+          {
+            "commands": "cat > /home/eval/merge_ini.py << 'EOF'\nfrom collections import OrderedDict\n\ndef parse_ini(path):\n    \"\"\"Parse an INI file into an OrderedDict of sections -> OrderedDict of key->value.\n    Preserves order of sections and keys.\"\"\"\n    sections = OrderedDict()\n    current = None\n    with open(path) as f:\n        for raw in f:\n            line = raw.strip()\n            if not line or line.startswith(('#', ';')):\n                continue\n            if line.startswith('[') and line.endswith(']'):\n                current = line[1:-1].strip()\n                sections.setdefault(current, OrderedDict())\n            elif '=' in line and current is not None:\n                key, value = line.split('=', 1)\n                sections[current][key.strip()] = value.strip()\n    return sections\n\ndefaults = parse_ini('/config/defaults.ini')\ncustom = parse_ini('/config/custom.ini')\n\nmerged = defaults  # already an OrderedDict; mutate in place\nfor section, kv in custom.items():\n    if section not in merged:\n        merged[section] = OrderedDict()\n    for key, value in kv.items():\n        merged[section][key] = value  # overrides existing key, keeps original position\n\nlines = []\nfor i, (section, kv) in enumerate(merged.items()):\n    if i:\n        lines.append('')\n    lines.append(f'[{section}]')\n    for key, value in kv.items():\n        lines.append(f'{key}={value}')\n\nwith open('/config/merged.ini', 'w') as f:\n    f.write('\\n'.join(lines) + '\\n')\n\nprint('Merge complete.')\nEOF\npython3 /home/eval/merge_ini.py && echo \"=== merged.ini ===\" && cat /config/merged.ini",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Merge complete.\n=== merged.ini ===\n[server]\nhost=0.0.0.0\nport=9090\nworkers=8\n\n[database]\nhost=localhost\nport=5432\npool_size=5\n\n[logging]\nlevel=debug\nformat=json\n"
+          },
+          {
+            "commands": "python3 - << 'EOF'\n# Verification checks\nwith open('/config/merged.ini') as f:\n    content = f.read()\n\nchecks = {\n    \"custom overrides server.port\":      \"port=9090\" in content,\n    \"custom overrides server.workers\":   \"workers=8\" in content,\n    \"custom overrides logging.level\":    \"level=debug\" in content,\n    \"custom overrides logging.format\":   \"format=json\" in content,\n    \"defaults-only key server.host kept\":\"host=0.0.0.0\" in content,\n    \"defaults-only section [database]\":  \"[database]\" in content and \"pool_size=5\" in content,\n    \"no stale default values\":           \"port=8080\" not in content and \"level=info\" not in content and \"format=text\" not in content and \"workers=4\" not in content,\n}\nfor name, ok in checks.items():\n    print(f\"{'PASS' if ok else 'FAIL'}: {name}\")\nassert all(checks.values()), \"Some checks failed!\"\nprint(\"\\nAll checks passed ✔\")\nEOF",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "PASS: custom overrides server.port\nPASS: custom overrides server.workers\nPASS: custom overrides logging.level\nPASS: custom overrides logging.format\nPASS: defaults-only key server.host kept\nPASS: defaults-only section [database]\nPASS: no stale default values\n\nAll checks passed ✔\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

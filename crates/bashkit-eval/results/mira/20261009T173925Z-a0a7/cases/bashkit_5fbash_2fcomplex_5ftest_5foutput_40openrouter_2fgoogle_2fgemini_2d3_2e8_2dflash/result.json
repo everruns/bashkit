@@ -1,0 +1,92 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_test_output",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Read /data/test-results.txt which contains test output in a standard format. Parse it to: 1) Count total tests, passed, and failed. 2) Extract the names of all failing tests. 3) Generate a summary report at /reports/test-summary.md with a header '# Test Summary', a line 'Total: N | Passed: N | Failed: N', and a '## Failures' section listing each failed test. Print the summary."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "10/10 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "The test output in `/data/test-results.txt` has been parsed and the summary report generated at `/reports/test-summary.md`.\n\n### Summary Report\n\n```markdown\n# Test Summary\n\nTotal: 12 | Passed: 9 | Failed: 3\n\n## Failures\n\n- test_login_expired_token\n- test_signup_duplicate_email\n- test_session_timeout\n```",
+    "iterations": 7,
+    "tool_calls_count": 6,
+    "tool_calls": [
+      "cat /data/test-results.txt",
+      "ls -ld /reports",
+      "find / -maxdepth 3 -name \"*test*\" 2>/dev/null",
+      "python3 -c \"\nwith open('/data/test-results.txt') as f:\n    lines = [l.strip() for l in f if l.strip()]\n\npassed = [l.split(None, 1)[1] for l in lines if l.startswith('PASS')]\nfailed = [l.split(None, 1)[1] for l in lines if l.startswith('FAIL')]\ntotal = len(lines)\n\nprint(f'Total: {total}, Passed: {len(passed)}, Failed: {len(failed)}')\nprint('Failed tests:', failed)\n\"",
+      "python3 -c \"\nimport os\n\nwith open('/data/test-results.txt') as f:\n    lines = [line.strip() for line in f if line.strip()]\n\npassed = [l.split(maxsplit=1)[1] for l in lines if l.startswith('PASS')]\nfailed = [l.split(maxsplit=1)[1] for l in lines if l.startswith('FAIL')]\ntotal = len(lines)\n\nos.makedirs('/reports', exist_ok=True)\n\nfailure_items = '\\n'.join(f'- {t}' for t in failed)\nsummary = f'''# Test Summary\n\nTotal: {total} | Passed: {len(passed)} | Failed: {len(failed)}\n\n## Failures\n\n{failure_items}\n'''\n\nwith open('/reports/test-summary.md', 'w') as f:\n    f.write(summary)\n\nprint(summary)\n\"",
+      "cat /reports/test-summary.md"
+    ],
+    "usage": {
+      "input_tokens": 5418,
+      "output_tokens": 1063,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 20564
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 6.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 5.0,
+      "turns": 7.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /data/test-results.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "PASS test_login_valid\nPASS test_login_invalid_password\nFAIL test_login_expired_token\nPASS test_signup_new_user\nFAIL test_signup_duplicate_email\nPASS test_logout\nPASS test_password_reset\nFAIL test_session_timeout\nPASS test_profile_update\nPASS test_profile_delete\nPASS test_api_rate_limit\nPASS test_api_auth_header\n"
+          },
+          {
+            "commands": "ls -ld /reports",
+            "exit_code": 2,
+            "stderr": "ls: cannot access '/reports': No such file or directory\n",
+            "stdout": ""
+          },
+          {
+            "commands": "find / -maxdepth 3 -name \"*test*\" 2>/dev/null",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/bin/test\n/data/test-results.txt\n/usr/bin/test\n"
+          },
+          {
+            "commands": "python3 -c \"\nwith open('/data/test-results.txt') as f:\n    lines = [l.strip() for l in f if l.strip()]\n\npassed = [l.split(None, 1)[1] for l in lines if l.startswith('PASS')]\nfailed = [l.split(None, 1)[1] for l in lines if l.startswith('FAIL')]\ntotal = len(lines)\n\nprint(f'Total: {total}, Passed: {len(passed)}, Failed: {len(failed)}')\nprint('Failed tests:', failed)\n\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Total: 12, Passed: 9, Failed: 3\nFailed tests: ['test_login_expired_token', 'test_signup_duplicate_email', 'test_session_timeout']\n"
+          },
+          {
+            "commands": "python3 -c \"\nimport os\n\nwith open('/data/test-results.txt') as f:\n    lines = [line.strip() for line in f if line.strip()]\n\npassed = [l.split(maxsplit=1)[1] for l in lines if l.startswith('PASS')]\nfailed = [l.split(maxsplit=1)[1] for l in lines if l.startswith('FAIL')]\ntotal = len(lines)\n\nos.makedirs('/reports', exist_ok=True)\n\nfailure_items = '\\n'.join(f'- {t}' for t in failed)\nsummary = f'''# Test Summary\n\nTotal: {total} | Passed: {len(passed)} | Failed: {len(failed)}\n\n## Failures\n\n{failure_items}\n'''\n\nwith open('/reports/test-summary.md', 'w') as f:\n    f.write(summary)\n\nprint(summary)\n\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Test Summary\n\nTotal: 12 | Passed: 9 | Failed: 3\n\n## Failures\n\n- test_login_expired_token\n- test_signup_duplicate_email\n- test_session_timeout\n\n"
+          },
+          {
+            "commands": "cat /reports/test-summary.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Test Summary\n\nTotal: 12 | Passed: 9 | Failed: 3\n\n## Failures\n\n- test_login_expired_token\n- test_signup_duplicate_email\n- test_session_timeout\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}
