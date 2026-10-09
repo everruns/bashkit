@@ -25,6 +25,11 @@ fn bashkit_smoke() -> Eval {
 }
 
 #[eval]
+fn bashkit_generate() -> Eval {
+    mira_study::generate_eval()
+}
+
+#[eval]
 fn bashkit_scripting() -> Eval {
     mira_study::scripting_eval()
 }

@@ -317,6 +317,11 @@ eval-repo *ARGS:
 eval-hard *ARGS:
     mira run --study-bin bashkit-eval bashkit_bash --tag hard {{ARGS}}
 
+# One-shot generation eval: one reply, one script run, no feedback. Slice with
+# `--tag basic` / `--tag hard`; references run in `cargo test -p bashkit-eval`.
+eval-generate *ARGS:
+    mira run --study-bin bashkit-eval bashkit_generate {{ARGS}}
+
 # Scripting-tool eval. The `mode` axis compares scripted vs baseline; select one
 # with `--axis mode=scripted` (omit to run both).
 eval-scripting *ARGS:

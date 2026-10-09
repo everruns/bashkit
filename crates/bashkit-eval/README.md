@@ -35,6 +35,7 @@ just eval-list
 just eval --targets anthropic/claude-opus-5-5
 just eval-smoke
 just eval-scripting
+just eval-generate              # one-shot script generation
 ```
 
 Results are written by mira under `./results/<run_id>/`.
@@ -48,6 +49,7 @@ Results are written by mira under `./results/<run_id>/`.
 | `bashkit_repo` | 8 `repo_workflow` tasks | multi-turn fixture repos (`just eval-repo`) |
 | `bashkit_hard` | 10 hard tasks, 9 categories | built not to saturate; 25 turns (`just eval-hard`) |
 | `bashkit_scripting` | scripting-tool tasks | `--axis mode=scripted\|baseline` |
+| `bashkit_generate` | 15 one-shot tasks (`basic`/`hard`) | one reply, one script run, no feedback (`just eval-generate`, `--tag hard`) |
 
 Targets (model matrix) are defined in `src/mira_study.rs` and gated on
 `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `OPENROUTER_API_KEY`; offline runs

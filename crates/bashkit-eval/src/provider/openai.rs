@@ -153,11 +153,15 @@ impl OpenAiProvider {
             })
             .collect();
 
-        serde_json::json!({
+        let mut body = serde_json::json!({
             "model": self.model,
             "messages": api_messages,
-            "tools": api_tools
-        })
+        });
+        // Chat Completions rejects `tools: []`; omit it when none are offered.
+        if !api_tools.is_empty() {
+            body["tools"] = serde_json::Value::Array(api_tools);
+        }
+        body
     }
 
     fn parse_response(&self, body: serde_json::Value) -> Result<ProviderResponse> {
@@ -274,5 +278,26 @@ impl Provider for OpenAiProvider {
 
     fn model(&self) -> &str {
         &self.model
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_tools_are_omitted() {
+        let p = OpenAiProvider {
+            client: {
+                ensure_rustls_crypto_provider().unwrap();
+                build_http_client().unwrap()
+            },
+            api_key: String::new(),
+            model: "m".to_string(),
+            endpoint: OPENAI_CHAT_URL,
+            name: "OpenAI",
+        };
+        let body = p.build_request_body(&[], &[], "sys");
+        assert!(body.get("tools").is_none());
     }
 }

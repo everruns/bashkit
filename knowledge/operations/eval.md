@@ -137,7 +137,7 @@ Implemented under `src/provider/`, selected by the mira target's `provider` id:
 
 ## Evals
 
-Five evals are advertised (`#[eval]` wrappers in `src/main.rs`):
+Evals advertised (`#[eval]` wrappers in `src/main.rs`):
 
 | Eval | Samples | Notes |
 |------|---------|-------|
@@ -146,6 +146,7 @@ Five evals are advertised (`#[eval]` wrappers in `src/main.rs`):
 | `bashkit_repo` | 8 `repo_workflow` tasks | Multi-turn fixture repos; 20-turn budget (`REPO_MAX_TURNS`) |
 | `bashkit_hard` | 10 hard tasks, 9 categories | Built not to saturate; 25-turn budget (`HARD_MAX_TURNS`) |
 | `bashkit_scripting` | scripting-tool tasks | `mode` axis: `scripted` vs `baseline` |
+| `bashkit_generate` | 15 one-shot tasks (`basic`/`hard`) | One reply, one script run, no feedback (`just eval-generate`); see "Generate Eval" |
 
 ## CLI
 
@@ -160,7 +161,7 @@ mira run --study-bin bashkit-eval --format html --out report.html
 mira run --study-bin bashkit-eval --resume <run_id>
 ```
 
-`just eval`, `just eval-smoke`, `just eval-repo`, `just eval-hard`, `just eval-scripting`, and
+`just eval`, `just eval-smoke`, `just eval-repo`, `just eval-hard`, `just eval-generate`, `just eval-scripting`, and
 `just eval-list` wrap these.
 
 ## Output / Metrics
@@ -269,6 +270,76 @@ an `if`/`||`/`!` context (`if bash test.sh` never saw test.sh fail),
 omits `.` and `..`, `touch -d 'YYYY-MM-DD HH:MM:SS UTC'` is rejected (no
 zone suffix; ISO `...Z` and `@epoch` work), and under `set -eu` an unbound variable in a subshell's
 EXIT trap leaves the subshell's status 0 (bash: 1).
+
+## Generate Eval (`bashkit_generate`)
+
+Added 2026-10-09. `bashkit_bash` is an agent loop: the model probes, sees
+errors and retries, which hides how often its **first** script fails on
+bashkit. `bashkit_generate` measures one-shot generation. Decision: a separate
+eval because scoring differs (one script, one run, no feedback); otherwise
+evals stay one tagged dataset.
+
+- **Subject** (`src/generate.rs`, `generate_subject`): one provider call with
+  no tools offered (the providers omit `tools` when the list is empty, which
+  Chat Completions requires), under the fixed `GENERATE_SYSTEM_PROMPT`
+  (bashkit virtual bash, the builtin set incl. coreutils/awk/sed/jq/grep/find,
+  HOME=/home/eval, no network, no python/node/perl unless stated, answer as
+  one ```` ```bash ```` block). The task's `system` field is not used. The
+  script runs once via `bash.exec` on `build_task_bash(task)` (same starting
+  state as the agent eval: files, git, `setup`), bounded by `SCRIPT_TIMEOUT`
+  (60 s; a timeout records exit 124).
+- **Extraction rule** (`extract_script`): the first fenced block tagged
+  `bash`/`sh`/`shell` (case-insensitive); else the first untagged fenced
+  block; else, when the reply has no fence at all, the whole reply trimmed.
+  Blocks in other languages are never run; an unclosed fence (truncated
+  reply) runs to the end of the text; a closing fence must start a line.
+- **Scoring**: the transcript has the same shape as `bash_subject`'s (one
+  `ToolOutput` in the `Snapshot`, expectation-relevant VFS files), so the
+  shared `expectations_scorer` scores it unchanged.
+- **Failure split**: provider/HTTP error or a failing `setup` = infra error
+  (N/A). No script (empty reply, empty block, only non-shell fences) = model
+  failure: empty snapshot and no files, so every check fails and the score
+  is 0. A script that errors, exits non-zero or times out is scored normally.
+- **Metrics**: `script_found`, `extracted` (1 fenced / 0 raw), `script_bytes`,
+  `exit_code`, `timed_out`, `generate_ms`, `exec_ms`, plus usage tokens;
+  `transcript.metadata["generate"]` carries `extraction` and `timed_out`.
+
+Dataset `data/generate-tasks.jsonl` (same `EvalTask` schema, `mode:
+"generate"`, difficulty `basic`/`hard` as tags) is validated by its own test
+(`generate::tests::dataset_is_valid`), not the `bashkit_bash` tag test.
+Every path under `/home/eval`; prompts show each starting file verbatim
+because the model cannot look. Reference scripts in
+`data/generate-solutions.jsonl` (one `steps` entry each) run in `cargo test
+-p bashkit-eval` through the subject's own run path and must pass every
+check; the do-nothing script `true` must fail every task. All 15 references
+also pass under real bash 5.2.21 (jq 1.7, mawk 1.3.4) with `/home/eval`
+rewritten to a temp dir, and `true` fails each there too.
+
+| Task | Difficulty | What it exercises |
+|------|------------|-------------------|
+| `gen_log_status_report` | basic | status-code histogram and 5xx list from an access log |
+| `gen_log_rotate` | hard | numbered rotation with a keep count, gaps, lookalike `app.log.old` |
+| `gen_csv_to_jsonl` | basic | CSV to typed JSON Lines, last line without newline |
+| `gen_batch_rename` | basic | recursive `*.JPG` rename, lowercase + spaces to `_`, dirs keep names |
+| `gen_config_template` | hard | `${VAR}` from an env file, unknown placeholders and `$5` intact, `/` in values |
+| `gen_getopts_cli` | hard | getopts tool with repeatable/required options, usage + exit 2, then exercised |
+| `gen_retry_backoff` | hard | retry with 2^(n-1) backoff, exact log, preserved exit code |
+| `gen_parallel_jobs` | hard | background jobs, `wait` per PID, aggregated exit codes, script exit 1 |
+| `gen_printf_report` | basic | TSV aggregation into an aligned printf table |
+| `gen_jq_rollup` | basic | jq rollup of paid orders per customer, top SKU |
+| `gen_heredoc_site` | basic | quoted vs unquoted here-docs, unquoted env values with spaces |
+| `gen_trap_atomic` | hard | EXIT trap with exit status, `mktemp -d`, atomic replace, abort keeps old output |
+| `gen_assoc_inventory` | basic | associative-array aggregation by SKU and warehouse |
+| `gen_path_parts` | basic | dir/base/stem/ext via parameter expansion (dotfiles, `v1.2/`, `.tar.gz`) |
+| `gen_semver_bump` | hard | semver bump from conventional changes (9 -> 10), changelog insert |
+
+Building the references found two bashkit gaps. Fixed: `jq -n` failed on
+non-JSON stdin it never reads (`jq -cn ...` inside `while read; done <
+file.csv`); jq 1.7 reads stdin lazily under `-n`, now only a pulled parse
+error counts. Open (the reference avoids it): a double-quoted pattern with
+`\$` inside `${var//pattern/repl}` is not unescaped (`"${c//"\${K}"/V}"`
+replaces nothing; bash replaces `${K}`), and the unquoted form
+`${c//\${K\}/V}` is a parse error.
 
 ## Scripting-Tool Eval
 

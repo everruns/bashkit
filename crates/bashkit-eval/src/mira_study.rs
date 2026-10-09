@@ -69,7 +69,7 @@ fn openrouter(model: &str) -> Target {
 
 /// Map a mira `Target` to a bashkit `Provider`. Errors surface as infra errors
 /// (the case scores N/A rather than failing the model).
-fn provider_for(target: &Target) -> Result<Box<dyn Provider>, String> {
+pub(crate) fn provider_for(target: &Target) -> Result<Box<dyn Provider>, String> {
     let model = target.model.as_str();
     let provider: Box<dyn Provider> = match target.provider.as_str() {
         "anthropic" => Box::new(AnthropicProvider::new(model).map_err(|e| e.to_string())?),
@@ -103,7 +103,7 @@ fn last_assistant_text(messages: &[Message]) -> String {
 }
 
 /// Read the per-sample expectation list the scorer evaluates.
-fn expectations_from_sample(sample: &Sample) -> Vec<(String, f64)> {
+pub(crate) fn expectations_from_sample(sample: &Sample) -> Vec<(String, f64)> {
     sample
         .metadata
         .get("expectations")
@@ -135,7 +135,7 @@ fn expectations_value(expectations: &[crate::dataset::Expectation]) -> serde_jso
 // ---------------------------------------------------------------------------
 
 /// Build the samples for a bash eval dataset (parsed JSONL text).
-fn bash_samples(jsonl: &str) -> Vec<Sample> {
+pub(crate) fn bash_samples(jsonl: &str) -> Vec<Sample> {
     parse_jsonl::<EvalTask>(jsonl)
         .into_iter()
         .map(|task| {
@@ -478,9 +478,41 @@ pub fn scripting_eval() -> Eval {
     b.build()
 }
 
+/// One-shot generation tasks (`bashkit_generate`); own file because scoring
+/// differs (one script, one run, no feedback). See `generate.rs`.
+const GENERATE_TASKS: &str = include_str!("../data/generate-tasks.jsonl");
+
+/// The one-shot script generation eval: the model writes ONE bash script from
+/// the task + a fixed sandbox description, bashkit runs it once, and the
+/// shared expectations scorer scores the result. Tags: category, `generate`,
+/// difficulty (`basic` | `hard`).
+pub fn generate_eval() -> Eval {
+    let mut b = Eval::new("bashkit_generate")
+        .describe("One-shot bash script generation: one reply, one run, no feedback")
+        .subject(crate::generate::generate_subject())
+        .scorer(expectations_scorer())
+        .max_turns(1)
+        .targets(default_targets());
+    for sample in bash_samples(GENERATE_TASKS) {
+        b = b.add_sample(sample);
+    }
+    b.build()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn generate_samples_load_and_build() {
+        let samples = bash_samples(GENERATE_TASKS);
+        assert!(samples.len() >= 15);
+        for s in &samples {
+            assert!(s.tags.contains(&"generate".to_string()), "{}", s.id);
+            assert!(!expectations_from_sample(s).is_empty(), "{}", s.id);
+        }
+        let _ = generate_eval();
+    }
 
     #[test]
     fn bash_samples_load_all_tasks_with_expectations() {
