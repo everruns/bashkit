@@ -386,7 +386,7 @@ mod tests {
     // at the call deadline, not when some other call releases a slot.
     #[tokio::test]
     async fn guarded_stops_unwoken_wait_at_deadline() {
-        let start = std::time::Instant::now();
+        let start = std::time::Instant::now(); // std-time-ok: native-only test
         let deadline = crate::time_compat::Instant::now() + Duration::from_millis(150);
         let r = guarded(std::future::pending::<()>(), deadline, None).await;
         assert!(matches!(r, Err(Stop::Timeout)));
@@ -404,7 +404,7 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(50)).await;
             flag.store(true, std::sync::atomic::Ordering::Relaxed);
         });
-        let start = std::time::Instant::now();
+        let start = std::time::Instant::now(); // std-time-ok: native-only test
         let deadline = crate::time_compat::Instant::now() + Duration::from_secs(30);
         let r = guarded(std::future::pending::<()>(), deadline, Some(&budget)).await;
         assert!(matches!(r, Err(Stop::Budget(_))));
