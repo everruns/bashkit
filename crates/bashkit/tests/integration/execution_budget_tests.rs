@@ -523,3 +523,112 @@ async fn cdpath_search_yields_to_cancellation() {
     );
     assert!(result.unwrap_err().to_string().contains("cancelled"));
 }
+
+#[tokio::test]
+async fn indexed_array_pending_values_share_live_byte_limit() {
+    for assignment in [
+        "a=([0]=$v [0]=$v [0]=$v [0]=$v)",
+        "declare -a a=([0]=$v [0]=$v [0]=$v [0]=$v)",
+        "a+=([0]=$v [0]=$v [0]=$v [0]=$v)",
+        "a=(\"$v\" \"$v\" \"$v\" \"$v\")",
+        "a=(\"$v\"{1..4})",
+        "a=([0]=$v$v$v)",
+    ] {
+        let mut bash = Bash::builder()
+            .limits(ExecutionLimits::new().max_live_intermediate_bytes(8_192))
+            .build();
+        bash.exec(&format!("v='{}'; a=(original)", "x".repeat(4_096)))
+            .await
+            .unwrap();
+        assert_budget_exhausted(bash.exec(assignment).await);
+        assert_eq!(
+            bash.exec("echo ${a[0]}").await.unwrap().stdout,
+            "original\n"
+        );
+        assert_eq!(bash.exec("echo reused").await.unwrap().stdout, "reused\n");
+    }
+}
+
+#[tokio::test]
+async fn indexed_array_pending_keys_share_live_byte_limit() {
+    let mut bash = Bash::builder()
+        .limits(ExecutionLimits::new().max_live_intermediate_bytes(8_192))
+        .build();
+    // Leading zeroes keep every subscript valid and small.
+    bash.exec(&format!("k='{}'", "0".repeat(4_096)))
+        .await
+        .unwrap();
+    assert_budget_exhausted(bash.exec("a=([$k]=x [$k]=y [$k]=z)").await);
+}
+
+#[tokio::test]
+async fn indexed_array_pending_storage_is_released_between_assignments() {
+    let mut bash = Bash::builder()
+        .limits(ExecutionLimits::new().max_live_intermediate_bytes(8_192))
+        .build();
+    let result = bash
+        .exec(&format!(
+            "v='{}'; a=([0]=$v); a=([0]=$v); a=([0]=$v); echo ${{#a[0]}}",
+            "x".repeat(4_096)
+        ))
+        .await
+        .unwrap();
+    assert_eq!(result.stdout, "4096\n");
+}
+
+#[tokio::test]
+async fn indexed_array_budget_preserves_expansion_order() {
+    let script = "a=(old); a=([0]=1+2 [a[0]]=$a [0]+=x); printf '%s\\n' \"${a[0]}\" \"${a[3]}\"; a+=([0]=new [1]=$a); printf '%s\\n' \"${a[1]}\"";
+    let expected = std::process::Command::new("bash")
+        .args(["--noprofile", "--norc", "-c", script])
+        .output()
+        .unwrap();
+    assert!(expected.status.success());
+    let mut bash = Bash::builder()
+        .limits(ExecutionLimits::new().max_live_intermediate_bytes(8_192))
+        .build();
+    let result = bash.exec(script).await.unwrap();
+    assert_eq!(result.exit_code, 0);
+    assert_eq!(result.stdout.as_bytes(), expected.stdout);
+    assert_eq!(result.stderr.as_bytes(), expected.stderr);
+}
+
+#[tokio::test]
+async fn indexed_array_empty_pending_items_still_charge_container_storage() {
+    let mut bash = Bash::builder()
+        .limits(ExecutionLimits::new().max_live_intermediate_bytes(256))
+        .build();
+    let script = format!("a=({})", "[0]='' ".repeat(64));
+    assert_budget_exhausted(bash.exec(&script).await);
+}
+
+#[tokio::test]
+async fn indexed_array_duplicate_subscripts_remain_valid_at_entry_limit() {
+    let mut bash = Bash::builder()
+        .memory_limits(bashkit::MemoryLimits::new().max_array_entries(1))
+        .limits(ExecutionLimits::new().max_live_intermediate_bytes(8_192))
+        .build();
+    let result = bash
+        .exec(&format!(
+            "v='{}'; a=([0]=$v [0]=$v [0]=$v); echo ${{#a[@]}} ${{#a[0]}}",
+            "x".repeat(1_024)
+        ))
+        .await
+        .unwrap();
+    assert_eq!(result.stdout, "1 1024\n");
+}
+
+#[tokio::test]
+async fn indexed_array_substitutions_release_consumed_output() {
+    let mut bash = Bash::builder()
+        .limits(ExecutionLimits::new().max_live_intermediate_bytes(7_168))
+        .build();
+    bash.exec(&format!("v='{}'", "x".repeat(1_024)))
+        .await
+        .unwrap();
+    let result = bash
+        .exec("a=([0]=$(printf %s \"$v\")$(printf %s \"$v\")$(printf %s \"$v\")); echo ${#a[0]}")
+        .await
+        .unwrap();
+    assert_eq!(result.stdout, "3072\n");
+}

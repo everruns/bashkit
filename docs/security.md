@@ -29,6 +29,12 @@ normalization storage is reserved against `max_live_intermediate_bytes`
 before allocation. Searches also consume the shared work budget and check
 cancellation and deadlines, including when every candidate is missing.
 
+Indexed compound-array assignments expand values before evaluating subscripts.
+Pending keys, values, fields and container capacity count against
+`max_live_intermediate_bytes`, including repeated writes to the same index.
+Exceeding that budget returns a resource-limit error even when the final array
+would fit the retained-variable budget.
+
 Command hash entries (`hash -p FILE NAME...` and automatic PATH lookups) charge
 each retained name and pathname against the same live-byte budget before copying.
 Entries that survive between executions count toward the next execution's budget.

@@ -1,6 +1,8 @@
 //! Declaration builtins: `declare`/`typeset`, `local`, `export`, `readonly`.
 //!
 //! Important decisions:
+//! - Indexed compound assignments retain budgeted values until all expansion
+//!   finishes; duplicate subscripts must not bypass intermediate-memory limits.
 //! - One engine serves all four builtins (bash shares `declare_internal`):
 //!   each builtin only restricts its option letters and fixes an attribute
 //!   (`export` adds `-x`, `readonly` adds `-r`, `local` makes the name local).
@@ -15,6 +17,7 @@
 //!   value holds control characters; associative arrays in bash's hash order.
 
 use super::*;
+use crate::limits::BudgetedVec;
 
 /// Marks the placeholder that stands for a compound argument (`a=(...)`).
 /// A private-use character, so ordinary text never contains it.
@@ -1385,7 +1388,10 @@ impl Interpreter {
                     continue;
                 }
                 let remaining = max_entries.saturating_sub(map.len()).saturating_mul(2);
-                for field in self.expand_element_fields(word, remaining).await? {
+                let fields = self.expand_element_fields(word, remaining).await?;
+                let (fields, _fields_lease) = fields.into_parts();
+                for field in fields {
+                    let field = field.into_inner();
                     match pending_key.take() {
                         Some(k) => {
                             let v = self.transform_element(attrs, None, field);
@@ -1419,22 +1425,25 @@ impl Interpreter {
             // subscripts in order against the array as it is being built:
             // `a=([0]=1+2 [a[0]]=x)` stores x at 3.
             enum Item {
-                Keyed(String, String, bool),
-                Fields(Vec<String>),
+                Keyed(BudgetedString, BudgetedString, bool),
+                Fields(BudgetedVec<BudgetedString>),
             }
-            let mut items = Vec::with_capacity(words.len());
+            // THREAT[TM-DOS-114]: duplicate indices still retain every expanded
+            // value until subscripts run; lease both payloads and containers.
+            let mut items = BudgetedVec::new(Some(&self.execution_budget))?;
             let mut budget = max_entries.saturating_sub(map.len());
             for word in words {
+                self.execution_budget.consume_work(1)?;
                 // Bash brace-expands indexed elements before spotting
                 // `[i]=`, so `([2]=v{1,2})` stores the plain words
                 // `[2]=v1 [2]=v2`; assoc elements never brace-expand.
                 let braces = self.brace_expand_word(word).is_some();
                 if let Some((kw, vw, kappend)) = split_keyed_word(word).filter(|_| !braces) {
-                    let key_text = self.expand_word(&kw).await?;
+                    let key_text = self.expand_array_word(&kw).await?;
                     // `[k]=~:~` tilde-expands like an assignment value.
                     let vw = self.tilde_assignment_value(&vw).into_owned();
-                    let val = self.expand_word(&vw).await?;
-                    items.push(Item::Keyed(key_text, val, kappend));
+                    let val = self.expand_array_word(&vw).await?;
+                    items.try_push(Item::Keyed(key_text, val, kappend))?;
                     continue;
                 }
                 if budget == 0 {
@@ -1442,8 +1451,9 @@ impl Interpreter {
                 }
                 let fields = self.expand_element_fields(word, budget).await?;
                 budget = budget.saturating_sub(fields.len());
-                items.push(Item::Fields(fields));
+                items.try_push(Item::Fields(fields))?;
             }
+            let (items, _items_lease) = items.into_parts();
             // Only a subscript that names the array needs it live (keeps
             // the common case free of per-element copies).
             let mentions_self = items
@@ -1467,9 +1477,10 @@ impl Interpreter {
                             let len = map.keys().max().map_or(0, |m| m + 1) as i64;
                             let i = len + raw;
                             if i < 0 {
-                                return Err(crate::error::Error::LineAbort(
-                                    self.diag(format!("{name}[{key_text}]: bad array subscript\n")),
-                                ));
+                                return Err(crate::error::Error::LineAbort(self.diag(format!(
+                                    "{name}[{}]: bad array subscript\n",
+                                    &*key_text
+                                ))));
                             }
                             i as usize
                         } else {
@@ -1480,7 +1491,7 @@ impl Interpreter {
                         } else {
                             None
                         };
-                        let v = self.transform_element(attrs, old.as_deref(), val);
+                        let v = self.transform_element(attrs, old.as_deref(), val.into_inner());
                         if map.len() >= max_entries && !map.contains_key(&idx) {
                             break 'items;
                         }
@@ -1491,7 +1502,9 @@ impl Interpreter {
                         next = idx + 1;
                     }
                     Item::Fields(fields) => {
+                        let (fields, _fields_lease) = fields.into_parts();
                         for field in fields {
+                            let field = field.into_inner();
                             if map.len() >= max_entries {
                                 break 'items;
                             }
@@ -1516,22 +1529,42 @@ impl Interpreter {
     /// Expand one unkeyed compound element into fields: word splitting for
     /// unquoted expansions (bounded by `limit`), `"${a[@]}"` splats, brace
     /// expansion and globbing for unquoted literals.
-    async fn expand_element_fields(&mut self, word: &Word, limit: usize) -> Result<Vec<String>> {
+    async fn expand_element_fields(
+        &mut self,
+        word: &Word,
+        limit: usize,
+    ) -> Result<BudgetedVec<BudgetedString>> {
         // Brace expansion runs first on the unexpanded word, as for command
         // arguments: `a=("x"{1,2})` gives `x1 x2`, `a=('{a,b}')` stays literal.
         let Some(braced) = self.brace_expand_word(word) else {
-            return self.expand_element_word(word, limit).await;
+            let fields = self.expand_element_word(word, limit).await?;
+            return self.lease_array_fields(fields);
         };
-        let mut fields = Vec::new();
+        let mut fields = BudgetedVec::new(Some(&self.execution_budget))?;
         for w in &braced {
             let left = limit.saturating_sub(fields.len());
             if left == 0 {
                 break;
             }
-            fields.extend(self.expand_element_word(w, left).await?);
+            let expanded = self.expand_element_word(w, left).await?;
+            let leased = self.lease_array_fields(expanded)?;
+            let (expanded, _lease) = leased.into_parts();
+            for field in expanded {
+                fields.try_push(field)?;
+            }
         }
-        fields.truncate(limit);
         Ok(fields)
+    }
+
+    fn lease_array_fields(&self, fields: Vec<String>) -> Result<BudgetedVec<BudgetedString>> {
+        let mut leased = BudgetedVec::new(Some(&self.execution_budget))?;
+        for field in fields {
+            leased.try_push(BudgetedString::try_from_string(
+                field,
+                Some(&self.execution_budget),
+            )?)?;
+        }
+        Ok(leased)
     }
 
     /// One brace-expanded compound element: splitting, splats, then globbing
@@ -1560,7 +1593,7 @@ impl Interpreter {
         if is_unquoted_expansion {
             // Split fields are pathname-expanded like command words:
             // `p='*.txt'; a=($p)` holds the matching files.
-            let expanded = self.expand_word(word).await?;
+            let expanded = self.expand_array_word(word).await?;
             let mut fields = Vec::new();
             for field in self.ifs_split_limited(&expanded, limit)? {
                 match self.expand_glob_item(&field, false).await {
@@ -1581,7 +1614,7 @@ impl Interpreter {
             fields.truncate(limit);
             return Ok(fields);
         }
-        let value = self.expand_word(word).await?;
+        let value = self.expand_array_word(word).await?;
         let literal_only = word.parts.iter().all(|p| matches!(p, WordPart::Literal(_)));
         let globbable = if word.quoted {
             word.has_unquoted_glob
@@ -1589,7 +1622,7 @@ impl Interpreter {
             literal_only
         };
         if !globbable {
-            return Ok(vec![value]);
+            return Ok(vec![value.into_inner()]);
         }
         let mut fields = match self
             .expand_glob_item(&value, word.quoted && word.has_unquoted_glob)
