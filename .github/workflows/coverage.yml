@@ -48,10 +48,6 @@ jobs:
       - name: Install pinned ripgrep for differential tests
         run: scripts/install-ripgrep-ci.sh "$RG_VERSION"
 
-      # --timeout is per test binary. bashkit-eval enables bashkit's cpython
-      # and sqlite features, so under --workspace feature unification the
-      # bashkit integration binary also runs its CPython/sqlite tests, which
-      # are slow when instrumented (~115s binary went past 300s).
       - name: Generate coverage report
         run: |
           cargo tarpaulin --features http_client \
@@ -63,7 +59,7 @@ jobs:
             --exclude-files "crates/bashkit-bench/*" \
             --exclude-files "crates/bashkit-cli/*" \
             --exclude-files "crates/bashkit-python/*" \
-            --timeout 900 \
+            --timeout 300 \
             --skip-clean \
             --engine llvm
 
