@@ -28,7 +28,6 @@ echo <(true); f(){ echo <(true); }; f
 
 ### bashbox_process_substitution_part_of_a_word
 # part of a word
-### skip: process substitution is its own word, not joined to adjacent text (x<(true) is two words) (limitations.md, Process substitution row)
 echo x<(true)
 ### expect
 x/dev/fd/63
@@ -75,7 +74,6 @@ x=1; cat <(x=2; echo $x); echo $x
 
 ### bashbox_process_substitution_assigned_to_a_variable
 # assigned to a variable
-### skip: x=<(true) parses as an assignment then a separate process-substitution word (limitations.md, Process substitution row)
 x=<(true); echo $x
 ### expect
 /dev/fd/63

@@ -130,3 +130,12 @@ a
 b
 c
 ### end
+
+### procsub_joined_to_adjacent_word_text
+# A process substitution touching word text is part of that word
+echo x<(true) <(true)x a<(true)<(true)b 2<(true) "q"<(true); y=a<(true); echo $y; x=<(true); echo $x
+### expect
+x/dev/fd/63 /dev/fd/62x a/dev/fd/61/dev/fd/60b 2/dev/fd/59 q/dev/fd/58
+a/dev/fd/63
+/dev/fd/63
+### end

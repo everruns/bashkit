@@ -140,12 +140,25 @@ fn shell_quote(s: &str) -> String {
     }
 
     // Under UTF-8, bash leaves printable non-ASCII characters as they are
-    // (`printf %q 'com espaço'` is `com\ espaço`).
-    let safe = |c: char| {
-        c.is_ascii_alphanumeric() || "_/.:-=+@,%^".contains(c) || (!c.is_ascii() && !c.is_control())
+    // (`printf %q 'com espaço'` is `com\ espaço`). Observed bash rules:
+    // shell metacharacters (and `,`, `^` for brace/history expansion) are
+    // always escaped; `#` only starts a comment, so only a leading one is;
+    // `~` only expands at the start or after `=`/`:`, so only there.
+    let needs_escape = |prev: Option<char>, c: char| match c {
+        '#' => prev.is_none(),
+        '~' => matches!(prev, None | Some('=' | ':')),
+        c if c.is_ascii() => !(c.is_ascii_alphanumeric() || "_/.:-=+@%".contains(c)),
+        c => c.is_control(),
     };
-    let needs_quoting = s.chars().any(|c| !safe(c));
-    if !needs_quoting {
+    let escapes = || {
+        let mut prev = None;
+        s.chars().map(move |c| {
+            let e = needs_escape(prev, c);
+            prev = Some(c);
+            (c, e)
+        })
+    };
+    if !escapes().any(|(_, e)| e) {
         return s.to_string();
     }
 
@@ -179,13 +192,11 @@ fn shell_quote(s: &str) -> String {
     }
 
     let mut out = String::new();
-    for ch in s.chars() {
-        if safe(ch) {
-            out.push(ch);
-        } else {
+    for (ch, escape) in escapes() {
+        if escape {
             out.push('\\');
-            out.push(ch);
         }
+        out.push(ch);
     }
     out
 }

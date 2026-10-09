@@ -236,6 +236,7 @@ impl Interpreter {
         existing_stdin: Option<crate::StreamData>,
         redirects: &[Redirect],
         demand: StdinDemand,
+        high_fd_stdin: HighFdStdin,
     ) -> Result<Option<crate::StreamData>> {
         let mut stdin = existing_stdin;
         // Readable fds this command's own redirects open (`4<<E <&4`).
@@ -301,10 +302,20 @@ impl Interpreter {
                                 if let Some(fd) = high_fd {
                                     own_fds.push((fd, content.clone()));
                                 }
-                                // WTF: `3<file` also feeds stdin; loops like
-                                // `while read -u 3 ...; done 3<file` rely on
-                                // it until per-command fds are modelled.
-                                stdin = Some(content);
+                                // WTF: on a compound `3<file` also feeds
+                                // stdin; loops like `while read -u 3 ...;
+                                // done 3<file` rely on it until per-command
+                                // fds are modelled. A simple command reads
+                                // fd N only as `read -u N` (`cat 3<f` reads
+                                // its own stdin, as bash).
+                                let feeds = match (high_fd, high_fd_stdin) {
+                                    (None, _) | (_, HighFdStdin::Any) => true,
+                                    (Some(fd), HighFdStdin::Fd(u)) => fd == u,
+                                    (Some(_), HighFdStdin::Never) => false,
+                                };
+                                if feeds {
+                                    stdin = Some(content);
+                                }
                             }
                             Err(e) => {
                                 return Err(crate::error::Error::CommandFailure(

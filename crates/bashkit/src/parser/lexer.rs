@@ -110,6 +110,10 @@ pub struct Lexer<'a> {
     /// groups (`@(`, `+(`, ...) always lex as patterns, where bash would
     /// report a syntax error instead.
     extglob_bang: bool,
+    /// While the rest of a here-document's command line is re-read, the
+    /// position walks that line again (spans and `$LINENO` stay on the
+    /// source text); this is where the input resumes after the body.
+    heredoc_resume: Option<Position>,
 }
 
 impl<'a> Lexer<'a> {
@@ -135,6 +139,7 @@ impl<'a> Lexer<'a> {
             alias_stack: Vec::new(),
             blank_alias_pending: false,
             extglob_bang: true,
+            heredoc_resume: None,
         }
     }
 
@@ -154,8 +159,13 @@ impl<'a> Lexer<'a> {
         self.next_token_inner()
     }
 
-    /// Put `ch` back in front of the remaining input.
+    /// Put `ch` (just read, not a newline) back in front of the remaining
+    /// input; the position moves back so it is not counted twice.
     pub fn unread_char(&mut self, ch: char) {
+        if ch != '\n' {
+            self.position.offset = self.position.offset.saturating_sub(ch.len_utf8());
+            self.position.column = self.position.column.saturating_sub(1).max(1);
+        }
         self.reinject_buf.push_front(ch);
     }
 
@@ -169,7 +179,8 @@ impl<'a> Lexer<'a> {
 
     fn advance(&mut self) -> Option<char> {
         let mut from_alias = false;
-        let ch = if !self.reinject_buf.is_empty() {
+        let reinjected = !self.reinject_buf.is_empty();
+        let ch = if reinjected {
             if self.alias_front > 0 {
                 self.alias_front -= 1;
                 from_alias = true;
@@ -183,6 +194,14 @@ impl<'a> Lexer<'a> {
                 self.finish_used_aliases();
             } else {
                 self.position.advance(c);
+            }
+            // The re-read rest of a here-document's command line is used
+            // up: continue at the input after the body.
+            if reinjected
+                && self.reinject_buf.is_empty()
+                && let Some(resume) = self.heredoc_resume.take()
+            {
+                self.position = resume;
             }
             if self.capture_raw || self.track_plain {
                 self.raw_buf.push(c);
@@ -705,7 +724,10 @@ impl<'a> Lexer<'a> {
             }
         };
 
-        if rest.starts_with(">>") {
+        if rest.starts_with("<(") || rest.starts_with(">(") {
+            // `2<(cmd)`: a word touching a process substitution, as bash.
+            return self.read_word();
+        } else if rest.starts_with(">>") {
             // N>> - append redirect with fd
             consume(self, 2);
             return Some(Token::RedirectFdAppend(fd));
@@ -2003,7 +2025,8 @@ impl<'a> Lexer<'a> {
                         '\'' => out.push('\''),
                         '"' => out.push('"'),
                         '?' => out.push('?'),
-                        // `\cX`: the control character, X's low five bits.
+                        // `\cX`: the control character, X's low five bits;
+                        // `\c?` is DEL (0x7f), as in bash.
                         'c' if self.peek_char().is_some_and(|c| c.is_ascii() && c != '\'') => {
                             let ctl = self.peek_char().map_or(0, |c| c as u8);
                             self.advance();
@@ -2011,7 +2034,7 @@ impl<'a> Lexer<'a> {
                             if ctl == b'\\' && self.peek_char() == Some('\\') {
                                 self.advance();
                             }
-                            bytes.push(ctl & 0x1f);
+                            bytes.push(if ctl == b'?' { 0x7f } else { ctl & 0x1f });
                         }
                         'x' => {
                             let mut hex = String::new();
@@ -3017,6 +3040,7 @@ impl<'a> Lexer<'a> {
         //
         // Quoted strings may span multiple lines (e.g., `cat <<EOF; echo "two\nthree"`),
         // so we track quoting state and continue across newlines until quotes close.
+        let rest_start = self.position;
         let mut rest_of_line = String::new();
         let mut in_double_quote = false;
         let mut in_single_quote = false;
@@ -3093,6 +3117,9 @@ impl<'a> Lexer<'a> {
         // The line break always comes back: it ends the command even when
         // nothing followed the delimiter (`cat <<A <<B`).
         let rest_of_line_chars = rest_of_line.chars().count();
+        // Re-read the line from where it was first read (see `advance`).
+        self.heredoc_resume = Some(self.position);
+        self.position = rest_start;
         for ch in rest_of_line.chars() {
             self.reinject_buf.push_back(ch);
         }
