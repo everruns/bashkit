@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "json_to_csv_export",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "Convert /data/employees.json (an array of objects with keys name, department, salary) to CSV format with a header row. Save the result to /data/employees.csv and print it. The output should have the header 'name,department,salary' followed by one data row per object."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "8/8 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Saved the CSV to `/data/employees.csv`:\n\n```csv\nname,department,salary\n\"Alice Chen\",\"Engineering\",120000\n\"Bob Park\",\"Marketing\",95000\n\"Carol Wu\",\"Engineering\",115000\n\"Dave Kim\",\"Sales\",88000\n```",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "cat /data/employees.json; echo; ls -l /data",
+      "command -v jq || true; command -v node || true; command -v ruby || true; command -v php || true",
+      "{ printf 'name,department,salary\\n'; jq -r '.[] | [.name, .department, .salary] | @csv' /data/employees.json; } | tee /data/employees.csv"
+    ],
+    "usage": {
+      "input_tokens": 1543,
+      "output_tokens": 230,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 5649
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /data/employees.json; echo; ls -l /data",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[{\"name\":\"Alice Chen\",\"department\":\"Engineering\",\"salary\":120000},{\"name\":\"Bob Park\",\"department\":\"Marketing\",\"salary\":95000},{\"name\":\"Carol Wu\",\"department\":\"Engineering\",\"salary\":115000},{\"name\":\"Dave Kim\",\"department\":\"Sales\",\"salary\":88000}]\n-rw-r--r--      245 2026-10-09 04:58 employees.json\n"
+          },
+          {
+            "commands": "command -v jq || true; command -v node || true; command -v ruby || true; command -v php || true",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/usr/bin/jq\n"
+          },
+          {
+            "commands": "{ printf 'name,department,salary\\n'; jq -r '.[] | [.name, .department, .salary] | @csv' /data/employees.json; } | tee /data/employees.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "name,department,salary\n\"Alice Chen\",\"Engineering\",120000\n\"Bob Park\",\"Marketing\",95000\n\"Carol Wu\",\"Engineering\",115000\n\"Dave Kim\",\"Sales\",88000\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

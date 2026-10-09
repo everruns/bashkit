@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "data_regex_extract",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "Read /data/access.log where each line has format '[TIMESTAMP] STATUS_CODE METHOD URL DURATION_MS'. Use bash regex matching ([[ =~ ]]) with BASH_REMATCH to extract each field. Find all requests that took longer than 500ms. Print them as 'SLOW: METHOD URL took DURATIONms (STATUS)'. At the end, print 'Slow requests: N of M total'."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I read `/data/access.log` with a bash script that matches each line using `[[ =~ ]]` and pulls the fields out of `BASH_REMATCH`. Four of the 8 requests took longer than 500ms:\n\n```\nSLOW: POST /api/orders took 850ms (200)\nSLOW: GET /api/reports took 1200ms (200)\nSLOW: POST /api/payments took 2000ms (500)\nSLOW: PUT /api/users took 620ms (200)\nSlow requests: 4 of 8 total\n```\n\nAll 8 lines matched the pattern, so the total of 8 counts every line in the file. The script is saved at `/tmp/s.sh` if you want to run it again.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "head -5 /data/access.log; wc -l /data/access.log",
+      "cat > /tmp/s.sh <<'EOF'\nre='^\\[([^]]+)\\] ([0-9]{3}) ([A-Z]+) ([^ ]+) ([0-9]+)$'\nslow=0; total=0\nwhile IFS= read -r line || [[ -n $line ]]; do\n  line=${line%$'\\r'}\n  if [[ $line =~ $re ]]; then\n    ((total++))\n    status=${BASH_REMATCH[2]} method=${BASH_REMATCH[3]} url=${BASH_REMATCH[4]} dur=${BASH_REMATCH[5]}\n    if (( dur > 500 )); then\n      echo \"SLOW: $method $url took ${dur}ms ($status)\"\n      ((slow++))\n    fi\n  fi\ndone < /data/access.log\necho \"Slow requests: $slow of $total total\"\nEOF\nbash /tmp/s.sh; cat /data/access.log | tail -4"
+    ],
+    "usage": {
+      "input_tokens": 3261,
+      "output_tokens": 666,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 7160
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "head -5 /data/access.log; wc -l /data/access.log",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[2024-01-15T10:00:01] 200 GET /api/users 150\n[2024-01-15T10:00:02] 200 POST /api/orders 850\n[2024-01-15T10:00:03] 404 GET /api/missing 50\n[2024-01-15T10:00:04] 200 GET /api/reports 1200\n[2024-01-15T10:00:05] 500 POST /api/payments 2000\n8 /data/access.log\n"
+          },
+          {
+            "commands": "cat > /tmp/s.sh <<'EOF'\nre='^\\[([^]]+)\\] ([0-9]{3}) ([A-Z]+) ([^ ]+) ([0-9]+)$'\nslow=0; total=0\nwhile IFS= read -r line || [[ -n $line ]]; do\n  line=${line%$'\\r'}\n  if [[ $line =~ $re ]]; then\n    ((total++))\n    status=${BASH_REMATCH[2]} method=${BASH_REMATCH[3]} url=${BASH_REMATCH[4]} dur=${BASH_REMATCH[5]}\n    if (( dur > 500 )); then\n      echo \"SLOW: $method $url took ${dur}ms ($status)\"\n      ((slow++))\n    fi\n  fi\ndone < /data/access.log\necho \"Slow requests: $slow of $total total\"\nEOF\nbash /tmp/s.sh; cat /data/access.log | tail -4",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "SLOW: POST /api/orders took 850ms (200)\nSLOW: GET /api/reports took 1200ms (200)\nSLOW: POST /api/payments took 2000ms (500)\nSLOW: PUT /api/users took 620ms (200)\nSlow requests: 4 of 8 total\n[2024-01-15T10:00:05] 500 POST /api/payments 2000\n[2024-01-15T10:00:06] 200 GET /api/health 30\n[2024-01-15T10:00:07] 200 GET /api/products 450\n[2024-01-15T10:00:08] 200 PUT /api/users 620\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

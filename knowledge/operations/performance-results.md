@@ -26,7 +26,8 @@ directories:
 |---------|------------------|------------|
 | `bashkit-bench` | `crates/bashkit-bench/results/` | `bench-*.json` plus matching `bench-*.md` |
 | Criterion benches | `crates/bashkit/benches/results/` | `criterion-*.md` |
-| `bashkit-eval` (archived) | `crates/bashkit-eval/results/` | `eval-*.json`, `scripting-eval-*.json`, plus matching `.md` reports |
+| `bashkit-eval` (pre-mira archive) | `crates/bashkit-eval/results/` | `eval-*.json`, `scripting-eval-*.json`, plus matching `.md` reports |
+| `bashkit-eval` (mira) | `crates/bashkit-eval/results/mira/<run_id>/` | `report.json` (one site run per `bashkit_bash` target), `meta.json`, `report.html` |
 | `bashkit-replay` gap telemetry | `crates/bashkit-eval/results/gaps/` | `gaps-*.json` plus matching `gaps-*.md` |
 | Oils spec pass rate | `scripts/oils-spec/results/` | `oils-spec-*.json` plus matching `oils-spec-*.md` |
 
@@ -34,11 +35,13 @@ Markdown files are the user-facing reports linked from `/benches`; JSON files
 are the aggregation input for benchmark and eval summaries.
 
 > `bashkit-eval` was reimplemented as a [mira](https://github.com/everruns/mira)
-> study (see [Evaluation Framework](eval.md)); mira now owns eval run output (written under
-> `./results/<run_id>/` in mira's own format). The `crates/bashkit-eval/results/`
-> directory is retained as an **archive** of pre-mira runs and remains the
-> `/benches` eval input until the site is re-wired to mira's output format
-> (follow-up).
+> study (see [Evaluation Framework](eval.md)). `mira.toml` points mira's run
+> folders at `crates/bashkit-eval/results/mira/`; `build-performance-data.mjs`
+> splits each run's `report.json` into one eval run per target (score = tasks
+> passed / tasks scored, categories from `data/eval-tasks.jsonl`) and merges
+> them with the pre-mira archive. The homepage eval table and hero stat are
+> derived from the same generated timeline (latest full run per model within
+> 7 days of the newest run), so they cannot drift from the results folder.
 
 ## Run Commands
 
@@ -56,8 +59,9 @@ this additive field; historical reports remain readable. Regression tests in
 `crates/bashkit-bench/src/runners.rs` cover PATH precedence and missing/old Bash.
 
 `bashkit-eval` runs through the `mira` host (`just eval`, `just eval-scripting`);
-mira writes its own run folder under `./results/<run_id>/` and is not part of the
-benchmark save contract above.
+mira writes its run folder under `crates/bashkit-eval/results/mira/<run_id>/`
+(via `mira.toml`); commit full-lineup runs so `/benches` and the homepage pick
+them up.
 
 Non-saving exploratory commands may exist, but their names or comments must make
 clear that they do not update the site.

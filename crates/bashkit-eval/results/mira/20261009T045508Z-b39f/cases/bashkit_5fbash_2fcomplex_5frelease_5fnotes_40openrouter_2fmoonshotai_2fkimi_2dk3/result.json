@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_release_notes",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Read /data/commits.log containing conventional commit messages (one per line, format: 'type(scope): message'). Parse each line, group by type, and generate /release/CHANGELOG.md with sections: '## Features' for 'feat' commits, '## Bug Fixes' for 'fix' commits, and '## Other' for all remaining types. Under each section list items as '- scope: message'. Print the generated changelog."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "8/8 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "The changelog has been generated successfully. `/release/CHANGELOG.md` contains all 10 commits grouped by type:\n\n- **Features** (4): OAuth2 support, dark mode toggle, pagination, connection pooling\n- **Bug Fixes** (4): null response handling, token refresh race condition, button alignment, 404 status code\n- **Other** (2): a `chore` (lodash update) and a `docs` (readme update) commit\n\nThe script parses each line with `awk` using `(`, `)`, `:` as delimiters — field `$4` is the message since the delimiters create an empty field between `)` and `:`. Items are collected into three arrays keyed by type, then printed in the required section order, preserving the original file order within each section.",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "cat /data/commits.log",
+      "mkdir -p /release\nawk -F'[():]' '{\n  type=$1; scope=$2; msg=$3;\n  sub(/^ /, \"\", msg);\n  line=\"- \" scope \": \" msg;\n  if (type==\"feat\") feats[++nf]=line;\n  else if (type==\"fix\") fixes[++nx]=line;\n  else other[++no]=line;\n}\nEND {\n  print \"## Features\";\n  for (i=1;i<=nf;i++) print feats[i];\n  print \"\";\n  print \"## Bug Fixes\";\n  for (i=1;i<=nx;i++) print fixes[i];\n  print \"\";\n  print \"## Other\";\n  for (i=1;i<=no;i++) print other[i];\n}' /data/commits.log > /release/CHANGELOG.md\ncat /release/CHANGELOG.md",
+      "awk -F'[():]' '{\n  type=$1; scope=$2; msg=$4;\n  sub(/^ /, \"\", msg);\n  line=\"- \" scope \": \" msg;\n  if (type==\"feat\") feats[++nf]=line;\n  else if (type==\"fix\") fixes[++nx]=line;\n  else other[++no]=line;\n}\nEND {\n  print \"## Features\";\n  for (i=1;i<=nf;i++) print feats[i];\n  print \"\";\n  print \"## Bug Fixes\";\n  for (i=1;i<=nx;i++) print fixes[i];\n  print \"\";\n  print \"## Other\";\n  for (i=1;i<=no;i++) print other[i];\n}' /data/commits.log > /release/CHANGELOG.md\ncat /release/CHANGELOG.md"
+    ],
+    "usage": {
+      "input_tokens": 2990,
+      "output_tokens": 782,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 19238
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /data/commits.log",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "feat(auth): add OAuth2 support\nfix(api): handle null response body\nfeat(ui): dark mode toggle\nchore(deps): update lodash to 4.17.21\nfix(auth): token refresh race condition\nfeat(api): add pagination support\nfix(ui): button alignment on mobile\ndocs(readme): update install instructions\nfeat(db): add connection pooling\nfix(api): correct status code for 404\n"
+          },
+          {
+            "commands": "mkdir -p /release\nawk -F'[():]' '{\n  type=$1; scope=$2; msg=$3;\n  sub(/^ /, \"\", msg);\n  line=\"- \" scope \": \" msg;\n  if (type==\"feat\") feats[++nf]=line;\n  else if (type==\"fix\") fixes[++nx]=line;\n  else other[++no]=line;\n}\nEND {\n  print \"## Features\";\n  for (i=1;i<=nf;i++) print feats[i];\n  print \"\";\n  print \"## Bug Fixes\";\n  for (i=1;i<=nx;i++) print fixes[i];\n  print \"\";\n  print \"## Other\";\n  for (i=1;i<=no;i++) print other[i];\n}' /data/commits.log > /release/CHANGELOG.md\ncat /release/CHANGELOG.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "## Features\n- auth: \n- ui: \n- api: \n- db: \n\n## Bug Fixes\n- api: \n- auth: \n- ui: \n- api: \n\n## Other\n- deps: \n- readme: \n"
+          },
+          {
+            "commands": "awk -F'[():]' '{\n  type=$1; scope=$2; msg=$4;\n  sub(/^ /, \"\", msg);\n  line=\"- \" scope \": \" msg;\n  if (type==\"feat\") feats[++nf]=line;\n  else if (type==\"fix\") fixes[++nx]=line;\n  else other[++no]=line;\n}\nEND {\n  print \"## Features\";\n  for (i=1;i<=nf;i++) print feats[i];\n  print \"\";\n  print \"## Bug Fixes\";\n  for (i=1;i<=nx;i++) print fixes[i];\n  print \"\";\n  print \"## Other\";\n  for (i=1;i<=no;i++) print other[i];\n}' /data/commits.log > /release/CHANGELOG.md\ncat /release/CHANGELOG.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "## Features\n- auth: add OAuth2 support\n- ui: dark mode toggle\n- api: add pagination support\n- db: add connection pooling\n\n## Bug Fixes\n- api: handle null response body\n- auth: token refresh race condition\n- ui: button alignment on mobile\n- api: correct status code for 404\n\n## Other\n- deps: update lodash to 4.17.21\n- readme: update install instructions\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

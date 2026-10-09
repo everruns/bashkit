@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "text_csv_revenue",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Read /data/sales.csv (columns: product,price,quantity). Compute total revenue (sum of price*quantity for each row, skip the header). Print only the final total number."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "329",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "head -n 10 /data/sales.csv",
+      "awk -F',' 'NR>1 {sum += $2 * $3} END {print sum}' /data/sales.csv",
+      "cat /data/sales.csv"
+    ],
+    "usage": {
+      "input_tokens": 1049,
+      "output_tokens": 299,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 7824
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "head -n 10 /data/sales.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "product,price,quantity\nwidget,10,5\ngadget,25,3\ndoohickey,7,12\nsprocket,15,8\n"
+          },
+          {
+            "commands": "awk -F',' 'NR>1 {sum += $2 * $3} END {print sum}' /data/sales.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "329\n"
+          },
+          {
+            "commands": "cat /data/sales.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "product,price,quantity\nwidget,10,5\ngadget,25,3\ndoohickey,7,12\nsprocket,15,8\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

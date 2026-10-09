@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "archive_create_extract",
+  "target": "openai/gpt-6.1-sol",
+  "input": [
+    "Create a tar.gz archive of the /project directory and save it as /tmp/project.tar.gz. Then create /backup directory and extract the archive there. Verify the files exist in /backup."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Created `/tmp/project.tar.gz` and extracted it into `/backup/project`.\n\nVerified these files exist and match the originals:\n- `/backup/project/README.md`\n- `/backup/project/src/main.sh`",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "tar -czf /tmp/project.tar.gz -C / project && mkdir -p /backup && tar -xzf /tmp/project.tar.gz -C /backup && echo 'Archive:' && ls -l /tmp/project.tar.gz && echo 'Extracted files:' && find /backup -type f && echo 'Verification:' && diff -r /project /backup/project",
+      "set -e\nfind /project -type f | while IFS= read -r file; do\n  target=\"/backup${file}\"\n  test -f \"$target\"\n  cmp \"$file\" \"$target\"\n  printf 'Verified: %s\\n' \"$target\"\ndone"
+    ],
+    "usage": {
+      "input_tokens": 1072,
+      "output_tokens": 229,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 8778
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 1.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "tar -czf /tmp/project.tar.gz -C / project && mkdir -p /backup && tar -xzf /tmp/project.tar.gz -C /backup && echo 'Archive:' && ls -l /tmp/project.tar.gz && echo 'Extracted files:' && find /backup -type f && echo 'Verification:' && diff -r /project /backup/project",
+            "exit_code": 2,
+            "stderr": "diff: invalid option -- 'r'\n",
+            "stdout": "Archive:\n-rw-r--r--      230 2026-10-09 04:57 /tmp/project.tar.gz\nExtracted files:\n/backup/project/README.md\n/backup/project/src/main.sh\nVerification:\n"
+          },
+          {
+            "commands": "set -e\nfind /project -type f | while IFS= read -r file; do\n  target=\"/backup${file}\"\n  test -f \"$target\"\n  cmp \"$file\" \"$target\"\n  printf 'Verified: %s\\n' \"$target\"\ndone",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Verified: /backup/project/README.md\nVerified: /backup/project/src/main.sh\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

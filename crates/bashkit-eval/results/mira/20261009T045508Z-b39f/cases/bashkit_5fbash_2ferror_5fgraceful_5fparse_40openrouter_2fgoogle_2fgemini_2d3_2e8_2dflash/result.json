@@ -1,0 +1,92 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "error_graceful_parse",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Read /data/broken.json. It contains invalid JSON (a trailing comma before the closing brace). Fix the JSON by removing the trailing comma, save the fixed version back to the same file, and then parse it to print the 'name' field."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "The trailing comma in `/data/broken.json` was removed and saved back to the file. Parsing the fixed JSON yields the value for the `name` field:\n\n**test-app**",
+    "iterations": 7,
+    "tool_calls_count": 6,
+    "tool_calls": [
+      "cat /data/broken.json",
+      "which jq sed awk",
+      "cat << 'EOF' > /tmp/fix.sed\n# Remove trailing comma before closing brace or bracket\ns/,[[:space:]]*\\}/}/g\ns/,[[:space:]]*\\]/]/g\nEOF\n# Let's inspect the exact bytes / characters in /data/broken.json\nod -c /data/broken.json\n",
+      "sed -i 's/,[[:space:]]*}/}/g' /data/broken.json\ncat /data/broken.json\njq -r .name /data/broken.json",
+      "jq . /data/broken.json",
+      "jq -r .name /data/broken.json"
+    ],
+    "usage": {
+      "input_tokens": 2885,
+      "output_tokens": 411,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 11198
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 6.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 6.0,
+      "turns": 7.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /data/broken.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "{\"name\": \"test-app\", \"version\": \"1.0\", \"debug\": true, }"
+          },
+          {
+            "commands": "which jq sed awk",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/usr/bin/jq\n/usr/bin/sed\n/usr/bin/awk\n"
+          },
+          {
+            "commands": "cat << 'EOF' > /tmp/fix.sed\n# Remove trailing comma before closing brace or bracket\ns/,[[:space:]]*\\}/}/g\ns/,[[:space:]]*\\]/]/g\nEOF\n# Let's inspect the exact bytes / characters in /data/broken.json\nod -c /data/broken.json\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "0000000   {   \"   n   a   m   e   \"   :       \"   t   e   s   t   -   a\n0000020   p   p   \"   ,       \"   v   e   r   s   i   o   n   \"   :    \n0000040   \"   1   .   0   \"   ,       \"   d   e   b   u   g   \"   :    \n0000060   t   r   u   e   ,       }\n0000067\n"
+          },
+          {
+            "commands": "sed -i 's/,[[:space:]]*}/}/g' /data/broken.json\ncat /data/broken.json\njq -r .name /data/broken.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "{\"name\": \"test-app\", \"version\": \"1.0\", \"debug\": true}test-app\n"
+          },
+          {
+            "commands": "jq . /data/broken.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "{\n  \"name\": \"test-app\",\n  \"version\": \"1.0\",\n  \"debug\": true\n}\n"
+          },
+          {
+            "commands": "jq -r .name /data/broken.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "test-app\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

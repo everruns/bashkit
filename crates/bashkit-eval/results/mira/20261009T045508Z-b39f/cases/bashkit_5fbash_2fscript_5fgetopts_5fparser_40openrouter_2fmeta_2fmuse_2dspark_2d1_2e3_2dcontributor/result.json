@@ -1,0 +1,78 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "script_getopts_parser",
+  "target": "openrouter/meta/muse-spark-1.3-contributor",
+  "input": [
+    "Create /scripts/report.sh that uses getopts to parse these options: -f <format> (output format: csv or json, default csv), -o <file> (output file, default stdout), -v (verbose mode flag), -h (print usage and exit). After parsing, the script should read /data/input.csv and: if format is csv, output it as-is; if format is json, convert each row to a JSON object. Run the script with: 'bash /scripts/report.sh -f json -v' to process the input in verbose mode. Verbose mode should print 'Verbose: processing N rows' before output."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Created `/scripts/report.sh` using `getopts` (`-f`, `-o`, `-v`, `-h`) and executed it in verbose JSON mode:\n\n- Default `format=csv`, `output=stdout`, `verbose=0`\n- `getopts \"f:o:vh\"` with usage function for `-h`\n- Reads `/data/input.csv`: `csv` → `cat` as-is; `json` → `awk` converts each row to `{\"col\":\"val\"}` objects in a JSON array\n- Verbose prints `Verbose: processing N rows` (N = total lines - header) before output\n- Supports `-o <file>` redirecting output to file, else stdout\n\nVerified run `bash /scripts/report.sh -f json -v` outputs:\n```\nVerbose: processing 3 rows\n[\n{\"name\": \"alice\", \"score\": \"95\"},\n{\"name\": \"bob\", \"score\": \"87\"},\n{\"name\": \"carol\", \"score\": \"92\"}\n]\n```",
+    "iterations": 5,
+    "tool_calls_count": 4,
+    "tool_calls": [
+      "ls -R /data 2>&1; echo \"---\"; cat /data/input.csv 2>&1; echo \"---\"; ls -l /scripts 2>&1 || echo \"no scripts dir\"",
+      "mkdir -p /scripts\ncat > /scripts/report.sh <<'EOS'\n#!/bin/bash\n\nformat=\"csv\"\noutput=\"\"\nverbose=0\n\nusage() {\n  echo \"Usage: $0 [-f csv|json] [-o file] [-v] [-h]\"\n  echo \"  -f <format>  output format: csv or json (default: csv)\"\n  echo \"  -o <file>    output file (default: stdout)\"\n  echo \"  -v           verbose mode\"\n  echo \"  -h           print usage and exit\"\n}\n\nwhile getopts \"f:o:vh\" opt; do\n  case \"$opt\" in\n    f) format=\"$OPTARG\" ;;\n    o) output=\"$OPTARG\" ;;\n    v) verbose=1 ;;\n    h) usage\n       exit 0\n       ;;\n    \\?) usage >&2\n        exit 1\n        ;;\n    :) usage >&2\n       exit 1\n       ;;\n  esac\ndone\nshift $((OPTIND-1))\n\ninput=\"/data/input.csv\"\n\nif [ ! -f \"$input\" ]; then\n  echo \"Error: input file $input not found\" >&2\n  exit 1\nfi\n\nif [ \"$format\" != \"csv\" ] && [ \"$format\" != \"json\" ]; then\n  echo \"Error: invalid format '$format'. Use csv or json.\" >&2\n  exit 1\nfi\n\n# count data rows (excluding header)\ntotal_lines=$(wc -l < \"$input\")\n# trim whitespace\ntotal_lines=$(echo \"$total_lines\" | tr -d ' ')\nif [ \"$total_lines\" -gt 0 ]; then\n  rows=$((total_lines - 1))\nelse\n  rows=0\nfi\nif [ \"$rows\" -lt 0 ]; then\n  rows=0\nfi\n\nif [ \"$verbose\" -eq 1 ]; then\n  echo \"Verbose: processing $rows rows\"\nfi\n\nif [ \"$format\" = \"csv\" ]; then\n  if [ -n \"$output\" ]; then\n    cat \"$input\" > \"$output\"\n  else\n    cat \"$input\"\n  fi\nelse\n  # json conversion: each row to JSON object, output as JSON array\n  json_convert() {\n    awk -F, '\n      function trim(s) { gsub(/^[ \\t\\r\\n]+|[ \\t\\r\\n]+$/, \"\", s); return s }\n      function escape(s) { gsub(/\\\\/, \"\\\\\\\\\", s); gsub(/\"/, \"\\\\\\\"\", s); return s }\n      NR==1 {\n        for (i=1; i<=NF; i++) {\n          h[i]=escape(trim($i))\n        }\n        n=NF\n        next\n      }\n      {\n        if (NR==2) printf \"[\\n\"\n        else printf \",\\n\"\n        printf \"{\"\n        for (i=1; i<=n; i++) {\n          v = (i<=NF ? $i : \"\")\n          v=escape(trim(v))\n          printf \"\\\"%s\\\": \\\"%s\\\"\", h[i], v\n          if (i<n) printf \", \"\n        }\n        printf \"}\"\n      }\n      END {\n        if (NR>1) printf \"\\n]\\n\"\n        else printf \"[]\\n\"\n      }\n    ' \"$input\"\n  }\n  if [ -n \"$output\" ]; then\n    json_convert > \"$output\"\n  else\n    json_convert\n  fi\nfi\nEOS\nchmod +x /scripts/report.sh\ncat /scripts/report.sh\necho \"=== getopts check ===\"\ngrep -c \"getopts\" /scripts/report.sh",
+      "bash /scripts/report.sh -f json -v\necho \"---exit:$?---\"\necho \"=== test -h ===\"\nbash /scripts/report.sh -h\necho \"=== test default csv ===\"\nbash /scripts/report.sh\necho \"=== test -o ===\"\nbash /scripts/report.sh -f json -o /tmp/out.json -v && cat /tmp/out.json\necho \"=== perms ===\"\nls -l /scripts/report.sh",
+      "rm -f /tmp/out.json\nbash /scripts/report.sh -f json -v"
+    ],
+    "usage": {
+      "input_tokens": 10460,
+      "output_tokens": 7942,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 139216
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 4.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 4.0,
+      "turns": 5.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -R /data 2>&1; echo \"---\"; cat /data/input.csv 2>&1; echo \"---\"; ls -l /scripts 2>&1 || echo \"no scripts dir\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/data:\ninput.csv\n---\nname,score\nalice,95\nbob,87\ncarol,92\n---\nls: cannot access '/scripts': No such file or directory\nno scripts dir\n"
+          },
+          {
+            "commands": "mkdir -p /scripts\ncat > /scripts/report.sh <<'EOS'\n#!/bin/bash\n\nformat=\"csv\"\noutput=\"\"\nverbose=0\n\nusage() {\n  echo \"Usage: $0 [-f csv|json] [-o file] [-v] [-h]\"\n  echo \"  -f <format>  output format: csv or json (default: csv)\"\n  echo \"  -o <file>    output file (default: stdout)\"\n  echo \"  -v           verbose mode\"\n  echo \"  -h           print usage and exit\"\n}\n\nwhile getopts \"f:o:vh\" opt; do\n  case \"$opt\" in\n    f) format=\"$OPTARG\" ;;\n    o) output=\"$OPTARG\" ;;\n    v) verbose=1 ;;\n    h) usage\n       exit 0\n       ;;\n    \\?) usage >&2\n        exit 1\n        ;;\n    :) usage >&2\n       exit 1\n       ;;\n  esac\ndone\nshift $((OPTIND-1))\n\ninput=\"/data/input.csv\"\n\nif [ ! -f \"$input\" ]; then\n  echo \"Error: input file $input not found\" >&2\n  exit 1\nfi\n\nif [ \"$format\" != \"csv\" ] && [ \"$format\" != \"json\" ]; then\n  echo \"Error: invalid format '$format'. Use csv or json.\" >&2\n  exit 1\nfi\n\n# count data rows (excluding header)\ntotal_lines=$(wc -l < \"$input\")\n# trim whitespace\ntotal_lines=$(echo \"$total_lines\" | tr -d ' ')\nif [ \"$total_lines\" -gt 0 ]; then\n  rows=$((total_lines - 1))\nelse\n  rows=0\nfi\nif [ \"$rows\" -lt 0 ]; then\n  rows=0\nfi\n\nif [ \"$verbose\" -eq 1 ]; then\n  echo \"Verbose: processing $rows rows\"\nfi\n\nif [ \"$format\" = \"csv\" ]; then\n  if [ -n \"$output\" ]; then\n    cat \"$input\" > \"$output\"\n  else\n    cat \"$input\"\n  fi\nelse\n  # json conversion: each row to JSON object, output as JSON array\n  json_convert() {\n    awk -F, '\n      function trim(s) { gsub(/^[ \\t\\r\\n]+|[ \\t\\r\\n]+$/, \"\", s); return s }\n      function escape(s) { gsub(/\\\\/, \"\\\\\\\\\", s); gsub(/\"/, \"\\\\\\\"\", s); return s }\n      NR==1 {\n        for (i=1; i<=NF; i++) {\n          h[i]=escape(trim($i))\n        }\n        n=NF\n        next\n      }\n      {\n        if (NR==2) printf \"[\\n\"\n        else printf \",\\n\"\n        printf \"{\"\n        for (i=1; i<=n; i++) {\n          v = (i<=NF ? $i : \"\")\n          v=escape(trim(v))\n          printf \"\\\"%s\\\": \\\"%s\\\"\", h[i], v\n          if (i<n) printf \", \"\n        }\n        printf \"}\"\n      }\n      END {\n        if (NR>1) printf \"\\n]\\n\"\n        else printf \"[]\\n\"\n      }\n    ' \"$input\"\n  }\n  if [ -n \"$output\" ]; then\n    json_convert > \"$output\"\n  else\n    json_convert\n  fi\nfi\nEOS\nchmod +x /scripts/report.sh\ncat /scripts/report.sh\necho \"=== getopts check ===\"\ngrep -c \"getopts\" /scripts/report.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "#!/bin/bash\n\nformat=\"csv\"\noutput=\"\"\nverbose=0\n\nusage() {\n  echo \"Usage: $0 [-f csv|json] [-o file] [-v] [-h]\"\n  echo \"  -f <format>  output format: csv or json (default: csv)\"\n  echo \"  -o <file>    output file (default: stdout)\"\n  echo \"  -v           verbose mode\"\n  echo \"  -h           print usage and exit\"\n}\n\nwhile getopts \"f:o:vh\" opt; do\n  case \"$opt\" in\n    f) format=\"$OPTARG\" ;;\n    o) output=\"$OPTARG\" ;;\n    v) verbose=1 ;;\n    h) usage\n       exit 0\n       ;;\n    \\?) usage >&2\n        exit 1\n        ;;\n    :) usage >&2\n       exit 1\n       ;;\n  esac\ndone\nshift $((OPTIND-1))\n\ninput=\"/data/input.csv\"\n\nif [ ! -f \"$input\" ]; then\n  echo \"Error: input file $input not found\" >&2\n  exit 1\nfi\n\nif [ \"$format\" != \"csv\" ] && [ \"$format\" != \"json\" ]; then\n  echo \"Error: invalid format '$format'. Use csv or json.\" >&2\n  exit 1\nfi\n\n# count data rows (excluding header)\ntotal_lines=$(wc -l < \"$input\")\n# trim whitespace\ntotal_lines=$(echo \"$total_lines\" | tr -d ' ')\nif [ \"$total_lines\" -gt 0 ]; then\n  rows=$((total_lines - 1))\nelse\n  rows=0\nfi\nif [ \"$rows\" -lt 0 ]; then\n  rows=0\nfi\n\nif [ \"$verbose\" -eq 1 ]; then\n  echo \"Verbose: processing $rows rows\"\nfi\n\nif [ \"$format\" = \"csv\" ]; then\n  if [ -n \"$output\" ]; then\n    cat \"$input\" > \"$output\"\n  else\n    cat \"$input\"\n  fi\nelse\n  # json conversion: each row to JSON object, output as JSON array\n  json_convert() {\n    awk -F, '\n      function trim(s) { gsub(/^[ \\t\\r\\n]+|[ \\t\\r\\n]+$/, \"\", s); return s }\n      function escape(s) { gsub(/\\\\/, \"\\\\\\\\\", s); gsub(/\"/, \"\\\\\\\"\", s); return s }\n      NR==1 {\n        for (i=1; i<=NF; i++) {\n          h[i]=escape(trim($i))\n        }\n        n=NF\n        next\n      }\n      {\n        if (NR==2) printf \"[\\n\"\n        else printf \",\\n\"\n        printf \"{\"\n        for (i=1; i<=n; i++) {\n          v = (i<=NF ? $i : \"\")\n          v=escape(trim(v))\n          printf \"\\\"%s\\\": \\\"%s\\\"\", h[i], v\n          if (i<n) printf \", \"\n        }\n        printf \"}\"\n      }\n      END {\n        if (NR>1) printf \"\\n]\\n\"\n        else printf \"[]\\n\"\n      }\n    ' \"$input\"\n  }\n  if [ -n \"$output\" ]; then\n    json_convert > \"$output\"\n  else\n    json_convert\n  fi\nfi\n=== getopts check ===\n1\n"
+          },
+          {
+            "commands": "bash /scripts/report.sh -f json -v\necho \"---exit:$?---\"\necho \"=== test -h ===\"\nbash /scripts/report.sh -h\necho \"=== test default csv ===\"\nbash /scripts/report.sh\necho \"=== test -o ===\"\nbash /scripts/report.sh -f json -o /tmp/out.json -v && cat /tmp/out.json\necho \"=== perms ===\"\nls -l /scripts/report.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Verbose: processing 3 rows\n[\n{\"name\": \"alice\", \"score\": \"95\"},\n{\"name\": \"bob\", \"score\": \"87\"},\n{\"name\": \"carol\", \"score\": \"92\"}\n]\n---exit:0---\n=== test -h ===\nUsage: /scripts/report.sh [-f csv|json] [-o file] [-v] [-h]\n  -f <format>  output format: csv or json (default: csv)\n  -o <file>    output file (default: stdout)\n  -v           verbose mode\n  -h           print usage and exit\n=== test default csv ===\nname,score\nalice,95\nbob,87\ncarol,92\n=== test -o ===\nVerbose: processing 3 rows\n[\n{\"name\": \"alice\", \"score\": \"95\"},\n{\"name\": \"bob\", \"score\": \"87\"},\n{\"name\": \"carol\", \"score\": \"92\"}\n]\n=== perms ===\n-rwxr-xr-x     2145 2026-10-09 05:03 /scripts/report.sh\n"
+          },
+          {
+            "commands": "rm -f /tmp/out.json\nbash /scripts/report.sh -f json -v",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Verbose: processing 3 rows\n[\n{\"name\": \"alice\", \"score\": \"95\"},\n{\"name\": \"bob\", \"score\": \"87\"},\n{\"name\": \"carol\", \"score\": \"92\"}\n]\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

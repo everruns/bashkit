@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "build_multi_stage",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "Simulate a build pipeline: 1) Check that /src/main.c and /src/utils.c exist, 2) 'Compile' each .c file by copying it to /build/ with a .o extension and prepending '// compiled', 3) 'Link' by concatenating all .o files into /build/program with a '// linked' header, 4) 'Package' by creating a tar.gz of /build/ at /dist/release.tar.gz. Print status for each stage. If any stage fails, stop and report the error."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Build pipeline completed successfully:\n\n1. Source files checked: `/src/main.c` and `/src/utils.c` exist.\n2. Compile stage completed; object files created in `/build/`.\n3. Link stage completed; `/build/program` created.\n4. Package stage completed; archive created at `/dist/release.tar.gz`.",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "set -e\nprintf 'Stage 1: Check sources...\\n'\nfor f in /src/main.c /src/utils.c; do\n  if [ ! -f \"$f\" ]; then\n    printf 'ERROR: required source not found: %s\\n' \"$f\" >&2\n    exit 1\n  fi\ndone\nprintf 'Stage 1: OK\\n'\n\nprintf 'Stage 2: Compile...\\n'\nmkdir -p /build\nfor f in /src/main.c /src/utils.c; do\n  base=${f##*/}\n  obj=${base%.c}.o\n  { printf '// compiled\\n'; cat \"$f\"; } > \"/build/$obj\"\ndone\nprintf 'Stage 2: OK\\n'\n\nprintf 'Stage 3: Link...\\n'\n{ printf '// linked\\n'; cat /build/*.o; } > /build/program\nprintf 'Stage 3: OK\\n'\n\nprintf 'Stage 4: Package...\\n'\nmkdir -p /dist\ntar -czf /dist/release.tar.gz -C / build\nprintf 'Stage 4: OK\\n'"
+    ],
+    "usage": {
+      "input_tokens": 900,
+      "output_tokens": 352,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 5302
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "set -e\nprintf 'Stage 1: Check sources...\\n'\nfor f in /src/main.c /src/utils.c; do\n  if [ ! -f \"$f\" ]; then\n    printf 'ERROR: required source not found: %s\\n' \"$f\" >&2\n    exit 1\n  fi\ndone\nprintf 'Stage 1: OK\\n'\n\nprintf 'Stage 2: Compile...\\n'\nmkdir -p /build\nfor f in /src/main.c /src/utils.c; do\n  base=${f##*/}\n  obj=${base%.c}.o\n  { printf '// compiled\\n'; cat \"$f\"; } > \"/build/$obj\"\ndone\nprintf 'Stage 2: OK\\n'\n\nprintf 'Stage 3: Link...\\n'\n{ printf '// linked\\n'; cat /build/*.o; } > /build/program\nprintf 'Stage 3: OK\\n'\n\nprintf 'Stage 4: Package...\\n'\nmkdir -p /dist\ntar -czf /dist/release.tar.gz -C / build\nprintf 'Stage 4: OK\\n'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Stage 1: Check sources...\nStage 1: OK\nStage 2: Compile...\nStage 2: OK\nStage 3: Link...\nStage 3: OK\nStage 4: Package...\nStage 4: OK\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

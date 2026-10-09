@@ -16,23 +16,23 @@ Install the host CLI once, then drive the study through it:
 cargo install mira-cli            # provides the `mira` binary
 
 # List advertised evals, samples, scorers, and targets
-mira --bin bashkit-eval list
+mira list --study-bin bashkit-eval
 
 # Run the bash agent eval (set keys for the models you want; unkeyed targets skip)
-ANTHROPIC_API_KEY=... OPENAI_API_KEY=... \
-  mira --bin bashkit-eval run bashkit_bash
+ANTHROPIC_API_KEY=... OPENROUTER_API_KEY=... \
+  mira run --study-bin bashkit-eval bashkit_bash
 
-# A specific model + one category (--targets takes exact labels, comma-separated)
+# A specific model + one category (--targets takes comma-separated label globs)
 ANTHROPIC_API_KEY=... \
-  mira --bin bashkit-eval run bashkit_bash --targets anthropic/claude-opus-4-8 --tag json_processing
+  mira run --study-bin bashkit-eval bashkit_bash --targets anthropic/claude-opus-5-5 --tag json_processing
 
 # Scripting-tool eval, scripted mode only, self-contained HTML report
 OPENAI_API_KEY=... \
-  mira --bin bashkit-eval run bashkit_scripting --axis mode=scripted --format html --out report.html
+  mira run --study-bin bashkit-eval bashkit_scripting --axis mode=scripted --format html --out report.html
 
 # Via just
 just eval-list
-just eval --targets anthropic/claude-opus-4-8
+just eval --targets anthropic/claude-opus-5-5
 just eval-smoke
 just eval-scripting
 ```
@@ -46,12 +46,15 @@ Results are written by mira under `./results/<run_id>/`.
 | `bashkit_bash` | 58 tasks, 15 categories | `--tag <category>`, `--samples <id>` |
 | `bashkit_smoke` | 3 tasks | quick verification |
 | `bashkit_repo` | 8 `repo_workflow` tasks | multi-turn fixture repos (`just eval-repo`) |
+| `bashkit_hard` | 10 hard tasks, 9 categories | built not to saturate; 25 turns (`just eval-hard`) |
 | `bashkit_scripting` | scripting-tool tasks | `--axis mode=scripted\|baseline` |
 
 Targets (model matrix) are defined in `src/mira_study.rs` and gated on
-`ANTHROPIC_API_KEY` / `OPENAI_API_KEY`; offline runs skip them all. Select a
-subset with `--targets <label>`, **exact** labels, comma-separated (globs are
-not supported), e.g. `--targets anthropic/claude-opus-4-8,openai/gpt-5.5`.
+`ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `OPENROUTER_API_KEY`; offline runs
+skip them all. Models with no bashkit provider (Kimi, Meta Muse, Gemini) run
+through OpenRouter, labelled `openrouter/<vendor>/<model>`. Select a subset with `--targets <labels>`,
+comma-separated globs (mira 0.5+), e.g. `--targets 'anthropic/*'` or
+`--targets anthropic/claude-opus-5-5,openrouter/openai/gpt-5.6-sol`.
 
 ## Dataset
 
@@ -65,13 +68,66 @@ multi-turn tasks: a `setup` script builds a fixture git repo, the model runs
 git). Reference solutions in `data/repo-workflow-solutions.jsonl` run in
 `cargo test -p bashkit-eval`, so every task stays solvable without an LLM.
 
+Hard dataset (`data/hard-tasks.jsonl`, eval `bashkit_hard`) has 10 tasks
+written after `bashkit_bash` saturated: interacting bugs revealed one test at
+a time, quoting/glob/leading-dash file names, masked `set -euo pipefail`
+failures, trap/exit-code contracts, Makefile dependency graphs, a rename that
+must spare lookalikes and frozen messages, and golden-output reports (CSV/TSV
+reconciliation, nearest-rank p95 over a generated log, jq rollups, a
+deterministic topological sort). Reference solutions in
+`data/hard-tasks-solutions.jsonl` run in `cargo test -p bashkit-eval`.
+
 ## Results
 
 > Runs from 2026-06-27 onward use the mira eval framework (saved under
 > `results/mira/<run_id>/`). Earlier entries were produced by the original
 > (pre-mira) harness and are retained as a record.
 
-### 2026-06-27, mira harness, 5-model lineup (58 tasks, latest)
+### 2026-10-09, 7-model lineup (58 tasks + 8 repo + 10 hard, latest)
+
+Lineup refreshed to current models: Claude Opus 5.5 and Sonnet 5.5, GPT-6.1 Sol
+and GPT-6 Luna (Responses API: GPT-6 rejects function tools on Chat Completions
+with reasoning on), and, via OpenRouter, Gemini 3.8 Flash, Kimi K3 and Meta Muse
+Spark 1.3 Contributor. Run folders: `results/mira/20261009T045508Z-b39f`
+(`bashkit_bash`), `results/mira/20261009T050612Z-09d5` (`bashkit_repo`) and
+`results/mira/20261009T052837Z-e7e1` (`bashkit_hard`, first run of the new set).
+
+| Metric | Sonnet 5.5 | Kimi K3 | Muse Spark 1.3 | Opus 5.5 | GPT-6.1 Sol | Gemini 3.8 Flash | GPT-6 Luna |
+|--------|-----------|---------|----------------|----------|-------------|------------------|------------|
+| Tasks passed (58) | **58/58** | **58/58** | **58/58** | 57/58 | 54/58 | 54/58 | 51/58 |
+| Repo tasks (8) | **8/8** | **8/8** | 6/8 | 7/8 | 5/8 | 3/8 | 3/8 |
+| Hard tasks (10) | **10/10** | 8/10 | 8/10 | **10/10** | 9/10 | 4/10 | 6/10 |
+| Tool-call success | 95% | **96%** | **96%** | 95% | 91% | 93% | 93% |
+| Tokens (in/out) | 159K / 30K | 174K / 53K | 293K / 128K | 164K / 40K | **51K / 16K** | 229K / 47K | 60K / 20K |
+| Duration | **5.7 min** | 11.2 min | 28.0 min | 8.1 min | 8.0 min | 14.5 min | 5.8 min |
+
+Duration is the sum of per-task wall-clock time for the 58-task eval.
+
+#### Highlights
+
+1. **The 58-task set is saturating**: three models (Sonnet 5.5, Kimi K3, Muse
+   Spark 1.3) pass every task, and Opus 5.5 misses one (`complex_todo_app`).
+   The repo-workflow and new hard tasks now carry the signal.
+2. **Sonnet 5.5 is the value pick**: 58/58 and 8/8, fastest run, fewest
+   Anthropic tokens. Kimi K3 matches its pass counts at about twice the time.
+3. **GPT-6.1 Sol is the most token-frugal** (51K in) but drops 4 tasks and 3
+   repo tasks; GPT-6 Luna and Gemini 3.8 Flash pass only 3 of 8 repo tasks.
+4. **Recurring misses**: `file_path_organizer` and `search_find_replace` fail
+   for both GPT-6 models and Gemini, `script_getopts_parser` for GPT-6.1 Sol
+   and Gemini. In the repo set, `repo_parallel_runner_masks_failure` and
+   `repo_report_sort_regression` trip three models each.
+5. **Hard set (first run)**: 55/70 overall. Both Claude 5.5 models pass all
+   10; GPT-6.1 Sol 9, Kimi K3 and Muse Spark 8, GPT-6 Luna 6, Gemini 3.8
+   Flash 4. Hardest tasks: `hard_quoting_collect`, `hard_rename_refactor`,
+   `hard_makefile_deps`, `hard_trap_publish` (4/7 each). The top of the field
+   still saturates it, so the next round needs harder tasks again.
+6. **Gap telemetry**: replaying every recorded run on today's bashkit, calls
+   hitting a gap fall from 336 recorded to 73
+   (`results/gaps/gaps-20261009T051832Z.md`). The top remaining entries are
+   mostly invalid bash the models wrote (real bash rejects it too) and probes
+   for `python3`/`node`/`perl`, which the sandbox does not ship.
+
+### 2026-06-27, mira harness, 5-model lineup (58 tasks)
 
 First full run on the [mira](https://github.com/everruns/mira) framework, model
 lineup refreshed to `claude-opus-4-8` and `claude-haiku-4-5`. Anthropic and

@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_release_notes",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "Read /data/commits.log containing conventional commit messages (one per line, format: 'type(scope): message'). Parse each line, group by type, and generate /release/CHANGELOG.md with sections: '## Features' for 'feat' commits, '## Bug Fixes' for 'fix' commits, and '## Other' for all remaining types. Under each section list items as '- scope: message'. Print the generated changelog."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "8/8 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I generated `/release/CHANGELOG.md` from the 10 commits in `/data/commits.log`. Here is its content:\n\n```\n## Features\n\n- auth: add OAuth2 support\n- ui: dark mode toggle\n- api: add pagination support\n- db: add connection pooling\n\n## Bug Fixes\n\n- api: handle null response body\n- auth: token refresh race condition\n- ui: button alignment on mobile\n- api: correct status code for 404\n\n## Other\n\n- deps: update lodash to 4.17.21\n- readme: update install instructions\n```\n\nThe `/release` directory didn't exist, so I created it. Items appear in the same order as in the log. The `chore` and `docs` commits went under Other. The script would also handle a commit with no scope by listing it as `- message`, but none of these commits needed that.",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "cat -A /data/commits.log | head -50; wc -l /data/commits.log; ls /release",
+      "mkdir -p /release\ngen(){ # $1 heading, rest: types regex\n  local h=$1 re=$2 out=\"\" line type scope msg\n  while IFS= read -r line || [ -n \"$line\" ]; do\n    [[ $line =~ ^([a-zA-Z]+)(\\(([^)]*)\\))?!?:\\ *(.*)$ ]] || continue\n    type=${BASH_REMATCH[1]}; scope=${BASH_REMATCH[3]}; msg=${BASH_REMATCH[4]}\n    if [[ $type =~ $re ]]; then\n      if [ -n \"$scope\" ]; then out+=\"- $scope: $msg\"$'\\n'; else out+=\"- $msg\"$'\\n'; fi\n    fi\n  done < /data/commits.log\n  [ -n \"$out\" ] && printf '## %s\\n\\n%s\\n' \"$h\" \"$out\"\n}\n{ echo \"# Changelog\"; echo\ngen Features '^feat$'\ngen \"Bug Fixes\" '^fix$'\ngen Other '^(feat|fix)$' ; } >/dev/null\n# Other needs negation; do it explicitly\ngen2(){ :; }\n{\necho \"# Changelog\"; echo\ngen Features '^feat$'\ngen \"Bug Fixes\" '^fix$'\ngen Other '^[^]]*$' \n} >/dev/null\necho",
+      "mkdir -p /release\ngen(){ # $1 heading, $2 category: feat|fix|other\n  local h=$1 cat=$2 out=\"\" line type scope msg c\n  local re='^([a-zA-Z]+)(\\(([^)]*)\\))?!?:[[:space:]]*(.*)$'\n  while IFS= read -r line || [ -n \"$line\" ]; do\n    [[ $line =~ $re ]] || continue\n    type=${BASH_REMATCH[1]}; scope=${BASH_REMATCH[3]}; msg=${BASH_REMATCH[4]}\n    case $type in feat|fix) c=$type;; *) c=other;; esac\n    [ \"$c\" = \"$cat\" ] || continue\n    if [ -n \"$scope\" ]; then out+=\"- $scope: $msg\"$'\\n'; else out+=\"- $msg\"$'\\n'; fi\n  done < /data/commits.log\n  [ -n \"$out\" ] && printf '## %s\\n\\n%s\\n' \"$h\" \"$out\"\n}\n{ gen Features feat; gen \"Bug Fixes\" fix; gen Other other; } > /release/CHANGELOG.md\ncat /release/CHANGELOG.md"
+    ],
+    "usage": {
+      "input_tokens": 5473,
+      "output_tokens": 1322,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 10802
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 2.0,
+      "tool_calls_ok": 1.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat -A /data/commits.log | head -50; wc -l /data/commits.log; ls /release",
+            "exit_code": 2,
+            "stderr": "ls: cannot access '/release': No such file or directory\n",
+            "stdout": "feat(auth): add OAuth2 support$\nfix(api): handle null response body$\nfeat(ui): dark mode toggle$\nchore(deps): update lodash to 4.17.21$\nfix(auth): token refresh race condition$\nfeat(api): add pagination support$\nfix(ui): button alignment on mobile$\ndocs(readme): update install instructions$\nfeat(db): add connection pooling$\nfix(api): correct status code for 404$\n10 /data/commits.log\n"
+          },
+          {
+            "commands": "mkdir -p /release\ngen(){ # $1 heading, rest: types regex\n  local h=$1 re=$2 out=\"\" line type scope msg\n  while IFS= read -r line || [ -n \"$line\" ]; do\n    [[ $line =~ ^([a-zA-Z]+)(\\(([^)]*)\\))?!?:\\ *(.*)$ ]] || continue\n    type=${BASH_REMATCH[1]}; scope=${BASH_REMATCH[3]}; msg=${BASH_REMATCH[4]}\n    if [[ $type =~ $re ]]; then\n      if [ -n \"$scope\" ]; then out+=\"- $scope: $msg\"$'\\n'; else out+=\"- $msg\"$'\\n'; fi\n    fi\n  done < /data/commits.log\n  [ -n \"$out\" ] && printf '## %s\\n\\n%s\\n' \"$h\" \"$out\"\n}\n{ echo \"# Changelog\"; echo\ngen Features '^feat$'\ngen \"Bug Fixes\" '^fix$'\ngen Other '^(feat|fix)$' ; } >/dev/null\n# Other needs negation; do it explicitly\ngen2(){ :; }\n{\necho \"# Changelog\"; echo\ngen Features '^feat$'\ngen \"Bug Fixes\" '^fix$'\ngen Other '^[^]]*$' \n} >/dev/null\necho",
+            "exit_code": 2,
+            "stderr": "bash: line 5: syntax error in conditional expression: unexpected token `)'\n",
+            "stdout": ""
+          },
+          {
+            "commands": "mkdir -p /release\ngen(){ # $1 heading, $2 category: feat|fix|other\n  local h=$1 cat=$2 out=\"\" line type scope msg c\n  local re='^([a-zA-Z]+)(\\(([^)]*)\\))?!?:[[:space:]]*(.*)$'\n  while IFS= read -r line || [ -n \"$line\" ]; do\n    [[ $line =~ $re ]] || continue\n    type=${BASH_REMATCH[1]}; scope=${BASH_REMATCH[3]}; msg=${BASH_REMATCH[4]}\n    case $type in feat|fix) c=$type;; *) c=other;; esac\n    [ \"$c\" = \"$cat\" ] || continue\n    if [ -n \"$scope\" ]; then out+=\"- $scope: $msg\"$'\\n'; else out+=\"- $msg\"$'\\n'; fi\n  done < /data/commits.log\n  [ -n \"$out\" ] && printf '## %s\\n\\n%s\\n' \"$h\" \"$out\"\n}\n{ gen Features feat; gen \"Bug Fixes\" fix; gen Other other; } > /release/CHANGELOG.md\ncat /release/CHANGELOG.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "## Features\n\n- auth: add OAuth2 support\n- ui: dark mode toggle\n- api: add pagination support\n- db: add connection pooling\n\n## Bug Fixes\n\n- api: handle null response body\n- auth: token refresh race condition\n- ui: button alignment on mobile\n- api: correct status code for 404\n\n## Other\n\n- deps: update lodash to 4.17.21\n- readme: update install instructions\n\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

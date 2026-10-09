@@ -1,0 +1,68 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "file_ops_project_scaffold",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Create a Python project at /home/eval/myproject with the following structure: src/ directory with __init__.py, tests/ directory with __init__.py, docs/ directory, and a README.md at the project root with the text '# My Project'."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "The Python project has been created at `/home/eval/myproject` with the requested structure:\n\n- `/home/eval/myproject/src/__init__.py`\n- `/home/eval/myproject/tests/__init__.py`\n- `/home/eval/myproject/docs/`\n- `/home/eval/myproject/README.md` containing `# My Project`",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "mkdir -p /home/eval/myproject/src /home/eval/myproject/tests /home/eval/myproject/docs\ntouch /home/eval/myproject/src/__init__.py\ntouch /home/eval/myproject/tests/__init__.py\necho '# My Project' > /home/eval/myproject/README.md\n",
+      "ls -la /home/eval/myproject\nls -la /home/eval/myproject/src\nls -la /home/eval/myproject/tests\nls -la /home/eval/myproject/docs\ncat /home/eval/myproject/README.md\n"
+    ],
+    "usage": {
+      "input_tokens": 1030,
+      "output_tokens": 348,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 6058
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/home/eval/myproject/docs",
+          "/home/eval/myproject/src",
+          "/home/eval/myproject/tests"
+        ],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "mkdir -p /home/eval/myproject/src /home/eval/myproject/tests /home/eval/myproject/docs\ntouch /home/eval/myproject/src/__init__.py\ntouch /home/eval/myproject/tests/__init__.py\necho '# My Project' > /home/eval/myproject/README.md\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "ls -la /home/eval/myproject\nls -la /home/eval/myproject/src\nls -la /home/eval/myproject/tests\nls -la /home/eval/myproject/docs\ncat /home/eval/myproject/README.md\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       13 2026-10-09 04:55 README.md\ndrwxr-xr-x        0 2026-10-09 04:55 docs\ndrwxr-xr-x        0 2026-10-09 04:55 src\ndrwxr-xr-x        0 2026-10-09 04:55 tests\n-rw-r--r--        0 2026-10-09 04:55 __init__.py\n-rw-r--r--        0 2026-10-09 04:55 __init__.py\n# My Project\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

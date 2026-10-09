@@ -1,0 +1,92 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "script_getopts_parser",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Create /scripts/report.sh that uses getopts to parse these options: -f <format> (output format: csv or json, default csv), -o <file> (output file, default stdout), -v (verbose mode flag), -h (print usage and exit). After parsing, the script should read /data/input.csv and: if format is csv, output it as-is; if format is json, convert each row to a JSON object. Run the script with: 'bash /scripts/report.sh -f json -v' to process the input in verbose mode. Verbose mode should print 'Verbose: processing N rows' before output."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Done. `/scripts/report.sh` is created and executable, and the required run `bash /scripts/report.sh -f json -v` works as specified.\n\n**What the script does:**\n- **`getopts` parsing** with the `:f:o:vh` optstring:\n  - `-f <format>` — `csv` (default) or `json`; anything else exits with an error\n  - `-o <file>` — writes output to a file instead of stdout\n  - `-v` — verbose flag\n  - `-h` — prints usage and exits 0\n  - Handles unknown options and missing arguments with error messages (exit 1)\n- **CSV format**: outputs `/data/input.csv` as-is via `cat`\n- **JSON format**: uses `awk` to map each data row to a JSON object keyed by the header columns, producing a JSON array (validated as well-formed with `jq`)\n- **Verbose mode**: prints `Verbose: processing N rows` (N = 3, the data rows excluding the header) to **stderr** *before* output, so it doesn't contaminate stdout when piping or redirecting\n\n**Verified behavior of the required run:**\n```\nVerbose: processing 3 rows\n[{\"name\":\"alice\",\"score\":\"95\"},{\"name\":\"bob\",\"score\":\"87\"},{\"name\":\"carol\",\"score\":\"92\"}]\n```\n\nAlso tested: `-h` usage output, default CSV passthrough, `-o` file output, and error handling for bad formats, unknown flags, and missing option arguments.",
+    "iterations": 7,
+    "tool_calls_count": 6,
+    "tool_calls": [
+      "ls -la /data/ 2>/dev/null && echo \"---\" && cat /data/input.csv 2>/dev/null; echo \"---\"; ls -la /scripts 2>/dev/null || echo \"/scripts does not exist\"",
+      "which jq awk sed 2>/dev/null; echo \"---\"; awk --version 2>/dev/null | head -1 || awk -W version 2>&1 | head -1",
+      "mkdir -p /scripts && cat > /scripts/report.sh << 'EOF'\n#!/bin/bash\n#\n# report.sh - Read /data/input.csv and output it as CSV or JSON.\n#\n# Options:\n#   -f <format>  Output format: csv or json (default: csv)\n#   -o <file>    Output file (default: stdout)\n#   -v           Verbose mode\n#   -h           Print usage and exit\n\nset -u\n\nINPUT=\"/data/input.csv\"\n\nusage() {\n    cat <<USAGE\nUsage: $(basename \"$0\") [-f format] [-o file] [-v] [-h]\n\nOptions:\n  -f <format>  Output format: csv or json (default: csv)\n  -o <file>    Write output to <file> instead of stdout\n  -v           Verbose mode (prints progress to stderr)\n  -h           Print this usage message and exit\nUSAGE\n}\n\n# Defaults\nformat=\"csv\"\noutfile=\"\"\nverbose=0\n\nwhile getopts \":f:o:vh\" opt; do\n    case \"$opt\" in\n        f)\n            format=\"$OPTARG\"\n            ;;\n        o)\n            outfile=\"$OPTARG\"\n            ;;\n        v)\n            verbose=1\n            ;;\n        h)\n            usage\n            exit 0\n            ;;\n        :)\n            echo \"Error: option -$OPTARG requires an argument.\" >&2\n            usage >&2\n            exit 1\n            ;;\n        \\?)\n            echo \"Error: invalid option -$OPTARG.\" >&2\n            usage >&2\n            exit 1\n            ;;\n    esac\ndone\nshift $((OPTIND - 1))\n\n# Validate format\ncase \"$format\" in\n    csv|json) ;;\n    *)\n        echo \"Error: unsupported format '$format' (expected csv or json).\" >&2\n        exit 1\n        ;;\nesac\n\n# Validate input file\nif [ ! -r \"$INPUT\" ]; then\n    echo \"Error: cannot read input file '$INPUT'.\" >&2\n    exit 1\nfi\n\n# Count data rows (total lines minus header)\ntotal_lines=$(wc -l < \"$INPUT\")\nrows=$((total_lines - 1))\n[ \"$rows\" -lt 0 ] && rows=0\n\nif [ \"$verbose\" -eq 1 ]; then\n    echo \"Verbose: processing $rows rows\" >&2\nfi\n\n# Produce the output for the requested format\nproduce_output() {\n    if [ \"$format\" = \"csv\" ]; then\n        cat \"$INPUT\"\n    else\n        awk -F',' '\n            NR == 1 {\n                for (i = 1; i <= NF; i++) header[i] = $i\n                ncols = NF\n                printf \"[\"\n                next\n            }\n            {\n                if (count++ > 0) printf \",\"\n                printf \"{\"\n                for (i = 1; i <= ncols; i++) {\n                    key = header[i]\n                    val = $i\n                    gsub(/\\\\/, \"\\\\\\\\\", key); gsub(/\"/, \"\\\\\\\"\", key)\n                    gsub(/\\\\/, \"\\\\\\\\\", val); gsub(/\"/, \"\\\\\\\"\", val)\n                    printf \"\\\"%s\\\":\\\"%s\\\"%s\", key, val, (i < ncols ? \",\" : \"\")\n                }\n                printf \"}\"\n            }\n            END { printf \"]\\n\" }\n        ' \"$INPUT\"\n    fi\n}\n\n# Send output to file or stdout\nif [ -n \"$outfile\" ]; then\n    produce_output > \"$outfile\"\n    if [ \"$verbose\" -eq 1 ]; then\n        echo \"Verbose: output written to $outfile\" >&2\n    fi\nelse\n    produce_output\nfi\nEOF\nchmod +x /scripts/report.sh && echo \"Script created:\" && cat /scripts/report.sh",
+      "echo \"=== Required run: bash /scripts/report.sh -f json -v ===\"\nbash /scripts/report.sh -f json -v\necho\necho \"=== Validate JSON output with jq ===\"\nbash /scripts/report.sh -f json 2>/dev/null | jq .",
+      "echo \"=== -h (usage) ===\"\nbash /scripts/report.sh -h\necho \"exit code: $?\"\necho\necho \"=== default csv (no -f) ===\"\nbash /scripts/report.sh\necho\necho \"=== -f json -o /tmp/out.json -v ===\"\nbash /scripts/report.sh -f json -o /tmp/out.json -v\necho \"--- file contents:\"; cat /tmp/out.json\necho\necho \"=== error: missing arg for -f ===\"\nbash /scripts/report.sh -f; echo \"exit code: $?\"\necho\necho \"=== error: invalid option ===\"\nbash /scripts/report.sh -x; echo \"exit code: $?\"\necho\necho \"=== error: bad format ===\"\nbash /scripts/report.sh -f xml; echo \"exit code: $?\"\necho\necho \"=== csv verbose to stdout (streams separate) ===\"\nbash /scripts/report.sh -v 2>/dev/null",
+      "bash /scripts/report.sh -f json -v 2>&1"
+    ],
+    "usage": {
+      "input_tokens": 14122,
+      "output_tokens": 3251,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 77963
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 6.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 6.0,
+      "turns": 7.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /data/ 2>/dev/null && echo \"---\" && cat /data/input.csv 2>/dev/null; echo \"---\"; ls -la /scripts 2>/dev/null || echo \"/scripts does not exist\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       36 2026-10-09 05:01 input.csv\n---\nname,score\nalice,95\nbob,87\ncarol,92\n---\n/scripts does not exist\n"
+          },
+          {
+            "commands": "which jq awk sed 2>/dev/null; echo \"---\"; awk --version 2>/dev/null | head -1 || awk -W version 2>&1 | head -1",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/usr/bin/jq\n/usr/bin/awk\n/usr/bin/sed\n---\nGNU Awk 5.2.1 (bashkit)\n"
+          },
+          {
+            "commands": "mkdir -p /scripts && cat > /scripts/report.sh << 'EOF'\n#!/bin/bash\n#\n# report.sh - Read /data/input.csv and output it as CSV or JSON.\n#\n# Options:\n#   -f <format>  Output format: csv or json (default: csv)\n#   -o <file>    Output file (default: stdout)\n#   -v           Verbose mode\n#   -h           Print usage and exit\n\nset -u\n\nINPUT=\"/data/input.csv\"\n\nusage() {\n    cat <<USAGE\nUsage: $(basename \"$0\") [-f format] [-o file] [-v] [-h]\n\nOptions:\n  -f <format>  Output format: csv or json (default: csv)\n  -o <file>    Write output to <file> instead of stdout\n  -v           Verbose mode (prints progress to stderr)\n  -h           Print this usage message and exit\nUSAGE\n}\n\n# Defaults\nformat=\"csv\"\noutfile=\"\"\nverbose=0\n\nwhile getopts \":f:o:vh\" opt; do\n    case \"$opt\" in\n        f)\n            format=\"$OPTARG\"\n            ;;\n        o)\n            outfile=\"$OPTARG\"\n            ;;\n        v)\n            verbose=1\n            ;;\n        h)\n            usage\n            exit 0\n            ;;\n        :)\n            echo \"Error: option -$OPTARG requires an argument.\" >&2\n            usage >&2\n            exit 1\n            ;;\n        \\?)\n            echo \"Error: invalid option -$OPTARG.\" >&2\n            usage >&2\n            exit 1\n            ;;\n    esac\ndone\nshift $((OPTIND - 1))\n\n# Validate format\ncase \"$format\" in\n    csv|json) ;;\n    *)\n        echo \"Error: unsupported format '$format' (expected csv or json).\" >&2\n        exit 1\n        ;;\nesac\n\n# Validate input file\nif [ ! -r \"$INPUT\" ]; then\n    echo \"Error: cannot read input file '$INPUT'.\" >&2\n    exit 1\nfi\n\n# Count data rows (total lines minus header)\ntotal_lines=$(wc -l < \"$INPUT\")\nrows=$((total_lines - 1))\n[ \"$rows\" -lt 0 ] && rows=0\n\nif [ \"$verbose\" -eq 1 ]; then\n    echo \"Verbose: processing $rows rows\" >&2\nfi\n\n# Produce the output for the requested format\nproduce_output() {\n    if [ \"$format\" = \"csv\" ]; then\n        cat \"$INPUT\"\n    else\n        awk -F',' '\n            NR == 1 {\n                for (i = 1; i <= NF; i++) header[i] = $i\n                ncols = NF\n                printf \"[\"\n                next\n            }\n            {\n                if (count++ > 0) printf \",\"\n                printf \"{\"\n                for (i = 1; i <= ncols; i++) {\n                    key = header[i]\n                    val = $i\n                    gsub(/\\\\/, \"\\\\\\\\\", key); gsub(/\"/, \"\\\\\\\"\", key)\n                    gsub(/\\\\/, \"\\\\\\\\\", val); gsub(/\"/, \"\\\\\\\"\", val)\n                    printf \"\\\"%s\\\":\\\"%s\\\"%s\", key, val, (i < ncols ? \",\" : \"\")\n                }\n                printf \"}\"\n            }\n            END { printf \"]\\n\" }\n        ' \"$INPUT\"\n    fi\n}\n\n# Send output to file or stdout\nif [ -n \"$outfile\" ]; then\n    produce_output > \"$outfile\"\n    if [ \"$verbose\" -eq 1 ]; then\n        echo \"Verbose: output written to $outfile\" >&2\n    fi\nelse\n    produce_output\nfi\nEOF\nchmod +x /scripts/report.sh && echo \"Script created:\" && cat /scripts/report.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Script created:\n#!/bin/bash\n#\n# report.sh - Read /data/input.csv and output it as CSV or JSON.\n#\n# Options:\n#   -f <format>  Output format: csv or json (default: csv)\n#   -o <file>    Output file (default: stdout)\n#   -v           Verbose mode\n#   -h           Print usage and exit\n\nset -u\n\nINPUT=\"/data/input.csv\"\n\nusage() {\n    cat <<USAGE\nUsage: $(basename \"$0\") [-f format] [-o file] [-v] [-h]\n\nOptions:\n  -f <format>  Output format: csv or json (default: csv)\n  -o <file>    Write output to <file> instead of stdout\n  -v           Verbose mode (prints progress to stderr)\n  -h           Print this usage message and exit\nUSAGE\n}\n\n# Defaults\nformat=\"csv\"\noutfile=\"\"\nverbose=0\n\nwhile getopts \":f:o:vh\" opt; do\n    case \"$opt\" in\n        f)\n            format=\"$OPTARG\"\n            ;;\n        o)\n            outfile=\"$OPTARG\"\n            ;;\n        v)\n            verbose=1\n            ;;\n        h)\n            usage\n            exit 0\n            ;;\n        :)\n            echo \"Error: option -$OPTARG requires an argument.\" >&2\n            usage >&2\n            exit 1\n            ;;\n        \\?)\n            echo \"Error: invalid option -$OPTARG.\" >&2\n            usage >&2\n            exit 1\n            ;;\n    esac\ndone\nshift $((OPTIND - 1))\n\n# Validate format\ncase \"$format\" in\n    csv|json) ;;\n    *)\n        echo \"Error: unsupported format '$format' (expected csv or json).\" >&2\n        exit 1\n        ;;\nesac\n\n# Validate input file\nif [ ! -r \"$INPUT\" ]; then\n    echo \"Error: cannot read input file '$INPUT'.\" >&2\n    exit 1\nfi\n\n# Count data rows (total lines minus header)\ntotal_lines=$(wc -l < \"$INPUT\")\nrows=$((total_lines - 1))\n[ \"$rows\" -lt 0 ] && rows=0\n\nif [ \"$verbose\" -eq 1 ]; then\n    echo \"Verbose: processing $rows rows\" >&2\nfi\n\n# Produce the output for the requested format\nproduce_output() {\n    if [ \"$format\" = \"csv\" ]; then\n        cat \"$INPUT\"\n    else\n        awk -F',' '\n            NR == 1 {\n                for (i = 1; i <= NF; i++) header[i] = $i\n                ncols = NF\n                printf \"[\"\n                next\n            }\n            {\n                if (count++ > 0) printf \",\"\n                printf \"{\"\n                for (i = 1; i <= ncols; i++) {\n                    key = header[i]\n                    val = $i\n                    gsub(/\\\\/, \"\\\\\\\\\", key); gsub(/\"/, \"\\\\\\\"\", key)\n                    gsub(/\\\\/, \"\\\\\\\\\", val); gsub(/\"/, \"\\\\\\\"\", val)\n                    printf \"\\\"%s\\\":\\\"%s\\\"%s\", key, val, (i < ncols ? \",\" : \"\")\n                }\n                printf \"}\"\n            }\n            END { printf \"]\\n\" }\n        ' \"$INPUT\"\n    fi\n}\n\n# Send output to file or stdout\nif [ -n \"$outfile\" ]; then\n    produce_output > \"$outfile\"\n    if [ \"$verbose\" -eq 1 ]; then\n        echo \"Verbose: output written to $outfile\" >&2\n    fi\nelse\n    produce_output\nfi\n"
+          },
+          {
+            "commands": "echo \"=== Required run: bash /scripts/report.sh -f json -v ===\"\nbash /scripts/report.sh -f json -v\necho\necho \"=== Validate JSON output with jq ===\"\nbash /scripts/report.sh -f json 2>/dev/null | jq .",
+            "exit_code": 0,
+            "stderr": "Verbose: processing 3 rows\n",
+            "stdout": "=== Required run: bash /scripts/report.sh -f json -v ===\n[{\"name\":\"alice\",\"score\":\"95\"},{\"name\":\"bob\",\"score\":\"87\"},{\"name\":\"carol\",\"score\":\"92\"}]\n\n=== Validate JSON output with jq ===\n[\n  {\n    \"name\": \"alice\",\n    \"score\": \"95\"\n  },\n  {\n    \"name\": \"bob\",\n    \"score\": \"87\"\n  },\n  {\n    \"name\": \"carol\",\n    \"score\": \"92\"\n  }\n]\n"
+          },
+          {
+            "commands": "echo \"=== -h (usage) ===\"\nbash /scripts/report.sh -h\necho \"exit code: $?\"\necho\necho \"=== default csv (no -f) ===\"\nbash /scripts/report.sh\necho\necho \"=== -f json -o /tmp/out.json -v ===\"\nbash /scripts/report.sh -f json -o /tmp/out.json -v\necho \"--- file contents:\"; cat /tmp/out.json\necho\necho \"=== error: missing arg for -f ===\"\nbash /scripts/report.sh -f; echo \"exit code: $?\"\necho\necho \"=== error: invalid option ===\"\nbash /scripts/report.sh -x; echo \"exit code: $?\"\necho\necho \"=== error: bad format ===\"\nbash /scripts/report.sh -f xml; echo \"exit code: $?\"\necho\necho \"=== csv verbose to stdout (streams separate) ===\"\nbash /scripts/report.sh -v 2>/dev/null",
+            "exit_code": 0,
+            "stderr": "Verbose: processing 3 rows\nVerbose: output written to /tmp/out.json\nError: option -f requires an argument.\nUsage: report.sh [-f format] [-o file] [-v] [-h]\n\nOptions:\n  -f <format>  Output format: csv or json (default: csv)\n  -o <file>    Write output to <file> instead of stdout\n  -v           Verbose mode (prints progress to stderr)\n  -h           Print this usage message and exit\nError: invalid option -x.\nUsage: report.sh [-f format] [-o file] [-v] [-h]\n\nOptions:\n  -f <format>  Output format: csv or json (default: csv)\n  -o <file>    Write output to <file> instead of stdout\n  -v           Verbose mode (prints progress to stderr)\n  -h           Print this usage message and exit\nError: unsupported format 'xml' (expected csv or json).\n",
+            "stdout": "=== -h (usage) ===\nUsage: report.sh [-f format] [-o file] [-v] [-h]\n\nOptions:\n  -f <format>  Output format: csv or json (default: csv)\n  -o <file>    Write output to <file> instead of stdout\n  -v           Verbose mode (prints progress to stderr)\n  -h           Print this usage message and exit\nexit code: 0\n\n=== default csv (no -f) ===\nname,score\nalice,95\nbob,87\ncarol,92\n\n=== -f json -o /tmp/out.json -v ===\n--- file contents:\n[{\"name\":\"alice\",\"score\":\"95\"},{\"name\":\"bob\",\"score\":\"87\"},{\"name\":\"carol\",\"score\":\"92\"}]\n\n=== error: missing arg for -f ===\nexit code: 1\n\n=== error: invalid option ===\nexit code: 1\n\n=== error: bad format ===\nexit code: 1\n\n=== csv verbose to stdout (streams separate) ===\nname,score\nalice,95\nbob,87\ncarol,92\n"
+          },
+          {
+            "commands": "bash /scripts/report.sh -f json -v 2>&1",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Verbose: processing 3 rows\n[{\"name\":\"alice\",\"score\":\"95\"},{\"name\":\"bob\",\"score\":\"87\"},{\"name\":\"carol\",\"score\":\"92\"}]\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

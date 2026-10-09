@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "text_csv_revenue",
+  "target": "openai/gpt-6.1-sol",
+  "input": [
+    "Read /data/sales.csv (columns: product,price,quantity). Compute total revenue (sum of price*quantity for each row, skip the header). Print only the final total number."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "329.00",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "awk -F, 'NR>1 {sum += $2*$3} END {printf \"%.2f\\n\", sum}' /data/sales.csv"
+    ],
+    "usage": {
+      "input_tokens": 479,
+      "output_tokens": 63,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 4127
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "awk -F, 'NR>1 {sum += $2*$3} END {printf \"%.2f\\n\", sum}' /data/sales.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "329.00\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -472,6 +472,95 @@ async function buildEvalRuns() {
   return runs.toSorted((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 }
 
+// mira runs (results/mira/<run_id>/report.json) hold every target of one
+// `mira run`; split them into one eval run per target so they line up with
+// the pre-mira per-model JSON files. Only the full `bashkit_bash` eval feeds
+// the site. Score = tasks passed / tasks scored (a case passes iff every check
+// passes), matching the README tables. Infra errors (no scores) are excluded.
+async function buildMiraEvalRuns() {
+  const miraDir = path.join(evalDir, "mira");
+  let runIds = [];
+  try {
+    runIds = (await readdir(miraDir)).toSorted();
+  } catch {
+    return [];
+  }
+  const categoryById = new Map();
+  const tasksFile = await readFile(path.join(repoRoot, "crates/bashkit-eval/data/eval-tasks.jsonl"), "utf8");
+  for (const line of tasksFile.split("\n")) {
+    if (!line.trim()) continue;
+    const task = JSON.parse(line);
+    categoryById.set(task.id, task.category);
+  }
+
+  const runs = [];
+  for (const runId of runIds) {
+    let report;
+    let meta;
+    try {
+      report = await readJson(path.join(miraDir, runId, "report.json"));
+      meta = await readJson(path.join(miraDir, runId, "meta.json"));
+    } catch {
+      continue;
+    }
+    const timestamp = meta.started_unix ? new Date(meta.started_unix * 1000).toISOString() : null;
+    const byTarget = new Map();
+    for (const item of report.cases ?? []) {
+      if (item.eval !== "bashkit_bash" || item.skipped || !item.scores?.length) continue;
+      const bucket = byTarget.get(item.target) ?? [];
+      bucket.push(item);
+      byTarget.set(item.target, bucket);
+    }
+
+    for (const [target, cases] of byTarget) {
+      const slash = target.indexOf("/");
+      const provider = target.slice(0, slash);
+      // OpenRouter ids carry a vendor prefix (openai/gpt-5.6-sol); the model
+      // name alone keys trends across direct and routed runs.
+      const model = target.slice(slash + 1).split("/").at(-1);
+      const sum = (pick) => cases.reduce((acc, item) => acc + (pick(item) ?? 0), 0);
+      const passed = cases.filter((item) => item.passed).length;
+      const toolCalls = sum((item) => item.transcript?.metrics?.tool_calls);
+      const toolOk = sum((item) => item.transcript?.metrics?.tool_calls_ok);
+      const byCategory = new Map();
+      for (const item of cases) {
+        const category = categoryById.get(item.sample) ?? "unknown";
+        const row = byCategory.get(category) ?? { tasks: 0, passed: 0 };
+        row.tasks += 1;
+        row.passed += item.passed ? 1 : 0;
+        byCategory.set(category, row);
+      }
+      const categories = [...byCategory.entries()]
+        .map(([category, row]) => ({ ...row, category, rate: round((row.passed / row.tasks) * 100, 1) }))
+        .sort((a, b) => a.rate - b.rate || b.tasks - a.tasks);
+      const source = `crates/bashkit-eval/results/mira/${runId}/report.json`;
+      runs.push({
+        id: `mira-${runId}-${target.replaceAll("/", "-")}`,
+        kind: "llm-eval",
+        provider,
+        model,
+        baseline: null,
+        label: target,
+        date: dateLabel(timestamp),
+        timestamp,
+        source,
+        reportSource: `crates/bashkit-eval/results/mira/${runId}/report.html`,
+        tasks: cases.length,
+        passed,
+        scorePct: round((passed / cases.length) * 100, 1),
+        toolSuccessPct: toolCalls ? round((toolOk / toolCalls) * 100, 1) : null,
+        avgTurns: round(sum((item) => item.transcript?.metrics?.turns) / cases.length, 2),
+        avgToolCalls: round(toolCalls / cases.length, 2),
+        avgDurationMs: round(sum((item) => item.transcript?.timing?.duration_ms) / cases.length, 0),
+        inputTokens: sum((item) => item.transcript?.usage?.input_tokens),
+        outputTokens: sum((item) => item.transcript?.usage?.output_tokens),
+        categories,
+      });
+    }
+  }
+  return runs;
+}
+
 function bestBy(items, score) {
   return items.reduce((best, item) => {
     if (!best) return item;
@@ -537,7 +626,7 @@ function buildMilestones({ benchRuns, criterionRuns, evalRuns }) {
 function buildModelTrends(evalRuns) {
   const byModel = new Map();
   for (const run of evalRuns.filter((item) => item.tasks >= 10)) {
-    const key = `${run.provider}/${run.model}`;
+    const key = run.model;
     const bucket = byModel.get(key) ?? [];
     bucket.push({ date: run.date, timestamp: run.timestamp, scorePct: run.scorePct, passed: run.passed, tasks: run.tasks });
     byModel.set(key, bucket);
@@ -553,7 +642,9 @@ function buildModelTrends(evalRuns) {
 
 const benchRuns = await buildBenchRuns();
 const criterionRuns = await buildCriterionRuns();
-const evalRuns = await buildEvalRuns();
+const evalRuns = [...(await buildEvalRuns()), ...(await buildMiraEvalRuns())].toSorted(
+  (a, b) => new Date(a.timestamp) - new Date(b.timestamp),
+);
 const pythonStartup = await buildPythonStartup();
 const gapTelemetry = await buildGapTelemetry();
 const oilsSpec = await buildOilsSpec();
@@ -564,7 +655,7 @@ const payload = {
   sources: {
     bench: "crates/bashkit-bench/results/*.json",
     criterion: "crates/bashkit/benches/results/*.md",
-    evals: "crates/bashkit-eval/results/*.json",
+    evals: "crates/bashkit-eval/results/*.json + results/mira/*/report.json",
     gaps: "crates/bashkit-eval/results/gaps/gaps-*.json",
     oilsSpec: "scripts/oils-spec/results/oils-spec-*.json",
   },

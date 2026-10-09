@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "archive_selective",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "Create files: /tmp/notes.txt with 'remember this', /tmp/data.csv with 'a,b,c', /tmp/script.sh with '#!/bin/bash'. Create a tar.gz archive /tmp/bundle.tar.gz containing all three files. Then list the archive contents. Finally extract only notes.txt to /output/ directory."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "3/3 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I created the three files in `/tmp` and bundled them into `/tmp/bundle.tar.gz`.\n\n- **Archive contents:** `notes.txt`, `data.csv` and `script.sh`.\n- **Extraction:** I extracted only `notes.txt`, into `/output/`. Listing `/output` shows just that file, and it contains \"remember this\".",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "cd /tmp\necho 'remember this' > notes.txt\necho 'a,b,c' > data.csv\necho '#!/bin/bash' > script.sh\ntar -czf bundle.tar.gz notes.txt data.csv script.sh\ntar -tzf bundle.tar.gz\nmkdir -p /output\ntar -xzf bundle.tar.gz -C /output notes.txt\nls -l /output; cat /output/notes.txt"
+    ],
+    "usage": {
+      "input_tokens": 1688,
+      "output_tokens": 317,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 3669
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cd /tmp\necho 'remember this' > notes.txt\necho 'a,b,c' > data.csv\necho '#!/bin/bash' > script.sh\ntar -czf bundle.tar.gz notes.txt data.csv script.sh\ntar -tzf bundle.tar.gz\nmkdir -p /output\ntar -xzf bundle.tar.gz -C /output notes.txt\nls -l /output; cat /output/notes.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "notes.txt\ndata.csv\nscript.sh\n-rw-r--r--       14 2026-10-09 04:57 notes.txt\nremember this\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

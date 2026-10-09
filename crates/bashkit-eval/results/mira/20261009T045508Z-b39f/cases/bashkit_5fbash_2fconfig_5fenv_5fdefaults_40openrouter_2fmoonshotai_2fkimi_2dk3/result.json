@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "config_env_defaults",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Write /scripts/start.sh that configures a service. It should read these environment variables and fall back to defaults when they're not set: DB_HOST (default 'localhost'), DB_PORT (default '5432'), DB_NAME (default 'myapp'), LOG_LEVEL (default 'info'). Print the resolved config as 'key=value' lines. If DB_HOST is explicitly set, also print 'custom_db=true'. Run the script twice: first with no env vars set (to test defaults), then with DB_HOST=db.prod.internal to test the override."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Done. `/scripts/start.sh` is created, executable, and verified with both runs.\n\n**How it works:**\n\n- **Defaults** — `${VAR:-default}` syntax supplies the fallback when a variable is unset or empty.\n- **Explicit-set detection** — Before applying defaults, the script checks `${DB_HOST+x}`, which expands to `x` whenever `DB_HOST` is set (even to an empty string). This flag is captured first so the default-filling doesn't mask whether the user set it. Per your spec, `custom_db=true` only prints when `DB_HOST` was explicitly provided, not when the default is used.\n\n**Test results:**\n\n| Run | Output |\n|---|---|\n| No env vars (`env -i` for a clean environment) | `DB_HOST=localhost`, `DB_PORT=5432`, `DB_NAME=myapp`, `LOG_LEVEL=info` — no `custom_db` line |\n| `DB_HOST=db.prod.internal` | Same, but `DB_HOST=db.prod.internal` and `custom_db=true` appended |\n\nThe `env -i` in the first run guarantees a genuinely empty environment (no inherited vars from the shell), making the defaults test rigorous.",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "mkdir -p /scripts\ncat > /scripts/start.sh <<'EOF'\n#!/usr/bin/env bash\n#\n# start.sh - resolve service configuration from environment variables,\n# falling back to defaults for anything not set.\n\n# Detect whether DB_HOST was explicitly set BEFORE applying the default.\n# ${DB_HOST+x} expands to \"x\" whenever DB_HOST is set (even if set to \"\").\nif [ -n \"${DB_HOST+x}\" ]; then\n  custom_db=true\nelse\n  custom_db=false\nfi\n\n# Apply defaults for unset/empty values.\nDB_HOST=\"${DB_HOST:-localhost}\"\nDB_PORT=\"${DB_PORT:-5432}\"\nDB_NAME=\"${DB_NAME:-myapp}\"\nLOG_LEVEL=\"${LOG_LEVEL:-info}\"\n\n# Print the resolved configuration as key=value lines.\necho \"DB_HOST=$DB_HOST\"\necho \"DB_PORT=$DB_PORT\"\necho \"DB_NAME=$DB_NAME\"\necho \"LOG_LEVEL=$LOG_LEVEL\"\n\nif [ \"$custom_db\" = \"true\" ]; then\n  echo \"custom_db=true\"\nfi\nEOF\nchmod +x /scripts/start.sh\n\necho \"=== Run 1: no env vars set (defaults) ===\"\nenv -i bash /scripts/start.sh\n\necho\necho \"=== Run 2: DB_HOST=db.prod.internal (override) ===\"\nDB_HOST=db.prod.internal bash /scripts/start.sh"
+    ],
+    "usage": {
+      "input_tokens": 1268,
+      "output_tokens": 2212,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 21654
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "mkdir -p /scripts\ncat > /scripts/start.sh <<'EOF'\n#!/usr/bin/env bash\n#\n# start.sh - resolve service configuration from environment variables,\n# falling back to defaults for anything not set.\n\n# Detect whether DB_HOST was explicitly set BEFORE applying the default.\n# ${DB_HOST+x} expands to \"x\" whenever DB_HOST is set (even if set to \"\").\nif [ -n \"${DB_HOST+x}\" ]; then\n  custom_db=true\nelse\n  custom_db=false\nfi\n\n# Apply defaults for unset/empty values.\nDB_HOST=\"${DB_HOST:-localhost}\"\nDB_PORT=\"${DB_PORT:-5432}\"\nDB_NAME=\"${DB_NAME:-myapp}\"\nLOG_LEVEL=\"${LOG_LEVEL:-info}\"\n\n# Print the resolved configuration as key=value lines.\necho \"DB_HOST=$DB_HOST\"\necho \"DB_PORT=$DB_PORT\"\necho \"DB_NAME=$DB_NAME\"\necho \"LOG_LEVEL=$LOG_LEVEL\"\n\nif [ \"$custom_db\" = \"true\" ]; then\n  echo \"custom_db=true\"\nfi\nEOF\nchmod +x /scripts/start.sh\n\necho \"=== Run 1: no env vars set (defaults) ===\"\nenv -i bash /scripts/start.sh\n\necho\necho \"=== Run 2: DB_HOST=db.prod.internal (override) ===\"\nDB_HOST=db.prod.internal bash /scripts/start.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== Run 1: no env vars set (defaults) ===\nDB_HOST=localhost\nDB_PORT=5432\nDB_NAME=myapp\nLOG_LEVEL=info\n\n=== Run 2: DB_HOST=db.prod.internal (override) ===\nDB_HOST=db.prod.internal\nDB_PORT=5432\nDB_NAME=myapp\nLOG_LEVEL=info\ncustom_db=true\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

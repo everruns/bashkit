@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "script_getopts_parser",
+  "target": "openai/gpt-6.1-sol",
+  "input": [
+    "Create /scripts/report.sh that uses getopts to parse these options: -f <format> (output format: csv or json, default csv), -o <file> (output file, default stdout), -v (verbose mode flag), -h (print usage and exit). After parsing, the script should read /data/input.csv and: if format is csv, output it as-is; if format is json, convert each row to a JSON object. Run the script with: 'bash /scripts/report.sh -f json -v' to process the input in verbose mode. Verbose mode should print 'Verbose: processing N rows' before output."
+  ],
+  "passed": false,
+  "aggregate": 0.8,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 0.8,
+      "pass": false,
+      "reason": "4/5 checks passed (weighted rate 80%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Created `/scripts/report.sh` with `getopts` support for `-f`, `-o`, `-v`, and `-h`, and ran:\n\n```bash\nbash /scripts/report.sh -f json -v\n```\n\nVerbose message (stderr):\n```text\nVerbose: processing 3 rows\n```\n\nJSON output (stdout):\n```json\n[\n  {\"name\": \"alice\", \"score\": \"95\"},\n  {\"name\": \"bob\", \"score\": \"87\"},\n  {\"name\": \"carol\", \"score\": \"92\"}\n]\n```",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "ls -la /data; cat /data/input.csv; command -v jq; command -v ruby; command -v node; command -v awk",
+      "mkdir -p /scripts\ncat > /scripts/report.sh <<'EOF'\n#!/usr/bin/env bash\nset -euo pipefail\n\nusage() {\n    printf 'Usage: %s [-f csv|json] [-o file] [-v] [-h]\\n' \"$0\"\n}\n\nformat=csv\noutput=\nverbose=false\nwhile getopts ':f:o:vh' opt; do\n    case \"$opt\" in\n        f) format=$OPTARG ;;\n        o) output=$OPTARG ;;\n        v) verbose=true ;;\n        h) usage; exit 0 ;;\n        :) printf 'Error: -%s requires an argument\\n' \"$OPTARG\" >&2; usage >&2; exit 1 ;;\n        \\?) printf 'Error: unknown option -%s\\n' \"$OPTARG\" >&2; usage >&2; exit 1 ;;\n    esac\ndone\nshift \"$((OPTIND - 1))\"\nif (( $# > 0 )); then\n    printf 'Error: unexpected positional arguments\\n' >&2\n    usage >&2\n    exit 1\nfi\ncase \"$format\" in\n    csv|json) ;;\n    *) printf 'Error: format must be csv or json\\n' >&2; exit 1 ;;\nesac\n\ninput=/data/input.csv\nif [[ ! -r \"$input\" ]]; then\n    printf 'Error: cannot read %s\\n' \"$input\" >&2\n    exit 1\nfi\n\nif \"$verbose\"; then\n    rows=$(awk 'END { print (NR > 0 ? NR - 1 : 0) }' \"$input\")\n    printf 'Verbose: processing %s rows\\n' \"$rows\" >&2\nfi\n\nrender() {\n    if [[ \"$format\" == csv ]]; then\n        cat \"$input\"\n    else\n        # The first row supplies the object keys; cell values remain strings.\n        jq -Rn '\n            [inputs | rtrimstr(\"\\r\") | split(\",\")] as $rows\n            | if ($rows | length) == 0 then []\n              else $rows[0] as $headers\n                | [$rows[1:][] as $row\n                   | reduce range(0; $headers | length) as $i\n                     ({}; .[$headers[$i]] = ($row[$i] // \"\"))]\n              end\n        ' < \"$input\"\n    fi\n}\n\nif [[ -n \"$output\" ]]; then\n    render > \"$output\"\nelse\n    render\nfi\nEOF\nchmod +x /scripts/report.sh\nbash /scripts/report.sh -f json -v"
+    ],
+    "usage": {
+      "input_tokens": 1824,
+      "output_tokens": 977,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 21470
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /data; cat /data/input.csv; command -v jq; command -v ruby; command -v node; command -v awk",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       36 2026-10-09 05:01 input.csv\nname,score\nalice,95\nbob,87\ncarol,92\n/usr/bin/jq\n/usr/bin/awk\n"
+          },
+          {
+            "commands": "mkdir -p /scripts\ncat > /scripts/report.sh <<'EOF'\n#!/usr/bin/env bash\nset -euo pipefail\n\nusage() {\n    printf 'Usage: %s [-f csv|json] [-o file] [-v] [-h]\\n' \"$0\"\n}\n\nformat=csv\noutput=\nverbose=false\nwhile getopts ':f:o:vh' opt; do\n    case \"$opt\" in\n        f) format=$OPTARG ;;\n        o) output=$OPTARG ;;\n        v) verbose=true ;;\n        h) usage; exit 0 ;;\n        :) printf 'Error: -%s requires an argument\\n' \"$OPTARG\" >&2; usage >&2; exit 1 ;;\n        \\?) printf 'Error: unknown option -%s\\n' \"$OPTARG\" >&2; usage >&2; exit 1 ;;\n    esac\ndone\nshift \"$((OPTIND - 1))\"\nif (( $# > 0 )); then\n    printf 'Error: unexpected positional arguments\\n' >&2\n    usage >&2\n    exit 1\nfi\ncase \"$format\" in\n    csv|json) ;;\n    *) printf 'Error: format must be csv or json\\n' >&2; exit 1 ;;\nesac\n\ninput=/data/input.csv\nif [[ ! -r \"$input\" ]]; then\n    printf 'Error: cannot read %s\\n' \"$input\" >&2\n    exit 1\nfi\n\nif \"$verbose\"; then\n    rows=$(awk 'END { print (NR > 0 ? NR - 1 : 0) }' \"$input\")\n    printf 'Verbose: processing %s rows\\n' \"$rows\" >&2\nfi\n\nrender() {\n    if [[ \"$format\" == csv ]]; then\n        cat \"$input\"\n    else\n        # The first row supplies the object keys; cell values remain strings.\n        jq -Rn '\n            [inputs | rtrimstr(\"\\r\") | split(\",\")] as $rows\n            | if ($rows | length) == 0 then []\n              else $rows[0] as $headers\n                | [$rows[1:][] as $row\n                   | reduce range(0; $headers | length) as $i\n                     ({}; .[$headers[$i]] = ($row[$i] // \"\"))]\n              end\n        ' < \"$input\"\n    fi\n}\n\nif [[ -n \"$output\" ]]; then\n    render > \"$output\"\nelse\n    render\nfi\nEOF\nchmod +x /scripts/report.sh\nbash /scripts/report.sh -f json -v",
+            "exit_code": 0,
+            "stderr": "Verbose: processing 3 rows\n",
+            "stdout": "[\n  {\n    \"name\": \"alice\",\n    \"score\": \"95\"\n  },\n  {\n    \"name\": \"bob\",\n    \"score\": \"87\"\n  },\n  {\n    \"name\": \"carol\",\n    \"score\": \"92\"\n  }\n]\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

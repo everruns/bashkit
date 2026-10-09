@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "db_csv_join_aggregate",
+  "target": "openai/gpt-6.1-sol",
+  "input": [
+    "Join /data/orders.csv and /data/products.csv on product_id. For each category, compute the total revenue (quantity * price). Print 'category: total_revenue' sorted by revenue descending."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "electronics: 450.00\nhardware: 165.00",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "head -n 5 /data/orders.csv; echo '---'; head -n 5 /data/products.csv; command -v awk; command -v ruby; command -v node; command -v csvkit",
+      "awk -F, 'FNR==1 {next} NR==FNR {category[$1]=$3; price[$1]=$4; next} $2 in category {revenue[category[$2]] += $3 * price[$2]} END {for (c in revenue) printf \"%s: %.2f\\n\", c, revenue[c]}' /data/products.csv /data/orders.csv | sort -t: -k2,2nr"
+    ],
+    "usage": {
+      "input_tokens": 1065,
+      "output_tokens": 201,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 9364
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 1.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "head -n 5 /data/orders.csv; echo '---'; head -n 5 /data/products.csv; command -v awk; command -v ruby; command -v node; command -v csvkit",
+            "exit_code": 1,
+            "stderr": "",
+            "stdout": "order_id,product_id,quantity\n1,101,3\n2,102,5\n3,101,2\n4,103,1\n---\nproduct_id,name,category,price\n101,Widget,hardware,25\n102,Gadget,electronics,50\n103,Bolt,hardware,10\n/usr/bin/awk\n"
+          },
+          {
+            "commands": "awk -F, 'FNR==1 {next} NR==FNR {category[$1]=$3; price[$1]=$4; next} $2 in category {revenue[category[$2]] += $3 * price[$2]} END {for (c in revenue) printf \"%s: %.2f\\n\", c, revenue[c]}' /data/products.csv /data/orders.csv | sort -t: -k2,2nr",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "electronics: 450.00\nhardware: 165.00\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

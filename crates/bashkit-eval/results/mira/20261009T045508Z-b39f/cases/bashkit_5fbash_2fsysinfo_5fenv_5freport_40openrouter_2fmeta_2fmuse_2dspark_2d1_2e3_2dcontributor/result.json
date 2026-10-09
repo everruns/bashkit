@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "sysinfo_env_report",
+  "target": "openrouter/meta/muse-spark-1.3-contributor",
+  "input": [
+    "Print a system report with four lines: 'user: <whoami output>', 'host: <hostname output>', 'cwd: <pwd output>', 'shell: bash'. Use the actual commands to get the values."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "user: eval\nhost: bashkit-eval\ncwd: /home/user\nshell: bash",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "whoami; hostname; pwd; echo \"shell: bash\"",
+      "echo \"user: $(whoami)\"\necho \"host: $(hostname)\"\necho \"cwd: $(pwd)\"\necho \"shell: bash\""
+    ],
+    "usage": {
+      "input_tokens": 2524,
+      "output_tokens": 1250,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 16365
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "whoami; hostname; pwd; echo \"shell: bash\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "eval\nbashkit-eval\n/home/user\nshell: bash\n"
+          },
+          {
+            "commands": "echo \"user: $(whoami)\"\necho \"host: $(hostname)\"\necho \"cwd: $(pwd)\"\necho \"shell: bash\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "user: eval\nhost: bashkit-eval\ncwd: /home/user\nshell: bash\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

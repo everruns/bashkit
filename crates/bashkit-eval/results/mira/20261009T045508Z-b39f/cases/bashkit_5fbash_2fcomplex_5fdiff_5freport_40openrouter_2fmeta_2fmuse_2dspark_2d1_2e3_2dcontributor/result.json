@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_diff_report",
+  "target": "openrouter/meta/muse-spark-1.3-contributor",
+  "input": [
+    "Compare /data/v1.conf and /data/v2.conf. Produce a human-readable summary showing: which keys were added, which were removed, and which had their values changed. Print the summary to stdout."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Summary of changes between /data/v1.conf and /data/v2.conf:\n\nAdded keys (1):\n  timeout=30\n\nRemoved keys (1):\n  max_connections=100\n\nChanged values (3):\n  host: localhost -> 0.0.0.0\n  log_level: info -> debug\n  port: 8080 -> 9090\n",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "ls -l /data/; echo \"---v1---\"; cat /data/v1.conf; echo \"---v2---\"; cat /data/v2.conf",
+      "cat /data/v1.conf\necho \"===\"\ncat /data/v2.conf\necho \"===\"\n# generic comparison script\ndeclare -A v1 v2\nwhile IFS='=' read -r k v || [[ -n \"$k\" ]]; do\n  # trim whitespace, skip empty/comment\n  k=$(echo \"$k\" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')\n  v=$(echo \"$v\" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')\n  [[ -z \"$k\" ]] && continue\n  [[ \"$k\" == \\#* ]] && continue\n  v1[\"$k\"]=\"$v\"\ndone < /data/v1.conf\n\nwhile IFS='=' read -r k v || [[ -n \"$k\" ]]; do\n  k=$(echo \"$k\" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')\n  v=$(echo \"$v\" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')\n  [[ -z \"$k\" ]] && continue\n  [[ \"$k\" == \\#* ]] && continue\n  v2[\"$k\"]=\"$v\"\ndone < /data/v2.conf\n\nadded=()\nremoved=()\nchanged=()\nfor k in \"${!v2[@]}\"; do\n  if [[ -z \"${v1[$k]+x}\" ]]; then\n    added+=(\"$k=${v2[$k]}\")\n  elif [[ \"${v1[$k]}\" != \"${v2[$k]}\" ]]; then\n    changed+=(\"$k: ${v1[$k]} -> ${v2[$k]}\")\n  fi\ndone\nfor k in \"${!v1[@]}\"; do\n  if [[ -z \"${v2[$k]+x}\" ]]; then\n    removed+=(\"$k=${v1[$k]}\")\n  fi\ndone\n\necho \"Summary of changes between /data/v1.conf and /data/v2.conf:\"\necho \"\"\necho \"Added keys (${#added[@]}):\"\nif [ ${#added[@]} -eq 0 ]; then echo \"  (none)\"; else printf \"  %s\\n\" \"${added[@]}\" | sort; fi\necho \"\"\necho \"Removed keys (${#removed[@]}):\"\nif [ ${#removed[@]} -eq 0 ]; then echo \"  (none)\"; else printf \"  %s\\n\" \"${removed[@]}\" | sort; fi\necho \"\"\necho \"Changed values (${#changed[@]}):\"\nif [ ${#changed[@]} -eq 0 ]; then echo \"  (none)\"; else printf \"  %s\\n\" \"${changed[@]}\" | sort; fi"
+    ],
+    "usage": {
+      "input_tokens": 3413,
+      "output_tokens": 1545,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 10317
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -l /data/; echo \"---v1---\"; cat /data/v1.conf; echo \"---v2---\"; cat /data/v2.conf",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       70 2026-10-09 04:58 v1.conf\n-rw-r--r--       60 2026-10-09 04:58 v2.conf\n---v1---\nport=8080\nhost=localhost\nlog_level=info\nworkers=4\nmax_connections=100\n---v2---\nport=9090\nhost=0.0.0.0\nlog_level=debug\nworkers=4\ntimeout=30\n"
+          },
+          {
+            "commands": "cat /data/v1.conf\necho \"===\"\ncat /data/v2.conf\necho \"===\"\n# generic comparison script\ndeclare -A v1 v2\nwhile IFS='=' read -r k v || [[ -n \"$k\" ]]; do\n  # trim whitespace, skip empty/comment\n  k=$(echo \"$k\" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')\n  v=$(echo \"$v\" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')\n  [[ -z \"$k\" ]] && continue\n  [[ \"$k\" == \\#* ]] && continue\n  v1[\"$k\"]=\"$v\"\ndone < /data/v1.conf\n\nwhile IFS='=' read -r k v || [[ -n \"$k\" ]]; do\n  k=$(echo \"$k\" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')\n  v=$(echo \"$v\" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')\n  [[ -z \"$k\" ]] && continue\n  [[ \"$k\" == \\#* ]] && continue\n  v2[\"$k\"]=\"$v\"\ndone < /data/v2.conf\n\nadded=()\nremoved=()\nchanged=()\nfor k in \"${!v2[@]}\"; do\n  if [[ -z \"${v1[$k]+x}\" ]]; then\n    added+=(\"$k=${v2[$k]}\")\n  elif [[ \"${v1[$k]}\" != \"${v2[$k]}\" ]]; then\n    changed+=(\"$k: ${v1[$k]} -> ${v2[$k]}\")\n  fi\ndone\nfor k in \"${!v1[@]}\"; do\n  if [[ -z \"${v2[$k]+x}\" ]]; then\n    removed+=(\"$k=${v1[$k]}\")\n  fi\ndone\n\necho \"Summary of changes between /data/v1.conf and /data/v2.conf:\"\necho \"\"\necho \"Added keys (${#added[@]}):\"\nif [ ${#added[@]} -eq 0 ]; then echo \"  (none)\"; else printf \"  %s\\n\" \"${added[@]}\" | sort; fi\necho \"\"\necho \"Removed keys (${#removed[@]}):\"\nif [ ${#removed[@]} -eq 0 ]; then echo \"  (none)\"; else printf \"  %s\\n\" \"${removed[@]}\" | sort; fi\necho \"\"\necho \"Changed values (${#changed[@]}):\"\nif [ ${#changed[@]} -eq 0 ]; then echo \"  (none)\"; else printf \"  %s\\n\" \"${changed[@]}\" | sort; fi",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "port=8080\nhost=localhost\nlog_level=info\nworkers=4\nmax_connections=100\n===\nport=9090\nhost=0.0.0.0\nlog_level=debug\nworkers=4\ntimeout=30\n===\nSummary of changes between /data/v1.conf and /data/v2.conf:\n\nAdded keys (1):\n  timeout=30\n\nRemoved keys (1):\n  max_connections=100\n\nChanged values (3):\n  host: localhost -> 0.0.0.0\n  log_level: info -> debug\n  port: 8080 -> 9090\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

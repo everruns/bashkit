@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "build_multi_stage",
+  "target": "openrouter/meta/muse-spark-1.3-contributor",
+  "input": [
+    "Simulate a build pipeline: 1) Check that /src/main.c and /src/utils.c exist, 2) 'Compile' each .c file by copying it to /build/ with a .o extension and prepending '// compiled', 3) 'Link' by concatenating all .o files into /build/program with a '// linked' header, 4) 'Package' by creating a tar.gz of /build/ at /dist/release.tar.gz. Print status for each stage. If any stage fails, stop and report the error."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Build pipeline completed successfully:\n\n- **Stage 1 - Check:** `/src/main.c` and `/src/utils.c` exist ✅\n- **Stage 2 - Compile:** `/src/main.c` → `/build/main.o`, `/src/utils.c` → `/build/utils.o` (with `// compiled` header) ✅\n- **Stage 3 - Link:** Concatenated `.o` files into `/build/program` (with `// linked` header) ✅\n- **Stage 4 - Package:** Created `/dist/release.tar.gz` from `/build/` ✅",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "pwd; ls -R /src 2>&1; echo \"---\"; ls -R /build 2>&1; echo \"---\"; ls -R /dist 2>&1; echo \"---\"; cat /src/main.c 2>&1 | head -n 50; echo \"===\"; cat /src/utils.c 2>&1 | head -n 50",
+      "set -u\necho \"Stage 1: Checking sources...\"\nif [ ! -f /src/main.c ]; then echo \"Stage 1 FAILED: /src/main.c not found\" >&2; exit 1; fi\nif [ ! -f /src/utils.c ]; then echo \"Stage 1 FAILED: /src/utils.c not found\" >&2; exit 1; fi\necho \"Stage 1 OK: /src/main.c and /src/utils.c exist\"\n\necho \"Stage 2: Compiling...\"\nmkdir -p /build || { echo \"Stage 2 FAILED: could not create /build\" >&2; exit 1; }\ncompile_failed=0\nfor src in /src/main.c /src/utils.c; do\n  base=$(basename \"$src\" .c)\n  dst=\"/build/${base}.o\"\n  if ! { echo '// compiled'; cat \"$src\"; } > \"$dst\"; then\n    echo \"Stage 2 FAILED: failed to compile $src\" >&2\n    compile_failed=1\n    break\n  fi\n  echo \"Compiled $src -> $dst\"\ndone\nif [ \"$compile_failed\" -ne 0 ]; then exit 1; fi\n# verify .o files exist\nif [ ! -f /build/main.o ] || [ ! -f /build/utils.o ]; then\n  echo \"Stage 2 FAILED: expected object files missing\" >&2; exit 1\nfi\necho \"Stage 2 OK: compilation complete\"\n\necho \"Stage 3: Linking...\"\nif ! ls /build/*.o >/dev/null 2>&1; then echo \"Stage 3 FAILED: no object files in /build/\" >&2; exit 1; fi\nif ! { echo '// linked'; cat /build/*.o; } > /build/program; then\n  echo \"Stage 3 FAILED: linking failed\" >&2; exit 1\nfi\nif [ ! -f /build/program ]; then echo \"Stage 3 FAILED: /build/program not created\" >&2; exit 1; fi\necho \"Stage 3 OK: linked /build/program created\"\n\necho \"Stage 4: Packaging...\"\nmkdir -p /dist || { echo \"Stage 4 FAILED: could not create /dist\" >&2; exit 1; }\nif ! tar -czf /dist/release.tar.gz -C /build .; then\n  echo \"Stage 4 FAILED: tar packaging failed\" >&2; exit 1\nfi\nif [ ! -f /dist/release.tar.gz ]; then echo \"Stage 4 FAILED: /dist/release.tar.gz not created\" >&2; exit 1; fi\necho \"Stage 4 OK: packaged /dist/release.tar.gz created\"\n\necho \"Build pipeline completed successfully.\""
+    ],
+    "usage": {
+      "input_tokens": 3584,
+      "output_tokens": 2211,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 24843
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "pwd; ls -R /src 2>&1; echo \"---\"; ls -R /build 2>&1; echo \"---\"; ls -R /dist 2>&1; echo \"---\"; cat /src/main.c 2>&1 | head -n 50; echo \"===\"; cat /src/utils.c 2>&1 | head -n 50",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/home/user\n/src:\nmain.c\nutils.c\n---\nls: cannot access '/build': No such file or directory\n---\nls: cannot access '/dist': No such file or directory\n---\nint main() { return helper(); }\n===\nint helper() { return 0; }\n"
+          },
+          {
+            "commands": "set -u\necho \"Stage 1: Checking sources...\"\nif [ ! -f /src/main.c ]; then echo \"Stage 1 FAILED: /src/main.c not found\" >&2; exit 1; fi\nif [ ! -f /src/utils.c ]; then echo \"Stage 1 FAILED: /src/utils.c not found\" >&2; exit 1; fi\necho \"Stage 1 OK: /src/main.c and /src/utils.c exist\"\n\necho \"Stage 2: Compiling...\"\nmkdir -p /build || { echo \"Stage 2 FAILED: could not create /build\" >&2; exit 1; }\ncompile_failed=0\nfor src in /src/main.c /src/utils.c; do\n  base=$(basename \"$src\" .c)\n  dst=\"/build/${base}.o\"\n  if ! { echo '// compiled'; cat \"$src\"; } > \"$dst\"; then\n    echo \"Stage 2 FAILED: failed to compile $src\" >&2\n    compile_failed=1\n    break\n  fi\n  echo \"Compiled $src -> $dst\"\ndone\nif [ \"$compile_failed\" -ne 0 ]; then exit 1; fi\n# verify .o files exist\nif [ ! -f /build/main.o ] || [ ! -f /build/utils.o ]; then\n  echo \"Stage 2 FAILED: expected object files missing\" >&2; exit 1\nfi\necho \"Stage 2 OK: compilation complete\"\n\necho \"Stage 3: Linking...\"\nif ! ls /build/*.o >/dev/null 2>&1; then echo \"Stage 3 FAILED: no object files in /build/\" >&2; exit 1; fi\nif ! { echo '// linked'; cat /build/*.o; } > /build/program; then\n  echo \"Stage 3 FAILED: linking failed\" >&2; exit 1\nfi\nif [ ! -f /build/program ]; then echo \"Stage 3 FAILED: /build/program not created\" >&2; exit 1; fi\necho \"Stage 3 OK: linked /build/program created\"\n\necho \"Stage 4: Packaging...\"\nmkdir -p /dist || { echo \"Stage 4 FAILED: could not create /dist\" >&2; exit 1; }\nif ! tar -czf /dist/release.tar.gz -C /build .; then\n  echo \"Stage 4 FAILED: tar packaging failed\" >&2; exit 1\nfi\nif [ ! -f /dist/release.tar.gz ]; then echo \"Stage 4 FAILED: /dist/release.tar.gz not created\" >&2; exit 1; fi\necho \"Stage 4 OK: packaged /dist/release.tar.gz created\"\n\necho \"Build pipeline completed successfully.\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Stage 1: Checking sources...\nStage 1 OK: /src/main.c and /src/utils.c exist\nStage 2: Compiling...\nCompiled /src/main.c -> /build/main.o\nCompiled /src/utils.c -> /build/utils.o\nStage 2 OK: compilation complete\nStage 3: Linking...\nStage 3 OK: linked /build/program created\nStage 4: Packaging...\nStage 4 OK: packaged /dist/release.tar.gz created\nBuild pipeline completed successfully.\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "text_comm_setops",
+  "target": "openai/gpt-6.1-sol",
+  "input": [
+    "Given /data/team_a.txt and /data/team_b.txt containing member names (one per line, already sorted), use the comm command to find: 1) Members only in Team A (print under 'Only Team A:'). 2) Members only in Team B (print under 'Only Team B:'). 3) Members in both teams (print under 'Both teams:'). Print the count of each group."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "```text\nOnly Team A:\nalice\ndave\neve\nCount: 3\n\nOnly Team B:\nfrank\ngrace\nCount: 2\n\nBoth teams:\nbob\ncarol\nCount: 2\n```",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "a_only=$(comm -23 /data/team_a.txt /data/team_b.txt)\nb_only=$(comm -13 /data/team_a.txt /data/team_b.txt)\nboth=$(comm -12 /data/team_a.txt /data/team_b.txt)\nprintf 'Only Team A:\\n'\ncomm -23 /data/team_a.txt /data/team_b.txt\nprintf 'Count: %s\\n\\n' \"$(comm -23 /data/team_a.txt /data/team_b.txt | wc -l)\"\nprintf 'Only Team B:\\n'\ncomm -13 /data/team_a.txt /data/team_b.txt\nprintf 'Count: %s\\n\\n' \"$(comm -13 /data/team_a.txt /data/team_b.txt | wc -l)\"\nprintf 'Both teams:\\n'\ncomm -12 /data/team_a.txt /data/team_b.txt\nprintf 'Count: %s\\n' \"$(comm -12 /data/team_a.txt /data/team_b.txt | wc -l)\""
+    ],
+    "usage": {
+      "input_tokens": 793,
+      "output_tokens": 288,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 7257
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "a_only=$(comm -23 /data/team_a.txt /data/team_b.txt)\nb_only=$(comm -13 /data/team_a.txt /data/team_b.txt)\nboth=$(comm -12 /data/team_a.txt /data/team_b.txt)\nprintf 'Only Team A:\\n'\ncomm -23 /data/team_a.txt /data/team_b.txt\nprintf 'Count: %s\\n\\n' \"$(comm -23 /data/team_a.txt /data/team_b.txt | wc -l)\"\nprintf 'Only Team B:\\n'\ncomm -13 /data/team_a.txt /data/team_b.txt\nprintf 'Count: %s\\n\\n' \"$(comm -13 /data/team_a.txt /data/team_b.txt | wc -l)\"\nprintf 'Both teams:\\n'\ncomm -12 /data/team_a.txt /data/team_b.txt\nprintf 'Count: %s\\n' \"$(comm -12 /data/team_a.txt /data/team_b.txt | wc -l)\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Only Team A:\nalice\ndave\neve\nCount: 3\n\nOnly Team B:\nfrank\ngrace\nCount: 2\n\nBoth teams:\nbob\ncarol\nCount: 2\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

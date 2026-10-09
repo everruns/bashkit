@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "json_api_pagination",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Read /data/response.json which contains a paginated API response. Print the current page number, print the total count, and print all item IDs one per line."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "The paginated API response contains:\n\n**Current page:** 2\n**Total count:** 15\n\n**Item IDs:**\n```\n201\n202\n203\n```\n\n(The page has 3 items per page — IDs 201 \"alpha\", 202 \"beta\", and 203 \"gamma\".)",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat /data/response.json",
+      "jq -r '.page, .total, (.items[].id)' /data/response.json"
+    ],
+    "usage": {
+      "input_tokens": 1374,
+      "output_tokens": 318,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 2762
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /data/response.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "{\"page\":2,\"per_page\":3,\"total\":15,\"items\":[{\"id\":201,\"name\":\"alpha\",\"status\":\"active\"},{\"id\":202,\"name\":\"beta\",\"status\":\"inactive\"},{\"id\":203,\"name\":\"gamma\",\"status\":\"active\"}]}"
+          },
+          {
+            "commands": "jq -r '.page, .total, (.items[].id)' /data/response.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "2\n15\n201\n202\n203\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

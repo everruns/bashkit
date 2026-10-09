@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_todo_app",
+  "target": "openai/gpt-6.1-sol",
+  "input": [
+    "Build a command-line TODO app. Create /app/todo.sh that supports these subcommands: 'add <task>' appends a task to /app/tasks.txt, 'list' prints all tasks with line numbers, 'done <number>' removes that line from the file. Then demonstrate: add 'Buy groceries', add 'Write tests', add 'Deploy app', list all tasks, mark task 1 as done, list again to show remaining tasks."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Created executable `/app/todo.sh`, with tasks stored in `/app/tasks.txt`.\n\nDemonstrated:\n```bash\n/app/todo.sh add 'Buy groceries'\n/app/todo.sh add 'Write tests'\n/app/todo.sh add 'Deploy app'\n/app/todo.sh list\n```\n\nOutput:\n```text\n1  Buy groceries\n2  Write tests\n3  Deploy app\n```\n\nThen:\n```bash\n/app/todo.sh done 1\n/app/todo.sh list\n```\n\nOutput:\n```text\n1  Write tests\n2  Deploy app\n```",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "mkdir -p /app\ncat > /app/todo.sh <<'EOF'\n#!/bin/bash\nset -euo pipefail\n\nfile=/app/tasks.txt\nusage() {\n  echo \"Usage: $0 {add <task>|list|done <number>}\" >&2\n  exit 1\n}\n\n[[ $# -gt 0 ]] || usage\ncommand=$1\nshift\ncase \"$command\" in\n  add)\n    [[ $# -gt 0 && -n \"$*\" ]] || usage\n    printf '%s\\n' \"$*\" >> \"$file\"\n    ;;\n  list)\n    [[ $# -eq 0 ]] || usage\n    if [[ -f \"$file\" ]]; then\n      cat -n \"$file\"\n    fi\n    ;;\n  done)\n    [[ $# -eq 1 && \"$1\" =~ ^[1-9][0-9]*$ ]] || usage\n    if [[ ! -f \"$file\" ]]; then\n      echo \"Error: task $1 does not exist.\" >&2\n      exit 1\n    fi\n    count=$(wc -l < \"$file\")\n    if [[ ${#1} -gt ${#count} ]] || [[ \"$1\" -gt \"$count\" ]]; then\n      echo \"Error: task $1 does not exist.\" >&2\n      exit 1\n    fi\n    temp=$(mktemp /app/tasks.XXXXXX)\n    trap 'rm -f \"$temp\"' EXIT\n    sed \"${1}d\" \"$file\" > \"$temp\"\n    mv \"$temp\" \"$file\"\n    ;;\n  *) usage ;;\nesac\nEOF\nchmod +x /app/todo.sh\n/app/todo.sh add 'Buy groceries'\n/app/todo.sh add 'Write tests'\n/app/todo.sh add 'Deploy app'\nprintf '\\nAll tasks:\\n'\n/app/todo.sh list\n/app/todo.sh done 1\nprintf '\\nAfter completing task 1:\\n'\n/app/todo.sh list"
+    ],
+    "usage": {
+      "input_tokens": 1034,
+      "output_tokens": 591,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 11907
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "mkdir -p /app\ncat > /app/todo.sh <<'EOF'\n#!/bin/bash\nset -euo pipefail\n\nfile=/app/tasks.txt\nusage() {\n  echo \"Usage: $0 {add <task>|list|done <number>}\" >&2\n  exit 1\n}\n\n[[ $# -gt 0 ]] || usage\ncommand=$1\nshift\ncase \"$command\" in\n  add)\n    [[ $# -gt 0 && -n \"$*\" ]] || usage\n    printf '%s\\n' \"$*\" >> \"$file\"\n    ;;\n  list)\n    [[ $# -eq 0 ]] || usage\n    if [[ -f \"$file\" ]]; then\n      cat -n \"$file\"\n    fi\n    ;;\n  done)\n    [[ $# -eq 1 && \"$1\" =~ ^[1-9][0-9]*$ ]] || usage\n    if [[ ! -f \"$file\" ]]; then\n      echo \"Error: task $1 does not exist.\" >&2\n      exit 1\n    fi\n    count=$(wc -l < \"$file\")\n    if [[ ${#1} -gt ${#count} ]] || [[ \"$1\" -gt \"$count\" ]]; then\n      echo \"Error: task $1 does not exist.\" >&2\n      exit 1\n    fi\n    temp=$(mktemp /app/tasks.XXXXXX)\n    trap 'rm -f \"$temp\"' EXIT\n    sed \"${1}d\" \"$file\" > \"$temp\"\n    mv \"$temp\" \"$file\"\n    ;;\n  *) usage ;;\nesac\nEOF\nchmod +x /app/todo.sh\n/app/todo.sh add 'Buy groceries'\n/app/todo.sh add 'Write tests'\n/app/todo.sh add 'Deploy app'\nprintf '\\nAll tasks:\\n'\n/app/todo.sh list\n/app/todo.sh done 1\nprintf '\\nAfter completing task 1:\\n'\n/app/todo.sh list",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "\nAll tasks:\n     1\tBuy groceries\n     2\tWrite tests\n     3\tDeploy app\n\nAfter completing task 1:\n     1\tWrite tests\n     2\tDeploy app\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

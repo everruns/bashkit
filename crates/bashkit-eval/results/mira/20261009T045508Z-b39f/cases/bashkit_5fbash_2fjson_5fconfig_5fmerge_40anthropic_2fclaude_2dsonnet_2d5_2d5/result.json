@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "json_config_merge",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "Merge /config/defaults.json with /config/production.json where production values override defaults. Perform a deep merge so that keys present only in defaults are preserved while keys in production take precedence. Save the merged result to /config/merged.json and print it."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "8/8 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I deep-merged the two files with `jq`, with production values overriding defaults, and saved the result to `/config/merged.json`. The merged JSON is:\n\n```json\n{\n  \"app\": { \"name\": \"myservice\", \"port\": 8080, \"debug\": false },\n  \"db\":  { \"host\": \"db.prod.internal\", \"port\": 5432, \"pool_size\": 20 },\n  \"log\": { \"level\": \"warn\", \"format\": \"json\" }\n}\n```\n\n- **Preserved from defaults:** `app.name` and `db.port`, since production doesn't set them.\n- **Overridden by production:** `app.port`, `app.debug`, `db.host`, `db.pool_size`, `log.level` and `log.format`.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cd /config; ls; cat defaults.json production.json; which jq",
+      "cd /config; jq -s '.[0] * .[1]' defaults.json production.json > merged.json; cat merged.json"
+    ],
+    "usage": {
+      "input_tokens": 2665,
+      "output_tokens": 382,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 4658
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cd /config; ls; cat defaults.json production.json; which jq",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "defaults.json\nproduction.json\n{\"app\":{\"name\":\"myservice\",\"port\":3000,\"debug\":true},\"db\":{\"host\":\"localhost\",\"port\":5432,\"pool_size\":5},\"log\":{\"level\":\"debug\",\"format\":\"text\"}}{\"app\":{\"port\":8080,\"debug\":false},\"db\":{\"host\":\"db.prod.internal\",\"pool_size\":20},\"log\":{\"level\":\"warn\",\"format\":\"json\"}}/usr/bin/jq\n"
+          },
+          {
+            "commands": "cd /config; jq -s '.[0] * .[1]' defaults.json production.json > merged.json; cat merged.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "{\n  \"app\": {\n    \"name\": \"myservice\",\n    \"port\": 8080,\n    \"debug\": false\n  },\n  \"db\": {\n    \"host\": \"db.prod.internal\",\n    \"port\": 5432,\n    \"pool_size\": 20\n  },\n  \"log\": {\n    \"level\": \"warn\",\n    \"format\": \"json\"\n  }\n}\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

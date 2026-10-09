@@ -1,0 +1,78 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "archive_create_extract",
+  "target": "openrouter/meta/muse-spark-1.3-contributor",
+  "input": [
+    "Create a tar.gz archive of the /project directory and save it as /tmp/project.tar.gz. Then create /backup directory and extract the archive there. Verify the files exist in /backup."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "All tasks completed successfully:\n\n1. **Created archive** `/tmp/project.tar.gz` from `/project`:\n   ```\n   project/\n   project/README.md\n   project/src/\n   project/src/main.sh\n   ```\n   Archive size: 233 bytes\n\n2. **Created `/backup` directory** and extracted the archive there with `tar -xzf /tmp/project.tar.gz -C /backup`\n\n3. **Verified files exist in /backup**:\n   ```\n   /backup/project/README.md\n   /backup/project/src/main.sh\n   ```\n   - ✅ `/tmp/project.tar.gz` exists\n   - ✅ `/backup/project/README.md` exists\n   - ✅ `/backup/project/src/main.sh` exists\n",
+    "iterations": 5,
+    "tool_calls_count": 4,
+    "tool_calls": [
+      "ls -la /project 2>&1; echo \"---\"; ls -la /tmp/ 2>&1; echo \"---\"; ls -la /backup 2>&1 || echo \"/backup does not exist yet\"",
+      "ls -laR /project 2>&1; echo \"===\"; cat /project/README.md 2>&1; echo \"===\"; ls -la /project/src/ 2>&1",
+      "tar -czf /tmp/project.tar.gz -C / project && echo \"archive created\" && ls -lh /tmp/project.tar.gz && tar -tzf /tmp/project.tar.gz",
+      "mkdir -p /backup && tar -xzf /tmp/project.tar.gz -C /backup && echo \"extracted\" && ls -laR /backup && echo \"=== verification ===\" && test -f /tmp/project.tar.gz && echo \"OK: /tmp/project.tar.gz exists\" && ls -lh /tmp/project.tar.gz && test -e /backup/project/README.md && echo \"OK: /backup/project/README.md exists\" || echo \"checking alternate layout...\"; find /backup -type f | sort"
+    ],
+    "usage": {
+      "input_tokens": 5741,
+      "output_tokens": 3177,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 32146
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 4.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 4.0,
+      "turns": 5.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /project 2>&1; echo \"---\"; ls -la /tmp/ 2>&1; echo \"---\"; ls -la /backup 2>&1 || echo \"/backup does not exist yet\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       37 2026-10-09 04:57 README.md\ndrwxr-xr-x        0 2026-10-09 04:57 src\n---\n---\nls: cannot access '/backup': No such file or directory\n/backup does not exist yet\n"
+          },
+          {
+            "commands": "ls -laR /project 2>&1; echo \"===\"; cat /project/README.md 2>&1; echo \"===\"; ls -la /project/src/ 2>&1",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/project:\n-rw-r--r--       37 2026-10-09 04:57 README.md\ndrwxr-xr-x        0 2026-10-09 04:57 src\n\n/project/src:\n-rw-r--r--       38 2026-10-09 04:57 main.sh\n===\n# My Project\nThis is a test project.\n===\n-rw-r--r--       38 2026-10-09 04:57 main.sh\n"
+          },
+          {
+            "commands": "tar -czf /tmp/project.tar.gz -C / project && echo \"archive created\" && ls -lh /tmp/project.tar.gz && tar -tzf /tmp/project.tar.gz",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "archive created\n-rw-r--r--    233 2026-10-09 04:57 /tmp/project.tar.gz\nproject/\nproject/README.md\nproject/src/\nproject/src/main.sh\n"
+          },
+          {
+            "commands": "mkdir -p /backup && tar -xzf /tmp/project.tar.gz -C /backup && echo \"extracted\" && ls -laR /backup && echo \"=== verification ===\" && test -f /tmp/project.tar.gz && echo \"OK: /tmp/project.tar.gz exists\" && ls -lh /tmp/project.tar.gz && test -e /backup/project/README.md && echo \"OK: /backup/project/README.md exists\" || echo \"checking alternate layout...\"; find /backup -type f | sort",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "extracted\n/backup:\ndrwxr-xr-x        0 2026-10-09 04:57 project\n\n/backup/project:\n-rw-r--r--       37 2026-10-09 04:57 README.md\ndrwxr-xr-x        0 2026-10-09 04:57 src\n\n/backup/project/src:\n-rw-r--r--       38 2026-10-09 04:57 main.sh\n=== verification ===\nOK: /tmp/project.tar.gz exists\n-rw-r--r--    233 2026-10-09 04:57 /tmp/project.tar.gz\nOK: /backup/project/README.md exists\n/backup/project/README.md\n/backup/project/src/main.sh\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

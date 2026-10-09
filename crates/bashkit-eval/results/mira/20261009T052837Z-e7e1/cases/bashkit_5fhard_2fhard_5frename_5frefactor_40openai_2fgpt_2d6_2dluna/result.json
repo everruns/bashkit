@@ -1,0 +1,113 @@
+{
+  "eval": "bashkit_hard",
+  "sample": "hard_rename_refactor",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "In the git repository /home/eval/cfgtool, rename the shell function get_cfg to config_get everywhere it is used as code under lib/ and bin/: its definition, every call (including calls inside $(...) and inside double-quoted strings), and anywhere the name is used to refer to the function. Do not rename the different functions get_cfg_path, get_cfg_or and forget_cfg (keep their names; their bodies must call config_get). Text that is printed to users (echo/printf messages, usage text) is frozen because log parsers depend on it: keep it byte-for-byte, even where it mentions get_cfg. Do not edit docs/ or tests/; the tests already use the new name. Make `make test` pass, then commit with a message starting with `refactor:`."
+  ],
+  "passed": false,
+  "aggregate": 0.8888888888888888,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 0.8888888888888888,
+      "pass": false,
+      "reason": "16/17 checks passed (weighted rate 89%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Renamed the function to `config_get` in its definition and code references under `lib/` and `bin/`, while preserving user-facing messages that mention `get_cfg`. `make test` passed.\n\nCommitted as `b465c29` with message `refactor: rename get_cfg to config_get`.",
+    "iterations": 10,
+    "tool_calls_count": 9,
+    "tool_calls": [
+      "cd /home/eval/cfgtool && git status --short && grep -RIn 'get_cfg' lib bin --exclude-dir=.git && grep -RIn 'get_cfg' -- Makefile 2>/dev/null || true",
+      "cd /home/eval/cfgtool && sed -i 's/^# get_cfg KEY:/# config_get KEY:/; s/^get_cfg() {/config_get() {/; s/v=$(get_cfg /v=$(config_get /' lib/config.sh && sed -i 's/like get_cfg,/like config_get,/' lib/config.sh && sed -i '8s/get_cfg /config_get /' lib/db.sh && sed -i 's/get_cfg /config_get /g; s/$(get_cfg /$(config_get /g' lib/net.sh && sed -i 's/\\[get\\]=get_cfg /[get]=config_get /' bin/app && sed -i 's/command -v get_cfg /command -v config_get /' bin/doctor && grep -RIn 'get_cfg' lib bin && grep -RIn 'config_get' lib bin && git diff --check && git diff",
+      "cd /home/eval/cfgtool && sed -i 's/get_cfg \"$1\" 2>\\/dev\\/null/config_get \"$1\" 2>\\/dev\\/null/' lib/config.sh && grep -RIn 'get_cfg' lib bin && make test",
+      "cd /home/eval/cfgtool && git diff -- lib bin && git status --short && git diff --check && git diff --name-only",
+      "cd /home/eval/cfgtool && git status --porcelain=v2 && git ls-files -v lib/config.sh lib/db.sh lib/net.sh bin/app bin/doctor && sed -n '1,35p' lib/config.sh && git show HEAD:lib/config.sh | sed -n '1,35p' && git diff --stat && git diff --cached --stat",
+      "cd /home/eval/cfgtool && git log -1 --oneline && cat lib/net.sh && sed -n '1,18p' lib/db.sh && sed -n '1,12p' bin/app && sed -n '1,12p' bin/doctor && git status --short && rm -f build/test-report.txt && git status --short",
+      "cd /home/eval/cfgtool && git log --oneline --all --decorate -5 && git status --porcelain=v1 && git diff HEAD^ HEAD --stat 2>/dev/null || true && git cat-file -p HEAD | head -5 && git rev-parse HEAD && git rev-parse HEAD^{tree} && git ls-tree HEAD lib/config.sh bin/app",
+      "cd /home/eval/cfgtool && git add lib/config.sh lib/db.sh lib/net.sh bin/app bin/doctor && git status --short && git commit -m 'refactor: rename get_cfg to config_get'",
+      "cd /home/eval/cfgtool && git status --short && git show --stat --oneline HEAD && git show HEAD:lib/config.sh | sed -n '1,28p' && grep -RIn 'get_cfg' lib bin"
+    ],
+    "usage": {
+      "input_tokens": 24719,
+      "output_tokens": 2987,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 37279
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 9.0,
+      "tool_calls_err": 2.0,
+      "tool_calls_ok": 7.0,
+      "turns": 10.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 128,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cd /home/eval/cfgtool && git status --short && grep -RIn 'get_cfg' lib bin --exclude-dir=.git && grep -RIn 'get_cfg' -- Makefile 2>/dev/null || true",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "On branch master\n\nnothing to commit, working tree clean\nlib/config.sh:4:# get_cfg KEY: print the value of KEY (exit 1 + message if missing)\nlib/config.sh:5:get_cfg() {\nlib/config.sh:7:  line=$(grep -m1 \"^$1=\" \"$CFG_FILE\") || { echo \"get_cfg: missing key $1\" >&2; return 1; }\nlib/config.sh:11:# get_cfg_path KEY: like get_cfg, but resolves a relative value against the\nlib/config.sh:13:get_cfg_path() {\nlib/config.sh:15:  v=$(get_cfg \"$1\") || return 1\nlib/config.sh:22:# get_cfg_or KEY DEFAULT\nlib/config.sh:23:get_cfg_or() { get_cfg \"$1\" 2>/dev/null || echo \"$2\"; }\nlib/config.sh:25:# forget_cfg: drop the configured file name\nlib/config.sh:26:forget_cfg() { unset CFG_FILE; }\nlib/db.sh:4:  path=$(get_cfg_path db_file) || return 1\nlib/db.sh:5:  echo \"sqlite://$path?user=$(get_cfg_or db_user app)\"\nlib/db.sh:8:  if ! get_cfg db_file >/dev/null; then\nlib/db.sh:9:    echo 'db: get_cfg failed for db_file' >&2\nlib/net.sh:2:net_port() { get_cfg port; }\nlib/net.sh:3:net_url() { echo \"http://$(get_cfg host):$(get_cfg port)/\"; }\nbin/app:5:declare -A handlers=([get]=get_cfg [path]=get_cfg_path [url]=net_url [dsn]=db_dsn [check]=db_check)\nbin/app:6:usage() { echo \"usage: app get|path|url|dsn|check [KEY]  (get uses get_cfg)\" >&2; exit 2; }\nbin/doctor:5:  printf '%-8s %s\\n' \"$k\" \"$(get_cfg_or \"$k\" '<unset>')\"\nbin/doctor:7:command -v get_cfg >/dev/null && echo \"doctor: get_cfg available\"\n"
+          },
+          {
+            "commands": "cd /home/eval/cfgtool && sed -i 's/^# get_cfg KEY:/# config_get KEY:/; s/^get_cfg() {/config_get() {/; s/v=$(get_cfg /v=$(config_get /' lib/config.sh && sed -i 's/like get_cfg,/like config_get,/' lib/config.sh && sed -i '8s/get_cfg /config_get /' lib/db.sh && sed -i 's/get_cfg /config_get /g; s/$(get_cfg /$(config_get /g' lib/net.sh && sed -i 's/\\[get\\]=get_cfg /[get]=config_get /' bin/app && sed -i 's/command -v get_cfg /command -v config_get /' bin/doctor && grep -RIn 'get_cfg' lib bin && grep -RIn 'config_get' lib bin && git diff --check && git diff",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "lib/config.sh:7:  line=$(grep -m1 \"^$1=\" \"$CFG_FILE\") || { echo \"get_cfg: missing key $1\" >&2; return 1; }\nlib/config.sh:11:# get_cfg_path KEY: like config_get, but resolves a relative value against the\nlib/config.sh:13:get_cfg_path() {\nlib/config.sh:22:# get_cfg_or KEY DEFAULT\nlib/config.sh:23:get_cfg_or() { get_cfg \"$1\" 2>/dev/null || echo \"$2\"; }\nlib/config.sh:25:# forget_cfg: drop the configured file name\nlib/config.sh:26:forget_cfg() { unset CFG_FILE; }\nlib/db.sh:4:  path=$(get_cfg_path db_file) || return 1\nlib/db.sh:5:  echo \"sqlite://$path?user=$(get_cfg_or db_user app)\"\nlib/db.sh:9:    echo 'db: get_cfg failed for db_file' >&2\nbin/app:5:declare -A handlers=([get]=config_get [path]=get_cfg_path [url]=net_url [dsn]=db_dsn [check]=db_check)\nbin/app:6:usage() { echo \"usage: app get|path|url|dsn|check [KEY]  (get uses get_cfg)\" >&2; exit 2; }\nbin/doctor:5:  printf '%-8s %s\\n' \"$k\" \"$(get_cfg_or \"$k\" '<unset>')\"\nbin/doctor:7:command -v config_get >/dev/null && echo \"doctor: get_cfg available\"\nlib/config.sh:4:# config_get KEY: print the value of KEY (exit 1 + message if missing)\nlib/config.sh:5:config_get() {\nlib/config.sh:11:# get_cfg_path KEY: like config_get, but resolves a relative value against the\nlib/config.sh:15:  v=$(config_get \"$1\") || return 1\nlib/db.sh:8:  if ! config_get db_file >/dev/null; then\nlib/net.sh:2:net_port() { config_get port; }\nlib/net.sh:3:net_url() { echo \"http://$(config_get host):$(config_get port)/\"; }\nbin/app:5:declare -A handlers=([get]=config_get [path]=get_cfg_path [url]=net_url [dsn]=db_dsn [check]=db_check)\nbin/doctor:7:command -v config_get >/dev/null && echo \"doctor: get_cfg available\"\n# Diff output (simplified in virtual mode)\n# Diff output (simplified in virtual mode)\n"
+          },
+          {
+            "commands": "cd /home/eval/cfgtool && sed -i 's/get_cfg \"$1\" 2>\\/dev\\/null/config_get \"$1\" 2>\\/dev\\/null/' lib/config.sh && grep -RIn 'get_cfg' lib bin && make test",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "lib/config.sh:7:  line=$(grep -m1 \"^$1=\" \"$CFG_FILE\") || { echo \"get_cfg: missing key $1\" >&2; return 1; }\nlib/config.sh:11:# get_cfg_path KEY: like config_get, but resolves a relative value against the\nlib/config.sh:13:get_cfg_path() {\nlib/config.sh:22:# get_cfg_or KEY DEFAULT\nlib/config.sh:23:get_cfg_or() { config_get \"$1\" 2>/dev/null || echo \"$2\"; }\nlib/config.sh:25:# forget_cfg: drop the configured file name\nlib/config.sh:26:forget_cfg() { unset CFG_FILE; }\nlib/db.sh:4:  path=$(get_cfg_path db_file) || return 1\nlib/db.sh:5:  echo \"sqlite://$path?user=$(get_cfg_or db_user app)\"\nlib/db.sh:9:    echo 'db: get_cfg failed for db_file' >&2\nbin/app:5:declare -A handlers=([get]=config_get [path]=get_cfg_path [url]=net_url [dsn]=db_dsn [check]=db_check)\nbin/app:6:usage() { echo \"usage: app get|path|url|dsn|check [KEY]  (get uses get_cfg)\" >&2; exit 2; }\nbin/doctor:5:  printf '%-8s %s\\n' \"$k\" \"$(get_cfg_or \"$k\" '<unset>')\"\nbin/doctor:7:command -v config_get >/dev/null && echo \"doctor: get_cfg available\"\nPASS\n"
+          },
+          {
+            "commands": "cd /home/eval/cfgtool && git diff -- lib bin && git status --short && git diff --check && git diff --name-only",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Diff output (simplified in virtual mode)\nOn branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/test-report.txt\n# Diff output (simplified in virtual mode)\n# Diff output (simplified in virtual mode)\n"
+          },
+          {
+            "commands": "cd /home/eval/cfgtool && git status --porcelain=v2 && git ls-files -v lib/config.sh lib/db.sh lib/net.sh bin/app bin/doctor && sed -n '1,35p' lib/config.sh && git show HEAD:lib/config.sh | sed -n '1,35p' && git diff --stat && git diff --cached --stat",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "On branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/test-report.txt\nMakefile\nbin/app\nbin/doctor\ndocs/CHANGELOG.md\netc/app.conf\nlib/config.sh\nlib/db.sh\nlib/net.sh\ntests/assert.sh\ntests/fixtures/app.conf\ntests/fixtures/empty.conf\ntests/fixtures/nodb.conf\ntests/test_config.sh\n# config.sh: key=value config access\nCFG_FILE=${CFG_FILE:-etc/app.conf}\n\n# config_get KEY: print the value of KEY (exit 1 + message if missing)\nconfig_get() {\n  local line\n  line=$(grep -m1 \"^$1=\" \"$CFG_FILE\") || { echo \"get_cfg: missing key $1\" >&2; return 1; }\n  echo \"${line#*=}\"\n}\n\n# get_cfg_path KEY: like config_get, but resolves a relative value against the\n# directory of the config file\nget_cfg_path() {\n  local v\n  v=$(config_get \"$1\") || return 1\n  case $v in\n    /*) echo \"$v\" ;;\n    *) echo \"$(dirname \"$CFG_FILE\")/$v\" ;;\n  esac\n}\n\n# get_cfg_or KEY DEFAULT\nget_cfg_or() { config_get \"$1\" 2>/dev/null || echo \"$2\"; }\n\n# forget_cfg: drop the configured file name\nforget_cfg() { unset CFG_FILE; }\n# config.sh: key=value config access\nCFG_FILE=${CFG_FILE:-etc/app.conf}\n\n# config_get KEY: print the value of KEY (exit 1 + message if missing)\nconfig_get() {\n  local line\n  line=$(grep -m1 \"^$1=\" \"$CFG_FILE\") || { echo \"get_cfg: missing key $1\" >&2; return 1; }\n  echo \"${line#*=}\"\n}\n\n# get_cfg_path KEY: like config_get, but resolves a relative value against the\n# directory of the config file\nget_cfg_path() {\n  local v\n  v=$(config_get \"$1\") || return 1\n  case $v in\n    /*) echo \"$v\" ;;\n    *) echo \"$(dirname \"$CFG_FILE\")/$v\" ;;\n  esac\n}\n\n# get_cfg_or KEY DEFAULT\nget_cfg_or() { config_get \"$1\" 2>/dev/null || echo \"$2\"; }\n\n# forget_cfg: drop the configured file name\nforget_cfg() { unset CFG_FILE; }\n# Diff output (simplified in virtual mode)\n# Diff output (simplified in virtual mode)\n"
+          },
+          {
+            "commands": "cd /home/eval/cfgtool && git log -1 --oneline && cat lib/net.sh && sed -n '1,18p' lib/db.sh && sed -n '1,12p' bin/app && sed -n '1,12p' bin/doctor && git status --short && rm -f build/test-report.txt && git status --short",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "commit b465c28e\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 05:32:17 2026 +0000\n\n    initial import\n\n. lib/config.sh\nnet_port() { config_get port; }\nnet_url() { echo \"http://$(config_get host):$(config_get port)/\"; }\n. lib/config.sh\ndb_dsn() {\n  local path\n  path=$(get_cfg_path db_file) || return 1\n  echo \"sqlite://$path?user=$(get_cfg_or db_user app)\"\n}\ndb_check() {\n  if ! config_get db_file >/dev/null; then\n    echo 'db: get_cfg failed for db_file' >&2\n    return 1\n  fi\n}\n#!/bin/bash\ncd \"$(dirname \"$0\")/..\" || exit 2\n. lib/net.sh\n. lib/db.sh\ndeclare -A handlers=([get]=config_get [path]=get_cfg_path [url]=net_url [dsn]=db_dsn [check]=db_check)\nusage() { echo \"usage: app get|path|url|dsn|check [KEY]  (get uses get_cfg)\" >&2; exit 2; }\n[ $# -gt 0 ] || usage\nh=${handlers[$1]:-}\n[ -n \"$h\" ] || usage\nshift\n\"$h\" \"$@\"\n#!/bin/bash\ncd \"$(dirname \"$0\")/..\" || exit 2\n. lib/config.sh\nfor k in host port db_file; do\n  printf '%-8s %s\\n' \"$k\" \"$(get_cfg_or \"$k\" '<unset>')\"\ndone\ncommand -v config_get >/dev/null && echo \"doctor: get_cfg available\"\nOn branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/test-report.txt\nOn branch master\n\nnothing to commit, working tree clean\n"
+          },
+          {
+            "commands": "cd /home/eval/cfgtool && git log --oneline --all --decorate -5 && git status --porcelain=v1 && git diff HEAD^ HEAD --stat 2>/dev/null || true && git cat-file -p HEAD | head -5 && git rev-parse HEAD && git rev-parse HEAD^{tree} && git ls-tree HEAD lib/config.sh bin/app",
+            "exit_code": 128,
+            "stderr": "git: 'cat-file' is not a git command. See 'git --help'.\ninternal error: fatal: ambiguous argument 'HEAD^{tree}': unknown revision\n",
+            "stdout": "commit b465c28e\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 05:32:17 2026 +0000\n\n    initial import\n\nOn branch master\n\nnothing to commit, working tree clean\n# Diff output (simplified in virtual mode)\nb465c28e\n"
+          },
+          {
+            "commands": "cd /home/eval/cfgtool && git add lib/config.sh lib/db.sh lib/net.sh bin/app bin/doctor && git status --short && git commit -m 'refactor: rename get_cfg to config_get'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "On branch master\n\nChanges to be committed:\n  (use \"git restore --staged <file>...\" to unstage)\n\tnew file:   bin/app\n\tnew file:   bin/doctor\n\tnew file:   lib/config.sh\n\tnew file:   lib/db.sh\n\tnew file:   lib/net.sh\n[master b465c29] refactor: rename get_cfg to config_get\n"
+          },
+          {
+            "commands": "cd /home/eval/cfgtool && git status --short && git show --stat --oneline HEAD && git show HEAD:lib/config.sh | sed -n '1,28p' && grep -RIn 'get_cfg' lib bin",
+            "exit_code": 128,
+            "stderr": "internal error: fatal: bad object --stat\n",
+            "stdout": "On branch master\n\nnothing to commit, working tree clean\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

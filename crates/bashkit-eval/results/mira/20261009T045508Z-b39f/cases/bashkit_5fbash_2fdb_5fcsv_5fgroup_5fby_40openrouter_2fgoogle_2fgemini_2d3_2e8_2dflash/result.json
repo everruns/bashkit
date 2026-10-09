@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "db_csv_group_by",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Read /data/sales.csv with columns: region, product, amount. Compute total amount per region (like SQL GROUP BY region, SUM(amount)). Print results as 'region: total' sorted by total descending."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "```bash\nawk -F, 'NR>1 {sum[$1]+=$3} END {for (r in sum) print r\": \"sum[r]}' /data/sales.csv | sort -t: -k2,2rn\n```\n\n**Output:**\n```\nnorth: 850\nsouth: 750\neast: 650\n```",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "head /data/sales.csv",
+      "awk -F, 'NR>1 {sum[$1]+=$3} END {for (r in sum) print r\": \"sum[r]}' /data/sales.csv | sort -t: -k2,2rn",
+      "wc -l /data/sales.csv\ncat /data/sales.csv"
+    ],
+    "usage": {
+      "input_tokens": 1284,
+      "output_tokens": 568,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 7158
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "head /data/sales.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "region,product,amount\nnorth,widgets,500\nsouth,gadgets,300\nnorth,bolts,200\neast,widgets,400\nsouth,widgets,350\nnorth,gadgets,150\neast,bolts,250\nsouth,bolts,100\n"
+          },
+          {
+            "commands": "awk -F, 'NR>1 {sum[$1]+=$3} END {for (r in sum) print r\": \"sum[r]}' /data/sales.csv | sort -t: -k2,2rn",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "north: 850\nsouth: 750\neast: 650\n"
+          },
+          {
+            "commands": "wc -l /data/sales.csv\ncat /data/sales.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "9 /data/sales.csv\nregion,product,amount\nnorth,widgets,500\nsouth,gadgets,300\nnorth,bolts,200\neast,widgets,400\nsouth,widgets,350\nnorth,gadgets,150\neast,bolts,250\nsouth,bolts,100\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

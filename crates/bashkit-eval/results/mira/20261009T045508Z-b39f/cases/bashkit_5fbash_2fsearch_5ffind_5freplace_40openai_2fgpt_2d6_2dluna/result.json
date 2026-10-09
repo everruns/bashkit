@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "search_find_replace",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "Search all .js files under /src for the string 'console.log'. Replace every occurrence with 'logger.info' in-place. Print each modified filename and how many replacements were made per file. At the end, print 'Files modified: N' with the total count of files changed."
+  ],
+  "passed": false,
+  "aggregate": 0.8333333333333334,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 0.8333333333333334,
+      "pass": false,
+      "reason": "5/6 checks passed (weighted rate 83%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "./app.js 1  \n./index.js 2  \n./middleware.js 2  \nFiles modified: 3",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "cd /src && find . -type f -name '*.js' -print0 | while IFS= read -r -d '' file; do count=$(grep -o 'console\\.log' \"$file\" | wc -l); if [ \"$count\" -gt 0 ]; then sed -i 's/console\\.log/logger.info/g' \"$file\"; printf '%s %s\\n' \"$file\" \"$count\"; fi; done"
+    ],
+    "usage": {
+      "input_tokens": 593,
+      "output_tokens": 177,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 2827
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cd /src && find . -type f -name '*.js' -print0 | while IFS= read -r -d '' file; do count=$(grep -o 'console\\.log' \"$file\" | wc -l); if [ \"$count\" -gt 0 ]; then sed -i 's/console\\.log/logger.info/g' \"$file\"; printf '%s %s\\n' \"$file\" \"$count\"; fi; done",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "./app.js 1\n./index.js 2\n./middleware.js 2\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

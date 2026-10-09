@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_diff_report",
+  "target": "openai/gpt-6.1-sol",
+  "input": [
+    "Compare /data/v1.conf and /data/v2.conf. Produce a human-readable summary showing: which keys were added, which were removed, and which had their values changed. Print the summary to stdout."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "```text\nAdded keys:\n  timeout = 30\n\nRemoved keys:\n  max_connections (was 100)\n\nChanged values:\n  port: 8080 -> 9090\n  host: localhost -> 0.0.0.0\n  log_level: info -> debug\n```",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "ls -l /data/v1.conf /data/v2.conf; printf '\\n--- v1 ---\\n'; cat /data/v1.conf; printf '\\n--- v2 ---\\n'; cat /data/v2.conf",
+      "awk '\nFNR == NR { p=index($0,\"=\"); if (p) { k=substr($0,1,p-1); old[k]=substr($0,p+1); oldkeys[++n]=k } next }\n{ p=index($0,\"=\"); if (p) { k=substr($0,1,p-1); new[k]=substr($0,p+1); newkeys[++m]=k } }\nEND {\n print \"Added keys:\";\n for(i=1;i<=m;i++) { k=newkeys[i]; if(!(k in old)) print \"  \" k \" = \" new[k] }\n print \"\\nRemoved keys:\";\n for(i=1;i<=n;i++) { k=oldkeys[i]; if(!(k in new)) print \"  \" k \" (was \" old[k] \")\" }\n print \"\\nChanged values:\";\n for(i=1;i<=n;i++) { k=oldkeys[i]; if(k in new && old[k]!=new[k]) print \"  \" k \": \" old[k] \" -> \" new[k] }\n}' /data/v1.conf /data/v2.conf"
+    ],
+    "usage": {
+      "input_tokens": 1347,
+      "output_tokens": 409,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 10648
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -l /data/v1.conf /data/v2.conf; printf '\\n--- v1 ---\\n'; cat /data/v1.conf; printf '\\n--- v2 ---\\n'; cat /data/v2.conf",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       70 2026-10-09 04:58 /data/v1.conf\n-rw-r--r--       60 2026-10-09 04:58 /data/v2.conf\n\n--- v1 ---\nport=8080\nhost=localhost\nlog_level=info\nworkers=4\nmax_connections=100\n\n--- v2 ---\nport=9090\nhost=0.0.0.0\nlog_level=debug\nworkers=4\ntimeout=30\n"
+          },
+          {
+            "commands": "awk '\nFNR == NR { p=index($0,\"=\"); if (p) { k=substr($0,1,p-1); old[k]=substr($0,p+1); oldkeys[++n]=k } next }\n{ p=index($0,\"=\"); if (p) { k=substr($0,1,p-1); new[k]=substr($0,p+1); newkeys[++m]=k } }\nEND {\n print \"Added keys:\";\n for(i=1;i<=m;i++) { k=newkeys[i]; if(!(k in old)) print \"  \" k \" = \" new[k] }\n print \"\\nRemoved keys:\";\n for(i=1;i<=n;i++) { k=oldkeys[i]; if(!(k in new)) print \"  \" k \" (was \" old[k] \")\" }\n print \"\\nChanged values:\";\n for(i=1;i<=n;i++) { k=oldkeys[i]; if(k in new && old[k]!=new[k]) print \"  \" k \": \" old[k] \" -> \" new[k] }\n}' /data/v1.conf /data/v2.conf",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Added keys:\n  timeout = 30\n\nRemoved keys:\n  max_connections (was 100)\n\nChanged values:\n  port: 8080 -> 9090\n  host: localhost -> 0.0.0.0\n  log_level: info -> debug\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

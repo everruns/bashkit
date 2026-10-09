@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_test_output",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Read /data/test-results.txt which contains test output in a standard format. Parse it to: 1) Count total tests, passed, and failed. 2) Extract the names of all failing tests. 3) Generate a summary report at /reports/test-summary.md with a header '# Test Summary', a line 'Total: N | Passed: N | Failed: N', and a '## Failures' section listing each failed test. Print the summary."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "10/10 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Parsed `/data/test-results.txt` (12 result lines) and generated the report.\n\n**Counts:** 12 total — 9 passed, 3 failed.\n\n**Failing tests:**\n- `test_login_expired_token`\n- `test_signup_duplicate_email`\n- `test_session_timeout`\n\nThe summary report was written to `/reports/test-summary.md` with the `# Test Summary` header, the `Total: 12 | Passed: 9 | Failed: 3` line, and a `## Failures` section listing each failed test as a bullet. Its contents are printed above.",
+    "iterations": 3,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "cat /data/test-results.txt",
+      "ls -la /reports 2>/dev/null || echo \"no /reports dir\"; wc -l /data/test-results.txt",
+      "mkdir -p /reports\nawk '\n$1 == \"PASS\" { passed++; next }\n$1 == \"FAIL\" { failed++; fails[failed] = $2 }\nEND {\n  total = passed + failed\n  out = \"/reports/test-summary.md\"\n  print \"# Test Summary\" > out\n  print \"\" > out\n  printf \"Total: %d | Passed: %d | Failed: %d\\n\", total, passed, failed > out\n  print \"\" > out\n  print \"## Failures\" > out\n  for (i = 1; i <= failed; i++) print \"- \" fails[i] > out\n}' /data/test-results.txt\ncat /reports/test-summary.md"
+    ],
+    "usage": {
+      "input_tokens": 1925,
+      "output_tokens": 539,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 6087
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /data/test-results.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "PASS test_login_valid\nPASS test_login_invalid_password\nFAIL test_login_expired_token\nPASS test_signup_new_user\nFAIL test_signup_duplicate_email\nPASS test_logout\nPASS test_password_reset\nFAIL test_session_timeout\nPASS test_profile_update\nPASS test_profile_delete\nPASS test_api_rate_limit\nPASS test_api_auth_header\n"
+          },
+          {
+            "commands": "ls -la /reports 2>/dev/null || echo \"no /reports dir\"; wc -l /data/test-results.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "no /reports dir\n12 /data/test-results.txt\n"
+          },
+          {
+            "commands": "mkdir -p /reports\nawk '\n$1 == \"PASS\" { passed++; next }\n$1 == \"FAIL\" { failed++; fails[failed] = $2 }\nEND {\n  total = passed + failed\n  out = \"/reports/test-summary.md\"\n  print \"# Test Summary\" > out\n  print \"\" > out\n  printf \"Total: %d | Passed: %d | Failed: %d\\n\", total, passed, failed > out\n  print \"\" > out\n  print \"## Failures\" > out\n  for (i = 1; i <= failed; i++) print \"- \" fails[i] > out\n}' /data/test-results.txt\ncat /reports/test-summary.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Test Summary\n\nTotal: 12 | Passed: 9 | Failed: 3\n\n## Failures\n- test_login_expired_token\n- test_signup_duplicate_email\n- test_session_timeout\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

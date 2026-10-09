@@ -1,0 +1,47 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "file_path_organizer",
+  "target": "openai/gpt-6.1-sol",
+  "input": [
+    "Under /uploads there are files with various extensions. Write a script that: 1) For each file, determines its extension and moves it into a subdirectory named after that extension (e.g., .txt files go to /uploads/txt/, .csv files go to /uploads/csv/). Create the subdirectories as needed. 2) Print each move as 'moved: FILENAME -> EXTENSION_DIR/'. 3) After all moves, print a summary of how many files per extension as 'EXT: N files'. Handle the case where a file has no extension by putting it in /uploads/other/."
+  ],
+  "passed": false,
+  "aggregate": 0.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": -0.0,
+      "pass": false,
+      "reason": "0/8 checks passed (weighted rate -0%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Save this as `organize_uploads.sh` and run it with `bash organize_uploads.sh`:\n\n```bash\n#!/usr/bin/env bash\nset -euo pipefail\nshopt -s nullglob dotglob\n\nupload_dir=\"/uploads\"\ndeclare -A counts=()\n\nfor file in \"$upload_dir\"/*; do\n    [[ -f \"$file\" ]] || continue\n\n    filename=\"${file##*/}\"\n\n    # Treat dotfiles like \".env\" and names ending in \".\" as extensionless.\n    if [[ \"${filename#.}\" == *.* && \"$filename\" != *. ]]; then\n        ext=\"${filename##*.}\"\n    else\n        ext=\"other\"\n    fi\n\n    destination=\"$upload_dir/$ext\"\n    mkdir -p -- \"$destination\"\n\n    # Avoid overwriting an existing file.\n    if [[ -e \"$destination/$filename\" || -L \"$destination/$filename\" ]]; then\n        printf 'skipped (destination exists): %s\\n' \"$filename\" >&2\n        continue\n    fi\n\n    mv -- \"$file\" \"$destination/\"\n    printf 'moved: %s -> %s/\\n' \"$filename\" \"$ext\"\n    counts[\"$ext\"]=$(( ${counts[\"$ext\"]:-0} + 1 ))\ndone\n\n# Summarize successfully moved files, sorted by extension.\nfor ext in \"${!counts[@]}\"; do\n    printf '%s: %d files\\n' \"$ext\" \"${counts[\"$ext\"]}\"\ndone | sort\n```\n\nThis processes files directly inside `/uploads`, includes hidden files, and leaves existing subdirectories untouched.",
+    "iterations": 1,
+    "tool_calls_count": 0,
+    "usage": {
+      "input_tokens": 292,
+      "output_tokens": 603,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 13367
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 0.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 0.0,
+      "turns": 1.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": null,
+        "links": {},
+        "tool_outputs": []
+      }
+    }
+  },
+  "skipped": false
+}

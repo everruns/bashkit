@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "json_ndjson_error_aggregate",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Read /var/log/services.jsonl which contains newline-delimited JSON log entries. Each line is a JSON object with fields: timestamp, service, level, message. Count how many ERROR-level entries each service has. Print results as 'service: count' lines, sorted by count descending."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Results, sorted by count descending:\n\n```\nauth: 3\npayments: 2\napi: 1\n```\n\n**How it was done** (no python/jq available, so pure shell):\n\n1. `grep '\"level\":\"ERROR\"'` — filter only ERROR-level entries (verified 6 matches against the raw file).\n2. `sed -n 's/.*\"service\":\"\\([^\"]*\\)\".*/\\1/p'` — extract the `service` field value from each JSON line.\n3. `sort | uniq -c` — count occurrences per service.\n4. `sort -rn` — sort by count descending.\n5. `awk '{print $2\": \"$1}'` — format as `service: count`.\n\nThe log contained 9 total entries, of which 6 were ERRORs: auth had 3 (token expired ×2, invalid credentials), payments had 2 (gateway timeout, invalid card), and api had 1 (rate limited).",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "head -5 /var/log/services.jsonl; echo \"---\"; wc -l /var/log/services.jsonl",
+      "grep '\"level\":\"ERROR\"' /var/log/services.jsonl | sed -n 's/.*\"service\":\"\\([^\"]*\\)\".*/\\1/p' | sort | uniq -c | sort -rn | awk '{print $2\": \"$1}'",
+      "grep '\"level\":\"ERROR\"' /var/log/services.jsonl"
+    ],
+    "usage": {
+      "input_tokens": 2753,
+      "output_tokens": 657,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 10191
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "head -5 /var/log/services.jsonl; echo \"---\"; wc -l /var/log/services.jsonl",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "{\"timestamp\":\"2024-01-01T10:00:00Z\",\"service\":\"auth\",\"level\":\"ERROR\",\"message\":\"token expired\"}\n{\"timestamp\":\"2024-01-01T10:00:01Z\",\"service\":\"api\",\"level\":\"INFO\",\"message\":\"request received\"}\n{\"timestamp\":\"2024-01-01T10:00:02Z\",\"service\":\"auth\",\"level\":\"ERROR\",\"message\":\"invalid credentials\"}\n{\"timestamp\":\"2024-01-01T10:00:03Z\",\"service\":\"payments\",\"level\":\"ERROR\",\"message\":\"gateway timeout\"}\n{\"timestamp\":\"2024-01-01T10:00:04Z\",\"service\":\"auth\",\"level\":\"INFO\",\"message\":\"login success\"}\n---\n9 /var/log/services.jsonl\n"
+          },
+          {
+            "commands": "grep '\"level\":\"ERROR\"' /var/log/services.jsonl | sed -n 's/.*\"service\":\"\\([^\"]*\\)\".*/\\1/p' | sort | uniq -c | sort -rn | awk '{print $2\": \"$1}'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "auth: 3\npayments: 2\napi: 1\n"
+          },
+          {
+            "commands": "grep '\"level\":\"ERROR\"' /var/log/services.jsonl",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "{\"timestamp\":\"2024-01-01T10:00:00Z\",\"service\":\"auth\",\"level\":\"ERROR\",\"message\":\"token expired\"}\n{\"timestamp\":\"2024-01-01T10:00:02Z\",\"service\":\"auth\",\"level\":\"ERROR\",\"message\":\"invalid credentials\"}\n{\"timestamp\":\"2024-01-01T10:00:03Z\",\"service\":\"payments\",\"level\":\"ERROR\",\"message\":\"gateway timeout\"}\n{\"timestamp\":\"2024-01-01T10:00:05Z\",\"service\":\"api\",\"level\":\"ERROR\",\"message\":\"rate limited\"}\n{\"timestamp\":\"2024-01-01T10:00:06Z\",\"service\":\"auth\",\"level\":\"ERROR\",\"message\":\"token expired\"}\n{\"timestamp\":\"2024-01-01T10:00:07Z\",\"service\":\"payments\",\"level\":\"ERROR\",\"message\":\"invalid card\"}\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

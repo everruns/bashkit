@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "script_function_lib",
+  "target": "anthropic/claude-opus-5-5",
+  "input": [
+    "Create a file /lib/utils.sh with these bash functions: 'to_upper' that reads stdin and converts to uppercase, 'count_lines' that takes a filename argument and prints the line count, 'file_size' that takes a filename and prints byte count. Then source /lib/utils.sh and demonstrate each function: use to_upper on the string 'hello world', count_lines on /data/sample.txt, and file_size on /data/sample.txt."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I created `/lib/utils.sh` with the three functions, then sourced it and ran each one. All three gave the expected results.\n\n**`/lib/utils.sh`:**\n```bash\n#!/usr/bin/env bash\n# Utility functions\n\n# Read stdin and convert to uppercase\nto_upper() {\n    tr '[:lower:]' '[:upper:]'\n}\n\n# Print the line count of a file\ncount_lines() {\n    if [[ ! -f \"$1\" ]]; then\n        echo \"count_lines: file not found: $1\" >&2\n        return 1\n    fi\n    wc -l < \"$1\" | tr -d ' '\n}\n\n# Print the byte count of a file\nfile_size() {\n    if [[ ! -f \"$1\" ]]; then\n        echo \"file_size: file not found: $1\" >&2\n        return 1\n    fi\n    wc -c < \"$1\" | tr -d ' '\n}\n```\n\n**Demonstration:**\n```bash\nsource /lib/utils.sh\necho 'hello world' | to_upper      # HELLO WORLD\ncount_lines /data/sample.txt       # 5\nfile_size /data/sample.txt         # 49\n```\n\n**Notes:**\n- I checked both numbers against the file by hand. `/data/sample.txt` has 5 lines (\"line one\" to \"line five\"), and with their newlines they add up to 49 bytes.\n- `count_lines` and `file_size` also check that the file exists. If it doesn't, they print an error and return a non-zero exit code.\n- `count_lines` uses `wc -l`, which counts newline characters. If a file's last line has no newline at the end, that line won't be counted.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "ls -la /lib /data 2>&1; cat /data/sample.txt 2>&1 | head",
+      "mkdir -p /lib\ncat > /lib/utils.sh <<'EOF'\n#!/usr/bin/env bash\n# Utility functions\n\n# Read stdin and convert to uppercase\nto_upper() {\n    tr '[:lower:]' '[:upper:]'\n}\n\n# Print the line count of a file\ncount_lines() {\n    if [[ ! -f \"$1\" ]]; then\n        echo \"count_lines: file not found: $1\" >&2\n        return 1\n    fi\n    wc -l < \"$1\" | tr -d ' '\n}\n\n# Print the byte count of a file\nfile_size() {\n    if [[ ! -f \"$1\" ]]; then\n        echo \"file_size: file not found: $1\" >&2\n        return 1\n    fi\n    wc -c < \"$1\" | tr -d ' '\n}\nEOF\nsource /lib/utils.sh\necho \"to_upper:    $(echo 'hello world' | to_upper)\"\necho \"count_lines: $(count_lines /data/sample.txt)\"\necho \"file_size:   $(file_size /data/sample.txt)\""
+    ],
+    "usage": {
+      "input_tokens": 2913,
+      "output_tokens": 1078,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 10868
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /lib /data 2>&1; cat /data/sample.txt 2>&1 | head",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "ls: cannot access '/lib': No such file or directory\nline one\nline two\nline three\nline four\nline five\n"
+          },
+          {
+            "commands": "mkdir -p /lib\ncat > /lib/utils.sh <<'EOF'\n#!/usr/bin/env bash\n# Utility functions\n\n# Read stdin and convert to uppercase\nto_upper() {\n    tr '[:lower:]' '[:upper:]'\n}\n\n# Print the line count of a file\ncount_lines() {\n    if [[ ! -f \"$1\" ]]; then\n        echo \"count_lines: file not found: $1\" >&2\n        return 1\n    fi\n    wc -l < \"$1\" | tr -d ' '\n}\n\n# Print the byte count of a file\nfile_size() {\n    if [[ ! -f \"$1\" ]]; then\n        echo \"file_size: file not found: $1\" >&2\n        return 1\n    fi\n    wc -c < \"$1\" | tr -d ' '\n}\nEOF\nsource /lib/utils.sh\necho \"to_upper:    $(echo 'hello world' | to_upper)\"\necho \"count_lines: $(count_lines /data/sample.txt)\"\necho \"file_size:   $(file_size /data/sample.txt)\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "to_upper:    HELLO WORLD\ncount_lines: 5\nfile_size:   49\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

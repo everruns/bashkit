@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "pipe_process_sub",
+  "target": "openrouter/meta/muse-spark-1.3-contributor",
+  "input": [
+    "Use process substitution to compare two sorted lists without creating temporary files. /data/installed.txt contains currently installed packages. /data/required.txt contains required packages. Use diff with process substitution (diff <(sort file1) <(sort file2)) to find: 1) packages in installed but not required (to remove), 2) packages in required but not installed (to install). Print 'To install:' followed by missing packages, and 'To remove:' followed by extra packages."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Used `diff` with process substitution (no temp files) to compare sorted lists:\n\n```\nTo install:\nnodejs\nredis\nTo remove:\nnginx\nvim\n```\n\nCommands used:\n```bash\necho 'To install:'\ndiff <(sort /data/installed.txt) <(sort /data/required.txt) | grep '^>' | sed 's/^> //'\necho 'To remove:'\ndiff <(sort /data/installed.txt) <(sort /data/required.txt) | grep '^<' | sed 's/^< //'\n```\n",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat /data/installed.txt; echo \"---\"; cat /data/required.txt; echo \"---\"; ls -l /data/",
+      "echo 'To install:'\ndiff <(sort /data/installed.txt) <(sort /data/required.txt) | grep '^>' | sed 's/^> //'\necho 'To remove:'\ndiff <(sort /data/installed.txt) <(sort /data/required.txt) | grep '^<' | sed 's/^< //'"
+    ],
+    "usage": {
+      "input_tokens": 2876,
+      "output_tokens": 1604,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 18517
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /data/installed.txt; echo \"---\"; cat /data/required.txt; echo \"---\"; ls -l /data/",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "curl\ngit\nnginx\nvim\nwget\npython3\n---\ncurl\ngit\nnodejs\npython3\nwget\nredis\n---\n-rw-r--r--       32 2026-10-09 05:02 installed.txt\n-rw-r--r--       35 2026-10-09 05:02 required.txt\n"
+          },
+          {
+            "commands": "echo 'To install:'\ndiff <(sort /data/installed.txt) <(sort /data/required.txt) | grep '^>' | sed 's/^> //'\necho 'To remove:'\ndiff <(sort /data/installed.txt) <(sort /data/required.txt) | grep '^<' | sed 's/^< //'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "To install:\nnodejs\nredis\nTo remove:\nnginx\nvim\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

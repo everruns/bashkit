@@ -1,0 +1,192 @@
+{
+  "eval": "bashkit_repo",
+  "sample": "repo_symlink_release_switch",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "/home/eval/deploy is a git repo of release directories under releases/, with a `current` symlink pointing at the live one. The file TARGET names the release that should be live. Repoint `current` at that release (keep it a symlink; do not copy or rename release directories), then run `make test`. If the check reports a problem in the target release's files, fix it and re-run until `make test` passes. Commit everything with a message starting with `release:`."
+  ],
+  "passed": false,
+  "aggregate": 0.8,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 0.8,
+      "pass": false,
+      "reason": "4/5 checks passed (weighted rate 80%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "",
+    "iterations": 20,
+    "tool_calls_count": 20,
+    "tool_calls": [
+      "cd /home/eval/deploy && ls -la && cat TARGET",
+      "cd /home/eval/deploy && cat Makefile && git status && ls -la releases",
+      "cd /home/eval/deploy && cat bin/check-release",
+      "cd /home/eval/deploy\nln -sfn releases/v1.5.0 current\nls -la current\nmake test",
+      "cd /home/eval/deploy && cat releases/v1.5.0/app.conf",
+      "cd /home/eval/deploy && cat releases/v1.4.0/app.conf",
+      "cd /home/eval/deploy && ls -la releases/v1.5.0/",
+      "cd /home/eval/deploy && cat releases/v1.5.0/VERSION",
+      "cd /home/eval/deploy\nsed -i 's/port = 8080/port=8080/' releases/v1.5.0/app.conf\ncat releases/v1.5.0/app.conf\nmake test",
+      "cd /home/eval/deploy && git status",
+      "cd /home/eval/deploy && cat .gitignore",
+      "cd /home/eval/deploy && git log -n 5 --stat",
+      "cd /home/eval/deploy && git show --stat",
+      "cd /home/eval/deploy && git show b465c8bc",
+      "cd /home/eval/deploy && git diff",
+      "cd /home/eval/deploy && git status --short",
+      "cd /home/eval/deploy && git status",
+      "cd /home/eval/deploy && git add current releases/v1.5.0/app.conf",
+      "cd /home/eval/deploy && git status",
+      "cd /home/eval/deploy && git ls-files"
+    ],
+    "usage": {
+      "input_tokens": 23318,
+      "output_tokens": 795,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 32352
+    },
+    "metrics": {
+      "natural_stop": 0.0,
+      "tool_calls": 20.0,
+      "tool_calls_err": 3.0,
+      "tool_calls_ok": 17.0,
+      "turns": 20.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {
+          "/home/eval/deploy/current": "releases/v1.5.0"
+        },
+        "tool_outputs": [
+          {
+            "commands": "cd /home/eval/deploy && ls -la && cat TARGET",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "drwxr-xr-x        0 2026-10-09 05:06 .git\n-rw-r--r--       31 2026-10-09 05:06 Makefile\n-rw-r--r--        7 2026-10-09 05:06 TARGET\ndrwxr-xr-x        0 2026-10-09 05:06 bin\nlrwxrwxrwx       15 2026-10-09 05:06 current -> releases/v1.4.0\ndrwxr-xr-x        0 2026-10-09 05:06 releases\nv1.5.0\n"
+          },
+          {
+            "commands": "cd /home/eval/deploy && cat Makefile && git status && ls -la releases",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "test:\n\t@bash bin/check-release\nOn branch master\n\nnothing to commit, working tree clean\ndrwxr-xr-x        0 2026-10-09 05:06 v1.4.0\ndrwxr-xr-x        0 2026-10-09 05:06 v1.5.0\n"
+          },
+          {
+            "commands": "cd /home/eval/deploy && cat bin/check-release",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "#!/bin/bash\n# Verify the live release (`current`) is the TARGET release and is well-formed.\nset -u\nmkdir -p build\nwant=$(cat TARGET)\n[ -L current ] || { echo 'current must be a symlink'; exit 1; }\nhave=\"v$(cat current/VERSION)\"\nif [ \"$have\" != \"$want\" ]; then echo \"live release is $have, TARGET is $want\"; exit 1; fi\nfor key in name port workers; do\n  grep -Eq \"^$key=[^ ]+$\" current/app.conf || { echo \"app.conf: missing or malformed '$key=VALUE' line\"; exit 1; }\ndone\necho \"OK $want\" | tee build/release-check.txt\n"
+          },
+          {
+            "commands": "cd /home/eval/deploy\nln -sfn releases/v1.5.0 current\nls -la current\nmake test",
+            "exit_code": 2,
+            "stderr": "make: *** [Makefile:2: test] Error 1\n",
+            "stdout": "lrwxrwxrwx       15 2026-10-09 05:06 current -> releases/v1.5.0\napp.conf: missing or malformed 'port=VALUE' line\n"
+          },
+          {
+            "commands": "cd /home/eval/deploy && cat releases/v1.5.0/app.conf",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "name=web\nport = 8080\nworkers=6\n"
+          },
+          {
+            "commands": "cd /home/eval/deploy && cat releases/v1.4.0/app.conf",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "name=web\nport=8080\nworkers=4\n"
+          },
+          {
+            "commands": "cd /home/eval/deploy && ls -la releases/v1.5.0/",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--        6 2026-10-09 05:06 VERSION\n-rw-r--r--       31 2026-10-09 05:06 app.conf\n"
+          },
+          {
+            "commands": "cd /home/eval/deploy && cat releases/v1.5.0/VERSION",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "1.5.0\n"
+          },
+          {
+            "commands": "cd /home/eval/deploy\nsed -i 's/port = 8080/port=8080/' releases/v1.5.0/app.conf\ncat releases/v1.5.0/app.conf\nmake test",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "name=web\nport=8080\nworkers=6\nOK v1.5.0\n"
+          },
+          {
+            "commands": "cd /home/eval/deploy && git status",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "On branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/release-check.txt\n"
+          },
+          {
+            "commands": "cd /home/eval/deploy && cat .gitignore",
+            "exit_code": 1,
+            "stderr": "cat: .gitignore: No such file or directory\n",
+            "stdout": ""
+          },
+          {
+            "commands": "cd /home/eval/deploy && git log -n 5 --stat",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "commit b465c8bc\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 05:06:27 2026 +0000\n\n    initial import\n\n"
+          },
+          {
+            "commands": "cd /home/eval/deploy && git show --stat",
+            "exit_code": 128,
+            "stderr": "internal error: fatal: bad object --stat\n",
+            "stdout": ""
+          },
+          {
+            "commands": "cd /home/eval/deploy && git show b465c8bc",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "commit b465c8bc\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 05:06:27 2026 +0000\n\n    initial import\n\n"
+          },
+          {
+            "commands": "cd /home/eval/deploy && git diff",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Diff output (simplified in virtual mode)\n"
+          },
+          {
+            "commands": "cd /home/eval/deploy && git status --short",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "On branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/release-check.txt\n"
+          },
+          {
+            "commands": "cd /home/eval/deploy && git status",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "On branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/release-check.txt\n"
+          },
+          {
+            "commands": "cd /home/eval/deploy && git add current releases/v1.5.0/app.conf",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "cd /home/eval/deploy && git status",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "On branch master\n\nChanges to be committed:\n  (use \"git restore --staged <file>...\" to unstage)\n\tnew file:   current\n\tnew file:   releases/v1.5.0/app.conf\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/release-check.txt\n"
+          },
+          {
+            "commands": "cd /home/eval/deploy && git ls-files",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Makefile\nTARGET\nbin/check-release\ncurrent\nreleases/v1.4.0/VERSION\nreleases/v1.4.0/app.conf\nreleases/v1.5.0/VERSION\nreleases/v1.5.0/app.conf\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

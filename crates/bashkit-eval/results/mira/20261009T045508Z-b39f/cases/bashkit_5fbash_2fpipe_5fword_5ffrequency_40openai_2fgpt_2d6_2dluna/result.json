@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "pipe_word_frequency",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "Read /data/poem.txt and find the 3 most frequently used words. Print each word with its count, one per line, sorted by frequency descending."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "the 8\non 3\ncat 2",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "cat /data/poem.txt; echo; awk '{ for(i=1;i<=NF;i++){ w=tolower($i); gsub(/^[^[:alnum:]]+|[^[:alnum:]]+$/, \"\", w); if(w!=\"\") c[w]++ }} END { for(w in c) print w, c[w] }' /data/poem.txt | sort -k2,2nr | head -3"
+    ],
+    "usage": {
+      "input_tokens": 561,
+      "output_tokens": 132,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 2962
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /data/poem.txt; echo; awk '{ for(i=1;i<=NF;i++){ w=tolower($i); gsub(/^[^[:alnum:]]+|[^[:alnum:]]+$/, \"\", w); if(w!=\"\") c[w]++ }} END { for(w in c) print w, c[w] }' /data/poem.txt | sort -k2,2nr | head -3",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "the cat sat on the mat\nthe cat in the hat\nthe dog on the log\nthe frog on the bog\n\nthe 8\non 3\ncat 2\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

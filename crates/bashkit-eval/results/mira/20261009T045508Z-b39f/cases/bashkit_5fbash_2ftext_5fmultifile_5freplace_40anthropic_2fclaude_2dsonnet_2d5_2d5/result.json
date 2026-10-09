@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "text_multifile_replace",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "Rename the function 'getData' to 'fetchRecords' in all .py files under /src/. Print which files were modified and how many replacements were made in each file."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I renamed `getData` to `fetchRecords` in all three `.py` files under `/src/`:\n\n- `/src/main.py`: 2 replacements\n- `/src/utils.py`: 2 replacements\n- `/src/tests/test_utils.py`: 2 replacements\n\nI matched whole words only, so `test_getData` in `tests/test_utils.py` was left unchanged. It is a different identifier, and `getData` inside it is not a standalone word. If you want it renamed too (for example to `test_fetchRecords`), I can do that. I didn't run the tests after the change.",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "cd /src 2>&1 && find . -name '*.py' -type f | head -100; grep -rc 'getData' --include='*.py' /src | grep -v ':0$'",
+      "cd /src; grep -rn 'getData' --include='*.py' .",
+      "cd /src; for f in $(find . -name '*.py' -type f); do n=$(grep -o '\\bgetData\\b' $f | wc -l); if [ $n -gt 0 ]; then sed -i 's/\\bgetData\\b/fetchRecords/g' $f; echo \"$f: $n replacements\"; fi; done; grep -rn 'getData\\|fetchRecords' --include='*.py' ."
+    ],
+    "usage": {
+      "input_tokens": 3871,
+      "output_tokens": 695,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 7191
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cd /src 2>&1 && find . -name '*.py' -type f | head -100; grep -rc 'getData' --include='*.py' /src | grep -v ':0$'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "./main.py\n./tests/test_utils.py\n./utils.py\n/src/main.py:2\n/src/utils.py:2\n/src/tests/test_utils.py:3\n"
+          },
+          {
+            "commands": "cd /src; grep -rn 'getData' --include='*.py' .",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "./main.py:1:from utils import getData\n./main.py:4:    result = getData()\n./utils.py:1:def getData():\n./utils.py:5:    data = getData()\n./tests/test_utils.py:1:from utils import getData\n./tests/test_utils.py:3:def test_getData():\n./tests/test_utils.py:4:    assert getData() == [1, 2, 3]\n"
+          },
+          {
+            "commands": "cd /src; for f in $(find . -name '*.py' -type f); do n=$(grep -o '\\bgetData\\b' $f | wc -l); if [ $n -gt 0 ]; then sed -i 's/\\bgetData\\b/fetchRecords/g' $f; echo \"$f: $n replacements\"; fi; done; grep -rn 'getData\\|fetchRecords' --include='*.py' .",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "./main.py: 2 replacements\n./tests/test_utils.py: 2 replacements\n./utils.py: 2 replacements\n./main.py:1:from utils import fetchRecords\n./main.py:4:    result = fetchRecords()\n./utils.py:1:def fetchRecords():\n./utils.py:5:    data = fetchRecords()\n./tests/test_utils.py:1:from utils import fetchRecords\n./tests/test_utils.py:3:def test_getData():\n./tests/test_utils.py:4:    assert fetchRecords() == [1, 2, 3]\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

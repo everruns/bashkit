@@ -37,20 +37,42 @@ pub const MAX_TURNS: usize = 10;
 /// (explore, run tests, fix, re-run, commit), so they get twice the default.
 pub const REPO_MAX_TURNS: usize = 20;
 
+/// Turn budget for `bashkit_hard`: several bugs revealed one at a time, golden
+/// outputs that usually need a second pass after checking edge cases.
+pub const HARD_MAX_TURNS: usize = 25;
+
 /// Default model matrix. Each target is gated on its provider's API-key env var,
 /// so an offline run skips them all (CI stays green) and a keyed run lights up
 /// the subset whose credentials are present. Select subsets with
-/// `mira run --targets anthropic/claude-opus-4-8` (exact labels, comma-separated).
+/// `mira run --targets 'anthropic/*'` (comma-separated label globs).
+///
+/// Decision: Anthropic and OpenAI go direct. Models without a bashkit provider
+/// (Kimi, Meta Muse, Gemini) go through OpenRouter's Chat Completions API;
+/// Gemini too because its own host is unreachable from the eval environment.
+/// GPT-6 models reject function tools on Chat Completions while reasoning is
+/// on, so OpenAI targets use the Responses API. Lineup chosen 2026-10-09.
 pub fn default_targets() -> Vec<Target> {
     vec![
-        Target::anthropic("claude-opus-4-8"),
-        Target::anthropic("claude-haiku-4-5"),
-        Target::anthropic("claude-sonnet-4-6"),
-        Target::openai("gpt-5.5"),
-        // Codex models require the OpenAI Responses API; route on a custom
-        // provider id our subject understands, gated on the OpenAI key.
-        Target::cloud("openresponses", "gpt-5.3-codex", "OPENAI_API_KEY"),
+        Target::anthropic("claude-opus-5-5"),
+        Target::anthropic("claude-sonnet-5-5"),
+        openai_responses("gpt-6.1-sol"),
+        openai_responses("gpt-6-luna"),
+        openrouter("google/gemini-3.8-flash"),
+        openrouter("moonshotai/kimi-k3"),
+        openrouter("meta/muse-spark-1.3-contributor"),
     ]
+}
+
+/// An OpenAI model on the Responses API (custom provider id our subject
+/// understands), labelled `openai/<model>` so reports read like the provider.
+fn openai_responses(model: &str) -> Target {
+    Target::cloud("openresponses", model, "OPENAI_API_KEY").label(format!("openai/{model}"))
+}
+
+/// An OpenRouter target; `model` is the vendor-prefixed OpenRouter id, so the
+/// label reads `openrouter/openai/gpt-5.6-sol`.
+fn openrouter(model: &str) -> Target {
+    Target::cloud("openrouter", model, "OPENROUTER_API_KEY")
 }
 
 /// Map a mira `Target` to a bashkit `Provider`. Errors surface as infra errors
@@ -60,6 +82,7 @@ fn provider_for(target: &Target) -> Result<Box<dyn Provider>, String> {
     let provider: Box<dyn Provider> = match target.provider.as_str() {
         "anthropic" => Box::new(AnthropicProvider::new(model).map_err(|e| e.to_string())?),
         "openai" => Box::new(OpenAiProvider::new(model).map_err(|e| e.to_string())?),
+        "openrouter" => Box::new(OpenAiProvider::openrouter(model).map_err(|e| e.to_string())?),
         "openresponses" => {
             Box::new(OpenAiResponsesProvider::new(model).map_err(|e| e.to_string())?)
         }
@@ -395,6 +418,7 @@ fn parse_jsonl<T: serde::de::DeserializeOwned>(text: &str) -> Vec<T> {
 const EVAL_TASKS: &str = include_str!("../data/eval-tasks.jsonl");
 const SMOKE_TASKS: &str = include_str!("../data/smoke-test.jsonl");
 const REPO_TASKS: &str = include_str!("../data/repo-workflow.jsonl");
+const HARD_TASKS: &str = include_str!("../data/hard-tasks.jsonl");
 const SCRIPTING_MANY_TOOLS: &str = include_str!("../data/scripting-tool/many-tools.jsonl");
 const SCRIPTING_DISCOVERY: &str = include_str!("../data/scripting-tool/discovery.jsonl");
 const SCRIPTING_PAGINATED: &str = include_str!("../data/scripting-tool/paginated.jsonl");
@@ -443,6 +467,26 @@ pub fn repo_eval() -> Eval {
         .max_turns(REPO_MAX_TURNS)
         .targets(default_targets());
     for sample in bash_samples(REPO_TASKS) {
+        b = b.add_sample(sample);
+    }
+    b.build()
+}
+
+/// Hard tasks (`bashkit_hard`): added when `bashkit_bash` saturated (top
+/// models 55/58). Interacting bugs revealed one at a time, quoting/errexit
+/// traps, golden-output data reports, make dependency graphs. Same subject and
+/// scorer as `bashkit_repo`; every task has a CI-checked reference solution
+/// (`reference.rs`). Select a category with `--tag`.
+pub fn hard_eval() -> Eval {
+    let mut b = Eval::new("bashkit_hard")
+        .describe(
+            "Hard multi-turn tasks: hidden interacting bugs, quoting, errexit, golden reports",
+        )
+        .subject(bash_subject())
+        .scorer(expectations_scorer())
+        .max_turns(HARD_MAX_TURNS)
+        .targets(default_targets());
+    for sample in bash_samples(HARD_TASKS) {
         b = b.add_sample(sample);
     }
     b.build()
@@ -510,6 +554,23 @@ mod tests {
     }
 
     #[test]
+    fn hard_samples_load_with_categories() {
+        let samples = bash_samples(HARD_TASKS);
+        assert_eq!(samples.len(), 10);
+        let mut categories = std::collections::BTreeSet::new();
+        for s in &samples {
+            let task: EvalTask = serde_json::from_value(s.metadata["task"].clone()).unwrap();
+            assert!(task.id.starts_with("hard_"), "{}", s.id);
+            assert!(!expectations_from_sample(s).is_empty(), "{}", s.id);
+            categories.insert(task.category);
+        }
+        assert!(
+            categories.len() >= 8,
+            "hard set lost variety: {categories:?}"
+        );
+    }
+
+    #[test]
     fn scripting_samples_load_all_datasets() {
         let datasets = [
             ("many-tools", SCRIPTING_MANY_TOOLS),
@@ -531,6 +592,7 @@ mod tests {
         let _ = bash_eval();
         let _ = smoke_eval();
         let _ = repo_eval();
+        let _ = hard_eval();
         let _ = scripting_eval();
     }
 }

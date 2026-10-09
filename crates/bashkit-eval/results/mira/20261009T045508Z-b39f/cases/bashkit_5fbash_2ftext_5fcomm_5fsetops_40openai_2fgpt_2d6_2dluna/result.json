@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "text_comm_setops",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "Given /data/team_a.txt and /data/team_b.txt containing member names (one per line, already sorted), use the comm command to find: 1) Members only in Team A (print under 'Only Team A:'). 2) Members only in Team B (print under 'Only Team B:'). 3) Members in both teams (print under 'Both teams:'). Print the count of each group."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Only Team A:\nalice\ndave\neve\nCount: 3\n\nOnly Team B:\nfrank\ngrace\nCount: 2\n\nBoth teams:\nbob\ncarol\nCount: 2",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "printf '%s\\n' 'Only Team A:'; comm -23 /data/team_a.txt /data/team_b.txt | tee /tmp/team_a_only; printf 'Count: '; wc -l < /tmp/team_a_only; printf '%s\\n' 'Only Team B:'; comm -13 /data/team_a.txt /data/team_b.txt | tee /tmp/team_b_only; printf 'Count: '; wc -l < /tmp/team_b_only; printf '%s\\n' 'Both teams:'; comm -12 /data/team_a.txt /data/team_b.txt | tee /tmp/both_teams; printf 'Count: '; wc -l < /tmp/both_teams"
+    ],
+    "usage": {
+      "input_tokens": 724,
+      "output_tokens": 214,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 5984
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "printf '%s\\n' 'Only Team A:'; comm -23 /data/team_a.txt /data/team_b.txt | tee /tmp/team_a_only; printf 'Count: '; wc -l < /tmp/team_a_only; printf '%s\\n' 'Only Team B:'; comm -13 /data/team_a.txt /data/team_b.txt | tee /tmp/team_b_only; printf 'Count: '; wc -l < /tmp/team_b_only; printf '%s\\n' 'Both teams:'; comm -12 /data/team_a.txt /data/team_b.txt | tee /tmp/both_teams; printf 'Count: '; wc -l < /tmp/both_teams",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Only Team A:\nalice\ndave\neve\nCount: 3\nOnly Team B:\nfrank\ngrace\nCount: 2\nBoth teams:\nbob\ncarol\nCount: 2\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

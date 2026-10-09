@@ -11,6 +11,9 @@
 //   stderr_empty          file_exists:/path       dir_exists:/path
 //   file_contains:/path:text   file_line_regex:/path:pattern   llm_judge:prompt
 //   file_not_contains:/path:text  (file must exist and not contain text)
+//   file_equals:/path:content     (golden file: whole content equal; trailing
+//                                  newlines are ignored on both sides, nothing
+//                                  else is normalised)
 //   symlink:/path:target  (/path is a symlink whose target resolves to the
 //                          same absolute path as `target`; relative or absolute
 //                          spellings both pass)
@@ -92,6 +95,7 @@ pub fn evaluate_check(
         "file_contains" => check_file_contains(check, weight, check_value, files),
         "file_not_contains" => check_file_not_contains(check, weight, check_value, files),
         "file_line_regex" => check_file_line_regex(check, weight, check_value, files),
+        "file_equals" => check_file_equals(check, weight, check_value, files),
         "symlink" => check_symlink(check, weight, check_value, snap),
         "llm_judge" => CheckResult {
             check: check.to_string(),
@@ -346,6 +350,67 @@ fn check_file_line_regex(
     }
 }
 
+fn check_file_equals(
+    check: &str,
+    weight: f64,
+    value: &str,
+    files: &BTreeMap<String, String>,
+) -> CheckResult {
+    // Format: "file_equals:/path:content". Golden-output check for tasks with
+    // an exact report format. Only trailing newlines are forgiven (`echo` vs
+    // `printf` endings); every other byte must match.
+    let Some((path_str, expected)) = value.split_once(':') else {
+        return CheckResult {
+            check: check.to_string(),
+            passed: false,
+            detail: "invalid format, expected file_equals:/path:content".to_string(),
+            weight,
+        };
+    };
+    let (passed, detail) = match files.get(path_str) {
+        None => (false, format!("cannot read {}", path_str)),
+        Some(actual) => {
+            let (a, e) = (
+                actual.trim_end_matches('\n'),
+                expected.trim_end_matches('\n'),
+            );
+            if a == e {
+                (true, "file matches".to_string())
+            } else {
+                let (mut al, mut el) = (a.lines(), e.lines());
+                let mut line = 1;
+                loop {
+                    match (al.next(), el.next()) {
+                        (Some(x), Some(y)) if x == y => line += 1,
+                        (x, y) => {
+                            let show = |l: Option<&str>| {
+                                l.map(|s| format!("{:?}", s.chars().take(120).collect::<String>()))
+                                    .unwrap_or_else(|| "<end of file>".to_string())
+                            };
+                            break (
+                                false,
+                                format!(
+                                    "{} differs at line {}: expected {}, got {}",
+                                    path_str,
+                                    line,
+                                    show(y),
+                                    show(x)
+                                ),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    };
+    CheckResult {
+        check: check.to_string(),
+        passed,
+        detail,
+        weight,
+    }
+}
+
 /// Lexically resolve `target` against the directory holding `link`
 /// (`.`/`..` folded, no filesystem access), the way `readlink -m` would.
 fn resolve_link_target(link: &str, target: &str) -> String {
@@ -588,6 +653,21 @@ mod tests {
         assert!(!check_file_not_contains("c", 1.0, present, &files).passed);
         let missing = "/d/gone.csv:n/a";
         assert!(!check_file_not_contains("c", 1.0, missing, &files).passed);
+    }
+
+    #[test]
+    fn file_equals_exact_modulo_trailing_newlines() {
+        let files = files_with(&[("/r.txt", "a: 1\nb: 2\n")]);
+        let snap = snap_with(vec![]);
+        let ok = |c: &str| evaluate_check(c, 1.0, &snap, &files).passed;
+        assert!(ok("file_equals:/r.txt:a: 1\nb: 2\n"));
+        assert!(ok("file_equals:/r.txt:a: 1\nb: 2"));
+        assert!(!ok("file_equals:/r.txt:a: 1\nb: 2\nc: 3\n"));
+        assert!(!ok("file_equals:/r.txt:a: 1\nb:  2\n"));
+        assert!(!ok("file_equals:/r.txt:b: 2\n"));
+        assert!(!ok("file_equals:/missing:x"));
+        let r = evaluate_check("file_equals:/r.txt:a: 1\nb: 3", 1.0, &snap, &files);
+        assert!(r.detail.contains("line 2"), "{}", r.detail);
     }
 
     #[test]

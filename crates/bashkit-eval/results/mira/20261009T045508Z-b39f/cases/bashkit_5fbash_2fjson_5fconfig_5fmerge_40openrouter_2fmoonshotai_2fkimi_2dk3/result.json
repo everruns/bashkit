@@ -1,0 +1,78 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "json_config_merge",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Merge /config/defaults.json with /config/production.json where production values override defaults. Perform a deep merge so that keys present only in defaults are preserved while keys in production take precedence. Save the merged result to /config/merged.json and print it."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "8/8 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Done. The deep merge was performed with `jq -s '.[0] * .[1]'`, where the `*` operator recursively merges the two objects with production (right side) taking precedence. The result was saved to `/config/merged.json`:\n\n```json\n{\n  \"app\": {\n    \"name\": \"myservice\",\n    \"port\": 8080,\n    \"debug\": false\n  },\n  \"db\": {\n    \"host\": \"db.prod.internal\",\n    \"port\": 5432,\n    \"pool_size\": 20\n  },\n  \"log\": {\n    \"level\": \"warn\",\n    \"format\": \"json\"\n  }\n}\n```\n\nMerge behavior verified:\n- **Production overrode defaults**: `app.port` (3000 → 8080), `app.debug` (true → false), `db.host` (localhost → db.prod.internal), `db.pool_size` (5 → 20), `log.level` (debug → warn), `log.format` (text → json)\n- **Defaults-only keys preserved**: `app.name` (\"myservice\") and `db.port` (5432)\n\nThe output file was also validated as well-formed JSON.",
+    "iterations": 5,
+    "tool_calls_count": 4,
+    "tool_calls": [
+      "cat /config/defaults.json; echo \"---\"; cat /config/production.json",
+      "command -v jq && jq --version || echo \"no jq\"",
+      "jq -s '.[0] * .[1]' /config/defaults.json /config/production.json > /config/merged.json && cat /config/merged.json",
+      "jq . /config/merged.json > /dev/null && echo \"valid JSON\""
+    ],
+    "usage": {
+      "input_tokens": 3321,
+      "output_tokens": 866,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 9807
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 4.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 4.0,
+      "turns": 5.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /config/defaults.json; echo \"---\"; cat /config/production.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "{\"app\":{\"name\":\"myservice\",\"port\":3000,\"debug\":true},\"db\":{\"host\":\"localhost\",\"port\":5432,\"pool_size\":5},\"log\":{\"level\":\"debug\",\"format\":\"text\"}}---\n{\"app\":{\"port\":8080,\"debug\":false},\"db\":{\"host\":\"db.prod.internal\",\"pool_size\":20},\"log\":{\"level\":\"warn\",\"format\":\"json\"}}"
+          },
+          {
+            "commands": "command -v jq && jq --version || echo \"no jq\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/usr/bin/jq\njq-1.8\n"
+          },
+          {
+            "commands": "jq -s '.[0] * .[1]' /config/defaults.json /config/production.json > /config/merged.json && cat /config/merged.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "{\n  \"app\": {\n    \"name\": \"myservice\",\n    \"port\": 8080,\n    \"debug\": false\n  },\n  \"db\": {\n    \"host\": \"db.prod.internal\",\n    \"port\": 5432,\n    \"pool_size\": 20\n  },\n  \"log\": {\n    \"level\": \"warn\",\n    \"format\": \"json\"\n  }\n}\n"
+          },
+          {
+            "commands": "jq . /config/merged.json > /dev/null && echo \"valid JSON\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "valid JSON\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

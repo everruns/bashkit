@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "config_env_template",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Read /config/template.env which has lines like 'KEY=${VALUE:-default}'. For each line, check if the key exists in /config/overrides.txt (format: KEY=value). If it does, use the override value; otherwise use the default from the template. Write the final KEY=value pairs to /app/.env and print the result."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Done. The script worked as follows:\n\n1. **Loaded overrides** from `/config/overrides.txt` into an associative array (`DB_HOST=db.prod.internal`, `LOG_LEVEL=warn`).\n2. **Parsed each template line** of the form `KEY=${KEY:-default}`, extracting the key and the default value (text between `:-` and the closing `}`).\n3. **Resolved each key**: used the override value if present, otherwise fell back to the template default.\n4. **Wrote results** to `/app/.env` (creating `/app` if needed) and printed the file.\n\nFinal `/app/.env`:\n```\nDB_HOST=db.prod.internal      ← overridden\nDB_PORT=5432                  ← default\nDB_NAME=myapp                 ← default\nREDIS_URL=redis://localhost:6379  ← default\nLOG_LEVEL=warn                ← overridden\n```",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat /config/template.env; echo '---'; cat /config/overrides.txt",
+      "declare -A OVR\n# Load overrides (skip blanks/comments)\nwhile IFS='=' read -r k v; do\n  [[ -z \"$k\" || \"$k\" =~ ^[[:space:]]*# ]] && continue\n  OVR[\"$k\"]=\"$v\"\ndone < /config/overrides.txt\n\nmkdir -p /app\n: > /app/.env\nwhile IFS= read -r line; do\n  [[ -z \"$line\" || \"$line\" =~ ^[[:space:]]*# ]] && continue\n  key=\"${line%%=*}\"                                   # KEY\n  default=\"${line#*:-}\"; default=\"${default%\\}}\"      # text between :- and }\n  if [[ -v \"OVR[$key]\" ]]; then\n    echo \"$key=${OVR[$key]}\"\n  else\n    echo \"$key=$default\"\n  fi >> /app/.env\ndone < /config/template.env\n\necho \"Final /app/.env:\"\ncat /app/.env"
+    ],
+    "usage": {
+      "input_tokens": 1765,
+      "output_tokens": 635,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 5985
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /config/template.env; echo '---'; cat /config/overrides.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "DB_HOST=${DB_HOST:-localhost}\nDB_PORT=${DB_PORT:-5432}\nDB_NAME=${DB_NAME:-myapp}\nREDIS_URL=${REDIS_URL:-redis://localhost:6379}\nLOG_LEVEL=${LOG_LEVEL:-info}\n---\nDB_HOST=db.prod.internal\nLOG_LEVEL=warn\n"
+          },
+          {
+            "commands": "declare -A OVR\n# Load overrides (skip blanks/comments)\nwhile IFS='=' read -r k v; do\n  [[ -z \"$k\" || \"$k\" =~ ^[[:space:]]*# ]] && continue\n  OVR[\"$k\"]=\"$v\"\ndone < /config/overrides.txt\n\nmkdir -p /app\n: > /app/.env\nwhile IFS= read -r line; do\n  [[ -z \"$line\" || \"$line\" =~ ^[[:space:]]*# ]] && continue\n  key=\"${line%%=*}\"                                   # KEY\n  default=\"${line#*:-}\"; default=\"${default%\\}}\"      # text between :- and }\n  if [[ -v \"OVR[$key]\" ]]; then\n    echo \"$key=${OVR[$key]}\"\n  else\n    echo \"$key=$default\"\n  fi >> /app/.env\ndone < /config/template.env\n\necho \"Final /app/.env:\"\ncat /app/.env",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Final /app/.env:\nDB_HOST=db.prod.internal\nDB_PORT=5432\nDB_NAME=myapp\nREDIS_URL=redis://localhost:6379\nLOG_LEVEL=warn\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

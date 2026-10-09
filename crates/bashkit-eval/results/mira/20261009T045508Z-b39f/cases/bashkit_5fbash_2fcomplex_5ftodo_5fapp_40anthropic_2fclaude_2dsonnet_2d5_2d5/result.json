@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_todo_app",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "Build a command-line TODO app. Create /app/todo.sh that supports these subcommands: 'add <task>' appends a task to /app/tasks.txt, 'list' prints all tasks with line numbers, 'done <number>' removes that line from the file. Then demonstrate: add 'Buy groceries', add 'Write tests', add 'Deploy app', list all tasks, mark task 1 as done, list again to show remaining tasks."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I created `/app/todo.sh` and ran the demo. It works as asked.\n\n- **`add <task>`** appends the task to `/app/tasks.txt`.\n- **`list`** prints the tasks with line numbers, or \"No tasks.\" if the file is empty.\n- **`done <number>`** removes that line. It rejects numbers that are non-numeric or out of range.\n\nIn the demo I added \"Buy groceries\", \"Write tests\" and \"Deploy app\", and the first list showed all three. After marking task 1 done, the second list showed only \"Write tests\" (now 1) and \"Deploy app\" (now 2). Task numbers shift down after a removal, so check `list` again before marking another task done.",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "mkdir -p /app && cat > /app/todo.sh <<'EOF'\n#!/usr/bin/env bash\n# Simple TODO app\nFILE=/app/tasks.txt\ntouch \"$FILE\"\n\ncase \"$1\" in\n  add)\n    shift\n    if [ $# -eq 0 ]; then echo \"Usage: $0 add <task>\" >&2; exit 1; fi\n    echo \"$*\" >> \"$FILE\"\n    echo \"Added: $*\"\n    ;;\n  list)\n    if [ ! -s \"$FILE\" ]; then echo \"No tasks.\"; else cat -n \"$FILE\"; fi\n    ;;\n  done)\n    n=\"$2\"\n    total=$(wc -l < \"$FILE\")\n    if ! [[ \"$n\" =~ ^[0-9]+$ ]] || [ \"$n\" -lt 1 ] || [ \"$n\" -gt \"$total\" ]; then\n      echo \"Invalid task number: $n\" >&2; exit 1\n    fi\n    task=$(sed -n \"${n}p\" \"$FILE\")\n    sed \"${n}d\" \"$FILE\" > \"$FILE.tmp\" && mv \"$FILE.tmp\" \"$FILE\"\n    echo \"Done: $task\"\n    ;;\n  *)\n    echo \"Usage: $0 {add <task>|list|done <number>}\" >&2\n    exit 1\n    ;;\nesac\nEOF\nchmod +x /app/todo.sh\nrm -f /app/tasks.txt\ncd /app\n./todo.sh add 'Buy groceries'\n./todo.sh add 'Write tests'\n./todo.sh add 'Deploy app'\necho \"--- list ---\"; ./todo.sh list\necho \"--- done 1 ---\"; ./todo.sh done 1\necho \"--- list ---\"; ./todo.sh list"
+    ],
+    "usage": {
+      "input_tokens": 2250,
+      "output_tokens": 877,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 6093
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "mkdir -p /app && cat > /app/todo.sh <<'EOF'\n#!/usr/bin/env bash\n# Simple TODO app\nFILE=/app/tasks.txt\ntouch \"$FILE\"\n\ncase \"$1\" in\n  add)\n    shift\n    if [ $# -eq 0 ]; then echo \"Usage: $0 add <task>\" >&2; exit 1; fi\n    echo \"$*\" >> \"$FILE\"\n    echo \"Added: $*\"\n    ;;\n  list)\n    if [ ! -s \"$FILE\" ]; then echo \"No tasks.\"; else cat -n \"$FILE\"; fi\n    ;;\n  done)\n    n=\"$2\"\n    total=$(wc -l < \"$FILE\")\n    if ! [[ \"$n\" =~ ^[0-9]+$ ]] || [ \"$n\" -lt 1 ] || [ \"$n\" -gt \"$total\" ]; then\n      echo \"Invalid task number: $n\" >&2; exit 1\n    fi\n    task=$(sed -n \"${n}p\" \"$FILE\")\n    sed \"${n}d\" \"$FILE\" > \"$FILE.tmp\" && mv \"$FILE.tmp\" \"$FILE\"\n    echo \"Done: $task\"\n    ;;\n  *)\n    echo \"Usage: $0 {add <task>|list|done <number>}\" >&2\n    exit 1\n    ;;\nesac\nEOF\nchmod +x /app/todo.sh\nrm -f /app/tasks.txt\ncd /app\n./todo.sh add 'Buy groceries'\n./todo.sh add 'Write tests'\n./todo.sh add 'Deploy app'\necho \"--- list ---\"; ./todo.sh list\necho \"--- done 1 ---\"; ./todo.sh done 1\necho \"--- list ---\"; ./todo.sh list",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Added: Buy groceries\nAdded: Write tests\nAdded: Deploy app\n--- list ---\n     1\tBuy groceries\n     2\tWrite tests\n     3\tDeploy app\n--- done 1 ---\nDone: Buy groceries\n--- list ---\n     1\tWrite tests\n     2\tDeploy app\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}
