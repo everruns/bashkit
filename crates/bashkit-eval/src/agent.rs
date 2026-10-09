@@ -5,7 +5,9 @@
 // hidden `verify` probe run after the loop. See knowledge/operations/eval.md.
 
 use anyhow::{Context, Result};
-use bashkit::{Bash, BashBuilder, BashTool, CPython, GitConfig, Sqlite, Tool};
+use bashkit::{
+    Bash, BashBuilder, BashTool, CPython, CPythonLimits, ExecutionLimits, GitConfig, Sqlite, Tool,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::dataset::EvalTask;
@@ -63,6 +65,17 @@ pub const EVAL_GIT_AUTHOR: (&str, &str) = ("Eval Agent", "eval@bashkit-eval.inva
 /// Runtime opt-in env var for the embedded sqlite builtin (Turso is BETA).
 pub const SQLITE_OPT_IN: (&str, &str) = ("BASHKIT_ALLOW_INPROCESS_SQLITE", "1");
 
+/// Wall-clock override under coverage instrumentation (`cfg(tarpaulin)`).
+///
+/// Decision: the instrumented CPython guest runs ~10x slower, so replaying
+/// large-input runtime references (`rt_py_large_log`: 12k log lines through
+/// python3) blows the 30s defaults. Coverage builds get 300s for the shell and
+/// python3; real eval runs and normal tests keep bashkit's defaults.
+#[cfg(tarpaulin)]
+const COVERAGE_TIMEOUT: Option<std::time::Duration> = Some(std::time::Duration::from_secs(300));
+#[cfg(not(tarpaulin))]
+const COVERAGE_TIMEOUT: Option<std::time::Duration> = None;
+
 /// Enable the embedded runtimes every eval `Bash` gets: real CPython 3.14
 /// (`python`/`python3`, WASI guest, default `CPythonLimits`) and sqlite
 /// (`sqlite`/`sqlite3`, runtime opt-in set).
@@ -72,8 +85,12 @@ pub const SQLITE_OPT_IN: (&str, &str) = ("BASHKIT_ALLOW_INPROCESS_SQLITE", "1");
 /// agents write CPython scripts (stdlib, classes, CLI). Shared with
 /// `bashkit-replay` so gap telemetry replays on the same environment.
 pub fn with_eval_runtimes(builder: BashBuilder) -> BashBuilder {
+    let python = match COVERAGE_TIMEOUT {
+        Some(t) => CPythonLimits::default().max_duration(t),
+        None => CPythonLimits::default(),
+    };
     builder
-        .cpython()
+        .cpython_with_limits(python)
         .sqlite()
         .env(SQLITE_OPT_IN.0, SQLITE_OPT_IN.1)
 }
@@ -110,6 +127,9 @@ pub async fn build_task_bash(task: &EvalTask) -> Result<Bash> {
             .hostname("bashkit-eval")
             .git(GitConfig::new().author(EVAL_GIT_AUTHOR.0, EVAL_GIT_AUTHOR.1)),
     );
+    if let Some(t) = COVERAGE_TIMEOUT {
+        builder = builder.limits(ExecutionLimits::default().timeout(t));
+    }
 
     for (path, content) in &task.files {
         builder = builder.mount_text(path, content);
