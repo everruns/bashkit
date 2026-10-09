@@ -123,6 +123,14 @@ compression paths use these builders because their expansion ratios and nested
 buffers make post-hoc leasing unsafe. Atomic compare/exchange admission keeps
 concurrent descendants from wrapping or temporarily exceeding the shared cap.
 
+Shell diagnostic names are truncated to 1,024 UTF-8 bytes before copying,
+without changing positional `$0`. Builtin diagnostic prefix rewriting uses
+`BudgetedBytes` and fallible `StreamData` text construction under the same
+request budget. Both storage leases survive through redirection and hooks;
+input scanning and every emitted line charge work and check the shared
+cancellation/deadline. Capture caps remain downstream: redirected diagnostics
+are not truncated merely because the captured-stderr limit is small.
+
 ### `set -e` contexts
 
 `errexit_active()` is `set -e` plus `condition_sequence_depth == 0`. The

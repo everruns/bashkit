@@ -18,6 +18,9 @@
 // `name: msg` for bash shell builtins) and `prefix_builtin_diagnostics`
 // rewrites the line start at the single dispatch point
 // (`execute_builtin_arc`), before redirects or streaming see the text.
+// Diagnostic names are capped at 1,024 UTF-8 bytes without changing `$0`.
+// Rewriting leases both bytes and cached text before fallible allocation;
+// leases survive routing, and each scan/emission checks the request budget.
 // Execution plans and `/dev/stderr` operand data are not rewritten; usage
 // lines (`name: usage:`) and coreutils-style builtins (cat, grep, ...:
 // external programs in bash) stay unprefixed. Interactive shells
@@ -3064,15 +3067,21 @@ impl Interpreter {
     /// (`BASH_SOURCE[0]`, so a sourced file names itself), else `$0`. Mirrors
     /// bash's `get_name_for_error`.
     pub(crate) fn diag_name(&self) -> String {
-        if !self.interactive
+        // THREAT[TM-DOS-103]: bound attacker-controlled names before copying.
+        let name = if !self.interactive
             && let Some(src) = self.bash_source_stack.last().filter(|s| !s.file.is_empty())
         {
-            return src.file.clone();
+            src.file.as_str()
+        } else if let Some(frame) = self.call_stack.iter().rev().find(|f| !f.keeps_arg0) {
+            frame.name.as_str()
+        } else {
+            Self::DEFAULT_ARG0
+        };
+        let mut end = name.len().min(1024);
+        while !name.is_char_boundary(end) {
+            end -= 1;
         }
-        if let Some(frame) = self.call_stack.iter().rev().find(|f| !f.keeps_arg0) {
-            return frame.name.clone();
-        }
-        Self::DEFAULT_ARG0.to_string()
+        name[..end].to_string()
     }
 
     /// Prefix of a shell diagnostic: `$0: line N: ` (non-interactive bash),
@@ -9719,11 +9728,20 @@ impl Interpreter {
             };
             // Before `/dev/stderr` operand data is appended and before any
             // redirect or streaming emission sees the text.
+            // Keep rewritten byte/text storage charged until redirects and
+            // result hooks finish consuming it, including discarded stderr.
+            let mut diagnostic_storage = None;
             if bundled
-                && let Some(stderr) =
-                    prefix_builtin_diagnostics(&result.stderr, name, &self.diag_prefix())
+                && !result.stderr.is_empty()
+                && let Some((stderr, storage)) = prefix_builtin_diagnostics(
+                    &result.stderr,
+                    name,
+                    &self.diag_prefix(),
+                    &self.execution_budget,
+                )?
             {
                 result.stderr = stderr;
+                diagnostic_storage = Some(storage);
             }
             if let Some(capture) = std_capture {
                 let capture =
@@ -9753,7 +9771,9 @@ impl Interpreter {
             self.apply_builtin_side_effects(&mut result).await;
 
             let result = self.apply_redirections(result, redirects).await?;
-            self.apply_after_tool(name, result)
+            let result = self.apply_after_tool(name, result);
+            drop(diagnostic_storage);
+            result
         })
     }
 
@@ -14700,33 +14720,58 @@ fn prefix_builtin_diagnostics(
     stderr: &crate::StreamData,
     name: &str,
     prefix: &str,
-) -> Option<crate::StreamData> {
+    budget: &crate::limits::ExecutionBudget,
+) -> Result<Option<(crate::StreamData, crate::stream::StreamStorage)>> {
     let bytes = stderr.as_bytes();
     if bytes.is_empty() {
-        return None;
+        return Ok(None);
+    }
+    // THREAT[TM-DOS-103]: account before scanning or multiplying prefixes.
+    // Poll by input chunk even when a single diagnostic line is enormous.
+    for chunk in bytes.chunks(4096) {
+        budget.consume_work(chunk.len().div_ceil(1024) as u64)?;
     }
     let shell_builtin = BASH_SHELL_BUILTINS.contains(&name);
     let own = format!("{name}: ");
     let usage = format!("{name}: usage:");
-    let mut out = Vec::with_capacity(bytes.len() + prefix.len());
-    let mut changed = false;
+    let mut out = None;
+    let mut offset = 0;
     for line in bytes.split_inclusive(|b| *b == b'\n') {
-        if let Some(rest) = line.strip_prefix(b"bash: ".as_slice()) {
-            out.extend_from_slice(prefix.as_bytes());
-            out.extend_from_slice(rest);
-            changed = true;
-        } else if shell_builtin
-            && line.starts_with(own.as_bytes())
-            && !line.starts_with(usage.as_bytes())
-        {
-            out.extend_from_slice(prefix.as_bytes());
-            out.extend_from_slice(line);
-            changed = true;
+        let (add_prefix, rest) = if let Some(rest) = line.strip_prefix(b"bash: ".as_slice()) {
+            (true, rest)
         } else {
-            out.extend_from_slice(line);
+            (
+                shell_builtin
+                    && line.starts_with(own.as_bytes())
+                    && !line.starts_with(usage.as_bytes()),
+                line,
+            )
+        };
+        budget.consume_work(
+            1 + rest.len().div_ceil(1024) as u64
+                + if add_prefix {
+                    prefix.len().div_ceil(1024) as u64
+                } else {
+                    0
+                },
+        )?;
+        if add_prefix {
+            if out.is_none() {
+                let mut bytes_out = crate::limits::BudgetedBytes::new(Some(budget))?;
+                bytes_out.try_extend_from_slice(&bytes[..offset])?;
+                out = Some(bytes_out);
+            }
+            out.as_mut()
+                .unwrap()
+                .try_extend_from_slice(prefix.as_bytes())?;
         }
+        if let Some(out) = &mut out {
+            out.try_extend_from_slice(rest)?;
+        }
+        offset += line.len();
     }
-    changed.then(|| crate::StreamData::from(out))
+    out.map(|out| crate::StreamData::from_budgeted_bytes(out, budget).map_err(Into::into))
+        .transpose()
 }
 
 fn builtin_usage_error(msg: &str) -> ExecResult {
@@ -14748,6 +14793,22 @@ mod tests {
     use crate::Bash;
     use crate::fs::InMemoryFs;
     use crate::parser::Parser;
+
+    #[test]
+    fn diagnostic_rewrite_checks_work_and_cancellation() {
+        for cancelled in [false, true] {
+            let limits = crate::limits::ExecutionLimits::new().max_work_units(2);
+            let budget = crate::limits::ExecutionBudget::new(
+                &limits,
+                Arc::new(std::sync::atomic::AtomicBool::new(cancelled)),
+            );
+            let stderr = crate::StreamData::from("bash: unalias: x: not found\n".repeat(10));
+            let error = prefix_builtin_diagnostics(&stderr, "unalias", "child: line 1: ", &budget)
+                .unwrap_err();
+            let expected = if cancelled { "cancel" } else { "work" };
+            assert!(error.to_string().contains(expected), "{error}");
+        }
+    }
 
     /// TM-DOS-042: comma-list brace expansion must not recurse one frame per
     /// brace group (stack overflow) nor accumulate unbounded memory. A long

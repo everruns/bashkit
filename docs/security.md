@@ -24,6 +24,14 @@ bytes of stack padding; output capacity is admitted against
 `ExecutionLimits::max_live_intermediate_bytes` before fallible allocation.
 This memory budget applies to pipelines and redirected output too.
 
+Shell diagnostic names (`$0` or the current source file) show at most 1,024
+UTF-8 bytes; the actual `$0` value is unchanged. Repeating a prefix across
+builtin errors uses the shared live-memory and work budget before allocation,
+including the cached text representation. A refused reservation aborts the
+request before capture, streaming, or redirection; the next host execution
+can reuse the shell with a fresh budget. Capture limits remain downstream so
+redirected diagnostics keep their full content when they fit the memory budget.
+
 Recursive `grep -R` skips directory symlinks that resolve to an ancestor and
 reports `warning: recursive directory loop` (suppressed by `-s`). Separate
 aliases of a non-ancestor directory remain searchable. Traversal uses the shared

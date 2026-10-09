@@ -231,3 +231,99 @@ async fn interactive_mode_keeps_bare_prefix() {
     let r = bash.exec("nocmd").await.unwrap();
     assert_eq!(r.stderr, "bash: nocmd: command not found\n");
 }
+
+/// Small-budget reproduction: the original stderr fits; repeating $0 does not.
+#[tokio::test]
+async fn diagnostic_prefix_amplification_hits_shared_memory_budget() {
+    for (redirect, streaming) in [
+        ("", false),
+        ("", true),
+        (" 2>/tmp/diagnostics", true),
+        (" 2>&1", true),
+        (" 2>/dev/null", true),
+    ] {
+        let mut bash = Bash::builder()
+            .limits(
+                bashkit::ExecutionLimits::new()
+                    .timeout(std::time::Duration::from_secs(600))
+                    .max_live_intermediate_bytes(8192)
+                    .max_stderr_bytes(64),
+            )
+            .build();
+        let seen = Arc::new(Mutex::new(String::new()));
+        let seen_cb = seen.clone();
+        let script = format!(
+            "bash -c 'unalias {{1..100}}' '{}'{}",
+            "x".repeat(128),
+            redirect
+        );
+        let options = if streaming {
+            ExecOptions::new().streaming(Box::new(move |stdout, stderr| {
+                let mut seen = seen_cb.lock().unwrap();
+                seen.push_str(stdout);
+                seen.push_str(stderr);
+            }))
+        } else {
+            ExecOptions::new()
+        };
+        let error = bash
+            .exec_with_options(&script, options)
+            .await
+            .expect_err("prefix amplification must fail before routing or capture");
+        assert!(
+            error.to_string().contains("live intermediate"),
+            "{redirect}: {error}"
+        );
+        assert!(seen.lock().unwrap().is_empty());
+        let recovered = bash.exec("echo recovered").await.unwrap();
+        assert_eq!(recovered.stdout, "recovered\n");
+    }
+}
+
+#[tokio::test]
+async fn diagnostic_name_is_bounded_utf8_without_changing_arg0() {
+    let name = "€".repeat(400);
+    let mut bash = Bash::new();
+    let script = format!("bash -c 'echo ${{#0}}; unalias absent' '{name}'");
+    let result = bash.exec(&script).await.unwrap();
+    assert_eq!(result.stdout, "400\n");
+    assert_eq!(
+        result.stderr,
+        format!("{}: line 1: unalias: absent: not found\n", "€".repeat(341))
+    );
+}
+
+#[tokio::test]
+async fn diagnostic_prefix_matches_bash_and_redirect_keeps_full_output() {
+    let name = "child".repeat(24);
+    let body = "unalias first second third";
+    let oracle = std::process::Command::new("bash")
+        .env_clear()
+        .args(["-c", body, &name])
+        .output()
+        .unwrap();
+    let script = format!("bash -c '{body}' '{name}'");
+    let mut bash = Bash::builder()
+        .limits(bashkit::ExecutionLimits::new().max_live_intermediate_bytes(8192))
+        .build();
+    let result = bash.exec(&script).await.unwrap();
+    assert_eq!(result.stderr.as_bytes(), oracle.stderr);
+    assert_eq!(result.stdout.as_bytes(), oracle.stdout);
+    assert_eq!(Some(result.exit_code), oracle.status.code());
+
+    let mut bash = Bash::builder()
+        .limits(
+            bashkit::ExecutionLimits::new()
+                .max_live_intermediate_bytes(8192)
+                .max_stderr_bytes(64),
+        )
+        .build();
+    let result = bash
+        .exec(&format!(
+            "{script} 2>/tmp/diagnostics; cat /tmp/diagnostics"
+        ))
+        .await
+        .unwrap();
+    assert!(result.stderr.is_empty());
+    assert_eq!(result.stdout.as_bytes(), oracle.stderr);
+}
