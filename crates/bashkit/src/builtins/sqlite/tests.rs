@@ -355,6 +355,51 @@ async fn persistence_round_trip_memory_backend() {
 }
 
 #[tokio::test]
+async fn persisted_memory_image_uses_rollback_journal_header() {
+    // SQLite builds without WAL (CPython's sqlite3 in the WASI guest) reject a
+    // WAL-mode header as "file is not a database"; the checkpointed image must
+    // say legacy mode, and Turso must keep reading and writing it.
+    let env = opt_in_env();
+    let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
+    let path = Path::new("/tmp/legacy.sqlite");
+    for sql in [
+        "CREATE TABLE t(a); INSERT INTO t VALUES (1)",
+        "INSERT INTO t VALUES (2)",
+    ] {
+        let r = run_persisting(
+            &["/tmp/legacy.sqlite", sql],
+            SqliteBackend::Memory,
+            fs.clone(),
+            &env,
+        )
+        .await;
+        assert_eq!(r.exit_code, 0, "stderr: {}", r.stderr);
+        let bytes = fs.read_file(path).await.unwrap();
+        assert_eq!(&bytes[..16], b"SQLite format 3\0");
+        assert_eq!((bytes[18], bytes[19]), (1, 1), "read/write version bytes");
+    }
+    let r = run_persisting(
+        &["/tmp/legacy.sqlite", "SELECT group_concat(a) FROM t"],
+        SqliteBackend::Memory,
+        fs,
+        &env,
+    )
+    .await;
+    assert_eq!(r.stdout.trim(), "1,2", "stderr: {}", r.stderr);
+}
+
+#[test]
+fn rollback_journal_header_only_touches_wal_sqlite_images() {
+    use super::engine::rollback_journal_header;
+    let mut wal = b"SQLite format 3\0\x10\x00\x02\x02rest".to_vec();
+    wal = rollback_journal_header(wal);
+    assert_eq!((wal[18], wal[19]), (1, 1));
+    let other = b"not a database at all....".to_vec();
+    assert_eq!(rollback_journal_header(other.clone()), other);
+    assert!(rollback_journal_header(Vec::new()).is_empty());
+}
+
+#[tokio::test]
 async fn persistence_round_trip_vfs_backend() {
     let env = opt_in_env();
     let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
