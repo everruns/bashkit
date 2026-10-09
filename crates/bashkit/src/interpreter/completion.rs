@@ -966,9 +966,21 @@ impl Interpreter {
                 .iter()
                 .map(|s| s.to_string())
                 .collect(),
-            // Live registry, not bash's list: bashkit's `awk`/`grep` are
-            // builtins here (compgen_tests.rs pins this contract).
-            "builtin" | "enabled" => self.builtin_names(),
+            // The live registry minus the commands that stand in for
+            // programs (`awk`, `grep`): bash's builtins, plus builtins the
+            // embedder registered.
+            "builtin" | "enabled" => self
+                .builtin_names()
+                .into_iter()
+                .filter(|n| {
+                    crate::builtins::BASH_BUILTIN_NAMES.contains(&n.as_str())
+                        || self.custom_builtin_names.contains(n)
+                        || self
+                            .host_builtins
+                            .as_ref()
+                            .is_some_and(|r| r.lookup(n).is_some())
+                })
+                .collect(),
             "helptopic" => crate::builtins::BASH_BUILTIN_NAMES
                 .iter()
                 .map(|s| s.to_string())

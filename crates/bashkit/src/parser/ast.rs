@@ -25,6 +25,17 @@ pub struct Script {
     /// reading it. Empty when the script was not built by the parser.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub command_end_lines: Vec<usize>,
+    /// Text the script was parsed from. The interpreter re-reads the rest
+    /// from a later top-level command when `alias` or `shopt -s extglob`
+    /// changed how it parses (bash parses a line at a time). Never
+    /// serialized.
+    #[serde(skip)]
+    pub source: Option<std::sync::Arc<str>>,
+    /// Byte offset into `source` and line where each top-level command
+    /// starts, parallel to `commands`; after a syntax error one more entry
+    /// marks where the unparsed rest starts. Never serialized.
+    #[serde(skip)]
+    pub command_starts: Vec<(usize, usize)>,
 }
 
 /// A single command in the script.
@@ -1388,6 +1399,8 @@ mod tests {
             span: Span::new(),
             trailing_error: None,
             command_end_lines: Vec::new(),
+            source: None,
+            command_starts: Vec::new(),
         };
         assert!(script.commands.is_empty());
     }
