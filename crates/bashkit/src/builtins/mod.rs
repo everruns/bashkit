@@ -302,6 +302,8 @@ pub(crate) use cpython::check_http_request_invariants;
 #[cfg(feature = "cpython")]
 pub use cpython::{CPython, CPythonLimits};
 #[cfg(feature = "wasm-coreutils")]
+pub(crate) use wasm_coreutils::WasmCoreutilsHost;
+#[cfg(feature = "wasm-coreutils")]
 pub(crate) use wasm_coreutils::{
     MISSING_NATIVE as WASM_COREUTILS_MISSING, MULTICALL as WASM_COREUTILS_MULTICALL,
 };

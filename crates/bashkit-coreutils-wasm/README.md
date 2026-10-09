@@ -20,7 +20,7 @@ bashkit = { version = "0.18.2", features = ["wasm-coreutils"] }
 |------|-------------|
 | `load_module(&engine)` | The guest as a `wasmtime::Module` (mapped in place on first load) |
 | `engine_config()` / `engine()` | The compile-affecting Wasmtime configuration the module was built for |
-| `UTILS` | Utility names the guest dispatches on (71, sorted) |
+| `UTILS` | Utility names the guest dispatches on (70, sorted) |
 | `UUTILS_VERSION` | `0.12.0` |
 
 Guest contract: a WASI command (`_start`); `argv[0]` names the utility;

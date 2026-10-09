@@ -254,6 +254,9 @@ impl Builtin for CPython {
                     bashkit_cpython_wasm::STDLIB_ZIP,
                 )),
                 deadline,
+                // TODO(TM-INF-018): CPython still reads the host clock; route it
+                // through the virtual clock like wasm coreutils.
+                clock: wasi_host::GuestClock::default(),
                 http: http::HttpState::new(
                     #[cfg(feature = "http_client")]
                     ctx.http_client.cloned(),
@@ -273,6 +276,8 @@ impl Builtin for CPython {
                 deadline,
                 budget: budget.as_ref(),
                 yield_fuel: YIELD_INTERVAL_FUEL,
+                fuel: wasi_host::fuel_for(budget.as_ref(), FUEL_PER_WORK_UNIT),
+                tenant: None,
             },
         )
         .await?;

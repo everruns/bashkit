@@ -22,7 +22,7 @@
 
 pub(crate) mod wasi;
 
-pub(crate) use wasi::{GuestConfig, GuestState, ProcExit};
+pub(crate) use wasi::{GuestClock, GuestConfig, GuestState, ProcExit};
 
 use std::future::Future;
 use std::task::Poll;
@@ -47,9 +47,11 @@ pub(crate) struct PoolSpec {
 pub(crate) struct GuestRuntime {
     engine: Engine,
     pre: InstancePre<GuestState>,
-    /// Pooled slots; `None` when the pool could not be created and every
-    /// instance is allocated on demand.
-    slots: Option<tokio::sync::Semaphore>,
+    /// Concurrent instances per process; the same cap applies when the pool
+    /// could not be created and instances are allocated on demand.
+    slots: tokio::sync::Semaphore,
+    #[cfg(all(test, feature = "cpython"))]
+    pooled: bool,
     max_memory: usize,
 }
 
@@ -65,17 +67,11 @@ impl GuestRuntime {
         // Pooled slots first; on-demand allocation (mmap + munmap per call)
         // serializes many concurrent calls on the kernel's address-space lock.
         match Engine::new(&runtime_config(base(), spec, true)) {
-            Ok(engine) => Self::link(
-                engine,
-                Some(tokio::sync::Semaphore::new(spec.slots as usize)),
-                spec.max_memory,
-                load,
-                extra,
-            ),
+            Ok(engine) => Self::link(engine, true, spec, load, extra),
             Err(_) => Self::link(
                 Engine::new(&runtime_config(base(), spec, false))?,
-                None,
-                usize::MAX,
+                false,
+                spec,
                 load,
                 extra,
             ),
@@ -84,8 +80,8 @@ impl GuestRuntime {
 
     pub(crate) fn link(
         engine: Engine,
-        slots: Option<tokio::sync::Semaphore>,
-        max_memory: usize,
+        #[cfg_attr(not(all(test, feature = "cpython")), allow(unused_variables))] pooled: bool,
+        spec: &PoolSpec,
         load: fn(&Engine) -> wasmtime::Result<Module>,
         extra: fn(&mut Linker<GuestState>) -> wasmtime::Result<()>,
     ) -> wasmtime::Result<Self> {
@@ -97,15 +93,19 @@ impl GuestRuntime {
         Ok(Self {
             engine,
             pre,
-            slots,
-            max_memory,
+            // THREAT[TM-WCU-006]: the same concurrency and memory caps apply
+            // with or without the pool.
+            slots: tokio::sync::Semaphore::new(spec.slots as usize),
+            #[cfg(all(test, feature = "cpython"))]
+            pooled,
+            max_memory: spec.max_memory,
         })
     }
 
     /// Whether instances come from the pool.
-    #[cfg(test)]
+    #[cfg(all(test, feature = "cpython"))]
     pub(crate) fn pooled(&self) -> bool {
-        self.slots.is_some()
+        self.pooled
     }
 
     /// `requested` clamped to what one slot can hold.
@@ -162,6 +162,11 @@ pub(crate) struct Call<'a> {
     pub(crate) budget: Option<&'a crate::limits::ExecutionBudget>,
     /// Guest instructions between cooperative yields.
     pub(crate) yield_fuel: u64,
+    /// Guest instructions this call may run in total; running out traps.
+    /// Set from the request's remaining work budget.
+    pub(crate) fuel: u64,
+    /// Per-tenant concurrency share, acquired before a pool slot.
+    pub(crate) tenant: Option<&'a tokio::sync::Semaphore>,
 }
 
 /// What a finished call produced.
@@ -190,13 +195,15 @@ pub(crate) async fn run(
     state: GuestState,
     call: Call<'_>,
 ) -> std::result::Result<Finished, crate::limits::LimitExceeded> {
-    // Hold a pooled slot until the store (and its instance) is dropped;
-    // waiting for one counts against the deadline.
-    let _slot = match &rt.slots {
-        Some(slots) => match guarded(slots.acquire(), call.deadline, call.budget).await {
-            Ok(Ok(permit)) => Some(permit),
-            // The semaphore is never closed.
-            Ok(Err(_)) => None,
+    // THREAT[TM-WCU-006]: take the tenant's share first, then a process
+    // slot, and hold both until the store (and its instance) is dropped.
+    // Waiting for either counts against the deadline.
+    let mut permits = Vec::with_capacity(2);
+    for sem in [call.tenant, Some(&rt.slots)].into_iter().flatten() {
+        match guarded(sem.acquire(), call.deadline, call.budget).await {
+            Ok(Ok(permit)) => permits.push(permit),
+            // The semaphores are never closed.
+            Ok(Err(_)) => {}
             Err(Stop::Timeout) => {
                 return Ok(Finished {
                     stdout: Vec::new(),
@@ -208,13 +215,12 @@ pub(crate) async fn run(
                 });
             }
             Err(Stop::Budget(e)) => return Err(e),
-        },
-        None => None,
-    };
+        }
+    }
     let mut store = Store::new(&rt.engine, state);
     store.limiter(|s| &mut s.limits);
     let setup = store
-        .set_fuel(u64::MAX)
+        .set_fuel(call.fuel)
         .and_then(|()| store.fuel_async_yield_interval(Some(call.yield_fuel)));
     if let Err(e) = setup {
         return Ok(Finished {
@@ -246,7 +252,7 @@ pub(crate) async fn run(
     )
     .await;
 
-    let fuel_used = u64::MAX - store.get_fuel().unwrap_or(0);
+    let fuel_used = call.fuel - store.get_fuel().unwrap_or(0).min(call.fuel);
     // Files a guest wrote but never closed persist, as they would after a
     // real process exits or is killed.
     store.data_mut().flush_all().await;
@@ -279,6 +285,20 @@ pub(crate) async fn run(
     })
 }
 
+/// Fuel for one call: the request's remaining work budget in guest
+/// instructions, plus one unit, so a guest that runs out of fuel has always
+/// overspent the budget and the post-call charge fails the request.
+pub(crate) fn fuel_for(
+    budget: Option<&crate::limits::ExecutionBudget>,
+    fuel_per_work_unit: u64,
+) -> u64 {
+    budget.map_or(u64::MAX, |b| {
+        b.remaining_work()
+            .saturating_add(1)
+            .saturating_mul(fuel_per_work_unit)
+    })
+}
+
 pub(crate) fn timeout_message(name: &str, timeout: Duration) -> String {
     format!(
         "{name}: execution timed out after {:.1}s\n",
@@ -286,14 +306,21 @@ pub(crate) fn timeout_message(name: &str, timeout: Duration) -> String {
     )
 }
 
+/// How often a wait nothing else wakes re-checks the deadline and budget.
+/// Cancellation is a flag without a waker, so it needs this tick.
+const CHECK_TICK: Duration = Duration::from_millis(50);
+
 /// Poll `fut`, stopping at the deadline or when the request budget closes.
-/// Fuel yields guarantee the guest returns to this poll regularly.
+/// Fuel yields return a busy guest to this poll regularly; a timer tick
+/// covers waits that nothing wakes (a pool slot that never frees, a host
+/// call parked on I/O), so they cannot outlive the deadline either.
 async fn guarded<F: Future>(
     fut: F,
     deadline: crate::time_compat::Instant,
     budget: Option<&crate::limits::ExecutionBudget>,
 ) -> std::result::Result<F::Output, Stop> {
     let mut fut = std::pin::pin!(fut);
+    let mut tick = std::pin::pin!(tokio::time::sleep(CHECK_TICK));
     std::future::poll_fn(|cx| {
         if crate::time_compat::Instant::now() >= deadline {
             return Poll::Ready(Err(Stop::Timeout));
@@ -303,7 +330,15 @@ async fn guarded<F: Future>(
         {
             return Poll::Ready(Err(Stop::Budget(e)));
         }
-        fut.as_mut().poll(cx).map(Ok)
+        if let Poll::Ready(out) = fut.as_mut().poll(cx) {
+            return Poll::Ready(Ok(out));
+        }
+        // Re-arm until it registers a wake-up for the next check.
+        while tick.as_mut().poll(cx).is_ready() {
+            let next = tokio::time::Instant::now() + CHECK_TICK;
+            tick.as_mut().reset(next);
+        }
+        Poll::Pending
     })
     .await
 }
@@ -345,6 +380,35 @@ mod tests {
         );
         let long = wasmtime::Error::msg("x".repeat(4096));
         assert!(trap_message("python3", "interpreter", &long).len() < 600);
+    }
+
+    // A wait that nothing wakes (a pool slot that never frees) must still end
+    // at the call deadline, not when some other call releases a slot.
+    #[tokio::test]
+    async fn guarded_stops_unwoken_wait_at_deadline() {
+        let start = std::time::Instant::now();
+        let deadline = crate::time_compat::Instant::now() + Duration::from_millis(150);
+        let r = guarded(std::future::pending::<()>(), deadline, None).await;
+        assert!(matches!(r, Err(Stop::Timeout)));
+        assert!(start.elapsed() < Duration::from_secs(2));
+    }
+
+    // Cancellation is a flag with no waker; an unwoken wait must notice it.
+    #[tokio::test]
+    async fn guarded_stops_unwoken_wait_on_cancel() {
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let budget =
+            crate::limits::ExecutionBudget::new(&crate::ExecutionLimits::new(), cancel.clone());
+        let flag = cancel.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            flag.store(true, std::sync::atomic::Ordering::Relaxed);
+        });
+        let start = std::time::Instant::now();
+        let deadline = crate::time_compat::Instant::now() + Duration::from_secs(30);
+        let r = guarded(std::future::pending::<()>(), deadline, Some(&budget)).await;
+        assert!(matches!(r, Err(Stop::Budget(_))));
+        assert!(start.elapsed() < Duration::from_secs(2));
     }
 
     #[test]

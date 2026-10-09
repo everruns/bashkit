@@ -10,7 +10,6 @@ cp
 csplit
 cut
 date
-dd
 dir
 dircolors
 dirname

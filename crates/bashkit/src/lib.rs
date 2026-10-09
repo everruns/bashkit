@@ -1984,6 +1984,10 @@ pub struct BashBuilder {
     shell_features: ShellFeatures,
     builtin_filter: Option<interpreter::BuiltinFilter>,
     custom_builtins: HashMap<String, Box<dyn Builtin>>,
+    /// Wasm coreutils to register at `build()` (names, limits), once the
+    /// builtin filter and virtual clock are known.
+    #[cfg(feature = "wasm-coreutils")]
+    wasm_coreutils: Option<(&'static [&'static str], builtins::WasmCoreutilsLimits)>,
     /// Optional host-owned mutable registry. Entries here are consulted at
     /// dispatch time, so embedders can register/remove builtins after build.
     host_builtins: Option<BuiltinRegistry>,
@@ -2620,18 +2624,46 @@ impl BashBuilder {
     #[cfg(feature = "wasm-coreutils")]
     fn register_wasm_coreutils(
         mut self,
-        names: &[&str],
+        names: &'static [&'static str],
         limits: builtins::WasmCoreutilsLimits,
     ) -> Self {
+        self.wasm_coreutils = Some((names, limits));
+        self
+    }
+
+    /// Turn the pending wasm coreutils registration into builtins.
+    ///
+    /// THREAT[TM-WCU-005]: guest utilities obey `builtin_filter` (a filtered
+    /// name is neither registered nor reachable through the `coreutils`
+    /// multicall), and guest clocks follow the same virtual clock as `date`
+    /// (TM-INF-018), coarsened under the Hardened profile (TM-INF-033).
+    /// A builtin the embedder added with [`Self::builtin`] keeps its name.
+    #[cfg(feature = "wasm-coreutils")]
+    fn install_wasm_coreutils(&mut self) {
+        let Some((names, limits)) = self.wasm_coreutils.take() else {
+            return;
+        };
+        let running = Arc::new(tokio::sync::Semaphore::new(limits.max_concurrent.max(1)));
+        let host = builtins::WasmCoreutilsHost {
+            clock: interpreter::virtual_clock(self.fixed_epoch, self.epoch_offset),
+            coarse_clock: self.profile.name() == ExecutionProfileName::Hardened,
+            filter: self.builtin_filter.clone(),
+        };
         for name in names {
+            if !host.allows(name) {
+                continue;
+            }
             if let Some(b) = builtins::WasmCoreutil::new(name, limits.clone()) {
-                self = self.builtin(*name, Box::new(b));
+                self.custom_builtins
+                    .entry((*name).to_string())
+                    .or_insert_with(|| Box::new(b.with_host(host.clone(), running.clone())));
             }
         }
-        self.builtin(
-            builtins::WASM_COREUTILS_MULTICALL,
-            Box::new(builtins::WasmCoreutil::multicall(limits)),
-        )
+        self.custom_builtins
+            .entry(builtins::WASM_COREUTILS_MULTICALL.to_string())
+            .or_insert_with(|| {
+                Box::new(builtins::WasmCoreutil::multicall(limits).with_host(host, running))
+            });
     }
 
     /// Enable embedded SQLite (`sqlite`/`sqlite3` builtins) via Turso.
@@ -3553,7 +3585,9 @@ impl BashBuilder {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn build(self) -> Bash {
+    pub fn build(#[allow(unused_mut)] mut self) -> Bash {
+        #[cfg(feature = "wasm-coreutils")]
+        self.install_wasm_coreutils();
         let base_fs: Arc<dyn FileSystem> = if let Some(fs) = self.fs {
             fs
         } else {

@@ -918,6 +918,14 @@ impl ExecutionBudget {
         self.inner.work_units.load(Ordering::Relaxed)
     }
 
+    /// Work units still available before the request budget closes. Lets a
+    /// metered subsystem (wasm guests) stop mid-run instead of charging
+    /// after the fact.
+    #[cfg(any(feature = "cpython", feature = "wasm-coreutils"))]
+    pub(crate) fn remaining_work(&self) -> u64 {
+        self.inner.max_work_units.saturating_sub(self.work_units())
+    }
+
     /// Consume bytes read or materialized by a request consumer.
     pub fn consume_input(&self, bytes: usize) -> Result<(), LimitExceeded> {
         self.check()?;

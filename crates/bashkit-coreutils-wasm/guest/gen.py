@@ -4,7 +4,8 @@
 Run by build.sh; commit the outputs. Utilities must build for wasm32-wasip1
 (uutils' `feat_wasm` set). Left out on purpose: utilities that
 only report on or wait for the host (uname, arch, tty, hostid, nice, sleep,
-yes), which bashkit answers itself.
+yes), which bashkit answers itself, and ones that build but cannot work on
+wasip1 (dd spawns a thread on every copy, tac needs a temp dir for stdin).
 """
 
 from pathlib import Path
@@ -54,10 +55,17 @@ arms = "\n".join(f'        "{u}" => uu_{u}::uumain(args),' for u in utils)
 //! The host passes the shell's working directory as `PWD`; wasi-libc starts
 //! every process at `/`, so it is applied before dispatch. Unknown names exit
 //! 127 like a shell's "command not found".
+//!
+//! A panic prints one fixed line instead of Rust's default report (source
+//! paths, toolchain hash, `Debug` payloads); the host then reports the abort.
 
 use std::ffi::OsString;
 
 fn main() {{
+    std::panic::set_hook(Box::new(|_| {{
+        let name = std::env::args().next().unwrap_or_default();
+        eprintln!("{{name}}: internal error");
+    }}));
     if let Some(pwd) = std::env::var_os("PWD") {{
         let _ = std::env::set_current_dir(pwd);
     }}

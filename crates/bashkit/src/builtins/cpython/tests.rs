@@ -35,8 +35,8 @@ fn on_demand_fallback_links() {
     let config = wasi_host::runtime_config(bashkit_cpython_wasm::engine_config(), &POOL, false);
     let rt = GuestRuntime::link(
         wasmtime::Engine::new(&config).unwrap(),
-        None,
-        usize::MAX,
+        false,
+        &POOL,
         bashkit_cpython_wasm::load_module,
         http::add_to_linker,
     )
@@ -49,8 +49,8 @@ fn pooled_engine_links() {
     let config = wasi_host::runtime_config(bashkit_cpython_wasm::engine_config(), &POOL, true);
     let rt = GuestRuntime::link(
         wasmtime::Engine::new(&config).unwrap(),
-        None,
-        POOL.max_memory,
+        true,
+        &POOL,
         bashkit_cpython_wasm::load_module,
         http::add_to_linker,
     )

@@ -4,10 +4,17 @@
 //! The host passes the shell's working directory as `PWD`; wasi-libc starts
 //! every process at `/`, so it is applied before dispatch. Unknown names exit
 //! 127 like a shell's "command not found".
+//!
+//! A panic prints one fixed line instead of Rust's default report (source
+//! paths, toolchain hash, `Debug` payloads); the host then reports the abort.
 
 use std::ffi::OsString;
 
 fn main() {
+    std::panic::set_hook(Box::new(|_| {
+        let name = std::env::args().next().unwrap_or_default();
+        eprintln!("{name}: internal error");
+    }));
     if let Some(pwd) = std::env::var_os("PWD") {
         let _ = std::env::set_current_dir(pwd);
     }
@@ -29,7 +36,7 @@ fn main() {
 }
 
 /// Utilities this guest provides, sorted.
-const UTILS: &[&str] = &["b2sum", "base32", "base64", "basename", "basenc", "cat", "cksum", "comm", "cp", "csplit", "cut", "date", "dd", "dir", "dircolors", "dirname", "echo", "expand", "expr", "factor", "false", "fmt", "fold", "head", "join", "link", "ln", "ls", "md5sum", "mkdir", "mktemp", "mv", "nl", "nproc", "numfmt", "od", "paste", "pathchk", "pr", "printenv", "printf", "ptx", "pwd", "readlink", "realpath", "rm", "rmdir", "seq", "sha1sum", "sha224sum", "sha256sum", "sha384sum", "sha512sum", "shred", "shuf", "sort", "split", "sum", "tail", "tee", "test", "touch", "tr", "true", "truncate", "tsort", "unexpand", "uniq", "unlink", "vdir", "wc"];
+const UTILS: &[&str] = &["b2sum", "base32", "base64", "basename", "basenc", "cat", "cksum", "comm", "cp", "csplit", "cut", "date", "dir", "dircolors", "dirname", "echo", "expand", "expr", "factor", "false", "fmt", "fold", "head", "join", "link", "ln", "ls", "md5sum", "mkdir", "mktemp", "mv", "nl", "nproc", "numfmt", "od", "paste", "pathchk", "pr", "printenv", "printf", "ptx", "pwd", "readlink", "realpath", "rm", "rmdir", "seq", "sha1sum", "sha224sum", "sha256sum", "sha384sum", "sha512sum", "shred", "shuf", "sort", "split", "sum", "tail", "tee", "test", "touch", "tr", "true", "truncate", "tsort", "unexpand", "uniq", "unlink", "vdir", "wc"];
 
 fn dispatch(name: &str, args: impl uucore::Args) -> i32 {
     match name {
@@ -45,7 +52,6 @@ fn dispatch(name: &str, args: impl uucore::Args) -> i32 {
         "csplit" => uu_csplit::uumain(args),
         "cut" => uu_cut::uumain(args),
         "date" => uu_date::uumain(args),
-        "dd" => uu_dd::uumain(args),
         "dir" => uu_dir::uumain(args),
         "dircolors" => uu_dircolors::uumain(args),
         "dirname" => uu_dirname::uumain(args),

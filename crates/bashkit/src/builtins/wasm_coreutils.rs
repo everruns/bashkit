@@ -14,13 +14,19 @@
 //!   Output is captured, not streamed (same as the CPython guest).
 //! - Limits default tighter than CPython's (10 s, 64 MiB): coreutils are
 //!   short-lived stream filters.
+//! - One `Bash` runs at most `max_concurrent` guests at once (default 4), so
+//!   one tenant's background jobs cannot hold the process-wide pool.
+//! - Registered at `BashBuilder::build` ([`WasmCoreutilsHost`]): utilities
+//!   obey `builtin_filter`, and guest clocks follow the virtual clock.
 
 use std::sync::OnceLock;
 use std::time::Duration;
 
 use async_trait::async_trait;
 
-use super::wasi_host::{self, Call, Entry, GuestConfig, GuestRuntime, GuestState, PoolSpec};
+use super::wasi_host::{
+    self, Call, Entry, GuestClock, GuestConfig, GuestRuntime, GuestState, PoolSpec,
+};
 use super::{Builtin, Context, ExecutionDeadline};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
@@ -31,6 +37,8 @@ const DEFAULT_MAX_DURATION: Duration = Duration::from_secs(10);
 const DEFAULT_MAX_MEMORY: usize = 64 * 1024 * 1024;
 /// Default cap on captured stdout + stderr.
 const DEFAULT_MAX_OUTPUT: usize = 16 * 1024 * 1024;
+/// Default guests one `Bash` may run at the same time.
+const DEFAULT_MAX_CONCURRENT: usize = 4;
 /// Guest instructions between cooperative yields (~1 ms on Pulley).
 const YIELD_INTERVAL_FUEL: u64 = 100_000;
 /// Request-budget work units charged per call before the guest runs.
@@ -81,6 +89,9 @@ pub struct WasmCoreutilsLimits {
     /// Maximum captured stdout + stderr bytes; output past this is dropped and
     /// the result is marked truncated.
     pub max_output: usize,
+    /// Guests one `Bash` runs at the same time; further calls wait for a
+    /// free one within their own deadline (at least 1).
+    pub max_concurrent: usize,
 }
 
 impl Default for WasmCoreutilsLimits {
@@ -89,6 +100,7 @@ impl Default for WasmCoreutilsLimits {
             max_duration: DEFAULT_MAX_DURATION,
             max_memory: DEFAULT_MAX_MEMORY,
             max_output: DEFAULT_MAX_OUTPUT,
+            max_concurrent: DEFAULT_MAX_CONCURRENT,
         }
     }
 }
@@ -113,6 +125,32 @@ impl WasmCoreutilsLimits {
     pub fn max_output(mut self, bytes: usize) -> Self {
         self.max_output = bytes;
         self
+    }
+
+    /// Set how many guests one `Bash` runs at the same time.
+    #[must_use]
+    pub fn max_concurrent(mut self, calls: usize) -> Self {
+        self.max_concurrent = calls;
+        self
+    }
+}
+
+/// What a `Bash` shares with all of its wasm coreutils builtins; built by
+/// `BashBuilder::build`.
+#[derive(Clone)]
+pub(crate) struct WasmCoreutilsHost {
+    /// Virtual clock the guest reads (TM-INF-018).
+    pub(crate) clock: super::Date,
+    /// Round guest clocks to 100 ms (Hardened profile, TM-INF-033).
+    pub(crate) coarse_clock: bool,
+    /// The embedder's `builtin_filter`; rejected utilities are unreachable,
+    /// also through the multicall (TM-WCU-005).
+    pub(crate) filter: Option<crate::interpreter::BuiltinFilter>,
+}
+
+impl WasmCoreutilsHost {
+    pub(crate) fn allows(&self, util: &str) -> bool {
+        self.filter.as_ref().is_none_or(|keep| keep(util))
     }
 }
 
@@ -140,21 +178,48 @@ pub struct WasmCoreutil {
     /// first argument.
     util: Option<&'static str>,
     limits: WasmCoreutilsLimits,
+    host: Option<WasmCoreutilsHost>,
+    /// Guests this builtin's `Bash` may run at once; shared by every wasm
+    /// coreutils builtin of that `Bash`.
+    running: std::sync::Arc<tokio::sync::Semaphore>,
 }
 
 impl WasmCoreutil {
     /// The builtin for `util`, or `None` if the guest does not provide it.
     pub fn new(util: &str, limits: WasmCoreutilsLimits) -> Option<Self> {
         let util = guest_utils().iter().copied().find(|u| *u == util)?;
-        Some(Self {
-            util: Some(util),
-            limits,
-        })
+        Some(Self::build(Some(util), limits))
     }
 
     /// The `coreutils <utility> [args...]` multicall builtin.
     pub fn multicall(limits: WasmCoreutilsLimits) -> Self {
-        Self { util: None, limits }
+        Self::build(None, limits)
+    }
+
+    fn build(util: Option<&'static str>, limits: WasmCoreutilsLimits) -> Self {
+        let running =
+            std::sync::Arc::new(tokio::sync::Semaphore::new(limits.max_concurrent.max(1)));
+        Self {
+            util,
+            limits,
+            host: None,
+            running,
+        }
+    }
+
+    /// Attach the `Bash`-wide clock, filter and concurrency share.
+    pub(crate) fn with_host(
+        mut self,
+        host: WasmCoreutilsHost,
+        running: std::sync::Arc<tokio::sync::Semaphore>,
+    ) -> Self {
+        self.host = Some(host);
+        self.running = running;
+        self
+    }
+
+    fn allows(&self, util: &str) -> bool {
+        self.host.as_ref().is_none_or(|h| h.allows(util))
     }
 
     /// Utilities the embedded guest provides, sorted.
@@ -187,11 +252,18 @@ impl Builtin for WasmCoreutil {
             None => match ctx.args.split_first() {
                 Some((first, rest)) if first == "--list" => {
                     let _ = rest;
-                    let mut out = guest_utils().join("\n");
-                    out.push('\n');
+                    let mut out = String::new();
+                    for u in guest_utils().iter().filter(|u| self.allows(u)) {
+                        out.push_str(u);
+                        out.push('\n');
+                    }
                     return Ok(ExecResult::ok(out));
                 }
-                Some((first, rest)) => match guest_utils().iter().copied().find(|u| u == first) {
+                Some((first, rest)) => match guest_utils()
+                    .iter()
+                    .copied()
+                    .find(|u| u == first && self.allows(u))
+                {
                     Some(u) => (u, rest),
                     None => {
                         return Ok(ExecResult::err(
@@ -264,6 +336,13 @@ impl Builtin for WasmCoreutil {
                 max_memory: rt.clamp_memory(self.limits.max_memory),
                 overlay: None,
                 deadline,
+                clock: self
+                    .host
+                    .as_ref()
+                    .map_or_else(GuestClock::default, |h| GuestClock {
+                        date: Some(h.clock),
+                        coarse: h.coarse_clock,
+                    }),
                 #[cfg(feature = "cpython")]
                 http: super::cpython::HttpState::new(
                     #[cfg(feature = "http_client")]
@@ -284,6 +363,8 @@ impl Builtin for WasmCoreutil {
                 deadline,
                 budget: budget.as_ref(),
                 yield_fuel: YIELD_INTERVAL_FUEL,
+                fuel: wasi_host::fuel_for(budget.as_ref(), FUEL_PER_WORK_UNIT),
+                tenant: Some(&self.running),
             },
         )
         .await?;
@@ -349,6 +430,31 @@ mod tests {
     fn unknown_utility_is_rejected() {
         assert!(WasmCoreutil::new("bash", WasmCoreutilsLimits::default()).is_none());
         assert!(WasmCoreutil::new("sort", WasmCoreutilsLimits::default()).is_some());
+    }
+
+    /// THREAT[TM-WCU-006]: a call waits for its `Bash`'s concurrency share
+    /// within its own deadline, and runs once the share is free.
+    #[tokio::test]
+    async fn tenant_share_is_waited_for_within_deadline() {
+        let running = std::sync::Arc::new(tokio::sync::Semaphore::new(1));
+        let held = running.clone().acquire_owned().await.unwrap();
+        let limits = WasmCoreutilsLimits::default().max_duration(Duration::from_millis(300));
+        let host = WasmCoreutilsHost {
+            clock: crate::interpreter::virtual_clock(None, None),
+            coarse_clock: false,
+            filter: None,
+        };
+        let util = WasmCoreutil::new("true", limits)
+            .unwrap()
+            .with_host(host, running.clone());
+        let mut bash = crate::Bash::builder()
+            .builtin("gtrue", Box::new(util))
+            .build();
+        let r = bash.exec("gtrue; echo $?").await.unwrap();
+        assert_eq!(r.stdout, "124\n", "{}", r.stderr);
+        drop(held);
+        let r = bash.exec("gtrue; echo $?").await.unwrap();
+        assert_eq!(r.stdout, "0\n", "{}", r.stderr);
     }
 
     /// `MISSING_NATIVE` must be exactly the guest utilities with no native
