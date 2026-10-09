@@ -93,6 +93,8 @@ jobs/executable VFS scripts, and removal of old metadata on shell-state restore.
 test `function_metadata_shares_storage_and_drops_with_functions` proves definitions
 from one source share their filename allocation and that rollback/unset leave no
 orphan entries or retained filename allocation. No host-exhaustion probe is needed.
+The real-Bash comparison sources both the original and post-unset replacement;
+Bash versions differ in the filename they assign to a definition inside `-c`.
 
 ## Adding New Fail Points
 

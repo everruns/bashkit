@@ -138,6 +138,8 @@ async fn function_metadata_budget_boundary() {
 #[tokio::test]
 async fn source_filename_lifecycle_matches_real_bash() {
     let dir = tempfile::tempdir().unwrap();
+    // Bash versions label functions defined in `-c` differently. Source the
+    // replacement too, so the oracle checks the same filename contract.
     let script = r#"
 echo 'f() { echo "${BASH_SOURCE[0]}"; }' > defs
 echo 'f() { echo "${BASH_SOURCE[0]}"; }' > child
@@ -154,7 +156,8 @@ chmod +x child
 ./child
 f
 unset -f f
-f() { echo "${BASH_SOURCE[0]}"; }
+echo 'f() { echo "${BASH_SOURCE[0]}"; }' > replacement
+source ./replacement
 f
 "#;
     let oracle = std::process::Command::new("bash")
