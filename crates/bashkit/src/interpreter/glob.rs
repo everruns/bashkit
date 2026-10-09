@@ -929,6 +929,7 @@ impl Interpreter {
                         | '('
                         | ')'
                         | '|'
+                        | '-'
                 )
             {
                 result.push(next);
@@ -1040,6 +1041,10 @@ impl Interpreter {
                 // Dotfiles are hidden per component unless dotglob is set or this
                 // component explicitly starts with '.'.
                 let component_starts_with_dot = component.starts_with('.');
+                // `shopt -u globskipdots`: a pattern that starts with `.` also
+                // matches `.` and `..`, which the VFS `read_dir` never lists.
+                let dot_entries = component_starts_with_dot
+                    && !crate::builtins::shopt_on(&self.scoped.variables, "globskipdots");
 
                 for (dir, out) in &candidates {
                     let entries = match self.fs.read_dir(dir).await {
@@ -1048,6 +1053,13 @@ impl Interpreter {
                     };
 
                     let mut matched: Vec<String> = Vec::new();
+                    if dot_entries {
+                        for dot in [".", ".."] {
+                            if self.glob_match_impl(dot, component, opts, 0) {
+                                matched.push(dot.to_string());
+                            }
+                        }
+                    }
                     for entry in entries {
                         if entry.name.starts_with('.') && !dotglob && !component_starts_with_dot {
                             continue;

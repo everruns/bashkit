@@ -73,6 +73,13 @@ impl LineReader {
         self.script_addr == script as *const Script as usize
     }
 
+    /// The top level re-read its rest into `to` (see `reread_script_rest`).
+    pub(super) fn retarget(&mut self, from: &Script, to: &Script) {
+        if self.reads(from) {
+            self.script_addr = to as *const Script as usize;
+        }
+    }
+
     /// Source lines `first..=last` (1-based), without the final newline.
     fn lines(&mut self, first: usize, last: usize) -> String {
         if self.line_starts.is_empty() {

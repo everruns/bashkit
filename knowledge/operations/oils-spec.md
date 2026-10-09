@@ -17,15 +17,20 @@ Implemented. Harness: `scripts/oils-spec/run.py` (`just oils-spec`).
 
 ## Headline
 
-**95.8%**: bashkit passes 2578 of the 2692 Oils spec cases real bash 5.2.21
-passes (2759 cases in 132 spec files; bashkit passes 2588 of all cases,
-93.8%). Oils `57d3f0d088c3`, 2026-10-08. Report:
-`scripts/oils-spec/results/oils-spec-linux-x86_64-20261008T225033Z.md`
+**97.3%**: bashkit passes 2618 of the 2692 Oils spec cases real bash 5.2.21
+passes (2759 cases in 132 spec files; bashkit passes 2628 of all cases,
+95.3%). Oils `57d3f0d088c3`, 2026-10-09. Report:
+`scripts/oils-spec/results/oils-spec-linux-x86_64-20261009T010244Z.md`
 (bash missed one timing-dependent `builtin-kill` case in this run that
 bashkit passes, hence 2692).
 Every remaining miss is listed by cause under "Oils Spec Misses" in
 [Known Limitations](limitations.md).
-The run before this one (92.8%, `...T211202Z.md`) missed 9 in
+The run before this one (95.8%, `...T225033Z.md`) missed 7 in `alias`, 3 in
+`extglob-files`, `array-assign` and `glob`, 2 in `assign-deferred`,
+`glob-bash`, `ble-idioms` and `parse-errors`; they now miss 0, 0, 1, 1, 0,
+0, 1 and 1. 19 files went to 0 in that change, 40 cases in all, with no new
+misses.
+The run before that (92.8%, `...T211202Z.md`) missed 9 in
 `ysh-builtin-private`, 7 in `arith` and `array-literal`, 5 in `nameref`, 4
 in `array`, `array-assoc`, `var-sub-quote` and `parse-errors`, 3 in
 `blog2`, `bool-parse`, `builtin-misc` and `func-parsing`; they now miss 1,

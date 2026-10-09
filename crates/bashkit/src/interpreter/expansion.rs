@@ -260,7 +260,20 @@ impl Interpreter {
     fn needs_glob_escape(ch: char) -> bool {
         matches!(
             ch,
-            '\\' | '*' | '?' | '[' | ']' | '{' | '}' | ',' | '@' | '!' | '+' | '(' | ')' | '|'
+            '\\' | '*'
+                | '?'
+                | '['
+                | ']'
+                | '{'
+                | '}'
+                | ','
+                | '@'
+                | '!'
+                | '+'
+                | '('
+                | ')'
+                | '|'
+                | '-'
         )
     }
 
@@ -519,6 +532,14 @@ impl Interpreter {
                     // values read into arithmetic).
                     let value = if index.contains("$(") && !self.is_assoc_array(name) {
                         self.array_access_after_subst(name, index).await?
+                    } else if arith_has_side_effect(index)
+                        && !self.is_assoc_array(name)
+                        && !self.scoped.namerefs.contains_key(name)
+                    {
+                        // `${a[b=2]}`: the subscript is evaluated once, with
+                        // its assignments (bash).
+                        let idx = self.evaluate_arithmetic_with_assign(index);
+                        self.expand_array_access_part(name, &idx.to_string())
                     } else {
                         self.expand_array_access_part(name, index)
                     };
@@ -868,13 +889,57 @@ impl Interpreter {
     /// its tildes resolved: a leading `~` and the `~` after each `:` of an
     /// unquoted literal. Literals holding a `~` become quoted, so later
     /// expansion leaves them alone.
+    /// A `${v-word}` operand with each unquoted `~` after a `:` replaced
+    /// by its directory.
+    fn tilde_operand_after_colons(&self, operand: &str) -> Option<String> {
+        let b = operand.as_bytes();
+        let mut out = String::new();
+        let mut copied = 0;
+        let mut quote: Option<u8> = None;
+        let mut changed = false;
+        let mut i = 0;
+        while i < b.len() {
+            match (quote, b[i]) {
+                (None, b'\\') => i += 1,
+                (None, q @ (b'\'' | b'"')) => quote = Some(q),
+                (Some(q), c) if c == q => quote = None,
+                (None, b':') if b.get(i + 1) == Some(&b'~') => {
+                    let start = i + 2;
+                    let end = operand[start..]
+                        .find(['/', ':', '}', '$', '\'', '"'])
+                        .map_or(operand.len(), |k| start + k);
+                    // The operand is re-read as a word: a directory that
+                    // would read differently there keeps its `~`.
+                    if matches!(b.get(end), None | Some(b'/' | b':'))
+                        && let Some(dir) = self.tilde_dir(&operand[start..end])
+                        && !dir.contains(['$', '`', '\\', '\'', '"', '*', '?', '[', '}'])
+                    {
+                        out.push_str(&operand[copied..=i]);
+                        out.push_str(&dir);
+                        copied = end;
+                        changed = true;
+                        i = end;
+                        continue;
+                    }
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        changed.then(|| {
+            out.push_str(&operand[copied..]);
+            out
+        })
+    }
+
     pub(super) fn tilde_assignment_value<'w>(&self, word: &'w Word) -> std::borrow::Cow<'w, Word> {
         use std::borrow::Cow;
         let quoted_at = |i: usize| Self::part_is_quoted(word, i);
-        let has_tilde =
-            word.parts.iter().enumerate().any(
-                |(i, p)| matches!(p, WordPart::Literal(s) if !quoted_at(i) && s.contains('~')),
-            );
+        let has_tilde = word.parts.iter().enumerate().any(|(i, p)| match p {
+            WordPart::Literal(s) => !quoted_at(i) && s.contains('~'),
+            WordPart::ParameterExpansion { operand, .. } => !quoted_at(i) && operand.contains(":~"),
+            _ => false,
+        });
         if !has_tilde {
             return Cow::Borrowed(word);
         }
@@ -882,6 +947,28 @@ impl Interpreter {
         out.part_quoted = (0..word.parts.len()).map(quoted_at).collect();
         let n = word.parts.len();
         for (i, part) in word.parts.iter().enumerate() {
+            if let WordPart::ParameterExpansion {
+                name,
+                operator:
+                    op @ (ParameterOp::UseDefault
+                    | ParameterOp::AssignDefault
+                    | ParameterOp::UseReplacement),
+                operand,
+                colon_variant,
+            } = part
+                && !quoted_at(i)
+                && let Some(expanded) = self.tilde_operand_after_colons(operand)
+            {
+                // `x=${undef-~:~}`: the operand of an assignment value
+                // expands `~` after each `:` too.
+                out.parts[i] = WordPart::ParameterExpansion {
+                    name: name.clone(),
+                    operator: op.clone(),
+                    operand: expanded,
+                    colon_variant: *colon_variant,
+                };
+                continue;
+            }
             let WordPart::Literal(s) = part else {
                 continue;
             };
@@ -3514,6 +3601,23 @@ impl Interpreter {
         }
         value.to_string()
     }
+}
+
+/// Whether arithmetic text assigns: `b=2`, `i+=1`, `i++`, `--i`.
+fn arith_has_side_effect(expr: &str) -> bool {
+    if expr.contains("++") || expr.contains("--") {
+        return true;
+    }
+    let b = expr.as_bytes();
+    b.iter().enumerate().any(|(i, &c)| {
+        c == b'='
+            && b.get(i + 1) != Some(&b'=')
+            && !matches!(
+                i.checked_sub(1).map(|j| b[j]),
+                Some(b'=' | b'!' | b'<' | b'>')
+            )
+            || c == b'=' && i >= 2 && matches!(&b[i - 2..i], b"<<" | b">>")
+    })
 }
 
 #[cfg(test)]
