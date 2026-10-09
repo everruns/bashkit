@@ -129,6 +129,7 @@ pub mod script_analysis;
 pub mod script_execution_tests;
 pub mod security_audit_pocs;
 mod sed_fuzz_scaffold_tests;
+mod sed_inplace_policy_tests;
 mod sed_resource_tests;
 pub mod set_e_and_or_tests;
 pub mod shlvl_tests;
