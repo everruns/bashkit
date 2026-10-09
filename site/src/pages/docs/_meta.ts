@@ -244,7 +244,7 @@ export const DOC_META: DocMeta[] = [
     slug: "wasm-coreutils",
     title: "Wasm coreutils",
     summary: "Real uutils coreutils compiled to WebAssembly, sandboxed per call.",
-    seoTitle: "Bashkit wasm coreutils: real uutils programs in a WebAssembly sandbox",
+    seoTitle: "Bashkit wasm coreutils: real uutils in a WebAssembly sandbox",
     seoDescription:
       "Run real uutils coreutils inside Bashkit, compiled to WebAssembly and precompiled at build time, with VFS access, resource limits, and per-call isolation.",
     section: "Runtimes",
