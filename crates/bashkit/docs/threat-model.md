@@ -527,6 +527,7 @@ echo $user_input
 | Cross-tenant jq env (TM-ISO-004) | `std::env::set_var()` in jq | Custom jaq context variable | **FIXED** |
 | Cumulative counter bypass (TM-ISO-005) | Repeated `exec()` resets counters | Session-level counters | **MITIGATED** |
 | Memory budget exhaustion (TM-ISO-006) | Unbounded variable/array growth | Per-instance MemoryLimits | **MITIGATED** |
+| Function filename amplification (TM-ISO-006) | Long `source` operand copied per function or retained after rollback | Shared filename storage; function byte budget includes filename/key bytes before insertion; unset and subshell rollback follow function lifetime | **MITIGATED** |
 | Alias leakage (TM-ISO-007) | Aliases from session A visible in B | Per-instance alias HashMap | MITIGATED |
 | Trap handler leakage (TM-ISO-008) | Trap from session A fires in B | Per-instance trap HashMap | MITIGATED |
 | Shell option leakage (TM-ISO-009) | `set -e` in session A affects B | Per-instance SHOPT_* variables | MITIGATED |

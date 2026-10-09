@@ -10,6 +10,11 @@
 // validating string contents. This is safe because we check for non-empty strings.
 #![allow(clippy::unwrap_used)]
 
+// Decision: function definition filenames share Arc<str> storage and live in
+// ScopedState beside functions. Charge filename/key bytes per function before
+// admission; replace/refund them with the definition so forks, rollback and
+// unset cannot orphan metadata or bypass the retained-function byte limit.
+
 // Decision: shell diagnostics carry bash's non-interactive prefix
 // `$0: line N: ` (`$0` is BASH_SOURCE[0] when a file is being read, so a
 // sourced file names itself), built by `Interpreter::diag_prefix`. Every
@@ -1151,7 +1156,7 @@ struct SavedVar {
 /// was entered from.
 #[derive(Debug, Clone)]
 struct SourceFrame {
-    file: String,
+    file: Arc<str>,
     funcname: String,
     call_line: usize,
     is_function: bool,
@@ -1160,7 +1165,7 @@ struct SourceFrame {
 impl SourceFrame {
     fn script(file: &str) -> Self {
         Self {
-            file: file.to_string(),
+            file: Arc::from(file),
             funcname: "main".to_string(),
             call_line: 0,
             is_function: false,
@@ -1490,6 +1495,11 @@ struct ScopedState {
     assoc_arrays: Arc<HashMap<String, HashMap<String, String>>>,
     /// Defined shell functions.
     functions: Arc<HashMap<String, FunctionDef>>,
+    /// Definition filenames share storage with source frames. Charge each
+    /// function's filename and metadata key conservatively to the function
+    /// byte budget, even when several definitions share the same allocation.
+    /// Keep this scoped so forks and rollback follow the function lifecycle.
+    function_files: Arc<HashMap<String, Arc<str>>>,
     /// Trap handlers: signal/event name -> command string.
     traps: Arc<HashMap<String, String>>,
     /// Shell aliases: name -> expansion value.
@@ -1651,8 +1661,6 @@ pub struct Interpreter {
     call_stack: Vec<CallFrame>,
     /// Debug stack behind BASH_SOURCE / BASH_LINENO / FUNCNAME
     bash_source_stack: Vec<SourceFrame>,
-    /// File each function was defined in (`BASH_SOURCE` inside it).
-    function_files: HashMap<String, String>,
     /// The pending line abort is a failed assignment (readonly target).
     assign_error_abort: bool,
     /// Directory at the last `PWD=...` / `unset PWD`: while the shell is
@@ -2434,7 +2442,6 @@ impl Interpreter {
             command_resolver: None,
             call_stack: Vec::new(),
             bash_source_stack: Vec::new(),
-            function_files: HashMap::new(),
             assign_error_abort: false,
             pwd_shadow: None,
             pending_tempenv: None,
@@ -2665,7 +2672,6 @@ impl Interpreter {
             command_resolver: self.command_resolver.clone(),
             call_stack: self.call_stack.clone(),
             bash_source_stack: self.bash_source_stack.clone(),
-            function_files: self.function_files.clone(),
             assign_error_abort: false,
             pwd_shadow: None,
             pending_tempenv: None,
@@ -2835,6 +2841,24 @@ impl Interpreter {
         Arc::make_mut(&mut self.scoped.functions)
     }
 
+    fn function_retained_bytes(&self, func: &FunctionDef) -> usize {
+        function_storage_bytes(func).saturating_add(
+            self.scoped
+                .function_files
+                .get(&func.name)
+                .map_or(0, |file| file.len().saturating_add(func.name.len())),
+        )
+    }
+
+    fn remove_function(&mut self, name: &str) {
+        if let Some(func) = self.scoped.functions.get(name) {
+            let bytes = self.function_retained_bytes(func);
+            self.memory_budget.record_function_remove(bytes);
+            self.functions_mut().remove(name);
+        }
+        Arc::make_mut(&mut self.scoped.function_files).remove(name);
+    }
+
     #[inline]
     fn traps_mut(&mut self) -> &mut HashMap<String, String> {
         Arc::make_mut(&mut self.scoped.traps)
@@ -2880,7 +2904,7 @@ impl Interpreter {
             .iter()
             .rev()
             .enumerate()
-            .map(|(i, f)| (i, f.file.clone()))
+            .map(|(i, f)| (i, f.file.to_string()))
             .collect();
         let lineno: HashMap<usize, String> = frames
             .iter()
@@ -3119,7 +3143,7 @@ impl Interpreter {
         if !self.interactive
             && let Some(src) = self.bash_source_stack.last().filter(|s| !s.file.is_empty())
         {
-            return src.file.clone();
+            return src.file.to_string();
         }
         if let Some(frame) = self.call_stack.iter().rev().find(|f| !f.keeps_arg0) {
             return frame.name.clone();
@@ -3546,6 +3570,9 @@ impl Interpreter {
             restored_functions.insert(name, parsed_func);
         }
         self.scoped.functions = Arc::new(restored_functions);
+        // ShellState persists function source, but has no definition filenames.
+        // Discard old metadata together with the replaced function map.
+        self.scoped.function_files = Arc::default();
         self.scoped.aliases = Arc::new(state.aliases.clone());
         self.scoped.traps = Arc::new(state.traps.clone());
         self.scoped.dir_stack = Arc::new(state.dir_stack.clone());
@@ -10535,6 +10562,7 @@ impl Interpreter {
         let saved_arrays = Arc::clone(&self.scoped.arrays);
         let saved_assoc = Arc::clone(&self.scoped.assoc_arrays);
         let saved_functions = Arc::clone(&self.scoped.functions);
+        let saved_function_files = Arc::clone(&self.scoped.function_files);
         let saved_traps = Arc::clone(&self.scoped.traps);
         let saved_aliases = Arc::clone(&self.scoped.aliases);
         let saved_var_attrs = Arc::clone(&self.scoped.var_attrs);
@@ -10561,6 +10589,7 @@ impl Interpreter {
             .insert("BASH_VERSINFO".to_string(), compat_bash_versinfo_array());
         self.scoped.assoc_arrays = Arc::new(HashMap::new());
         self.scoped.functions = Arc::new(HashMap::new());
+        self.scoped.function_files = Arc::default();
         self.scoped.traps = Arc::new(HashMap::new());
         self.scoped.aliases = Arc::new(HashMap::new());
         self.scoped.var_attrs = Arc::new(HashMap::new());
@@ -10622,6 +10651,7 @@ impl Interpreter {
         self.scoped.arrays = saved_arrays;
         self.scoped.assoc_arrays = saved_assoc;
         self.scoped.functions = saved_functions;
+        self.scoped.function_files = saved_function_files;
         self.scoped.traps = saved_traps;
         self.scoped.aliases = saved_aliases;
         self.scoped.var_attrs = saved_var_attrs;
@@ -10814,7 +10844,7 @@ impl Interpreter {
 
         // Track source file for BASH_SOURCE
         self.bash_source_stack.push(SourceFrame {
-            file: filename.clone(),
+            file: Arc::from(filename.as_str()),
             funcname: "source".to_string(),
             call_line: self.current_line,
             is_function: false,
@@ -11091,7 +11121,12 @@ impl Interpreter {
         // charged via the normal array-assignment path. Without this, repeated
         // FUNCNAME mutation would leak array budget across calls (over-count).
         self.bash_source_stack.push(SourceFrame {
-            file: self.function_files.get(name).cloned().unwrap_or_default(),
+            file: self
+                .scoped
+                .function_files
+                .get(name)
+                .cloned()
+                .unwrap_or_default(),
             funcname: name.to_string(),
             call_line: self.current_line,
             is_function: true,
@@ -11282,7 +11317,7 @@ impl Interpreter {
 
         for arg in &var_args {
             if unset_function {
-                self.functions_mut().remove(arg.as_str());
+                self.remove_function(arg.as_str());
                 continue;
             }
             // Only an explicit `-v` checks the name (bash).
@@ -11391,7 +11426,7 @@ impl Interpreter {
                     && !self.scoped.assoc_arrays.contains_key(&resolved)
                     && self.scoped.functions.contains_key(&resolved)
                 {
-                    self.functions_mut().remove(&resolved);
+                    self.remove_function(&resolved);
                     continue;
                 }
                 self.unset_variable(&resolved);
@@ -13121,8 +13156,13 @@ impl Interpreter {
                 .collect();
             return ExecResult::err(self.diag(format!("`{shown}': not a valid identifier\n")), 1);
         }
-        // THREAT[TM-DOS-060]: Check function count/size budget
-        let body_bytes = function_storage_bytes(func_def);
+        // THREAT[TM-ISO-006]: Admit retained filename/key bytes before cloning
+        // or inserting metadata. Sharing source storage prevents N deep copies;
+        // conservative per-function charging bounds distinct-file retention too.
+        let file = self.bash_source_stack.last().map(|frame| &frame.file);
+        let body_bytes = function_storage_bytes(func_def)
+            .saturating_add(file.map_or(0, |file| file.len()))
+            .saturating_add(func_def.name.len());
         let is_new = !self.scoped.functions.contains_key(&func_def.name);
         let old_body_bytes = if is_new {
             0
@@ -13130,32 +13170,33 @@ impl Interpreter {
             self.scoped
                 .functions
                 .get(&func_def.name)
-                .map(function_storage_bytes)
+                .map(|func| self.function_retained_bytes(func))
                 .unwrap_or(0)
         };
-        if self
-            .memory_budget
-            .check_function_insert(body_bytes, is_new, old_body_bytes, &self.memory_limits)
-            .is_ok()
-        {
-            self.memory_budget
-                .record_function_insert(body_bytes, is_new, old_body_bytes);
-            self.functions_mut()
-                .insert(func_def.name.clone(), func_def.clone());
-            self.record_function_file(&func_def.name);
+        match self.memory_budget.check_function_insert(
+            body_bytes,
+            is_new,
+            old_body_bytes,
+            &self.memory_limits,
+        ) {
+            Ok(()) => {
+                let file = file.cloned().unwrap_or_default();
+                self.memory_budget
+                    .record_function_insert(body_bytes, is_new, old_body_bytes);
+                self.functions_mut()
+                    .insert(func_def.name.clone(), func_def.clone());
+                Arc::make_mut(&mut self.scoped.function_files).insert(func_def.name.clone(), file);
+            }
+            // Preserve the established silent skip at the function-count cap.
+            Err(_)
+                if is_new
+                    && self.memory_budget.function_count
+                        >= self.memory_limits.max_function_count => {}
+            Err(error) => {
+                self.memory_limit_error.get_or_insert(error);
+            }
         }
         ExecResult::ok(String::new())
-    }
-
-    /// Remember the file a function is defined in (`BASH_SOURCE` inside it).
-    #[inline(never)]
-    fn record_function_file(&mut self, name: &str) {
-        let file = self
-            .bash_source_stack
-            .last()
-            .map(|f| f.file.clone())
-            .unwrap_or_default();
-        self.function_files.insert(name.to_string(), file);
     }
 
     /// `v=x f` / `v=x eval ...`: hand the prefix assignments to the call as
@@ -14705,6 +14746,28 @@ mod tests {
     use crate::Bash;
     use crate::fs::InMemoryFs;
     use crate::parser::Parser;
+
+    #[tokio::test]
+    async fn function_metadata_shares_storage_and_drops_with_functions() {
+        let mut bash = Bash::new();
+        bash.exec("echo 'a() { :; }; b() { :; }' > /defs; source ////defs")
+            .await
+            .unwrap();
+        let files = &bash.interpreter.scoped.function_files;
+        assert!(Arc::ptr_eq(&files["a"], &files["b"]));
+        let weak = Arc::downgrade(&files["a"]);
+        bash.exec("(echo 'ghost() { :; }' > /child; source /child)")
+            .await
+            .unwrap();
+        assert_eq!(bash.interpreter.scoped.function_files.len(), 2);
+        bash.exec("chmod +x /child; /child").await.unwrap();
+        assert_eq!(bash.interpreter.scoped.function_files.len(), 2);
+        bash.exec("unset -f a b").await.unwrap();
+        assert!(bash.interpreter.scoped.function_files.is_empty());
+        assert!(weak.upgrade().is_none());
+        assert_eq!(bash.interpreter.memory_budget.function_body_bytes, 0);
+        assert_eq!(bash.interpreter.memory_budget.function_count, 0);
+    }
 
     /// TM-DOS-042: comma-list brace expansion must not recurse one frame per
     /// brace group (stack overflow) nor accumulate unbounded memory. A long

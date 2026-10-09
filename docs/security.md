@@ -36,6 +36,16 @@ Deleting, replacing, evicting or clearing entries releases their storage; subshe
 share pathname storage while maintaining independent hash state. The table also
 retains its 512-entry ceiling.
 
+`MemoryLimits::max_function_body_bytes` also includes retained function-definition
+filenames and metadata keys. Filename storage is shared; each function is charged
+conservatively before insertion. An oversized `source` operand therefore fails
+with a resource-limit error even when redundant slashes normalize to a short VFS
+path. Redefinition replaces the charge, `unset` releases it, and subshell rollback
+restores filenames together with functions. Executable child scripts discard
+their own metadata on return. Functions and their admitted metadata
+persist across executions; shell-state restore discards previous filenames because
+the serialized state carries function source without definition filenames.
+
 Recursive `grep -R` skips directory symlinks that resolve to an ancestor and
 reports `warning: recursive directory loop` (suppressed by `-s`). Separate
 aliases of a non-ancestor directory remain searchable. Traversal uses the shared
