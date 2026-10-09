@@ -1,8 +1,8 @@
 //! Behavioral tests for `compgen` builtin/function/alias listing.
 //!
-//! `compgen -b` must reflect the live builtin registry — the same source
-//! `Bash::builtin_names()` reads — not a hardcoded list that drifts as
-//! builtins are added (it sat at 109 names while the registry had 156).
+//! `compgen -b` reads the live builtin registry — the same source
+//! `Bash::builtin_names()` reads — keeping bash's own builtins and
+//! host-registered commands (the rest stand in for programs: `-c` only).
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -27,7 +27,7 @@ fn stdout_set(result: &ExecResult) -> HashSet<String> {
 }
 
 #[tokio::test]
-async fn compgen_b_matches_builtin_names() {
+async fn compgen_b_lists_bash_builtins_in_the_registry() {
     let mut bash = Bash::new();
     let names: HashSet<String> = bash.builtin_names().into_iter().collect();
 
@@ -35,9 +35,13 @@ async fn compgen_b_matches_builtin_names() {
     assert_eq!(result.exit_code, 0, "stderr: {}", result.stderr);
     let listed = stdout_set(&result);
 
-    assert_eq!(
-        listed, names,
-        "compgen -b must list exactly the registered builtins"
+    // bash's own builtins that bashkit registers; commands standing in for
+    // programs (`awk`, `grep`) are `-c` only, as in bash.
+    assert!(listed.contains("getopts") && listed.contains("echo"));
+    assert!(!listed.contains("grep") && !listed.contains("awk"));
+    assert!(
+        listed.is_subset(&names),
+        "compgen -b lists only registered names"
     );
 }
 
@@ -58,11 +62,13 @@ async fn compgen_b_includes_host_registered_builtin() {
 #[tokio::test]
 async fn compgen_action_builtin_lists_builtins_only() {
     let mut bash = Bash::new();
-    // `awk` is a bashkit builtin; with -A builtin it must appear even though
-    // it's not a builtin in real bash.
+    // `awk` is a bashkit builtin standing in for a program; like bash,
+    // `-A builtin` lists only bash's builtins (`getopts`).
     let result = bash.exec("compgen -A builtin awk").await.unwrap();
-    assert_eq!(result.exit_code, 0, "stderr: {}", result.stderr);
-    assert_eq!(result.stdout, "awk\n");
+    assert_eq!(result.exit_code, 1, "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "");
+    let result = bash.exec("compgen -A builtin g").await.unwrap();
+    assert_eq!(result.stdout, "getopts\n");
 
     // -A builtin must NOT include functions.
     let result = bash

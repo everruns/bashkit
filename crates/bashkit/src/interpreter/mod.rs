@@ -931,6 +931,21 @@ fn is_dev_null(path: &Path) -> bool {
 /// Decision: these paths are resolved at the interpreter level like
 /// `/dev/null`, never through the VFS. Writing them as regular files silently
 /// swallowed `echo err > /dev/stderr`, a pattern agents use constantly.
+/// The script a body runs (see `Interpreter::reread_script_rest`).
+enum ScriptView<'a> {
+    Parsed(&'a Script),
+    Reread(Box<Script>),
+}
+
+impl ScriptView<'_> {
+    fn get(&self) -> &Script {
+        match self {
+            ScriptView::Parsed(s) => s,
+            ScriptView::Reread(s) => s,
+        }
+    }
+}
+
 fn dev_fd_alias(path: &Path) -> Option<i32> {
     let normalized = normalize_dev_path(path);
     match normalized.to_str()? {
@@ -1760,9 +1775,6 @@ pub struct Interpreter {
     operand_substs: std::collections::VecDeque<String>,
     /// PIPESTATUS: exit codes of the last pipeline's commands
     pipestatus: Vec<i32>,
-    /// Aliases currently being expanded (prevents infinite recursion).
-    /// When alias `foo` expands to `foo bar`, the inner `foo` is not re-expanded.
-    expanding_aliases: HashSet<String>,
     /// THREAT[TM-DOS-023]: Bounded cache for repeated `[[ value =~ pattern ]]` evaluations.
     regex_cache: RuntimeRegexCache,
     /// Command history entries for the current session.
@@ -1854,6 +1866,8 @@ pub struct Interpreter {
     /// nested AND-OR lists can suppress ERR traps without weakening top-level
     /// final-command errexit behavior.
     condition_sequence_depth: usize,
+    /// `set -e` stopped a command sequence (see the `!` pipeline arm).
+    errexit_fired: bool,
     /// Deferred output process substitutions: after a command writes to the
     /// substitution's fd, run these commands with what it wrote as stdin.
     /// Each entry is (write buffer, commands_to_run).
@@ -2447,7 +2461,6 @@ impl Interpreter {
             nounset_error: None,
             operand_substs: std::collections::VecDeque::new(),
             pipestatus: Vec::new(),
-            expanding_aliases: HashSet::new(),
             regex_cache: RuntimeRegexCache::default(),
             history: Vec::new(),
             history_bytes: 0,
@@ -2479,6 +2492,7 @@ impl Interpreter {
             debug_trap_dormant: false,
             err_trap_skip_stage: false,
             condition_sequence_depth: 0,
+            errexit_fired: false,
             deferred_proc_subs: Vec::new(),
             proc_subs,
             random_state: AtomicU32::new(random_seed),
@@ -2663,7 +2677,6 @@ impl Interpreter {
             nounset_error: None,
             operand_substs: std::collections::VecDeque::new(),
             pipestatus: Vec::new(),
-            expanding_aliases: HashSet::new(),
             regex_cache: RuntimeRegexCache::default(),
             history: Vec::new(),
             history_bytes: 0,
@@ -2697,6 +2710,7 @@ impl Interpreter {
             debug_trap_dormant: self.debug_trap_dormant,
             err_trap_skip_stage: false,
             condition_sequence_depth: self.condition_sequence_depth,
+            errexit_fired: false,
             deferred_proc_subs: Vec::new(),
             proc_subs: job_proc_subs,
             random_state: AtomicU32::new(random_seed),
@@ -3839,6 +3853,190 @@ impl Interpreter {
     /// Used by `execute_source` and nested shell contexts.
     /// `run_exit_trap`: whether this shell context runs its EXIT trap.
     /// `fire_exit_hook`: whether `exit` notifies host-level on_exit hooks.
+    /// bash parses a script a line at a time, so `alias x=...` or
+    /// `shopt -s extglob` on one line changes how the next lines parse.
+    /// When those options differ from the ones `view` was parsed with and
+    /// command `index` starts a new line, re-read the rest of the source
+    /// from there with the current options.
+    #[inline(never)]
+    fn reread_script_rest(
+        &mut self,
+        view: &mut ScriptView<'_>,
+        index: &mut usize,
+        parsed_with: &mut crate::parser::ParseOptions,
+    ) -> Result<()> {
+        let script = view.get();
+        let Some(source) = script.source.clone() else {
+            return Ok(());
+        };
+        // Past the last command `command_starts` may hold where a syntax
+        // error stopped the parse: that rest is re-read too.
+        let Some(&(offset, line)) = script.command_starts.get(*index) else {
+            return Ok(());
+        };
+        let prev_end = script
+            .command_end_lines
+            .get(index.saturating_sub(1))
+            .copied()
+            .unwrap_or(0);
+        if line <= prev_end {
+            return Ok(());
+        }
+        let now = self.parse_options();
+        if now == *parsed_with {
+            return Ok(());
+        }
+        let Some(rest) = source.get(offset..) else {
+            return Ok(());
+        };
+        // THREAT[TM-DOS-030]: Propagate interpreter parser limits
+        let (mut reread, err) = Parser::with_limits(
+            rest,
+            self.limits.max_ast_depth,
+            self.limits.max_parser_operations,
+        )
+        .with_execution_budget(self.execution_budget.clone())
+        .with_options(now.clone())
+        .starting_at_line(line)
+        .parse_recovering();
+        // The syntax error keeps the `who:` its first report used.
+        let who = script
+            .trailing_error
+            .as_deref()
+            .and_then(|m| m.split_once(": line ").map(|(w, _)| w.to_string()))
+            .unwrap_or_else(|| self.diag_name());
+        match err {
+            None => {}
+            Some(e @ crate::error::Error::Parse { .. }) => {
+                reread.trailing_error = Some(
+                    e.syntax_report(&who, &source)
+                        .unwrap_or_else(|| format!("{who}: syntax error: {e}\n")),
+                );
+            }
+            Some(e) => return Err(e),
+        }
+        // THREAT[TM-DOS-031]: the re-read text (aliases expanded) gets the
+        // static budget check the first parse got; over budget, the rest
+        // of the script is refused with a diagnostic, like a syntax error.
+        if let Err(e) = crate::parser::validate_budget(&reread, &self.limits) {
+            reread.commands.clear();
+            reread.command_end_lines.clear();
+            reread.command_starts.clear();
+            reread.trailing_error = Some(self.diag(format!("budget validation failed: {e}\n")));
+        }
+        for start in &mut reread.command_starts {
+            start.0 += offset;
+        }
+        reread.source = Some(source);
+        let reread = Box::new(reread);
+        if let Some(reader) = self.line_reader.as_mut() {
+            reader.retarget(view.get(), &reread);
+        }
+        *view = ScriptView::Reread(reread);
+        *index = 0;
+        *parsed_with = now;
+        Ok(())
+    }
+
+    /// Bookkeeping before command `index` of a script body runs: a
+    /// `(( ))`/`[[ ]]` there takes `$LINENO` from where it starts (the AST
+    /// node has no span), and under `set -v` a shell's top level echoes the
+    /// source lines read for it (bash prints each line as it reads it).
+    #[inline(never)]
+    fn before_body_command(
+        &mut self,
+        script: &Script,
+        index: usize,
+        command: &Command,
+        top_level: bool,
+    ) -> Option<crate::StreamData> {
+        let start = script.command_starts.get(index).copied();
+        if let Some((_, line)) = start
+            && matches!(
+                command,
+                Command::Compound(
+                    CompoundCommand::Arithmetic(_) | CompoundCommand::Conditional(_),
+                    _
+                )
+            )
+        {
+            self.current_line = self.line_at(line);
+        }
+        if !top_level || !self.flags.contains(BashFlags::VERBOSE) {
+            return None;
+        }
+        let (_, line) = start?;
+        let source = script.source.as_deref()?;
+        let prev_end = index
+            .checked_sub(1)
+            .and_then(|i| script.command_end_lines.get(i).copied())
+            .unwrap_or(0);
+        if line <= prev_end {
+            return None;
+        }
+        let end = script.command_end_lines.get(index).copied().unwrap_or(line);
+        // A re-read rest starts over at index 0: begin at its own line.
+        let first = if index == 0 { line } else { prev_end + 1 };
+        let mut text = String::new();
+        for (n, l) in source.split_inclusive('\n').enumerate() {
+            let n = n + 1;
+            if n > end {
+                break;
+            }
+            if n >= first {
+                text.push_str(l);
+            }
+        }
+        if !text.is_empty() && !text.ends_with('\n') {
+            text.push('\n');
+        }
+        (!text.is_empty()).then(|| text.into())
+    }
+
+    /// Emit `set -v` echoed lines as the shell's own stderr: through any
+    /// `exec 2>...` target, merged into stdout when fd 2 joins fd 1.
+    /// Boxed so the script body loop's frame stays small (TM-DOS-089).
+    #[inline(never)]
+    fn route_verbose_echo(
+        &mut self,
+        echo: crate::StreamData,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecResult>> + Send + '_>> {
+        Box::pin(async move {
+            let mut result = ExecResult {
+                stderr: echo,
+                ..ExecResult::default()
+            };
+            let emitted = (
+                self.output_stream_stdout_bytes,
+                self.output_stream_stderr_bytes,
+            );
+            self.route_exec_output(&mut result, emitted, (0, 0), None)
+                .await?;
+            if self.merge_stderr {
+                Self::merge_stderr_into_stdout(&mut result);
+            }
+            let emit_before = self.output_emit_count;
+            self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
+            self.flush_exec_passthrough(&mut result);
+            Ok(result)
+        })
+    }
+
+    /// Parse shell text (a trap, `$(...)` in arithmetic, a sourced script)
+    /// under the shell's limits, budget and alias/extglob options. Kept out
+    /// of line so the async callers' frames hold no `Parser` (TM-DOS-089).
+    #[inline(never)]
+    fn parse_shell_text(&self, text: &str) -> Result<Script> {
+        Parser::with_limits(
+            text,
+            self.limits.max_ast_depth,
+            self.limits.max_parser_operations,
+        )
+        .with_execution_budget(self.execution_budget.clone())
+        .with_options(self.parse_options())
+        .parse()
+    }
+
     async fn execute_script_body(
         &mut self,
         script: &Script,
@@ -3874,7 +4072,21 @@ impl Interpreter {
         let mut aborted_line: Option<usize> = None;
         let mut propagate_abort = false;
         let mut propagated_flow = ControlFlow::None;
-        for (index, command) in script.commands.iter().enumerate() {
+        // The script being run: as parsed, or its rest re-read after an
+        // `alias`/`shopt -s extglob` changed how the next lines parse.
+        let mut view = ScriptView::Parsed(script);
+        let mut parsed_with = Box::new(self.parse_options());
+        let mut next_index = 0;
+        loop {
+            if next_index > 0 {
+                self.reread_script_rest(&mut view, &mut next_index, &mut parsed_with)?;
+            }
+            let script = view.get();
+            let Some(command) = script.commands.get(next_index) else {
+                break;
+            };
+            let index = next_index;
+            next_index += 1;
             if aborted_line == Some(Self::command_start_line(command)) {
                 continue;
             }
@@ -3888,6 +4100,11 @@ impl Interpreter {
                 stderr.append(&err);
             }
             self.check_cancelled()?;
+            if let Some(echo) = self.before_body_command(script, index, command, run_exit_trap) {
+                let echo = self.route_verbose_echo(echo).await?;
+                stdout.append(&echo.stdout);
+                stderr.append(&echo.stderr);
+            }
             let emit_before = self.output_emit_count;
             let emitted_before = (
                 self.output_stream_stdout_bytes,
@@ -4053,7 +4270,7 @@ impl Interpreter {
             && self
                 .line_reader
                 .as_ref()
-                .is_some_and(|r| r.interactive && r.reads(script))
+                .is_some_and(|r| r.interactive && r.reads(view.get()))
         {
             let (out, err) = self.top_level_line_async(true).await;
             stdout.append(&out);
@@ -4062,7 +4279,7 @@ impl Interpreter {
 
         // Syntax error after the commands that ran: bash reads and runs a
         // script line by line, so it reports the error only on reaching it.
-        if !stopped && let Some(message) = &script.trailing_error {
+        if !stopped && let Some(message) = &view.get().trailing_error {
             let emit_before = self.output_emit_count;
             let err = crate::StreamData::from(message.clone());
             self.maybe_emit_output(&crate::StreamData::new(), &err, emit_before);
@@ -4078,14 +4295,7 @@ impl Interpreter {
         if run_exit_trap {
             if let Some(trap_cmd) = self.scoped.traps.get("EXIT").cloned() {
                 // THREAT[TM-DOS-030]: Propagate interpreter parser limits
-                if let Ok(trap_script) = Parser::with_limits(
-                    &trap_cmd,
-                    self.limits.max_ast_depth,
-                    self.limits.max_parser_operations,
-                )
-                .with_execution_budget(self.execution_budget.clone())
-                .parse()
-                {
+                if let Ok(trap_script) = self.parse_shell_text(&trap_cmd) {
                     let emit_before = self.output_emit_count;
                     if let Ok(trap_result) =
                         self.execute_command_sequence(&trap_script.commands).await
@@ -4324,12 +4534,26 @@ impl Interpreter {
                     result
                 }
                 Command::Pipeline(pipeline) if pipeline.negated => {
-                    // `! cmd` is an errexit-ignored context, inside too.
-                    self.condition_sequence_depth += 1;
+                    // `! cmd` is an errexit-ignored context, inside too. bash
+                    // does it by clearing `set -e` for the pipeline, so a
+                    // `set -e` run inside (`f() { set -e; false; }; ! f`)
+                    // is live again.
+                    let ignore = usize::from(self.is_errexit_enabled());
+                    self.condition_sequence_depth += ignore;
+                    self.errexit_fired = false;
                     let result = self.execute_pipeline(pipeline).await;
-                    self.condition_sequence_depth -= 1;
+                    self.condition_sequence_depth -= ignore;
+                    // Still on afterwards: not a subshell's own `set -e`.
+                    let fired = std::mem::take(&mut self.errexit_fired)
+                        && ignore == 0
+                        && self.is_errexit_enabled();
                     result.map(|mut r| {
                         r.errexit_suppressed = true;
+                        if fired {
+                            // The failure that stopped the body ends the shell.
+                            r.control_flow = ControlFlow::Exit(1 - r.exit_code.min(1));
+                            r.exit_code = 1 - r.exit_code.min(1);
+                        }
                         r
                     })
                 }
@@ -4655,14 +4879,7 @@ impl Interpreter {
                     let parent_had_same = snap.scoped.traps.get("EXIT") == Some(&trap_cmd);
                     if !parent_had_same {
                         // THREAT[TM-DOS-030]: Propagate interpreter parser limits
-                        if let Ok(trap_script) = Parser::with_limits(
-                            &trap_cmd,
-                            self.limits.max_ast_depth,
-                            self.limits.max_parser_operations,
-                        )
-                        .with_execution_budget(self.execution_budget.clone())
-                        .parse()
-                        {
+                        if let Ok(trap_script) = self.parse_shell_text(&trap_cmd) {
                             let emit_before = self.output_emit_count;
                             if let Ok(ref mut res) = result
                                 && let Ok(trap_result) =
@@ -5473,6 +5690,20 @@ impl Interpreter {
         })
     }
 
+    /// `[[ s =~ ~/x ]]`: the directory a tilde expands to matches
+    /// literally, as quoted text does (bash quotes tilde results).
+    async fn tilde_regex_operand(&mut self, word: &Word) -> Result<String> {
+        let [WordPart::Literal(lit)] = word.parts.as_slice() else {
+            return self.expand_word(word).await;
+        };
+        let (prefix, rest) = lit.split_at(lit.find('/').unwrap_or(lit.len()));
+        let dir = self.expand_word(&Word::literal(prefix)).await?;
+        if dir == prefix {
+            return self.expand_word(word).await;
+        }
+        Ok(format!("{}{rest}", regex::escape(&dir)))
+    }
+
     /// A `[[ ]]` word list with no `!`, `&&`, `||` or wrapping parens on top.
     fn conditional_words_leaf(words: &[Word]) -> bool {
         !words.is_empty()
@@ -5501,8 +5732,14 @@ impl Interpreter {
                         words[i - 1].parts.as_slice(),
                         [WordPart::Literal(op)] if matches!(op.as_str(), "==" | "=" | "!=")
                     );
+                let tilde_regex = i > 0
+                    && Self::conditional_word_literal(&words[i - 1]) == Some("=~")
+                    && !word.quoted
+                    && matches!(word.parts.as_slice(), [WordPart::Literal(l)] if l.starts_with('~'));
                 expanded.push(if is_pattern {
                     self.expand_pattern_word(word).await?
+                } else if tilde_regex {
+                    Box::pin(self.tilde_regex_operand(word)).await?
                 } else {
                     self.expand_word(word).await?
                 });
@@ -5776,19 +6013,24 @@ impl Interpreter {
             let prefix = self.xtrace_prefix().await;
             self.queue_xtrace_line(&prefix, &format!("(( {raw} ))"));
         }
-        match self.try_evaluate_arithmetic_with_assign(&expr) {
-            Ok(v) => Ok(ExecResult {
+        // `$(...)` stderr belongs to this command, so `(( ... )) 2>f`
+        // redirects it (as `[[ ]]` does).
+        let subst_stderr = std::mem::take(&mut self.subst_stderr);
+        let mut result = match self.try_evaluate_arithmetic_with_assign(&expr) {
+            Ok(v) => ExecResult {
                 exit_code: if v != 0 { 0 } else { 1 },
                 ..Default::default()
-            }),
+            },
             Err(_) if self.has_arith_unbound() => {
                 let msg = self.take_arith_unbound().unwrap_or_default();
-                Ok(self.expansion_error_result(msg))
+                self.expansion_error_result(msg)
             }
             // `((...))` reports an arithmetic error and fails with status 1;
             // unlike `$((...))` it does not abandon the line.
-            Err(msg) => Ok(ExecResult::err(self.arith_diag("((: ", &msg), 1)),
-        }
+            Err(msg) => ExecResult::err(self.arith_diag("((: ", &msg), 1),
+        };
+        result.stderr = subst_stderr + &result.stderr;
+        Ok(result)
     }
 
     /// A `for ((init; cond; step))` expression with its `$(...)` run, each
@@ -6435,7 +6677,8 @@ impl Interpreter {
                 max_parser_operations,
                 Some(parser_timeout),
             )
-            .with_execution_budget(self.execution_budget.clone());
+            .with_execution_budget(self.execution_budget.clone())
+            .with_options(self.parse_options());
             match nested_partial_parse(parser.parse_recovering(), noexec, &who, &script_content) {
                 Ok(s) => s,
                 Err(e) => {
@@ -6453,11 +6696,13 @@ impl Interpreter {
         let script = {
             let script_owned = script_content.clone();
             let execution_budget = self.execution_budget.clone();
+            let options = self.parse_options();
             let parse_result = tokio::time::timeout(parser_timeout, async move {
                 tokio::task::spawn_blocking(move || {
                     let parser =
                         Parser::with_limits(&script_owned, max_ast_depth, max_parser_operations)
-                            .with_execution_budget(execution_budget);
+                            .with_execution_budget(execution_budget)
+                            .with_options(options);
                     parser.parse_recovering()
                 })
                 .await
@@ -7214,6 +7459,7 @@ impl Interpreter {
             // result.errexit_suppressed (e.g. AND-OR lists).
             let suppress = result.errexit_suppressed;
             if check_errexit && self.errexit_active() && exit_code != 0 && !suppress {
+                self.errexit_fired = true;
                 return Ok(ExecResult {
                     stdout,
                     stderr,
@@ -8086,6 +8332,15 @@ impl Interpreter {
             let mut stderr = String::new();
             self.temp_path = has_command && assignments.iter().any(|a| a.name == "PATH");
             for assignment in assignments {
+                // `a[1]=x cmd`: bash refuses an element as a temporary
+                // binding, without expanding its value, and runs `cmd`.
+                if has_command && let Some(index) = &assignment.index {
+                    stderr.push_str(&self.diag(format!(
+                        "`{}[{index}]': not a valid identifier\n",
+                        assignment.name
+                    )));
+                    continue;
+                }
                 match &assignment.value {
                     AssignmentValue::Scalar(word) => {
                         let word = self.tilde_assignment_value(word);
@@ -8233,132 +8488,6 @@ impl Interpreter {
             lhs.push('+');
         }
         lhs
-    }
-
-    /// Try alias expansion. Returns `Some(result)` if alias was expanded, `None` otherwise.
-    async fn try_alias_expansion(
-        &mut self,
-        name: &str,
-        command: &SimpleCommand,
-        stdin: Option<crate::StreamData>,
-        var_saves: Vec<(String, Option<String>)>,
-    ) -> Option<Result<ExecResult>> {
-        let is_plain_literal = !command.name.quoted
-            && command
-                .name
-                .parts
-                .iter()
-                .all(|p| matches!(p, WordPart::Literal(_)));
-        if !is_plain_literal
-            || !self.is_expand_aliases_enabled()
-            || self.expanding_aliases.contains(name)
-        {
-            return None;
-        }
-        let expansion = self.scoped.aliases.get(name).cloned()?;
-
-        // Restore variable saves before re-executing
-        for (vname, old) in var_saves.into_iter().rev() {
-            match old {
-                Some(v) => {
-                    self.insert_variable_checked(vname, v);
-                }
-                None => {
-                    self.vars_mut().remove(&vname);
-                }
-            }
-        }
-
-        // Build expanded command: prefix assignments (`FOO=1 al`), alias
-        // value, original args.
-        let mut expanded_cmd = String::new();
-        for assignment in &command.assignments {
-            expanded_cmd.push_str(&Self::xtrace_assignment_lhs(assignment));
-            expanded_cmd.push('=');
-            match &assignment.value {
-                AssignmentValue::Scalar(w) => {
-                    expanded_cmd.push_str(&Self::format_word_for_alias_reparse(w));
-                }
-                AssignmentValue::Array(elems) => {
-                    expanded_cmd.push('(');
-                    let elems: Vec<String> = elems
-                        .iter()
-                        .map(Self::format_word_for_alias_reparse)
-                        .collect();
-                    expanded_cmd.push_str(&elems.join(" "));
-                    expanded_cmd.push(')');
-                }
-            }
-            expanded_cmd.push(' ');
-        }
-        expanded_cmd.push_str(&expansion);
-        // A value ending in a blank alias-expands the next word too, and so
-        // on down the chain (`e_ one two` with `one='ONE '`).
-        let mut trailing_space = expansion.ends_with(' ');
-        for word in &command.args {
-            let arg_str = Self::format_word_for_alias_reparse(word);
-            let plain =
-                !word.quoted && word.parts.iter().all(|p| matches!(p, WordPart::Literal(_)));
-            if trailing_space
-                && plain
-                && let Some(arg_expansion) = self.scoped.aliases.get(&arg_str)
-            {
-                trailing_space = arg_expansion.ends_with(' ');
-                expanded_cmd.push_str(arg_expansion);
-                continue;
-            }
-            if !trailing_space {
-                expanded_cmd.push(' ');
-            }
-            trailing_space = false;
-            expanded_cmd.push_str(&arg_str);
-        }
-        for redir in &command.redirects {
-            expanded_cmd.push(' ');
-            expanded_cmd.push_str(&Self::format_redirect(redir));
-        }
-
-        self.expanding_aliases.insert(name.to_string());
-
-        let prev_pipeline_stdin = self.pipeline_stdin.take();
-        if stdin.is_some() {
-            self.pipeline_stdin = stdin;
-        }
-
-        // THREAT[TM-DOS-030]: Propagate interpreter parser limits
-        let parser = Parser::with_limits(
-            &expanded_cmd,
-            self.limits.max_ast_depth,
-            self.limits.max_parser_operations,
-        )
-        .with_execution_budget(self.execution_budget.clone());
-        let result = match parser.parse() {
-            Ok(s) => {
-                // THREAT[TM-DOS-031]: Validate budget on expanded alias AST
-                // to prevent bypassing static budget checks via alias expansion.
-                if let Err(e) = crate::parser::validate_budget(&s, &self.limits) {
-                    Ok(ExecResult::err(
-                        self.diag(format!("alias expansion: budget validation failed: {e}\n")),
-                        1,
-                    ))
-                } else {
-                    // Alias expansion runs in the current shell: use
-                    // execute_script_body (like source/eval), NOT execute(),
-                    // so an aliased command does not fire the EXIT trap.
-                    self.execute_script_body(&s, false, true).await
-                }
-            }
-            // A syntax error in the expanded text fails like any syntax
-            // error: status 2.
-            Err(e) => Ok(ExecResult::err(
-                self.diag(format!("alias expansion: parse error: {e}\n")),
-                2,
-            )),
-        };
-
-        self.pipeline_stdin = prev_pipeline_stdin;
-        self.expanding_aliases.remove(name);
-        Some(result)
     }
 
     /// Where the current simple command's process substitutions start.
@@ -8726,20 +8855,7 @@ impl Interpreter {
                 return Err(err);
             }
 
-            // Alias expansion. Boxed and gated on a defined alias so its
-            // re-parse state stays off this hot frame (TM-DOS-089).
-            if self.scoped.aliases.contains_key(&name)
-                && let Some(result) = Box::pin(self.try_alias_expansion(
-                    &name,
-                    command,
-                    stdin.clone(),
-                    var_saves.clone(),
-                ))
-                .await
-            {
-                self.discard_deferred_proc_subs_from(deferred_proc_sub_start);
-                return result;
-            }
+            // Aliases expand when the command is parsed (see `ParseOptions`).
 
             // Empty command handling
             if name.is_empty() {
@@ -8817,7 +8933,16 @@ impl Interpreter {
                 self.restore_variables(var_saves);
                 self.discard_deferred_proc_subs_from(deferred_proc_sub_start);
                 let result = ExecResult::err(err_msg, 1);
-                return self.apply_redirections(result, &command.redirects).await;
+                // failglob abandons the rest of the line (bash DISCARD):
+                // `echo *.ZZ; echo next` prints nothing more.
+                let mut result = self.apply_redirections(result, &command.redirects).await?;
+                // Under `set -e` the failed command ends the shell.
+                result.control_flow = if self.errexit_active() {
+                    ControlFlow::Exit(1)
+                } else {
+                    ControlFlow::Abort
+                };
+                return Ok(result);
             }
 
             if self.is_xtrace_enabled() {
@@ -10342,13 +10467,7 @@ impl Interpreter {
         };
 
         self.execution_budget.consume_input(script_text.len())?;
-        let parser = Parser::with_limits(
-            script_text,
-            self.limits.max_ast_depth,
-            self.limits.max_parser_operations,
-        )
-        .with_execution_budget(self.execution_budget.clone());
-        let script = match parser.parse() {
+        let script = match self.parse_shell_text(script_text) {
             Ok(s) => s,
             Err(e) => {
                 return Ok(ExecResult::err(self.diag(format!("{name}: {e}\n")), 2));
@@ -10804,13 +10923,7 @@ impl Interpreter {
 
         #[cfg(target_family = "wasm")]
         {
-            Parser::with_limits(
-                input,
-                self.limits.max_ast_depth,
-                self.limits.max_parser_operations,
-            )
-            .with_execution_budget(self.execution_budget.clone())
-            .parse()
+            self.parse_shell_text(input)
         }
 
         #[cfg(not(target_family = "wasm"))]
@@ -10820,11 +10933,13 @@ impl Interpreter {
             let max_ops = self.limits.max_parser_operations;
             let timeout = self.limits.parser_timeout;
             let execution_budget = self.execution_budget.clone();
+            let options = self.parse_options();
 
             let parse_result = tokio::time::timeout(timeout, async move {
                 tokio::task::spawn_blocking(move || {
                     let parser = Parser::with_limits(&input_owned, max_depth, max_ops)
-                        .with_execution_budget(execution_budget);
+                        .with_execution_budget(execution_budget)
+                        .with_options(options);
                     parser.parse()
                 })
                 .await
@@ -10844,6 +10959,16 @@ impl Interpreter {
         }
     }
 
+    /// Shell state that changes how text parses: the alias table (when
+    /// `expand_aliases` is on) and `extglob`.
+    pub(crate) fn parse_options(&self) -> crate::parser::ParseOptions {
+        crate::parser::ParseOptions {
+            aliases: (self.is_expand_aliases_enabled() && !self.scoped.aliases.is_empty())
+                .then(|| self.scoped.aliases.clone()),
+            extglob: self.is_extglob(),
+        }
+    }
+
     /// Check if expand_aliases is enabled via shopt.
     fn is_expand_aliases_enabled(&self) -> bool {
         self.scoped
@@ -10851,224 +10976,6 @@ impl Interpreter {
             .get("SHOPT_expand_aliases")
             .map(|v| v == "1")
             .unwrap_or(false)
-    }
-
-    /// Format a Redirect back to its textual representation for alias expansion.
-    fn format_redirect(redir: &Redirect) -> String {
-        let fd_prefix = match &redir.fd_var {
-            Some(var) => format!("{{{var}}}"),
-            None => redir.fd.map(|fd| fd.to_string()).unwrap_or_default(),
-        };
-        let op = match redir.kind {
-            RedirectKind::Output => ">",
-            RedirectKind::Append => ">>",
-            RedirectKind::Input => "<",
-            RedirectKind::HereDoc => "<<",
-            RedirectKind::HereDocStrip => "<<-",
-            RedirectKind::HereString => "<<<",
-            RedirectKind::Clobber => ">|",
-            RedirectKind::DupOutput => ">&",
-            RedirectKind::DupInput => "<&",
-            RedirectKind::OutputBoth => "&>",
-            RedirectKind::ReadWrite => "<>",
-        };
-        format!(
-            "{}{}{}",
-            fd_prefix,
-            op,
-            Self::format_word_for_alias_reparse(&redir.target)
-        )
-    }
-
-    /// Serialize a parsed word for alias re-parse without dropping quoted literalness.
-    fn format_word_for_alias_reparse(word: &Word) -> String {
-        if !word.quoted {
-            return format!("{}", word);
-        }
-
-        if word.has_unquoted_glob {
-            // Keep glob metacharacters outside quotes while quoting expansions.
-            // Wrapping the whole word would erase the QuotedGlobWord boundary.
-            let mut out = String::new();
-            for part in &word.parts {
-                match part {
-                    WordPart::Literal(s) => Self::push_alias_reparse_literal(&mut out, s, true),
-                    _ => {
-                        out.push('"');
-                        Self::push_alias_reparse_word_part(&mut out, part);
-                        out.push('"');
-                    }
-                }
-            }
-            return out;
-        }
-
-        let mut out = String::from("\"");
-        for part in &word.parts {
-            Self::push_alias_reparse_word_part(&mut out, part);
-        }
-        out.push('"');
-        out
-    }
-
-    fn push_alias_reparse_literal(out: &mut String, s: &str, preserve_glob: bool) {
-        for ch in s.chars() {
-            if preserve_glob && matches!(ch, '*' | '?' | '[' | ']') {
-                out.push(ch);
-                continue;
-            }
-            if preserve_glob {
-                match ch {
-                    'a'..='z'
-                    | 'A'..='Z'
-                    | '0'..='9'
-                    | '_'
-                    | '-'
-                    | '.'
-                    | '/'
-                    | ':'
-                    | ','
-                    | '+'
-                    | '='
-                    | '%'
-                    | '@' => out.push(ch),
-                    _ => {
-                        out.push('\\');
-                        out.push(ch);
-                    }
-                }
-            } else {
-                if matches!(ch, '\\' | '"' | '$' | '`') {
-                    out.push('\\');
-                }
-                out.push(ch);
-            }
-        }
-    }
-
-    fn push_alias_reparse_word_part(out: &mut String, part: &WordPart) {
-        match part {
-            WordPart::CompoundAssignment { .. } => {
-                let word = Word {
-                    parts: vec![part.clone()],
-                    quoted: false,
-                    has_unquoted_glob: false,
-                    part_quoted: Vec::new(),
-                    raw: None,
-                };
-                out.push_str(&word.to_string());
-            }
-            WordPart::Literal(s) => Self::push_alias_reparse_literal(out, s, false),
-            WordPart::BadSubstitution(text) => out.push_str(text),
-            WordPart::Variable(name) => out.push_str(&format!("${}", name)),
-            WordPart::CommandSubstitution(cmd) => out.push_str(&format!("$({:?})", cmd)),
-            WordPart::ArithmeticExpansion(expr) => out.push_str(&format!("$(({}))", expr)),
-            WordPart::ParameterExpansion {
-                name,
-                operator,
-                operand,
-                colon_variant,
-            } => match operator {
-                ParameterOp::UseDefault => {
-                    let c = if *colon_variant { ":" } else { "" };
-                    out.push_str(&format!("${{{}{}-{}}}", name, c, operand));
-                }
-                ParameterOp::AssignDefault => {
-                    let c = if *colon_variant { ":" } else { "" };
-                    out.push_str(&format!("${{{}{}={}}}", name, c, operand));
-                }
-                ParameterOp::UseReplacement => {
-                    let c = if *colon_variant { ":" } else { "" };
-                    out.push_str(&format!("${{{}{}+{}}}", name, c, operand));
-                }
-                ParameterOp::Error => {
-                    let c = if *colon_variant { ":" } else { "" };
-                    out.push_str(&format!("${{{}{}?{}}}", name, c, operand));
-                }
-                ParameterOp::RemovePrefixShort => {
-                    out.push_str(&format!("${{{}#{}}}", name, operand))
-                }
-                ParameterOp::RemovePrefixLong => {
-                    out.push_str(&format!("${{{}##{}}}", name, operand))
-                }
-                ParameterOp::RemoveSuffixShort => {
-                    out.push_str(&format!("${{{}%{}}}", name, operand))
-                }
-                ParameterOp::RemoveSuffixLong => {
-                    out.push_str(&format!("${{{}%%{}}}", name, operand))
-                }
-                ParameterOp::ReplaceFirst {
-                    pattern,
-                    replacement,
-                } => out.push_str(&format!("${{{}/{}/{}}}", name, pattern, replacement)),
-                ParameterOp::ReplaceAll {
-                    pattern,
-                    replacement,
-                } => out.push_str(&format!("${{{}//{}/{}}}", name, pattern, replacement)),
-                ParameterOp::UpperFirst => out.push_str(&format!("${{{}^{}}}", name, operand)),
-                ParameterOp::UpperAll => out.push_str(&format!("${{{}^^{}}}", name, operand)),
-                ParameterOp::LowerFirst => out.push_str(&format!("${{{},{}}}", name, operand)),
-                ParameterOp::LowerAll => out.push_str(&format!("${{{},,{}}}", name, operand)),
-                ParameterOp::ToggleFirst => out.push_str(&format!("${{{}~{}}}", name, operand)),
-                ParameterOp::ToggleAll => out.push_str(&format!("${{{}~~{}}}", name, operand)),
-            },
-            WordPart::Length(name) => out.push_str(&format!("${{#{}}}", name)),
-            WordPart::ArrayAccess { name, index } => {
-                out.push_str(&format!("${{{}[{}]}}", name, index))
-            }
-            WordPart::ArrayLength(name) => out.push_str(&format!("${{#{}[@]}}", name)),
-            WordPart::ArrayIndices { name, star } => out.push_str(&format!(
-                "${{!{}[{}]}}",
-                name,
-                if *star { '*' } else { '@' }
-            )),
-            WordPart::Substring {
-                name,
-                offset,
-                length,
-            } => {
-                if let Some(len) = length {
-                    out.push_str(&format!("${{{}:{}:{}}}", name, offset, len));
-                } else {
-                    out.push_str(&format!("${{{}:{}}}", name, offset));
-                }
-            }
-            WordPart::IndirectExpansion {
-                name,
-                operator,
-                operand,
-                colon_variant,
-            } => {
-                if let Some(op) = operator {
-                    let c = if *colon_variant { ":" } else { "" };
-                    let op_char = match op {
-                        ParameterOp::UseDefault => "-",
-                        ParameterOp::AssignDefault => "=",
-                        ParameterOp::UseReplacement => "+",
-                        ParameterOp::Error => "?",
-                        _ => "",
-                    };
-                    out.push_str(&format!("${{!{}{}{}{}}}", name, c, op_char, operand));
-                } else {
-                    out.push_str(&format!("${{!{}}}", name));
-                }
-            }
-            WordPart::IndirectSuffix { name, suffix } => {
-                out.push_str(&format!("${{!{name}{suffix}}}"))
-            }
-            WordPart::PrefixMatch { prefix, star } => out.push_str(&format!(
-                "${{!{}{}}}",
-                prefix,
-                if *star { '*' } else { '@' }
-            )),
-            WordPart::ProcessSubstitution { commands, is_input } => {
-                let prefix = if *is_input { "<" } else { ">" };
-                out.push_str(&format!("{}({:?})", prefix, commands));
-            }
-            WordPart::Transformation { name, operator } => {
-                out.push_str(&format!("${{{}@{}}}", name, operator));
-            }
-        }
     }
 
     fn shadow_local_array_bindings(&mut self, name: &str, keep_indexed: bool, keep_assoc: bool) {
@@ -12949,13 +12856,7 @@ impl Interpreter {
             // Fire EXIT trap set inside the command substitution
             if let Some(trap_cmd) = self.scoped.traps.get("EXIT").cloned()
                 && snapshot.scoped.traps.get("EXIT") != Some(&trap_cmd)
-                && let Ok(trap_script) = Parser::with_limits(
-                    &trap_cmd,
-                    self.limits.max_ast_depth,
-                    self.limits.max_parser_operations,
-                )
-                .with_execution_budget(self.execution_budget.clone())
-                .parse()
+                && let Ok(trap_script) = self.parse_shell_text(&trap_cmd)
                 && let Ok(trap_result) = self
                     .execute_capture_only_sequence(&trap_script.commands)
                     .await
@@ -13024,6 +12925,18 @@ impl Interpreter {
         let lookup = |name: &str| -> String {
             if plain {
                 self.scoped.variables.get(name).cloned().unwrap_or_default()
+            } else if let Some(arr) = name
+                .strip_suffix("[@]")
+                .or_else(|| name.strip_suffix("[*]"))
+            {
+                // `assoc["${array[@]}"]`: the elements joined (bash, without
+                // strict_array).
+                let sep = if name.ends_with("[*]") {
+                    self.get_ifs_separator()
+                } else {
+                    " ".to_string()
+                };
+                self.array_values(self.resolve_nameref(arr)).join(&sep)
             } else {
                 self.resolve_param_expansion_name(name).1
             }
@@ -13991,13 +13904,7 @@ impl Interpreter {
                         _ => cmd.push(c),
                     }
                 }
-                let parser = Parser::with_limits(
-                    &cmd,
-                    self.limits.max_ast_depth,
-                    self.limits.max_parser_operations,
-                )
-                .with_execution_budget(self.execution_budget.clone());
-                let out = match parser.parse() {
+                let out = match self.parse_shell_text(&cmd) {
                     Ok(script) if self.counters.push_subst(&self.limits).is_ok() => {
                         self.execute_cmd_subst(&script.commands).await?
                     }
@@ -14034,13 +13941,7 @@ impl Interpreter {
                 }
                 // Execute the command and substitute in a subshell context:
                 // save/restore mutable state so mutations don't leak.
-                let parser = Parser::with_limits(
-                    &cmd,
-                    self.limits.max_ast_depth,
-                    self.limits.max_parser_operations,
-                )
-                .with_execution_budget(self.execution_budget.clone());
-                match parser.parse() {
+                match self.parse_shell_text(&cmd) {
                     Ok(script) => {
                         if self.counters.push_subst(&self.limits).is_err() {
                             result.push('0');
@@ -14405,13 +14306,7 @@ impl Interpreter {
         stderr: &mut crate::StreamData,
     ) -> Option<(ControlFlow, i32)> {
         // THREAT[TM-DOS-030]: Propagate interpreter parser limits.
-        let Ok(trap_script) = Parser::with_limits(
-            trap_cmd,
-            self.limits.max_ast_depth,
-            self.limits.max_parser_operations,
-        )
-        .with_execution_budget(self.execution_budget.clone())
-        .parse() else {
+        let Ok(trap_script) = self.parse_shell_text(trap_cmd) else {
             return None;
         };
         let was_in_trap = self.in_trap;
@@ -17448,8 +17343,10 @@ echo "count=$COUNT"
 
     #[tokio::test]
     async fn test_output_process_sub_cleared_after_failglob_in_same_exec() {
+        // failglob abandons the rest of its line, as in bash: VICTIM goes on
+        // the next one.
         let result =
-            run_script(r#"shopt -s failglob; echo >(echo STALE) ./missing_*; echo VICTIM"#).await;
+            run_script("shopt -s failglob; echo >(echo STALE) ./missing_*\necho VICTIM").await;
         assert!(
             !result.stdout.contains("STALE"),
             "deferred output process substitution leaked after failglob"

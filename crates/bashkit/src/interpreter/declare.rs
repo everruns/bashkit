@@ -1565,7 +1565,7 @@ impl Interpreter {
             for field in self.ifs_split_limited(&expanded, limit)? {
                 match self.expand_glob_item(&field, false).await {
                     Ok(items) => fields.extend(items),
-                    Err(_) => fields.push(field),
+                    Err(pat) => return Err(self.failglob_abort(&pat)),
                 }
                 if fields.len() >= limit {
                     break;
@@ -1574,8 +1574,12 @@ impl Interpreter {
             fields.truncate(limit);
             return Ok(fields);
         }
-        if is_splat {
-            return self.expand_word_to_fields(word).await;
+        // `"${a[@]:1}"`, `"x${a[@]}y"`: a quoted word with an `@` splat
+        // keeps one field per element.
+        if is_splat || word.quoted && !word.has_unquoted_glob && word_has_at_splat(word) {
+            let mut fields = self.expand_word_to_fields(word).await?;
+            fields.truncate(limit);
+            return Ok(fields);
         }
         let value = self.expand_word(word).await?;
         let literal_only = word.parts.iter().all(|p| matches!(p, WordPart::Literal(_)));
@@ -1592,10 +1596,17 @@ impl Interpreter {
             .await
         {
             Ok(items) => items,
-            Err(_) => vec![value],
+            Err(pat) => return Err(self.failglob_abort(&pat)),
         };
         fields.truncate(limit);
         Ok(fields)
+    }
+
+    /// `shopt -s failglob` with no match in an array literal: bash reports
+    /// `no match` and abandons the rest of the line, status 1.
+    fn failglob_abort(&mut self, pattern: &str) -> crate::error::Error {
+        self.last_exit_code = 1;
+        crate::error::Error::LineAbort(self.diag(format!("no match: {pattern}\n")))
     }
 }
 
@@ -1619,6 +1630,16 @@ fn no_tilde_word(word: &Word) -> std::borrow::Cow<'_, Word> {
         })
         .collect();
     std::borrow::Cow::Owned(out)
+}
+
+/// A part that expands to one field per element inside double quotes.
+fn word_has_at_splat(word: &Word) -> bool {
+    word.parts.iter().any(|p| match p {
+        WordPart::ArrayAccess { index, .. } => index == "@",
+        WordPart::Variable(n) => n == "@",
+        WordPart::Substring { name, .. } => name == "@" || name.ends_with("[@]"),
+        _ => false,
+    })
 }
 
 #[cfg(test)]

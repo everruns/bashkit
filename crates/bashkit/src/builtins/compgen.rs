@@ -140,13 +140,21 @@ impl Builtin for Compgen {
         // -b / -A builtin (and -c): names from the live registry — the same
         // source as `Bash::builtin_names()` — never a hardcoded list, which
         // drifted (109 names vs 156 registered) before this was wired up.
+        // -b / -A builtin keep the ones bash itself has built in.
         // `ctx.shell` is None only for custom/external builtin contexts,
         // which have no interpreter introspection by design.
         if (gen_builtins || gen_commands)
             && let Some(ref shell) = ctx.shell
         {
             for name in shell.builtin_names() {
-                if name.starts_with(pfx) {
+                // `-A builtin` is bash's builtins only; the other registered
+                // commands stand in for programs, which only `-c` lists.
+                // A host-registered command is the embedder's builtin.
+                let bash_builtin = super::BASH_BUILTIN_NAMES.contains(&name.as_str())
+                    || shell
+                        .host_builtins
+                        .is_some_and(|r| r.lookup(&name).is_some());
+                if name.starts_with(pfx) && (gen_commands || bash_builtin) {
                     completions.push(name);
                 }
             }

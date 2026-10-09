@@ -39,7 +39,20 @@ use crate::limits::LimitExceeded;
 use crate::time_compat::Instant;
 use raw::{heredoc_eof_from_raw, single_quote, split_raw_words};
 use std::cell::Cell;
+use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
+
+/// Shell state that changes how text parses, taken from the interpreter
+/// when a parse starts (bash reads and parses a line at a time, so an
+/// `alias` or `shopt -s extglob` affects the lines after it).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ParseOptions {
+    /// Aliases to expand (`shopt -s expand_aliases` on); `None` when off.
+    pub aliases: Option<Arc<HashMap<String, String>>>,
+    /// `shopt -s extglob`: `!(` starts a pattern group, not `!` + subshell.
+    pub extglob: bool,
+}
 
 /// Default maximum AST depth (matches ExecutionLimits default)
 const DEFAULT_MAX_AST_DEPTH: usize = 100;
@@ -97,6 +110,19 @@ pub struct Parser<'a> {
     failed_command_line: usize,
     /// Aggregate request budget shared by every child parser.
     execution_budget: Option<crate::limits::ExecutionBudget>,
+    /// Shell options that change parsing (aliases, extglob).
+    options: ParseOptions,
+    /// The current token is a word with no quoting (alias candidate).
+    current_plain: bool,
+    /// The current token follows a blank-ending alias value.
+    current_after_blank: bool,
+    /// The next `parse_command_list` call reads a top-level command: a
+    /// newline after `;` or `&` ends it, as bash's reader ends a line.
+    top_level_list: bool,
+    /// Byte offset and line where each top-level command starts.
+    top_starts: Vec<(usize, usize)>,
+    /// Offset and line of the top-level command being parsed.
+    failed_command_start: (usize, usize),
 }
 
 impl<'a> Parser<'a> {
@@ -137,6 +163,10 @@ impl<'a> Parser<'a> {
             Some(st) => (Some(st.token), st.span),
             None => (None, Span::new()),
         };
+        // The first token was lexed before any alias table was attached:
+        // it is plain when it reads exactly as its source text.
+        let current_plain = matches!(&current_token, Some(tokens::Token::Word(w))
+            if input.get(current_span.start.offset..current_span.end.offset) == Some(w.as_str()));
         Self {
             input,
             lexer,
@@ -155,6 +185,75 @@ impl<'a> Parser<'a> {
             error_was_deferred: false,
             failed_command_line: 0,
             execution_budget: None,
+            // Without shell options every extglob group lexes as one.
+            options: ParseOptions {
+                aliases: None,
+                extglob: true,
+            },
+            current_plain,
+            current_after_blank: false,
+            top_level_list: false,
+            top_starts: Vec::new(),
+            failed_command_start: (0, 1),
+        }
+    }
+
+    /// Parse with the shell's alias table and `extglob` setting.
+    pub fn with_options(mut self, options: ParseOptions) -> Self {
+        self.set_options(options);
+        self
+    }
+
+    fn set_options(&mut self, options: ParseOptions) {
+        self.lexer.set_track_plain(options.aliases.is_some());
+        self.lexer.set_extglob_bang(options.extglob);
+        self.options = options;
+    }
+
+    /// Count lines from `line` (text taken from later in a larger source).
+    pub(crate) fn starting_at_line(mut self, line: usize) -> Self {
+        let shift = line.saturating_sub(1);
+        if shift > 0 {
+            self.lexer.shift_lines(shift);
+            self.current_span.start.line += shift;
+            self.current_span.end.line += shift;
+        }
+        self
+    }
+
+    /// Expand an alias named by the current word, if it is one: its value
+    /// is read in place of the word (bash `alias_expand_token`).
+    /// THREAT[TM-DOS-030]: each expansion is charged to parser fuel by its
+    /// length, so chains of blank-ending aliases cannot grow without bound.
+    fn try_expand_alias(&mut self) -> bool {
+        let Some(aliases) = self.options.aliases.as_ref() else {
+            return false;
+        };
+        let Some(tokens::Token::Word(w)) = &self.current_token else {
+            return false;
+        };
+        if !self.current_plain || self.peeked_token.is_some() || self.lexer.alias_active(w) {
+            return false;
+        }
+        let Some(text) = aliases.get(w.as_str()) else {
+            return false;
+        };
+        let text = text.clone();
+        let name = w.clone();
+        if let Err(e) = self.tick_units(text.len() + 1) {
+            self.deferred_error.set(Some(e));
+            return false;
+        }
+        self.lexer.push_alias(&name, &text);
+        self.advance_token();
+        true
+    }
+
+    /// Expand aliases in command position (also through values that name
+    /// another alias: `alias FOR2='FOR1 '`).
+    fn expand_command_alias(&mut self) {
+        if self.options.aliases.is_some() {
+            while self.try_expand_alias() {}
         }
     }
 
@@ -355,6 +454,7 @@ impl<'a> Parser<'a> {
             let close = match msg.as_str() {
                 "unterminated double quote" => Some('"'),
                 "unterminated single quote" => Some('\''),
+                "unterminated subscript" => Some(']'),
                 _ => None,
             };
             if let Some(close) = close {
@@ -374,11 +474,14 @@ impl<'a> Parser<'a> {
         self.parse_script_into(&mut commands)?;
         let end_span = self.current_span;
         let (commands, command_end_lines) = commands.into_iter().unzip();
+        let command_starts = std::mem::take(&mut self.top_starts);
         Ok(Script {
             commands,
             span: start_span.merge(end_span),
             trailing_error: None,
             command_end_lines,
+            source: Some(Arc::from(self.input)),
+            command_starts,
         })
     }
 
@@ -417,12 +520,25 @@ impl<'a> Parser<'a> {
         };
         commands.truncate(keep);
         let (commands, command_end_lines) = commands.into_iter().unzip();
+        let mut command_starts = std::mem::take(&mut self.top_starts);
+        if err.is_some() {
+            // Where the unparsed rest starts: the first dropped command, or
+            // the one that failed.
+            let rest = command_starts
+                .get(keep)
+                .copied()
+                .unwrap_or(self.failed_command_start);
+            command_starts.truncate(keep);
+            command_starts.push(rest);
+        }
         (
             Script {
                 commands,
                 span: start_span.merge(end_span),
                 trailing_error: None,
                 command_end_lines,
+                source: Some(Arc::from(self.input)),
+                command_starts,
             },
             err,
         )
@@ -442,8 +558,12 @@ impl<'a> Parser<'a> {
                 break;
             }
             let start_offset = self.current_span.start.offset;
-            self.failed_command_line = self.current_span.start.line;
+            let start_line = self.current_span.start.line;
+            self.failed_command_line = start_line;
+            self.failed_command_start = (start_offset, start_line);
+            self.top_level_list = true;
             if let Some(cmd) = self.parse_command_list()? {
+                self.top_starts.push((start_offset, start_line));
                 commands.push((cmd, self.current_span.start.line));
             } else if self.current_token.is_some() && self.current_span.start.offset == start_offset
             {
@@ -462,22 +582,30 @@ impl<'a> Parser<'a> {
     }
 
     fn advance(&mut self) {
-        if let Some(peeked) = self.peeked_token.take() {
-            self.current_token = Some(peeked.token);
-            self.current_span = peeked.span;
-            self.current_raw = peeked.raw;
-        } else {
-            match self.lexer.next_spanned_token() {
-                Some(st) => {
-                    self.current_token = Some(st.token);
-                    self.current_span = st.span;
-                    self.current_raw = st.raw;
-                }
-                None => {
-                    self.current_token = None;
-                    self.current_raw = None;
-                    // Keep the last span for error reporting
-                }
+        self.advance_token();
+        // The word after a blank-ending alias value is checked too.
+        while self.current_after_blank && self.try_expand_alias() {}
+    }
+
+    fn advance_token(&mut self) {
+        let next = match self.peeked_token.take() {
+            Some(peeked) => Some(peeked),
+            None => self.lexer.next_spanned_token(),
+        };
+        match next {
+            Some(st) => {
+                self.current_token = Some(st.token);
+                self.current_span = st.span;
+                self.current_raw = st.raw;
+                self.current_plain = st.plain;
+                self.current_after_blank = st.after_blank_alias;
+            }
+            None => {
+                self.current_token = None;
+                self.current_raw = None;
+                self.current_plain = false;
+                self.current_after_blank = false;
+                // Keep the last span for error reporting
             }
         }
     }
@@ -501,6 +629,7 @@ impl<'a> Parser<'a> {
     /// Parse a command list (commands connected by && or ||)
     fn parse_command_list(&mut self) -> Result<Option<Command>> {
         self.tick()?;
+        let top_level = std::mem::take(&mut self.top_level_list);
         match self.current_token {
             Some(tokens::Token::Pipe) => return Err(self.error("unexpected token: |")),
             Some(tokens::Token::And) => return Err(self.error("unexpected token: &&")),
@@ -527,6 +656,11 @@ impl<'a> Parser<'a> {
                 }
                 Some(tokens::Token::Semicolon) => {
                     self.advance();
+                    // bash's reader ends a top-level command at the end
+                    // of its line: `{ls;` NL `}` runs `{ls` first.
+                    if top_level && matches!(self.current_token, Some(tokens::Token::Newline)) {
+                        break;
+                    }
                     self.skip_newlines()?;
                     // Check if there's more to parse
                     if self.current_token.is_none()
@@ -538,6 +672,10 @@ impl<'a> Parser<'a> {
                 }
                 Some(tokens::Token::Background) => {
                     self.advance();
+                    if top_level && matches!(self.current_token, Some(tokens::Token::Newline)) {
+                        rest.push(empty_background(self.current_span));
+                        break;
+                    }
                     self.skip_newlines()?;
                     // Check if there's more to parse after &
                     if self.current_token.is_none()
@@ -953,6 +1091,7 @@ impl<'a> Parser<'a> {
     fn parse_command(&mut self) -> Result<Option<Command>> {
         self.skip_newlines()?;
         self.check_error_token()?;
+        self.expand_command_alias();
 
         // Check for compound commands and function keyword
         if let Some(tokens::Token::Word(w)) = &self.current_token {
@@ -1122,6 +1261,8 @@ impl<'a> Parser<'a> {
             }
         };
         self.advance();
+        // `for i` NL `in a b`: newlines may come before `in` (not a `;`).
+        self.skip_newlines()?;
 
         // Check for 'in' keyword
         let words = if self.is_keyword("in") {
@@ -1182,21 +1323,13 @@ impl<'a> Parser<'a> {
 
         self.skip_newlines()?;
 
-        // Expect 'do'
-        self.expect_keyword("do")?;
-        self.skip_newlines()?;
-
-        // Parse body
-        let body = self.parse_compound_list("done")?;
-
-        // Bash requires at least one command in loop body
-        if body.is_empty() {
-            self.pop_depth();
-            return Err(self.error("syntax error: empty for loop body"));
-        }
-
-        // Expect 'done'
-        self.expect_keyword("done")?;
+        let body = match self.parse_for_body() {
+            Ok(body) => body,
+            Err(e) => {
+                self.pop_depth();
+                return Err(e);
+            }
+        };
 
         self.pop_depth();
         Ok(CompoundCommand::For(ForCommand {
@@ -1205,6 +1338,24 @@ impl<'a> Parser<'a> {
             body,
             span: start_span.merge(self.current_span),
         }))
+    }
+
+    /// A `for` body: `do list; done`, or bash's `{ list; }` form
+    /// (`for ((i=0; i<3; i++)) { echo $i; }`).
+    fn parse_for_body(&mut self) -> Result<Vec<Command>> {
+        if matches!(self.current_token, Some(tokens::Token::LeftBrace)) {
+            let group = self.parse_brace_group()?;
+            return Ok(vec![Command::Compound(group, Vec::new())]);
+        }
+        self.expect_keyword("do")?;
+        self.skip_newlines()?;
+        let body = self.parse_compound_list("done")?;
+        // Bash requires at least one command in loop body
+        if body.is_empty() {
+            return Err(self.error("syntax error: empty for loop body"));
+        }
+        self.expect_keyword("done")?;
+        Ok(body)
     }
 
     /// Parse select loop: select var in list; do body; done
@@ -1435,20 +1586,7 @@ impl<'a> Parser<'a> {
         }
         self.skip_newlines()?;
 
-        // Expect 'do'
-        self.expect_keyword("do")?;
-        self.skip_newlines()?;
-
-        // Parse body
-        let body = self.parse_compound_list("done")?;
-
-        // Bash requires at least one command in loop body
-        if body.is_empty() {
-            return Err(self.error("syntax error: empty for loop body"));
-        }
-
-        // Expect 'done'
-        self.expect_keyword("done")?;
+        let body = self.parse_for_body()?;
 
         Ok(CompoundCommand::ArithmeticFor(ArithmeticForCommand {
             init,
@@ -1991,8 +2129,18 @@ impl<'a> Parser<'a> {
                         parsed
                     };
                     words.push(self.with_raw(word));
+                    // bash reads the pattern after `==`/`!=`/`=` with extglob
+                    // on: `[[ x == --!(a|b) ]]` needs no `shopt -s extglob`.
+                    let pattern_next = matches!(op_text.as_deref(), Some("==" | "!=" | "="));
                     kinds.push(CondTok::Word(op_text));
-                    self.advance();
+                    if pattern_next {
+                        let saved = self.lexer.extglob_bang();
+                        self.lexer.set_extglob_bang(true);
+                        self.advance();
+                        self.lexer.set_extglob_bang(saved);
+                    } else {
+                        self.advance();
+                    }
                 }
                 // Operators that the lexer tokenizes separately
                 Some(tokens::Token::And) => {
@@ -3103,6 +3251,11 @@ impl<'a> Parser<'a> {
         let mut redirects = Vec::new();
 
         loop {
+            if words.is_empty() {
+                // `FOO=1 ll`, `>f ll`: the first word after assignments and
+                // redirects is a command name.
+                self.expand_command_alias();
+            }
             match &self.current_token {
                 Some(
                     tokens::Token::Word(_)
@@ -3258,7 +3411,15 @@ impl<'a> Parser<'a> {
 
         // Handle compound array assignment in arg position:
         // declare -a arr=(x y z) → arr=(x y z) as single arg
-        if w.ends_with('=') && !words.is_empty() {
+        // Only a declaration builtin, `let` or `eval` named directly takes
+        // one: bash rejects `builtin declare a=(x)`, `echo a=(x)` and
+        // `command typeset a=(x)` at `(`.
+        let decl_command = words.first().is_some_and(|w0| {
+            !w0.quoted
+                && matches!(w0.parts.as_slice(), [WordPart::Literal(n)]
+                    if matches!(n.as_str(), "declare" | "typeset" | "local" | "export" | "readonly" | "let" | "eval"))
+        });
+        if w.ends_with('=') && decl_command {
             let saved_raw = self.current_raw.clone();
             self.advance();
             if let Some(word) = self.try_parse_compound_array_arg(w.clone(), saved_raw.clone()) {
@@ -3756,6 +3917,7 @@ impl<'a> Parser<'a> {
         let remaining_depth = self.max_depth.saturating_sub(self.current_depth);
         let mut parser = Box::new(Parser::with_limits(src, remaining_depth, self.fuel));
         parser.execution_budget = self.execution_budget.clone();
+        parser.set_options(self.options.clone());
         // `$( )` spans count from the outer word's line, so `$LINENO` and
         // error line numbers inside it match bash.
         let shift = self.current_span.start.line.saturating_sub(1);
@@ -5101,7 +5263,7 @@ pub(crate) fn unescape_glob_literal(s: &str) -> String {
             && let Some(&next) = chars.peek()
             && matches!(
                 next,
-                '\\' | '*' | '?' | '[' | ']' | '{' | '}' | '@' | '!' | '+' | '(' | ')' | '|'
+                '\\' | '*' | '?' | '[' | ']' | '{' | '}' | '@' | '!' | '+' | '(' | ')' | '|' | '-'
             )
         {
             out.push(next);
