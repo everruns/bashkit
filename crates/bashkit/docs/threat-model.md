@@ -853,6 +853,19 @@ access is bridged through Bashkit's VFS, never the host filesystem.
 Per-threat coverage (TM-TS-001 … TM-TS-023), including error-isolation and
 exit-code propagation cases, is also exercised by the `threat_ts_*` tests.
 
+### Wasm Coreutils Security (TM-WCU-*)
+
+The `wasm-coreutils` feature runs real uutils programs as WebAssembly guests
+on Wasmtime's Pulley interpreter. A fresh instance runs each call and can
+reach only the Bashkit VFS, captured stdio, clocks and a random source.
+
+| Threat | Attack Example | Mitigation | Status |
+|--------|---------------|------------|--------|
+| Host access (TM-WCU-001) | `coreutils cat /etc/passwd`, `../../` | Only the VFS is reachable (paths clamp at `/`); no socket or process imports; no native guest code | MITIGATED |
+| Resource exhaustion (TM-WCU-002) | `factor` of huge numbers, `seq` floods | Fuel-driven deadline and budget checks, memory cap (64 MiB default), output cap | MITIGATED |
+| Cross-call / cross-tenant leak (TM-WCU-003) | Read another tenant's files or env | Fresh instance per call; per-`Bash` VFS; only exported variables passed | MITIGATED |
+| Guest crash / internal leak (TM-WCU-004) | Panic or abort in a utility | Trap ends only that call (`<util>: fatal error: ...`, Display-only, <= 512 bytes) | MITIGATED |
+
 ### Request Signing & Snapshot Integrity (TM-CRY-*, TM-SNAP-*)
 
 The `bot-auth` request signer (Ed25519, RFC 9421) and the snapshot
@@ -1019,6 +1032,7 @@ All threats use stable IDs in the format `TM-<CATEGORY>-<NUMBER>`:
 | TM-PY | Python/Monty Security |
 | TM-SQL | SQLite Security |
 | TM-TS | TypeScript/ZapCode Security |
+| TM-WCU | Wasm Coreutils Security |
 | TM-CRY | Cryptography / Request Signing |
 | TM-SNAP | Snapshot Integrity |
 | TM-FS | RealFs Mount Security |
