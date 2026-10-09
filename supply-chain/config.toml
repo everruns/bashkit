@@ -18,6 +18,10 @@ criteria = "safe-to-deploy"
 audit-as-crates-io = false
 criteria = "safe-to-deploy"
 
+[policy.bashkit-coreutils-wasm]
+audit-as-crates-io = false
+criteria = "safe-to-deploy"
+
 [policy.bashkit-cpython-wasm]
 audit-as-crates-io = false
 criteria = "safe-to-deploy"

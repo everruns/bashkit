@@ -408,6 +408,7 @@
 //! - [`namespace_filesystems_guide`] - Static namespaces with rebasing and per-mount access
 //! - `python_guide` - Embedded Python (Monty) guide (requires `python` feature)
 //! - `cpython_guide` - Embedded CPython (WebAssembly) guide (requires `cpython` feature)
+//! - `wasm_coreutils_guide` - Real uutils coreutils as WebAssembly guests (requires `wasm-coreutils` feature)
 //! - `logging_guide` - Structured logging with security (requires `logging` feature)
 //!
 //! # Resources
@@ -577,6 +578,9 @@ pub use runtime_call::RuntimeCallContext;
 
 #[cfg(feature = "cpython")]
 pub use builtins::{CPython, CPythonLimits};
+
+#[cfg(feature = "wasm-coreutils")]
+pub use builtins::{WasmCoreutil, WasmCoreutilsLimits};
 
 #[cfg(feature = "sqlite")]
 pub use builtins::{Sqlite, SqliteBackend, SqliteLimits};
@@ -2575,6 +2579,61 @@ impl BashBuilder {
         .builtin("python3", Box::new(builtins::CPython::with_limits(limits)))
     }
 
+    /// Add real uutils/coreutils programs, compiled to WebAssembly, for the
+    /// utilities bashkit has no native builtin for (`fmt`, `pr`, `factor`,
+    /// `sha512sum`, `csplit`, ...), plus a `coreutils <utility> [args...]`
+    /// multicall entry that runs any of them, including ones bashkit also
+    /// implements natively.
+    ///
+    /// Each call runs in a fresh, sandboxed wasm instance over the virtual
+    /// filesystem (no host filesystem, network or process access). Requires
+    /// the `wasm-coreutils` feature. The module loads on first use; call
+    /// [`WasmCoreutil::warm_up`] at process start to move that cost out of
+    /// the first request.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let bash = Bash::builder().wasm_coreutils().build();
+    /// bash.exec("factor 12; coreutils sort -h sizes.txt").await?;
+    /// ```
+    #[cfg(feature = "wasm-coreutils")]
+    pub fn wasm_coreutils(self) -> Self {
+        self.wasm_coreutils_with_limits(builtins::WasmCoreutilsLimits::default())
+    }
+
+    /// [`BashBuilder::wasm_coreutils`] with custom limits.
+    #[cfg(feature = "wasm-coreutils")]
+    pub fn wasm_coreutils_with_limits(self, limits: builtins::WasmCoreutilsLimits) -> Self {
+        self.register_wasm_coreutils(builtins::wasm_coreutils_missing_native(), limits)
+    }
+
+    /// Like [`BashBuilder::wasm_coreutils_with_limits`], but every utility the
+    /// guest provides replaces bashkit's native builtin of the same name
+    /// (`cat`, `sort`, `ls`, ...). Native builtins are faster; this trades
+    /// speed for GNU-compatible behavior and is mainly for differential tests.
+    #[cfg(feature = "wasm-coreutils")]
+    pub fn wasm_coreutils_replace_native(self, limits: builtins::WasmCoreutilsLimits) -> Self {
+        self.register_wasm_coreutils(builtins::WasmCoreutil::utilities(), limits)
+    }
+
+    #[cfg(feature = "wasm-coreutils")]
+    fn register_wasm_coreutils(
+        mut self,
+        names: &[&str],
+        limits: builtins::WasmCoreutilsLimits,
+    ) -> Self {
+        for name in names {
+            if let Some(b) = builtins::WasmCoreutil::new(name, limits.clone()) {
+                self = self.builtin(*name, Box::new(b));
+            }
+        }
+        self.builtin(
+            builtins::WASM_COREUTILS_MULTICALL,
+            Box::new(builtins::WasmCoreutil::multicall(limits)),
+        )
+    }
+
     /// Enable embedded SQLite (`sqlite`/`sqlite3` builtins) via Turso.
     ///
     /// Registers both names with the default [`SqliteLimits`]. The Turso
@@ -4166,6 +4225,19 @@ pub mod python_guide {}
 #[cfg(feature = "cpython")]
 #[doc = include_str!("../docs/cpython.md")]
 pub mod cpython_guide {}
+
+/// Guide for real uutils/coreutils programs running as WebAssembly guests.
+///
+/// This guide covers:
+/// - Quick start with `Bash::builder().wasm_coreutils()`
+/// - Which utilities are registered, and the `coreutils` multicall entry
+/// - Resource limits via [`WasmCoreutilsLimits`]
+/// - Isolation and limitations
+///
+/// **Related:** [`BashBuilder::wasm_coreutils`], [`WasmCoreutilsLimits`], [`WasmCoreutil`], [`threat_model`]
+#[cfg(feature = "wasm-coreutils")]
+#[doc = include_str!("../docs/wasm-coreutils.md")]
+pub mod wasm_coreutils_guide {}
 
 /// Guide for the embedded SQLite builtin (Turso).
 ///

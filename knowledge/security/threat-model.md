@@ -1817,7 +1817,7 @@ The `cpython` feature runs real CPython 3.14 as a `wasm32-wasip1` guest on
 Wasmtime's Pulley interpreter ([CPython WebAssembly Runtime](../runtimes/cpython-wasm.md)).
 CPython itself is *not* trusted: a guest bug, a malicious script or a crafted
 input may corrupt the guest's own linear memory. The boundary is the wasm
-sandbox plus the WASI host in `builtins/cpython/wasi.rs`, which is the only
+sandbox plus the WASI host in `builtins/wasi_host/wasi.rs`, which is the only
 code that touches bashkit state.
 
 ```
@@ -1843,6 +1843,20 @@ Fuzzing: `cpython_security_tests` runs bounded proptest cases (arbitrary
 source, stitched os/sys/file fragments, arbitrary CLI arguments) through
 `assert_no_leak`; `fuzz/fuzz_targets/cpython_fuzz.rs` runs nightly under
 cargo-fuzz with the host-environment canary.
+
+## Wasm Coreutils Security (TM-WCU)
+
+The `wasm-coreutils` feature runs real uutils programs as `wasm32-wasip1`
+guests on the same WASI host as CPython (TM-PY-CPY), on Pulley
+([Wasm Coreutils](../runtimes/wasm-coreutils.md)). The programs are not
+trusted; the boundary is the wasm sandbox plus `builtins/wasi_host/`.
+
+| ID | Threat | Severity | Mitigation | Test |
+|----|--------|----------|------------|------|
+| TM-WCU-001 | Host filesystem, network or process access | Critical | Only the VFS is reachable (paths clamp at `/`); no socket or process imports; no native guest code | `host_files_are_not_reachable`, `parent_traversal_stays_in_vfs` |
+| TM-WCU-002 | CPU, memory or output exhaustion (`factor` of huge numbers, `sort` of huge input, `seq` floods) | High | Fuel-driven yields with deadline and `ExecutionBudget` checks; store limiter (64 MiB default, 256 MiB max); `max_output` cap with truncation note | `busy_guest_hits_timeout`, `request_deadline_wins`, `memory_is_capped`, `output_is_capped` |
+| TM-WCU-003 | State leaking across calls or tenants | Critical | Fresh instance per call; per-`Bash` VFS; only exported variables reach the guest | `tenants_do_not_share_files`, `concurrent_calls_are_independent`, `only_exported_variables_reach_the_guest` |
+| TM-WCU-004 | Guest crash (panic, abort) takes down the host; internal shapes leak (TM-INF-022) | High | Traps end only that call (exit 1, `<util>: fatal error: ...`, Display-only, <= 512 bytes) | `trap_messages_are_display_only` (wasi_host), `exit_codes_and_errors_propagate` |
 
 ## Python / Monty Security (TM-PY)
 

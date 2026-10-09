@@ -160,12 +160,17 @@ worth keeping so the question does not get re-litigated from scratch.
   of `Quotable`), but they are imported by *generated* coreutils-port files, so
   removal means carrying rewrite rules in the porter. Low return.
 
-## Build-only dependencies of `bashkit-cpython-wasm`
+## Build-only dependencies of `bashkit-cpython-wasm` and `bashkit-coreutils-wasm`
 
 - `lzma-rs` (pure Rust, MIT) decodes the xz-compressed CPython snapshot in
   `build.rs`. Never linked into a binary. xz keeps the crate under the
   crates.io 10 MiB cap with more modules preloaded (see
-  [CPython WebAssembly Runtime](../runtimes/cpython-wasm.md)).
+  [CPython WebAssembly Runtime](../runtimes/cpython-wasm.md)). The coreutils
+  guest uses it the same way.
+- The `uu_*` crates (uutils 0.12.0) build only the coreutils guest, in its
+  own workspace (`crates/bashkit-coreutils-wasm/guest/`, own `Cargo.lock`);
+  only the compiled wasm is committed, so they never enter bashkit's
+  dependency graph or `cargo deny`/`cargo vet` scope.
 
 ## Vendored crates
 

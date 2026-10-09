@@ -161,5 +161,6 @@ pub mod typescript_security_tests;
 pub mod unicode_security_tests;
 pub mod unset_function_tests;
 pub mod urandom_tests;
+pub mod wasm_coreutils_tests;
 pub mod workflow_security_tests;
 pub mod yq_integration_tests;

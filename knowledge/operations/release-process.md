@@ -85,6 +85,8 @@ silently failed.
      snapshot as xz; ~7.8 MiB with requests/httpx and urllib.request preloaded). `bashkit` depends on the same version
      of it, so `publish.yml` publishes it first and the `bashkit` dry-run only
      resolves once that version is live.
+   - `cargo publish --dry-run -p bashkit-coreutils-wasm` must succeed (~2 MB
+     crate, xz guest); `publish.yml` also publishes it before `bashkit`.
    - `cargo publish --dry-run -p bashkit` must succeed. Package
      `bashkit-cli` and `bashkit-scripted-tool` in a disposable copy against the latest published
      registry core version (remove the local path in the copy) as a structural
@@ -220,6 +222,7 @@ Use the latest entries in `CHANGELOG.md` as the template. Rules:
 ## Package Names and Registries
 
 - `bashkit-cpython-wasm` on crates.io (embedded CPython for the `cpython` feature; published first)
+- `bashkit-coreutils-wasm` on crates.io (uutils coreutils guest for the `wasm-coreutils` feature; published first)
 - `bashkit` on crates.io (core library)
 - `bashkit-scripted-tool` on crates.io (`ScriptedTool` / `ToolDef` / `ToolRegistry`)
 - `bashkit-cli` on crates.io (CLI tool)

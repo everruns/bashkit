@@ -27,7 +27,7 @@ use std::time::Duration;
 
 use wasmtime::{Caller, Linker};
 
-use super::wasi::{GuestState, read_bytes, write_bytes, write_u32};
+use crate::builtins::wasi_host::wasi::{GuestState, read_bytes, write_bytes, write_u32};
 
 const MODULE: &str = "bashkit";
 

@@ -43,7 +43,7 @@ are the aggregation input for benchmark and eval summaries.
 ## Run Commands
 
 Default benchmark recipes that represent a real run MUST save artifacts in the
-directories above: `just bench`, `just bench-parallel`, `just bench-sqlite`, `just bench-python`,
+directories above: `just bench`, `just bench-parallel`, `just bench-sqlite`, `just bench-python`, `just bench-wasm-coreutils`,
 `just gaps`, `just oils-spec`.
 
 The comparison harness resolves `bash` from `PATH` and requires Bash 4 or newer
@@ -86,7 +86,8 @@ The transformer also emits `pythonStartup`, one point per
 start table, warm `python_call/<runtime>/print`, and CPython
 `python_import/cpython/http_client` when present. `/benches` shows the latest
 point (CPython vs Monty) and the CPython history. `just bench-python` produces
-these reports.
+these reports. `criterion-wasm-coreutils-*.md` reports (`just
+bench-wasm-coreutils`) are saved alongside but not yet charted on `/benches`.
 
 The transformer also emits `oilsSpec`: `runs` (one point per
 `oils-spec-*.json`: pass rate, bashkit passes among bash passes, Oils and

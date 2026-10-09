@@ -156,6 +156,18 @@ Boundaries of the WebAssembly CPython guest; see
 | L-CPY-010 | `requests` and `httpx` are subsets: no retries, proxies, client certificates, HTTP/2, digest auth, streaming uploads or OPTIONS; bodies are buffered; `AsyncClient` requests run sequentially | Upstream packages cost ~3 s per call to import on Pulley; the subset is preloaded in the snapshot and costs nothing | `requests_lib`, `httpx_lib` in `cpython_http_tests` |
 | L-CPY-009 | Stdlib ships as bytecode only: tracebacks show no source line for stdlib frames, `inspect.getsource()` fails on stdlib objects. Modules that cannot work in the guest are not shipped: `ctypes`, `ssl`, `ftplib`, `imaplib`, `poplib`, `smtplib`, `socketserver`, `http.server`, `wsgiref`, `xmlrpc`, `webbrowser`, `bdb`, `pydoc` (so `help()`), `_pyrepl`, `mailbox`, `tty`, `pty`, `bz2`, `lzma`, `compression.zstd`; low-use for agent scripts: `unittest`, `doctest`, `cProfile`, `profile`, `pstats`, `trace`, `tabnanny`, `pyclbr`, `modulefinder`, `pickletools`, `compileall`, `zipapp`, `dbm`, `shelve`, `plistlib`, `wave`, `netrc`, `cmd`, `rlcompleter`, `concurrent.interpreters`; `pdb` is a stand-in (`breakpoint()` prints a notice and continues) | Compiling source on Pulley costs seconds per import; sources would push the crate past the crates.io 10 MiB cap. No FFI, TLS, sockets, TTY or bz2/lzma/zstd C codecs exist. The workload is agents' file-processing scripts; low-use modules cost crate bytes and preload budget | `stdlib_is_bytecode_only` (cpython_integration_tests) |
 
+### Wasm coreutils (`wasm-coreutils` feature)
+
+Boundaries of the uutils WebAssembly guests; see
+[Wasm Coreutils](../runtimes/wasm-coreutils.md).
+
+| ID | Limitation | Why | Evidence |
+|----|------------|-----|----------|
+| L-WCU-001 | Only uutils' WASI-buildable set (71 utilities); `stat`, `du`, `df`, `id`, `install`, `chown`, `timeout`, `tac` are not in the guest | They need host APIs WASI preview1 lacks (or `tac` panics on `std::env::temp_dir`) | `guest/gen.py`, stance |
+| L-WCU-002 | `ls -l` and similar show placeholder owner and permission bits | WASI `filestat` has no mode or uid/gid | stance |
+| L-WCU-003 | Output is captured, not streamed: a pipeline stage runs to completion first, and redirected output counts against `max_output` | Same buffered model as the CPython guest | `output_is_capped` |
+| L-WCU-004 | Wasm utilities run on the Pulley interpreter, much slower than native builtins on large inputs | No run-time compile (startup is a product feature); native AOT is a possible opt-in like `cpython-native` | `criterion-wasm-coreutils-*` |
+
 ## Text Processing
 
 What each tool does is covered by its spec tests (all unskipped tests

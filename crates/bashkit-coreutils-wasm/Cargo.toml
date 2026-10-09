@@ -1,0 +1,33 @@
+# uutils/coreutils compiled to WebAssembly (wasm32-wasip1) as one multicall
+# guest, compiled ahead of time to Wasmtime's Pulley bytecode. Consumed by
+# bashkit's `wasm-coreutils` feature; see knowledge/runtimes/wasm-coreutils.md.
+#
+# Decisions:
+# - The guest artifact is committed; `guest/build.sh` rebuilds it from the
+#   pinned uutils release. No network access at build or run time.
+# - build.rs compiles it to Pulley once per build: no wasm is compiled at run
+#   time, and one output serves every 64-bit little-endian host.
+# - wasmtime is pinned exactly (workspace): a `.cwasm` only loads into the
+#   same version with the same compile-affecting configuration.
+
+[package]
+name = "bashkit-coreutils-wasm"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+license = "MIT AND Apache-2.0 AND Unicode-3.0 AND Zlib"
+description = "uutils coreutils compiled to WASI and precompiled to Pulley, for bashkit's sandboxed coreutils"
+keywords = ["coreutils", "wasm", "sandbox", "bashkit"]
+categories = ["wasm", "command-line-utilities"]
+readme = "README.md"
+# guest/ is its own Cargo package (excluded from packaging by Cargo); its
+# sources live in the repository.
+include = ["src/**", "build.rs", "artifacts/**", "README.md", "THIRD_PARTY_LICENSES.md"]
+
+[dependencies]
+wasmtime = { workspace = true }
+
+[build-dependencies]
+wasmtime = { workspace = true, features = ["cranelift", "parallel-compilation"] }
+lzma-rs = "0.3"

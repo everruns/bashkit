@@ -9,41 +9,29 @@
 //! - No runtime opt-in env var (unlike Monty's `BASHKIT_ALLOW_INPROCESS_PYTHON`):
 //!   the guest never runs native code in the host, so calling
 //!   `BashBuilder::cpython()` is the opt-in.
-//! - One process-wide engine and pre-linked module, created on first use (or
-//!   by [`CPython::warm_up`]). Every call gets a fresh store and instance,
-//!   mapped copy-on-write from the pre-initialized snapshot; nothing survives
-//!   between calls or tenants.
-//! - Guest work is metered with fuel and yields to the async runtime at a fixed
-//!   interval; each poll re-checks the call deadline and the request's
-//!   `ExecutionBudget` (cancellation, timeout), so a busy loop cannot hold a
-//!   worker thread past its deadline.
-//! - Instances come from wasmtime's pooling allocator (512 slots per
-//!   process): slots keep their memory mapped and are reset by discarding only
-//!   the pages a call dirtied, instead of mmap/munmap per call. Calls beyond
-//!   512 wait for a slot within their own deadline. If the pool cannot reserve
-//!   its address space, instances are allocated on demand instead.
+//! - Engine, pooling, fuel-metered deadlines and budget checks are shared with
+//!   other wasm guests ([`super::wasi_host`]). Every call gets a fresh
+//!   instance mapped copy-on-write from the pre-initialized snapshot; nothing
+//!   survives between calls or tenants.
 //! - Memory is capped by a store limiter; `memory.grow` past the cap fails and
 //!   surfaces as `MemoryError` inside Python, not as a host error.
 
 mod http;
-mod wasi;
 
+pub(crate) use http::HttpState;
 pub(crate) use http::check_request_invariants as check_http_request_invariants;
 
-use std::future::Future;
 use std::sync::OnceLock;
-use std::task::Poll;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use wasmtime::{Engine, InstancePre, Linker, Store};
 
 use super::runtime_limits::{DEFAULT_MAX_DURATION, RuntimeLimits};
 use super::{Builtin, Context, ExecutionDeadline};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
 
-use wasi::{GuestConfig, GuestState, ProcExit};
+use super::wasi_host::{self, Call, Entry, GuestConfig, GuestRuntime, GuestState, PoolSpec};
 
 /// Default memory cap for one call. The snapshot itself starts at ~40 MB of
 /// linear memory (mostly untouched, mapped copy-on-write).
@@ -134,77 +122,31 @@ impl CPythonLimits {
     }
 }
 
-/// Concurrent guest instances per process (pooled allocator slots). Calls
-/// beyond this wait for a free slot, bounded by their own deadline.
-const POOL_SLOTS: u32 = 512;
-/// Largest guest memory a pooled slot can hold; `max_memory` above this is
-/// clamped. Must not exceed the engine's `memory_reservation` (1 GiB).
-const POOL_MAX_MEMORY: usize = 1 << 30;
-/// Snapshot pages kept mapped in a released slot. Reset cost then scales with
-/// what a call dirtied, not with the snapshot size.
-const POOL_KEEP_RESIDENT: usize = 64 << 20;
+/// Instance pool: 512 concurrent calls per process; slots hold up to 1 GiB
+/// (the engine's `memory_reservation`), and keep 64 MiB of snapshot pages
+/// mapped so reset cost scales with what a call dirtied.
+const POOL: PoolSpec = PoolSpec {
+    slots: 512,
+    max_memory: 1 << 30,
+    keep_resident: 64 << 20,
+    max_wasm_stack: MAX_WASM_STACK,
+};
 
-/// Process-wide compiled guest, shared by every `Bash` instance.
-struct Runtime {
-    engine: Engine,
-    pre: InstancePre<GuestState>,
-    /// Pooled slots; `None` when the pool could not be created and every
-    /// instance is allocated on demand.
-    slots: Option<tokio::sync::Semaphore>,
-}
+static RUNTIME: OnceLock<std::result::Result<GuestRuntime, String>> = OnceLock::new();
 
-static RUNTIME: OnceLock<std::result::Result<Runtime, String>> = OnceLock::new();
-
-fn runtime() -> std::result::Result<&'static Runtime, &'static str> {
+fn runtime() -> std::result::Result<&'static GuestRuntime, &'static str> {
     RUNTIME
-        .get_or_init(|| init_runtime().map_err(|e| e.to_string()))
+        .get_or_init(|| {
+            GuestRuntime::new(
+                bashkit_cpython_wasm::engine_config,
+                &POOL,
+                bashkit_cpython_wasm::load_module,
+                http::add_to_linker,
+            )
+            .map_err(|e| e.to_string())
+        })
         .as_ref()
         .map_err(String::as_str)
-}
-
-fn init_runtime() -> wasmtime::Result<Runtime> {
-    // Pooled slots first: instances reuse pre-mapped memory and stacks, and a
-    // released slot is reset by discarding only the pages a call dirtied. On
-    // demand allocation (mmap + munmap per call) serializes many concurrent
-    // calls on the kernel's address-space lock. Fall back to it when the pool
-    // cannot reserve its address space (e.g. a tight RLIMIT_AS).
-    match Engine::new(&runtime_config(true)) {
-        Ok(engine) => link(
-            engine,
-            Some(tokio::sync::Semaphore::new(POOL_SLOTS as usize)),
-        ),
-        Err(_) => link(Engine::new(&runtime_config(false))?, None),
-    }
-}
-
-fn runtime_config(pooled: bool) -> wasmtime::Config {
-    let mut config = bashkit_cpython_wasm::engine_config();
-    // Runtime-only settings; they do not affect module compatibility.
-    config.max_wasm_stack(MAX_WASM_STACK);
-    config.async_stack_size(MAX_WASM_STACK + (1 << 20));
-    if pooled {
-        let mut pool = wasmtime::PoolingAllocationConfig::new();
-        pool.total_core_instances(POOL_SLOTS)
-            .total_memories(POOL_SLOTS)
-            .total_tables(POOL_SLOTS)
-            .total_stacks(POOL_SLOTS)
-            .max_memory_size(POOL_MAX_MEMORY)
-            .table_elements(1 << 16)
-            .max_core_instance_size(1 << 20)
-            .linear_memory_keep_resident(POOL_KEEP_RESIDENT)
-            .pagemap_scan(wasmtime::Enabled::Auto);
-        config.allocation_strategy(wasmtime::InstanceAllocationStrategy::Pooling(pool));
-    }
-    config
-}
-
-fn link(engine: Engine, slots: Option<tokio::sync::Semaphore>) -> wasmtime::Result<Runtime> {
-    let module = bashkit_cpython_wasm::load_module(&engine)?;
-    let mut linker = Linker::new(&engine);
-    wasi::add_to_linker(&mut linker)?;
-    http::add_to_linker(&mut linker)?;
-    let pre = linker.instantiate_pre(&module)?;
-    Ok(Runtime { engine, pre, slots })
 }
 
 /// CPython `python`/`python3` builtin.
@@ -230,12 +172,6 @@ impl Default for CPython {
     fn default() -> Self {
         Self::with_limits(CPythonLimits::default())
     }
-}
-
-/// Why a guest call stopped without returning.
-enum Stop {
-    Timeout,
-    Budget(crate::limits::LimitExceeded),
 }
 
 #[async_trait]
@@ -312,13 +248,11 @@ impl Builtin for CPython {
                 env,
                 stdin,
                 output_cap: self.limits.max_output,
-                max_memory: if rt.slots.is_some() {
-                    limits.max_memory.min(POOL_MAX_MEMORY)
-                } else {
-                    limits.max_memory
-                },
-                stdlib_path: bashkit_cpython_wasm::STDLIB_ZIP_PATH,
-                stdlib: bashkit_cpython_wasm::STDLIB_ZIP,
+                max_memory: rt.clamp_memory(limits.max_memory),
+                overlay: Some((
+                    bashkit_cpython_wasm::STDLIB_ZIP_PATH,
+                    bashkit_cpython_wasm::STDLIB_ZIP,
+                )),
                 deadline,
                 http: http::HttpState::new(
                     #[cfg(feature = "http_client")]
@@ -328,70 +262,34 @@ impl Builtin for CPython {
             },
         );
 
-        // Hold a pooled slot until the store (and its instance) is dropped;
-        // waiting for one counts against the deadline.
-        let _slot = match &rt.slots {
-            Some(slots) => match guarded(slots.acquire(), deadline, budget.as_ref()).await {
-                Ok(Ok(permit)) => Some(permit),
-                // The semaphore is never closed.
-                Ok(Err(_)) => None,
-                Err(Stop::Timeout) => return Ok(timed_out(timeout, Vec::new())),
-                Err(Stop::Budget(e)) => return Err(e.into()),
+        let done = wasi_host::run(
+            rt,
+            state,
+            Call {
+                name: "python3",
+                noun: "interpreter",
+                entry: Entry::Run("bashkit_run"),
+                timeout,
+                deadline,
+                budget: budget.as_ref(),
+                yield_fuel: YIELD_INTERVAL_FUEL,
             },
-            None => None,
-        };
-        let mut store = Store::new(&rt.engine, state);
-        store.limiter(|s| &mut s.limits);
-        let setup = store
-            .set_fuel(u64::MAX)
-            .and_then(|()| store.fuel_async_yield_interval(Some(YIELD_INTERVAL_FUEL)));
-        if let Err(e) = setup {
-            return Ok(ExecResult::err(format!("python3: {e}\n"), 1));
-        }
-
-        let outcome = guarded(
-            async {
-                let instance = rt.pre.instantiate_async(&mut store).await?;
-                let run = instance.get_typed_func::<(), i32>(&mut store, "bashkit_run")?;
-                run.call_async(&mut store, ()).await
-            },
-            deadline,
-            budget.as_ref(),
         )
-        .await;
+        .await?;
+        ctx.consume_budget_work(done.fuel_used / FUEL_PER_WORK_UNIT)?;
 
-        let fuel_used = u64::MAX - store.get_fuel().unwrap_or(0);
-        // Files a script wrote but never closed persist, as they would after a
-        // real process exits or is killed.
-        store.data_mut().flush_all().await;
-        let state = store.into_data();
-
-        let mut stderr = state.output.stderr;
-        let exit_code = match outcome {
-            Ok(Ok(code)) => code,
-            Ok(Err(e)) => {
-                if let Some(exit) = e.downcast_ref::<ProcExit>() {
-                    exit.0
-                } else {
-                    stderr.extend_from_slice(trap_message(&e).as_bytes());
-                    1
-                }
-            }
-            Err(Stop::Timeout) => {
-                stderr.extend_from_slice(timeout_message(timeout).as_bytes());
-                124
-            }
-            Err(Stop::Budget(e)) => return Err(e.into()),
-        };
-        ctx.consume_budget_work(fuel_used / FUEL_PER_WORK_UNIT)?;
-        let exit_code = if state.flush_error.is_some() {
+        let mut stderr = done.stderr;
+        let exit_code = if done.flush_failed {
             stderr.extend_from_slice(b"python3: failed to write back open files\n");
-            if exit_code == 0 { 1 } else { exit_code }
+            if done.exit_code == 0 {
+                1
+            } else {
+                done.exit_code
+            }
         } else {
-            exit_code
+            done.exit_code
         };
-
-        if state.output.truncated {
+        if done.truncated {
             stderr.extend_from_slice(
                 format!(
                     "python3: output truncated at {} bytes\n",
@@ -400,67 +298,13 @@ impl Builtin for CPython {
                 .as_bytes(),
             );
         }
-        let mut result = ExecResult::with_code(state.output.stdout, exit_code);
+        let mut result = ExecResult::with_code(done.stdout, exit_code);
         result.stderr = stderr.into();
-        if state.output.truncated {
+        if done.truncated {
             result.stdout_truncated = true;
             result.stderr_truncated = true;
         }
         Ok(result)
-    }
-}
-
-fn timeout_message(timeout: Duration) -> String {
-    format!(
-        "python3: execution timed out after {:.1}s\n",
-        timeout.as_secs_f64()
-    )
-}
-
-fn timed_out(timeout: Duration, stdout: Vec<u8>) -> ExecResult {
-    let mut result = ExecResult::with_code(stdout, 124);
-    result.stderr = timeout_message(timeout).into();
-    result
-}
-
-/// Poll `fut`, stopping at the deadline or when the request budget closes.
-/// Fuel yields guarantee the guest returns to this poll regularly.
-async fn guarded<F: Future>(
-    fut: F,
-    deadline: crate::time_compat::Instant,
-    budget: Option<&crate::limits::ExecutionBudget>,
-) -> std::result::Result<F::Output, Stop> {
-    let mut fut = std::pin::pin!(fut);
-    std::future::poll_fn(|cx| {
-        if crate::time_compat::Instant::now() >= deadline {
-            return Poll::Ready(Err(Stop::Timeout));
-        }
-        if let Some(budget) = budget
-            && let Err(e) = budget.check()
-        {
-            return Poll::Ready(Err(Stop::Budget(e)));
-        }
-        fut.as_mut().poll(cx).map(Ok)
-    })
-    .await
-}
-
-/// Describe a guest trap without leaking internal shapes (TM-INF-022).
-fn trap_message(e: &wasmtime::Error) -> String {
-    match e.downcast_ref::<wasmtime::Trap>() {
-        Some(wasmtime::Trap::StackOverflow) => {
-            "python3: fatal error: stack overflow in the interpreter\n".to_string()
-        }
-        Some(wasmtime::Trap::OutOfFuel) => "python3: fatal error: out of fuel\n".to_string(),
-        Some(wasmtime::Trap::UnreachableCodeReached) => {
-            "python3: fatal error: interpreter aborted\n".to_string()
-        }
-        Some(trap) => format!("python3: fatal error: {trap}\n"),
-        None => {
-            let mut msg = e.to_string();
-            msg.truncate(msg.floor_char_boundary(512));
-            format!("python3: fatal error: {msg}\n")
-        }
     }
 }
 
