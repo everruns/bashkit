@@ -612,10 +612,12 @@ impl super::PlanDriver for XargsRun {
         if let Some(cmd) = self.commands.front() {
             if self.verbose && !self.announced {
                 self.announced = true;
-                let mut line = cmd.name.clone();
+                // GNU quotes each word shell-escape style (`'it'\''s'$'\t'`).
+                use super::ls::quoting::{QuotingStyle, quote_name};
+                let mut line = quote_name(&cmd.name, QuotingStyle::ShellEscape).into_owned();
                 for a in &cmd.args {
                     line.push(' ');
-                    line.push_str(a);
+                    line.push_str(&quote_name(a, QuotingStyle::ShellEscape));
                 }
                 line.push('\n');
                 let err: crate::StreamData = line.into();

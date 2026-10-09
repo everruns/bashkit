@@ -225,6 +225,11 @@ fn render(
             out.extend_from_slice(format!("{counter:>6}\t").as_bytes());
         }
 
+        // GNU `-E` shows a CR right before the newline as `^M` (`x^M$`).
+        let (body, cr_end) = match body.strip_suffix(b"\r") {
+            Some(rest) if show_ends && has_newline && !show_nonprinting => (rest, true),
+            _ => (body, false),
+        };
         if show_nonprinting || show_tabs {
             for &b in body {
                 emit_byte(&mut out, b, show_tabs, show_nonprinting);
@@ -233,6 +238,9 @@ fn render(
             out.extend_from_slice(body);
         }
 
+        if cr_end {
+            out.extend_from_slice(b"^M");
+        }
         if show_ends && has_newline {
             out.push(b'$');
         }

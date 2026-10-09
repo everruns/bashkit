@@ -134,3 +134,12 @@ yes a b c | head -2
 a b c
 a b c
 ### end
+
+### rev_keeps_a_missing_final_newline
+# reverses characters, keeping line endings
+printf 'abc\ndéf' | rev; echo; printf 'xy\n' | rev
+### expect
+cba
+féd
+yx
+### end

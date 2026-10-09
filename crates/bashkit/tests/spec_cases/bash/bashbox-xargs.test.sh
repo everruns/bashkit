@@ -314,3 +314,25 @@ a b
 c
 it's	a b
 ### end
+
+### bashbox_xargs_a_bare_optional_option_at_the_end_of_a_bundle
+# a bare optional option at the end of a bundle
+echo a x b | xargs -E x -tl echo 2>/dev/null; echo y | xargs -ti echo {} 2>/dev/null; echo z | xargs -it echo {} 2>/dev/null
+### expect
+a
+y
+{}
+### end
+
+### bashbox_xargs_t_prints_each_command
+# -t prints each command (to stderr, quoted) and still runs it
+printf 'a b\nc\n' | xargs -t -n2 echo 2>/dev/null; printf "it's\ta b\n" | xargs -d '\n' --verbose 2>/dev/null
+printf 'a b\nc\n' | xargs -t -n2 echo 2>&1 >/dev/null; printf "it's\ta b\n" | xargs -d '\n' --verbose 2>&1 >/dev/null
+### expect
+a b
+c
+it's	a b
+echo a b
+echo c
+echo 'it'\''s'$'\t''a b'
+### end

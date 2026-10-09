@@ -40,3 +40,10 @@ don't "q" 1 $x $'a' bt "\"" \
  ab
 in dq ` \a
 ### end
+
+### bashbox_ansi_c_quoting_control_characters_unknown_escapes_and_nul
+# control characters, unknown escapes and NUL (\c? is DEL)
+printf '%s|' $'\cA\ca\c?\c[\cz' $'\z\q' $'a\0b' $'x\c@y' $'\08' | od -An -c
+### expect
+ 001 001 177 033 032   |   \   z   \   q   |   a   |   x   |   |
+### end

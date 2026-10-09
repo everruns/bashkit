@@ -687,6 +687,37 @@ fn append_stage_stderr(
     }
 }
 
+/// Whether an `N<file` redirect (N >= 1) also feeds the command's stdin.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HighFdStdin {
+    /// Any fd: a compound's body (`while read -u 3 l; ...; done 3<f`).
+    Any,
+    /// Only this fd: a simple `read -u N`.
+    Fd(i32),
+    /// No fd: any other simple command (`cat 3<f` reads its own stdin).
+    Never,
+}
+
+/// The fd a simple `read -u N` reads, as an [`HighFdStdin`].
+#[inline(never)]
+fn simple_high_fd_stdin(name: &str, args: &[String]) -> HighFdStdin {
+    if name != "read" {
+        return HighFdStdin::Never;
+    }
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        let fd = if arg == "-u" {
+            iter.next().map(String::as_str)
+        } else {
+            arg.strip_prefix("-u")
+        };
+        if let Some(fd) = fd.and_then(|f| f.parse::<i32>().ok()) {
+            return HighFdStdin::Fd(fd);
+        }
+    }
+    HighFdStdin::Never
+}
+
 /// How much of a streaming stdin a command needs before it starts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum StdinDemand {
@@ -9260,7 +9291,12 @@ impl Interpreter {
 
             // Handle input redirections first
             let stdin = match self
-                .process_input_redirections(stdin, &command.redirects, stdin_demand(name, &args))
+                .process_input_redirections(
+                    stdin,
+                    &command.redirects,
+                    stdin_demand(name, &args),
+                    simple_high_fd_stdin(name, &args),
+                )
                 .await
             {
                 Ok(s) => s,
@@ -12029,9 +12065,15 @@ impl Interpreter {
                             } else {
                                 None
                             };
+                            let emit_before = self.output_emit_count;
                             let result = self.execute_command(&inner_cmd).await;
                             if saved_callback.is_some() {
                                 self.output_callback = saved_callback;
+                            } else if let Ok(r) = &result {
+                                // A command that did not stream its own
+                                // output (`xargs -t echo`) streams it now,
+                                // after the driver's earlier `Emit`s.
+                                self.maybe_emit_output(&r.stdout, &r.stderr, emit_before);
                             }
                             if let Some(dir) = saved_cwd {
                                 self.cwd = dir;
@@ -12593,7 +12635,7 @@ impl Interpreter {
             redirects
         };
         match self
-            .process_input_redirections(None, redirects, StdinDemand::Nothing)
+            .process_input_redirections(None, redirects, StdinDemand::Nothing, HighFdStdin::Any)
             .await
         {
             Ok(_) => {}
@@ -12694,7 +12736,7 @@ impl Interpreter {
             // ...; done <&${C[0]}`) is read to end of input up front, not
             // line by line as the loop runs.
             let stdin = match self
-                .process_input_redirections(None, redirects, StdinDemand::All)
+                .process_input_redirections(None, redirects, StdinDemand::All, HighFdStdin::Any)
                 .await
             {
                 Ok(s) => s,
@@ -12790,8 +12832,13 @@ impl Interpreter {
                 let read = if self.disabled_redirect_error(redirects).is_some() {
                     Err(crate::error::Error::CommandFailure(String::new()))
                 } else {
-                    self.process_input_redirections(None, redirects, StdinDemand::All)
-                        .await
+                    self.process_input_redirections(
+                        None,
+                        redirects,
+                        StdinDemand::All,
+                        HighFdStdin::Any,
+                    )
+                    .await
                 };
                 match read {
                     Ok(content) => {

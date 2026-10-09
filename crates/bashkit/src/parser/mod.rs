@@ -116,6 +116,9 @@ pub struct Parser<'a> {
     current_plain: bool,
     /// The current token follows a blank-ending alias value.
     current_after_blank: bool,
+    /// End offset of the token consumed last: a token that starts there
+    /// touches it (`x<(true)` is one word, see `join_adjacent_word`).
+    prev_token_end: usize,
     /// The next `parse_command_list` call reads a top-level command: a
     /// newline after `;` or `&` ends it, as bash's reader ends a line.
     top_level_list: bool,
@@ -192,6 +195,7 @@ impl<'a> Parser<'a> {
             },
             current_plain,
             current_after_blank: false,
+            prev_token_end: usize::MAX,
             top_level_list: false,
             top_starts: Vec::new(),
             failed_command_start: (0, 1),
@@ -592,6 +596,9 @@ impl<'a> Parser<'a> {
             Some(peeked) => Some(peeked),
             None => self.lexer.next_spanned_token(),
         };
+        if self.current_token.is_some() {
+            self.prev_token_end = self.current_span.end.offset;
+        }
         match next {
             Some(st) => {
                 self.current_token = Some(st.token);
@@ -3249,6 +3256,9 @@ impl<'a> Parser<'a> {
         let mut assignments = Vec::new();
         let mut words = Vec::new();
         let mut redirects = Vec::new();
+        // End offset of the word or assignment just parsed (usize::MAX:
+        // none); a process substitution touching it joins that word.
+        let mut join_end = usize::MAX;
 
         loop {
             if words.is_empty() {
@@ -3256,6 +3266,13 @@ impl<'a> Parser<'a> {
                 // redirects is a command name.
                 self.expand_command_alias();
             }
+            if join_end == self.current_span.start.offset
+                && self.join_adjacent_word(&mut words, &mut assignments)?
+            {
+                join_end = self.prev_token_end;
+                continue;
+            }
+            let counts = (words.len(), assignments.len());
             match &self.current_token {
                 Some(
                     tokens::Token::Word(_)
@@ -3345,6 +3362,11 @@ impl<'a> Parser<'a> {
                 | None => break,
                 _ => break,
             }
+            join_end = if words.len() > counts.0 || assignments.len() > counts.1 {
+                self.prev_token_end
+            } else {
+                usize::MAX
+            };
         }
 
         // Handle assignment-only and redirect-only commands (`VAR=value`,
@@ -3374,6 +3396,64 @@ impl<'a> Parser<'a> {
             assignments,
             span: start_span.merge(self.current_span),
         }))
+    }
+
+    /// `x<(true)`, `<(true)x`, `x=<(true)`: a process substitution and the
+    /// word text it touches form one word, as in bash. The current token
+    /// starts where the last word (or, before the command name, the last
+    /// assignment's scalar value) ended. Returns false, consuming nothing,
+    /// when the token does not join it.
+    #[inline(never)]
+    fn join_adjacent_word(
+        &mut self,
+        words: &mut [Word],
+        assignments: &mut [Assignment],
+    ) -> Result<bool> {
+        let procsub = matches!(
+            self.current_token,
+            Some(tokens::Token::ProcessSubIn | tokens::Token::ProcessSubOut)
+        );
+        let word_token = matches!(
+            self.current_token,
+            Some(
+                tokens::Token::Word(_)
+                    | tokens::Token::LiteralWord(_)
+                    | tokens::Token::QuotedWord(_)
+                    | tokens::Token::QuotedGlobWord(_)
+            )
+        );
+        fn target<'w>(
+            words: &'w mut [Word],
+            assignments: &'w mut [Assignment],
+        ) -> Option<&'w mut Word> {
+            if words.is_empty() {
+                match assignments.last_mut() {
+                    Some(Assignment {
+                        value: AssignmentValue::Scalar(w),
+                        ..
+                    }) => Some(w),
+                    _ => None,
+                }
+            } else {
+                words.last_mut()
+            }
+        }
+        let Some(prev) = target(words, assignments) else {
+            return Ok(false);
+        };
+        // Two word tokens only touch across a process substitution's `)`.
+        let after_procsub = matches!(
+            prev.parts.last(),
+            Some(WordPart::ProcessSubstitution { .. })
+        );
+        if !(procsub || (word_token && after_procsub)) {
+            return Ok(false);
+        }
+        let next = self.expect_word()?;
+        if let Some(prev) = target(words, assignments) {
+            prev.append_word(next);
+        }
+        Ok(true)
     }
 
     /// One word of a simple command (outlined to keep the recursive
@@ -3754,6 +3834,10 @@ impl<'a> Parser<'a> {
                     depth = 0;
                 }
                 self.advance();
+                if scanned {
+                    // The last consumed text is the `)`, not the `<(` token.
+                    self.prev_token_end = body_end_offset + 1;
+                }
 
                 while depth > 0 {
                     match &self.current_token {
