@@ -178,3 +178,10 @@ printf -v x %s a; echo "$x"
 ### expect
 a
 ### end
+
+### bashbox_printf_q_backslash_quotes_shell_syntax
+# %q backslash-quotes shell syntax
+printf '%q|' '' '~a' 'a~' 'a:~' 'a=~b' '#a' 'a#' "it's" 'a b' ' !"$&()*,;<>?[\]^`{|}' '~~' '##' '%+-./:=@_'; echo
+### expect
+''|\~a|a~|a:\~|a=\~b|\#a|a#|it\'s|a\ b|\ \!\"\$\&\(\)\*\,\;\<\>\?\[\\\]\^\`\{\|\}|\~~|\##|%+-./:=@_|
+### end

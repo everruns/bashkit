@@ -210,7 +210,10 @@ impl Builtin for Rev {
             let reversed: String = line.chars().rev().collect();
             output.push_str(&reversed);
         }
-        output.push('\n');
+        // A last line without a newline stays without one (util-linux).
+        if has_trailing_newline {
+            output.push('\n');
+        }
 
         Ok(ExecResult::ok(output))
     }

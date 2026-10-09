@@ -131,3 +131,35 @@ cat <<-EOF
 hello
 world
 ### end
+
+### heredoc_lineno_after_body
+# Commands after a here-document body keep their source line numbers
+cat <<EOF | tr a-z A-Z
+hi
+EOF
+echo $LINENO
+cat <<EOF; echo same
+b
+EOF
+echo $LINENO
+### expect
+HI
+4
+b
+same
+8
+### end
+
+### heredoc_alias_defined_on_the_heredoc_line
+# An alias defined on a here-document's command line applies after the body
+shopt -s expand_aliases
+alias c='echo aliased'; cat <<EOF
+body
+EOF
+c "next line"
+echo end
+### expect
+body
+aliased next line
+end
+### end

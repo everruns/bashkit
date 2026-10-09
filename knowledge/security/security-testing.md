@@ -83,6 +83,19 @@ oracle; see the [GNU report](https://lists.gnu.org/archive/html/bug-coreutils/20
 The enormous-width tests invoke only the fixed builtin, after safe bounded
 regressions established the allocation path.
 
+## Function Definition Metadata
+
+`function_metadata_security_tests` uses small function budgets and at most a few
+KiB of padded source operands. It covers per-function and aggregate filename
+charges, exact byte boundaries, failed redefinition atomicity, replacement and
+unset refunds, filename rollback in subshells/substitutions/pipelines/background
+jobs/executable VFS scripts, and removal of old metadata on shell-state restore. The interpreter unit
+test `function_metadata_shares_storage_and_drops_with_functions` proves definitions
+from one source share their filename allocation and that rollback/unset leave no
+orphan entries or retained filename allocation. No host-exhaustion probe is needed.
+The real-Bash comparison sources both the original and post-unset replacement;
+Bash versions differ in the filename they assign to a definition inside `-c`.
+
 ## Adding New Fail Points
 
 Add `fail_point!("module::function", |action| ...)` under

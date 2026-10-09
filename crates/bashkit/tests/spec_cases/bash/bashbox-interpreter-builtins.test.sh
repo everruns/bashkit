@@ -514,3 +514,19 @@ f(){ local x=1; unset x; echo "[${x-unset}]"; x=2; echo $x; }; x=g; f; echo $x
 2
 g
 ### end
+
+### bashbox_interpreter_builtins_input_from_a_file_an_fd_other_than_0_and_dev_n
+# input from a file, an fd other than 0, and /dev/null
+echo hi > out.txt; : > e; cat < out.txt; cat 3< out.txt < e; cat < e; echo $?
+### expect
+hi
+0
+### end
+
+### bashbox_interpreter_builtins_read_u_reads_the_fd_its_own_redirect_opens
+# read -u reads the fd its own redirect opens; cat 3<f still reads stdin
+printf 'l1\nl2\n' > f; read -u 3 a 3<f; echo "$a"; echo in | cat 3<f
+### expect
+l1
+in
+### end
