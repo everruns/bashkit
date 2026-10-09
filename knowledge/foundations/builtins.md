@@ -52,7 +52,10 @@ as bash. Exit 127: not found; Exit 126: not executable or is a directory.
 
 `CommandHash` owns leases from the current `ExecutionBudget` for every retained
 name, path and entry's metadata (TM-DOS-129). Admission happens before copying
-borrowed `hash -p` arguments or automatic PATH lookups. Deletion, replacement,
+borrowed `hash -p` arguments or automatic PATH lookups. Every mutation takes the
+interpreter-owned budget explicitly, including direct interpreter calls and
+child execution; it does not depend on a prior host execution to initialize
+hidden hash state. Deletion, replacement,
 512-entry eviction, and `hash -r`/PATH assignment release the removed entries.
 Copy-on-write forks clone `Arc<str>` payloads and leases; hit counters remain
 local. Each host execution re-admits persistent entries to its fresh budget
