@@ -309,14 +309,13 @@ eval *ARGS:
 eval-smoke *ARGS:
     mira run --study-bin bashkit-eval bashkit_smoke {{ARGS}}
 
-# Repo-workflow eval: multi-turn fixture repos (make test, fix, commit). Every
-# task's reference solution also runs offline in `cargo test -p bashkit-eval`.
+# Slices of bashkit_bash by tag (difficulty=repo / hard). Reference solutions
+# for these run offline in `cargo test -p bashkit-eval`.
 eval-repo *ARGS:
-    mira run --study-bin bashkit-eval bashkit_repo {{ARGS}}
+    mira run --study-bin bashkit-eval bashkit_bash --tag repo {{ARGS}}
 
-# Hard eval (bashkit_hard): 10 tasks built to not saturate; 25-turn budget.
 eval-hard *ARGS:
-    mira run --study-bin bashkit-eval bashkit_hard {{ARGS}}
+    mira run --study-bin bashkit-eval bashkit_bash --tag hard {{ARGS}}
 
 # Scripting-tool eval. The `mode` axis compares scripted vs baseline; select one
 # with `--axis mode=scripted` (omit to run both).

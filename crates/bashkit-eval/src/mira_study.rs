@@ -33,14 +33,6 @@ use crate::snapshot::{Snapshot, SnapshotTargets, ToolOutput, snapshot_fs, snapsh
 /// Default agent-turn budget per task (matches the original harness).
 pub const MAX_TURNS: usize = 10;
 
-/// Turn budget for `bashkit_repo`: repo tasks are multi-step by design
-/// (explore, run tests, fix, re-run, commit), so they get twice the default.
-pub const REPO_MAX_TURNS: usize = 20;
-
-/// Turn budget for `bashkit_hard`: several bugs revealed one at a time, golden
-/// outputs that usually need a second pass after checking edge cases.
-pub const HARD_MAX_TURNS: usize = 25;
-
 /// Default model matrix. Each target is gated on its provider's API-key env var,
 /// so an offline run skips them all (CI stays green) and a keyed run lights up
 /// the subset whose credentials are present. Select subsets with
@@ -149,6 +141,10 @@ fn bash_samples(jsonl: &str) -> Vec<Sample> {
         .map(|task| {
             let mut sample = Sample::new(&task.id, &task.prompt)
                 .tag(&task.category)
+                .tag(&task.mode)
+                .tag(&task.difficulty)
+                .meta("mode", task.mode.clone())
+                .meta("difficulty", task.difficulty.clone())
                 .meta("category", task.category.clone())
                 .meta("description", task.description.clone())
                 .meta("expectations", expectations_value(&task.expectations))
@@ -179,10 +175,11 @@ fn bash_subject() -> impl Subject {
             Err(e) => return Transcript::infra_error(e),
         };
 
-        let (trace, bash) = match run_agent_loop(&*provider, &task, cx.max_turns).await {
-            Ok(x) => x,
-            Err(e) => return Transcript::infra_error(format!("agent loop failed: {e:#}")),
-        };
+        let (trace, bash) =
+            match run_agent_loop(&*provider, &task, task.max_turns.unwrap_or(cx.max_turns)).await {
+                Ok(x) => x,
+                Err(e) => return Transcript::infra_error(format!("agent loop failed: {e:#}")),
+            };
 
         let expectations = expectations_from_sample(&sample);
         let targets = SnapshotTargets::from_expectations(&expectations);
@@ -417,20 +414,23 @@ fn parse_jsonl<T: serde::de::DeserializeOwned>(text: &str) -> Vec<T> {
 /// Embedded datasets (no runtime path dependence — robust under any cwd).
 const EVAL_TASKS: &str = include_str!("../data/eval-tasks.jsonl");
 const SMOKE_TASKS: &str = include_str!("../data/smoke-test.jsonl");
-const REPO_TASKS: &str = include_str!("../data/repo-workflow.jsonl");
-const HARD_TASKS: &str = include_str!("../data/hard-tasks.jsonl");
 const SCRIPTING_MANY_TOOLS: &str = include_str!("../data/scripting-tool/many-tools.jsonl");
 const SCRIPTING_DISCOVERY: &str = include_str!("../data/scripting-tool/discovery.jsonl");
 const SCRIPTING_PAGINATED: &str = include_str!("../data/scripting-tool/paginated.jsonl");
 const SCRIPTING_LARGE_OUTPUT: &str = include_str!("../data/scripting-tool/large-output.jsonl");
 
-/// The main bash agent eval: 58 hand-curated tasks across 15 categories.
-/// Select a category with `mira run --tag json_processing`. The `#[eval]`
-/// registration wrapper lives in `main.rs` (the bin crate) so the inventory
-/// submission is guaranteed to link into the host binary.
+/// The main eval: one tagged dataset of agent-loop tasks. Tags: category,
+/// `mode` (`agent` | `runtime`) and `difficulty` (`basic` | `repo` | `hard`);
+/// slice with `mira run --tag hard`. Repo and hard tasks carry their own turn
+/// budget (`max_turns`). Decision (2026-10-09): one dataset with tags rather
+/// than one eval per kind; a separate eval only where scoring differs. The
+/// `#[eval]` registration wrapper lives in `main.rs` (the bin crate) so the
+/// inventory submission is guaranteed to link into the host binary.
 pub fn bash_eval() -> Eval {
     let mut b = Eval::new("bashkit_bash")
-        .describe("LLM bash-tool usage across 15 task categories (bashkit VFS)")
+        .describe(
+            "Agent-loop tasks tagged by mode (agent/runtime) and difficulty (basic/repo/hard)",
+        )
         .subject(bash_subject())
         .scorer(expectations_scorer())
         .max_turns(MAX_TURNS)
@@ -450,43 +450,6 @@ pub fn smoke_eval() -> Eval {
         .max_turns(MAX_TURNS)
         .targets(default_targets());
     for sample in bash_samples(SMOKE_TASKS) {
-        b = b.add_sample(sample);
-    }
-    b.build()
-}
-
-/// Repo-shaped, multi-turn tasks (`repo_workflow`): a fixture git repo built
-/// by the task's `setup`, then run `make test`, fix, commit. Kept out of
-/// `bashkit_bash` so its 58-task scores stay comparable across runs. Every
-/// task has a reference solution checked in CI (`reference.rs`).
-pub fn repo_eval() -> Eval {
-    let mut b = Eval::new("bashkit_repo")
-        .describe("Multi-turn repo workflows: make test, fix, commit (symlinks, PATH, jobs, git)")
-        .subject(bash_subject())
-        .scorer(expectations_scorer())
-        .max_turns(REPO_MAX_TURNS)
-        .targets(default_targets());
-    for sample in bash_samples(REPO_TASKS) {
-        b = b.add_sample(sample);
-    }
-    b.build()
-}
-
-/// Hard tasks (`bashkit_hard`): added when `bashkit_bash` saturated (top
-/// models 55/58). Interacting bugs revealed one at a time, quoting/errexit
-/// traps, golden-output data reports, make dependency graphs. Same subject and
-/// scorer as `bashkit_repo`; every task has a CI-checked reference solution
-/// (`reference.rs`). Select a category with `--tag`.
-pub fn hard_eval() -> Eval {
-    let mut b = Eval::new("bashkit_hard")
-        .describe(
-            "Hard multi-turn tasks: hidden interacting bugs, quoting, errexit, golden reports",
-        )
-        .subject(bash_subject())
-        .scorer(expectations_scorer())
-        .max_turns(HARD_MAX_TURNS)
-        .targets(default_targets());
-    for sample in bash_samples(HARD_TASKS) {
         b = b.add_sample(sample);
     }
     b.build()
@@ -522,7 +485,7 @@ mod tests {
     #[test]
     fn bash_samples_load_all_tasks_with_expectations() {
         let samples = bash_samples(EVAL_TASKS);
-        assert_eq!(samples.len(), 58);
+        assert!(samples.len() >= 76);
         for s in &samples {
             assert!(
                 !expectations_from_sample(s).is_empty(),
@@ -543,31 +506,30 @@ mod tests {
     }
 
     #[test]
-    fn repo_samples_load_with_setup() {
-        let samples = bash_samples(REPO_TASKS);
-        assert_eq!(samples.len(), 8);
+    fn tags_cover_modes_and_difficulties() {
+        let samples = bash_samples(EVAL_TASKS);
+        let mut by_difficulty = std::collections::BTreeMap::<String, usize>::new();
         for s in &samples {
             let task: EvalTask = serde_json::from_value(s.metadata["task"].clone()).unwrap();
-            assert_eq!(task.category, "repo_workflow", "{}", s.id);
-            assert!(task.setup.is_some(), "{} has no fixture setup", s.id);
+            assert!(
+                ["agent", "runtime"].contains(&task.mode.as_str()),
+                "{}",
+                s.id
+            );
+            assert!(
+                ["basic", "repo", "hard"].contains(&task.difficulty.as_str()),
+                "{}",
+                s.id
+            );
+            assert!(s.tags.contains(&task.mode) && s.tags.contains(&task.difficulty));
+            if task.difficulty != "basic" {
+                assert!(task.max_turns.is_some(), "{} needs a turn budget", s.id);
+            }
+            *by_difficulty.entry(task.difficulty).or_default() += 1;
         }
-    }
-
-    #[test]
-    fn hard_samples_load_with_categories() {
-        let samples = bash_samples(HARD_TASKS);
-        assert_eq!(samples.len(), 10);
-        let mut categories = std::collections::BTreeSet::new();
-        for s in &samples {
-            let task: EvalTask = serde_json::from_value(s.metadata["task"].clone()).unwrap();
-            assert!(task.id.starts_with("hard_"), "{}", s.id);
-            assert!(!expectations_from_sample(s).is_empty(), "{}", s.id);
-            categories.insert(task.category);
-        }
-        assert!(
-            categories.len() >= 8,
-            "hard set lost variety: {categories:?}"
-        );
+        assert_eq!(by_difficulty["basic"], 58);
+        assert_eq!(by_difficulty["repo"], 8);
+        assert!(by_difficulty["hard"] >= 10);
     }
 
     #[test]
@@ -591,8 +553,6 @@ mod tests {
         // Smoke: the eval builders produce valid Evals without panicking.
         let _ = bash_eval();
         let _ = smoke_eval();
-        let _ = repo_eval();
-        let _ = hard_eval();
         let _ = scripting_eval();
     }
 }
