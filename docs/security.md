@@ -59,6 +59,12 @@ execution work and deadline budget; file contents are admitted against aggregate
 input and live intermediate limits and scanned one file at a time. `-q` stops
 at the first match, before further traversal.
 
+Syntax-error reports are limited to 1 KiB during construction, including an
+explicit `[diagnostic truncated]` marker when text is omitted. This prevents
+multiline unexpected tokens and long `bash -c` shell names from multiplying
+host-memory usage before stderr capture. Ordinary short reports retain Bash's
+text, line numbers, and exit status.
+
 ## Threat model
 
 Prompt expansion (`${x@P}` and interactive prompts) shares the execution work,
