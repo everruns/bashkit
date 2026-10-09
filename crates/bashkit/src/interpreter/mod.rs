@@ -14147,22 +14147,31 @@ impl Interpreter {
     }
 
     fn lookup_regular_variable(&self, name: &str) -> Option<String> {
+        self.lookup_regular_variable_ref(name).map(str::to_owned)
+    }
+
+    fn lookup_regular_variable_ref(&self, name: &str) -> Option<&str> {
         if let Some(value) = self.scoped.variables.get(name) {
-            return Some(value.clone());
+            return Some(value.as_str());
         }
 
         // `$arr` on an array is `${arr[0]}` (indexed) or `${arr["0"]}` (assoc).
         if let Some(arr) = self.scoped.arrays.get(name) {
-            return arr.get(&0).cloned();
+            return arr.get(&0).map(String::as_str);
         }
         if let Some(arr) = self.scoped.assoc_arrays.get(name) {
-            return arr.get("0").cloned();
+            return arr.get("0").map(String::as_str);
         }
 
-        self.env.get(name).cloned()
+        self.env.get(name).map(String::as_str)
     }
 
     fn expand_variable(&self, name: &str) -> String {
+        self.expand_variable_cow(name).into_owned()
+    }
+
+    fn expand_variable_cow(&self, name: &str) -> std::borrow::Cow<'_, str> {
+        use std::borrow::Cow;
         // Resolve nameref before expansion
         let name = self.resolve_nameref(name);
 
@@ -14177,71 +14186,71 @@ impl Interpreter {
                 // Plain variable values only, so a reference cannot recurse.
                 if idx_str.contains(['$', '"', '\'', '\\']) {
                     let key = self.expand_key_text_with(idx_str, true);
-                    return arr.get(&key).cloned().unwrap_or_default();
+                    return Cow::Owned(arr.get(&key).cloned().unwrap_or_default());
                 }
-                return arr.get(idx_str).cloned().unwrap_or_default();
+                return Cow::Owned(arr.get(idx_str).cloned().unwrap_or_default());
             } else if let Some(arr) = self.scoped.arrays.get(arr_name) {
                 let idx: usize = self.evaluate_arithmetic(idx_str).try_into().unwrap_or(0);
-                return arr.get(&idx).cloned().unwrap_or_default();
+                return Cow::Owned(arr.get(&idx).cloned().unwrap_or_default());
             }
-            return String::new();
+            return Cow::Owned(String::new());
         }
 
         // Check for special parameters (POSIX required)
         match name {
-            "?" => return self.last_exit_code.to_string(),
+            "?" => return Cow::Owned(self.last_exit_code.to_string()),
             "#" => {
                 // Number of positional parameters
                 if let Some(frame) = self.call_stack.last() {
-                    return frame.positional.len().to_string();
+                    return Cow::Owned(frame.positional.len().to_string());
                 }
-                return "0".to_string();
+                return Cow::Owned("0".to_string());
             }
             "@" => {
                 // All positional parameters (space-separated as string)
                 if let Some(frame) = self.call_stack.last() {
-                    return frame.positional.join(" ");
+                    return Cow::Owned(frame.positional.join(" "));
                 }
-                return String::new();
+                return Cow::Owned(String::new());
             }
             "*" => {
                 // All positional parameters joined by IFS first char
                 if let Some(frame) = self.call_stack.last() {
                     let sep = self.get_ifs_separator();
-                    return frame.positional.join(&sep);
+                    return Cow::Owned(frame.positional.join(&sep));
                 }
-                return String::new();
+                return Cow::Owned(String::new());
             }
             // THREAT[TM-INF-014]: Return sandboxed PID, not real host PID.
             "$" => {
-                return "1".to_string();
+                return Cow::Owned("1".to_string());
             }
             // A subshell's own virtual pid (`$$` stays the shell's).
             "BASHPID" => {
-                return if self.bashpid == 0 {
+                return Cow::Owned(if self.bashpid == 0 {
                     "1".to_string()
                 } else {
                     self.bashpid.to_string()
-                };
+                });
             }
             "!" => {
                 // $! - PID of most recent background command
                 // In Bashkit's virtual environment, background jobs run synchronously
                 // Return empty string or last job ID placeholder
                 if let Some(last_bg_pid) = &self.last_bg_pid {
-                    return last_bg_pid.clone();
+                    return Cow::Owned(last_bg_pid.clone());
                 }
-                return String::new();
+                return Cow::Owned(String::new());
             }
             "-" => {
                 // $- - Current option flags, from the SHOPT_* variables.
                 let flags = builtins::dollar_dash(&self.scoped.variables);
                 if !self.interactive {
-                    return flags;
+                    return Cow::Owned(flags);
                 }
                 // `bash -i`: `i` follows `h` (`himBHc` order).
                 let at = flags.find('h').map_or(0, |i| i + 1);
-                return format!("{}i{}", &flags[..at], &flags[at..]);
+                return Cow::Owned(format!("{}i{}", &flags[..at], &flags[at..]));
             }
             "RANDOM" => {
                 // $RANDOM - LCG matching bash behavior, seeded per-instance.
@@ -14249,60 +14258,61 @@ impl Interpreter {
                 let prev = self.random_state.load(Ordering::Relaxed);
                 let next = prev.wrapping_mul(1103515245).wrapping_add(12345);
                 self.random_state.store(next, Ordering::Relaxed);
-                return ((next >> 16) & 0x7fff).to_string();
+                return Cow::Owned(((next >> 16) & 0x7fff).to_string());
             }
             "SRANDOM" => {
                 // $SRANDOM - 32 bits from the OS CSPRNG, not the LCG (bash 5.1).
                 let mut b = [0u8; 4];
                 if getrandom::fill(&mut b).is_err() {
-                    return String::new();
+                    return Cow::Owned(String::new());
                 }
-                return u32::from_le_bytes(b).to_string();
+                return Cow::Owned(u32::from_le_bytes(b).to_string());
             }
             // $LINENO - current line number from command span. A
             // `local LINENO` is an ordinary variable and `unset LINENO`
             // makes it ordinary (bash).
             "LINENO" if !self.lineno_unset && !self.is_local_anywhere("LINENO") => {
-                return self.current_line.to_string();
+                return Cow::Owned(self.current_line.to_string());
             }
             // `PWD=x` / `unset PWD` hold until the directory changes
             // (bash keeps PWD an ordinary variable that `cd` rewrites).
             "PWD" => {
                 if self.pwd_shadow.as_ref() == Some(&self.cwd) {
-                    return self
-                        .scoped
-                        .variables
-                        .get("PWD")
-                        .cloned()
-                        .unwrap_or_default();
+                    return Cow::Owned(
+                        self.scoped
+                            .variables
+                            .get("PWD")
+                            .cloned()
+                            .unwrap_or_default(),
+                    );
                 }
-                return self.cwd.to_string_lossy().to_string();
+                return Cow::Owned(self.cwd.to_string_lossy().to_string());
             }
             "OLDPWD" => {
                 if let Some(v) = self.scoped.variables.get("OLDPWD") {
-                    return v.clone();
+                    return Cow::Owned(v.clone());
                 }
-                return self.cwd.to_string_lossy().to_string();
+                return Cow::Owned(self.cwd.to_string_lossy().to_string());
             }
             "HOSTNAME" => {
                 if let Some(v) = self.scoped.variables.get("HOSTNAME") {
-                    return v.clone();
+                    return Cow::Owned(v.clone());
                 }
-                return "localhost".to_string();
+                return Cow::Owned("localhost".to_string());
             }
             "BASH_VERSION" => {
-                return COMPAT_BASH_VERSION.to_string();
+                return Cow::Owned(COMPAT_BASH_VERSION.to_string());
             }
             "BASH_SUBSHELL" => {
-                return self.bash_subshell.to_string();
+                return Cow::Owned(self.bash_subshell.to_string());
             }
             // The enabled `set -o` / `shopt` options, colon-separated.
-            "SHELLOPTS" => return builtins::shellopts_value(&self.scoped.variables),
-            "BASHOPTS" => return builtins::bashopts_value(&self.scoped.variables),
+            "SHELLOPTS" => return Cow::Owned(builtins::shellopts_value(&self.scoped.variables)),
+            "BASHOPTS" => return Cow::Owned(builtins::bashopts_value(&self.scoped.variables)),
             "SECONDS" => {
                 let (start, base) = self.seconds_base;
                 let elapsed = i64::try_from(start.elapsed().as_secs()).unwrap_or(i64::MAX);
-                return base.saturating_add(elapsed).to_string();
+                return Cow::Owned(base.saturating_add(elapsed).to_string());
             }
             _ => {}
         }
@@ -14313,21 +14323,23 @@ impl Interpreter {
                 // $0 is the script/shell name; functions and `source`
                 // do not change it.
                 if let Some(frame) = self.call_stack.iter().rev().find(|f| !f.keeps_arg0) {
-                    return frame.name.clone();
+                    return Cow::Owned(frame.name.clone());
                 }
-                return Self::DEFAULT_ARG0.to_string();
+                return Cow::Owned(Self::DEFAULT_ARG0.to_string());
             }
             // $1, $2, etc. (1-indexed)
             if let Some(frame) = self.call_stack.last()
                 && n > 0
                 && n <= frame.positional.len()
             {
-                return frame.positional[n - 1].clone();
+                return Cow::Owned(frame.positional[n - 1].clone());
             }
-            return String::new();
+            return Cow::Owned(String::new());
         }
 
-        self.lookup_regular_variable(name).unwrap_or_default()
+        self.lookup_regular_variable_ref(name)
+            .map(Cow::Borrowed)
+            .unwrap_or_default()
     }
 
     /// Check if a variable is set (for `set -u` / nounset).
