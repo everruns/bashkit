@@ -30,7 +30,9 @@ builtin errors uses the shared live-memory and work budget before allocation,
 including the cached text representation. A refused reservation aborts the
 request before capture, streaming, or redirection; the next host execution
 can reuse the shell with a fresh budget. Capture limits remain downstream so
-redirected diagnostics keep their full content when they fit the memory budget.
+command-local redirected diagnostics keep their full content when they fit
+the memory budget. An outer redirect on a child-shell invocation receives
+that child's already capped capture.
 
 Recursive `grep -R` skips directory symlinks that resolve to an ancestor and
 reports `warning: recursive directory loop` (suppressed by `-s`). Separate

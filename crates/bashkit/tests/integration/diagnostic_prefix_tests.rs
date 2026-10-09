@@ -1,9 +1,10 @@
 //! Shell diagnostics carry bash's non-interactive `$0: line N: ` prefix.
 //!
-//! Every expected string below was checked against real bash 5.2 running the
+//! Standard diagnostic expectations were checked against real bash 5.2 running the
 //! same text as `bash SCRIPT` (so `$0` is `SCRIPT`) or `bash -c '...'` (so
 //! `$0` is `bash`). Coreutils-style builtins are external programs in bash and
-//! keep their own `cat: ...` form; usage lines stay unprefixed.
+//! keep their own `cat: ...` form; usage lines stay unprefixed. Resource tests
+//! also cover the intentional diagnostic-name cap and shared execution budget.
 
 use bashkit::{Bash, ExecOptions};
 use std::sync::{Arc, Mutex};
@@ -319,9 +320,11 @@ async fn diagnostic_prefix_matches_bash_and_redirect_keeps_full_output() {
                 .max_stderr_bytes(64),
         )
         .build();
+    // Redirect the builtin before the child captures stderr. An outer
+    // redirect receives the child's already capped capture.
     let result = bash
         .exec(&format!(
-            "{script} 2>/tmp/diagnostics; cat /tmp/diagnostics"
+            "bash -c '{body} 2>/tmp/diagnostics' '{name}'; cat /tmp/diagnostics"
         ))
         .await
         .unwrap();

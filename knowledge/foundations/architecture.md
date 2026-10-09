@@ -128,8 +128,11 @@ without changing positional `$0`. Builtin diagnostic prefix rewriting uses
 `BudgetedBytes` and fallible `StreamData` text construction under the same
 request budget. Both storage leases survive through redirection and hooks;
 input scanning and every emitted line charge work and check the shared
-cancellation/deadline. Capture caps remain downstream: redirected diagnostics
-are not truncated merely because the captured-stderr limit is small.
+cancellation/deadline. Capture caps remain downstream of a command's own
+redirections, so command-local redirected diagnostics retain full content.
+A child shell captures uncaught stderr before an outer redirect on the
+`bash -c` invocation sees it; that outer redirect receives the child's capped
+capture. Put the redirect on the child command to bypass capture.
 
 ### `set -e` contexts
 
