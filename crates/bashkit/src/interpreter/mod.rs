@@ -419,6 +419,40 @@ pub(crate) struct ShellRef<'a> {
 // interpreter state; others (e.g. `bash`, `command`, `exec`, `getopts`) live
 // only here. Listing every name guarantees inventory completeness regardless of
 // map membership.
+/// Interpreter named by a script's `#!` line, with the arguments that go
+/// before the script path. `None` for no shebang or a shell (`bash`/`sh`),
+/// which run the content in-process.
+///
+/// Decision: `#!/path/NAME [ARG]` keeps Linux semantics (everything after
+/// the interpreter is one argument); `#!/path/env [-S] NAME ARGS...` splits,
+/// matching `env -S`. Only the basename picks the builtin, so the path in the
+/// shebang never needs to exist in the VFS. The caller dispatches only to a
+/// registered builtin that is a real program (not `cd`, `export`, ...).
+fn shebang_interpreter(content: &str) -> Option<(String, Vec<String>)> {
+    let line = content.strip_prefix("#!")?.lines().next()?.trim();
+    let (interp, rest) = match line.split_once(char::is_whitespace) {
+        Some((i, r)) => (i, r.trim()),
+        None => (line, ""),
+    };
+    let base = interp.rsplit('/').next()?;
+    let (cmd, argv): (&str, Vec<String>) = if base == "env" {
+        let mut words = rest.split_whitespace();
+        let mut cmd = words.next()?;
+        if cmd == "-S" {
+            cmd = words.next()?;
+        }
+        (cmd, words.map(str::to_string).collect())
+    } else if rest.is_empty() {
+        (base, Vec::new())
+    } else {
+        (base, vec![rest.to_string()])
+    };
+    if cmd.is_empty() || cmd.starts_with('-') || matches!(cmd, "bash" | "sh") {
+        return None;
+    }
+    Some((cmd.to_string(), argv))
+}
+
 // Builtins that exist only inside a shell (no `/usr/bin` program of that
 // name), so `env NAME` cannot run them.
 const ENV_SHELL_ONLY_BUILTINS: &[&str] = &[
@@ -10538,6 +10572,20 @@ impl Interpreter {
         stdin: Option<crate::StreamData>,
         redirects: &[Redirect],
     ) -> Result<ExecResult> {
+        // `#!/usr/bin/env python3` (or `#!/usr/bin/python3`, `#!/usr/bin/awk -f`)
+        // names a registered non-shell builtin: run it on the script path, as
+        // the kernel would exec the interpreter. Shell or unknown interpreters
+        // fall through to running the content as bash.
+        if let Some((cmd, mut argv)) = shebang_interpreter(content)
+            && self.builtins.contains_key(cmd.as_str())
+            && !ENV_SHELL_ONLY_BUILTINS.contains(&cmd.as_str())
+        {
+            argv.push(name.to_string());
+            argv.extend(args.iter().cloned());
+            return self
+                .execute_registered_builtin(&cmd, &argv, stdin.as_ref(), redirects)
+                .await;
+        }
         // Strip shebang line if present
         let script_text = if content.starts_with("#!") {
             content

@@ -62,7 +62,12 @@ functions → special commands → builtins → path execution → $PATH search 
 `CommandResolver` → "command not found"
 
 Scripts containing `/` are resolved against VFS. Commands without `/` are
-searched in `$PATH` directories. Shebang lines are stripped; content executed
+searched in `$PATH` directories. A shebang naming a registered non-shell
+builtin (`#!/usr/bin/env python3`, `#!/usr/bin/python3`, `#!/usr/bin/awk -f`)
+runs that builtin with the script path as its argument, as the kernel execs an
+interpreter (only the basename matters; `#!/path/NAME ARG` passes ARG as one
+argument, `env -S` splits). Otherwise (`bash`/`sh`, unknown interpreters,
+shell-only builtins, no shebang) the shebang is stripped and the content runs
 as bash. Exit 127: not found; Exit 126: not executable or is a directory.
 
 ### Command Hash Resource Ownership

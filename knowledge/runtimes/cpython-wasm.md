@@ -234,6 +234,14 @@ the dependency on stdlib http.client/email.
 
 - **No runtime opt-in env var**: unlike Monty, no native interpreter runs in
   the host, so `BashBuilder::cpython()` is the opt-in.
+- **Executable scripts**: a file with `#!/usr/bin/env python3` (or any
+  `#!.../python3`) run by path or `$PATH` runs CPython with the script path
+  as `argv[0]`, like `python3 FILE` (interpreter shebang dispatch, see
+  [Builtins](../foundations/builtins.md)). Before 2026-10-09 the content ran
+  as bash and failed with a parse error.
+- **sqlite3 module interop**: the guest SQLite has no WAL, so it can only
+  open databases the `sqlite` builtin wrote because the builtin persists
+  them in rollback-journal mode (see [SQLite Builtin](sqlite-builtin.md)).
 - **Only exported variables** reach `os.environ`, plus `PWD`; `__BASHKIT_*`
   names are filtered (the recursion limit is passed as one and removed by the
   guest).

@@ -58,6 +58,51 @@ async fn script_file_and_argv() {
 }
 
 #[tokio::test]
+async fn shebang_script_runs_as_python() {
+    // `chmod +x tool.py; ./tool.py` and PATH lookup run CPython, not bash.
+    let out = ok(
+        "mkdir -p /bin2; printf '#!/usr/bin/env python3\\nimport sys\\n\
+         print(sys.argv)\\nsys.exit(len(sys.argv))\\n' > /bin2/tool; chmod +x /bin2/tool; \
+         /bin2/tool a 'b c'; echo rc=$?; PATH=/bin2:$PATH tool x; echo rc=$?; \
+         printf '#!/usr/bin/python3\\nprint(input().upper())\\n' > /bin2/up; chmod +x /bin2/up; \
+         echo hi | /bin2/up",
+    )
+    .await;
+    assert_eq!(
+        out,
+        "['/bin2/tool', 'a', 'b c']\nrc=3\n['/bin2/tool', 'x']\nrc=2\nHI\n"
+    );
+}
+
+#[cfg(feature = "sqlite")]
+#[tokio::test]
+async fn sqlite_builtin_db_readable_by_python_sqlite3() {
+    // Turso writes WAL-mode headers; the guest's SQLite (no WAL) must still
+    // open a db the `sqlite` builtin wrote, and the builtin must read back
+    // what Python wrote.
+    let mut bash = Bash::builder()
+        .cpython()
+        .sqlite()
+        .env("BASHKIT_ALLOW_INPROCESS_SQLITE", "1")
+        .build();
+    let r = bash
+        .exec(
+            "sqlite3 /t.db \"create table u(id integer primary key, s text); \
+             insert into u(s) values ('x'),('y')\"; \
+             python3 -c \"import sqlite3; c = sqlite3.connect('/t.db'); \
+             print(c.execute('select s from u order by id').fetchall()); \
+             c.execute(\\\"insert into u(s) values ('z')\\\"); c.commit()\"; \
+             sqlite3 /t.db \"insert into u(s) values ('w')\"; \
+             sqlite3 /t.db 'select group_concat(s) from u'; \
+             python3 -c \"import sqlite3; print(sqlite3.connect('/t.db').execute('select count(*) from u').fetchone())\"",
+        )
+        .await
+        .unwrap();
+    assert_eq!(r.stderr, "");
+    assert_eq!(r.stdout, "[('x',), ('y',)]\nx,y,z,w\n(4,)\n");
+}
+
+#[tokio::test]
 async fn script_relative_to_cwd() {
     let out = ok("mkdir -p /proj; cd /proj; echo 'print(__file__)' > run.py; python3 run.py").await;
     assert_eq!(out, "run.py\n");

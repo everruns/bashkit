@@ -418,7 +418,9 @@ resource limits and VFS; `bash --version` returns Bashkit version, never real ba
 
 **Script Execution by Path** (TM-ESC-006): scripts run by absolute/relative path or `$PATH`
 search stay within the virtual interpreter, no OS subprocess. File must exist in VFS with
-execute permission (mode & 0o111); exit 127 missing / 126 non-executable; shebang stripped;
+execute permission (mode & 0o111); exit 127 missing / 126 non-executable; a shebang naming a
+registered non-shell builtin runs that builtin on the script path (same sandbox as typing
+`python3 script`), any other shebang is stripped;
 `$0`/`$1..N` via call frame; resource limits and VFS constraints apply.
 
 #### 2.3 Privilege Escalation
