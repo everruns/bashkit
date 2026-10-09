@@ -371,6 +371,8 @@ pub(crate) struct ShellRef<'a> {
     pub(crate) dir_stack: &'a mut Vec<String>,
     /// Command hash table (`hash`, `type`'s "is hashed").
     pub(crate) command_hash: &'a mut builtins::CommandHash,
+    /// Current budget, including direct interpreter and descendant execution.
+    pub(crate) execution_budget: &'a crate::limits::ExecutionBudget,
     /// `test -v NAME` answers, worked out by the interpreter (which knows
     /// arrays, namerefs and dynamic variables) for each operand that follows
     /// a `-v` in a `test`/`[` call. Empty for every other builtin.
@@ -9473,7 +9475,7 @@ impl Interpreter {
         {
             return Ok(());
         }
-        Arc::make_mut(&mut self.scoped.command_hash).hit(name, None)
+        Arc::make_mut(&mut self.scoped.command_hash).hit(name, None, &self.execution_budget)
     }
 
     /// The operands after `-v` in a `test`/`[` call that name set variables
@@ -9601,6 +9603,7 @@ impl Interpreter {
                     namerefs: Arc::make_mut(&mut self.scoped.namerefs),
                     dir_stack: Arc::make_mut(&mut self.scoped.dir_stack),
                     command_hash: Arc::make_mut(&mut self.scoped.command_hash),
+                    execution_budget: &self.execution_budget,
                     set_vars: &self.test_set_vars,
                     call_stack: &self.call_stack,
                     history: &self.history,
@@ -9675,6 +9678,7 @@ impl Interpreter {
                 namerefs: Arc::make_mut(&mut self.scoped.namerefs),
                 dir_stack: Arc::make_mut(&mut self.scoped.dir_stack),
                 command_hash: Arc::make_mut(&mut self.scoped.command_hash),
+                execution_budget: &self.execution_budget,
                 set_vars: &self.test_set_vars,
                 call_stack: &self.call_stack,
                 history: &self.history,
@@ -10296,7 +10300,11 @@ impl Interpreter {
                 .get("SHOPT_h")
                 .is_none_or(|v| v != "0")
         {
-            Arc::make_mut(&mut self.scoped.command_hash).hit(name, Some(&found))?;
+            Arc::make_mut(&mut self.scoped.command_hash).hit(
+                name,
+                Some(&found),
+                &self.execution_budget,
+            )?;
         }
         let resolved = self.resolve_path(&found);
         let raw = match self.read_executable(&found, &resolved).await {

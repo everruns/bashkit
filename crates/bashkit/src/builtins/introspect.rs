@@ -34,7 +34,6 @@ pub(crate) struct HashEntry {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct CommandHash {
     entries: Vec<HashEntry>,
-    budget: Option<ExecutionBudget>,
 }
 
 impl CommandHash {
@@ -52,7 +51,6 @@ impl CommandHash {
             );
         }
         self.entries = entries;
-        self.budget = Some(budget.clone());
         Ok(())
     }
 
@@ -81,14 +79,16 @@ impl CommandHash {
     }
 
     /// Remember `name` (replacing any entry) with `hits` uses.
-    pub(crate) fn insert(&mut self, name: &str, path: Option<&str>, hits: u32) -> Result<()> {
+    pub(crate) fn insert(
+        &mut self,
+        name: &str,
+        path: Option<&str>,
+        hits: u32,
+        budget: &ExecutionBudget,
+    ) -> Result<()> {
         // THREAT[TM-DOS-129]: admit every retained copy before allocating it,
         // including names, arbitrary `hash -p` paths, and entry metadata.
-        let lease = self
-            .budget
-            .as_ref()
-            .expect("command hash bound before execution")
-            .lease_bytes(Self::entry_bytes(name, path))?;
+        let lease = budget.lease_bytes(Self::entry_bytes(name, path))?;
         let entry = HashEntry {
             name: Arc::from(name),
             path: path.map(Arc::from),
@@ -104,12 +104,17 @@ impl CommandHash {
     }
 
     /// Count one use of `name`, adding it with `path` when new.
-    pub(crate) fn hit(&mut self, name: &str, path: Option<&str>) -> Result<()> {
+    pub(crate) fn hit(
+        &mut self,
+        name: &str,
+        path: Option<&str>,
+        budget: &ExecutionBudget,
+    ) -> Result<()> {
         if let Some(entry) = self.entries.iter_mut().find(|e| e.name.as_ref() == name) {
             entry.hits = entry.hits.saturating_add(1);
             Ok(())
         } else {
-            self.insert(name, path, 1)
+            self.insert(name, path, 1, budget)
         }
     }
 
@@ -313,7 +318,7 @@ impl Builtin for Type {
 
         if let Some(shell) = ctx.shell.as_mut() {
             for name in &hashed_hits {
-                shell.command_hash.hit(name, None)?;
+                shell.command_hash.hit(name, None, shell.execution_budget)?;
             }
         }
         let exit_code = if all_found { 0 } else { 1 };
@@ -476,7 +481,9 @@ impl Builtin for Hash {
         let many = names.len() > 1;
         for name in &names {
             if let Some(path) = &set_path {
-                shell.command_hash.insert(name, Some(path), 0)?;
+                shell
+                    .command_hash
+                    .insert(name, Some(path), 0, shell.execution_budget)?;
                 continue;
             }
             if delete {
@@ -519,7 +526,9 @@ impl Builtin for Hash {
                     } else {
                         Some(path)
                     };
-                    shell.command_hash.insert(name, path.as_deref(), 0)?;
+                    shell
+                        .command_hash
+                        .insert(name, path.as_deref(), 0, shell.execution_budget)?;
                 }
                 None if shell.has_builtin(name) => {}
                 None => {
@@ -553,8 +562,11 @@ mod tests {
     #[test]
     fn hash_entry_admission_is_atomic_and_counts_names() {
         let mut names = CommandHash::default();
-        names.bind_budget(&budget(128)).unwrap();
-        assert!(names.insert(&"n".repeat(256), None, 0).is_err());
+        assert!(
+            names
+                .insert(&"n".repeat(256), None, 0, &budget(128))
+                .is_err()
+        );
         assert!(names.is_empty());
 
         let path = "p".repeat(64);
@@ -562,9 +574,12 @@ mod tests {
         let bytes = CommandHash::entry_bytes(&name, Some(&path));
         let budget = budget(bytes);
         let mut table = CommandHash::default();
-        table.bind_budget(&budget).unwrap();
-        table.insert(&name, Some(&path), 0).unwrap();
-        assert!(table.insert(&name, Some("replacement"), 0).is_err());
+        table.insert(&name, Some(&path), 0, &budget).unwrap();
+        assert!(
+            table
+                .insert(&name, Some("replacement"), 0, &budget)
+                .is_err()
+        );
         assert_eq!(
             table.get(&name).unwrap().path.as_deref(),
             Some(path.as_str())
@@ -577,12 +592,13 @@ mod tests {
         let bytes = CommandHash::entry_bytes("name", Some("/path"));
         let budget = budget(bytes * (CommandHash::MAX_ENTRIES + 1));
         let mut table = CommandHash::default();
-        table.bind_budget(&budget).unwrap();
         for i in 0..1_024 {
-            table.insert(&format!("{i:04}"), Some("/path"), 0).unwrap();
+            table
+                .insert(&format!("{i:04}"), Some("/path"), 0, &budget)
+                .unwrap();
         }
         assert_eq!(table.entries().len(), CommandHash::MAX_ENTRIES);
-        table.insert("1023", Some("/path"), 0).unwrap();
+        table.insert("1023", Some("/path"), 0, &budget).unwrap();
         assert!(table.remove("1023"));
         // Exactly one slot was released, including its name and path.
         let slot = budget.lease_bytes(bytes * 2).unwrap();
@@ -597,8 +613,8 @@ mod tests {
     fn hash_budget_rebinding_preserves_state_on_failure() {
         let bytes = CommandHash::entry_bytes("n", Some("/path"));
         let mut table = CommandHash::default();
-        table.bind_budget(&budget(bytes)).unwrap();
-        table.insert("n", Some("/path"), 0).unwrap();
+        let initial = budget(bytes);
+        table.insert("n", Some("/path"), 0, &initial).unwrap();
         assert!(table.bind_budget(&budget(bytes - 1)).is_err());
         assert_eq!(table.get("n").unwrap().path.as_deref(), Some("/path"));
         let next = budget(bytes);
@@ -612,10 +628,9 @@ mod tests {
         let bytes = CommandHash::entry_bytes("n", Some("/path"));
         let budget = budget(bytes);
         let mut table = CommandHash::default();
-        table.bind_budget(&budget).unwrap();
-        table.insert("n", Some("/path"), 0).unwrap();
+        table.insert("n", Some("/path"), 0, &budget).unwrap();
         let mut fork = table.clone();
-        fork.hit("n", None).unwrap();
+        fork.hit("n", None, &budget).unwrap();
         assert_eq!(table.get("n").unwrap().hits, 0);
         assert_eq!(fork.get("n").unwrap().hits, 1);
         assert!(Arc::ptr_eq(
