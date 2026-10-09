@@ -244,7 +244,7 @@ impl ArithmeticBudget {
 struct ArithEval<'a, 'b> {
     interp: &'a Interpreter,
     overlay: HashMap<(String, Option<String>), String>,
-    pub(super) writes: Vec<ArithWrite>,
+    writes: Vec<ArithWrite>,
     noeval: u32,
     budget: &'b mut ArithmeticBudget,
 }
@@ -310,7 +310,7 @@ impl<'a, 'b> ArithEval<'a, 'b> {
     }
 
     /// Evaluate a full expression (already `$`-expanded). Empty -> 0.
-    pub(super) fn eval_str(&mut self, src: &str) -> ArithResult<i64> {
+    fn eval_str(&mut self, src: &str) -> ArithResult<i64> {
         self.enter()?;
         let result = self.eval_str_inner(src);
         self.leave();
@@ -999,14 +999,14 @@ impl Interpreter {
 impl ArithEval<'_, '_> {
     fn expand_variable(&mut self, name: &str) -> ArithResult<String> {
         self.enter()?;
-        let result = (|| {
+        let result = {
             let resolved = self.interp.resolve_nameref(name);
             if parse_embedded_array_ref(resolved).is_some() {
                 self.expand_name_or_array_element(resolved)
             } else {
                 Ok(self.interp.expand_variable(resolved))
             }
-        })();
+        };
         self.leave();
         result
     }
