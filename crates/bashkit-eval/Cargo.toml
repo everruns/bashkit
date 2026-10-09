@@ -45,7 +45,3 @@ rustls = { workspace = true, features = ["ring"] }
 regex.workspace = true
 async-trait.workspace = true
 chrono.workspace = true
-
-# tarpaulin builds with `--cfg tarpaulin`; agent.rs widens timeouts under it.
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin)'] }
