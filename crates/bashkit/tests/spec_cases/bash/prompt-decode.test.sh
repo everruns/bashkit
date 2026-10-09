@@ -1,6 +1,15 @@
 # Prompt string decoding: ${x@P} (bash decode_prompt_string), then the
 # promptvars expansion pass.
 
+### prompt_finite_nested_transformations
+p0='done'
+p1='${p0@P}'
+p2='${p1@P}'
+echo "${p2@P}|${p2@P}"
+### expect
+done|done
+### end
+
 ### prompt_literal_escapes
 PS1='\a\e\r\n'
 printf '%s' "${PS1@P}" | od -An -c | tr -s ' '

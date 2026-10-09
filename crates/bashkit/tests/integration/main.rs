@@ -119,6 +119,7 @@ pub mod parallel_sessions_tests;
 pub mod partial_parse_tests;
 pub mod pipeline_tests;
 pub mod process_substitution_fd_tests;
+pub mod prompt_resource_tests;
 pub mod proptest_differential;
 pub mod python_integration_tests;
 pub mod python_security_tests;

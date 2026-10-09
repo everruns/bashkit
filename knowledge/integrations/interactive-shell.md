@@ -163,6 +163,14 @@ global.
   (completion specs, binding changes). Gaps: limitations "Interactive
   builtins" row, L-HIST-001.
 
+Prompt decoding (`${x@P}` and PS1/PS2/PS4) also shares the request's work,
+aggregate-input, cancellation and deadline budget. Reparsed prompts count
+cumulative runtime depth, including substitutions and forked descendants:
+`min(max_ast_depth, 8)`, independent of each fresh parser's shallow AST.
+Exhaustion returns `MaxPromptDepth`; success and errors unwind depth, and the
+next host `exec()` resets it defensively. `promptvars` off preserves literal
+text but still charges decoding. See TM-DOS-133 and `prompt_resource_tests`.
+
 ### Testing
 
 Unit tests cover incomplete-input detection, PS1 expansion, prompt format,

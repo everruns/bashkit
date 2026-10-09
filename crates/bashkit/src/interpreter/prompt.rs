@@ -13,6 +13,9 @@
 //!   virtual `date` clock and `TZ`, `\l` is `tty` (bashkit has no terminal
 //!   device), `\s`/`\v`/`\V` follow `$0` and `$BASH_VERSION`.
 //! - `\[` and `\]` (readline's non-printing markers) expand to nothing.
+//! - Reparses share request fuel, input accounting and cancellation. Cumulative
+//!   prompt depth follows `max_ast_depth`, capped at eight for native stack safety;
+//!   fresh shallow parsers must never reset the recursive polling limit.
 
 use super::Interpreter;
 use crate::error::Result;
@@ -31,15 +34,27 @@ impl Interpreter {
     }
 
     async fn expand_prompt_work(&mut self, value: String) -> Result<String> {
-        let decoded = self.decode_prompt_escapes(&value);
+        // THREAT[TM-DOS-133]: Charge before decoding or recursively polling.
+        self.execution_budget
+            .consume_work(u64::try_from(value.len()).unwrap_or(u64::MAX).max(1))?;
+        self.execution_budget.consume_input(value.len())?;
+        self.counters.push_prompt(&self.limits)?;
+        let result = self.expand_prompt_body(&value).await;
+        self.counters.pop_prompt();
+        result
+    }
+
+    async fn expand_prompt_body(&mut self, value: &str) -> Result<String> {
+        let decoded = self.decode_prompt_escapes(value);
         if !crate::builtins::shopt_on(&self.scoped.variables, "promptvars") {
             return Ok(unquote_prompt_text(&decoded));
         }
-        let word = Parser::parse_heredoc_body_with_limits(
+        let word = Parser::parse_prompt_body(
             &decoded,
             self.limits.max_ast_depth,
             self.limits.max_parser_operations,
-        );
+            self.execution_budget.clone(),
+        )?;
         self.expand_word(&word).await
     }
 
@@ -217,6 +232,70 @@ fn unquote_prompt_text(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{Error, ExecutionLimits, InMemoryFs};
+    use std::sync::{Arc, atomic::Ordering};
+
+    #[tokio::test]
+    async fn prompt_checks_cancellation_before_decoding() {
+        let mut interpreter = Interpreter::new(Arc::new(InMemoryFs::new()));
+        interpreter.begin_execution_budget();
+        interpreter.cancelled.store(true, Ordering::Relaxed);
+        assert!(matches!(
+            interpreter.expand_prompt_string("literal".into()).await,
+            Err(Error::Cancelled)
+        ));
+        assert_eq!(interpreter.counters.prompt_depth, 0);
+    }
+
+    #[tokio::test]
+    async fn prompt_checks_shared_deadline_before_decoding() {
+        let mut interpreter = Interpreter::new(Arc::new(InMemoryFs::new()));
+        interpreter.set_limits(ExecutionLimits::new().timeout(std::time::Duration::ZERO));
+        interpreter.begin_execution_budget();
+        tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+        assert!(matches!(
+            interpreter.expand_prompt_string("literal".into()).await,
+            Err(Error::ResourceLimit(crate::LimitExceeded::Timeout(_)))
+        ));
+        assert_eq!(interpreter.counters.prompt_depth, 0);
+    }
+
+    #[tokio::test]
+    async fn prompt_error_unwinds_depth() {
+        let mut interpreter = Interpreter::new(Arc::new(InMemoryFs::new()));
+        interpreter.begin_execution_budget();
+        interpreter.set_env("x", "${x@P}");
+        assert!(matches!(
+            interpreter.expand_prompt_string("${x@P}".into()).await,
+            Err(Error::ResourceLimit(crate::LimitExceeded::MaxPromptDepth(
+                8
+            )))
+        ));
+        assert_eq!(interpreter.counters.prompt_depth, 0);
+        assert_eq!(
+            interpreter.expand_prompt_string("ok".into()).await.unwrap(),
+            "ok"
+        );
+    }
+
+    #[tokio::test]
+    async fn prompt_child_parser_cannot_hide_budget_exhaustion() {
+        let value = "$(echo $(echo $(echo ok)))";
+        let mut interpreter = Interpreter::new(Arc::new(InMemoryFs::new()));
+        interpreter.set_limits(ExecutionLimits::new().max_work_units(value.len() as u64 + 2));
+        interpreter.begin_execution_budget();
+        let result = interpreter.expand_prompt_string(value.into()).await;
+        assert!(
+            matches!(
+                result,
+                Err(Error::ResourceLimit(crate::LimitExceeded::ExecutionBudget(
+                    crate::ExecutionBudgetExceeded::WorkUnits { .. }
+                )))
+            ),
+            "{result:?}"
+        );
+        assert_eq!(interpreter.counters.prompt_depth, 0);
+    }
 
     #[test]
     fn quoting_round_trips_without_expansion() {

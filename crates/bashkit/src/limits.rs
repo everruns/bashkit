@@ -36,6 +36,10 @@ use crate::time_compat::Instant;
 // embedders request a higher logical recursion limit.
 const HARD_MAX_FUNCTION_DEPTH: usize = 16;
 
+// Prompt reparses poll recursively on the host stack, even with shallow ASTs.
+// THREAT[TM-DOS-133]: No configurable AST limit may remove this stack ceiling.
+const HARD_MAX_PROMPT_DEPTH: usize = 8;
+
 #[cfg(feature = "failpoints")]
 use fail::fail_point;
 
@@ -94,6 +98,7 @@ pub struct ExecutionLimits {
     /// Maximum AST nesting depth during parsing
     /// Default: 100
     /// Protects against stack overflow from deeply nested scripts (V4 in threat model).
+    /// Also bounds cumulative prompt expansion depth, with a hard ceiling of 8.
     pub max_ast_depth: usize,
 
     /// Maximum parser operations (fuel model for parsing)
@@ -475,6 +480,9 @@ pub struct ExecutionCounters {
     /// Current explicit subshell nesting depth.
     pub subshell_depth: usize,
 
+    /// Current prompt expansion nesting depth (including descendant shells).
+    pub prompt_depth: usize,
+
     // THREAT[TM-DOS-059]: Session-level cumulative counters.
     // These persist across exec() calls (never reset by reset_for_execution).
     /// Total commands across all exec() calls in this session.
@@ -497,11 +505,12 @@ impl ExecutionCounters {
         self.commands = 0;
         self.loop_iterations.clear();
         self.total_loop_iterations = 0;
-        // function_depth/subst_depth/subshell_depth should already be 0 between
+        // Recursion depths should already be 0 between
         // exec() calls, but reset defensively to avoid stuck state.
         self.function_depth = 0;
         self.subst_depth = 0;
         self.subshell_depth = 0;
+        self.prompt_depth = 0;
     }
 
     /// Increment command counter, returns error if limit exceeded
@@ -684,6 +693,20 @@ impl ExecutionCounters {
     pub fn pop_subshell(&mut self) {
         self.subshell_depth = self.subshell_depth.saturating_sub(1);
     }
+
+    /// Enter a prompt reparse under the AST policy and native stack ceiling.
+    pub(crate) fn push_prompt(&mut self, limits: &ExecutionLimits) -> Result<(), LimitExceeded> {
+        let max_depth = limits.max_ast_depth.min(HARD_MAX_PROMPT_DEPTH);
+        if self.prompt_depth >= max_depth {
+            return Err(LimitExceeded::MaxPromptDepth(max_depth));
+        }
+        self.prompt_depth += 1;
+        Ok(())
+    }
+
+    pub(crate) fn pop_prompt(&mut self) {
+        self.prompt_depth = self.prompt_depth.saturating_sub(1);
+    }
 }
 
 /// Error returned when a resource limit is exceeded
@@ -709,6 +732,9 @@ pub enum LimitExceeded {
 
     #[error("maximum subshell depth exceeded ({0})")]
     MaxSubshellDepth(usize),
+
+    #[error("maximum prompt expansion depth exceeded ({0})")]
+    MaxPromptDepth(usize),
 
     #[error("maximum file descriptors exceeded ({0})")]
     MaxFileDescriptors(usize),
@@ -1838,6 +1864,7 @@ mod tests {
         counters.function_depth = 3;
         counters.subst_depth = 2;
         counters.subshell_depth = 2;
+        counters.prompt_depth = 2;
 
         // Reset should restore all counters
         counters.reset_for_execution();
@@ -1847,6 +1874,7 @@ mod tests {
         assert_eq!(counters.function_depth, 0);
         assert_eq!(counters.subst_depth, 0);
         assert_eq!(counters.subshell_depth, 0);
+        assert_eq!(counters.prompt_depth, 0);
 
         // Should be able to tick commands again
         assert!(counters.tick_command(&limits).is_ok());

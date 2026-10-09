@@ -81,6 +81,7 @@ through configurable limits.
 | Array and arithmetic reports (TM-DOS-130) | `$((` nested in arithmetic, many `${a[-9]}` reads, huge `${!r}` target | 32 nesting levels; warnings capped at 64 KiB per command; indirect target echoed truncated to 256 chars | MITIGATED |
 | History files (TM-DOS-131) | `history -a` loops, huge `$HISTSIZE`, giant `$HISTFILE` | History list bounded by `max_history_entries`/`max_history_bytes`; `$HISTFILE` reads refused past `max_input_bytes`; VFS only | MITIGATED |
 | Completion specs and bindings (TM-DOS-132) | `complete`/`bind` in a loop | 1024 specs (64 KiB each) and 1024 binding changes (4 KiB each) per interpreter; never shared between instances | MITIGATED |
+| Prompt recursion (TM-DOS-133) | `x='${x@P}'; echo "${x@P}"`, mutual cycles or substitution-mediated cycles | Cumulative prompt depth capped at `min(max_ast_depth, 8)`; shared work, aggregate input, cancellation and deadline checks on each prompt; descendant shells inherit depth | MITIGATED |
 
 **Stack Overflow / Recursion:**
 

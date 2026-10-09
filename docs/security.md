@@ -55,6 +55,13 @@ at the first match, before further traversal.
 
 ## Threat model
 
+Prompt expansion (`${x@P}` and interactive prompts) shares the execution work,
+aggregate-input, cancellation and deadline budgets. Recursive prompt reparses
+stop at `min(max_ast_depth, 8)` with a resource-limit error, including cycles
+through command substitutions. Raising the AST limit cannot remove this host
+stack protection. Finite prompt expansion and `shopt -u promptvars` retain their
+normal behavior within these limits.
+
 Bashkit maintains a living threat model in [`knowledge/security/threat-model.md`](../knowledge/security/threat-model.md)
 with stable threat IDs across these categories:
 

@@ -294,6 +294,22 @@ impl<'a> Parser<'a> {
         parser.parse_word(heredoc_body_escapes(input))
     }
 
+    /// Prompt reparses must charge the same request budget as their caller.
+    pub(crate) fn parse_prompt_body(
+        input: &str,
+        max_depth: usize,
+        max_fuel: usize,
+        budget: crate::limits::ExecutionBudget,
+    ) -> Result<Word> {
+        let parser =
+            Parser::with_limits(input, max_depth, max_fuel).with_execution_budget(budget.clone());
+        let word = parser.parse_word(heredoc_body_escapes(input));
+        // Word parsing can turn child parse errors into literal text. A poisoned
+        // request must still fail closed rather than continue with that fallback.
+        budget.check()?;
+        Ok(word)
+    }
+
     /// Create a parse error with the current position. A grammar error
     /// (a construct that cannot continue with the current token) gets bash's
     /// wording instead of `message`; see [`Self::bash_grammar_error`].
