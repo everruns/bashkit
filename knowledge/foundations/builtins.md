@@ -48,6 +48,23 @@ Scripts containing `/` are resolved against VFS. Commands without `/` are
 searched in `$PATH` directories. Shebang lines are stripped; content executed
 as bash. Exit 127: not found; Exit 126: not executable or is a directory.
 
+### Command Hash Resource Ownership
+
+`CommandHash` owns leases from the current `ExecutionBudget` for every retained
+name, path and entry's metadata (TM-DOS-129). Admission happens before copying
+borrowed `hash -p` arguments or automatic PATH lookups. Every mutation takes the
+interpreter-owned budget explicitly, including direct interpreter calls and
+child execution; it does not depend on a prior host execution to initialize
+hidden hash state. Deletion, replacement,
+512-entry eviction, and `hash -r`/PATH assignment release the removed entries.
+Copy-on-write forks clone `Arc<str>` payloads and leases; hit counters remain
+local. Each host execution re-admits persistent entries to its fresh budget
+before parsing or dispatch, preventing cross-execution accumulation. Failed
+admission preserves prior entries and fails the request through the existing
+shared budget error; earlier successful insertions may remain, as with other
+sequential shell mutations. `memory_growth_security_tests` covers bounded
+amplification and recovery; `introspect` unit tests cover lifecycle and sharing.
+
 ### Builtin Trait
 
 `Builtin` trait (`execute(ctx)` + optional `execution_plan(ctx)`, default

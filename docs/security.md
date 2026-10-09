@@ -24,6 +24,13 @@ bytes of stack padding; output capacity is admitted against
 `ExecutionLimits::max_live_intermediate_bytes` before fallible allocation.
 This memory budget applies to pipelines and redirected output too.
 
+Command hash entries (`hash -p FILE NAME...` and automatic PATH lookups) charge
+each retained name and pathname against the same live-byte budget before copying.
+Entries that survive between executions count toward the next execution's budget.
+Deleting, replacing, evicting or clearing entries releases their storage; subshells
+share pathname storage while maintaining independent hash state. The table also
+retains its 512-entry ceiling.
+
 Recursive `grep -R` skips directory symlinks that resolve to an ancestor and
 reports `warning: recursive directory loop` (suppressed by `-s`). Separate
 aliases of a non-ancestor directory remain searchable. Traversal uses the shared

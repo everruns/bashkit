@@ -52,7 +52,8 @@ pub struct ExecutionLimits {
     /// Default: 100MB
     pub max_aggregate_input_bytes: u64,
 
-    /// Maximum bytes held by explicitly leased intermediate buffers at once.
+    /// Maximum bytes held by explicitly leased buffers and command hash entries at once.
+    /// Persistent hash entries count against each new execution budget.
     /// Default: 32MB
     pub max_live_intermediate_bytes: u64,
 
