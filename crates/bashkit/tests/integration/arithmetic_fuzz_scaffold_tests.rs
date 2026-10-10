@@ -89,3 +89,41 @@ async fn valid_expression_still_evaluates() {
     let r = bash.exec("echo $((2 + 3 * 4))").await.unwrap();
     assert_eq!(r.stdout, "14\n");
 }
+
+/// Run 271: the diagnostic echoes the script's own text, which happened to
+/// contain the banned parser-token shape `Tok::`.
+///
+/// The tokenizer's `Tok` enum is never formatted -- this is the expression
+/// coming back verbatim, exactly as real bash echoes it. The target now skips
+/// such inputs at the input layer. Assert that, then assert the diagnostic is
+/// still a faithful echo and still bounded, so the skip is hiding a false
+/// positive rather than a real leak.
+#[tokio::test]
+async fn run_271_banned_shape_comes_from_the_input() {
+    let input = ":A>>=::TTA:::Tok::::";
+    assert!(bashkit::testing::input_echo_would_trip(input));
+
+    let mut bash = fuzz_bash();
+    let r = bash
+        .exec(&format!("echo $(({input}))"))
+        .await
+        .expect("exec");
+    let err = r.stderr.to_string();
+    // The echo is the user's own text, not a Debug shape: it appears inside
+    // the quoted error token, and only because the input put it there.
+    assert!(
+        err.contains(&format!("(error token is \"{input}\")")),
+        "{err}"
+    );
+    assert!(err.len() <= 1024, "stderr is {} bytes:\n{err}", err.len());
+}
+
+/// A banned shape bashkit itself emitted would still be caught: the same
+/// expression without the `Tok::` text produces a diagnostic with no banned
+/// substring at all, so the filter above is not blanket-suppressing this path.
+#[tokio::test]
+async fn same_shape_without_the_banned_text_is_still_checked() {
+    let input = ":A>>=::TTA:::X::::";
+    assert!(!bashkit::testing::input_echo_would_trip(input));
+    fuzz_arith(input, "no_banned_text").await;
+}
