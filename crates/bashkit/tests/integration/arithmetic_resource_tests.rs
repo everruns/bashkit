@@ -54,9 +54,13 @@ async fn arithmetic_dollar_siblings_share_expansion_fuel() {
 #[tokio::test]
 async fn arithmetic_dollar_subscripts_match_bash_within_limits() {
     let expr = nested_array_expansion(4, false);
+    // NOTE: subscript stays portable on purpose: macOS ships bash 3.2 with no
+    // negative-index support while Linux CI has bash 5.x, so `${a[-1]}` would
+    // make this differential assertion environment-dependent. `i-0` still
+    // exercises arithmetic inside the subscript on every bash.
     let script = format!(
         "a=(0 7); n=123; i=1; echo $(({expr}+${{a[i]}})); \
-         echo $((${{#a[1]}}+${{n%3}})); echo $((${{a[-1]}}))"
+         echo $((${{#a[1]}}+${{n%3}})); echo $((${{a[i-0]}}))"
     );
     let expected = std::process::Command::new("bash")
         .args(["--noprofile", "--norc", "-c", &script])
