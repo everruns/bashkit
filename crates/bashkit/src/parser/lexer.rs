@@ -1596,6 +1596,20 @@ impl<'a> Lexer<'a> {
                 quoted_prefix_len == 0 || flags.quoted_ranges.iter().any(|(s, e)| s == e);
             let mut ranges = flags.quoted_ranges;
             ranges.push((0, quoted_prefix_len));
+            if flags.has_unquoted_expansion
+                && ranges.iter().any(|&(start, end)| {
+                    let quoted = &content[start..end];
+                    quoted.contains(['*', '?', '[', ']', '{', '}', ',', '(', ')', '|', '\\'])
+                        || Self::has_unescaped_dollar(quoted)
+                })
+            {
+                // Preserve quoted glob text as well as IFS boundaries; an
+                // empty unquoted substitution must not activate quoted `*`.
+                ranges.sort_unstable_by_key(|&(start, _)| start);
+                return Some(Token::QuotedGlobWord(
+                    Self::escape_glob_metas_in_quoted_ranges(&content, &ranges),
+                ));
+            }
             Self::apply_quote_markers(&mut content, ranges);
             if !flags.has_unquoted_expansion && !flags.has_unquoted_glob && !has_empty_quoted {
                 // Nothing in it splits or globs: a quoted word whose
@@ -1694,6 +1708,14 @@ impl<'a> Lexer<'a> {
                             flags.error = Some(e);
                             break;
                         }
+                    }
+                }
+                Some('`') => {
+                    // `"a"`cmd``: the backquoted form of `"a"$(cmd)`.
+                    flags.has_unquoted_expansion = true;
+                    if let Err(e) = self.read_backtick_into(content) {
+                        flags.error = Some(e);
+                        break;
                     }
                 }
                 Some('\\') => {
@@ -2431,6 +2453,18 @@ impl<'a> Lexer<'a> {
             {
                 let mut ranges = flags.quoted_ranges;
                 ranges.push((0, quoted_prefix_len));
+                if flags.has_unquoted_expansion
+                    && ranges.iter().any(|&(start, end)| {
+                        let quoted = &content[start..end];
+                        quoted.contains(['*', '?', '[', ']', '{', '}', ',', '(', ')', '|', '\\'])
+                            || Self::has_unescaped_dollar(quoted)
+                    })
+                {
+                    ranges.sort_unstable_by_key(|&(start, _)| start);
+                    return Some(Token::QuotedGlobWord(
+                        Self::escape_glob_metas_in_quoted_ranges(&content, &ranges),
+                    ));
+                }
                 // Build marker-delimited quoted spans in one pass so hostile
                 // many-continuation words cannot trigger quadratic insertion work.
                 Self::apply_quote_markers(&mut content, ranges);
@@ -2471,20 +2505,12 @@ impl<'a> Lexer<'a> {
         if quoted_ranges.is_empty() {
             return s.to_string();
         }
-        // Collect chars with their byte positions for range-boundary checks.
-        let char_vec: Vec<(usize, char)> = {
-            let mut pos = 0usize;
-            s.chars()
-                .map(|c| {
-                    let p = pos;
-                    pos += c.len_utf8();
-                    (p, c)
-                })
-                .collect()
-        };
-
-        let mut result = String::with_capacity(s.len() + 8);
-        let mut range_idx = 0usize;
+        // Reuse the one-pass marker builder: adjacent spans still end variable
+        // names, and empty quoted spans retain a field without quadratic work.
+        let mut marked = s.to_string();
+        Self::apply_quote_markers(&mut marked, quoted_ranges.to_vec());
+        let char_vec: Vec<char> = marked.chars().collect();
+        let mut result = String::with_capacity(marked.len() + 8);
         // Stack of opening delimiters ('{'  or  '(') for active ${ } / $( ) constructs.
         // While non-empty we are inside an expansion and must NOT escape anything,
         // because the content is still unexpanded at parse time and characters like
@@ -2495,25 +2521,30 @@ impl<'a> Lexer<'a> {
         let mut marked_quoted = false;
 
         while i < n {
-            let (byte_pos, ch) = char_vec[i];
-            let ch_end = byte_pos + ch.len_utf8();
-
-            // Advance past quoted-range entries that ended before this char.
-            while range_idx < quoted_ranges.len() && quoted_ranges[range_idx].1 <= byte_pos {
-                range_idx += 1;
-            }
-            let in_quoted = range_idx < quoted_ranges.len()
-                && byte_pos >= quoted_ranges[range_idx].0
-                && ch_end <= quoted_ranges[range_idx].1;
-            if in_quoted != marked_quoted {
-                result.push(if in_quoted { '\u{1e}' } else { '\u{1f}' });
-                marked_quoted = in_quoted;
+            let ch = char_vec[i];
+            // Sentinel-escaped marker bytes are literal data, not boundaries.
+            if ch == '\x00'
+                && let Some(&next) = char_vec.get(i + 1)
+                && matches!(next, QUOTED_SEGMENT_START | QUOTED_SEGMENT_END)
+            {
+                result.push(ch);
+                result.push(next);
+                i += 2;
+                continue;
             }
 
+            if matches!(ch, QUOTED_SEGMENT_START | QUOTED_SEGMENT_END) {
+                marked_quoted = ch == QUOTED_SEGMENT_START;
+                result.push(ch);
+                i += 1;
+                continue;
+            }
+            let in_quoted = marked_quoted;
             if in_quoted {
-                if expansion_stack.is_empty() && ch == '$' {
+                if expansion_stack.is_empty() && ch == '$' && (i == 0 || char_vec[i - 1] != '\x00')
+                {
                     // Peek at next char to detect ${ or $(
-                    if let Some(&(_, next)) = char_vec.get(i + 1)
+                    if let Some(&next) = char_vec.get(i + 1)
                         && (next == '{' || next == '(')
                     {
                         expansion_stack.push(next);
@@ -2524,9 +2555,9 @@ impl<'a> Lexer<'a> {
                     }
                     // `"$*"*`, `"$@"x*`, `"$?"`: a special parameter's
                     // name is not a glob character.
-                    if let Some(&(_, next)) = char_vec.get(i + 1)
+                    if let Some(&next) = char_vec.get(i + 1)
                         && matches!(next, '*' | '@' | '?' | '!' | '-')
-                        && (i == 0 || char_vec[i - 1].1 != '\x00')
+                        && (i == 0 || char_vec[i - 1] != '\x00')
                     {
                         result.push(ch);
                         result.push(next);
@@ -2576,9 +2607,6 @@ impl<'a> Lexer<'a> {
 
             result.push(ch);
             i += 1;
-        }
-        if marked_quoted {
-            result.push('\u{1f}');
         }
         result
     }

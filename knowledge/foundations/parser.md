@@ -62,6 +62,13 @@ globbing uses the escaped text and drops the escapes when nothing matches;
 `expand_word` returns unescaped text for non-glob uses; assignments and
 script analysis unescape literal parts; `case` and `[[ == ]]` build patterns
 with `expand_pattern_word`, which escapes fully quoted words.
+A quote-start word followed by an unquoted expansion also uses this encoding
+when quoted text contains glob syntax or a quoted expansion could produce it:
+`"$prefix"$empty` and `'literal*'$(printf '')` keep the quoted glob literal.
+Expansion escaping and its byte-budget charge use each part's quote flag;
+unquoted expansion output still participates in glob and pattern matching.
+The shared marker builder preserves empty quoted spans and ends adjacent
+variable names; sentinel-escaped marker bytes remain literal data.
 
 **Quoted segments of mixed words.** A word that starts quoted and continues
 with an unquoted expansion (`'a b'$x`, `"$y"$x`) also wraps its quoted spans
@@ -239,6 +246,11 @@ after a heredoc on the same line lex the same as anywhere else.
 backquotes to `$(...)`; a body that does not parse becomes
 `$(eval 'body')`, which reports the syntax error at run time and never runs
 anything else. `$(...)` keeps rejecting the script at parse time.
+Quote continuations use the same backquote reader as ordinary words, so
+`'x'` followed immediately by a backquoted command is one mixed word.
+Unquoted substitution output still splits; static analysis reports nested
+commands in substitution context, dispatch hooks still gate them, and nested
+execution shares the parent's budget. Missing closing backquotes fail parsing.
 
 **Process substitution end.** `<(...)`/`>(...)` bodies end where the shared
 `subst_scan` scanner closes them (`Lexer::skip_subst_body`), so
