@@ -2522,10 +2522,10 @@ impl<'a> Lexer<'a> {
 
         while i < n {
             let ch = char_vec[i];
-            // Sentinel-escaped marker bytes are literal data, not boundaries.
+            // Sentinel pairs are indivisible; escaped NUL/marker bytes stay data.
             if ch == '\x00'
                 && let Some(&next) = char_vec.get(i + 1)
-                && matches!(next, QUOTED_SEGMENT_START | QUOTED_SEGMENT_END)
+                && matches!(next, '\x00' | QUOTED_SEGMENT_START | QUOTED_SEGMENT_END)
             {
                 result.push(ch);
                 result.push(next);
@@ -3161,6 +3161,18 @@ impl<'a> Lexer<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn quoted_glob_markers_do_not_split_sentinel_pairs() {
+        assert_eq!(
+            Lexer::escape_glob_metas_in_quoted_ranges("*\x00\x00*", &[(0, 3)]),
+            "\x1e\\*\x00\x00\x1f*"
+        );
+        assert_eq!(
+            Lexer::escape_glob_metas_in_quoted_ranges("*\x00\x1fx", &[(0, 3)]),
+            "\x1e\\*\x00\x1f\x1fx"
+        );
+    }
 
     #[test]
     fn test_simple_words() {
