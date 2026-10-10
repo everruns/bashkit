@@ -92,6 +92,18 @@ process-local scheduling, not a serializable continuation; snapshots still
 capture state only between executions. See [Builtin Commands](builtins.md) and
 [Snapshot History](snapshot-history.md).
 
+### Arithmetic expansion budget
+
+Arithmetic's synchronous evaluator owns one depth/fuel budget per top-level
+expression. Dollar expansion checks and charges original text before
+recursing into array subscripts or nested `$((...))`. Read-only child
+evaluators borrow that budget while discarding writes; siblings cannot
+restart fuel. Nameref and associative-key lookups stay in the same budget.
+Recursive bare-variable evaluation and syntax parsing share the depth
+counter. Expansion errors propagate to the arithmetic boundary; later host
+executions receive fresh state. Regression and Bash differential coverage:
+`crates/bashkit/tests/integration/arithmetic_resource_tests.rs` (TM-DOS-026).
+
 ### Shared execution budget
 
 Each `exec_with_options` creates exactly one `ExecutionBudget` before hooks or
