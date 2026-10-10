@@ -25,13 +25,8 @@ fn bashkit_smoke() -> Eval {
 }
 
 #[eval]
-fn bashkit_repo() -> Eval {
-    mira_study::repo_eval()
-}
-
-#[eval]
-fn bashkit_hard() -> Eval {
-    mira_study::hard_eval()
+fn bashkit_generate() -> Eval {
+    mira_study::generate_eval()
 }
 
 #[eval]

@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "config_env_template",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Read /config/template.env which has lines like 'KEY=${VALUE:-default}'. For each line, check if the key exists in /config/overrides.txt (format: KEY=value). If it does, use the override value; otherwise use the default from the template. Write the final KEY=value pairs to /app/.env and print the result."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Done. The script parsed the template's `${KEY:-default}` syntax, applied overrides from `/config/overrides.txt` where keys matched, and wrote the result to `/app/.env`:\n\n```\nDB_HOST=db.prod.internal      ← override\nDB_PORT=5432                  ← default\nDB_NAME=myapp                 ← default\nREDIS_URL=redis://localhost:6379  ← default\nLOG_LEVEL=warn                ← override\n```\n\n**How it works:**\n1. **Overrides** are loaded from `/config/overrides.txt` into a dict (skipping blanks/comments, splitting on first `=`).\n2. **Template lines** are parsed with the regex `^KEY=\\$\\{...:-default\\}$` to extract the key and its default value.\n3. Each key's final value is the override if present, otherwise the template default.\n4. Results are written to `/app/.env` and printed.",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "echo \"=== /config/template.env ===\"; cat /config/template.env; echo \"=== /config/overrides.txt ===\"; cat /config/overrides.txt",
+      "cat > /tmp/gen_env.py << 'EOF'\nimport re, os\n\noverrides = {}\nwith open('/config/overrides.txt') as f:\n    for line in f:\n        line = line.strip()\n        if line and not line.startswith('#') and '=' in line:\n            k, v = line.split('=', 1)\n            overrides[k.strip()] = v.strip()\n\nresult = []\nwith open('/config/template.env') as f:\n    for line in f:\n        line = line.strip()\n        if not line or line.startswith('#'):\n            continue\n        m = re.match(r'^([A-Za-z_][A-Za-z0-9_]*)=\\$\\{[^:}]*:-(.*)\\}$', line)\n        if m:\n            key, default = m.group(1), m.group(2)\n        elif '=' in line:\n            key, default = line.split('=', 1)\n        else:\n            continue\n        value = overrides.get(key, default)\n        result.append(f'{key}={value}')\n\nos.makedirs('/app', exist_ok=True)\nwith open('/app/.env', 'w') as f:\n    f.write('\\n'.join(result) + '\\n')\n\nprint('\\n'.join(result))\nEOF\npython3 /tmp/gen_env.py",
+      "echo \"=== /app/.env ===\"; cat /app/.env"
+    ],
+    "usage": {
+      "input_tokens": 3736,
+      "output_tokens": 796,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 7952
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "echo \"=== /config/template.env ===\"; cat /config/template.env; echo \"=== /config/overrides.txt ===\"; cat /config/overrides.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== /config/template.env ===\nDB_HOST=${DB_HOST:-localhost}\nDB_PORT=${DB_PORT:-5432}\nDB_NAME=${DB_NAME:-myapp}\nREDIS_URL=${REDIS_URL:-redis://localhost:6379}\nLOG_LEVEL=${LOG_LEVEL:-info}\n=== /config/overrides.txt ===\nDB_HOST=db.prod.internal\nLOG_LEVEL=warn\n"
+          },
+          {
+            "commands": "cat > /tmp/gen_env.py << 'EOF'\nimport re, os\n\noverrides = {}\nwith open('/config/overrides.txt') as f:\n    for line in f:\n        line = line.strip()\n        if line and not line.startswith('#') and '=' in line:\n            k, v = line.split('=', 1)\n            overrides[k.strip()] = v.strip()\n\nresult = []\nwith open('/config/template.env') as f:\n    for line in f:\n        line = line.strip()\n        if not line or line.startswith('#'):\n            continue\n        m = re.match(r'^([A-Za-z_][A-Za-z0-9_]*)=\\$\\{[^:}]*:-(.*)\\}$', line)\n        if m:\n            key, default = m.group(1), m.group(2)\n        elif '=' in line:\n            key, default = line.split('=', 1)\n        else:\n            continue\n        value = overrides.get(key, default)\n        result.append(f'{key}={value}')\n\nos.makedirs('/app', exist_ok=True)\nwith open('/app/.env', 'w') as f:\n    f.write('\\n'.join(result) + '\\n')\n\nprint('\\n'.join(result))\nEOF\npython3 /tmp/gen_env.py",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "DB_HOST=db.prod.internal\nDB_PORT=5432\nDB_NAME=myapp\nREDIS_URL=redis://localhost:6379\nLOG_LEVEL=warn\n"
+          },
+          {
+            "commands": "echo \"=== /app/.env ===\"; cat /app/.env",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== /app/.env ===\nDB_HOST=db.prod.internal\nDB_PORT=5432\nDB_NAME=myapp\nREDIS_URL=redis://localhost:6379\nLOG_LEVEL=warn\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

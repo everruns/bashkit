@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "data_json_query",
+  "target": "anthropic/claude-opus-5-5",
+  "input": [
+    "Read /data/inventory.json and find all items where the quantity field is less than 10. Print only their names, one per line."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "These are the items with a quantity under 10:\n\nscrews\nwashers\nnails",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat /data/inventory.json | head -c 2000",
+      "python3 -c \"\nimport json\nfor i in json.load(open('/data/inventory.json')):\n    q=i.get('quantity')\n    if isinstance(q,(int,float)) and q<10: print(i['name'])\n\""
+    ],
+    "usage": {
+      "input_tokens": 3397,
+      "output_tokens": 204,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 3450
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /data/inventory.json | head -c 2000",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[{\"name\":\"screws\",\"quantity\":5},{\"name\":\"bolts\",\"quantity\":50},{\"name\":\"washers\",\"quantity\":3},{\"name\":\"nuts\",\"quantity\":100},{\"name\":\"nails\",\"quantity\":8}]"
+          },
+          {
+            "commands": "python3 -c \"\nimport json\nfor i in json.load(open('/data/inventory.json')):\n    q=i.get('quantity')\n    if isinstance(q,(int,float)) and q<10: print(i['name'])\n\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "screws\nwashers\nnails\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

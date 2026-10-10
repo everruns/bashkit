@@ -1,0 +1,78 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "hard_toposort",
+  "target": "anthropic/claude-opus-5-5",
+  "input": [
+    "In /home/eval/pkgs there are dependency lists deps.txt, deps-big.txt and deps-cycle.txt. Each non-comment line has the form `package: dep1 dep2 ...` (deps are separated by spaces or tabs; there may be extra whitespace around names and the colon). `#` starts a comment that runs to the end of the line, blank lines are ignored, a package may appear on several lines (its deps accumulate), and a name that only ever appears as a dependency is still a package.\n\nWrite an executable script /home/eval/pkgs/bin/order (bash; awk/sort/etc. are fine, no python) that takes one such file and prints a build order, one package per line, where every package comes after all of its dependencies. The order must be deterministic: repeatedly emit the smallest package (byte order) whose dependencies have all been emitted. If some packages can never be emitted because of a cycle, print the order for the ones that can, then print `cycle: ` followed by all remaining packages sorted (byte order) and separated by single spaces to stderr, and exit 1; otherwise exit 0.\n\nThen from /home/eval/pkgs run it on each file and save: stdout of deps.txt to build/order.txt, stdout of deps-big.txt to build/big-order.txt, stdout of deps-cycle.txt to build/cycle-order.txt, its stderr to build/cycle.txt and its exit status (just the number) to build/cycle.rc."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I wrote `/home/eval/pkgs/bin/order`, ran it on all three files and saved the outputs in `build/`. Each result matched a separate checker I wrote in Python.\n\n**Results**\n- **`build/order.txt`** (deps.txt): docs, log, mock, net, db, http, web, app, cli, test. `mock` shows up even though it only ever appears as a dependency.\n- **`build/big-order.txt`** (deps-big.txt): 30 packages, starting cli-1, math, regex, time-2, zlib-9, json-8, log, … and ending … io-8, http, xml, yaml-1.\n- **`build/cycle-order.txt`** (deps-cycle.txt): e, f.\n- **`build/cycle.txt`**: `cycle: a b c d g`. The loop itself is a → b → c → a; d and g are listed because they depend on it.\n- **`build/cycle.rc`**: `1`.\n\n**How the script works**\n- It's a bash wrapper around one awk program. It reads the file once: it strips comments, ignores blank lines, allows spaces or tabs around names and the colon, adds up deps across repeated lines, and ignores duplicate deps.\n- Each step it emits the smallest package (byte order) whose deps have all been emitted. If packages are left that can't be emitted, it prints `cycle: …` to stderr with them sorted, and exits 1.\n- After the first run I fixed one bug: awk compares names that look like numbers as numbers (so `9` would sort before `10`). The script now always compares names as text, which gives true byte order (`10` before `9`). This didn't change any of the saved outputs, and I tested it on an extra file with names like these.\n- It also exits 2 with a usage message if it isn't given exactly one readable file.",
+    "iterations": 5,
+    "tool_calls_count": 4,
+    "tool_calls": [
+      "cd /home/eval/pkgs; ls -la; ls bin build 2>&1; wc -l *.txt; head -30 deps.txt; cat -A deps-cycle.txt | head -40; which awk sort tsort",
+      "cd /home/eval/pkgs; cat -A deps-big.txt",
+      "cd /home/eval/pkgs; mkdir -p bin build; cat > bin/order <<'EOF'\n#!/bin/bash\n# Deterministic topological build order (smallest ready package first, byte order).\nexport LC_ALL=C\nif [ $# -ne 1 ] || [ ! -r \"$1\" ]; then\n  echo \"usage: order FILE\" >&2; exit 2\nfi\nawk '\nfunction addpkg(p) { if (!(p in seen)) { seen[p]=1; names[++n]=p } }\n{\n  sub(/\\r$/, \"\")\n  sub(/#.*/, \"\")\n  if ($0 ~ /^[ \\t]*$/) next\n  c = index($0, \":\")\n  if (c == 0) { m = split($0, t, /[ \\t]+/); for (i=1;i<=m;i++) if (t[i]!=\"\") addpkg(t[i]); next }\n  lhs = substr($0, 1, c-1); rhs = substr($0, c+1)\n  gsub(/^[ \\t]+|[ \\t]+$/, \"\", lhs)\n  if (lhs != \"\") addpkg(lhs)\n  m = split(rhs, t, /[ \\t]+/)\n  for (i=1;i<=m;i++) {\n    d = t[i]; if (d == \"\") continue\n    addpkg(d)\n    if (lhs == \"\") continue\n    if (!((lhs SUBSEP d) in edge)) {\n      edge[lhs SUBSEP d]=1\n      indeg[lhs]++\n      nr[d]++; rdep[d, nr[d]] = lhs\n    }\n  }\n}\nEND {\n  # ready set as a plain array; pick min each time\n  for (i=1;i<=n;i++) { p=names[i]; if (!(indeg[p]+0)) ready[p]=1 }\n  emitted = 0\n  while (1) {\n    best = \"\"; found = 0\n    for (p in ready) if (!found || p < best) { best = p; found = 1 }\n    if (!found) break\n    delete ready[best]; done[best]=1; emitted++\n    print best\n    for (j=1;j<=nr[best]+0;j++) { q = rdep[best, j]; if (--indeg[q] == 0) ready[q]=1 }\n  }\n  if (emitted < n) {\n    k = 0\n    for (i=1;i<=n;i++) if (!(names[i] in done)) rem[++k] = names[i]\n    # insertion sort (byte order under LC_ALL=C)\n    for (i=2;i<=k;i++) { v=rem[i]; j=i-1; while (j>0 && rem[j] > v) { rem[j+1]=rem[j]; j-- } rem[j+1]=v }\n    s = \"cycle:\"\n    for (i=1;i<=k;i++) s = s \" \" rem[i]\n    print s > \"/dev/stderr\"\n    exit 1\n  }\n}' \"$1\"\nEOF\nchmod +x bin/order\nbin/order deps.txt > build/order.txt\nbin/order deps-big.txt > build/big-order.txt\nbin/order deps-cycle.txt > build/cycle-order.txt 2> build/cycle.txt; echo $? > build/cycle.rc\nfor f in build/*; do echo \"== $f\"; cat $f; done",
+      "cd /home/eval/pkgs; sed -i 's/if (!found || p < best)/if (!found || (p \"\") < (best \"\"))/; s/while (j>0 \\&\\& rem\\[j\\] > v)/while (j>0 \\&\\& (rem[j] \"\") > (v \"\"))/' bin/order; grep -n '\"\"' bin/order\nprintf '10: 9\\n9:\\n2:\\n 10x :\\tB a#c\\nzz: yy\\nyy: zz\\n' > /tmp/t.txt; bin/order /tmp/t.txt; echo rc=$?\nbin/order deps.txt | cmp - build/order.txt && bin/order deps-big.txt | cmp - build/big-order.txt && echo same\ncat > /tmp/v.py <<'EOF'\nimport sys,heapq\ndeps={}\nfor l in open(sys.argv[1],encoding='latin1'):\n    l=l.split('#')[0]\n    if not l.strip(): continue\n    a,b=l.split(':',1); a=a.strip()\n    deps.setdefault(a,set())\n    for d in b.split(): deps[a].add(d); deps.setdefault(d,set())\nout=[];done=set()\nwhile True:\n    r=sorted(p for p in deps if p not in done and deps[p]<=done)\n    if not r: break\n    out.append(r[0]);done.add(r[0])\nprint(\"\\n\".join(out))\nrem=sorted(set(deps)-done)\nif rem: print(\"cycle: \"+\" \".join(rem),file=sys.stderr)\nEOF\nfor f in deps deps-big deps-cycle /tmp/t; do python3 /tmp/v.py ${f%.txt}.txt 2>&1 | diff - <(bin/order ${f%.txt}.txt 2>&1) && echo \"$f ok\"; done"
+    ],
+    "usage": {
+      "input_tokens": 14023,
+      "output_tokens": 3490,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 38470
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 4.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 4.0,
+      "turns": 5.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cd /home/eval/pkgs; ls -la; ls bin build 2>&1; wc -l *.txt; head -30 deps.txt; cat -A deps-cycle.txt | head -40; which awk sort tsort",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--      551 2026-10-09 22:16 deps-big.txt\n-rw-r--r--       41 2026-10-09 22:16 deps-cycle.txt\n-rw-r--r--      217 2026-10-09 22:16 deps.txt\nls: cannot access 'bin': No such file or directory\n 37 deps-big.txt\n  7 deps-cycle.txt\n 13 deps.txt\n 57 total\n# package: dependencies (each must be built before the package)\napp: web  db   log\nweb: http log\nhttp: net\ndb: net log\nlog:\ncli: app\nnet:\ndocs:\n\n# repeated entries are allowed; deps accumulate\nweb: log\ntest: app mock\na: b$\nb: c$\nc: a$\nd: a$\ne:$\nf: e$\n  g :  f   d$\n/usr/bin/awk\n/usr/bin/sort\n/usr/bin/tsort\n"
+          },
+          {
+            "commands": "cd /home/eval/pkgs; cat -A deps-big.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "log:^Izlib-9$\nutil-0:  tls  net-9  math$\nyaml-1: tls term$\nsig-9: csv$\nnet-9: log$\ncore:  zlib-9  log$\n$\nsig-9:^Icsv^Inet-9$\ncli-1:$\nfmt: json-8$\nmock:^Ibench$\nbench: net-9$\ncsv:  log$\ncolor:^Icsv$\nfmt: json-8 bench zlib-9$\nproc:  docs  json-8  util-0$\ncache-3: core auth$\n# --$\ntest-0: csv math$\nfs:  zlib-9  core$\nuuid-2: core$\nzlib-9:$\nauth:  zlib-9  log  math$\ntime-2:  math$\njson-8:  zlib-9$\nregex:$\ndocs:^Icore^Iutil-0$\ntls:^Icore^Imath^Ilog$\nhttp: io-8$\nxml:^Ifmt^Imock$\nio-8: csv$\nio-8: csv test-0 uuid-2$\nnet-9:  log  zlib-9$\nmath:$\nterm: docs$\ndb-9:^Iauth^Iterm$\n# generated dependency list$\n"
+          },
+          {
+            "commands": "cd /home/eval/pkgs; mkdir -p bin build; cat > bin/order <<'EOF'\n#!/bin/bash\n# Deterministic topological build order (smallest ready package first, byte order).\nexport LC_ALL=C\nif [ $# -ne 1 ] || [ ! -r \"$1\" ]; then\n  echo \"usage: order FILE\" >&2; exit 2\nfi\nawk '\nfunction addpkg(p) { if (!(p in seen)) { seen[p]=1; names[++n]=p } }\n{\n  sub(/\\r$/, \"\")\n  sub(/#.*/, \"\")\n  if ($0 ~ /^[ \\t]*$/) next\n  c = index($0, \":\")\n  if (c == 0) { m = split($0, t, /[ \\t]+/); for (i=1;i<=m;i++) if (t[i]!=\"\") addpkg(t[i]); next }\n  lhs = substr($0, 1, c-1); rhs = substr($0, c+1)\n  gsub(/^[ \\t]+|[ \\t]+$/, \"\", lhs)\n  if (lhs != \"\") addpkg(lhs)\n  m = split(rhs, t, /[ \\t]+/)\n  for (i=1;i<=m;i++) {\n    d = t[i]; if (d == \"\") continue\n    addpkg(d)\n    if (lhs == \"\") continue\n    if (!((lhs SUBSEP d) in edge)) {\n      edge[lhs SUBSEP d]=1\n      indeg[lhs]++\n      nr[d]++; rdep[d, nr[d]] = lhs\n    }\n  }\n}\nEND {\n  # ready set as a plain array; pick min each time\n  for (i=1;i<=n;i++) { p=names[i]; if (!(indeg[p]+0)) ready[p]=1 }\n  emitted = 0\n  while (1) {\n    best = \"\"; found = 0\n    for (p in ready) if (!found || p < best) { best = p; found = 1 }\n    if (!found) break\n    delete ready[best]; done[best]=1; emitted++\n    print best\n    for (j=1;j<=nr[best]+0;j++) { q = rdep[best, j]; if (--indeg[q] == 0) ready[q]=1 }\n  }\n  if (emitted < n) {\n    k = 0\n    for (i=1;i<=n;i++) if (!(names[i] in done)) rem[++k] = names[i]\n    # insertion sort (byte order under LC_ALL=C)\n    for (i=2;i<=k;i++) { v=rem[i]; j=i-1; while (j>0 && rem[j] > v) { rem[j+1]=rem[j]; j-- } rem[j+1]=v }\n    s = \"cycle:\"\n    for (i=1;i<=k;i++) s = s \" \" rem[i]\n    print s > \"/dev/stderr\"\n    exit 1\n  }\n}' \"$1\"\nEOF\nchmod +x bin/order\nbin/order deps.txt > build/order.txt\nbin/order deps-big.txt > build/big-order.txt\nbin/order deps-cycle.txt > build/cycle-order.txt 2> build/cycle.txt; echo $? > build/cycle.rc\nfor f in build/*; do echo \"== $f\"; cat $f; done",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "== build/big-order.txt\ncli-1\nmath\nregex\ntime-2\nzlib-9\njson-8\nlog\nauth\ncore\ncache-3\ncsv\ncolor\nfs\nnet-9\nbench\nfmt\nmock\nsig-9\ntest-0\ntls\nutil-0\ndocs\nproc\nterm\ndb-9\nuuid-2\nio-8\nhttp\nxml\nyaml-1\n== build/cycle-order.txt\ne\nf\n== build/cycle.rc\n1\n== build/cycle.txt\ncycle: a b c d g\n== build/order.txt\ndocs\nlog\nmock\nnet\ndb\nhttp\nweb\napp\ncli\ntest\n"
+          },
+          {
+            "commands": "cd /home/eval/pkgs; sed -i 's/if (!found || p < best)/if (!found || (p \"\") < (best \"\"))/; s/while (j>0 \\&\\& rem\\[j\\] > v)/while (j>0 \\&\\& (rem[j] \"\") > (v \"\"))/' bin/order; grep -n '\"\"' bin/order\nprintf '10: 9\\n9:\\n2:\\n 10x :\\tB a#c\\nzz: yy\\nyy: zz\\n' > /tmp/t.txt; bin/order /tmp/t.txt; echo rc=$?\nbin/order deps.txt | cmp - build/order.txt && bin/order deps-big.txt | cmp - build/big-order.txt && echo same\ncat > /tmp/v.py <<'EOF'\nimport sys,heapq\ndeps={}\nfor l in open(sys.argv[1],encoding='latin1'):\n    l=l.split('#')[0]\n    if not l.strip(): continue\n    a,b=l.split(':',1); a=a.strip()\n    deps.setdefault(a,set())\n    for d in b.split(): deps[a].add(d); deps.setdefault(d,set())\nout=[];done=set()\nwhile True:\n    r=sorted(p for p in deps if p not in done and deps[p]<=done)\n    if not r: break\n    out.append(r[0]);done.add(r[0])\nprint(\"\\n\".join(out))\nrem=sorted(set(deps)-done)\nif rem: print(\"cycle: \"+\" \".join(rem),file=sys.stderr)\nEOF\nfor f in deps deps-big deps-cycle /tmp/t; do python3 /tmp/v.py ${f%.txt}.txt 2>&1 | diff - <(bin/order ${f%.txt}.txt 2>&1) && echo \"$f ok\"; done",
+            "exit_code": 0,
+            "stderr": "cycle: yy zz\n",
+            "stdout": "10:  sub(/\\r$/, \"\")\n11:  sub(/#.*/, \"\")\n14:  if (c == 0) { m = split($0, t, /[ \\t]+/); for (i=1;i<=m;i++) if (t[i]!=\"\") addpkg(t[i]); next }\n16:  gsub(/^[ \\t]+|[ \\t]+$/, \"\", lhs)\n17:  if (lhs != \"\") addpkg(lhs)\n20:    d = t[i]; if (d == \"\") continue\n22:    if (lhs == \"\") continue\n35:    best = \"\"; found = 0\n36:    for (p in ready) if (!found || (p \"\") < (best \"\")) { best = p; found = 1 }\n46:    for (i=2;i<=k;i++) { v=rem[i]; j=i-1; while (j>0 && (rem[j] \"\") > (v \"\")) { rem[j+1]=rem[j]; j-- } rem[j+1]=v }\n2\n9\n10\nB\na\n10x\nrc=1\nsame\ndeps ok\ndeps-big ok\ndeps-cycle ok\n/tmp/t ok\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

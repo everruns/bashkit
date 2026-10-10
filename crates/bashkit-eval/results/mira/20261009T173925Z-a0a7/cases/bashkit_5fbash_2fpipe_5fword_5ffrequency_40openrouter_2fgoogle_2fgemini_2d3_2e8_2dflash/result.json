@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "pipe_word_frequency",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Read /data/poem.txt and find the 3 most frequently used words. Print each word with its count, one per line, sorted by frequency descending."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "the 8\non 3\ncat 2",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "cat /data/poem.txt",
+      "python3 -c '\nfrom collections import Counter\nimport re\n\ntext = open(\"/data/poem.txt\").read()\n# Let us check exact tokens or case\nwords_raw = text.split()\nprint(\"Raw words:\", Counter(words_raw).most_common(10))\n\nwords_lower = [w.lower() for w in re.findall(r\"\\b\\w+\\b\", text)]\nprint(\"Lower words:\", Counter(words_lower).most_common(10))\n'",
+      "python3 -c '\nfrom collections import Counter\nimport re\n\ntext = open(\"/data/poem.txt\").read()\nwords = [w.lower() for w in re.findall(r\"\\b\\w+\\b\", text)]\nfor word, count in Counter(words).most_common(3):\n    print(f\"{word} {count}\")\n'"
+    ],
+    "usage": {
+      "input_tokens": 2365,
+      "output_tokens": 339,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 18649
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /data/poem.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "the cat sat on the mat\nthe cat in the hat\nthe dog on the log\nthe frog on the bog\n"
+          },
+          {
+            "commands": "python3 -c '\nfrom collections import Counter\nimport re\n\ntext = open(\"/data/poem.txt\").read()\n# Let us check exact tokens or case\nwords_raw = text.split()\nprint(\"Raw words:\", Counter(words_raw).most_common(10))\n\nwords_lower = [w.lower() for w in re.findall(r\"\\b\\w+\\b\", text)]\nprint(\"Lower words:\", Counter(words_lower).most_common(10))\n'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Raw words: [('the', 8), ('on', 3), ('cat', 2), ('sat', 1), ('mat', 1), ('in', 1), ('hat', 1), ('dog', 1), ('log', 1), ('frog', 1)]\nLower words: [('the', 8), ('on', 3), ('cat', 2), ('sat', 1), ('mat', 1), ('in', 1), ('hat', 1), ('dog', 1), ('log', 1), ('frog', 1)]\n"
+          },
+          {
+            "commands": "python3 -c '\nfrom collections import Counter\nimport re\n\ntext = open(\"/data/poem.txt\").read()\nwords = [w.lower() for w in re.findall(r\"\\b\\w+\\b\", text)]\nfor word, count in Counter(words).most_common(3):\n    print(f\"{word} {count}\")\n'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "the 8\non 3\ncat 2\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

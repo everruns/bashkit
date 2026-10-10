@@ -1,0 +1,78 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "rt_py_sessionize",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "/data/access.log has lines `<timestamp> user=<name> path=<path> status=<3 digits>` in no particular order. A valid timestamp is ISO 8601 `YYYY-MM-DDTHH:MM:SS` followed by `Z` or a `+HH:MM`/`-HH:MM` offset; a line with any other timestamp (no offset, a space instead of T, an impossible time) or not matching the format exactly is skipped. Duplicate lines are separate events.\n\nSplit each user's events, ordered by instant, into sessions: a new session starts when the gap to the previous event is more than 30 minutes (a gap of exactly 30:00 stays in the same session).\n\nWrite /out/sessions.tsv (tab-separated) with header user, session, start, end, events, seconds: one row per session, sorted by user then start; session numbers start at 1 per user; start/end are UTC as YYYY-MM-DDTHH:MM:SSZ; seconds = end minus start.\nWrite /out/summary.txt with the single line `users=U sessions=S events=E skipped=K`."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Both files are written and verified against a hand-trace of the data:\n\n**Validation highlights:**\n- **Skipped (6):** bob's space-instead-of-`T` timestamp, carol's naive (no-offset) timestamp, dave's line (missing `path=`), the line with no `user=`, the `garbage line`, and erin's impossible `T25:00:00Z`. dave contributes no user at all since his only line is malformed.\n- **alice** has 3 events at the same instant `08:00:00Z` (from `+02:00`, `+01:00`, and a duplicate `+02:00` line — kept as separate events); all gaps ≤30 min → 1 session, 6 events, 2700s.\n- **bob** exercises the boundary rule: gaps of exactly 30:00 stay in the session, but the 30:01 gap before `09:30:00Z` starts session 2.\n- **carol**: `23:50:00-01:00` converts to `00:50:00Z`, falling between the other two events → single session.\n- **erin**: `14:00:00+05:30` → `08:30:00Z`, solo session with `seconds=0`.\n\n**Results** — `/out/sessions.tsv` (tab-separated, sorted by user then start):\n\n| user | session | start | end | events | seconds |\n|------|---------|-------|-----|--------|---------|\n| alice | 1 | 2026-05-04T08:00:00Z | 2026-05-04T08:45:00Z | 6 | 2700 |\n| bob | 1 | 2026-05-04T07:59:59Z | 2026-05-04T08:59:59Z | 3 | 3600 |\n| bob | 2 | 2026-05-04T09:30:00Z | 2026-05-04T09:30:00Z | 1 | 0 |\n| carol | 1 | 2026-05-05T00:30:00Z | 2026-05-05T01:05:00Z | 3 | 2100 |\n| erin | 1 | 2026-05-04T08:30:00Z | 2026-05-04T08:30:00Z | 1 | 0 |\n\n**`/out/summary.txt`:**\n```\nusers=4 sessions=5 events=14 skipped=6\n```",
+    "iterations": 5,
+    "tool_calls_count": 4,
+    "tool_calls": [
+      "ls -la /data/ && wc -l /data/access.log && head -30 /data/access.log",
+      "file /data/access.log; grep -c $'\\r' /data/access.log; tail -c 50 /data/access.log | xxd | tail -3",
+      "mkdir -p /out && cat > /tmp/solve.py <<'EOF'\nimport re\nfrom datetime import datetime, timezone, timedelta\n\n# Full-line strict match:\n# ts user=<name> path=<path> status=<3 digits>\nLINE_RE = re.compile(\n    r'^(\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:Z|[+-]\\d{2}:\\d{2}))'\n    r' user=(\\S+) path=(\\S+) status=(\\d{3})$'\n)\n\nTS_RE = re.compile(\n    r'^(\\d{4})-(\\d{2})-(\\d{2})T(\\d{2}):(\\d{2}):(\\d{2})(Z|[+-])(\\d{2})?(?::(\\d{2}))?$'\n)\n\ndef parse_ts(ts):\n    m = TS_RE.match(ts)\n    if not m:\n        return None\n    y, mo, d, h, mi, s = (int(m.group(i)) for i in range(1, 7))\n    sign = m.group(7)\n    oh = int(m.group(8)) if m.group(8) is not None else 0\n    om = int(m.group(9)) if m.group(9) is not None else 0\n    if sign == 'Z':\n        off = timezone.utc\n    else:\n        if oh > 23 or om > 59:\n            return None\n        delta = timedelta(hours=oh, minutes=om)\n        off = timezone(delta if sign == '+' else -delta)\n    try:\n        dt = datetime(y, mo, d, h, mi, s, tzinfo=off)\n    except ValueError:\n        return None\n    return dt.astimezone(timezone.utc)\n\nGAP = timedelta(minutes=30)  # exactly 30:00 stays in same session; > starts new\n\nevents_by_user = {}\ntotal_events = 0\nskipped = 0\n\nwith open('/data/access.log', 'r', encoding='utf-8') as f:\n    for raw in f:\n        line = raw.rstrip('\\n')\n        m = LINE_RE.match(line)\n        if not m:\n            skipped += 1\n            continue\n        ts, user = m.group(1), m.group(2)\n        utc = parse_ts(ts)\n        if utc is None:\n            skipped += 1\n            continue\n        events_by_user.setdefault(user, []).append(utc)\n        total_events += 1\n\nrows = []\nsession_count = 0\nfor user in sorted(events_by_user):\n    evs = sorted(events_by_user[user])\n    start = prev = evs[0]\n    count = 1\n    sess_no = 1\n\n    def emit(u, n, s, e, c):\n        rows.append((u, n,\n                     s.strftime('%Y-%m-%dT%H:%M:%SZ'),\n                     e.strftime('%Y-%m-%dT%H:%M:%SZ'),\n                     c, int((e - s).total_seconds())))\n\n    for t in evs[1:]:\n        if t - prev > GAP:\n            emit(user, sess_no, start, prev, count)\n            session_count += 1\n            sess_no += 1\n            start, count = t, 1\n        else:\n            count += 1\n        prev = t\n    emit(user, sess_no, start, prev, count)\n    session_count += 1\n\nwith open('/out/sessions.tsv', 'w', encoding='utf-8') as f:\n    f.write('user\\tsession\\tstart\\tend\\tevents\\tseconds\\n')\n    for r in rows:\n        f.write('\\t'.join(map(str, r)) + '\\n')\n\nwith open('/out/summary.txt', 'w', encoding='utf-8') as f:\n    f.write(f'users={len(events_by_user)} sessions={session_count} '\n            f'events={total_events} skipped={skipped}\\n')\n\nprint(f'users={len(events_by_user)} sessions={session_count} events={total_events} skipped={skipped}')\nEOF\npython3 /tmp/solve.py",
+      "cat -A /out/sessions.tsv; echo '---'; cat /out/summary.txt"
+    ],
+    "usage": {
+      "input_tokens": 9024,
+      "output_tokens": 4130,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 38031
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 4.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 4.0,
+      "turns": 5.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /data/ && wc -l /data/access.log && head -30 /data/access.log",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--     1025 2026-10-09 18:08 access.log\n20 /data/access.log\n2026-05-04T10:00:00+02:00 user=alice path=/home status=200\n2026-05-04T08:10:00Z user=alice path=/cart status=200\n2026-05-04T03:40:00-05:00 user=alice path=/pay status=500\n2026-05-04T07:59:59Z user=bob path=/ status=200\n2026-05-04T08:29:59Z user=bob path=/a status=200\n2026-05-04T08:59:59Z user=bob path=/b status=200\n2026-05-04T09:30:00Z user=bob path=/c status=404\n2026-05-04 10:00:00 user=bob path=/bad status=200\n2026-05-04T12:00:00 user=carol path=/naive status=200\n2026-05-04T23:50:00-01:00 user=carol path=/late status=200\n2026-05-05T00:30:00Z user=carol path=/next status=200\n2026-05-05T01:05:00+00:00 user=carol path=/again status=200\n2026-05-04T09:00:00+01:00 user=alice path=/home status=200\n2026-05-04T11:15:00+03:00 user=dave status=200\n2026-05-04T08:00:00Z path=/x status=200\ngarbage line\n2026-05-04T14:00:00+05:30 user=erin path=/solo status=200\n2026-05-04T10:00:00+02:00 user=alice path=/home status=200\n2026-05-04T08:45:00Z user=alice path=/home status=304\n2026-05-04T25:00:00Z user=erin path=/bad status=200\n"
+          },
+          {
+            "commands": "file /data/access.log; grep -c $'\\r' /data/access.log; tail -c 50 /data/access.log | xxd | tail -3",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/data/access.log: ASCII text\n0\n00000010: 305a 2075 7365 723d 6572 696e 2070 6174  0Z user=erin pat\n00000020: 683d 2f62 6164 2073 7461 7475 733d 3230  h=/bad status=20\n00000030: 300a                                     0.\n"
+          },
+          {
+            "commands": "mkdir -p /out && cat > /tmp/solve.py <<'EOF'\nimport re\nfrom datetime import datetime, timezone, timedelta\n\n# Full-line strict match:\n# ts user=<name> path=<path> status=<3 digits>\nLINE_RE = re.compile(\n    r'^(\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:Z|[+-]\\d{2}:\\d{2}))'\n    r' user=(\\S+) path=(\\S+) status=(\\d{3})$'\n)\n\nTS_RE = re.compile(\n    r'^(\\d{4})-(\\d{2})-(\\d{2})T(\\d{2}):(\\d{2}):(\\d{2})(Z|[+-])(\\d{2})?(?::(\\d{2}))?$'\n)\n\ndef parse_ts(ts):\n    m = TS_RE.match(ts)\n    if not m:\n        return None\n    y, mo, d, h, mi, s = (int(m.group(i)) for i in range(1, 7))\n    sign = m.group(7)\n    oh = int(m.group(8)) if m.group(8) is not None else 0\n    om = int(m.group(9)) if m.group(9) is not None else 0\n    if sign == 'Z':\n        off = timezone.utc\n    else:\n        if oh > 23 or om > 59:\n            return None\n        delta = timedelta(hours=oh, minutes=om)\n        off = timezone(delta if sign == '+' else -delta)\n    try:\n        dt = datetime(y, mo, d, h, mi, s, tzinfo=off)\n    except ValueError:\n        return None\n    return dt.astimezone(timezone.utc)\n\nGAP = timedelta(minutes=30)  # exactly 30:00 stays in same session; > starts new\n\nevents_by_user = {}\ntotal_events = 0\nskipped = 0\n\nwith open('/data/access.log', 'r', encoding='utf-8') as f:\n    for raw in f:\n        line = raw.rstrip('\\n')\n        m = LINE_RE.match(line)\n        if not m:\n            skipped += 1\n            continue\n        ts, user = m.group(1), m.group(2)\n        utc = parse_ts(ts)\n        if utc is None:\n            skipped += 1\n            continue\n        events_by_user.setdefault(user, []).append(utc)\n        total_events += 1\n\nrows = []\nsession_count = 0\nfor user in sorted(events_by_user):\n    evs = sorted(events_by_user[user])\n    start = prev = evs[0]\n    count = 1\n    sess_no = 1\n\n    def emit(u, n, s, e, c):\n        rows.append((u, n,\n                     s.strftime('%Y-%m-%dT%H:%M:%SZ'),\n                     e.strftime('%Y-%m-%dT%H:%M:%SZ'),\n                     c, int((e - s).total_seconds())))\n\n    for t in evs[1:]:\n        if t - prev > GAP:\n            emit(user, sess_no, start, prev, count)\n            session_count += 1\n            sess_no += 1\n            start, count = t, 1\n        else:\n            count += 1\n        prev = t\n    emit(user, sess_no, start, prev, count)\n    session_count += 1\n\nwith open('/out/sessions.tsv', 'w', encoding='utf-8') as f:\n    f.write('user\\tsession\\tstart\\tend\\tevents\\tseconds\\n')\n    for r in rows:\n        f.write('\\t'.join(map(str, r)) + '\\n')\n\nwith open('/out/summary.txt', 'w', encoding='utf-8') as f:\n    f.write(f'users={len(events_by_user)} sessions={session_count} '\n            f'events={total_events} skipped={skipped}\\n')\n\nprint(f'users={len(events_by_user)} sessions={session_count} events={total_events} skipped={skipped}')\nEOF\npython3 /tmp/solve.py",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "users=4 sessions=5 events=14 skipped=6\n"
+          },
+          {
+            "commands": "cat -A /out/sessions.tsv; echo '---'; cat /out/summary.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "user^Isession^Istart^Iend^Ievents^Iseconds$\nalice^I1^I2026-05-04T08:00:00Z^I2026-05-04T08:45:00Z^I6^I2700$\nbob^I1^I2026-05-04T07:59:59Z^I2026-05-04T08:59:59Z^I3^I3600$\nbob^I2^I2026-05-04T09:30:00Z^I2026-05-04T09:30:00Z^I1^I0$\ncarol^I1^I2026-05-05T00:30:00Z^I2026-05-05T01:05:00Z^I3^I2100$\nerin^I1^I2026-05-04T08:30:00Z^I2026-05-04T08:30:00Z^I1^I0$\n---\nusers=4 sessions=5 events=14 skipped=6\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

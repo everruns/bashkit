@@ -48,11 +48,16 @@ jobs:
       - name: Install pinned ripgrep for differential tests
         run: scripts/install-ripgrep-ci.sh "$RG_VERSION"
 
+      # bashkit-eval is excluded: it enables bashkit's cpython and sqlite
+      # features, and under --workspace feature unification that would pull
+      # the slow CPython/sqlite tests into the instrumented bashkit binaries
+      # (past --timeout). Its tests still run in the main CI test job.
       - name: Generate coverage report
         run: |
           cargo tarpaulin --features http_client \
             --workspace \
             --exclude bashkit-python \
+            --exclude bashkit-eval \
             --out xml \
             --out html \
             --output-dir coverage \

@@ -1,0 +1,63 @@
+{
+  "eval": "bashkit_generate",
+  "sample": "gen_log_rotate",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Write a bash script that rotates numbered log files.\n\nStarting files in /home/eval/logs (nothing else is in that directory):\n--- /home/eval/logs/app.log ---\nline c\n--- end ---\n--- /home/eval/logs/app.log.1 ---\nline b\n--- end ---\n--- /home/eval/logs/app.log.2 ---\nline a\n--- end ---\n--- /home/eval/logs/app.log.3 ---\nline 0\n--- end ---\n--- /home/eval/logs/app.log.old ---\nmanual backup\n--- end ---\n--- /home/eval/logs/worker.log ---\nw2\n--- end ---\n--- /home/eval/logs/worker.log.1 ---\nw1\n--- end ---\n\nDefine a shell function `rotate LOGFILE KEEP` implementing classic numbered rotation:\n- `LOGFILE.N` becomes `LOGFILE.N+1` for every existing N, highest first, so nothing is overwritten.\n- Afterwards no numbered file above KEEP may remain (delete any that would end up numbered higher than KEEP).\n- `LOGFILE` itself becomes `LOGFILE.1`, and a new empty `LOGFILE` is created.\n- Files that are not exactly `LOGFILE` or `LOGFILE.<number>` (for example `app.log.old`) must not be touched.\n\nThen call it twice: `rotate /home/eval/logs/app.log 3` and `rotate /home/eval/logs/worker.log 2`. Exit 0."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "9/9 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "```bash\n#!/bin/bash\n\nrotate() {\n    local LOGFILE=$1 KEEP=$2\n    local dir base prefix f suffix n\n\n    dir=$(dirname -- \"$LOGFILE\")\n    base=$(basename -- \"$LOGFILE\")\n    prefix=$dir/$base.\n\n    # Collect suffixes of all existing files named exactly LOGFILE.<number>\n    local -a nums=()\n    for f in \"$prefix\"*; do\n        [[ -e $f ]] || continue\n        suffix=${f#\"$prefix\"}\n        [[ $suffix =~ ^[0-9]+$ ]] || continue\n        nums+=(\"$suffix\")\n    done\n\n    # Shift every LOGFILE.N to LOGFILE.N+1, highest N first\n    if ((${#nums[@]})); then\n        while IFS= read -r n; do\n            mv -- \"$prefix$n\" \"$prefix$((10#$n + 1))\"\n        done < <(printf '%s\\n' \"${nums[@]}\" | sort -rn)\n    fi\n\n    # Delete any numbered file that ended up above KEEP\n    for f in \"$prefix\"*; do\n        [[ -e $f ]] || continue\n        suffix=${f#\"$prefix\"}\n        [[ $suffix =~ ^[0-9]+$ ]] || continue\n        if ((10#$suffix > KEEP)); then\n            rm -f -- \"$f\"\n        fi\n    done\n\n    # Move the live log to LOGFILE.1 and start a fresh empty log\n    if [[ -e $LOGFILE ]]; then\n        mv -- \"$LOGFILE\" \"$LOGFILE.1\"\n    fi\n    : > \"$LOGFILE\"\n}\n\nrotate /home/eval/logs/app.log 3\nrotate /home/eval/logs/worker.log 2\n\nexit 0\n```",
+    "iterations": 1,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "#!/bin/bash\n\nrotate() {\n    local LOGFILE=$1 KEEP=$2\n    local dir base prefix f suffix n\n\n    dir=$(dirname -- \"$LOGFILE\")\n    base=$(basename -- \"$LOGFILE\")\n    prefix=$dir/$base.\n\n    # Collect suffixes of all existing files named exactly LOGFILE.<number>\n    local -a nums=()\n    for f in \"$prefix\"*; do\n        [[ -e $f ]] || continue\n        suffix=${f#\"$prefix\"}\n        [[ $suffix =~ ^[0-9]+$ ]] || continue\n        nums+=(\"$suffix\")\n    done\n\n    # Shift every LOGFILE.N to LOGFILE.N+1, highest N first\n    if ((${#nums[@]})); then\n        while IFS= read -r n; do\n            mv -- \"$prefix$n\" \"$prefix$((10#$n + 1))\"\n        done < <(printf '%s\\n' \"${nums[@]}\" | sort -rn)\n    fi\n\n    # Delete any numbered file that ended up above KEEP\n    for f in \"$prefix\"*; do\n        [[ -e $f ]] || continue\n        suffix=${f#\"$prefix\"}\n        [[ $suffix =~ ^[0-9]+$ ]] || continue\n        if ((10#$suffix > KEEP)); then\n            rm -f -- \"$f\"\n        fi\n    done\n\n    # Move the live log to LOGFILE.1 and start a fresh empty log\n    if [[ -e $LOGFILE ]]; then\n        mv -- \"$LOGFILE\" \"$LOGFILE.1\"\n    fi\n    : > \"$LOGFILE\"\n}\n\nrotate /home/eval/logs/app.log 3\nrotate /home/eval/logs/worker.log 2\n\nexit 0\n"
+    ],
+    "usage": {
+      "input_tokens": 674,
+      "output_tokens": 3967,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 29649
+    },
+    "metrics": {
+      "exec_ms": 11.0,
+      "exit_code": 0.0,
+      "extracted": 1.0,
+      "generate_ms": 29638.0,
+      "script_bytes": 1210.0,
+      "script_found": 1.0,
+      "timed_out": 0.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "#!/bin/bash\n\nrotate() {\n    local LOGFILE=$1 KEEP=$2\n    local dir base prefix f suffix n\n\n    dir=$(dirname -- \"$LOGFILE\")\n    base=$(basename -- \"$LOGFILE\")\n    prefix=$dir/$base.\n\n    # Collect suffixes of all existing files named exactly LOGFILE.<number>\n    local -a nums=()\n    for f in \"$prefix\"*; do\n        [[ -e $f ]] || continue\n        suffix=${f#\"$prefix\"}\n        [[ $suffix =~ ^[0-9]+$ ]] || continue\n        nums+=(\"$suffix\")\n    done\n\n    # Shift every LOGFILE.N to LOGFILE.N+1, highest N first\n    if ((${#nums[@]})); then\n        while IFS= read -r n; do\n            mv -- \"$prefix$n\" \"$prefix$((10#$n + 1))\"\n        done < <(printf '%s\\n' \"${nums[@]}\" | sort -rn)\n    fi\n\n    # Delete any numbered file that ended up above KEEP\n    for f in \"$prefix\"*; do\n        [[ -e $f ]] || continue\n        suffix=${f#\"$prefix\"}\n        [[ $suffix =~ ^[0-9]+$ ]] || continue\n        if ((10#$suffix > KEEP)); then\n            rm -f -- \"$f\"\n        fi\n    done\n\n    # Move the live log to LOGFILE.1 and start a fresh empty log\n    if [[ -e $LOGFILE ]]; then\n        mv -- \"$LOGFILE\" \"$LOGFILE.1\"\n    fi\n    : > \"$LOGFILE\"\n}\n\nrotate /home/eval/logs/app.log 3\nrotate /home/eval/logs/worker.log 2\n\nexit 0\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          }
+        ]
+      },
+      "generate": {
+        "extraction": "fenced",
+        "timed_out": false
+      }
+    }
+  },
+  "skipped": false
+}

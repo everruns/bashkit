@@ -509,30 +509,27 @@ just pre-pr       # Pre-PR checks
 
 ## LLM Eval Results
 
-Bashkit includes a [mira eval study](crates/bashkit-eval/) that measures how well LLMs use bashkit as a bash tool in agentic workloads, 58 tasks across 15 categories.
+Bashkit includes a [mira eval study](crates/bashkit-eval/) that measures how well LLMs use bashkit: one tagged 88-task dataset (`bashkit_bash`) covering agent tool use (58 basic, 8 multi-turn repo, 10 hard) and 12 runtime tasks (python3, sqlite3, state on the VFS), plus a 15-task one-shot script generation eval (`bashkit_generate`).
 
-_Latest run: 2026-10-09, on the mira eval framework (58 tasks, plus 8 multi-turn repo tasks and 10 hard tasks)._
+_Latest run: 2026-10-09, on the mira eval framework. GPT-6.1 Sol and GPT-6 Luna are pending a rerun on the 88-task set (their 58-task scores are in the [detailed results](crates/bashkit-eval/README.md#results))._
 
-| Model | Score | Tasks Passed | Repo Tasks | Hard Tasks | Tool Call Success | Duration |
-|-------|-------|-------------|------------|------------|-------------------|----------|
-| Claude Sonnet 5.5 | **100%** | **58/58** | **8/8** | **10/10** | 95% | **5.7 min** |
-| Kimi K3 | **100%** | **58/58** | **8/8** | 8/10 | **96%** | 11.2 min |
-| Muse Spark 1.3 Contributor | **100%** | **58/58** | 6/8 | 8/10 | **96%** | 28.0 min |
-| Claude Opus 5.5 | 98% | 57/58 | 7/8 | **10/10** | 95% | 8.1 min |
-| GPT-6.1 Sol | 93% | 54/58 | 5/8 | 9/10 | 91% | 8.0 min |
-| Gemini 3.8 Flash | 93% | 54/58 | 3/8 | 4/10 | 93% | 14.5 min |
-| GPT-6 Luna | 88% | 51/58 | 3/8 | 6/10 | 93% | 5.8 min |
+| Model | Score | Tasks Passed | Basic | Repo | Hard | Runtime | Generate |
+|-------|-------|-------------|-------|------|------|---------|----------|
+| Claude Opus 5.5 | **99%** | **87/88** | **58/58** | 7/8 | **10/10** | **12/12** | 13/15 |
+| Kimi K3 | 98% | 86/88 | 57/58 | **8/8** | 9/10 | **12/12** | **15/15** |
+| Claude Sonnet 5.5 | 97% | 85/88 | 56/58 | **8/8** | 9/10 | **12/12** | **15/15** |
+| Muse Spark 1.3 Contributor | 95% | 84/88 | **58/58** | 5/8 | 9/10 | **12/12** | **15/15** |
+| Gemini 3.8 Flash | 84% | 74/88 | 55/58 | 4/8 | 6/10 | 9/12 | 13/15 |
 
-Three models now clear all 58 tasks, so the harder sets separate the field:
-8 multi-turn repo tasks (fix a fixture repo, run `make test`, commit) and 10
-hard tasks (interacting bugs, `set -e`/quoting traps, exact data
-reconciliation). Only Sonnet 5.5 passes every task in all three sets. See the [detailed analysis](crates/bashkit-eval/README.md#results).
+Repo and hard tasks carry most of the spread; the new runtime tasks (python3
+and sqlite3 inside the sandbox) separate only Gemini so far. See the [detailed analysis](crates/bashkit-eval/README.md#results).
 
 ```bash
 cargo install mira-cli       # one-time: the `mira` host CLI
 just eval-list               # list evals, samples, scorers, targets
 just eval                    # run the bash eval across the model matrix
 just eval-scripting          # run the scripting-tool eval
+just eval-generate           # run the one-shot generation eval
 ```
 
 ## Benchmarks

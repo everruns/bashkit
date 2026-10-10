@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "config_env_template",
+  "target": "anthropic/claude-opus-5-5",
+  "input": [
+    "Read /config/template.env which has lines like 'KEY=${VALUE:-default}'. For each line, check if the key exists in /config/overrides.txt (format: KEY=value). If it does, use the override value; otherwise use the default from the template. Write the final KEY=value pairs to /app/.env and print the result."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I wrote the final settings to `/app/.env`. Two keys came from the overrides file and the other three used the template defaults:\n\n```\nDB_HOST=db.prod.internal\nDB_PORT=5432\nDB_NAME=myapp\nREDIS_URL=redis://localhost:6379\nLOG_LEVEL=warn\n```\n\n- **From overrides:** `DB_HOST` and `LOG_LEVEL`.\n- **From template defaults:** `DB_PORT`, `DB_NAME` and `REDIS_URL`. The colons inside the `REDIS_URL` default were kept intact.\n\nI used a short Python script for this. It splits each line on the first `=` only, so values that contain `=` stay whole. It also skips blank lines and lines starting with `#`, though neither file has any right now.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat -A /config/template.env; echo ---; cat -A /config/overrides.txt",
+      "mkdir -p /app\npython3 - <<'EOF'\nimport re\nov={}\nfor l in open('/config/overrides.txt'):\n    l=l.rstrip('\\r\\n')\n    if not l.strip() or l.lstrip().startswith('#') or '=' not in l: continue\n    k,v=l.split('=',1); ov[k.strip()]=v\nout=[]\nfor l in open('/config/template.env'):\n    l=l.rstrip('\\r\\n')\n    if not l.strip() or l.lstrip().startswith('#'): continue\n    k,rhs=l.split('=',1); k=k.strip()\n    m=re.fullmatch(r'\\$\\{[^:}]*:-(.*)\\}',rhs.strip())\n    d=m.group(1) if m else rhs\n    out.append(f\"{k}={ov.get(k,d)}\")\nopen('/app/.env','w').write('\\n'.join(out)+'\\n')\nEOF\ncat /app/.env"
+    ],
+    "usage": {
+      "input_tokens": 4084,
+      "output_tokens": 748,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 9220
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat -A /config/template.env; echo ---; cat -A /config/overrides.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "DB_HOST=${DB_HOST:-localhost}$\nDB_PORT=${DB_PORT:-5432}$\nDB_NAME=${DB_NAME:-myapp}$\nREDIS_URL=${REDIS_URL:-redis://localhost:6379}$\nLOG_LEVEL=${LOG_LEVEL:-info}$\n---\nDB_HOST=db.prod.internal$\nLOG_LEVEL=warn$\n"
+          },
+          {
+            "commands": "mkdir -p /app\npython3 - <<'EOF'\nimport re\nov={}\nfor l in open('/config/overrides.txt'):\n    l=l.rstrip('\\r\\n')\n    if not l.strip() or l.lstrip().startswith('#') or '=' not in l: continue\n    k,v=l.split('=',1); ov[k.strip()]=v\nout=[]\nfor l in open('/config/template.env'):\n    l=l.rstrip('\\r\\n')\n    if not l.strip() or l.lstrip().startswith('#'): continue\n    k,rhs=l.split('=',1); k=k.strip()\n    m=re.fullmatch(r'\\$\\{[^:}]*:-(.*)\\}',rhs.strip())\n    d=m.group(1) if m else rhs\n    out.append(f\"{k}={ov.get(k,d)}\")\nopen('/app/.env','w').write('\\n'.join(out)+'\\n')\nEOF\ncat /app/.env",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "DB_HOST=db.prod.internal\nDB_PORT=5432\nDB_NAME=myapp\nREDIS_URL=redis://localhost:6379\nLOG_LEVEL=warn\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "config_env_defaults",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "Write /scripts/start.sh that configures a service. It should read these environment variables and fall back to defaults when they're not set: DB_HOST (default 'localhost'), DB_PORT (default '5432'), DB_NAME (default 'myapp'), LOG_LEVEL (default 'info'). Print the resolved config as 'key=value' lines. If DB_HOST is explicitly set, also print 'custom_db=true'. Run the script twice: first with no env vars set (to test defaults), then with DB_HOST=db.prod.internal to test the override."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I wrote `/scripts/start.sh` and ran it twice. Both runs gave the expected output.\n\n**Run 1, no env vars set:** all four values fell back to their defaults, and `custom_db=true` was not printed.\n```\nDB_HOST=localhost\nDB_PORT=5432\nDB_NAME=myapp\nLOG_LEVEL=info\n```\n\n**Run 2, with `DB_HOST=db.prod.internal`:** the host was overridden and `custom_db=true` was added.\n```\nDB_HOST=db.prod.internal\nDB_PORT=5432\nDB_NAME=myapp\nLOG_LEVEL=info\ncustom_db=true\n```\n\nThe script uses `${VAR:-default}` for the defaults. This means a variable that is set but empty (for example `DB_HOST=\"\"`) also falls back to its default. The `custom_db=true` check uses the same rule, so an empty `DB_HOST` doesn't count as explicitly set.",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "mkdir -p /scripts && cat > /scripts/start.sh <<'EOF'\n#!/usr/bin/env bash\n# Resolve service configuration from environment, with defaults.\n\nDB_HOST_RESOLVED=\"${DB_HOST:-localhost}\"\nDB_PORT_RESOLVED=\"${DB_PORT:-5432}\"\nDB_NAME_RESOLVED=\"${DB_NAME:-myapp}\"\nLOG_LEVEL_RESOLVED=\"${LOG_LEVEL:-info}\"\n\necho \"DB_HOST=$DB_HOST_RESOLVED\"\necho \"DB_PORT=$DB_PORT_RESOLVED\"\necho \"DB_NAME=$DB_NAME_RESOLVED\"\necho \"LOG_LEVEL=$LOG_LEVEL_RESOLVED\"\n\n# Only when DB_HOST was explicitly provided (non-empty)\nif [ -n \"${DB_HOST:-}\" ]; then\n  echo \"custom_db=true\"\nfi\nEOF\nchmod +x /scripts/start.sh\necho \"--- Run 1: defaults ---\"\nenv -u DB_HOST -u DB_PORT -u DB_NAME -u LOG_LEVEL /scripts/start.sh\necho \"--- Run 2: DB_HOST override ---\"\nenv -u DB_PORT -u DB_NAME -u LOG_LEVEL DB_HOST=db.prod.internal /scripts/start.sh"
+    ],
+    "usage": {
+      "input_tokens": 2969,
+      "output_tokens": 1068,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 7719
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "mkdir -p /scripts && cat > /scripts/start.sh <<'EOF'\n#!/usr/bin/env bash\n# Resolve service configuration from environment, with defaults.\n\nDB_HOST_RESOLVED=\"${DB_HOST:-localhost}\"\nDB_PORT_RESOLVED=\"${DB_PORT:-5432}\"\nDB_NAME_RESOLVED=\"${DB_NAME:-myapp}\"\nLOG_LEVEL_RESOLVED=\"${LOG_LEVEL:-info}\"\n\necho \"DB_HOST=$DB_HOST_RESOLVED\"\necho \"DB_PORT=$DB_PORT_RESOLVED\"\necho \"DB_NAME=$DB_NAME_RESOLVED\"\necho \"LOG_LEVEL=$LOG_LEVEL_RESOLVED\"\n\n# Only when DB_HOST was explicitly provided (non-empty)\nif [ -n \"${DB_HOST:-}\" ]; then\n  echo \"custom_db=true\"\nfi\nEOF\nchmod +x /scripts/start.sh\necho \"--- Run 1: defaults ---\"\nenv -u DB_HOST -u DB_PORT -u DB_NAME -u LOG_LEVEL /scripts/start.sh\necho \"--- Run 2: DB_HOST override ---\"\nenv -u DB_PORT -u DB_NAME -u LOG_LEVEL DB_HOST=db.prod.internal /scripts/start.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "--- Run 1: defaults ---\nDB_HOST=localhost\nDB_PORT=5432\nDB_NAME=myapp\nLOG_LEVEL=info\n--- Run 2: DB_HOST override ---\nDB_HOST=db.prod.internal\nDB_PORT=5432\nDB_NAME=myapp\nLOG_LEVEL=info\ncustom_db=true\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

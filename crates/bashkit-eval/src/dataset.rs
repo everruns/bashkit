@@ -11,6 +11,17 @@ use std::collections::HashMap;
 pub struct EvalTask {
     pub id: String,
     pub category: String,
+    /// How bashkit is used: `agent` (bash as the model's tool) or `runtime`
+    /// (bashkit as the execution runtime: python3, sqlite, state across turns).
+    /// Becomes a mira sample tag.
+    #[serde(default = "default_mode")]
+    pub mode: String,
+    /// `basic`, `repo` (multi-turn fixture repo) or `hard`. Becomes a tag.
+    #[serde(default = "default_difficulty")]
+    pub difficulty: String,
+    /// Per-task agent-turn budget; `None` = the eval default (`MAX_TURNS`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_turns: Option<usize>,
     pub description: String,
     /// System message override. None = use BashTool default.
     #[serde(default)]
@@ -24,6 +35,13 @@ pub struct EvalTask {
     /// subshell with `set -e`; not shown to the model, not scored.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub setup: Option<String>,
+    /// Hidden shell script run after the agent finishes (and after a reference
+    /// solution's steps), before scoring. Its stdout+stderr is stored at
+    /// `agent::VERIFY_OUT` for `file_*` checks. Used by runtime tasks to probe
+    /// what the model built: run its tool on unseen input, query its database,
+    /// re-apply its migration to a fresh copy. Not shown to the model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verify: Option<String>,
     pub expectations: Vec<Expectation>,
 }
 
@@ -34,6 +52,14 @@ pub struct Expectation {
     pub check: String,
     #[serde(default = "default_weight")]
     pub weight: f64,
+}
+
+fn default_mode() -> String {
+    "agent".to_string()
+}
+
+fn default_difficulty() -> String {
+    "basic".to_string()
 }
 
 fn default_weight() -> f64 {

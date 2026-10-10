@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "json_order_totals",
+  "target": "anthropic/claude-opus-5-5",
+  "input": [
+    "Read /data/orders.json containing an array of order objects with fields: customer, product, amount. Group orders by customer and compute the total amount spent per customer. Print each result as 'customer: total' with one line per customer, sorted by total descending."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Here are the total amounts per customer, from highest to lowest:\n\n```\nglobex: 500\nacme: 325\ninitech: 75\n```\n\nThe file has 7 orders from 3 customers:\n- **globex:** 200 (gadgets) + 300 (widgets) = 500\n- **acme:** 150 (widgets) + 75 (bolts) + 100 (nuts) = 325\n- **initech:** 50 (paper) + 25 (staples) = 75\n\nI used a short Python script to add up the amounts for each customer and sort the totals.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat /data/orders.json | head -c 2000",
+      "python3 -c \"\nimport json\nfrom collections import defaultdict\nt=defaultdict(float)\nfor o in json.load(open('/data/orders.json')): t[o['customer']]+=o['amount']\nfor c,v in sorted(t.items(),key=lambda x:-x[1]): print(f'{c}: {int(v) if v==int(v) else v}')\n\""
+    ],
+    "usage": {
+      "input_tokens": 3719,
+      "output_tokens": 406,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 4850
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /data/orders.json | head -c 2000",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[{\"customer\":\"acme\",\"product\":\"widgets\",\"amount\":150},{\"customer\":\"globex\",\"product\":\"gadgets\",\"amount\":200},{\"customer\":\"acme\",\"product\":\"bolts\",\"amount\":75},{\"customer\":\"initech\",\"product\":\"paper\",\"amount\":50},{\"customer\":\"globex\",\"product\":\"widgets\",\"amount\":300},{\"customer\":\"acme\",\"product\":\"nuts\",\"amount\":100},{\"customer\":\"initech\",\"product\":\"staples\",\"amount\":25}]"
+          },
+          {
+            "commands": "python3 -c \"\nimport json\nfrom collections import defaultdict\nt=defaultdict(float)\nfor o in json.load(open('/data/orders.json')): t[o['customer']]+=o['amount']\nfor c,v in sorted(t.items(),key=lambda x:-x[1]): print(f'{c}: {int(v) if v==int(v) else v}')\n\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "globex: 500\nacme: 325\ninitech: 75\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

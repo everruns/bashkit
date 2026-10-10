@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "data_csv_join",
+  "target": "openrouter/meta/muse-spark-1.3-contributor",
+  "input": [
+    "Join /data/employees.csv and /data/departments.csv on the department_id field. Produce /data/report.csv with columns: name, department_name, salary. Include a header row. Print the result."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Created `/data/report.csv` by joining on `department_id`:\n\n```\nname,department_name,salary\nAlice,Engineering,120000\nBob,Marketing,95000\nCarol,Engineering,115000\nDave,Sales,88000\nEve,Marketing,92000\n```",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat /data/employees.csv; echo \"---\"; cat /data/departments.csv; echo \"---\"; ls -l /data/",
+      "python3 -c \"\nimport csv\n\nwith open('/data/departments.csv', newline='') as f:\n    r = csv.DictReader(f)\n    dept_map = {row['department_id']: row['department_name'] for row in r}\n\nwith open('/data/employees.csv', newline='') as fin, open('/data/report.csv', 'w', newline='') as fout:\n    r = csv.DictReader(fin)\n    w = csv.DictWriter(fout, fieldnames=['name','department_name','salary'])\n    w.writeheader()\n    for row in r:\n        w.writerow({'name': row['name'], 'department_name': dept_map.get(row['department_id'], ''), 'salary': row['salary']})\n\nprint('done')\n\"\ncat /data/report.csv"
+    ],
+    "usage": {
+      "input_tokens": 3500,
+      "output_tokens": 595,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 5576
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /data/employees.csv; echo \"---\"; cat /data/departments.csv; echo \"---\"; ls -l /data/",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "name,department_id,salary\nAlice,1,120000\nBob,2,95000\nCarol,1,115000\nDave,3,88000\nEve,2,92000\n---\ndepartment_id,department_name\n1,Engineering\n2,Marketing\n3,Sales\n---\n-rw-r--r--       64 2026-10-09 17:43 departments.csv\n-rw-r--r--       93 2026-10-09 17:43 employees.csv\n"
+          },
+          {
+            "commands": "python3 -c \"\nimport csv\n\nwith open('/data/departments.csv', newline='') as f:\n    r = csv.DictReader(f)\n    dept_map = {row['department_id']: row['department_name'] for row in r}\n\nwith open('/data/employees.csv', newline='') as fin, open('/data/report.csv', 'w', newline='') as fout:\n    r = csv.DictReader(fin)\n    w = csv.DictWriter(fout, fieldnames=['name','department_name','salary'])\n    w.writeheader()\n    for row in r:\n        w.writerow({'name': row['name'], 'department_name': dept_map.get(row['department_id'], ''), 'salary': row['salary']})\n\nprint('done')\n\"\ncat /data/report.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "done\nname,department_name,salary\r\nAlice,Engineering,120000\r\nBob,Marketing,95000\r\nCarol,Engineering,115000\r\nDave,Sales,88000\r\nEve,Marketing,92000\r\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

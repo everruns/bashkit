@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_diff_report",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Compare /data/v1.conf and /data/v2.conf. Produce a human-readable summary showing: which keys were added, which were removed, and which had their values changed. Print the summary to stdout."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "The comparison is complete. Here's what changed between the two configs:\n\n## Added (1)\n- `timeout = 30` — new key in v2\n\n## Removed (1)\n- `max_connections = 100` — present in v1, gone in v2\n\n## Changed (3)\n| Key | v1 | v2 |\n|---|---|---|\n| `port` | `8080` | `9090` |\n| `host` | `localhost` | `0.0.0.0` |\n| `log_level` | `info` | `debug` |\n\n## Unchanged (1)\n- `workers = 4`\n\n**Summary:** 1 added, 1 removed, 3 changed, 1 unchanged.\n\nThe comparison script (at `/tmp/diffconf.py`) parses both files as `key=value` configs — skipping blank lines and `#`/`;` comments — and reports differences in file order. Notably, v2 loosens the network binding (`0.0.0.0`), enables debug logging, and swaps the connection cap for a timeout.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "ls -la /data/ && echo \"===== v1.conf =====\" && cat /data/v1.conf && echo \"\" && echo \"===== v2.conf =====\" && cat /data/v2.conf",
+      "cat > /tmp/diffconf.py << 'EOF'\n#!/usr/bin/env python3\n\"\"\"Compare two key=value config files and summarize differences.\"\"\"\n\ndef load_conf(path):\n    \"\"\"Parse a key=value config file into an ordered dict.\"\"\"\n    conf = {}\n    order = []\n    with open(path) as f:\n        for lineno, line in enumerate(f, 1):\n            line = line.strip()\n            # Skip blank lines and comments\n            if not line or line.startswith('#') or line.startswith(';'):\n                continue\n            if '=' not in line:\n                print(f\"warning: {path}:{lineno}: ignoring malformed line: {line!r}\")\n                continue\n            key, _, value = line.partition('=')\n            key, value = key.strip(), value.strip()\n            if key not in conf:\n                order.append(key)\n            conf[key] = value\n    return conf, order\n\ndef main():\n    v1, order1 = load_conf('/data/v1.conf')\n    v2, order2 = load_conf('/data/v2.conf')\n\n    added   = [k for k in order2 if k not in v1]\n    removed = [k for k in order1 if k not in v2]\n    changed = [k for k in order1 if k in v2 and v1[k] != v2[k]]\n    same    = [k for k in order1 if k in v2 and v1[k] == v2[k]]\n\n    print(\"Config comparison: /data/v1.conf -> /data/v2.conf\")\n    print(\"=\" * 52)\n\n    print(f\"\\nADDED ({len(added)}):\")\n    if added:\n        for k in added:\n            print(f\"  + {k} = {v2[k]}\")\n    else:\n        print(\"  (none)\")\n\n    print(f\"\\nREMOVED ({len(removed)}):\")\n    if removed:\n        for k in removed:\n            print(f\"  - {k} = {v1[k]}\")\n    else:\n        print(\"  (none)\")\n\n    print(f\"\\nCHANGED ({len(changed)}):\")\n    if changed:\n        for k in changed:\n            print(f\"  ~ {k}: {v1[k]} -> {v2[k]}\")\n    else:\n        print(\"  (none)\")\n\n    print(f\"\\nUNCHANGED ({len(same)}): {', '.join(same) if same else '(none)'}\")\n    print()\n    print(f\"Summary: {len(added)} added, {len(removed)} removed, \"\n          f\"{len(changed)} changed, {len(same)} unchanged\")\n\nif __name__ == '__main__':\n    main()\nEOF\npython3 /tmp/diffconf.py"
+    ],
+    "usage": {
+      "input_tokens": 2873,
+      "output_tokens": 1143,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 8333
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /data/ && echo \"===== v1.conf =====\" && cat /data/v1.conf && echo \"\" && echo \"===== v2.conf =====\" && cat /data/v2.conf",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       70 2026-10-09 17:41 v1.conf\n-rw-r--r--       60 2026-10-09 17:41 v2.conf\n===== v1.conf =====\nport=8080\nhost=localhost\nlog_level=info\nworkers=4\nmax_connections=100\n\n===== v2.conf =====\nport=9090\nhost=0.0.0.0\nlog_level=debug\nworkers=4\ntimeout=30\n"
+          },
+          {
+            "commands": "cat > /tmp/diffconf.py << 'EOF'\n#!/usr/bin/env python3\n\"\"\"Compare two key=value config files and summarize differences.\"\"\"\n\ndef load_conf(path):\n    \"\"\"Parse a key=value config file into an ordered dict.\"\"\"\n    conf = {}\n    order = []\n    with open(path) as f:\n        for lineno, line in enumerate(f, 1):\n            line = line.strip()\n            # Skip blank lines and comments\n            if not line or line.startswith('#') or line.startswith(';'):\n                continue\n            if '=' not in line:\n                print(f\"warning: {path}:{lineno}: ignoring malformed line: {line!r}\")\n                continue\n            key, _, value = line.partition('=')\n            key, value = key.strip(), value.strip()\n            if key not in conf:\n                order.append(key)\n            conf[key] = value\n    return conf, order\n\ndef main():\n    v1, order1 = load_conf('/data/v1.conf')\n    v2, order2 = load_conf('/data/v2.conf')\n\n    added   = [k for k in order2 if k not in v1]\n    removed = [k for k in order1 if k not in v2]\n    changed = [k for k in order1 if k in v2 and v1[k] != v2[k]]\n    same    = [k for k in order1 if k in v2 and v1[k] == v2[k]]\n\n    print(\"Config comparison: /data/v1.conf -> /data/v2.conf\")\n    print(\"=\" * 52)\n\n    print(f\"\\nADDED ({len(added)}):\")\n    if added:\n        for k in added:\n            print(f\"  + {k} = {v2[k]}\")\n    else:\n        print(\"  (none)\")\n\n    print(f\"\\nREMOVED ({len(removed)}):\")\n    if removed:\n        for k in removed:\n            print(f\"  - {k} = {v1[k]}\")\n    else:\n        print(\"  (none)\")\n\n    print(f\"\\nCHANGED ({len(changed)}):\")\n    if changed:\n        for k in changed:\n            print(f\"  ~ {k}: {v1[k]} -> {v2[k]}\")\n    else:\n        print(\"  (none)\")\n\n    print(f\"\\nUNCHANGED ({len(same)}): {', '.join(same) if same else '(none)'}\")\n    print()\n    print(f\"Summary: {len(added)} added, {len(removed)} removed, \"\n          f\"{len(changed)} changed, {len(same)} unchanged\")\n\nif __name__ == '__main__':\n    main()\nEOF\npython3 /tmp/diffconf.py",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Config comparison: /data/v1.conf -> /data/v2.conf\n====================================================\n\nADDED (1):\n  + timeout = 30\n\nREMOVED (1):\n  - max_connections = 100\n\nCHANGED (3):\n  ~ port: 8080 -> 9090\n  ~ host: localhost -> 0.0.0.0\n  ~ log_level: info -> debug\n\nUNCHANGED (1): workers\n\nSummary: 1 added, 1 removed, 3 changed, 1 unchanged\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

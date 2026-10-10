@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "build_script_generator",
+  "target": "openrouter/meta/muse-spark-1.3-contributor",
+  "input": [
+    "Read /project/deps.txt which lists build targets and their dependencies (format: 'target: dep1 dep2'). Generate /project/build.sh that builds targets in correct dependency order (dependencies before dependents). Then run the build script, which should create each target as a file in /project/out/ containing 'built: <target>'. Print the build order."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Done. Build order is **core → lib → utils → app** (dependencies before dependents).\n\n- Generated `/project/build.sh` that builds in order `core lib utils app`:\n```bash\n#!/bin/bash\nset -e\nmkdir -p /project/out\necho \"built: core\" > \"/project/out/core\"\necho \"building core\"\necho \"built: lib\" > \"/project/out/lib\"\necho \"building lib\"\necho \"built: utils\" > \"/project/out/utils\"\necho \"building utils\"\necho \"built: app\" > \"/project/out/app\"\necho \"building app\"\necho \"Build order: core lib utils app\"\n```\n- Ran `bash /project/build.sh` output:\n```\nbuilding core\nbuilding lib\nbuilding utils\nbuilding app\nBuild order: core lib utils app\n```\n- Verified `/project/out/{core,lib,utils,app}` each contain `built: <target>`.\n\nBuild order: `core lib utils app`\n",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "cat /project/deps.txt; echo \"---\"; ls -R /project 2>&1",
+      "python3 - << 'PY'\nfrom pathlib import Path\nimport re\n\ndeps_path = Path(\"/project/deps.txt\")\nlines = deps_path.read_text().splitlines()\nprint(repr(lines))\n\n# Parse: 'target: dep1 dep2'\ndeps = {}  # target -> list of deps\norder_seen = []\nfor line in lines:\n    line=line.strip()\n    if not line:\n        continue\n    if ':' not in line:\n        continue\n    target, rest = line.split(':', 1)\n    target=target.strip()\n    dlist = rest.strip().split() if rest.strip() else []\n    deps[target]=dlist\n    order_seen.append(target)\n    # ensure deps that are not targets themselves are also nodes? Here all deps are targets, but handle generally\nfor dlist in list(deps.values()):\n    for d in dlist:\n        if d not in deps:\n            deps[d]=[]\n            order_seen.append(d)\n\nprint(deps)\n\n# Kahn's algorithm, deterministic: respect file order for tie-breaking, but also alphabetical fallback?\n# Use queue initialized with zero-indegree in file order, then BFS.\nfrom collections import defaultdict, deque\n\n# indegree = len(deps[target])\nindegree = {t: len(v) for t,v in deps.items()}\n# reverse map: dep -> list of dependents\ndependents = defaultdict(list)\nfor t, dlist in deps.items():\n    for d in dlist:\n        dependents[d].append(t)\n\n# initial zero indegree in file order\nqueue = deque([t for t in order_seen if indegree[t]==0])\n# If any nodes not in order_seen (shouldn't happen), add sorted\nfor t in deps:\n    if t not in order_seen and indegree[t]==0 and t not in queue:\n        queue.append(t)\n\nresult=[]\nwhile queue:\n    # To keep deterministic and stable, sort? Let's keep FIFO but initial sorted.\n    # For full determinism, sort queue each time? That would give alphabetical.\n    # Let's sort to be deterministic alphabetical within available.\n    # For this case both give same. Use sorted to be canonical.\n    # But FIFO vs sorted: choose sorted for canonical.\n    # Convert to sorted list each iteration\n    # Actually to preserve file order, don't sort. Hmm.\n    # We'll sort alphabetically for canonical output.\n    # Let's do: pick smallest alphabetical among available\n    queue = deque(sorted(queue))\n    n = queue.popleft()\n    result.append(n)\n    for depent in sorted(dependents[n]):  # sorted for determinism\n        indegree[depent]-=1\n        if indegree[depent]==0:\n            queue.append(depent)\n\nif len(result)!=len(deps):\n    raise SystemExit(\"cycle detected!\")\n\nprint(\"BUILD ORDER:\", result)\n# Write build.sh static with this order\nbuild_sh = Path(\"/project/build.sh\")\ncontent = \"#!/bin/bash\\nset -e\\nmkdir -p /project/out\\n\"\nfor t in result:\n    content += f'echo \"built: {t}\" > \"/project/out/{t}\"\\n'\n    content += f'echo \"building {t}\"\\n'\n# also print final order\ncontent += f'echo \"Build order: {\" \".join(result)}\"\\n'\nbuild_sh.write_text(content)\nprint(\"--- build.sh ---\")\nprint(content)\nPY",
+      "chmod +x /project/build.sh\ncat /project/build.sh\necho \"=== RUN ===\"\nbash /project/build.sh\necho \"=== VERIFY ===\"\nls -l /project/out/\nfor f in /project/out/*; do echo \"--- $f: $(cat \"$f\")\"; done"
+    ],
+    "usage": {
+      "input_tokens": 6513,
+      "output_tokens": 3004,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 34245
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /project/deps.txt; echo \"---\"; ls -R /project 2>&1",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "app: lib utils\nlib: core\nutils: core\ncore:\n---\n/project:\ndeps.txt\nsrc\n\n/project/src:\napp\ncore\nlib\nutils\n"
+          },
+          {
+            "commands": "python3 - << 'PY'\nfrom pathlib import Path\nimport re\n\ndeps_path = Path(\"/project/deps.txt\")\nlines = deps_path.read_text().splitlines()\nprint(repr(lines))\n\n# Parse: 'target: dep1 dep2'\ndeps = {}  # target -> list of deps\norder_seen = []\nfor line in lines:\n    line=line.strip()\n    if not line:\n        continue\n    if ':' not in line:\n        continue\n    target, rest = line.split(':', 1)\n    target=target.strip()\n    dlist = rest.strip().split() if rest.strip() else []\n    deps[target]=dlist\n    order_seen.append(target)\n    # ensure deps that are not targets themselves are also nodes? Here all deps are targets, but handle generally\nfor dlist in list(deps.values()):\n    for d in dlist:\n        if d not in deps:\n            deps[d]=[]\n            order_seen.append(d)\n\nprint(deps)\n\n# Kahn's algorithm, deterministic: respect file order for tie-breaking, but also alphabetical fallback?\n# Use queue initialized with zero-indegree in file order, then BFS.\nfrom collections import defaultdict, deque\n\n# indegree = len(deps[target])\nindegree = {t: len(v) for t,v in deps.items()}\n# reverse map: dep -> list of dependents\ndependents = defaultdict(list)\nfor t, dlist in deps.items():\n    for d in dlist:\n        dependents[d].append(t)\n\n# initial zero indegree in file order\nqueue = deque([t for t in order_seen if indegree[t]==0])\n# If any nodes not in order_seen (shouldn't happen), add sorted\nfor t in deps:\n    if t not in order_seen and indegree[t]==0 and t not in queue:\n        queue.append(t)\n\nresult=[]\nwhile queue:\n    # To keep deterministic and stable, sort? Let's keep FIFO but initial sorted.\n    # For full determinism, sort queue each time? That would give alphabetical.\n    # Let's sort to be deterministic alphabetical within available.\n    # For this case both give same. Use sorted to be canonical.\n    # But FIFO vs sorted: choose sorted for canonical.\n    # Convert to sorted list each iteration\n    # Actually to preserve file order, don't sort. Hmm.\n    # We'll sort alphabetically for canonical output.\n    # Let's do: pick smallest alphabetical among available\n    queue = deque(sorted(queue))\n    n = queue.popleft()\n    result.append(n)\n    for depent in sorted(dependents[n]):  # sorted for determinism\n        indegree[depent]-=1\n        if indegree[depent]==0:\n            queue.append(depent)\n\nif len(result)!=len(deps):\n    raise SystemExit(\"cycle detected!\")\n\nprint(\"BUILD ORDER:\", result)\n# Write build.sh static with this order\nbuild_sh = Path(\"/project/build.sh\")\ncontent = \"#!/bin/bash\\nset -e\\nmkdir -p /project/out\\n\"\nfor t in result:\n    content += f'echo \"built: {t}\" > \"/project/out/{t}\"\\n'\n    content += f'echo \"building {t}\"\\n'\n# also print final order\ncontent += f'echo \"Build order: {\" \".join(result)}\"\\n'\nbuild_sh.write_text(content)\nprint(\"--- build.sh ---\")\nprint(content)\nPY",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "['app: lib utils', 'lib: core', 'utils: core', 'core:']\n{'app': ['lib', 'utils'], 'lib': ['core'], 'utils': ['core'], 'core': []}\nBUILD ORDER: ['core', 'lib', 'utils', 'app']\n--- build.sh ---\n#!/bin/bash\nset -e\nmkdir -p /project/out\necho \"built: core\" > \"/project/out/core\"\necho \"building core\"\necho \"built: lib\" > \"/project/out/lib\"\necho \"building lib\"\necho \"built: utils\" > \"/project/out/utils\"\necho \"building utils\"\necho \"built: app\" > \"/project/out/app\"\necho \"building app\"\necho \"Build order: core lib utils app\"\n\n"
+          },
+          {
+            "commands": "chmod +x /project/build.sh\ncat /project/build.sh\necho \"=== RUN ===\"\nbash /project/build.sh\necho \"=== VERIFY ===\"\nls -l /project/out/\nfor f in /project/out/*; do echo \"--- $f: $(cat \"$f\")\"; done",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "#!/bin/bash\nset -e\nmkdir -p /project/out\necho \"built: core\" > \"/project/out/core\"\necho \"building core\"\necho \"built: lib\" > \"/project/out/lib\"\necho \"building lib\"\necho \"built: utils\" > \"/project/out/utils\"\necho \"building utils\"\necho \"built: app\" > \"/project/out/app\"\necho \"building app\"\necho \"Build order: core lib utils app\"\n=== RUN ===\nbuilding core\nbuilding lib\nbuilding utils\nbuilding app\nBuild order: core lib utils app\n=== VERIFY ===\n-rw-r--r--       11 2026-10-09 17:47 app\n-rw-r--r--       12 2026-10-09 17:47 core\n-rw-r--r--       11 2026-10-09 17:47 lib\n-rw-r--r--       13 2026-10-09 17:47 utils\n--- /project/out/app: built: app\n--- /project/out/core: built: core\n--- /project/out/lib: built: lib\n--- /project/out/utils: built: utils\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,85 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "repo_report_sort_regression",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "`make test` fails in the git repo /home/eval/report: the top-customers report no longer matches the golden file tests/expected.txt. The golden file is correct. Fix the report script, make sure `make test` passes, and commit with a message starting with `fix:`."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Fixed and committed.\n\n**Root cause:** `bin/top-customers` used `sort -t, -k2 -r`, which compares the amount column **lexically**, so `99` ranked above `1240` and the report listed `hooli,99` / `umbrella,95` at the top.\n\n**Fix:** changed the sort to `sort -t, -k2,2 -rn` (numeric, descending, only the second field). Now `make test` prints `report OK` and the output matches `tests/expected.txt`:\n\n```\nglobex,1240\nacme,1200\ninitech,1100\n```\n\nCommitted as `b46497f3 fix: sort top-customers report numerically by spend, not lexically`. (The `build/actual.txt` test artifact is left untracked, as it was before.)",
+    "iterations": 6,
+    "tool_calls_count": 5,
+    "tool_calls": [
+      "cd /home/eval/report && ls -la && git status && git log --oneline -5",
+      "cd /home/eval/report && cat Makefile && ls bin data tests && cat tests/expected.txt",
+      "cd /home/eval/report && cat bin/top-customers && echo '---' && cat data/orders.csv && echo '---' && make test",
+      "cd /home/eval/report && sed -i 's/sort -t, -k2 -r/sort -t, -k2,2 -rn/' bin/top-customers && cat bin/top-customers && make test",
+      "cd /home/eval/report && bin/top-customers data/orders.csv 3 && git add bin/top-customers && git commit -m \"fix: sort top-customers report numerically by spend, not lexically\" && git log --oneline -2 && git status --short"
+    ],
+    "usage": {
+      "input_tokens": 7193,
+      "output_tokens": 741,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 22083
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 5.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 4.0,
+      "turns": 6.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cd /home/eval/report && ls -la && git status && git log --oneline -5",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "drwxr-xr-x        0 2026-10-09 17:49 .git\n-rw-r--r--      146 2026-10-09 17:49 Makefile\ndrwxr-xr-x        0 2026-10-09 17:49 bin\ndrwxr-xr-x        0 2026-10-09 17:49 data\ndrwxr-xr-x        0 2026-10-09 17:49 tests\nOn branch master\n\nnothing to commit, working tree clean\ncommit b46497e3\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 17:49:00 2026 +0000\n\n    initial import\n\n"
+          },
+          {
+            "commands": "cd /home/eval/report && cat Makefile && ls bin data tests && cat tests/expected.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "test:\n\t@mkdir -p build\n\t@bin/top-customers data/orders.csv 3 > build/actual.txt\n\t@diff -u tests/expected.txt build/actual.txt && echo 'report OK'\nbin:\ntop-customers\n\ndata:\norders.csv\n\ntests:\nexpected.txt\nglobex,1240\nacme,1200\ninitech,1100\n"
+          },
+          {
+            "commands": "cd /home/eval/report && cat bin/top-customers && echo '---' && cat data/orders.csv && echo '---' && make test",
+            "exit_code": 2,
+            "stderr": "make: *** [Makefile:4: test] Error 1\n",
+            "stdout": "#!/bin/bash\n# usage: top-customers ORDERS.csv N -> top N customers by total spend\nawk -F, 'NR > 1 { total[$2] += $3 } END { for (c in total) print c \",\" total[c] }' \"$1\" \\\n  | sort -t, -k2 -r \\\n  | head -n \"$2\"\n---\nid,customer,amount\n1,acme,900\n2,globex,1200\n3,initech,450\n4,acme,300\n5,umbrella,95\n6,globex,40\n7,initech,650\n8,hooli,99\n---\n--- tests/expected.txt\n+++ build/actual.txt\n@@ -1,3 +1,3 @@\n+hooli,99\n+umbrella,95\n globex,1240\n-acme,1200\n-initech,1100\n"
+          },
+          {
+            "commands": "cd /home/eval/report && sed -i 's/sort -t, -k2 -r/sort -t, -k2,2 -rn/' bin/top-customers && cat bin/top-customers && make test",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "#!/bin/bash\n# usage: top-customers ORDERS.csv N -> top N customers by total spend\nawk -F, 'NR > 1 { total[$2] += $3 } END { for (c in total) print c \",\" total[c] }' \"$1\" \\\n  | sort -t, -k2,2 -rn \\\n  | head -n \"$2\"\nreport OK\n"
+          },
+          {
+            "commands": "cd /home/eval/report && bin/top-customers data/orders.csv 3 && git add bin/top-customers && git commit -m \"fix: sort top-customers report numerically by spend, not lexically\" && git log --oneline -2 && git status --short",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "globex,1240\nacme,1200\ninitech,1100\n[master b46497f] fix: sort top-customers report numerically by spend, not lexically\ncommit b46497f3\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 17:49:16 2026 +0000\n\n    fix: sort top-customers report numerically by spend, not lexically\n\ncommit b46497e3\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 17:49:00 2026 +0000\n\n    initial import\n\nOn branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/actual.txt\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

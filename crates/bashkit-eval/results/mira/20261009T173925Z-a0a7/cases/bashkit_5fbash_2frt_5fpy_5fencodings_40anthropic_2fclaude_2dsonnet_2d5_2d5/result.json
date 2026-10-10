@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "rt_py_encodings",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "/data/legacy holds text files in mixed encodings. For every file whose name ends in `.txt` (case-sensitive), write a normalised copy with the same name to /out/clean/: UTF-8 without BOM, line endings \\r\\n and lone \\r converted to \\n, and ending with exactly one added \\n if the text did not already end with \\n.\nDetect each file's encoding in this order: starts with a UTF-16 BOM (FF FE or FE FF) -> utf-16; starts with the UTF-8 BOM -> utf-8-sig; decodes as UTF-8 -> utf-8 (plain ASCII included); otherwise latin-1.\nWrite /out/manifest.tsv (tab-separated, header name, encoding, lines, chars) with one row per file sorted by name, where lines is the number of \\n and chars the number of Unicode characters in the normalised text (newlines included, BOM excluded)."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "8/8 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I wrote normalised copies of the six `.txt` files to `/out/clean/` and the manifest to `/out/manifest.tsv`. `g.TXT` was skipped because its extension is uppercase and the match is case-sensitive.\n\n| name | encoding | lines | chars |\n|---|---|---|---|\n| a.txt | utf-8 | 2 | 24 |\n| b.txt | utf-8-sig | 2 | 26 |\n| c.txt | latin-1 | 2 | 23 |\n| d.txt | utf-16 | 3 | 16 |\n| e.txt | utf-8 | 2 | 30 |\n| f.txt | latin-1 | 3 | 17 |\n\nI only spot-checked `a.txt`, whose raw bytes are valid UTF-8 and were detected as `utf-8`. I did not open the output files to check their contents.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cd /data/legacy && find . -type f | head -100; ls -la",
+      "cd /data/legacy && cat > /tmp/r.py <<'E'\nimport os\nsrc='/data/legacy'; out='/out/clean'\nos.makedirs(out,exist_ok=True)\nrows=[]\nfor n in sorted(os.listdir(src)):\n    p=os.path.join(src,n)\n    if not n.endswith('.txt') or not os.path.isfile(p): continue\n    b=open(p,'rb').read()\n    if b[:2] in (b'\\xff\\xfe',b'\\xfe\\xff'): enc='utf-16'\n    elif b[:3]==b'\\xef\\xbb\\xbf': enc='utf-8-sig'\n    else:\n        try: b.decode('utf-8'); enc='utf-8'\n        except UnicodeDecodeError: enc='latin-1'\n    t=b.decode(enc).replace('\\r\\n','\\n').replace('\\r','\\n')\n    if not t.endswith('\\n'): t+='\\n'\n    open(os.path.join(out,n),'wb').write(t.encode('utf-8'))\n    rows.append((n,enc,t.count('\\n'),len(t)))\nwith open('/out/manifest.tsv','w',encoding='utf-8',newline='') as f:\n    f.write('name\\tencoding\\tlines\\tchars\\n')\n    for r in rows: f.write('\\t'.join(map(str,r))+'\\n')\nE\npython3 /tmp/r.py; cat /out/manifest.tsv; xxd a.txt | head -3"
+    ],
+    "usage": {
+      "input_tokens": 5113,
+      "output_tokens": 1115,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 9300
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cd /data/legacy && find . -type f | head -100; ls -la",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "./a.txt\n./b.txt\n./c.txt\n./d.txt\n./e.txt\n./f.txt\n./g.TXT\n-rw-r--r--       29 2026-10-09 22:17 a.txt\n-rw-r--r--       32 2026-10-09 22:17 b.txt\n-rw-r--r--       22 2026-10-09 22:17 c.txt\n-rw-r--r--       40 2026-10-09 22:17 d.txt\n-rw-r--r--       29 2026-10-09 22:17 e.txt\n-rw-r--r--       17 2026-10-09 22:17 f.txt\n-rw-r--r--       28 2026-10-09 22:17 g.TXT\n"
+          },
+          {
+            "commands": "cd /data/legacy && cat > /tmp/r.py <<'E'\nimport os\nsrc='/data/legacy'; out='/out/clean'\nos.makedirs(out,exist_ok=True)\nrows=[]\nfor n in sorted(os.listdir(src)):\n    p=os.path.join(src,n)\n    if not n.endswith('.txt') or not os.path.isfile(p): continue\n    b=open(p,'rb').read()\n    if b[:2] in (b'\\xff\\xfe',b'\\xfe\\xff'): enc='utf-16'\n    elif b[:3]==b'\\xef\\xbb\\xbf': enc='utf-8-sig'\n    else:\n        try: b.decode('utf-8'); enc='utf-8'\n        except UnicodeDecodeError: enc='latin-1'\n    t=b.decode(enc).replace('\\r\\n','\\n').replace('\\r','\\n')\n    if not t.endswith('\\n'): t+='\\n'\n    open(os.path.join(out,n),'wb').write(t.encode('utf-8'))\n    rows.append((n,enc,t.count('\\n'),len(t)))\nwith open('/out/manifest.tsv','w',encoding='utf-8',newline='') as f:\n    f.write('name\\tencoding\\tlines\\tchars\\n')\n    for r in rows: f.write('\\t'.join(map(str,r))+'\\n')\nE\npython3 /tmp/r.py; cat /out/manifest.tsv; xxd a.txt | head -3",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "name\tencoding\tlines\tchars\na.txt\tutf-8\t2\t24\nb.txt\tutf-8-sig\t2\t26\nc.txt\tlatin-1\t2\t23\nd.txt\tutf-16\t3\t16\ne.txt\tutf-8\t2\t30\nf.txt\tlatin-1\t3\t17\n00000000: 4361 66c3 a920 6372 c3a8 6d65 0a6e 61c3  Caf.. cr..me.na.\n00000010: af76 6520 72c3 a973 756d c3a9 0a         .ve r..sum...\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

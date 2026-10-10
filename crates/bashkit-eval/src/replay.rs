@@ -283,10 +283,12 @@ pub fn load_corpus(results: &Path, dataset: &Path) -> Result<Vec<Session>> {
 
 /// Run a session's calls in order on a fresh `Bash`, as the eval agent did.
 pub async fn replay(session: &Session) -> Vec<Call> {
-    let mut builder = Bash::builder()
-        .username("eval")
-        .hostname("bashkit-eval")
-        .limits(ExecutionLimits::default().timeout(CALL_TIMEOUT));
+    let mut builder = crate::agent::with_eval_runtimes(
+        Bash::builder()
+            .username("eval")
+            .hostname("bashkit-eval")
+            .limits(ExecutionLimits::default().timeout(CALL_TIMEOUT)),
+    );
     for (path, content) in &session.files {
         builder = builder.mount_text(path, content);
     }

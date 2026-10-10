@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "json_config_merge",
+  "target": "anthropic/claude-opus-5-5",
+  "input": [
+    "Merge /config/defaults.json with /config/production.json where production values override defaults. Perform a deep merge so that keys present only in defaults are preserved while keys in production take precedence. Save the merged result to /config/merged.json and print it."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "8/8 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I merged the two files and saved the result to `/config/merged.json`. Values from production replaced the defaults, and keys that only exist in defaults were kept:\n\n```json\n{\n  \"app\": {\n    \"name\": \"myservice\",\n    \"port\": 8080,\n    \"debug\": false\n  },\n  \"db\": {\n    \"host\": \"db.prod.internal\",\n    \"port\": 5432,\n    \"pool_size\": 20\n  },\n  \"log\": {\n    \"level\": \"warn\",\n    \"format\": \"json\"\n  }\n}\n```\n\n- **Kept from defaults** (production doesn't set these): `app.name` (`\"myservice\"`) and `db.port` (`5432`).\n- **Taken from production:** `app.port`, `app.debug`, `db.host`, `db.pool_size`, `log.level` and `log.format`.\n\nWhen both files have a section, its nested keys are merged one by one. For any other value, including lists, the production value replaces the default as a whole.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat /config/defaults.json; echo ---; cat /config/production.json",
+      "cat > /tmp/m.py <<'EOF'\nimport json\ndef merge(a,b):\n    r=dict(a)\n    for k,v in b.items():\n        r[k]=merge(r[k],v) if isinstance(r.get(k),dict) and isinstance(v,dict) else v\n    return r\nd=json.load(open('/config/defaults.json'));p=json.load(open('/config/production.json'))\nm=merge(d,p)\nopen('/config/merged.json','w').write(json.dumps(m,indent=2)+\"\\n\")\nEOF\npython3 /tmp/m.py && cat /config/merged.json"
+    ],
+    "usage": {
+      "input_tokens": 3866,
+      "output_tokens": 619,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 6531
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /config/defaults.json; echo ---; cat /config/production.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "{\"app\":{\"name\":\"myservice\",\"port\":3000,\"debug\":true},\"db\":{\"host\":\"localhost\",\"port\":5432,\"pool_size\":5},\"log\":{\"level\":\"debug\",\"format\":\"text\"}}---\n{\"app\":{\"port\":8080,\"debug\":false},\"db\":{\"host\":\"db.prod.internal\",\"pool_size\":20},\"log\":{\"level\":\"warn\",\"format\":\"json\"}}"
+          },
+          {
+            "commands": "cat > /tmp/m.py <<'EOF'\nimport json\ndef merge(a,b):\n    r=dict(a)\n    for k,v in b.items():\n        r[k]=merge(r[k],v) if isinstance(r.get(k),dict) and isinstance(v,dict) else v\n    return r\nd=json.load(open('/config/defaults.json'));p=json.load(open('/config/production.json'))\nm=merge(d,p)\nopen('/config/merged.json','w').write(json.dumps(m,indent=2)+\"\\n\")\nEOF\npython3 /tmp/m.py && cat /config/merged.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "{\n  \"app\": {\n    \"name\": \"myservice\",\n    \"port\": 8080,\n    \"debug\": false\n  },\n  \"db\": {\n    \"host\": \"db.prod.internal\",\n    \"port\": 5432,\n    \"pool_size\": 20\n  },\n  \"log\": {\n    \"level\": \"warn\",\n    \"format\": \"json\"\n  }\n}\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

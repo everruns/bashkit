@@ -1,0 +1,63 @@
+{
+  "eval": "bashkit_generate",
+  "sample": "gen_semver_bump",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Write a bash script that cuts a release.\n\nStarting files:\n--- /home/eval/app/VERSION ---\n1.9.3\n--- end ---\n--- /home/eval/app/changes.txt ---\nfix: handle empty config\nfeat: add --dry-run flag\ndocs: typo in README\nfix: retry on 503\n--- end ---\n--- /home/eval/app/CHANGELOG.md ---\n# Changelog\n\n## Unreleased\n\n## 1.9.3 (2026-09-01)\n- fix: crash on start\n--- end ---\n\n1. Decide the bump from /home/eval/app/changes.txt: if any line starts with `BREAKING` or has `!:` right after its type (e.g. `feat!: ...`), bump major; otherwise if any line starts with `feat:`, bump minor; otherwise bump patch. Lower parts reset to 0. Version parts are integers.\n2. Write the new version to /home/eval/app/VERSION (single line).\n3. In /home/eval/app/CHANGELOG.md, keep the `## Unreleased` heading and insert right after it: a blank line, the heading `## <new version> (2026-10-09)`, then one line `- <change>` for each `feat`/`fix` line of changes.txt in original order (other types are omitted). The existing blank line before `## 1.9.3` must remain, so the file reads:\n```\n# Changelog\n\n## Unreleased\n\n## 1.10.0 (2026-10-09)\n- fix: handle empty config\n- feat: add --dry-run flag\n- fix: retry on 503\n\n## 1.9.3 (2026-09-01)\n- fix: crash on start\n```\n4. Print `1.9.3 -> <new version>` to stdout and exit 0."
+  ],
+  "passed": false,
+  "aggregate": 0.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": -0.0,
+      "pass": false,
+      "reason": "0/4 checks passed (weighted rate -0%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "```bash\n#!/usr/bin/env bash\nset -euo pipefail\n\napp_dir=\"/home/eval/app\"\nversion_file=\"$app_dir/VERSION\"\nchanges_file=\"$app_dir/changes.txt\"\nchangelog_file=\"$app_dir/CHANGELOG.md\"\n\nold_ver=$(head -n 1 \"$version_file\" | tr -d '\\r\\n')\nIFS='.' read -r major minor patch <<< \"$old_ver\"\n\nbump=\"patch\"\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  if [[ \"$line\" =~ ^BREAKING ]] || [[ \"$line\" =~ ^[a-zA-Z0-9_-]+(\\([^)]*\\))?!: ]]; then\n    bump=\"major\"\n    break\n  elif [[ \"$line\" =~ ^feat: ]] || [[ \"$line\" =~ ^feat\\([^)]*\\): ]]; then\n    bump=\"minor\"\n  fi\ndone < \"$changes_file\"\n\nif [[ \"$bump\" == \"major\" ]]; then\n  major=$((major + 1))\n  minor=0\n  patch=0\nelif [[ \"$bump\" == \"minor\" ]]; then\n  minor=$((minor + 1))\n  patch=0\nelse\n  patch=$((patch + 1))\nfi\n\nnew_ver=\"${major}.${minor}.${patch}\"\n\nprintf \"%s\\n\" \"$new_ver\" > \"$version_file\"\n\nentries=()\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  if [[ \"$line\" =~ ^(feat|fix)(\\([^)]*\\))?!?: ]]; then\n    entries+=(\"- $line\")\n  fi\ndone < \"$changes_file\"\n\ntmp_file=$(mktemp)\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  printf '%s\\n' \"$line\" >> \"$tmp_file\"\n  if [[ \"$line\" == \"## Unreleased\" ]]; then\n    printf '\\n## %s (2026-10-09)\\n' \"$new_ver\" >> \"$tmp_file\"\n    for entry in \"${entries[@]}\"; do\n      printf '%s\\n' \"$entry\" >> \"$tmp_file\"\n    done\n  fi\ndone < \"$changelog_file\"\n\nmv \"$tmp_file\" \"$changelog_file\"\n\nprintf \"%s -> %s\\n\" \"$old_ver\" \"$new_ver\"\nexit 0\n```",
+    "iterations": 1,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "#!/usr/bin/env bash\nset -euo pipefail\n\napp_dir=\"/home/eval/app\"\nversion_file=\"$app_dir/VERSION\"\nchanges_file=\"$app_dir/changes.txt\"\nchangelog_file=\"$app_dir/CHANGELOG.md\"\n\nold_ver=$(head -n 1 \"$version_file\" | tr -d '\\r\\n')\nIFS='.' read -r major minor patch <<< \"$old_ver\"\n\nbump=\"patch\"\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  if [[ \"$line\" =~ ^BREAKING ]] || [[ \"$line\" =~ ^[a-zA-Z0-9_-]+(\\([^)]*\\))?!: ]]; then\n    bump=\"major\"\n    break\n  elif [[ \"$line\" =~ ^feat: ]] || [[ \"$line\" =~ ^feat\\([^)]*\\): ]]; then\n    bump=\"minor\"\n  fi\ndone < \"$changes_file\"\n\nif [[ \"$bump\" == \"major\" ]]; then\n  major=$((major + 1))\n  minor=0\n  patch=0\nelif [[ \"$bump\" == \"minor\" ]]; then\n  minor=$((minor + 1))\n  patch=0\nelse\n  patch=$((patch + 1))\nfi\n\nnew_ver=\"${major}.${minor}.${patch}\"\n\nprintf \"%s\\n\" \"$new_ver\" > \"$version_file\"\n\nentries=()\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  if [[ \"$line\" =~ ^(feat|fix)(\\([^)]*\\))?!?: ]]; then\n    entries+=(\"- $line\")\n  fi\ndone < \"$changes_file\"\n\ntmp_file=$(mktemp)\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  printf '%s\\n' \"$line\" >> \"$tmp_file\"\n  if [[ \"$line\" == \"## Unreleased\" ]]; then\n    printf '\\n## %s (2026-10-09)\\n' \"$new_ver\" >> \"$tmp_file\"\n    for entry in \"${entries[@]}\"; do\n      printf '%s\\n' \"$entry\" >> \"$tmp_file\"\n    done\n  fi\ndone < \"$changelog_file\"\n\nmv \"$tmp_file\" \"$changelog_file\"\n\nprintf \"%s -> %s\\n\" \"$old_ver\" \"$new_ver\"\nexit 0\n"
+    ],
+    "usage": {
+      "input_tokens": 739,
+      "output_tokens": 4924,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 31511
+    },
+    "metrics": {
+      "exec_ms": 2.0,
+      "exit_code": 2.0,
+      "extracted": 1.0,
+      "generate_ms": 31509.0,
+      "script_bytes": 1413.0,
+      "script_found": 1.0,
+      "timed_out": 0.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 2,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "#!/usr/bin/env bash\nset -euo pipefail\n\napp_dir=\"/home/eval/app\"\nversion_file=\"$app_dir/VERSION\"\nchanges_file=\"$app_dir/changes.txt\"\nchangelog_file=\"$app_dir/CHANGELOG.md\"\n\nold_ver=$(head -n 1 \"$version_file\" | tr -d '\\r\\n')\nIFS='.' read -r major minor patch <<< \"$old_ver\"\n\nbump=\"patch\"\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  if [[ \"$line\" =~ ^BREAKING ]] || [[ \"$line\" =~ ^[a-zA-Z0-9_-]+(\\([^)]*\\))?!: ]]; then\n    bump=\"major\"\n    break\n  elif [[ \"$line\" =~ ^feat: ]] || [[ \"$line\" =~ ^feat\\([^)]*\\): ]]; then\n    bump=\"minor\"\n  fi\ndone < \"$changes_file\"\n\nif [[ \"$bump\" == \"major\" ]]; then\n  major=$((major + 1))\n  minor=0\n  patch=0\nelif [[ \"$bump\" == \"minor\" ]]; then\n  minor=$((minor + 1))\n  patch=0\nelse\n  patch=$((patch + 1))\nfi\n\nnew_ver=\"${major}.${minor}.${patch}\"\n\nprintf \"%s\\n\" \"$new_ver\" > \"$version_file\"\n\nentries=()\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  if [[ \"$line\" =~ ^(feat|fix)(\\([^)]*\\))?!?: ]]; then\n    entries+=(\"- $line\")\n  fi\ndone < \"$changes_file\"\n\ntmp_file=$(mktemp)\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  printf '%s\\n' \"$line\" >> \"$tmp_file\"\n  if [[ \"$line\" == \"## Unreleased\" ]]; then\n    printf '\\n## %s (2026-10-09)\\n' \"$new_ver\" >> \"$tmp_file\"\n    for entry in \"${entries[@]}\"; do\n      printf '%s\\n' \"$entry\" >> \"$tmp_file\"\n    done\n  fi\ndone < \"$changelog_file\"\n\nmv \"$tmp_file\" \"$changelog_file\"\n\nprintf \"%s -> %s\\n\" \"$old_ver\" \"$new_ver\"\nexit 0\n",
+            "exit_code": 2,
+            "stderr": "bash: line 14: syntax error in conditional expression: unexpected token `)'\n",
+            "stdout": ""
+          }
+        ]
+      },
+      "generate": {
+        "extraction": "fenced",
+        "timed_out": false
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,61 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "file_ops_project_scaffold",
+  "target": "anthropic/claude-opus-5-5",
+  "input": [
+    "Create a Python project at /home/eval/myproject with the following structure: src/ directory with __init__.py, tests/ directory with __init__.py, docs/ directory, and a README.md at the project root with the text '# My Project'."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I created the project at `/home/eval/myproject`, and a directory listing shows everything is there:\n\n```\nmyproject/\n├── README.md\n├── docs/\n├── src/\n│   └── __init__.py\n└── tests/\n    └── __init__.py\n```\n\n- **`README.md`** contains `# My Project`.\n- **`src/__init__.py`** and **`tests/__init__.py`** are empty, which is enough to make those folders Python packages.\n- **`docs/`** is an empty directory.",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "mkdir -p /home/eval/myproject/{src,tests,docs} && cd /home/eval/myproject && touch src/__init__.py tests/__init__.py && echo '# My Project' > README.md && find . | sort && cat README.md"
+    ],
+    "usage": {
+      "input_tokens": 2235,
+      "output_tokens": 287,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 3641
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/home/eval/myproject/docs",
+          "/home/eval/myproject/src",
+          "/home/eval/myproject/tests"
+        ],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "mkdir -p /home/eval/myproject/{src,tests,docs} && cd /home/eval/myproject && touch src/__init__.py tests/__init__.py && echo '# My Project' > README.md && find . | sort && cat README.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ".\n./README.md\n./docs\n./src\n./src/__init__.py\n./tests\n./tests/__init__.py\n# My Project\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

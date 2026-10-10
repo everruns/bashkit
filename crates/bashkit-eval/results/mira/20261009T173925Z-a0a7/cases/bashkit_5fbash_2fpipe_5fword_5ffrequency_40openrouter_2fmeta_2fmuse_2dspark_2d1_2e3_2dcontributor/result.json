@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "pipe_word_frequency",
+  "target": "openrouter/meta/muse-spark-1.3-contributor",
+  "input": [
+    "Read /data/poem.txt and find the 3 most frequently used words. Print each word with its count, one per line, sorted by frequency descending."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "the 8\non 3\ncat 2",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat /data/poem.txt\necho \"---\"\nls -l /data/poem.txt\n",
+      "tr '[:upper:]' '[:lower:]' < /data/poem.txt | tr -cs 'a-z0-9' '\\n' | grep -v '^$' | sort | uniq -c | sort -k1,1nr -k2 | head -3 | awk '{print $2\" \"$1}'"
+    ],
+    "usage": {
+      "input_tokens": 3233,
+      "output_tokens": 1428,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 11251
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /data/poem.txt\necho \"---\"\nls -l /data/poem.txt\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "the cat sat on the mat\nthe cat in the hat\nthe dog on the log\nthe frog on the bog\n---\n-rw-r--r--       81 2026-10-09 17:39 /data/poem.txt\n"
+          },
+          {
+            "commands": "tr '[:upper:]' '[:lower:]' < /data/poem.txt | tr -cs 'a-z0-9' '\\n' | grep -v '^$' | sort | uniq -c | sort -k1,1nr -k2 | head -3 | awk '{print $2\" \"$1}'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "the 8\non 3\ncat 2\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

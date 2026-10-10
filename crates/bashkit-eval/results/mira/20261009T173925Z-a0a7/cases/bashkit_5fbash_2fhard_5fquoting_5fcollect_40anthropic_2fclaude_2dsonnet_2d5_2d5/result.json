@@ -1,0 +1,87 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "hard_quoting_collect",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "In the git repository /home/eval/media, the script bin/collect (contract in its header comment) mishandles unusual file names. Fix bin/collect so that `make test` passes (do not modify tests/). Then use the fixed script to move the files from /home/eval/media/inbox into the directory `/home/eval/media/archive 2026` (note the space) by running it from /home/eval/media as: bash bin/collect inbox 'archive 2026'. Finally commit your change to bin/collect with a message starting with `fix:`."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "14/14 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "`bin/collect` is fixed, `make test` passes, and the inbox files are now in `archive 2026`. The fix is committed as `fix: handle unusual file names in bin/collect`.\n\n**The fix.** The old script split `ls` output on whitespace and left variables unquoted. That broke names with spaces and glob characters, and names starting with a dash. I replaced it with a `\"$src\"/*.txt` glob. It quotes every path and passes `--` to `mv`. It skips anything that isn't a regular file, so the `archive.txt` directory stays put. The glob also leaves out hidden names and anything not ending in lowercase `.txt`. `INDEX` is now rebuilt with `LC_ALL=C sort -u`, and an empty run leaves it unchanged.\n\n**The archive run.** `bash bin/collect inbox 'archive 2026'` printed `moved 6`. These six files went into `archive 2026`, and `INDEX` lists all six:\n- `--help.txt`\n- `Q3 summary.txt`\n- `[final] budget.txt`\n- `m*.txt`\n- `memo.txt`\n- `what?.txt`\n\nFour items stayed in `inbox`: `.draft.txt` (hidden), `LOUD.TXT` (uppercase extension), `notes.md` (not `.txt`) and the `archive.txt` directory.\n\nThe archive files, `build/` output and the test scratch files are untracked and not committed. Only `bin/collect` was committed.",
+    "iterations": 5,
+    "tool_calls_count": 5,
+    "tool_calls": [
+      "cd /home/eval/media; git status --short; ls -la . inbox tests; cat bin/collect; cat Makefile; ls tests",
+      "cd /home/eval/media; cat tests/test_collect.sh",
+      "cd /home/eval/media; ls -A inbox; ls -la inbox/archive.txt",
+      "cd /home/eval/media; python3 - <<'E'\ns=open('bin/collect').read()\ni=s.index('src=$1')\ns=s[:i]+'''src=$1\ndest=$2\nmkdir -p -- \"$dest\" || exit 1\ncount=0\nmoved=()\nfor p in \"$src\"/*.txt; do\n  [ -f \"$p\" ] && [ ! -L \"$p\" -o -f \"$p\" ] || continue\n  f=${p##*/}\n  mv -- \"$p\" \"$dest/$f\" || continue\n  moved+=(\"$f\")\n  count=$((count + 1))\ndone\nif [ \"$count\" -gt 0 ]; then\n  { [ -f \"$dest/INDEX\" ] && cat -- \"$dest/INDEX\"; printf '%s\\\\n' \"${moved[@]}\"; } \\\\\n    | LC_ALL=C sort -u -o \"$dest/INDEX\"\nfi\necho \"moved $count\"\n'''\nopen('bin/collect','w').write(s)\nE\nmake test && bash bin/collect inbox 'archive 2026' && ls -A inbox 'archive 2026'; cat 'archive 2026/INDEX'; git status --short",
+      "cd /home/eval/media; sed -i 's/^  \\[ -f \"\\$p\" \\] && .*$/  [ -f \"$p\" ] || continue/' bin/collect; sed -n 9,20p bin/collect; make test && git add bin/collect && git commit -qm \"fix: handle unusual file names in bin/collect\" && git log --oneline | head -2"
+    ],
+    "usage": {
+      "input_tokens": 15770,
+      "output_tokens": 1530,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 13695
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 5.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 5.0,
+      "turns": 5.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/home/eval/media/inbox/archive.txt"
+        ],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cd /home/eval/media; git status --short; ls -la . inbox tests; cat bin/collect; cat Makefile; ls tests",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "On branch master\n\nnothing to commit, working tree clean\n.:\ndrwxr-xr-x        0 2026-10-09 17:48 .git\n-rw-r--r--       49 2026-10-09 17:48 Makefile\ndrwxr-xr-x        0 2026-10-09 17:48 bin\ndrwxr-xr-x        0 2026-10-09 17:48 inbox\ndrwxr-xr-x        0 2026-10-09 17:48 tests\n\ninbox:\n-rw-r--r--       16 2026-10-09 17:48 --help.txt\n-rw-r--r--       16 2026-10-09 17:48 .draft.txt\n-rw-r--r--       14 2026-10-09 17:48 LOUD.TXT\n-rw-r--r--       20 2026-10-09 17:48 Q3 summary.txt\n-rw-r--r--       24 2026-10-09 17:48 [final] budget.txt\ndrwxr-xr-x        0 2026-10-09 17:48 archive.txt\n-rw-r--r--       12 2026-10-09 17:48 m*.txt\n-rw-r--r--       14 2026-10-09 17:48 memo.txt\n-rw-r--r--       14 2026-10-09 17:48 notes.md\n-rw-r--r--       15 2026-10-09 17:48 what?.txt\n\ntests:\n-rw-r--r--     2050 2026-10-09 17:48 test_collect.sh\n#!/bin/bash\n# collect SRC DEST: move every *.txt regular file directly inside SRC into DEST.\n#  - only non-hidden names ending in lowercase \".txt\"; directories are skipped\n#  - names may contain spaces, glob characters, or start with a dash\n#  - DEST/INDEX accumulates every name collect has ever moved into DEST:\n#    one name per line, sorted bytewise (LC_ALL=C sort), no duplicates\n#  - prints \"moved N\", N = number of files moved by this run\nsrc=$1\ndest=$2\nmkdir -p $dest\ncount=0\nfor f in $(ls $src | grep '\\.txt$'); do\n  mv $src/$f $dest/\n  echo $f >> $dest/INDEX\n  count=$((count + 1))\ndone\nsort -o $dest/INDEX $dest/INDEX\necho \"moved $count\"\ntest:\n\t@bash tests/test_collect.sh\n\n.PHONY: test\ntest_collect.sh\n"
+          },
+          {
+            "commands": "cd /home/eval/media; cat tests/test_collect.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "#!/bin/bash\n# Builds a scratch inbox full of awkward names and checks bin/collect.\ncd \"$(dirname \"$0\")/..\" || exit 2\nexport LC_ALL=C\nt=build/t\nrm -rf \"$t\"; mkdir -p \"$t/in box/old.txt\" \"$t/empty\"\nfor n in 'report final.txt' '[draft] plan.txt' '-urgent.txt' 'a*b.txt' 'ab.txt' 'notes  double  space.txt' 'x.TXT' '.hidden.txt' 'readme.md'; do\n  printf 'content of %s\\n' \"$n\" > \"$t/in box/$n\"\ndone\nout=$(bash bin/collect \"$t/in box\" \"$t/out dir\") || { echo \"FAIL: collect exited non-zero\"; exit 1; }\n[ \"$out\" = \"moved 6\" ] || { echo \"FAIL: summary: $out\"; exit 1; }\nfor n in 'report final.txt' '[draft] plan.txt' '-urgent.txt' 'a*b.txt' 'ab.txt' 'notes  double  space.txt'; do\n  [ -f \"$t/out dir/$n\" ] || { echo \"FAIL: not moved: $n\"; exit 1; }\n  [ \"$(cat \"$t/out dir/$n\")\" = \"content of $n\" ] || { echo \"FAIL: content changed: $n\"; exit 1; }\n  [ ! -e \"$t/in box/$n\" ] || { echo \"FAIL: still in inbox: $n\"; exit 1; }\ndone\nfor n in 'x.TXT' '.hidden.txt' 'readme.md'; do\n  [ -f \"$t/in box/$n\" ] || { echo \"FAIL: should stay in inbox: $n\"; exit 1; }\ndone\n[ -d \"$t/in box/old.txt\" ] || { echo \"FAIL: directory old.txt must stay\"; exit 1; }\nprintf '%s\\n' '-urgent.txt' '[draft] plan.txt' 'a*b.txt' 'ab.txt' 'notes  double  space.txt' 'report final.txt' > \"$t/expected\"\ncmp -s \"$t/expected\" \"$t/out dir/INDEX\" || { echo \"FAIL: INDEX\"; cat \"$t/out dir/INDEX\"; exit 1; }\nout=$(bash bin/collect \"$t/empty\" \"$t/out dir\") || { echo \"FAIL: empty inbox exited non-zero\"; exit 1; }\n[ \"$out\" = \"moved 0\" ] || { echo \"FAIL: empty inbox summary: $out\"; exit 1; }\ncmp -s \"$t/expected\" \"$t/out dir/INDEX\" || { echo \"FAIL: INDEX changed by an empty run\"; exit 1; }\nprintf 'late\\n' > \"$t/in box/zz late.txt\"\nout=$(bash bin/collect \"$t/in box\" \"$t/out dir\") || { echo \"FAIL: rerun exited non-zero\"; exit 1; }\n[ \"$out\" = \"moved 1\" ] || { echo \"FAIL: rerun summary: $out\"; exit 1; }\nprintf '%s\\n' 'zz late.txt' >> \"$t/expected\"\ncmp -s \"$t/expected\" \"$t/out dir/INDEX\" || { echo \"FAIL: INDEX after rerun\"; cat \"$t/out dir/INDEX\"; exit 1; }\necho PASS | tee build/test-report.txt\n"
+          },
+          {
+            "commands": "cd /home/eval/media; ls -A inbox; ls -la inbox/archive.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "--help.txt\n.draft.txt\nLOUD.TXT\nQ3 summary.txt\n[final] budget.txt\narchive.txt\nm*.txt\nmemo.txt\nnotes.md\nwhat?.txt\n"
+          },
+          {
+            "commands": "cd /home/eval/media; python3 - <<'E'\ns=open('bin/collect').read()\ni=s.index('src=$1')\ns=s[:i]+'''src=$1\ndest=$2\nmkdir -p -- \"$dest\" || exit 1\ncount=0\nmoved=()\nfor p in \"$src\"/*.txt; do\n  [ -f \"$p\" ] && [ ! -L \"$p\" -o -f \"$p\" ] || continue\n  f=${p##*/}\n  mv -- \"$p\" \"$dest/$f\" || continue\n  moved+=(\"$f\")\n  count=$((count + 1))\ndone\nif [ \"$count\" -gt 0 ]; then\n  { [ -f \"$dest/INDEX\" ] && cat -- \"$dest/INDEX\"; printf '%s\\\\n' \"${moved[@]}\"; } \\\\\n    | LC_ALL=C sort -u -o \"$dest/INDEX\"\nfi\necho \"moved $count\"\n'''\nopen('bin/collect','w').write(s)\nE\nmake test && bash bin/collect inbox 'archive 2026' && ls -A inbox 'archive 2026'; cat 'archive 2026/INDEX'; git status --short",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "PASS\nmoved 6\ninbox:\n.draft.txt\nLOUD.TXT\narchive.txt\nnotes.md\n\narchive 2026:\n--help.txt\nINDEX\nQ3 summary.txt\n[final] budget.txt\nm*.txt\nmemo.txt\nwhat?.txt\n--help.txt\nQ3 summary.txt\n[final] budget.txt\nm*.txt\nmemo.txt\nwhat?.txt\nOn branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tarchive 2026/--help.txt\n\tarchive 2026/INDEX\n\tarchive 2026/Q3 summary.txt\n\tarchive 2026/[final] budget.txt\n\tarchive 2026/m*.txt\n\tarchive 2026/memo.txt\n\tarchive 2026/what?.txt\n\tbuild/t/expected\n\tbuild/t/in box/.hidden.txt\n\tbuild/t/in box/readme.md\n\tbuild/t/in box/x.TXT\n\tbuild/t/out dir/-urgent.txt\n\tbuild/t/out dir/INDEX\n\tbuild/t/out dir/[draft] plan.txt\n\tbuild/t/out dir/a*b.txt\n\tbuild/t/out dir/ab.txt\n\tbuild/t/out dir/notes  double  space.txt\n\tbuild/t/out dir/report final.txt\n\tbuild/t/out dir/zz late.txt\n\tbuild/test-report.txt\n"
+          },
+          {
+            "commands": "cd /home/eval/media; sed -i 's/^  \\[ -f \"\\$p\" \\] && .*$/  [ -f \"$p\" ] || continue/' bin/collect; sed -n 9,20p bin/collect; make test && git add bin/collect && git commit -qm \"fix: handle unusual file names in bin/collect\" && git log --oneline | head -2",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "dest=$2\nmkdir -p -- \"$dest\" || exit 1\ncount=0\nmoved=()\nfor p in \"$src\"/*.txt; do\n  [ -f \"$p\" ] || continue\n  f=${p##*/}\n  mv -- \"$p\" \"$dest/$f\" || continue\n  moved+=(\"$f\")\n  count=$((count + 1))\ndone\nif [ \"$count\" -gt 0 ]; then\nPASS\n[master b464960] fix: handle unusual file names in bin/collect\ncommit b4649606\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "rt_pipeline_mail_domains",
+  "target": "anthropic/claude-opus-5-5",
+  "input": [
+    "Write a bash script /home/eval/report.sh used as `bash /home/eval/report.sh INBOX_DIR OUT_FILE` (it will be run again later on other directories). INBOX_DIR holds message files `*.json` (names may contain spaces; ignore other files). Each is a JSON object whose optional \"to\" and \"cc\" fields are email address-list header strings like `\"Doe, John\" <john@example.com>, ann@x.org` (display names may be quoted and contain commas). Count every recipient address in to and cc by its domain (the part after '@', lowercased).\nFiles that are not valid JSON are skipped and reported on stderr as `skip: <file name>` (base name), in file name order. OUT_FILE gets one line `COUNT DOMAIN` per domain, sorted by count descending then domain. Exit 0.\nRun it on /data/inbox writing /out/domains.txt."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I wrote `/home/eval/report.sh` and ran it on `/data/inbox`. It exited with 0.\n\n**`/out/domains.txt`:**\n```\n4 x.org\n2 corp.io\n2 example.com\n1 sub.x.org\n```\n\n**stderr:** `skip: broken.json`. That file is cut off partway through, so it isn't valid JSON.\n\nI counted the addresses by hand from the message files and got the same totals. It found 9 recipients in 4 messages, and display names with commas in quotes (like `\"Doe, John\"`) were read correctly. `notes.txt` was ignored because it isn't a `.json` file, and `002 reply.json` and `004 fwd fwd.json` were read without trouble despite the spaces in their names.\n\n**How the script works:**\n- It's a bash wrapper around embedded Python. Python's built-in email-address parser splits the `to`/`cc` strings, so it handles quoted names with commas and `<…>` brackets.\n- It reads only regular files ending in `.json`, in file name order. Files that aren't valid JSON, or aren't a JSON object, are reported as `skip: <name>` on stderr, also in name order.\n- Domains are lowercased, so `Example.com` and `example.COM` count as one domain. Results are sorted by count (highest first), then by domain name.\n- Missing or empty `to`/`cc` fields are fine. An empty or missing inbox directory gives an empty output file, and the output's parent directory is created if needed. It always exits 0.\n\nOne behaviour beyond what you asked for: if `to` or `cc` holds a list of strings instead of a single string, the script counts addresses from each string in the list.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cd /data/inbox; ls -la; for f in *; do echo \"== $f\"; head -c 400 \"$f\"; echo; done 2>&1 | head -100",
+      "cat > /home/eval/report.sh <<'EOF'\n#!/usr/bin/env bash\n# Usage: report.sh INBOX_DIR OUT_FILE\n# Counts recipient addresses (to + cc) per domain across *.json messages.\ninbox=\"${1:?usage: report.sh INBOX_DIR OUT_FILE}\"\nout=\"${2:?usage: report.sh INBOX_DIR OUT_FILE}\"\n\npython3 - \"$inbox\" \"$out\" <<'PY'\nimport sys, os, json\nfrom email.utils import getaddresses\nfrom collections import Counter\n\ninbox, out = sys.argv[1], sys.argv[2]\ncounts = Counter()\ntry:\n    names = sorted(n for n in os.listdir(inbox)\n                   if n.endswith('.json') and os.path.isfile(os.path.join(inbox, n)))\nexcept OSError:\n    names = []\n\nfor name in names:\n    try:\n        with open(os.path.join(inbox, name), encoding='utf-8') as fh:\n            msg = json.load(fh)\n        if not isinstance(msg, dict):\n            raise ValueError(\"not an object\")\n    except (ValueError, UnicodeDecodeError, OSError):\n        print(f\"skip: {name}\", file=sys.stderr)\n        continue\n    headers = []\n    for field in (\"to\", \"cc\"):\n        v = msg.get(field)\n        if isinstance(v, str):\n            headers.append(v)\n        elif isinstance(v, list):\n            headers.extend(x for x in v if isinstance(x, str))\n    for _, addr in getaddresses(headers):\n        addr = addr.strip()\n        if '@' not in addr:\n            continue\n        domain = addr.rsplit('@', 1)[1].strip().rstrip('>').lower()\n        if domain:\n            counts[domain] += 1\n\nd = os.path.dirname(out)\nif d:\n    os.makedirs(d, exist_ok=True)\nwith open(out, 'w', encoding='utf-8') as fh:\n    for dom, c in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])):\n        fh.write(f\"{c} {dom}\\n\")\nPY\nexit 0\nEOF\nbash /home/eval/report.sh /data/inbox /out/domains.txt; echo \"exit=$?\"; cat /out/domains.txt"
+    ],
+    "usage": {
+      "input_tokens": 5732,
+      "output_tokens": 1783,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 16280
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cd /data/inbox; ls -la; for f in *; do echo \"== $f\"; head -c 400 \"$f\"; echo; done 2>&1 | head -100",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       87 2026-10-09 22:17 001.json\n-rw-r--r--       95 2026-10-09 22:17 002 reply.json\n-rw-r--r--       37 2026-10-09 22:17 003.json\n-rw-r--r--       99 2026-10-09 22:17 004 fwd fwd.json\n-rw-r--r--       25 2026-10-09 22:17 broken.json\n-rw-r--r--        9 2026-10-09 22:17 notes.txt\n== 001.json\n{\"from\": \"ops@corp.io\", \"to\": \"\\\"Doe, John\\\" <JOHN@Example.com>, ann@x.org\", \"cc\": \"\"}\n\n== 002 reply.json\n{\"from\": \"a@b.c\", \"to\": \"Team <team@CORP.io>\", \"cc\": \"\\\"Lee, A.\\\" <a.lee@x.org>, b@sub.x.org\"}\n\n== 003.json\n{\"from\": \"z@z.z\", \"to\": \"ann@x.org\"}\n\n== 004 fwd fwd.json\n{\"from\": \"x@y.z\", \"to\": \"\\\"Smith, J\\\" <js@example.COM>, \\\"Ops\\\" <ops@corp.io>\", \"cc\": \"dan@x.org\"}\n\n== broken.json\n{\"from\": \"q@q.q\", \"to\": \n\n== notes.txt\nnot mail\n\n"
+          },
+          {
+            "commands": "cat > /home/eval/report.sh <<'EOF'\n#!/usr/bin/env bash\n# Usage: report.sh INBOX_DIR OUT_FILE\n# Counts recipient addresses (to + cc) per domain across *.json messages.\ninbox=\"${1:?usage: report.sh INBOX_DIR OUT_FILE}\"\nout=\"${2:?usage: report.sh INBOX_DIR OUT_FILE}\"\n\npython3 - \"$inbox\" \"$out\" <<'PY'\nimport sys, os, json\nfrom email.utils import getaddresses\nfrom collections import Counter\n\ninbox, out = sys.argv[1], sys.argv[2]\ncounts = Counter()\ntry:\n    names = sorted(n for n in os.listdir(inbox)\n                   if n.endswith('.json') and os.path.isfile(os.path.join(inbox, n)))\nexcept OSError:\n    names = []\n\nfor name in names:\n    try:\n        with open(os.path.join(inbox, name), encoding='utf-8') as fh:\n            msg = json.load(fh)\n        if not isinstance(msg, dict):\n            raise ValueError(\"not an object\")\n    except (ValueError, UnicodeDecodeError, OSError):\n        print(f\"skip: {name}\", file=sys.stderr)\n        continue\n    headers = []\n    for field in (\"to\", \"cc\"):\n        v = msg.get(field)\n        if isinstance(v, str):\n            headers.append(v)\n        elif isinstance(v, list):\n            headers.extend(x for x in v if isinstance(x, str))\n    for _, addr in getaddresses(headers):\n        addr = addr.strip()\n        if '@' not in addr:\n            continue\n        domain = addr.rsplit('@', 1)[1].strip().rstrip('>').lower()\n        if domain:\n            counts[domain] += 1\n\nd = os.path.dirname(out)\nif d:\n    os.makedirs(d, exist_ok=True)\nwith open(out, 'w', encoding='utf-8') as fh:\n    for dom, c in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])):\n        fh.write(f\"{c} {dom}\\n\")\nPY\nexit 0\nEOF\nbash /home/eval/report.sh /data/inbox /out/domains.txt; echo \"exit=$?\"; cat /out/domains.txt",
+            "exit_code": 0,
+            "stderr": "skip: broken.json\n",
+            "stdout": "exit=0\n4 x.org\n2 corp.io\n2 example.com\n1 sub.x.org\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_markdown_toc",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Read /doc/README.md and generate a table of contents from its headings (lines starting with # or ##). Insert the TOC after the first heading, formatted as a markdown list with '- [Heading Text](#anchor)' where anchor is the heading text lowercased with spaces replaced by hyphens. Write the result back to the file."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Done. I generated a table of contents from all the headings in `/doc/README.md` and inserted it right after the first heading (`# Project Alpha`).\n\nThe TOC includes entries for all 5 headings, formatted as requested with `- [Heading Text](#anchor)` links where anchors are lowercased with hyphens replacing spaces (e.g., `API Reference` → `#api-reference`). The file has been updated in place with the result shown above.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat /doc/README.md",
+      "python3 - <<'EOF'\npath = '/doc/README.md'\nwith open(path) as f:\n    lines = f.read().splitlines()\n\nheadings = [(l.lstrip('#').strip(), l.startswith('##')) for l in lines if l.startswith('#')]\n\ntoc = []\nfor text, is_h2 in headings:\n    anchor = text.lower().replace(' ', '-')\n    toc.append(f'- [{text}](#{anchor})')\n\n# Find first heading index\nfirst_idx = next(i for i, l in enumerate(lines) if l.startswith('#'))\n\nnew_lines = lines[:first_idx+1] + [''] + toc + lines[first_idx+1:]\n\nwith open(path, 'w') as f:\n    f.write('\\n'.join(new_lines) + '\\n')\nEOF\ncat /doc/README.md"
+    ],
+    "usage": {
+      "input_tokens": 2269,
+      "output_tokens": 541,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 7375
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /doc/README.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Project Alpha\n\nIntroduction to the project.\n\n## Installation\n\nRun the installer.\n\n## Usage\n\nHow to use it.\n\n## API Reference\n\nEndpoint documentation.\n\n## Contributing\n\nPR guidelines.\n"
+          },
+          {
+            "commands": "python3 - <<'EOF'\npath = '/doc/README.md'\nwith open(path) as f:\n    lines = f.read().splitlines()\n\nheadings = [(l.lstrip('#').strip(), l.startswith('##')) for l in lines if l.startswith('#')]\n\ntoc = []\nfor text, is_h2 in headings:\n    anchor = text.lower().replace(' ', '-')\n    toc.append(f'- [{text}](#{anchor})')\n\n# Find first heading index\nfirst_idx = next(i for i, l in enumerate(lines) if l.startswith('#'))\n\nnew_lines = lines[:first_idx+1] + [''] + toc + lines[first_idx+1:]\n\nwith open(path, 'w') as f:\n    f.write('\\n'.join(new_lines) + '\\n')\nEOF\ncat /doc/README.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Project Alpha\n\n- [Project Alpha](#project-alpha)\n- [Installation](#installation)\n- [Usage](#usage)\n- [API Reference](#api-reference)\n- [Contributing](#contributing)\n\nIntroduction to the project.\n\n## Installation\n\nRun the installer.\n\n## Usage\n\nHow to use it.\n\n## API Reference\n\nEndpoint documentation.\n\n## Contributing\n\nPR guidelines.\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

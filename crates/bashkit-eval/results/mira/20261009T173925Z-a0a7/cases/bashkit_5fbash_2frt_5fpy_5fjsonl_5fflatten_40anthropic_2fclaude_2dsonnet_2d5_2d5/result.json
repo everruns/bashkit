@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "rt_py_jsonl_flatten",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "Convert /data/events.jsonl (one JSON value per line) to /out/events.csv.\n- One CSV row per line that is a JSON object, in input order. Blank or whitespace-only lines are skipped silently.\n- Nested objects are flattened with '.' ({\"a\":{\"b\":1}} gives column a.b); an empty nested object adds no column. Arrays are not flattened.\n- Columns: the union of flattened keys over all rows, sorted by plain string comparison, as the header row.\n- Cells: strings verbatim; booleans true/false; null or missing key -> empty; numbers as Python's json.dumps prints the parsed value (2.50 -> 2.5, 1e3 -> 1000.0); arrays as compact JSON with no spaces and non-ASCII characters kept literally.\n- CSV uses ',' and '\\n' line endings and quotes a field only when it contains a comma, double quote or newline (embedded quotes doubled).\nWrite /out/errors.txt with one line `line N` (1-based line number) for every non-blank line that is not valid JSON or not a JSON object."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I converted `/data/events.jsonl` to `/out/events.csv`, which has 7 data rows. `/out/errors.txt` lists the three bad lines. I ran the script once and read the output by eye. I didn't check it against anything else.\n\n- **Rows:** ids 1–6 and 8 are in the CSV, in input order. The blank line 3 and the whitespace-only line 11 were skipped without comment.\n- **Columns:** there are 11, sorted as plain strings: `a_b`, `ab`, `id`, `meta.src`, `note`, `ok`, `score`, `tags`, `user.geo.city`, `user.geo.zip`, `user.name`.\n- **Errors:** `errors.txt` contains `line 5`, `line 6` and `line 10`. Line 5 is `not json at all`, line 6 is the array `[1, 2, 3]`, and line 10 is the broken `{\"id\": 7,, ...}`.\n\nA few cells that follow your rules but may look odd:\n- `-0.0` stays `-0.0`.\n- `1e3` becomes `1000.0`.\n- The empty `user` object on id 3 adds no column.\n- `\"007\"` stays `007` because strings are written verbatim.\n\nI split lines on `\\n` only. A `\\r` or Unicode line separator inside a line is therefore not treated as a line break.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "head -c 1500 /data/events.jsonl; wc -l /data/events.jsonl; ls /out",
+      "mkdir -p /out; cat > /tmp/c.py <<'E'\nimport json,csv\ndef bad(c): raise ValueError(c)\nrows=[];errs=[]\ndata=open('/data/events.jsonl','rb').read().split(b'\\n')\nif data and data[-1]==b'': data.pop()\ndef flat(o,p,out):\n    for k,v in o.items():\n        key=p+k\n        if isinstance(v,dict): flat(v,key+'.',out)\n        else: out[key]=v\ndef cell(v):\n    if v is None: return ''\n    if isinstance(v,bool): return 'true' if v else 'false'\n    if isinstance(v,str): return v\n    if isinstance(v,list): return json.dumps(v,separators=(',',':'),ensure_ascii=False)\n    return json.dumps(v)\nfor i,b in enumerate(data,1):\n    try: s=b.decode('utf-8')\n    except: errs.append(i); continue\n    if not s.strip(): continue\n    try: o=json.loads(s,parse_constant=bad)\n    except Exception: errs.append(i); continue\n    if not isinstance(o,dict): errs.append(i); continue\n    d={}; flat(o,'',d); rows.append(d)\ncols=sorted({k for r in rows for k in r})\nwith open('/out/events.csv','w',newline='',encoding='utf-8') as f:\n    w=csv.writer(f,lineterminator='\\n',quoting=csv.QUOTE_MINIMAL)\n    w.writerow(cols)\n    for r in rows: w.writerow([cell(r.get(c)) for c in cols])\nopen('/out/errors.txt','w').write(''.join(f'line {n}\\n' for n in errs))\nE\npython3 /tmp/c.py; cat /out/events.csv /out/errors.txt"
+    ],
+    "usage": {
+      "input_tokens": 5769,
+      "output_tokens": 1493,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 12124
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 1.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "head -c 1500 /data/events.jsonl; wc -l /data/events.jsonl; ls /out",
+            "exit_code": 2,
+            "stderr": "ls: cannot access '/out': No such file or directory\n",
+            "stdout": "{\"id\": 1, \"user\": {\"name\": \"Ana\", \"geo\": {\"city\": \"Kyiv\", \"zip\": \"01001\"}}, \"ok\": true, \"score\": 2.50}\n{\"id\": 2, \"user\": {\"name\": \"Bo, Jr.\"}, \"tags\": [\"a\", \"b\"], \"ok\": false}\n\n{\"id\": 3, \"note\": \"said \\\"hi\\\"\", \"score\": 1e3, \"user\": {}}\nnot json at all\n[1, 2, 3]\n{\"id\": 4, \"note\": \"line1\\nline2\", \"tags\": [], \"meta\": {\"src\": null}}\n{\"id\": 5, \"user\": {\"name\": \"Zoë\"}, \"tags\": [\"ü\", {\"k\": 1}], \"ok\": null, \"score\": -0.0}\n{\"id\": 6, \"user\": {\"geo\": {\"city\": \"Lviv\"}}, \"a_b\": \"x\", \"ab\": \"y\"}\n{\"id\": 7,, \"broken\": true}\n   \n{\"id\": 8, \"score\": 10, \"note\": \"007\", \"ok\": true}\n12 /data/events.jsonl\n"
+          },
+          {
+            "commands": "mkdir -p /out; cat > /tmp/c.py <<'E'\nimport json,csv\ndef bad(c): raise ValueError(c)\nrows=[];errs=[]\ndata=open('/data/events.jsonl','rb').read().split(b'\\n')\nif data and data[-1]==b'': data.pop()\ndef flat(o,p,out):\n    for k,v in o.items():\n        key=p+k\n        if isinstance(v,dict): flat(v,key+'.',out)\n        else: out[key]=v\ndef cell(v):\n    if v is None: return ''\n    if isinstance(v,bool): return 'true' if v else 'false'\n    if isinstance(v,str): return v\n    if isinstance(v,list): return json.dumps(v,separators=(',',':'),ensure_ascii=False)\n    return json.dumps(v)\nfor i,b in enumerate(data,1):\n    try: s=b.decode('utf-8')\n    except: errs.append(i); continue\n    if not s.strip(): continue\n    try: o=json.loads(s,parse_constant=bad)\n    except Exception: errs.append(i); continue\n    if not isinstance(o,dict): errs.append(i); continue\n    d={}; flat(o,'',d); rows.append(d)\ncols=sorted({k for r in rows for k in r})\nwith open('/out/events.csv','w',newline='',encoding='utf-8') as f:\n    w=csv.writer(f,lineterminator='\\n',quoting=csv.QUOTE_MINIMAL)\n    w.writerow(cols)\n    for r in rows: w.writerow([cell(r.get(c)) for c in cols])\nopen('/out/errors.txt','w').write(''.join(f'line {n}\\n' for n in errs))\nE\npython3 /tmp/c.py; cat /out/events.csv /out/errors.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "a_b,ab,id,meta.src,note,ok,score,tags,user.geo.city,user.geo.zip,user.name\n,,1,,,true,2.5,,Kyiv,01001,Ana\n,,2,,,false,,\"[\"\"a\"\",\"\"b\"\"]\",,,\"Bo, Jr.\"\n,,3,,\"said \"\"hi\"\"\",,1000.0,,,,\n,,4,,\"line1\nline2\",,,[],,,\n,,5,,,,-0.0,\"[\"\"ü\"\",{\"\"k\"\":1}]\",,,Zoë\nx,y,6,,,,,,Lviv,,\n,,8,,007,true,10,,,,\nline 5\nline 6\nline 10\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

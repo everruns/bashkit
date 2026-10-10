@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "json_to_csv_export",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "Convert /data/employees.json (an array of objects with keys name, department, salary) to CSV format with a header row. Save the result to /data/employees.csv and print it. The output should have the header 'name,department,salary' followed by one data row per object."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "8/8 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I converted `/data/employees.json` to `/data/employees.csv`. The file has the `name,department,salary` header and one row per employee:\n\n```\nname,department,salary\nAlice Chen,Engineering,120000\nBob Park,Marketing,95000\nCarol Wu,Engineering,115000\nDave Kim,Sales,88000\n```\n\nI wrote only those three keys, so any other keys in the JSON objects would have been dropped.",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "cd /data && python3 -c \"\nimport json,csv\nd=json.load(open('employees.json'))\nwith open('employees.csv','w',newline='') as f:\n    w=csv.DictWriter(f,fieldnames=['name','department','salary'],extrasaction='ignore',lineterminator='\\n')\n    w.writeheader(); w.writerows(d)\n\"; cat employees.csv"
+    ],
+    "usage": {
+      "input_tokens": 2314,
+      "output_tokens": 319,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 5209
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cd /data && python3 -c \"\nimport json,csv\nd=json.load(open('employees.json'))\nwith open('employees.csv','w',newline='') as f:\n    w=csv.DictWriter(f,fieldnames=['name','department','salary'],extrasaction='ignore',lineterminator='\\n')\n    w.writeheader(); w.writerows(d)\n\"; cat employees.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "name,department,salary\nAlice Chen,Engineering,120000\nBob Park,Marketing,95000\nCarol Wu,Engineering,115000\nDave Kim,Sales,88000\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

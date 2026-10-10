@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "pipe_process_sub",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "Use process substitution to compare two sorted lists without creating temporary files. /data/installed.txt contains currently installed packages. /data/required.txt contains required packages. Use diff with process substitution (diff <(sort file1) <(sort file2)) to find: 1) packages in installed but not required (to remove), 2) packages in required but not installed (to install). Print 'To install:' followed by missing packages, and 'To remove:' followed by extra packages."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I compared the two lists with `diff <(sort /data/installed.txt) <(sort /data/required.txt)`, so no temporary files were created. In diff's output, lines starting with `<` are only in installed and lines starting with `>` are only in required.\n\n```bash\nd=$(diff <(sort /data/installed.txt) <(sort /data/required.txt))\necho \"To install:\"; echo \"$d\" | sed -n 's/^> //p'\necho \"To remove:\";  echo \"$d\" | sed -n 's/^< //p'\n```\n\nOutput:\n\n```\nTo install:\nnodejs\nredis\nTo remove:\nnginx\nvim\n```\n\n- **To install** (required but not installed): `nodejs` and `redis`.\n- **To remove** (installed but not required): `nginx` and `vim`.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "ls -la /data; head -50 /data/installed.txt /data/required.txt",
+      "d=$(diff <(sort /data/installed.txt) <(sort /data/required.txt))\necho \"$d\"\necho \"To install:\"\necho \"$d\" | sed -n 's/^> //p'\necho \"To remove:\"\necho \"$d\" | sed -n 's/^< //p'"
+    ],
+    "usage": {
+      "input_tokens": 3921,
+      "output_tokens": 482,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 5522
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /data; head -50 /data/installed.txt /data/required.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       32 2026-10-09 17:44 installed.txt\n-rw-r--r--       35 2026-10-09 17:44 required.txt\n==> /data/installed.txt <==\ncurl\ngit\nnginx\nvim\nwget\npython3\n\n==> /data/required.txt <==\ncurl\ngit\nnodejs\npython3\nwget\nredis\n"
+          },
+          {
+            "commands": "d=$(diff <(sort /data/installed.txt) <(sort /data/required.txt))\necho \"$d\"\necho \"To install:\"\necho \"$d\" | sed -n 's/^> //p'\necho \"To remove:\"\necho \"$d\" | sed -n 's/^< //p'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "3c3\n< nginx\n---\n> nodejs\n5c5\n< vim\n---\n> redis\nTo install:\nnodejs\nredis\nTo remove:\nnginx\nvim\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

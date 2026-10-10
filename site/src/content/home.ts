@@ -15,7 +15,9 @@ export const builtinCount = inventory.builtins.length;
 // timeline (site/scripts/build-performance-data.mjs, fed by
 // crates/bashkit-eval/results), not hand-copied, so it can't lag the README.
 // It shows every model's latest full run from the newest eval lineup (runs
-// within LINEUP_WINDOW_DAYS of the newest one), best score first.
+// within LINEUP_WINDOW_DAYS of the newest one), best score first. Only runs
+// over the newest run's task count qualify, so scores share one dataset size
+// (a model not yet rerun on a grown dataset drops out instead of mixing in).
 type EvalRun = {
   kind: string;
   model: string;
@@ -64,9 +66,15 @@ export function evalModelName(model: string): string {
 
 function latestEvalLineup(runs: EvalRun[]) {
   const full = runs.filter((run) => run.kind === "llm-eval" && run.tasks >= 50 && run.timestamp);
-  const newest = Math.max(...full.map((run) => new Date(run.timestamp!).getTime()));
+  const newestRun = full.reduce<EvalRun | undefined>(
+    (best, run) => (!best || new Date(run.timestamp!) > new Date(best.timestamp!) ? run : best),
+    undefined,
+  );
+  if (!newestRun) return [];
+  const newest = new Date(newestRun.timestamp!).getTime();
   const byModel = new Map<string, EvalRun>();
   for (const run of full) {
+    if (run.tasks !== newestRun.tasks) continue;
     if (newest - new Date(run.timestamp!).getTime() > LINEUP_WINDOW_DAYS * DAY_MS) continue;
     const prev = byModel.get(run.model);
     if (!prev || new Date(run.timestamp!) > new Date(prev.timestamp!)) byModel.set(run.model, run);
@@ -113,6 +121,7 @@ export const homeNavigation = [
 
 export const evalSnapshot = {
   date: evalLineup.map((run) => run.date).sort().at(-1) ?? "unknown",
+  tasks: evalLineup[0]?.tasks ?? 0,
   href: "https://github.com/everruns/bashkit/blob/main/crates/bashkit-eval/README.md",
 };
 

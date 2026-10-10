@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "script_health_check",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "Write /scripts/healthcheck.sh that checks three conditions: 1) /app/config.json exists and contains valid JSON, 2) /var/log directory exists, 3) /app/data directory contains at least 2 files. For each check print 'PASS: <description>' or 'FAIL: <description>'. Exit 0 if all checks pass, exit 1 if any fail. Then run the script."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I wrote `/scripts/healthcheck.sh` and ran it. All three checks passed and the script exited with 0.\n\n```\nPASS: /app/config.json exists and contains valid JSON\nPASS: /var/log directory exists\nPASS: /app/data directory contains at least 2 files\n```\n\n- **JSON check:** it parses `/app/config.json` with `python3`, and falls back to `jq` if `python3` isn't available. If neither exists, this check fails.\n- **File count:** it counts only regular files directly inside `/app/data`. Subdirectories and files nested in them don't count.\n- **Exit code:** the script runs all three checks even if one fails, then exits 1 if any failed and 0 otherwise.",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "mkdir -p /scripts\ncat > /scripts/healthcheck.sh <<'EOF'\n#!/usr/bin/env bash\n# Health check script\nfail=0\n\ncheck() {\n  local desc=\"$1\"; shift\n  if \"$@\" >/dev/null 2>&1; then\n    echo \"PASS: $desc\"\n  else\n    echo \"FAIL: $desc\"\n    fail=1\n  fi\n}\n\nvalid_json() {\n  [ -f /app/config.json ] || return 1\n  if command -v python3 >/dev/null 2>&1; then\n    python3 -c 'import json,sys; json.load(open(sys.argv[1]))' /app/config.json\n  elif command -v jq >/dev/null 2>&1; then\n    jq . /app/config.json\n  else\n    return 1\n  fi\n}\n\nhas_two_files() {\n  [ -d /app/data ] || return 1\n  local n\n  n=$(find /app/data -maxdepth 1 -type f | wc -l)\n  [ \"$n\" -ge 2 ]\n}\n\ncheck \"/app/config.json exists and contains valid JSON\" valid_json\ncheck \"/var/log directory exists\" test -d /var/log\ncheck \"/app/data directory contains at least 2 files\" has_two_files\n\nexit $fail\nEOF\nchmod +x /scripts/healthcheck.sh\n/scripts/healthcheck.sh; echo \"exit=$?\""
+    ],
+    "usage": {
+      "input_tokens": 2744,
+      "output_tokens": 744,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 5818
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "mkdir -p /scripts\ncat > /scripts/healthcheck.sh <<'EOF'\n#!/usr/bin/env bash\n# Health check script\nfail=0\n\ncheck() {\n  local desc=\"$1\"; shift\n  if \"$@\" >/dev/null 2>&1; then\n    echo \"PASS: $desc\"\n  else\n    echo \"FAIL: $desc\"\n    fail=1\n  fi\n}\n\nvalid_json() {\n  [ -f /app/config.json ] || return 1\n  if command -v python3 >/dev/null 2>&1; then\n    python3 -c 'import json,sys; json.load(open(sys.argv[1]))' /app/config.json\n  elif command -v jq >/dev/null 2>&1; then\n    jq . /app/config.json\n  else\n    return 1\n  fi\n}\n\nhas_two_files() {\n  [ -d /app/data ] || return 1\n  local n\n  n=$(find /app/data -maxdepth 1 -type f | wc -l)\n  [ \"$n\" -ge 2 ]\n}\n\ncheck \"/app/config.json exists and contains valid JSON\" valid_json\ncheck \"/var/log directory exists\" test -d /var/log\ncheck \"/app/data directory contains at least 2 files\" has_two_files\n\nexit $fail\nEOF\nchmod +x /scripts/healthcheck.sh\n/scripts/healthcheck.sh; echo \"exit=$?\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "PASS: /app/config.json exists and contains valid JSON\nPASS: /var/log directory exists\nPASS: /app/data directory contains at least 2 files\nexit=0\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

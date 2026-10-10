@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "db_csv_group_by",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "Read /data/sales.csv with columns: region, product, amount. Compute total amount per region (like SQL GROUP BY region, SUM(amount)). Print results as 'region: total' sorted by total descending."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Totals per region, sorted by total descending:\n\n```\nnorth: 850\nsouth: 750\neast: 650\n```\n\nThe file had 8 data rows, and all of them parsed cleanly.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "head -5 /data/sales.csv; wc -l /data/sales.csv",
+      "cat /data/sales.csv; python3 -c \"\nimport csv,collections\nt=collections.defaultdict(float)\nfor r in csv.DictReader(open('/data/sales.csv')):\n    t[r['region'].strip()]+=float(r['amount'])\nfor k,v in sorted(t.items(),key=lambda x:-x[1]):\n    print(f'{k}: {v:g}')\n\""
+    ],
+    "usage": {
+      "input_tokens": 3602,
+      "output_tokens": 306,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 5268
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "head -5 /data/sales.csv; wc -l /data/sales.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "region,product,amount\nnorth,widgets,500\nsouth,gadgets,300\nnorth,bolts,200\neast,widgets,400\n9 /data/sales.csv\n"
+          },
+          {
+            "commands": "cat /data/sales.csv; python3 -c \"\nimport csv,collections\nt=collections.defaultdict(float)\nfor r in csv.DictReader(open('/data/sales.csv')):\n    t[r['region'].strip()]+=float(r['amount'])\nfor k,v in sorted(t.items(),key=lambda x:-x[1]):\n    print(f'{k}: {v:g}')\n\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "region,product,amount\nnorth,widgets,500\nsouth,gadgets,300\nnorth,bolts,200\neast,widgets,400\nsouth,widgets,350\nnorth,gadgets,150\neast,bolts,250\nsouth,bolts,100\nnorth: 850\nsouth: 750\neast: 650\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

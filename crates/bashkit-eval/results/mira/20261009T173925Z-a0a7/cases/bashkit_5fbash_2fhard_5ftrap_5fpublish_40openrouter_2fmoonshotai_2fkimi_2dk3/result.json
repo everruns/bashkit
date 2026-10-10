@@ -1,0 +1,155 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "hard_trap_publish",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "In the git repository /home/eval/publisher, bin/publish violates the contract in its header comment (wrong exit codes, leftover temporary files, sloppy validation). Fix bin/publish so `make test` passes; do not edit tests/. Then use it to publish /home/eval/publisher/etc/prod.conf to /home/eval/publisher/site/config.txt (run `bash bin/publish etc/prod.conf site/config.txt` from /home/eval/publisher), and commit your fix with a message starting with `fix:`."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "All done. The post-commit `git status` confirmed both `bin/publish` (fix) and `site/config.txt` (published output) are in commit `b46492c6` — only transient `build/` artifacts remain untracked.\n\n## Summary\n\n**The bugs in `bin/publish`** (each violated the header contract checked by `tests/test_publish.sh`):\n\n1. **Wrong exit codes** — usage error exited `1` instead of `2`; missing DEST directory died via `set -e` with `1` instead of `4`; the trailing `trap 'echo \"publish: done\"; exit 0' EXIT` **overwrote every failure exit to 0** and printed noise to stdout.\n2. **Leftover temp files** — the EXIT trap only removed `$tmp`, leaking the `mktemp -d` work directory; the final trap also clobbered the cleanup trap, leaking everything.\n3. **Sloppy validation** — `[a-z_]*=*` isn't a real character class (it allowed `!`, `/`, `=` in keys, and `*=` wasn't anchored so bad lines like `max conns=5` were silently accepted); the bad-line message went missing because stderr/exit were mangled by the trap.\n4. **Missed final line** — `while read` skipped a last line lacking a trailing newline.\n\n**The fix** rewrote the body to:\n- Exit `2`/`4`/`3` exactly as contracted, with `publish: bad line N` on stderr, and nothing on stdout for success.\n- Use one temp file (`mktemp` in `${TMPDIR:-/tmp}`) with a single `trap 'rm -f \"$tmp\"' EXIT`, so every exit path cleans up; DEST is only written (via `cp`) after the source fully validates.\n- Validate with `case`: reject lines without `=`, then require the key (`${line%%=*}`) to be non-empty `[a-z_]+` only.\n- Handle a missing trailing newline via `|| [ -n \"$line\" ]`, and sort by key only (`LC_ALL=C sort -t= -k1,1`) before `sed 's/=/: /'` so values containing `=` survive.\n\n**Verified:** `make test` → `PASS`; `bash bin/publish etc/prod.conf site/config.txt` → exit 0, producing the sorted `db_url`, `feature_flags`, `name`, `region`, `timeout_s` entries; committed as `fix: make bin/publish honor its exit-code and cleanup contract`.",
+    "iterations": 14,
+    "tool_calls_count": 15,
+    "tool_calls": [
+      "cd /home/eval/publisher && ls -la && cat Makefile 2>/dev/null",
+      "cd /home/eval/publisher && cat bin/publish",
+      "cd /home/eval/publisher && cat tests/test_publish.sh",
+      "cd /home/eval/publisher && ls -la etc site tests && cat etc/prod.conf; echo '---'; cat site/config.txt 2>/dev/null; echo '---'; git log --oneline | head; git status --short",
+      "cd /home/eval/publisher && ls tests/fixtures && for f in tests/fixtures/*; do echo \"== $f ==\"; cat -A \"$f\"; done",
+      "cd /home/eval/publisher && make test; echo \"make exit: $?\"",
+      "cd /home/eval/publisher && head -14 bin/publish > /tmp/header.txt && cat /tmp/header.txt",
+      "cd /home/eval/publisher && { cat /tmp/header.txt; tail -1 /dev/null; head -15 bin/publish | tail -1; cat <<'EOF'\nset -eu\n\n[ $# -eq 2 ] || { echo \"usage: publish SRC DEST\" >&2; exit 2; }\nsrc=$1 dest=$2\n\ncase $dest in\n  */*) dir=${dest%/*} ;;\n  *)   dir=. ;;\nesac\n[ -d \"$dir\" ] || exit 4\n\ntmp=$(mktemp \"${TMPDIR:-/tmp}/publish.XXXXXX\")\ntrap 'rm -f \"$tmp\"' EXIT\n\nn=0\nwhile IFS= read -r line || [ -n \"$line\" ]; do\n  n=$((n + 1))\n  case $line in\n    ''|'#'*) continue ;;\n  esac\n  key=${line%%=*}\n  case $line#$key in\n    *'='[a-z_]*)\n      case $key in\n        *[!a-z_]*) ;;\n        *) echo \"$line\" >> \"$tmp\"; continue ;;\n      esac ;;\n  esac\n  echo \"publish: bad line $n\" >&2\n  exit 3\ndone < \"$src\"\n\nLC_ALL=C sort -t= -k1,1 \"$tmp\" | sed 's/=/: /' > \"$tmp.out\"\nmv \"$tmp.out\" \"$tmp\"\ncp \"$tmp\" \"$dest\"\nEOF\n} > bin/publish.new && mv bin/publish.new bin/publish && cat bin/publish",
+      "cd /home/eval/publisher && cat > bin/publish <<'EOF'\n#!/bin/bash\n# publish SRC DEST: render the key=value file SRC into DEST as \"key: value\"\n# lines sorted by key (LC_ALL=C byte order). Blank lines and lines starting\n# with # are ignored. Every line of SRC counts, even a last line without a\n# trailing newline. Values may contain \"=\".\n#\n# Contract (tests/test_publish.sh checks all of it):\n#   exit 0  success: DEST replaced, nothing printed on stdout\n#   exit 2  usage error (not exactly two arguments)\n#   exit 3  SRC has a line that is not blank, not a comment and not\n#           key=value with key matching [a-z_]+ ; prints\n#           \"publish: bad line N\" (N = 1-based line number) on stderr\n#   exit 4  the directory DEST would be written to does not exist\n#   On every non-zero exit DEST is left untouched, and on every exit no\n#   temporary file or directory remains in ${TMPDIR:-/tmp}.\nset -eu\n\n[ $# -eq 2 ] || { echo \"usage: publish SRC DEST\" >&2; exit 2; }\nsrc=$1 dest=$2\n\ncase $dest in\n  */*) dir=${dest%/*} ;;\n  *)   dir=. ;;\nesac\n[ -d \"$dir\" ] || exit 4\n\ntmp=$(mktemp \"${TMPDIR:-/tmp}/publish.XXXXXX\")\ntrap 'rm -f \"$tmp\"' EXIT\n\nn=0\nwhile IFS= read -r line || [ -n \"$line\" ]; do\n  n=$((n + 1))\n  case $line in\n    ''|'#'*) continue ;;\n  esac\n  case $line in\n    *=*) ;;\n    *) echo \"publish: bad line $n\" >&2; exit 3 ;;\n  esac\n  key=${line%%=*}\n  case $key in\n    ''|*[!a-z_]*)\n      echo \"publish: bad line $n\" >&2\n      exit 3 ;;\n  esac\n  echo \"$line\" >> \"$tmp\"\ndone < \"$src\"\n\nLC_ALL=C sort -t= -k1,1 \"$tmp\" | sed 's/=/: /' > \"$tmp.out\"\nmv \"$tmp.out\" \"$tmp\"\ncp \"$tmp\" \"$dest\"\nEOF\nchmod +x bin/publish && bash -n bin/publish && echo syntax-ok",
+      "cd /home/eval/publisher && make test; echo \"make exit: $?\"",
+      "cd /home/eval/publisher && bash bin/publish etc/prod.conf site/config.txt; echo \"exit: $?\"; echo '---'; cat site/config.txt",
+      "cd /home/eval/publisher && git status --short && git add bin/publish site/config.txt && git commit -m \"fix: make bin/publish honor its exit-code and cleanup contract\n\n- exit 2 on usage error, 4 when DEST directory is missing, 3 with\n  'publish: bad line N' on stderr for malformed lines\n- validate keys strictly as [a-z_]+ and allow '=' in values\n- count the final line even without a trailing newline\n- remove the single temp file via trap on every exit; never leave\n  temp files or dirs in \\$TMPDIR\n- leave DEST untouched on failure, print nothing on success\n- sort rendered pairs by key in LC_ALL=C byte order\" && git log --oneline -2 && git status --short",
+      "cd /home/eval/publisher && make test && git show --stat HEAD | head -12 && git show HEAD:site/config.txt",
+      "cd /home/eval/publisher && git show HEAD --name-status --format='%h %s' 2>&1 | head -8 || git log -1 --stat 2>&1 | head -10",
+      "cd /home/eval/publisher && git ls-tree -r --name-only HEAD && echo '---' && git cat-file -p HEAD:site/config.txt"
+    ],
+    "usage": {
+      "input_tokens": 53752,
+      "output_tokens": 6677,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 142672
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 15.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 14.0,
+      "turns": 14.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 1,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cd /home/eval/publisher && ls -la && cat Makefile 2>/dev/null",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "drwxr-xr-x        0 2026-10-09 18:00 .git\n-rw-r--r--       49 2026-10-09 18:00 Makefile\ndrwxr-xr-x        0 2026-10-09 18:00 bin\ndrwxr-xr-x        0 2026-10-09 18:00 etc\ndrwxr-xr-x        0 2026-10-09 18:00 site\ndrwxr-xr-x        0 2026-10-09 18:00 tests\ntest:\n\t@bash tests/test_publish.sh\n\n.PHONY: test\n"
+          },
+          {
+            "commands": "cd /home/eval/publisher && cat bin/publish",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "#!/bin/bash\n# publish SRC DEST: render the key=value file SRC into DEST as \"key: value\"\n# lines sorted by key (LC_ALL=C byte order). Blank lines and lines starting\n# with # are ignored. Every line of SRC counts, even a last line without a\n# trailing newline. Values may contain \"=\".\n#\n# Contract (tests/test_publish.sh checks all of it):\n#   exit 0  success: DEST replaced, nothing printed on stdout\n#   exit 2  usage error (not exactly two arguments)\n#   exit 3  SRC has a line that is not blank, not a comment and not\n#           key=value with key matching [a-z_]+ ; prints\n#           \"publish: bad line N\" (N = 1-based line number) on stderr\n#   exit 4  the directory DEST would be written to does not exist\n#   On every non-zero exit DEST is left untouched, and on every exit no\n#   temporary file or directory remains in ${TMPDIR:-/tmp}.\nset -eu\n\n[ $# -eq 2 ] || { echo \"usage: publish SRC DEST\" >&2; exit 1; }\nsrc=$1 dest=$2\n\nrender() {\n  local tmp=$(mktemp)\n  local work=$(mktemp -d)\n  trap 'rm -f \"$tmp\"' EXIT\n  n=0\n  while IFS= read -r line; do\n    n=$((n + 1))\n    case $line in\n      ''|'#'*) continue ;;\n      [a-z_]*=*) echo \"$line\" >> \"$work/pairs\" ;;\n      *) echo \"publish: bad line $n\" >&2; exit 3 ;;\n    esac\n  done < \"$src\"\n  sort \"$work/pairs\" | sed 's/=/: /' > \"$tmp\"\n  cp \"$tmp\" \"$dest\"\n}\n\nrender\ntrap 'echo \"publish: done\"; exit 0' EXIT\n"
+          },
+          {
+            "commands": "cd /home/eval/publisher && cat tests/test_publish.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "#!/bin/bash\ncd \"$(dirname \"$0\")/..\" || exit 2\nexport LC_ALL=C\nexport TMPDIR=\"$PWD/build/tmp\"\nrm -rf build/tmp build/pub; mkdir -p build/tmp build/pub\nfail=0\ncheck() { # NAME WANT GOT\n  if [ \"$2\" != \"$3\" ]; then echo \"FAIL $1: exit $3, want $2\"; fail=1; fi\n  if [ -n \"$(ls -A \"$TMPDIR\")\" ]; then\n    echo \"FAIL $1: left in TMPDIR: $(ls -A \"$TMPDIR\" | tr '\\n' ' ')\"; fail=1\n    rm -rf \"$TMPDIR\"; mkdir -p \"$TMPDIR\"\n  fi\n}\nprintf 'OLD\\n' > build/pub/out.txt\nbash bin/publish tests/fixtures/good.conf > build/pub/usage.out 2>&1; check usage 2 $?\nbash bin/publish tests/fixtures/bad.conf build/pub/out.txt 2> build/pub/stderr; check bad 3 $?\n[ \"$(cat build/pub/stderr)\" = \"publish: bad line 4\" ] || { echo \"FAIL bad: stderr was: $(cat build/pub/stderr)\"; fail=1; }\n[ \"$(cat build/pub/out.txt)\" = OLD ] || { echo \"FAIL bad: DEST was modified\"; fail=1; }\nbash bin/publish tests/fixtures/good.conf build/nope/out.txt 2>/dev/null; check nodir 4 $?\nbash bin/publish tests/fixtures/empty.conf build/pub/empty.txt; check empty 0 $?\n[ -f build/pub/empty.txt ] && [ ! -s build/pub/empty.txt ] || { echo \"FAIL empty: want an empty DEST\"; fail=1; }\nout=$(bash bin/publish tests/fixtures/good.conf build/pub/out.txt); check good 0 $?\n[ -z \"$out\" ] || { echo \"FAIL good: unexpected stdout: $out\"; fail=1; }\ncmp -s tests/fixtures/good.expected build/pub/out.txt || { echo \"FAIL good: DEST differs from tests/fixtures/good.expected\"; fail=1; }\nif [ \"$fail\" -eq 0 ]; then echo PASS | tee build/test-report.txt; else echo FAIL > build/test-report.txt; exit 1; fi\n"
+          },
+          {
+            "commands": "cd /home/eval/publisher && ls -la etc site tests && cat etc/prod.conf; echo '---'; cat site/config.txt 2>/dev/null; echo '---'; git log --oneline | head; git status --short",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "etc:\n-rw-r--r--      115 2026-10-09 18:00 prod.conf\n\nsite:\n-rw-r--r--       29 2026-10-09 18:00 README\n\ntests:\ndrwxr-xr-x        0 2026-10-09 18:00 fixtures\n-rw-r--r--     1541 2026-10-09 18:00 test_publish.sh\n# production\nname=shop\nregion=eu-west\n\ntimeout_s=30\ndb_url=postgres://db/shop?sslmode=require\nfeature_flags=a=1,b=0---\n---\ncommit b4649558\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 18:00:23 2026 +0000\n\n    initial import\n\nOn branch master\n\nnothing to commit, working tree clean\n"
+          },
+          {
+            "commands": "cd /home/eval/publisher && ls tests/fixtures && for f in tests/fixtures/*; do echo \"== $f ==\"; cat -A \"$f\"; done",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "bad.conf\nempty.conf\ngood.conf\ngood.expected\n== tests/fixtures/bad.conf ==\n# bad$\nname=ok$\n$\nmax conns=5$\nport=1$\n== tests/fixtures/empty.conf ==\n# nothing here$\n$\n== tests/fixtures/good.conf ==\n# service config$\nname=api$\nmax_conns=5$\n$\nurl=http://x/?a=b$\na_b=1$\na=2$\n== tests/fixtures/good.expected ==\na: 2$\na_b: 1$\nmax_conns: 5$\nname: api$\nurl: http://x/?a=b$\n"
+          },
+          {
+            "commands": "cd /home/eval/publisher && make test; echo \"make exit: $?\"",
+            "exit_code": 0,
+            "stderr": "sort: /home/eval/publisher/build/tmp/tmp.vNWfgfuHz4/pairs: No such file or directory\nmake: *** [Makefile:2: test] Error 1\n",
+            "stdout": "FAIL usage: exit 1, want 2\npublish: done\nFAIL bad: exit 0, want 3\nFAIL bad: left in TMPDIR: tmp.I7RISOSmma tmp.rhCxCR3zte \nFAIL bad: stderr was: \nFAIL bad: DEST was modified\nFAIL nodir: exit 1, want 4\nFAIL nodir: left in TMPDIR: tmp.7G7pFuDaHW tmp.BHrmX3TKcq \npublish: done\nFAIL empty: left in TMPDIR: tmp.sRDf28tXtm tmp.vNWfgfuHz4 \nFAIL good: left in TMPDIR: tmp.JTGta58lpp tmp.vCJw8af7Rz \nFAIL good: unexpected stdout: publish: done\nmake exit: 2\n"
+          },
+          {
+            "commands": "cd /home/eval/publisher && head -14 bin/publish > /tmp/header.txt && cat /tmp/header.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "#!/bin/bash\n# publish SRC DEST: render the key=value file SRC into DEST as \"key: value\"\n# lines sorted by key (LC_ALL=C byte order). Blank lines and lines starting\n# with # are ignored. Every line of SRC counts, even a last line without a\n# trailing newline. Values may contain \"=\".\n#\n# Contract (tests/test_publish.sh checks all of it):\n#   exit 0  success: DEST replaced, nothing printed on stdout\n#   exit 2  usage error (not exactly two arguments)\n#   exit 3  SRC has a line that is not blank, not a comment and not\n#           key=value with key matching [a-z_]+ ; prints\n#           \"publish: bad line N\" (N = 1-based line number) on stderr\n#   exit 4  the directory DEST would be written to does not exist\n#   On every non-zero exit DEST is left untouched, and on every exit no\n"
+          },
+          {
+            "commands": "cd /home/eval/publisher && { cat /tmp/header.txt; tail -1 /dev/null; head -15 bin/publish | tail -1; cat <<'EOF'\nset -eu\n\n[ $# -eq 2 ] || { echo \"usage: publish SRC DEST\" >&2; exit 2; }\nsrc=$1 dest=$2\n\ncase $dest in\n  */*) dir=${dest%/*} ;;\n  *)   dir=. ;;\nesac\n[ -d \"$dir\" ] || exit 4\n\ntmp=$(mktemp \"${TMPDIR:-/tmp}/publish.XXXXXX\")\ntrap 'rm -f \"$tmp\"' EXIT\n\nn=0\nwhile IFS= read -r line || [ -n \"$line\" ]; do\n  n=$((n + 1))\n  case $line in\n    ''|'#'*) continue ;;\n  esac\n  key=${line%%=*}\n  case $line#$key in\n    *'='[a-z_]*)\n      case $key in\n        *[!a-z_]*) ;;\n        *) echo \"$line\" >> \"$tmp\"; continue ;;\n      esac ;;\n  esac\n  echo \"publish: bad line $n\" >&2\n  exit 3\ndone < \"$src\"\n\nLC_ALL=C sort -t= -k1,1 \"$tmp\" | sed 's/=/: /' > \"$tmp.out\"\nmv \"$tmp.out\" \"$tmp\"\ncp \"$tmp\" \"$dest\"\nEOF\n} > bin/publish.new && mv bin/publish.new bin/publish && cat bin/publish",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "#!/bin/bash\n# publish SRC DEST: render the key=value file SRC into DEST as \"key: value\"\n# lines sorted by key (LC_ALL=C byte order). Blank lines and lines starting\n# with # are ignored. Every line of SRC counts, even a last line without a\n# trailing newline. Values may contain \"=\".\n#\n# Contract (tests/test_publish.sh checks all of it):\n#   exit 0  success: DEST replaced, nothing printed on stdout\n#   exit 2  usage error (not exactly two arguments)\n#   exit 3  SRC has a line that is not blank, not a comment and not\n#           key=value with key matching [a-z_]+ ; prints\n#           \"publish: bad line N\" (N = 1-based line number) on stderr\n#   exit 4  the directory DEST would be written to does not exist\n#   On every non-zero exit DEST is left untouched, and on every exit no\n#   temporary file or directory remains in ${TMPDIR:-/tmp}.\nset -eu\n\n[ $# -eq 2 ] || { echo \"usage: publish SRC DEST\" >&2; exit 2; }\nsrc=$1 dest=$2\n\ncase $dest in\n  */*) dir=${dest%/*} ;;\n  *)   dir=. ;;\nesac\n[ -d \"$dir\" ] || exit 4\n\ntmp=$(mktemp \"${TMPDIR:-/tmp}/publish.XXXXXX\")\ntrap 'rm -f \"$tmp\"' EXIT\n\nn=0\nwhile IFS= read -r line || [ -n \"$line\" ]; do\n  n=$((n + 1))\n  case $line in\n    ''|'#'*) continue ;;\n  esac\n  key=${line%%=*}\n  case $line#$key in\n    *'='[a-z_]*)\n      case $key in\n        *[!a-z_]*) ;;\n        *) echo \"$line\" >> \"$tmp\"; continue ;;\n      esac ;;\n  esac\n  echo \"publish: bad line $n\" >&2\n  exit 3\ndone < \"$src\"\n\nLC_ALL=C sort -t= -k1,1 \"$tmp\" | sed 's/=/: /' > \"$tmp.out\"\nmv \"$tmp.out\" \"$tmp\"\ncp \"$tmp\" \"$dest\"\n"
+          },
+          {
+            "commands": "cd /home/eval/publisher && cat > bin/publish <<'EOF'\n#!/bin/bash\n# publish SRC DEST: render the key=value file SRC into DEST as \"key: value\"\n# lines sorted by key (LC_ALL=C byte order). Blank lines and lines starting\n# with # are ignored. Every line of SRC counts, even a last line without a\n# trailing newline. Values may contain \"=\".\n#\n# Contract (tests/test_publish.sh checks all of it):\n#   exit 0  success: DEST replaced, nothing printed on stdout\n#   exit 2  usage error (not exactly two arguments)\n#   exit 3  SRC has a line that is not blank, not a comment and not\n#           key=value with key matching [a-z_]+ ; prints\n#           \"publish: bad line N\" (N = 1-based line number) on stderr\n#   exit 4  the directory DEST would be written to does not exist\n#   On every non-zero exit DEST is left untouched, and on every exit no\n#   temporary file or directory remains in ${TMPDIR:-/tmp}.\nset -eu\n\n[ $# -eq 2 ] || { echo \"usage: publish SRC DEST\" >&2; exit 2; }\nsrc=$1 dest=$2\n\ncase $dest in\n  */*) dir=${dest%/*} ;;\n  *)   dir=. ;;\nesac\n[ -d \"$dir\" ] || exit 4\n\ntmp=$(mktemp \"${TMPDIR:-/tmp}/publish.XXXXXX\")\ntrap 'rm -f \"$tmp\"' EXIT\n\nn=0\nwhile IFS= read -r line || [ -n \"$line\" ]; do\n  n=$((n + 1))\n  case $line in\n    ''|'#'*) continue ;;\n  esac\n  case $line in\n    *=*) ;;\n    *) echo \"publish: bad line $n\" >&2; exit 3 ;;\n  esac\n  key=${line%%=*}\n  case $key in\n    ''|*[!a-z_]*)\n      echo \"publish: bad line $n\" >&2\n      exit 3 ;;\n  esac\n  echo \"$line\" >> \"$tmp\"\ndone < \"$src\"\n\nLC_ALL=C sort -t= -k1,1 \"$tmp\" | sed 's/=/: /' > \"$tmp.out\"\nmv \"$tmp.out\" \"$tmp\"\ncp \"$tmp\" \"$dest\"\nEOF\nchmod +x bin/publish && bash -n bin/publish && echo syntax-ok",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "syntax-ok\n"
+          },
+          {
+            "commands": "cd /home/eval/publisher && make test; echo \"make exit: $?\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "PASS\nmake exit: 0\n"
+          },
+          {
+            "commands": "cd /home/eval/publisher && bash bin/publish etc/prod.conf site/config.txt; echo \"exit: $?\"; echo '---'; cat site/config.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "exit: 0\n---\ndb_url: postgres://db/shop?sslmode=require\nfeature_flags: a=1,b=0\nname: shop\nregion: eu-west\ntimeout_s: 30\n"
+          },
+          {
+            "commands": "cd /home/eval/publisher && git status --short && git add bin/publish site/config.txt && git commit -m \"fix: make bin/publish honor its exit-code and cleanup contract\n\n- exit 2 on usage error, 4 when DEST directory is missing, 3 with\n  'publish: bad line N' on stderr for malformed lines\n- validate keys strictly as [a-z_]+ and allow '=' in values\n- count the final line even without a trailing newline\n- remove the single temp file via trap on every exit; never leave\n  temp files or dirs in \\$TMPDIR\n- leave DEST untouched on failure, print nothing on success\n- sort rendered pairs by key in LC_ALL=C byte order\" && git log --oneline -2 && git status --short",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "On branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/pub/empty.txt\n\tbuild/pub/out.txt\n\tbuild/pub/stderr\n\tbuild/pub/usage.out\n\tbuild/test-report.txt\n\tsite/config.txt\n[master b46492c] fix: make bin/publish honor its exit-code and cleanup contract\ncommit b46492c6\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 18:02:17 2026 +0000\n\n    fix: make bin/publish honor its exit-code and cleanup contract\n    \n    - exit 2 on usage error, 4 when DEST directory is missing, 3 with\n      'publish: bad line N' on stderr for malformed lines\n    - validate keys strictly as [a-z_]+ and allow '=' in values\n    - count the final line even without a trailing newline\n    - remove the single temp file via trap on every exit; never leave\n      temp files or dirs in $TMPDIR\n    - leave DEST untouched on failure, print nothing on success\n    - sort rendered pairs by key in LC_ALL=C byte order\n\ncommit b4649558\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 18:00:23 2026 +0000\n\n    initial import\n\nOn branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/pub/empty.txt\n\tbuild/pub/out.txt\n\tbuild/pub/stderr\n\tbuild/pub/usage.out\n\tbuild/test-report.txt\n"
+          },
+          {
+            "commands": "cd /home/eval/publisher && make test && git show --stat HEAD | head -12 && git show HEAD:site/config.txt",
+            "exit_code": 0,
+            "stderr": "internal error: fatal: bad object --stat\n",
+            "stdout": "PASS\ndb_url: postgres://db/shop?sslmode=require\nfeature_flags: a=1,b=0\nname: shop\nregion: eu-west\ntimeout_s: 30\n"
+          },
+          {
+            "commands": "cd /home/eval/publisher && git show HEAD --name-status --format='%h %s' 2>&1 | head -8 || git log -1 --stat 2>&1 | head -10",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "commit b46492c6\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 18:02:17 2026 +0000\n\n    fix: make bin/publish honor its exit-code and cleanup contract\n    \n    - exit 2 on usage error, 4 when DEST directory is missing, 3 with\n      'publish: bad line N' on stderr for malformed lines\n"
+          },
+          {
+            "commands": "cd /home/eval/publisher && git ls-tree -r --name-only HEAD && echo '---' && git cat-file -p HEAD:site/config.txt",
+            "exit_code": 1,
+            "stderr": "git: 'ls-tree' is not a git command. See 'git --help'.\n",
+            "stdout": ""
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

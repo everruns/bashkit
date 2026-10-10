@@ -1,0 +1,78 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "rt_sqlite_hr_report",
+  "target": "anthropic/claude-opus-5-5",
+  "input": [
+    "Load /data/employees.csv and /data/departments.csv (CSV with header rows; fields may be double-quoted) into a new SQLite database /data/hr.db using the sqlite3 command, with tables:\n  departments(id INTEGER PRIMARY KEY, name TEXT NOT NULL)\n  employees(id INTEGER PRIMARY KEY, name TEXT NOT NULL, dept_id INTEGER, salary INTEGER NOT NULL, hired TEXT NOT NULL)\nEvery CSV row must be loaded with its values unchanged.\n\nThen produce /out/dept_report.csv from a query on hr.db: header department,headcount,avg_salary,top_earner; one row per department including departments with no employees (headcount 0, avg_salary and top_earner empty), plus a row named (none) for employees whose dept_id matches no department. avg_salary has exactly 2 decimals; top_earner is the highest-paid employee, ties broken by name alphabetically. Sort by headcount descending, then department name. Use standard CSV quoting (quote only fields containing a comma, quote or newline) and \\n line endings."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I loaded both CSVs into `/data/hr.db` and wrote the report to `/out/dept_report.csv`. When I read the tables back, all 4 departments and 9 employees matched the CSV values exactly.\n\n```\ndepartment,headcount,avg_salary,top_earner\nEngineering,4,80000.00,Eli Stone\nSales,3,66166.67,Hana Sato\n(none),1,50000.00,Gus O'Neil\nSupport,1,58000.00,Farah Aziz\nLegal,0,,\n```\n\n**Loading:** I used Python's `csv` module to turn each CSV row into an INSERT statement, then ran the statements through the `sqlite3` command in one transaction. This was needed because the quoted name `\"O'Brien, Pat\"` contains a comma, and two names contain apostrophes.\n\n**Report:**\n- **The (none) row:** Gus O'Neil has `dept_id` 99, which matches no department, so he is counted under \"(none)\". An employee with a blank `dept_id` would also be counted there (there are none in this data).\n- **Legal:** it has no employees, so its headcount is 0 and the average salary and top earner are empty.\n- **Tie for top earner:** in Engineering, Eli Stone and O'Brien, Pat both earn 91,000. Eli Stone is listed because his name comes first alphabetically.\n- **Format:** the query's output is written with Python's CSV writer, which quotes a field only if it contains a comma, quote or newline and uses `\\n` line endings. No field in this report needed quotes.\n\nThe SQL scripts I used are in `/tmp/load.sql` and `/tmp/report.sql`.",
+    "iterations": 5,
+    "tool_calls_count": 4,
+    "tool_calls": [
+      "cd /data; ls -la; cat departments.csv; echo ---; cat employees.csv | head -50; wc -l *.csv; ls /out",
+      "cd /data; od -c employees.csv | head -30; od -c departments.csv | tail -3",
+      "cd /data; rm -f hr.db; mkdir -p /out\npython3 - <<'EOF' > /tmp/load.sql\nimport csv\nq=lambda s:\"'\"+s.replace(\"'\",\"''\")+\"'\"\nprint(\"BEGIN;\")\nprint(\"CREATE TABLE departments(id INTEGER PRIMARY KEY, name TEXT NOT NULL);\")\nprint(\"CREATE TABLE employees(id INTEGER PRIMARY KEY, name TEXT NOT NULL, dept_id INTEGER, salary INTEGER NOT NULL, hired TEXT NOT NULL);\")\nfor r in csv.DictReader(open('/data/departments.csv',newline='')):\n    print(f\"INSERT INTO departments VALUES({int(r['id'])},{q(r['name'])});\")\nfor r in csv.DictReader(open('/data/employees.csv',newline='')):\n    d=r['dept_id'].strip()\n    print(f\"INSERT INTO employees VALUES({int(r['id'])},{q(r['name'])},{int(d) if d else 'NULL'},{int(r['salary'])},{q(r['hired'])});\")\nprint(\"COMMIT;\")\nEOF\nsqlite3 hr.db < /tmp/load.sql\nsqlite3 -header hr.db \"SELECT * FROM departments; SELECT * FROM employees;\"",
+      "cd /data; cat > /tmp/report.sql <<'EOF'\nWITH e AS (\n  SELECT e.*, COALESCE(d.name,'(none)') AS dname, d.id AS did\n  FROM employees e LEFT JOIN departments d ON d.id = e.dept_id\n),\ngroups AS (\n  SELECT id AS did, name AS dname FROM departments\n  UNION ALL\n  SELECT DISTINCT NULL, '(none)' FROM e WHERE did IS NULL\n),\nranked AS (\n  SELECT dname, name, ROW_NUMBER() OVER (PARTITION BY dname ORDER BY salary DESC, name ASC) AS rn FROM e\n)\nSELECT g.dname AS department,\n       (SELECT COUNT(*) FROM e WHERE e.dname = g.dname) AS headcount,\n       (SELECT printf('%.2f', AVG(salary)) FROM e WHERE e.dname = g.dname HAVING COUNT(*)>0) AS avg_salary,\n       (SELECT name FROM ranked r WHERE r.dname = g.dname AND rn = 1) AS top_earner\nFROM groups g\nORDER BY headcount DESC, department ASC;\nEOF\nsqlite3 -separator $'\\t' hr.db < /tmp/report.sql | python3 -c \"\nimport sys,csv\nw=csv.writer(open('/out/dept_report.csv','w',newline=''),lineterminator='\\n')\nw.writerow(['department','headcount','avg_salary','top_earner'])\nfor l in sys.stdin.read().split('\\n'):\n    if l: w.writerow(l.split('\\t'))\n\"\ncat -A /out/dept_report.csv"
+    ],
+    "usage": {
+      "input_tokens": 13563,
+      "output_tokens": 2506,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 24909
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 4.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 3.0,
+      "turns": 5.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cd /data; ls -la; cat departments.csv; echo ---; cat employees.csv | head -50; wc -l *.csv; ls /out",
+            "exit_code": 2,
+            "stderr": "ls: cannot access '/out': No such file or directory\n",
+            "stdout": "-rw-r--r--       52 2026-10-09 22:16 departments.csv\n-rw-r--r--      324 2026-10-09 22:16 employees.csv\nid,name\n10,Engineering\n20,Sales\n30,Support\n40,Legal\n---\nid,name,dept_id,salary,hired\n1,Ana Lima,10,72000,2021-04-01\n2,\"O'Brien, Pat\",10,91000,2019-11-15\n3,Chen Wei,20,64000,2022-01-10\n4,Dara Okoye,20,64000,2020-06-30\n5,Eli Stone,10,91000,2023-02-01\n6,Farah Aziz,30,58000,2024-07-15\n7,Gus O'Neil,99,50000,2018-03-03\n8,Hana Sato,20,70500,2021-09-09\n9,Ivo Petrov,10,66000,2020-01-20\n  5 departments.csv\n 10 employees.csv\n 15 total\n"
+          },
+          {
+            "commands": "cd /data; od -c employees.csv | head -30; od -c departments.csv | tail -3",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "0000000   i   d   ,   n   a   m   e   ,   d   e   p   t   _   i   d   ,\n0000020   s   a   l   a   r   y   ,   h   i   r   e   d  \\n   1   ,   A\n0000040   n   a       L   i   m   a   ,   1   0   ,   7   2   0   0   0\n0000060   ,   2   0   2   1   -   0   4   -   0   1  \\n   2   ,   \"   O\n0000100   '   B   r   i   e   n   ,       P   a   t   \"   ,   1   0   ,\n0000120   9   1   0   0   0   ,   2   0   1   9   -   1   1   -   1   5\n0000140  \\n   3   ,   C   h   e   n       W   e   i   ,   2   0   ,   6\n0000160   4   0   0   0   ,   2   0   2   2   -   0   1   -   1   0  \\n\n0000200   4   ,   D   a   r   a       O   k   o   y   e   ,   2   0   ,\n0000220   6   4   0   0   0   ,   2   0   2   0   -   0   6   -   3   0\n0000240  \\n   5   ,   E   l   i       S   t   o   n   e   ,   1   0   ,\n0000260   9   1   0   0   0   ,   2   0   2   3   -   0   2   -   0   1\n0000300  \\n   6   ,   F   a   r   a   h       A   z   i   z   ,   3   0\n0000320   ,   5   8   0   0   0   ,   2   0   2   4   -   0   7   -   1\n0000340   5  \\n   7   ,   G   u   s       O   '   N   e   i   l   ,   9\n0000360   9   ,   5   0   0   0   0   ,   2   0   1   8   -   0   3   -\n0000400   0   3  \\n   8   ,   H   a   n   a       S   a   t   o   ,   2\n0000420   0   ,   7   0   5   0   0   ,   2   0   2   1   -   0   9   -\n0000440   0   9  \\n   9   ,   I   v   o       P   e   t   r   o   v   ,\n0000460   1   0   ,   6   6   0   0   0   ,   2   0   2   0   -   0   1\n0000500   -   2   0  \\n\n0000504\n0000040   3   0   ,   S   u   p   p   o   r   t  \\n   4   0   ,   L   e\n0000060   g   a   l  \\n\n0000064\n"
+          },
+          {
+            "commands": "cd /data; rm -f hr.db; mkdir -p /out\npython3 - <<'EOF' > /tmp/load.sql\nimport csv\nq=lambda s:\"'\"+s.replace(\"'\",\"''\")+\"'\"\nprint(\"BEGIN;\")\nprint(\"CREATE TABLE departments(id INTEGER PRIMARY KEY, name TEXT NOT NULL);\")\nprint(\"CREATE TABLE employees(id INTEGER PRIMARY KEY, name TEXT NOT NULL, dept_id INTEGER, salary INTEGER NOT NULL, hired TEXT NOT NULL);\")\nfor r in csv.DictReader(open('/data/departments.csv',newline='')):\n    print(f\"INSERT INTO departments VALUES({int(r['id'])},{q(r['name'])});\")\nfor r in csv.DictReader(open('/data/employees.csv',newline='')):\n    d=r['dept_id'].strip()\n    print(f\"INSERT INTO employees VALUES({int(r['id'])},{q(r['name'])},{int(d) if d else 'NULL'},{int(r['salary'])},{q(r['hired'])});\")\nprint(\"COMMIT;\")\nEOF\nsqlite3 hr.db < /tmp/load.sql\nsqlite3 -header hr.db \"SELECT * FROM departments; SELECT * FROM employees;\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "id|name\n10|Engineering\n20|Sales\n30|Support\n40|Legal\nid|name|dept_id|salary|hired\n1|Ana Lima|10|72000|2021-04-01\n2|O'Brien, Pat|10|91000|2019-11-15\n3|Chen Wei|20|64000|2022-01-10\n4|Dara Okoye|20|64000|2020-06-30\n5|Eli Stone|10|91000|2023-02-01\n6|Farah Aziz|30|58000|2024-07-15\n7|Gus O'Neil|99|50000|2018-03-03\n8|Hana Sato|20|70500|2021-09-09\n9|Ivo Petrov|10|66000|2020-01-20\n"
+          },
+          {
+            "commands": "cd /data; cat > /tmp/report.sql <<'EOF'\nWITH e AS (\n  SELECT e.*, COALESCE(d.name,'(none)') AS dname, d.id AS did\n  FROM employees e LEFT JOIN departments d ON d.id = e.dept_id\n),\ngroups AS (\n  SELECT id AS did, name AS dname FROM departments\n  UNION ALL\n  SELECT DISTINCT NULL, '(none)' FROM e WHERE did IS NULL\n),\nranked AS (\n  SELECT dname, name, ROW_NUMBER() OVER (PARTITION BY dname ORDER BY salary DESC, name ASC) AS rn FROM e\n)\nSELECT g.dname AS department,\n       (SELECT COUNT(*) FROM e WHERE e.dname = g.dname) AS headcount,\n       (SELECT printf('%.2f', AVG(salary)) FROM e WHERE e.dname = g.dname HAVING COUNT(*)>0) AS avg_salary,\n       (SELECT name FROM ranked r WHERE r.dname = g.dname AND rn = 1) AS top_earner\nFROM groups g\nORDER BY headcount DESC, department ASC;\nEOF\nsqlite3 -separator $'\\t' hr.db < /tmp/report.sql | python3 -c \"\nimport sys,csv\nw=csv.writer(open('/out/dept_report.csv','w',newline=''),lineterminator='\\n')\nw.writerow(['department','headcount','avg_salary','top_earner'])\nfor l in sys.stdin.read().split('\\n'):\n    if l: w.writerow(l.split('\\t'))\n\"\ncat -A /out/dept_report.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "department,headcount,avg_salary,top_earner$\nEngineering,4,80000.00,Eli Stone$\nSales,3,66166.67,Hana Sato$\n(none),1,50000.00,Gus O'Neil$\nSupport,1,58000.00,Farah Aziz$\nLegal,0,,$\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

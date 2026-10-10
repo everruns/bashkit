@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "data_json_query",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Read /data/inventory.json and find all items where the quantity field is less than 10. Print only their names, one per line."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "screws\nwashers\nnails",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "python3 -c \"\nimport json\n\nwith open('/data/inventory.json', 'r') as f:\n    data = json.load(f)\n\n# Let's inspect the data type/structure first\nif isinstance(data, list):\n    for item in data:\n        if item.get('quantity', 0) < 10:\n            print(item.get('name'))\nelif isinstance(data, dict):\n    # Could be {'items': [...]} or similar\n    items = data.get('items', data.get('inventory', []))\n    if not items and all(isinstance(v, dict) for v in data.values()):\n        # maybe dict of items\n        items = list(data.values())\n    for item in items:\n        if item.get('quantity', 0) < 10:\n            print(item.get('name'))\n\"",
+      "cat /data/inventory.json"
+    ],
+    "usage": {
+      "input_tokens": 1696,
+      "output_tokens": 350,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 16987
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "python3 -c \"\nimport json\n\nwith open('/data/inventory.json', 'r') as f:\n    data = json.load(f)\n\n# Let's inspect the data type/structure first\nif isinstance(data, list):\n    for item in data:\n        if item.get('quantity', 0) < 10:\n            print(item.get('name'))\nelif isinstance(data, dict):\n    # Could be {'items': [...]} or similar\n    items = data.get('items', data.get('inventory', []))\n    if not items and all(isinstance(v, dict) for v in data.values()):\n        # maybe dict of items\n        items = list(data.values())\n    for item in items:\n        if item.get('quantity', 0) < 10:\n            print(item.get('name'))\n\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "screws\nwashers\nnails\n"
+          },
+          {
+            "commands": "cat /data/inventory.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[{\"name\":\"screws\",\"quantity\":5},{\"name\":\"bolts\",\"quantity\":50},{\"name\":\"washers\",\"quantity\":3},{\"name\":\"nuts\",\"quantity\":100},{\"name\":\"nails\",\"quantity\":8}]"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

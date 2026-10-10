@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_markdown_toc",
+  "target": "anthropic/claude-opus-5-5",
+  "input": [
+    "Read /doc/README.md and generate a table of contents from its headings (lines starting with # or ##). Insert the TOC after the first heading, formatted as a markdown list with '- [Heading Text](#anchor)' where anchor is the heading text lowercased with spaces replaced by hyphens. Write the result back to the file."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I added a table of contents to `/doc/README.md`, right after the first heading (`# Project Alpha`):\n\n```markdown\n- [Project Alpha](#project-alpha)\n- [Installation](#installation)\n- [Usage](#usage)\n- [API Reference](#api-reference)\n- [Contributing](#contributing)\n```\n\nIt lists every `#` and `##` heading in the file, including \"Project Alpha\" itself. Each link is the heading lowercased with spaces turned into hyphens, as you asked. The rest of the file is unchanged.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat -A /doc/README.md | head -100; wc -l /doc/README.md",
+      "cd /doc && python3 - <<'EOF'\nimport re\nlines=open('README.md').read().split('\\n')\nheads=[]\nfor l in lines:\n    m=re.match(r'^(#{1,2}) (.+)$',l)\n    if m: heads.append(m.group(2).strip())\ntoc=['- [%s](#%s)'%(h,h.lower().replace(' ','-')) for h in heads]\ni=next(i for i,l in enumerate(lines) if re.match(r'^#{1,2} ',l))\nout=lines[:i+1]+['']+toc+lines[i+1:]\nopen('README.md','w').write('\\n'.join(out))\nEOF\ncat README.md"
+    ],
+    "usage": {
+      "input_tokens": 3975,
+      "output_tokens": 631,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 6497
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat -A /doc/README.md | head -100; wc -l /doc/README.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Project Alpha$\n$\nIntroduction to the project.$\n$\n## Installation$\n$\nRun the installer.$\n$\n## Usage$\n$\nHow to use it.$\n$\n## API Reference$\n$\nEndpoint documentation.$\n$\n## Contributing$\n$\nPR guidelines.$\n19 /doc/README.md\n"
+          },
+          {
+            "commands": "cd /doc && python3 - <<'EOF'\nimport re\nlines=open('README.md').read().split('\\n')\nheads=[]\nfor l in lines:\n    m=re.match(r'^(#{1,2}) (.+)$',l)\n    if m: heads.append(m.group(2).strip())\ntoc=['- [%s](#%s)'%(h,h.lower().replace(' ','-')) for h in heads]\ni=next(i for i,l in enumerate(lines) if re.match(r'^#{1,2} ',l))\nout=lines[:i+1]+['']+toc+lines[i+1:]\nopen('README.md','w').write('\\n'.join(out))\nEOF\ncat README.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Project Alpha\n\n- [Project Alpha](#project-alpha)\n- [Installation](#installation)\n- [Usage](#usage)\n- [API Reference](#api-reference)\n- [Contributing](#contributing)\n\nIntroduction to the project.\n\n## Installation\n\nRun the installer.\n\n## Usage\n\nHow to use it.\n\n## API Reference\n\nEndpoint documentation.\n\n## Contributing\n\nPR guidelines.\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

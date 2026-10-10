@@ -1,0 +1,85 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "archive_create_extract",
+  "target": "openrouter/meta/muse-spark-1.3-contributor",
+  "input": [
+    "Create a tar.gz archive of the /project directory and save it as /tmp/project.tar.gz. Then create /backup directory and extract the archive there. Verify the files exist in /backup."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "All tasks completed successfully:\n\n1. **Created tar.gz archive** of `/project` saved as `/tmp/project.tar.gz` (232 bytes):\n   - `tar -czf /tmp/project.tar.gz -C / project`\n   - Archive contains: `project/`, `project/README.md`, `project/src/`, `project/src/main.sh`\n\n2. **Created /backup directory and extracted archive**:\n   - `mkdir -p /backup && tar -xzf /tmp/project.tar.gz -C /backup`\n\n3. **Verified files exist in /backup**:\n   - `/backup/project/README.md` exists and matches original\n   - `/backup/project/src/main.sh` exists and matches original\n   - `/backup` directory structure mirrors `/project`\n",
+    "iterations": 6,
+    "tool_calls_count": 5,
+    "tool_calls": [
+      "ls -la /project 2>&1; echo \"---\"; ls -la /tmp 2>&1; echo \"---\"; ls -la /backup 2>&1 || echo \"/backup does not exist\"",
+      "ls -laR /project 2>&1\ncat /project/README.md 2>&1\nls -laR /project/src 2>&1 || true",
+      "tar -czf /tmp/project.tar.gz -C / project && echo \"archive created\" && ls -lh /tmp/project.tar.gz && tar -tzf /tmp/project.tar.gz",
+      "mkdir -p /backup && tar -xzf /tmp/project.tar.gz -C /backup && echo \"extraction done\" && ls -laR /backup && echo \"---VERIFY---\" && ls -lh /tmp/project.tar.gz /backup && test -f /backup/project/README.md && test -f /backup/project/src/main.sh && echo \"VERIFIED: files exist in /backup\" && diff -r /project /backup/project && echo \"DIFF OK: /backup matches /project\"",
+      "echo \"=== /tmp/project.tar.gz ===\" && ls -lh /tmp/project.tar.gz && echo \"=== /backup contents ===\" && ls -laR /backup && echo \"=== file checks ===\" && test -f /backup/project/README.md && echo \"OK: /backup/project/README.md exists\" && test -f /backup/project/src/main.sh && echo \"OK: /backup/project/src/main.sh exists\" && echo \"=== content comparison ===\" && diff /project/README.md /backup/project/README.md && echo \"README.md matches\" && diff /project/src/main.sh /backup/project/src/main.sh && echo \"main.sh matches\" && echo \"ALL VERIFIED\""
+    ],
+    "usage": {
+      "input_tokens": 9014,
+      "output_tokens": 3065,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 35934
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 5.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 4.0,
+      "turns": 6.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /project 2>&1; echo \"---\"; ls -la /tmp 2>&1; echo \"---\"; ls -la /backup 2>&1 || echo \"/backup does not exist\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       37 2026-10-09 17:41 README.md\ndrwxr-xr-x        0 2026-10-09 17:41 src\n---\n---\nls: cannot access '/backup': No such file or directory\n/backup does not exist\n"
+          },
+          {
+            "commands": "ls -laR /project 2>&1\ncat /project/README.md 2>&1\nls -laR /project/src 2>&1 || true",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/project:\n-rw-r--r--       37 2026-10-09 17:41 README.md\ndrwxr-xr-x        0 2026-10-09 17:41 src\n\n/project/src:\n-rw-r--r--       38 2026-10-09 17:41 main.sh\n# My Project\nThis is a test project.\n/project/src:\n-rw-r--r--       38 2026-10-09 17:41 main.sh\n"
+          },
+          {
+            "commands": "tar -czf /tmp/project.tar.gz -C / project && echo \"archive created\" && ls -lh /tmp/project.tar.gz && tar -tzf /tmp/project.tar.gz",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "archive created\n-rw-r--r--    232 2026-10-09 17:41 /tmp/project.tar.gz\nproject/\nproject/README.md\nproject/src/\nproject/src/main.sh\n"
+          },
+          {
+            "commands": "mkdir -p /backup && tar -xzf /tmp/project.tar.gz -C /backup && echo \"extraction done\" && ls -laR /backup && echo \"---VERIFY---\" && ls -lh /tmp/project.tar.gz /backup && test -f /backup/project/README.md && test -f /backup/project/src/main.sh && echo \"VERIFIED: files exist in /backup\" && diff -r /project /backup/project && echo \"DIFF OK: /backup matches /project\"",
+            "exit_code": 2,
+            "stderr": "diff: invalid option -- 'r'\n",
+            "stdout": "extraction done\n/backup:\ndrwxr-xr-x        0 2026-10-09 17:41 project\n\n/backup/project:\n-rw-r--r--       37 2026-10-09 17:41 README.md\ndrwxr-xr-x        0 2026-10-09 17:41 src\n\n/backup/project/src:\n-rw-r--r--       38 2026-10-09 17:41 main.sh\n---VERIFY---\n-rw-r--r--    232 2026-10-09 17:41 /tmp/project.tar.gz\n\n/backup:\ndrwxr-xr-x      0 2026-10-09 17:41 project\nVERIFIED: files exist in /backup\n"
+          },
+          {
+            "commands": "echo \"=== /tmp/project.tar.gz ===\" && ls -lh /tmp/project.tar.gz && echo \"=== /backup contents ===\" && ls -laR /backup && echo \"=== file checks ===\" && test -f /backup/project/README.md && echo \"OK: /backup/project/README.md exists\" && test -f /backup/project/src/main.sh && echo \"OK: /backup/project/src/main.sh exists\" && echo \"=== content comparison ===\" && diff /project/README.md /backup/project/README.md && echo \"README.md matches\" && diff /project/src/main.sh /backup/project/src/main.sh && echo \"main.sh matches\" && echo \"ALL VERIFIED\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== /tmp/project.tar.gz ===\n-rw-r--r--    232 2026-10-09 17:41 /tmp/project.tar.gz\n=== /backup contents ===\n/backup:\ndrwxr-xr-x        0 2026-10-09 17:41 project\n\n/backup/project:\n-rw-r--r--       37 2026-10-09 17:41 README.md\ndrwxr-xr-x        0 2026-10-09 17:41 src\n\n/backup/project/src:\n-rw-r--r--       38 2026-10-09 17:41 main.sh\n=== file checks ===\nOK: /backup/project/README.md exists\nOK: /backup/project/src/main.sh exists\n=== content comparison ===\nREADME.md matches\nmain.sh matches\nALL VERIFIED\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

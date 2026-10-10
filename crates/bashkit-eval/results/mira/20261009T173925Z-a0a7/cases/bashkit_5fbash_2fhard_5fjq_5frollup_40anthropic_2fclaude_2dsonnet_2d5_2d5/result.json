@@ -1,0 +1,78 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "hard_jq_rollup",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "/home/eval/shop/data/orders.json is an array of shop orders. Build per-customer rollups with jq.\n\nRules:\n- Customer key: .customer.id. Orders whose customer is null or missing belong to the key \"guest\".\n- Only orders with status \"paid\" count towards paid_orders, revenue_cents, by_month and top_skus (refunded and pending orders are ignored there), but every customer key that appears in any order gets a file.\n- Line revenue in cents = floor(qty * unit_cents * (100 - discount_pct) / 100), where a null or missing discount_pct means 0.\n- name = .customer.name on that customer's most recent order of any status (by .placed); null for \"guest\".\n\nWrite one file per customer key, /home/eval/shop/out/customers/<key>.json, containing one object with exactly these keys in this order:\n  customer (the key), name, paid_orders (number of paid orders), revenue_cents (integer sum of line revenue over paid orders), by_month (object mapping \"YYYY-MM\" of .placed to that month's revenue, keys ascending, only months with paid orders), top_skus (array of up to 3 skus with the highest revenue over paid orders, ties broken by sku ascending)\nAlso write /home/eval/shop/out/summary.json: an array of {\"customer\": <key>, \"revenue_cents\": <int>} for every customer key, sorted by revenue_cents descending then customer ascending.\n\nFormat every file exactly as `jq .` pretty-prints it (2-space indent, one trailing newline). Numbers must be integers (no 12.0)."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I wrote one file per customer key to `/home/eval/shop/out/customers/`, plus `/home/eval/shop/out/summary.json`. The customer keys are `c-ann`, `c-bob`, `c-cy`, `c-dee`, `c-eve` and `guest`. I only opened `c-ann.json`, `guest.json` and `summary.json` after writing them, and the other four customer files were not opened.\n\n- **Rules applied:** The files follow your rules for guests, paid-only totals, line revenue and name lookup. I formatted them with `jq .`, and revenue stays integer because I floor each line.\n- **Zero-revenue customer:** `c-eve` has no paid orders, so its file shows 0 paid orders and 0 revenue. It still gets a file and a row in the summary because it appears in an order.\n- **Summary order:** `guest` comes first with 14137 cents, then `c-cy` (9911), `c-bob` (9251), `c-ann` (5037), `c-dee` (1781) and `c-eve` (0).\n- **Spot-check:** `c-ann` has 2 paid orders totalling 5037 cents, split 3637 in 2026-07 and 1400 in 2026-08.",
+    "iterations": 4,
+    "tool_calls_count": 4,
+    "tool_calls": [
+      "cd /home/eval/shop/data; which jq; jq 'length, .[0], (map(.status)|unique), (map(.customer|type)|unique), (map(.placed|type)|unique)' orders.json; jq -c '[.[]|.lines[]?]|.[0:3]' orders.json; jq -c '[.[].placed]|.[0:5]' orders.json; jq -c '[.[].customer.id]|map(type)|unique' orders.json",
+      "cd /home/eval/shop/data; jq -c '.[]|select(.customer!=null and (.customer.id|type)!=\"string\")' orders.json; jq -c '[.[].items|type]|unique' orders.json; jq -c '[.[].items[]?|(.discount_pct|type),(.qty|type),(.unit_cents|type)]|unique' orders.json; jq -c '[.[].placed|length]|unique' orders.json; jq -c '[.[].customer.id]|unique' orders.json; jq -c '.[]|select(.customer.id==\"\")' orders.json; jq -c '[.[].placed]|sort==.' orders.json; jq -c '[.[].placed]|group_by(.)|map(select(length>1))' orders.json",
+      "cd /home/eval/shop/data; jq -c '.[]|select(.items[]?|(.discount_pct|type)==\"number\" and (.discount_pct!=(.discount_pct|floor)))' orders.json",
+      "cd /home/eval/shop; mkdir -p out/customers; rm -f out/customers/*\njq -c '[.[]|.k=((.customer.id)//\"guest\")]|group_by(.k)[]|{key:.[0].k, orders:.}' data/orders.json > /tmp/g.jsonl\njq '\n def rev: [.items[]? | ((.qty*.unit_cents*(100-(.discount_pct//0)))/100|floor)] | add // 0;\n . as $o | ($o.orders|sort_by(.placed)|last) as $l\n | ($o.orders|map(select(.status==\"paid\"))) as $p\n | {customer:$o.key,\n    name:(if $o.key==\"guest\" then null else $l.customer.name end),\n    paid_orders:($p|length),\n    revenue_cents:($p|map(rev)|add//0),\n    by_month:($p|group_by(.placed[0:7])|map({key:.[0].placed[0:7],value:(map(rev)|add)})|from_entries),\n    top_skus:([$p[]|.items[]?|{sku,r:((.qty*.unit_cents*(100-(.discount_pct//0)))/100|floor)}]|group_by(.sku)|map({sku:.[0].sku,r:(map(.r)|add)})|sort_by([-.r,.sku])|.[0:3]|map(.sku))}\n' -c /tmp/g.jsonl > /tmp/c.jsonl\nwhile IFS= read -r line; do k=$(jq -r .customer <<<\"$line\"); jq . <<<\"$line\" > \"out/customers/$k.json\"; done < /tmp/c.jsonl\njq -s 'map({customer,revenue_cents})|sort_by([-.revenue_cents,.customer])' /tmp/c.jsonl > /dev/null\njq -s 'map({customer,revenue_cents})|sort_by(.customer)|sort_by(-.revenue_cents)' /tmp/c.jsonl | jq . > out/summary.json\ncat out/summary.json; cat out/customers/c-ann.json out/customers/guest.json; ls out/customers"
+    ],
+    "usage": {
+      "input_tokens": 9550,
+      "output_tokens": 2115,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 17710
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 4.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 4.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cd /home/eval/shop/data; which jq; jq 'length, .[0], (map(.status)|unique), (map(.customer|type)|unique), (map(.placed|type)|unique)' orders.json; jq -c '[.[]|.lines[]?]|.[0:3]' orders.json; jq -c '[.[].placed]|.[0:5]' orders.json; jq -c '[.[].customer.id]|map(type)|unique' orders.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/usr/bin/jq\n26\n{\n  \"id\": \"o-1000\",\n  \"placed\": \"2026-07-01T08:00:00Z\",\n  \"status\": \"paid\",\n  \"items\": [\n    {\n      \"sku\": \"sku-cheese\",\n      \"qty\": 2,\n      \"unit_cents\": 899\n    }\n  ],\n  \"customer\": null\n}\n[\n  \"paid\",\n  \"pending\",\n  \"refunded\"\n]\n[\n  \"null\",\n  \"object\"\n]\n[\n  \"string\"\n]\n[]\n[\"2026-07-01T08:00:00Z\",\"2026-07-04T09:07:00Z\",\"2026-07-07T10:14:00Z\",\"2026-07-10T11:21:00Z\",\"2026-07-13T12:28:00Z\"]\n[\"null\",\"string\"]\n"
+          },
+          {
+            "commands": "cd /home/eval/shop/data; jq -c '.[]|select(.customer!=null and (.customer.id|type)!=\"string\")' orders.json; jq -c '[.[].items|type]|unique' orders.json; jq -c '[.[].items[]?|(.discount_pct|type),(.qty|type),(.unit_cents|type)]|unique' orders.json; jq -c '[.[].placed|length]|unique' orders.json; jq -c '[.[].customer.id]|unique' orders.json; jq -c '.[]|select(.customer.id==\"\")' orders.json; jq -c '[.[].placed]|sort==.' orders.json; jq -c '[.[].placed]|group_by(.)|map(select(length>1))' orders.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[\"array\"]\n[\"null\",\"number\"]\n[20]\n[null,\"c-ann\",\"c-bob\",\"c-cy\",\"c-dee\",\"c-eve\"]\ntrue\n[]\n"
+          },
+          {
+            "commands": "cd /home/eval/shop/data; jq -c '.[]|select(.items[]?|(.discount_pct|type)==\"number\" and (.discount_pct!=(.discount_pct|floor)))' orders.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "cd /home/eval/shop; mkdir -p out/customers; rm -f out/customers/*\njq -c '[.[]|.k=((.customer.id)//\"guest\")]|group_by(.k)[]|{key:.[0].k, orders:.}' data/orders.json > /tmp/g.jsonl\njq '\n def rev: [.items[]? | ((.qty*.unit_cents*(100-(.discount_pct//0)))/100|floor)] | add // 0;\n . as $o | ($o.orders|sort_by(.placed)|last) as $l\n | ($o.orders|map(select(.status==\"paid\"))) as $p\n | {customer:$o.key,\n    name:(if $o.key==\"guest\" then null else $l.customer.name end),\n    paid_orders:($p|length),\n    revenue_cents:($p|map(rev)|add//0),\n    by_month:($p|group_by(.placed[0:7])|map({key:.[0].placed[0:7],value:(map(rev)|add)})|from_entries),\n    top_skus:([$p[]|.items[]?|{sku,r:((.qty*.unit_cents*(100-(.discount_pct//0)))/100|floor)}]|group_by(.sku)|map({sku:.[0].sku,r:(map(.r)|add)})|sort_by([-.r,.sku])|.[0:3]|map(.sku))}\n' -c /tmp/g.jsonl > /tmp/c.jsonl\nwhile IFS= read -r line; do k=$(jq -r .customer <<<\"$line\"); jq . <<<\"$line\" > \"out/customers/$k.json\"; done < /tmp/c.jsonl\njq -s 'map({customer,revenue_cents})|sort_by([-.revenue_cents,.customer])' /tmp/c.jsonl > /dev/null\njq -s 'map({customer,revenue_cents})|sort_by(.customer)|sort_by(-.revenue_cents)' /tmp/c.jsonl | jq . > out/summary.json\ncat out/summary.json; cat out/customers/c-ann.json out/customers/guest.json; ls out/customers",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[\n  {\n    \"customer\": \"guest\",\n    \"revenue_cents\": 14137\n  },\n  {\n    \"customer\": \"c-cy\",\n    \"revenue_cents\": 9911\n  },\n  {\n    \"customer\": \"c-bob\",\n    \"revenue_cents\": 9251\n  },\n  {\n    \"customer\": \"c-ann\",\n    \"revenue_cents\": 5037\n  },\n  {\n    \"customer\": \"c-dee\",\n    \"revenue_cents\": 1781\n  },\n  {\n    \"customer\": \"c-eve\",\n    \"revenue_cents\": 0\n  }\n]\n{\n  \"customer\": \"c-ann\",\n  \"name\": \"Ann Lee\",\n  \"paid_orders\": 2,\n  \"revenue_cents\": 5037,\n  \"by_month\": {\n    \"2026-07\": 3637,\n    \"2026-08\": 1400\n  },\n  \"top_skus\": [\n    \"sku-cheese\",\n    \"sku-bread\",\n    \"sku-eggs\"\n  ]\n}\n{\n  \"customer\": \"guest\",\n  \"name\": null,\n  \"paid_orders\": 4,\n  \"revenue_cents\": 14137,\n  \"by_month\": {\n    \"2026-07\": 5026,\n    \"2026-08\": 9111\n  },\n  \"top_skus\": [\n    \"sku-cheese\",\n    \"sku-bread\",\n    \"sku-dates\"\n  ]\n}\nc-ann.json\nc-bob.json\nc-cy.json\nc-dee.json\nc-eve.json\nguest.json\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

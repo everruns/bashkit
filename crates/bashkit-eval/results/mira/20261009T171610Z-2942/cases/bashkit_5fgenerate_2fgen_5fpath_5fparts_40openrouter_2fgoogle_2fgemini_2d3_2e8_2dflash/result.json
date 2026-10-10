@@ -1,0 +1,63 @@
+{
+  "eval": "bashkit_generate",
+  "sample": "gen_path_parts",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Write a bash script that splits file paths into parts.\n\nStarting files:\n--- /home/eval/data/paths.txt ---\n/var/log/nginx/access.log\n/home/eval/archive.tar.gz\n/etc/hosts\nrelative/dir/README\n/home/eval/.bashrc\n/opt/app/v1.2/run.sh\n--- end ---\n\nFor each path, in order, write one line `DIR|BASE|STEM|EXT` to /home/eval/data/parts.txt:\n- DIR: everything before the last `/` (every path here contains a `/`);\n- BASE: everything after the last `/`;\n- EXT: the text after the last `.` in BASE, or empty when BASE has no `.` other than a leading one (e.g. `.bashrc` has no extension);\n- STEM: BASE without `.EXT` (BASE itself when EXT is empty).\nExit 0."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "```bash\n#!/usr/bin/env bash\nset -euo pipefail\n\ninput=\"/home/eval/data/paths.txt\"\noutput=\"/home/eval/data/parts.txt\"\n\nmkdir -p \"$(dirname \"$output\")\"\n\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  [[ -z \"$line\" ]] && continue\n\n  DIR=\"${line%/*}\"\n  BASE=\"${line##*/}\"\n\n  sub=\"${BASE#.}\"\n  if [[ \"$sub\" == *.* ]]; then\n    EXT=\"${BASE##*.}\"\n    STEM=\"${BASE%.*}\"\n  else\n    EXT=\"\"\n    STEM=\"$BASE\"\n  fi\n\n  printf '%s|%s|%s|%s\\n' \"$DIR\" \"$BASE\" \"$STEM\" \"$EXT\"\ndone < \"$input\" > \"$output\"\n\nexit 0\n```",
+    "iterations": 1,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "#!/usr/bin/env bash\nset -euo pipefail\n\ninput=\"/home/eval/data/paths.txt\"\noutput=\"/home/eval/data/parts.txt\"\n\nmkdir -p \"$(dirname \"$output\")\"\n\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  [[ -z \"$line\" ]] && continue\n\n  DIR=\"${line%/*}\"\n  BASE=\"${line##*/}\"\n\n  sub=\"${BASE#.}\"\n  if [[ \"$sub\" == *.* ]]; then\n    EXT=\"${BASE##*.}\"\n    STEM=\"${BASE%.*}\"\n  else\n    EXT=\"\"\n    STEM=\"$BASE\"\n  fi\n\n  printf '%s|%s|%s|%s\\n' \"$DIR\" \"$BASE\" \"$STEM\" \"$EXT\"\ndone < \"$input\" > \"$output\"\n\nexit 0\n"
+    ],
+    "usage": {
+      "input_tokens": 500,
+      "output_tokens": 2210,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 14878
+    },
+    "metrics": {
+      "exec_ms": 7.0,
+      "exit_code": 0.0,
+      "extracted": 1.0,
+      "generate_ms": 14871.0,
+      "script_bytes": 488.0,
+      "script_found": 1.0,
+      "timed_out": 0.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "#!/usr/bin/env bash\nset -euo pipefail\n\ninput=\"/home/eval/data/paths.txt\"\noutput=\"/home/eval/data/parts.txt\"\n\nmkdir -p \"$(dirname \"$output\")\"\n\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  [[ -z \"$line\" ]] && continue\n\n  DIR=\"${line%/*}\"\n  BASE=\"${line##*/}\"\n\n  sub=\"${BASE#.}\"\n  if [[ \"$sub\" == *.* ]]; then\n    EXT=\"${BASE##*.}\"\n    STEM=\"${BASE%.*}\"\n  else\n    EXT=\"\"\n    STEM=\"$BASE\"\n  fi\n\n  printf '%s|%s|%s|%s\\n' \"$DIR\" \"$BASE\" \"$STEM\" \"$EXT\"\ndone < \"$input\" > \"$output\"\n\nexit 0\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          }
+        ]
+      },
+      "generate": {
+        "extraction": "fenced",
+        "timed_out": false
+      }
+    }
+  },
+  "skipped": false
+}

@@ -35,6 +35,7 @@ just eval-list
 just eval --targets anthropic/claude-opus-5-5
 just eval-smoke
 just eval-scripting
+just eval-generate              # one-shot script generation
 ```
 
 Results are written by mira under `./results/<run_id>/`.
@@ -43,11 +44,12 @@ Results are written by mira under `./results/<run_id>/`.
 
 | Eval | Samples | Selection |
 |------|---------|-----------|
-| `bashkit_bash` | 58 tasks, 15 categories | `--tag <category>`, `--samples <id>` |
+| `bashkit_bash` | 88 tasks (58 basic + 8 repo + 10 hard agent tasks, 12 runtime) | `--tag <category\|agent\|runtime\|basic\|repo\|hard>`, `--samples <id>` |
 | `bashkit_smoke` | 3 tasks | quick verification |
-| `bashkit_repo` | 8 `repo_workflow` tasks | multi-turn fixture repos (`just eval-repo`) |
-| `bashkit_hard` | 10 hard tasks, 9 categories | built not to saturate; 25 turns (`just eval-hard`) |
 | `bashkit_scripting` | scripting-tool tasks | `--axis mode=scripted\|baseline` |
+| `bashkit_generate` | 15 one-shot tasks (`basic`/`hard`) | one reply, one script run, no feedback (`just eval-generate`, `--tag hard`) |
+
+`just eval-repo`, `just eval-hard` and `just eval-runtime` run the tag slices.
 
 Targets (model matrix) are defined in `src/mira_study.rs` and gated on
 `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `OPENROUTER_API_KEY`; offline runs
@@ -58,24 +60,32 @@ comma-separated globs (mira 0.5+), e.g. `--targets 'anthropic/*'` or
 
 ## Dataset
 
-58 hand-curated tasks in JSONL format across 15 categories: file_operations, text_processing, pipelines, scripting, data_transformation, error_recovery, system_info, archive_operations, json_processing, complex_tasks, code_search, environment, database_operations, config_management, build_simulation.
+One tagged JSONL dataset, `data/eval-tasks.jsonl`. Each task has a `mode`
+(`agent`: bash is the model's tool; `runtime`: bashkit is the execution
+runtime), a `difficulty` (`basic`, `repo`, `hard`) and an optional
+`max_turns`. Every eval `Bash` has sandboxed git, real CPython 3.14 as
+`python3` (`cpython` feature) and `sqlite3` (`sqlite` feature).
+
+- 58 basic agent tasks across 15 categories: file_operations, text_processing, pipelines, scripting, data_transformation, error_recovery, system_info, archive_operations, json_processing, complex_tasks, code_search, environment, database_operations, config_management, build_simulation.
+- 8 repo tasks (`repo_workflow`): a `setup` script builds a fixture git repo,
+  the model runs `make test`, fixes the bug, and commits (symlinks, PATH,
+  background jobs, jq, git).
+- 10 hard agent tasks written after the basic set saturated: interacting bugs
+  revealed one test at a time, quoting/glob/leading-dash file names, masked
+  `set -euo pipefail` failures, trap/exit-code contracts, Makefile dependency
+  graphs, a rename that must spare lookalikes and frozen messages, and
+  golden-output reports.
+- 12 runtime tasks: python3 file-processing scripts (CSV/JSONL/log/encoding/
+  TOML transforms with the stdlib), python3 + bash pipelines, sqlite3 (load CSV,
+  report queries, a reusable schema migration), and state across calls (build
+  a CLI or an idempotent ingester, use it, and have a hidden `verify` script
+  run it again on unseen input after the session).
+
+Reference solutions for every non-basic or runtime task live in
+`data/solutions.jsonl` and run in `cargo test -p bashkit-eval`, so every task
+stays solvable without an LLM and a do-nothing run must fail.
 
 Smoke test dataset (`data/smoke-test.jsonl`) has 3 tasks for quick verification.
-
-Repo workflow dataset (`data/repo-workflow.jsonl`, eval `bashkit_repo`) has 8
-multi-turn tasks: a `setup` script builds a fixture git repo, the model runs
-`make test`, fixes the bug, and commits (symlinks, PATH, background jobs, jq,
-git). Reference solutions in `data/repo-workflow-solutions.jsonl` run in
-`cargo test -p bashkit-eval`, so every task stays solvable without an LLM.
-
-Hard dataset (`data/hard-tasks.jsonl`, eval `bashkit_hard`) has 10 tasks
-written after `bashkit_bash` saturated: interacting bugs revealed one test at
-a time, quoting/glob/leading-dash file names, masked `set -euo pipefail`
-failures, trap/exit-code contracts, Makefile dependency graphs, a rename that
-must spare lookalikes and frozen messages, and golden-output reports (CSV/TSV
-reconciliation, nearest-rank p95 over a generated log, jq rollups, a
-deterministic topological sort). Reference solutions in
-`data/hard-tasks-solutions.jsonl` run in `cargo test -p bashkit-eval`.
 
 ## Results
 
@@ -83,7 +93,43 @@ deterministic topological sort). Reference solutions in
 > `results/mira/<run_id>/`). Earlier entries were produced by the original
 > (pre-mira) harness and are retained as a record.
 
-### 2026-10-09, 7-model lineup (58 tasks + 8 repo + 10 hard, latest)
+### 2026-10-09, tagged 88-task dataset + generate eval (latest)
+
+First run of the merged, tagged `bashkit_bash` dataset (mode=agent|runtime,
+difficulty=basic|repo|hard) and of `bashkit_generate`. Run folders:
+`results/mira/20261009T173925Z-a0a7` (`bashkit_bash`) and
+`results/mira/20261009T171610Z-2942` (`bashkit_generate`). GPT-6.1 Sol and
+GPT-6 Luna are not in this run: the OpenAI key ran out of credit mid-run, so
+resume both run folders with `mira run ... --resume <run_id>` once it is
+topped up.
+
+| Metric | Opus 5.5 | Kimi K3 | Sonnet 5.5 | Muse Spark 1.3 | Gemini 3.8 Flash |
+|--------|----------|---------|------------|----------------|------------------|
+| bashkit_bash (88) | **87/88** | 86/88 | 85/88 | 84/88 | 74/88 |
+| basic (58) | **58/58** | 57/58 | 56/58 | **58/58** | 55/58 |
+| repo (8) | 7/8 | **8/8** | **8/8** | 5/8 | 4/8 |
+| hard (10) | **10/10** | 9/10 | 9/10 | 9/10 | 6/10 |
+| runtime (12) | **12/12** | **12/12** | **12/12** | **12/12** | 9/12 |
+| bashkit_generate (15) | 13/15 | **15/15** | **15/15** | **15/15** | 13/15 |
+| Tool-call success | 92% | 92% | 92% | **97%** | 94% |
+| Tokens (in/out) | 628K / 102K | 974K / 192K | **519K / 79K** | 2639K / 679K | 1619K / 127K |
+| Duration | 18.3 min | 40.9 min | **13.1 min** | 119.3 min | 56.1 min |
+
+Duration is the sum of per-task wall-clock time for `bashkit_bash`.
+
+#### Highlights
+
+1. **`hard_makefile_deps` is the hardest task**: Sonnet, Kimi, Muse and Gemini
+   all miss it; only Opus 5.5 solves it.
+2. **Runtime tasks are near-saturated** for the top four (12/12). Gemini misses
+   `rt_sqlite_hr_report`, `rt_state_csvq_tool` and `rt_state_ledger_ingest`.
+3. **Repo tasks still split the field**: `repo_parallel_runner_masks_failure`
+   (masked background-job failures) defeats Opus, Muse and Gemini.
+4. **Generate**: Opus misses `gen_assoc_inventory` and `gen_retry_backoff`
+   (one reply had no script fence); Gemini misses `gen_csv_to_jsonl` and
+   `gen_semver_bump`.
+
+### 2026-10-09, 7-model lineup (58 tasks + 8 repo + 10 hard)
 
 Lineup refreshed to current models: Claude Opus 5.5 and Sonnet 5.5, GPT-6.1 Sol
 and GPT-6 Luna (Responses API: GPT-6 rejects function tools on Chat Completions

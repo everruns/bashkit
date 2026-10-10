@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "script_trap_cleanup",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "Write a bash script /scripts/deploy.sh that: 1) Creates a temp directory using mktemp -d and stores path in TMPDIR. 2) Sets a trap on EXIT that removes the temp directory and prints 'Cleanup: removed temp dir'. 3) Copies /app/config.json to the temp dir. 4) Simulates work by creating /app/deploy.log with the line 'deployed at TMPDIR_PATH' (using actual path). 5) Exits with code 0. Run the script. After it runs, verify the temp directory was cleaned up by checking it no longer exists, and verify /app/deploy.log exists."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I wrote `/scripts/deploy.sh` and ran it. It exited with code 0 and printed \"Cleanup: removed temp dir\".\n\n- **Temp directory:** the script used `/tmp/tmp.KtRpMSIBf7`. I checked afterwards and it no longer exists, so the EXIT trap cleaned it up.\n- **Deploy log:** `/app/deploy.log` exists and contains `deployed at /tmp/tmp.KtRpMSIBf7`.\n\nThe script also prints a \"Temp dir: …\" line, which you didn't ask for. I added it so the path shows in the output. `/scripts` didn't exist, so I created it.\n\n```bash\n#!/bin/bash\nTMPDIR=$(mktemp -d)\ntrap 'rm -rf \"$TMPDIR\"; echo \"Cleanup: removed temp dir\"' EXIT\n\necho \"Temp dir: $TMPDIR\"\ncp /app/config.json \"$TMPDIR/\"\necho \"deployed at $TMPDIR\" > /app/deploy.log\nexit 0\n```\n\nBecause the script sets `TMPDIR`, any child process it starts, including `mktemp` calls, would use that directory as its temp location. That's harmless here, since the script runs nothing else.",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "ls -la /app /scripts 2>&1",
+      "ls -la /app; mkdir -p /scripts /app; ls /app/config.json",
+      "cat > /scripts/deploy.sh <<'EOF'\n#!/bin/bash\nTMPDIR=$(mktemp -d)\ntrap 'rm -rf \"$TMPDIR\"; echo \"Cleanup: removed temp dir\"' EXIT\n\necho \"Temp dir: $TMPDIR\"\ncp /app/config.json \"$TMPDIR/\"\necho \"deployed at $TMPDIR\" > /app/deploy.log\nexit 0\nEOF\nchmod +x /scripts/deploy.sh\n/scripts/deploy.sh; echo \"exit=$?\"\nd=$(sed 's/^deployed at //' /app/deploy.log); echo \"path: $d\"\n[ -e \"$d\" ] && echo \"STILL EXISTS\" || echo \"temp dir gone\"\n[ -f /app/deploy.log ] && echo \"deploy.log exists:\" && cat /app/deploy.log"
+    ],
+    "usage": {
+      "input_tokens": 5664,
+      "output_tokens": 1088,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 10127
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 2.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /app /scripts 2>&1",
+            "exit_code": 2,
+            "stderr": "",
+            "stdout": "ls: cannot access '/scripts': No such file or directory\n"
+          },
+          {
+            "commands": "ls -la /app; mkdir -p /scripts /app; ls /app/config.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       36 2026-10-09 17:43 config.json\n/app/config.json\n"
+          },
+          {
+            "commands": "cat > /scripts/deploy.sh <<'EOF'\n#!/bin/bash\nTMPDIR=$(mktemp -d)\ntrap 'rm -rf \"$TMPDIR\"; echo \"Cleanup: removed temp dir\"' EXIT\n\necho \"Temp dir: $TMPDIR\"\ncp /app/config.json \"$TMPDIR/\"\necho \"deployed at $TMPDIR\" > /app/deploy.log\nexit 0\nEOF\nchmod +x /scripts/deploy.sh\n/scripts/deploy.sh; echo \"exit=$?\"\nd=$(sed 's/^deployed at //' /app/deploy.log); echo \"path: $d\"\n[ -e \"$d\" ] && echo \"STILL EXISTS\" || echo \"temp dir gone\"\n[ -f /app/deploy.log ] && echo \"deploy.log exists:\" && cat /app/deploy.log",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Temp dir: /tmp/tmp.KtRpMSIBf7\nCleanup: removed temp dir\nexit=0\npath: /tmp/tmp.KtRpMSIBf7\ntemp dir gone\ndeploy.log exists:\ndeployed at /tmp/tmp.KtRpMSIBf7\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -126,6 +126,15 @@ Pros: simple, isolates BETA risk to the in-memory engine, matches the
 whole file per invocation, practical for the KB–MB DBs bashkit users care
 about; `SqliteLimits::max_db_bytes` (256 MB default) keeps it predictable.
 
+The written image is marked rollback-journal mode (header bytes 18/19 set
+from 2 to 1, `engine::rollback_journal_header`). Turso always writes WAL
+mode, but only the fully checkpointed main file is persisted, so there is no
+WAL to replay. SQLite builds without WAL, notably CPython's `sqlite3` module
+in the `cpython` WASI guest, reject a WAL header as "file is not a database",
+so `python3` could not open a db the builtin wrote (found by the eval's
+runtime tasks, 2026-10-09). Turso reads both modes. The same patched bytes
+feed the cache-invalidation compare, so no extra reopen happens.
+
 ### Phase 2, `Backend::Vfs`
 
 `vfs_io::BashkitVfsIO` implements `turso_core::IO`, holding a
@@ -233,6 +242,13 @@ leading SQL keyword via the parser's lightweight tokeniser
 `column`, `json` (serde_json; NULL → `null`, blobs → lowercase hex, empty
 rows → `[]\n`), `markdown`. Empty column list → empty string; empty row set
 → empty string in row-oriented modes.
+
+Known divergences from the `sqlite3` 3.45 shell (not fixed; found by the
+eval's runtime tasks): `csv` quotes only fields with a comma, quote or newline
+(the shell also quotes fields with a space or `'`, and empty strings);
+`.mode csv` ends rows with `\n` (the shell's `.mode csv` uses `\r\n`, its
+`-csv` flag `\n`); SQL errors exit 1 (the shell exits with the SQLite result
+code, e.g. 19 for a constraint violation); `.import` is not implemented.
 
 ## Trust Model & Threats
 

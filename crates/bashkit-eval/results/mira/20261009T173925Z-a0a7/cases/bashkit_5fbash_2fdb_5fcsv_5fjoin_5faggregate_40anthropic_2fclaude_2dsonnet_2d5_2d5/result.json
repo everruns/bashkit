@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "db_csv_join_aggregate",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "Join /data/orders.csv and /data/products.csv on product_id. For each category, compute the total revenue (quantity * price). Print 'category: total_revenue' sorted by revenue descending."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Total revenue by category, highest first:\n\n```\nelectronics: 450\nhardware: 165\n```\n\nEvery order's product_id matched a product, so no rows were dropped.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "head -5 /data/orders.csv /data/products.csv; wc -l /data/*.csv",
+      "cd /data; cat orders.csv; python3 - <<'E'\nimport csv,collections\np={r['product_id'].strip():r for r in csv.DictReader(open('products.csv'))}\nt=collections.defaultdict(float)\nfor r in csv.DictReader(open('orders.csv')):\n    k=r['product_id'].strip()\n    if k not in p: print(\"unmatched:\",r); continue\n    t[p[k]['category']]+=int(r['quantity'])*float(p[k]['price'])\nfor c,v in sorted(t.items(),key=lambda x:-x[1]): print(f\"{c}: {v:g}\")\nE"
+    ],
+    "usage": {
+      "input_tokens": 3844,
+      "output_tokens": 397,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 5254
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "head -5 /data/orders.csv /data/products.csv; wc -l /data/*.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "==> /data/orders.csv <==\norder_id,product_id,quantity\n1,101,3\n2,102,5\n3,101,2\n4,103,1\n\n==> /data/products.csv <==\nproduct_id,name,category,price\n101,Widget,hardware,25\n102,Gadget,electronics,50\n103,Bolt,hardware,10\n  7 /data/orders.csv\n  4 /data/products.csv\n 11 total\n"
+          },
+          {
+            "commands": "cd /data; cat orders.csv; python3 - <<'E'\nimport csv,collections\np={r['product_id'].strip():r for r in csv.DictReader(open('products.csv'))}\nt=collections.defaultdict(float)\nfor r in csv.DictReader(open('orders.csv')):\n    k=r['product_id'].strip()\n    if k not in p: print(\"unmatched:\",r); continue\n    t[p[k]['category']]+=int(r['quantity'])*float(p[k]['price'])\nfor c,v in sorted(t.items(),key=lambda x:-x[1]): print(f\"{c}: {v:g}\")\nE",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "order_id,product_id,quantity\n1,101,3\n2,102,5\n3,101,2\n4,103,1\n5,102,4\n6,103,3\nelectronics: 450\nhardware: 165\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

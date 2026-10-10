@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "data_csv_to_json",
+  "target": "openrouter/meta/muse-spark-1.3-contributor",
+  "input": [
+    "Convert /data/users.csv to a JSON array where each row becomes an object with the column headers as keys. Print the resulting JSON to stdout."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "[\n  {\n    \"name\": \"alice\",\n    \"age\": \"30\",\n    \"city\": \"seattle\"\n  },\n  {\n    \"name\": \"bob\",\n    \"age\": \"25\",\n    \"city\": \"portland\"\n  },\n  {\n    \"name\": \"charlie\",\n    \"age\": \"35\",\n    \"city\": \"denver\"\n  }\n]",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat /data/users.csv; echo \"---\"; ls -l /data/",
+      "python3 -c \"import csv, json; print(json.dumps(list(csv.DictReader(open('/data/users.csv', newline=''))), indent=2))\""
+    ],
+    "usage": {
+      "input_tokens": 3228,
+      "output_tokens": 686,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 8975
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /data/users.csv; echo \"---\"; ls -l /data/",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "name,age,city\nalice,30,seattle\nbob,25,portland\ncharlie,35,denver\n---\n-rw-r--r--       65 2026-10-09 17:40 users.csv\n"
+          },
+          {
+            "commands": "python3 -c \"import csv, json; print(json.dumps(list(csv.DictReader(open('/data/users.csv', newline=''))), indent=2))\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[\n  {\n    \"name\": \"alice\",\n    \"age\": \"30\",\n    \"city\": \"seattle\"\n  },\n  {\n    \"name\": \"bob\",\n    \"age\": \"25\",\n    \"city\": \"portland\"\n  },\n  {\n    \"name\": \"charlie\",\n    \"age\": \"35\",\n    \"city\": \"denver\"\n  }\n]\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

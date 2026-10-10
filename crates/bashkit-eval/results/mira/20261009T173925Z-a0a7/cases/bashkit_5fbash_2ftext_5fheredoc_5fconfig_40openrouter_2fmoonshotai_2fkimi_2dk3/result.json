@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "text_heredoc_config",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Set these variables: APP_NAME='myservice', APP_PORT=8080, DB_HOST='db.prod.internal', DB_PORT=5432, LOG_LEVEL='warn'. Then use a heredoc (cat <<EOF) to generate /etc/app/config.yaml with these variables interpolated into a YAML structure with sections 'app:' (name, port), 'database:' (host, port), and 'logging:' (level). Print the generated file contents."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "8/8 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Done. All five variables were set in the shell and interpolated via an unquoted heredoc (`cat <<EOF`) into `/etc/app/config.yaml`.\n\nThe generated file:\n\n```yaml\napp:\n  name: myservice\n  port: 8080\ndatabase:\n  host: db.prod.internal\n  port: 5432\nlogging:\n  level: warn\n```\n\nA few notes on how it works:\n\n- **`cat <<EOF` (unquoted delimiter)** — enables shell variable expansion, so `${APP_NAME}`, `${DB_HOST}`, etc. are replaced with their values. If I had used `cat <<'EOF'`, the variables would have been written literally into the file instead.\n- **`mkdir -p /etc/app`** — ensures the target directory exists before writing, since the sandbox didn't have it yet.\n- The numeric values (8080, 5432) are written unquoted, so YAML parsers will treat them as integers rather than strings, which is typically what you want for ports.",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "APP_NAME='myservice'\nAPP_PORT=8080\nDB_HOST='db.prod.internal'\nDB_PORT=5432\nLOG_LEVEL='warn'\n\nmkdir -p /etc/app\n\ncat <<EOF > /etc/app/config.yaml\napp:\n  name: ${APP_NAME}\n  port: ${APP_PORT}\ndatabase:\n  host: ${DB_HOST}\n  port: ${DB_PORT}\nlogging:\n  level: ${LOG_LEVEL}\nEOF\n\necho \"--- /etc/app/config.yaml ---\"\ncat /etc/app/config.yaml"
+    ],
+    "usage": {
+      "input_tokens": 1436,
+      "output_tokens": 720,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 4260
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "APP_NAME='myservice'\nAPP_PORT=8080\nDB_HOST='db.prod.internal'\nDB_PORT=5432\nLOG_LEVEL='warn'\n\nmkdir -p /etc/app\n\ncat <<EOF > /etc/app/config.yaml\napp:\n  name: ${APP_NAME}\n  port: ${APP_PORT}\ndatabase:\n  host: ${DB_HOST}\n  port: ${DB_PORT}\nlogging:\n  level: ${LOG_LEVEL}\nEOF\n\necho \"--- /etc/app/config.yaml ---\"\ncat /etc/app/config.yaml",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "--- /etc/app/config.yaml ---\napp:\n  name: myservice\n  port: 8080\ndatabase:\n  host: db.prod.internal\n  port: 5432\nlogging:\n  level: warn\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

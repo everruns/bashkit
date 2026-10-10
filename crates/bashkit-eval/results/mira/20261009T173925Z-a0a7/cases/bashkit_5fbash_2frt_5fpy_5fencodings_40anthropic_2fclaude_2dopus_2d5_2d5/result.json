@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "rt_py_encodings",
+  "target": "anthropic/claude-opus-5-5",
+  "input": [
+    "/data/legacy holds text files in mixed encodings. For every file whose name ends in `.txt` (case-sensitive), write a normalised copy with the same name to /out/clean/: UTF-8 without BOM, line endings \\r\\n and lone \\r converted to \\n, and ending with exactly one added \\n if the text did not already end with \\n.\nDetect each file's encoding in this order: starts with a UTF-16 BOM (FF FE or FE FF) -> utf-16; starts with the UTF-8 BOM -> utf-8-sig; decodes as UTF-8 -> utf-8 (plain ASCII included); otherwise latin-1.\nWrite /out/manifest.tsv (tab-separated, header name, encoding, lines, chars) with one row per file sorted by name, where lines is the number of \\n and chars the number of Unicode characters in the normalised text (newlines included, BOM excluded)."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "8/8 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "I've written cleaned copies of the six `.txt` files to `/out/clean/` and created `/out/manifest.tsv`. I checked the bytes of every output file: they're all UTF-8 with no BOM, contain only `\\n` line endings, and end with exactly one newline.\n\n`/out/manifest.tsv`:\n```\nname\tencoding\tlines\tchars\na.txt\tutf-8\t2\t24\nb.txt\tutf-8-sig\t2\t26\nc.txt\tlatin-1\t2\t23\nd.txt\tutf-16\t3\t16\ne.txt\tutf-8\t2\t30\nf.txt\tlatin-1\t3\t17\n```\n\nWhat was done to each file:\n- **a.txt:** already clean UTF-8, copied unchanged.\n- **b.txt:** removed the UTF-8 BOM and converted `\\r\\n` to `\\n`.\n- **c.txt:** isn't valid UTF-8, so it was read as latin-1 (\"Señor Müller\", \"À bientôt\"). Added a final `\\n`.\n- **d.txt:** UTF-16 with a byte-order mark (\"Ωmega\", \"κόσμε\", \"end\"). Converted `\\r\\n` to `\\n`.\n- **e.txt:** plain ASCII, so it counts as utf-8. Added a final `\\n`.\n- **f.txt:** used old Mac-style lone `\\r` line endings, which became `\\n`. It was read as latin-1 because of a `£` byte.\n\n`g.TXT` was skipped because only lowercase `.txt` names count, so it isn't in `/out/clean/` or the manifest.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "ls -la /data/legacy; cd /data/legacy && for f in *; do echo \"== $f\"; head -c 64 \"$f\" | od -c | head -5; done",
+      "mkdir -p /out/clean && python3 - <<'EOF'\nimport os\nsrc='/data/legacy'; rows=[]\nfor name in sorted(os.listdir(src)):\n    p=os.path.join(src,name)\n    if not name.endswith('.txt') or not os.path.isfile(p): continue\n    b=open(p,'rb').read()\n    if b[:2] in (b'\\xff\\xfe',b'\\xfe\\xff'): enc='utf-16'\n    elif b[:3]==b'\\xef\\xbb\\xbf': enc='utf-8-sig'\n    else:\n        try: b.decode('utf-8'); enc='utf-8'\n        except UnicodeDecodeError: enc='latin-1'\n    t=b.decode(enc)\n    if t.startswith('\\ufeff'): t=t[1:]\n    t=t.replace('\\r\\n','\\n').replace('\\r','\\n')\n    if not t.endswith('\\n'): t+='\\n'\n    open(os.path.join('/out/clean',name),'w',encoding='utf-8',newline='').write(t)\n    rows.append((name,enc,t.count('\\n'),len(t)))\nwith open('/out/manifest.tsv','w',newline='') as f:\n    f.write('name\\tencoding\\tlines\\tchars\\n')\n    for r in rows: f.write('\\t'.join(map(str,r))+'\\n')\nEOF\ncat /out/manifest.tsv; for f in /out/clean/*; do echo \"== $f\"; od -c \"$f\"|head -4; done"
+    ],
+    "usage": {
+      "input_tokens": 6525,
+      "output_tokens": 1317,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 13961
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /data/legacy; cd /data/legacy && for f in *; do echo \"== $f\"; head -c 64 \"$f\" | od -c | head -5; done",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       29 2026-10-09 22:17 a.txt\n-rw-r--r--       32 2026-10-09 22:17 b.txt\n-rw-r--r--       22 2026-10-09 22:17 c.txt\n-rw-r--r--       40 2026-10-09 22:17 d.txt\n-rw-r--r--       29 2026-10-09 22:17 e.txt\n-rw-r--r--       17 2026-10-09 22:17 f.txt\n-rw-r--r--       28 2026-10-09 22:17 g.TXT\n== a.txt\n0000000   C   a   f 303 251       c   r 303 250   m   e  \\n   n   a 303\n0000020 257   v   e       r 303 251   s   u   m 303 251  \\n\n0000035\n== b.txt\n0000000 357 273 277   B   O   M       l   i   n   e       1  \\r  \\n   z\n0000020   w   e   i   t   e       Z   e   i   l   e     303 274  \\r  \\n\n0000040\n== c.txt\n0000000   S   e 361   o   r       M 374   l   l   e   r  \\n 300       b\n0000020   i   e   n   t 364   t\n0000026\n== d.txt\n0000000 377 376 251 003   m  \\0   e  \\0   g  \\0   a  \\0  \\r  \\0  \\n  \\0\n0000020 272 003 314 003 303 003 274 003 265 003  \\r  \\0  \\n  \\0   e  \\0\n0000040   n  \\0   d  \\0  \\r  \\0  \\n  \\0\n0000050\n== e.txt\n0000000   p   l   a   i   n       a   s   c   i   i  \\n   n   o       n\n0000020   e   w   l   i   n   e       a   t       e   n   d\n0000035\n== f.txt\n0000000   o   l   d  \\r   m   a   c  \\r   s   t   y   l   e     243   5\n0000020  \\r\n0000021\n== g.TXT\n0000000   i   g   n   o   r   e   d       u   p   p   e   r   -   c   a\n0000020   s   e       e   x   t   e   n   s   i   o   n\n0000034\n"
+          },
+          {
+            "commands": "mkdir -p /out/clean && python3 - <<'EOF'\nimport os\nsrc='/data/legacy'; rows=[]\nfor name in sorted(os.listdir(src)):\n    p=os.path.join(src,name)\n    if not name.endswith('.txt') or not os.path.isfile(p): continue\n    b=open(p,'rb').read()\n    if b[:2] in (b'\\xff\\xfe',b'\\xfe\\xff'): enc='utf-16'\n    elif b[:3]==b'\\xef\\xbb\\xbf': enc='utf-8-sig'\n    else:\n        try: b.decode('utf-8'); enc='utf-8'\n        except UnicodeDecodeError: enc='latin-1'\n    t=b.decode(enc)\n    if t.startswith('\\ufeff'): t=t[1:]\n    t=t.replace('\\r\\n','\\n').replace('\\r','\\n')\n    if not t.endswith('\\n'): t+='\\n'\n    open(os.path.join('/out/clean',name),'w',encoding='utf-8',newline='').write(t)\n    rows.append((name,enc,t.count('\\n'),len(t)))\nwith open('/out/manifest.tsv','w',newline='') as f:\n    f.write('name\\tencoding\\tlines\\tchars\\n')\n    for r in rows: f.write('\\t'.join(map(str,r))+'\\n')\nEOF\ncat /out/manifest.tsv; for f in /out/clean/*; do echo \"== $f\"; od -c \"$f\"|head -4; done",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "name\tencoding\tlines\tchars\na.txt\tutf-8\t2\t24\nb.txt\tutf-8-sig\t2\t26\nc.txt\tlatin-1\t2\t23\nd.txt\tutf-16\t3\t16\ne.txt\tutf-8\t2\t30\nf.txt\tlatin-1\t3\t17\n== /out/clean/a.txt\n0000000   C   a   f 303 251       c   r 303 250   m   e  \\n   n   a 303\n0000020 257   v   e       r 303 251   s   u   m 303 251  \\n\n0000035\n== /out/clean/b.txt\n0000000   B   O   M       l   i   n   e       1  \\n   z   w   e   i   t\n0000020   e       Z   e   i   l   e     303 274  \\n\n0000033\n== /out/clean/c.txt\n0000000   S   e 303 261   o   r       M 303 274   l   l   e   r  \\n 303\n0000020 200       b   i   e   n   t 303 264   t  \\n\n0000033\n== /out/clean/d.txt\n0000000 316 251   m   e   g   a  \\n 316 272 317 214 317 203 316 274 316\n0000020 265  \\n   e   n   d  \\n\n0000026\n== /out/clean/e.txt\n0000000   p   l   a   i   n       a   s   c   i   i  \\n   n   o       n\n0000020   e   w   l   i   n   e       a   t       e   n   d  \\n\n0000036\n== /out/clean/f.txt\n0000000   o   l   d  \\n   m   a   c  \\n   s   t   y   l   e     302 243\n0000020   5  \\n\n0000022\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_todo_app",
+  "target": "openrouter/meta/muse-spark-1.3-contributor",
+  "input": [
+    "Build a command-line TODO app. Create /app/todo.sh that supports these subcommands: 'add <task>' appends a task to /app/tasks.txt, 'list' prints all tasks with line numbers, 'done <number>' removes that line from the file. Then demonstrate: add 'Buy groceries', add 'Write tests', add 'Deploy app', list all tasks, mark task 1 as done, list again to show remaining tasks."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "TODO app built and demonstrated:\n\n**Script created at `/app/todo.sh`** (executable) supporting:\n- `add <task>` → appends to `/app/tasks.txt`\n- `list` → prints tasks with line numbers via `awk '{print NR\" \"$0}'`\n- `done <number>` → removes that line via `sed -i \"${num}d\"`\n\n**Demonstration executed:**\n```\n$ /app/todo.sh add 'Buy groceries'\n$ /app/todo.sh add 'Write tests'\n$ /app/todo.sh add 'Deploy app'\n$ /app/todo.sh list\n1 Buy groceries\n2 Write tests\n3 Deploy app\n\n$ /app/todo.sh done 1\n$ /app/todo.sh list\n1 Write tests\n2 Deploy app\n```\nRemaining `/app/tasks.txt` contains `Write tests` and `Deploy app`.\n",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "pwd; ls -R 2>&1 | head -n 100; cat /app/todo.sh 2>&1; cat /app/tasks.txt 2>&1; ls -l /app/ 2>&1",
+      "mkdir -p /app && cat > /app/todo.sh <<'EOS'\n#!/bin/bash\nTASK_FILE=\"/app/tasks.txt\"\n\ncmd=\"$1\"\ncase \"$cmd\" in\n  add)\n    shift\n    task=\"$*\"\n    if [ -z \"$task\" ]; then\n      echo \"Usage: $0 add <task>\" >&2\n      exit 1\n    fi\n    touch \"$TASK_FILE\"\n    echo \"$task\" >> \"$TASK_FILE\"\n    ;;\n  list)\n    if [ ! -f \"$TASK_FILE\" ] || [ ! -s \"$TASK_FILE\" ]; then\n      exit 0\n    fi\n    awk '{print NR\" \"$0}' \"$TASK_FILE\"\n    ;;\n  done)\n    num=\"$2\"\n    if [ -z \"$num\" ]; then\n      echo \"Usage: $0 done <number>\" >&2\n      exit 1\n    fi\n    if ! [[ \"$num\" =~ ^[0-9]+$ ]]; then\n      echo \"Invalid task number: $num\" >&2\n      exit 1\n    fi\n    if [ ! -f \"$TASK_FILE\" ]; then\n      echo \"No tasks found\" >&2\n      exit 1\n    fi\n    total=$(wc -l < \"$TASK_FILE\")\n    if [ \"$num\" -lt 1 ] || [ \"$num\" -gt \"$total\" ]; then\n      echo \"Invalid task number: $num\" >&2\n      exit 1\n    fi\n    sed -i \"${num}d\" \"$TASK_FILE\"\n    ;;\n  *)\n    echo \"Usage: $0 {add <task>|list|done <number>}\" >&2\n    exit 1\n    ;;\nesac\nEOS\nchmod +x /app/todo.sh\ncat /app/todo.sh\nls -l /app/",
+      "rm -f /app/tasks.txt\n/app/todo.sh add 'Buy groceries'\n/app/todo.sh add 'Write tests'\n/app/todo.sh add 'Deploy app'\necho \"--- first list ---\"\n/app/todo.sh list\necho \"--- mark 1 done ---\"\n/app/todo.sh done 1\necho \"--- second list ---\"\n/app/todo.sh list\necho \"--- tasks.txt content ---\"\ncat /app/tasks.txt\nls -l /app/"
+    ],
+    "usage": {
+      "input_tokens": 6395,
+      "output_tokens": 1655,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 11898
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 2.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "pwd; ls -R 2>&1 | head -n 100; cat /app/todo.sh 2>&1; cat /app/tasks.txt 2>&1; ls -l /app/ 2>&1",
+            "exit_code": 2,
+            "stderr": "",
+            "stdout": "/home/user\n.:\ncat: /app/todo.sh: No such file or directory\ncat: /app/tasks.txt: No such file or directory\nls: cannot access '/app/': No such file or directory\n"
+          },
+          {
+            "commands": "mkdir -p /app && cat > /app/todo.sh <<'EOS'\n#!/bin/bash\nTASK_FILE=\"/app/tasks.txt\"\n\ncmd=\"$1\"\ncase \"$cmd\" in\n  add)\n    shift\n    task=\"$*\"\n    if [ -z \"$task\" ]; then\n      echo \"Usage: $0 add <task>\" >&2\n      exit 1\n    fi\n    touch \"$TASK_FILE\"\n    echo \"$task\" >> \"$TASK_FILE\"\n    ;;\n  list)\n    if [ ! -f \"$TASK_FILE\" ] || [ ! -s \"$TASK_FILE\" ]; then\n      exit 0\n    fi\n    awk '{print NR\" \"$0}' \"$TASK_FILE\"\n    ;;\n  done)\n    num=\"$2\"\n    if [ -z \"$num\" ]; then\n      echo \"Usage: $0 done <number>\" >&2\n      exit 1\n    fi\n    if ! [[ \"$num\" =~ ^[0-9]+$ ]]; then\n      echo \"Invalid task number: $num\" >&2\n      exit 1\n    fi\n    if [ ! -f \"$TASK_FILE\" ]; then\n      echo \"No tasks found\" >&2\n      exit 1\n    fi\n    total=$(wc -l < \"$TASK_FILE\")\n    if [ \"$num\" -lt 1 ] || [ \"$num\" -gt \"$total\" ]; then\n      echo \"Invalid task number: $num\" >&2\n      exit 1\n    fi\n    sed -i \"${num}d\" \"$TASK_FILE\"\n    ;;\n  *)\n    echo \"Usage: $0 {add <task>|list|done <number>}\" >&2\n    exit 1\n    ;;\nesac\nEOS\nchmod +x /app/todo.sh\ncat /app/todo.sh\nls -l /app/",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "#!/bin/bash\nTASK_FILE=\"/app/tasks.txt\"\n\ncmd=\"$1\"\ncase \"$cmd\" in\n  add)\n    shift\n    task=\"$*\"\n    if [ -z \"$task\" ]; then\n      echo \"Usage: $0 add <task>\" >&2\n      exit 1\n    fi\n    touch \"$TASK_FILE\"\n    echo \"$task\" >> \"$TASK_FILE\"\n    ;;\n  list)\n    if [ ! -f \"$TASK_FILE\" ] || [ ! -s \"$TASK_FILE\" ]; then\n      exit 0\n    fi\n    awk '{print NR\" \"$0}' \"$TASK_FILE\"\n    ;;\n  done)\n    num=\"$2\"\n    if [ -z \"$num\" ]; then\n      echo \"Usage: $0 done <number>\" >&2\n      exit 1\n    fi\n    if ! [[ \"$num\" =~ ^[0-9]+$ ]]; then\n      echo \"Invalid task number: $num\" >&2\n      exit 1\n    fi\n    if [ ! -f \"$TASK_FILE\" ]; then\n      echo \"No tasks found\" >&2\n      exit 1\n    fi\n    total=$(wc -l < \"$TASK_FILE\")\n    if [ \"$num\" -lt 1 ] || [ \"$num\" -gt \"$total\" ]; then\n      echo \"Invalid task number: $num\" >&2\n      exit 1\n    fi\n    sed -i \"${num}d\" \"$TASK_FILE\"\n    ;;\n  *)\n    echo \"Usage: $0 {add <task>|list|done <number>}\" >&2\n    exit 1\n    ;;\nesac\n-rwxr-xr-x      957 2026-10-09 17:41 todo.sh\n"
+          },
+          {
+            "commands": "rm -f /app/tasks.txt\n/app/todo.sh add 'Buy groceries'\n/app/todo.sh add 'Write tests'\n/app/todo.sh add 'Deploy app'\necho \"--- first list ---\"\n/app/todo.sh list\necho \"--- mark 1 done ---\"\n/app/todo.sh done 1\necho \"--- second list ---\"\n/app/todo.sh list\necho \"--- tasks.txt content ---\"\ncat /app/tasks.txt\nls -l /app/",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "--- first list ---\n1 Buy groceries\n2 Write tests\n3 Deploy app\n--- mark 1 done ---\n--- second list ---\n1 Write tests\n2 Deploy app\n--- tasks.txt content ---\nWrite tests\nDeploy app\n-rw-r--r--       23 2026-10-09 17:41 tasks.txt\n-rwxr-xr-x      957 2026-10-09 17:41 todo.sh\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "env_source_export",
+  "target": "openrouter/moonshotai/kimi-k3",
+  "input": [
+    "Create /etc/env.conf with variable assignments: APP_ENV=production, APP_DEBUG=false, APP_SECRET=s3cret123. Source this file. Export all three variables. Then write a script /scripts/check_env.sh that reads these environment variables and prints them as 'APP_ENV=<value>' (one per line). Run the script with bash and verify the environment variables propagated correctly. Also run 'env | grep APP_' to list all APP_ prefixed env vars."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "All steps completed successfully:\n\n1. **`/etc/env.conf`** created with the three assignments (`APP_ENV=production`, `APP_DEBUG=false`, `APP_SECRET=s3cret123`).\n2. **Sourced and exported** — `source /etc/env.conf` loaded the variables into the shell, and `export APP_ENV APP_DEBUG APP_SECRET` marked them for inheritance by child processes.\n3. **`/scripts/check_env.sh`** created (executable) to print each variable as `NAME=value`.\n4. **Verification passed** — running `bash /scripts/check_env.sh` printed all three values correctly, proving the exported variables propagated into the child process:\n   ```\n   APP_ENV=production\n   APP_DEBUG=false\n   APP_SECRET=s3cret123\n   ```\n5. **`env | grep APP_`** confirms all three are in the process environment with the expected values.",
+    "iterations": 3,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "cat > /etc/env.conf << 'EOF'\nAPP_ENV=production\nAPP_DEBUG=false\nAPP_SECRET=s3cret123\nEOF\necho \"--- /etc/env.conf ---\"\ncat /etc/env.conf",
+      "mkdir -p /scripts\ncat > /scripts/check_env.sh << 'EOF'\n#!/bin/bash\necho \"APP_ENV=$APP_ENV\"\necho \"APP_DEBUG=$APP_DEBUG\"\necho \"APP_SECRET=$APP_SECRET\"\nEOF\nchmod +x /scripts/check_env.sh\necho \"--- /scripts/check_env.sh ---\"\ncat /scripts/check_env.sh",
+      "source /etc/env.conf && export APP_ENV APP_DEBUG APP_SECRET && echo \"--- bash /scripts/check_env.sh ---\" && bash /scripts/check_env.sh && echo \"--- env | grep APP_ ---\" && env | grep APP_"
+    ],
+    "usage": {
+      "input_tokens": 2591,
+      "output_tokens": 1367,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 7142
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat > /etc/env.conf << 'EOF'\nAPP_ENV=production\nAPP_DEBUG=false\nAPP_SECRET=s3cret123\nEOF\necho \"--- /etc/env.conf ---\"\ncat /etc/env.conf",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "--- /etc/env.conf ---\nAPP_ENV=production\nAPP_DEBUG=false\nAPP_SECRET=s3cret123\n"
+          },
+          {
+            "commands": "mkdir -p /scripts\ncat > /scripts/check_env.sh << 'EOF'\n#!/bin/bash\necho \"APP_ENV=$APP_ENV\"\necho \"APP_DEBUG=$APP_DEBUG\"\necho \"APP_SECRET=$APP_SECRET\"\nEOF\nchmod +x /scripts/check_env.sh\necho \"--- /scripts/check_env.sh ---\"\ncat /scripts/check_env.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "--- /scripts/check_env.sh ---\n#!/bin/bash\necho \"APP_ENV=$APP_ENV\"\necho \"APP_DEBUG=$APP_DEBUG\"\necho \"APP_SECRET=$APP_SECRET\"\n"
+          },
+          {
+            "commands": "source /etc/env.conf && export APP_ENV APP_DEBUG APP_SECRET && echo \"--- bash /scripts/check_env.sh ---\" && bash /scripts/check_env.sh && echo \"--- env | grep APP_ ---\" && env | grep APP_",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "--- bash /scripts/check_env.sh ---\nAPP_ENV=production\nAPP_DEBUG=false\nAPP_SECRET=s3cret123\n--- env | grep APP_ ---\nAPP_DEBUG=false\nAPP_ENV=production\nAPP_SECRET=s3cret123\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "script_array_stats",
+  "target": "openrouter/meta/muse-spark-1.3-contributor",
+  "input": [
+    "Given these numbers: 42 17 93 8 55 71 3 88 29 64. Write a bash script that computes the minimum, maximum, and sum. Print exactly three lines: 'min: N', 'max: N', 'sum: N'."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Script created at `/home/eval/solution.sh`:\n\n```bash\n#!/bin/bash\nnums=(42 17 93 8 55 71 3 88 29 64)\nmin=${nums[0]}\nmax=${nums[0]}\nsum=0\nfor n in \"${nums[@]}\"; do\n  if [ \"$n\" -lt \"$min\" ]; then min=$n; fi\n  if [ \"$n\" -gt \"$max\" ]; then max=$n; fi\n  sum=$((sum + n))\ndone\necho \"min: $min\"\necho \"max: $max\"\necho \"sum: $sum\"\n```\n\nOutput:\n```\nmin: 3\nmax: 93\nsum: 470\n```",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "cat > /home/eval/solution.sh <<'EOS'\n#!/bin/bash\nnums=(42 17 93 8 55 71 3 88 29 64)\nmin=${nums[0]}\nmax=${nums[0]}\nsum=0\nfor n in \"${nums[@]}\"; do\n  if [ \"$n\" -lt \"$min\" ]; then min=$n; fi\n  if [ \"$n\" -gt \"$max\" ]; then max=$n; fi\n  sum=$((sum + n))\ndone\necho \"min: $min\"\necho \"max: $max\"\necho \"sum: $sum\"\nEOS\nchmod +x /home/eval/solution.sh\ncat /home/eval/solution.sh\necho \"--- output ---\"\n/home/eval/solution.sh"
+    ],
+    "usage": {
+      "input_tokens": 2272,
+      "output_tokens": 1132,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 6790
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat > /home/eval/solution.sh <<'EOS'\n#!/bin/bash\nnums=(42 17 93 8 55 71 3 88 29 64)\nmin=${nums[0]}\nmax=${nums[0]}\nsum=0\nfor n in \"${nums[@]}\"; do\n  if [ \"$n\" -lt \"$min\" ]; then min=$n; fi\n  if [ \"$n\" -gt \"$max\" ]; then max=$n; fi\n  sum=$((sum + n))\ndone\necho \"min: $min\"\necho \"max: $max\"\necho \"sum: $sum\"\nEOS\nchmod +x /home/eval/solution.sh\ncat /home/eval/solution.sh\necho \"--- output ---\"\n/home/eval/solution.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "#!/bin/bash\nnums=(42 17 93 8 55 71 3 88 29 64)\nmin=${nums[0]}\nmax=${nums[0]}\nsum=0\nfor n in \"${nums[@]}\"; do\n  if [ \"$n\" -lt \"$min\" ]; then min=$n; fi\n  if [ \"$n\" -gt \"$max\" ]; then max=$n; fi\n  sum=$((sum + n))\ndone\necho \"min: $min\"\necho \"max: $max\"\necho \"sum: $sum\"\n--- output ---\nmin: 3\nmax: 93\nsum: 470\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

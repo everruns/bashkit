@@ -1,0 +1,85 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "data_csv_to_json",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Convert /data/users.csv to a JSON array where each row becomes an object with the column headers as keys. Print the resulting JSON to stdout."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "```json\n[{\"name\": \"alice\", \"age\": \"30\", \"city\": \"seattle\"}, {\"name\": \"bob\", \"age\": \"25\", \"city\": \"portland\"}, {\"name\": \"charlie\", \"age\": \"35\", \"city\": \"denver\"}]\n```",
+    "iterations": 6,
+    "tool_calls_count": 5,
+    "tool_calls": [
+      "ls -la /data",
+      "cat /data/users.csv",
+      "python3 -c \"\nimport csv, json\nwith open('/data/users.csv', mode='r', newline='', encoding='utf-8') as f:\n    reader = csv.DictReader(f)\n    data = list(reader)\nprint(json.dumps(data, indent=2))\n\"",
+      "python3 -c \"\nimport csv, json\nwith open('/data/users.csv', 'r') as f:\n    reader = csv.DictReader(f)\n    print(repr(json.dumps(list(reader))))\n\"",
+      "python3 -c \"\nimport csv, json\n\nwith open('/data/users.csv', mode='r', encoding='utf-8') as f:\n    reader = csv.DictReader(f)\n    print(json.dumps(list(reader)))\n\""
+    ],
+    "usage": {
+      "input_tokens": 3504,
+      "output_tokens": 759,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 18005
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 5.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 5.0,
+      "turns": 6.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /data",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       65 2026-10-09 17:40 users.csv\n"
+          },
+          {
+            "commands": "cat /data/users.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "name,age,city\nalice,30,seattle\nbob,25,portland\ncharlie,35,denver\n"
+          },
+          {
+            "commands": "python3 -c \"\nimport csv, json\nwith open('/data/users.csv', mode='r', newline='', encoding='utf-8') as f:\n    reader = csv.DictReader(f)\n    data = list(reader)\nprint(json.dumps(data, indent=2))\n\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[\n  {\n    \"name\": \"alice\",\n    \"age\": \"30\",\n    \"city\": \"seattle\"\n  },\n  {\n    \"name\": \"bob\",\n    \"age\": \"25\",\n    \"city\": \"portland\"\n  },\n  {\n    \"name\": \"charlie\",\n    \"age\": \"35\",\n    \"city\": \"denver\"\n  }\n]\n"
+          },
+          {
+            "commands": "python3 -c \"\nimport csv, json\nwith open('/data/users.csv', 'r') as f:\n    reader = csv.DictReader(f)\n    print(repr(json.dumps(list(reader))))\n\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "'[{\"name\": \"alice\", \"age\": \"30\", \"city\": \"seattle\"}, {\"name\": \"bob\", \"age\": \"25\", \"city\": \"portland\"}, {\"name\": \"charlie\", \"age\": \"35\", \"city\": \"denver\"}]'\n"
+          },
+          {
+            "commands": "python3 -c \"\nimport csv, json\n\nwith open('/data/users.csv', mode='r', encoding='utf-8') as f:\n    reader = csv.DictReader(f)\n    print(json.dumps(list(reader)))\n\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[{\"name\": \"alice\", \"age\": \"30\", \"city\": \"seattle\"}, {\"name\": \"bob\", \"age\": \"25\", \"city\": \"portland\"}, {\"name\": \"charlie\", \"age\": \"35\", \"city\": \"denver\"}]\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

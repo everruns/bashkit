@@ -1,0 +1,190 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "repo_parallel_shards_background",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "/home/eval/etl is a git repo. `scripts/process.sh SHARD` sums the amount column of data/SHARD.csv into out/SHARD.sum. Run it for the shards listed in SHARDS concurrently as background jobs, then wait for each job and write its exit status to out/status.txt, one line per shard in SHARDS order, formatted `SHARD EXIT_CODE`. One shard will fail: find the bad input row it reports and delete that row from the data file, re-run just that shard, then run `make report`. Commit the data fix and out/ with a message starting with `data:`."
+  ],
+  "passed": false,
+  "aggregate": 0.875,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 0.875,
+      "pass": false,
+      "reason": "7/8 checks passed (weighted rate 88%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "",
+    "iterations": 20,
+    "tool_calls_count": 20,
+    "tool_calls": [
+      "cd /home/eval/etl && ls -la && git status",
+      "cd /home/eval/etl\ncat Makefile\necho \"--- SHARDS ---\"\ncat SHARDS\necho \"--- scripts/process.sh ---\"\ncat scripts/process.sh\necho \"--- data ---\"\nls -la data",
+      "cd /home/eval/etl\ncat scripts/report.sh\nhead -n 20 data/*.csv",
+      "cat << 'EOF' > /tmp/run_shards.sh\n#!/bin/bash\nset -e\ncd /home/eval/etl\n\nmkdir -p out\ndeclare -A pids\nshards=()\n\nwhile IFS= read -r shard || [ -n \"$shard\" ]; do\n    [ -z \"$shard\" ] && continue\n    shards+=(\"$shard\")\n    bash scripts/process.sh \"$shard\" &\n    pids[\"$shard\"]=$!\ndone < SHARDS\n\nrm -f out/status.txt\nfor shard in \"${shards[@]}\"; do\n    pid=${pids[\"$shard\"]}\n    wait \"$pid\" && status=0 || status=$?\n    echo \"$shard $status\" >> out/status.txt\ndone\nEOF\nbash /tmp/run_shards.sh",
+      "cd /home/eval/etl\ncat out/status.txt\nls -la out",
+      "cd /home/eval/etl\ncat data/eu.csv",
+      "cd /home/eval/etl\nsed -i '3d' data/eu.csv\ncat data/eu.csv",
+      "cd /home/eval/etl\nbash scripts/process.sh eu\ncat out/eu.sum",
+      "cd /home/eval/etl\nmake report",
+      "cd /home/eval/etl\ncat out/report.txt\ncat out/status.txt",
+      "cd /home/eval/etl\ngit status",
+      "cd /home/eval/etl\ngit diff\ngit status -u",
+      "git diff --cached; git diff",
+      "cd /home/eval/etl\ngit status --porcelain",
+      "cd /home/eval/etl\ngit diff data/eu.csv",
+      "cd /home/eval/etl\ngit status --short",
+      "git --version",
+      "git help",
+      "which git",
+      "python3 -c \"\nwith open('/home/eval/etl/data/eu.csv') as f:\n    print('eu.csv contents:')\n    print(repr(f.read()))\n\""
+    ],
+    "usage": {
+      "input_tokens": 36749,
+      "output_tokens": 983,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 85694
+    },
+    "metrics": {
+      "natural_stop": 0.0,
+      "tool_calls": 20.0,
+      "tool_calls_err": 2.0,
+      "tool_calls_ok": 18.0,
+      "turns": 20.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cd /home/eval/etl && ls -la && git status",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "drwxr-xr-x        0 2026-10-09 17:48 .git\n-rw-r--r--       33 2026-10-09 17:48 Makefile\n-rw-r--r--       11 2026-10-09 17:48 SHARDS\ndrwxr-xr-x        0 2026-10-09 17:48 data\ndrwxr-xr-x        0 2026-10-09 17:48 scripts\nOn branch master\n\nnothing to commit, working tree clean\n"
+          },
+          {
+            "commands": "cd /home/eval/etl\ncat Makefile\necho \"--- SHARDS ---\"\ncat SHARDS\necho \"--- scripts/process.sh ---\"\ncat scripts/process.sh\necho \"--- data ---\"\nls -la data",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "report:\n\t@bash scripts/report.sh\n--- SHARDS ---\nus\neu\napac\n--- scripts/process.sh ---\n#!/bin/bash\n# usage: process.sh SHARD -> out/SHARD.sum (exit 2 on a malformed row)\nshard=$1\nmkdir -p out\nawk -F, -v shard=\"$shard\" '\n  NR == 1 { next }\n  $2 !~ /^[0-9]+$/ { printf \"%s: line %d: bad amount %s\\n\", shard, NR, $2 > \"/dev/stderr\"; bad = 1; exit 2 }\n  { sum += $2 }\n  END { if (!bad) print sum }\n' \"data/$shard.csv\" > \"out/$shard.sum.tmp\" || { rm -f \"out/$shard.sum.tmp\"; exit 2; }\nmv \"out/$shard.sum.tmp\" \"out/$shard.sum\"\n--- data ---\n-rw-r--r--       25 2026-10-09 17:48 apac.csv\n-rw-r--r--       32 2026-10-09 17:48 eu.csv\n-rw-r--r--       33 2026-10-09 17:48 us.csv\n"
+          },
+          {
+            "commands": "cd /home/eval/etl\ncat scripts/report.sh\nhead -n 20 data/*.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "#!/bin/bash\n# Combine out/*.sum (every shard in SHARDS must be present) into out/report.txt\ntotal=0\n: > out/report.txt\nwhile read -r shard; do\n  [ -f \"out/$shard.sum\" ] || { echo \"missing out/$shard.sum\"; exit 1; }\n  v=$(cat \"out/$shard.sum\")\n  echo \"$shard $v\" >> out/report.txt\n  total=$((total + v))\ndone < SHARDS\necho \"total $total\" >> out/report.txt\ncat out/report.txt\n==> data/apac.csv <==\norder,amount\nC1,15\nC2,25\n\n==> data/eu.csv <==\norder,amount\nB1,50\nB2,n/a\nB3,70\n\n==> data/us.csv <==\norder,amount\nA1,120\nA2,80\nA3,300\n"
+          },
+          {
+            "commands": "cat << 'EOF' > /tmp/run_shards.sh\n#!/bin/bash\nset -e\ncd /home/eval/etl\n\nmkdir -p out\ndeclare -A pids\nshards=()\n\nwhile IFS= read -r shard || [ -n \"$shard\" ]; do\n    [ -z \"$shard\" ] && continue\n    shards+=(\"$shard\")\n    bash scripts/process.sh \"$shard\" &\n    pids[\"$shard\"]=$!\ndone < SHARDS\n\nrm -f out/status.txt\nfor shard in \"${shards[@]}\"; do\n    pid=${pids[\"$shard\"]}\n    wait \"$pid\" && status=0 || status=$?\n    echo \"$shard $status\" >> out/status.txt\ndone\nEOF\nbash /tmp/run_shards.sh",
+            "exit_code": 0,
+            "stderr": "eu: line 3: bad amount n/a\n",
+            "stdout": ""
+          },
+          {
+            "commands": "cd /home/eval/etl\ncat out/status.txt\nls -la out",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "us 0\neu 2\napac 0\n-rw-r--r--        3 2026-10-09 17:48 apac.sum\n-rw-r--r--       17 2026-10-09 17:48 status.txt\n-rw-r--r--        4 2026-10-09 17:48 us.sum\n"
+          },
+          {
+            "commands": "cd /home/eval/etl\ncat data/eu.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "order,amount\nB1,50\nB2,n/a\nB3,70\n"
+          },
+          {
+            "commands": "cd /home/eval/etl\nsed -i '3d' data/eu.csv\ncat data/eu.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "order,amount\nB1,50\nB3,70\n"
+          },
+          {
+            "commands": "cd /home/eval/etl\nbash scripts/process.sh eu\ncat out/eu.sum",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "120\n"
+          },
+          {
+            "commands": "cd /home/eval/etl\nmake report",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "us 500\neu 120\napac 40\ntotal 660\n"
+          },
+          {
+            "commands": "cd /home/eval/etl\ncat out/report.txt\ncat out/status.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "us 500\neu 120\napac 40\ntotal 660\nus 0\neu 2\napac 0\n"
+          },
+          {
+            "commands": "cd /home/eval/etl\ngit status",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "On branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tout/apac.sum\n\tout/eu.sum\n\tout/report.txt\n\tout/status.txt\n\tout/us.sum\n"
+          },
+          {
+            "commands": "cd /home/eval/etl\ngit diff\ngit status -u",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Diff output (simplified in virtual mode)\nOn branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tout/apac.sum\n\tout/eu.sum\n\tout/report.txt\n\tout/status.txt\n\tout/us.sum\n"
+          },
+          {
+            "commands": "git diff --cached; git diff",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Diff output (simplified in virtual mode)\n# Diff output (simplified in virtual mode)\n"
+          },
+          {
+            "commands": "cd /home/eval/etl\ngit status --porcelain",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "On branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tout/apac.sum\n\tout/eu.sum\n\tout/report.txt\n\tout/status.txt\n\tout/us.sum\n"
+          },
+          {
+            "commands": "cd /home/eval/etl\ngit diff data/eu.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Diff output (simplified in virtual mode)\n"
+          },
+          {
+            "commands": "cd /home/eval/etl\ngit status --short",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "On branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tout/apac.sum\n\tout/eu.sum\n\tout/report.txt\n\tout/status.txt\n\tout/us.sum\n"
+          },
+          {
+            "commands": "git --version",
+            "exit_code": 1,
+            "stderr": "git: '--version' is not a git command. See 'git --help'.\n",
+            "stdout": ""
+          },
+          {
+            "commands": "git help",
+            "exit_code": 1,
+            "stderr": "git: 'help' is not a git command. See 'git --help'.\n",
+            "stdout": ""
+          },
+          {
+            "commands": "which git",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/usr/bin/git\n"
+          },
+          {
+            "commands": "python3 -c \"\nwith open('/home/eval/etl/data/eu.csv') as f:\n    print('eu.csv contents:')\n    print(repr(f.read()))\n\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "eu.csv contents:\n'order,amount\\nB1,50\\nB3,70\\n'\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

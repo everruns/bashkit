@@ -1,0 +1,176 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "repo_clone_fix_failing_test",
+  "target": "openrouter/meta/muse-spark-1.3-contributor",
+  "input": [
+    "A git repository lives at /srv/git/calc. Clone it into /home/eval/work/calc, run its test suite with `make test`, find and fix the bug in the library code that makes a test fail (do not edit the tests), re-run `make test` until it passes, and commit the fix in the clone with a commit message that starts with `fix:`. Leave /srv/git/calc unchanged."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Done. All requirements verified:\n\n1. **Cloned** `/srv/git/calc` → `/home/eval/work/calc` via `git clone`.\n2. **Ran `make test`** — `test_mul_div` failed: `mul 4 5: expected '20', got '9'`.\n3. **Bug found** in `lib/calc.sh`: `mul() { echo $(( $1 + $2 )); }` used `+` instead of `*`. Fixed to `mul() { echo $(( $1 * $2 )); }` (library code only, tests untouched).\n4. **Re-ran `make test`**: `PASS 2/2` (`ok test_add_sub`, `ok test_mul_div`).\n5. **Committed** in the clone: `fix: correct mul to multiply instead of add` (new commit `b4649602` on top of `b464965c`).\n6. **Origin unchanged**: `/srv/git/calc` still at 1 commit `b464965c` with the original buggy `mul`.",
+    "iterations": 19,
+    "tool_calls_count": 18,
+    "tool_calls": [
+      "ls -R /srv/git/calc 2>&1; echo \"---\"; cat /srv/git/calc/README* 2>&1 | head -n 200; echo \"---\"; ls -la /home/eval/work/ 2>&1; pwd; whoami; id",
+      "cat /srv/git/calc/Makefile; echo \"===\"; cat /srv/git/calc/lib/calc.sh; echo \"===\"; cat /srv/git/calc/tests/assert.sh; echo \"===\"; cat /srv/git/calc/tests/run.sh; echo \"===\"; cat /srv/git/calc/tests/test_add_sub.sh; echo \"===\"; cat /srv/git/calc/tests/test_mul_div.sh\n",
+      "ls -la /srv/git/calc/; echo \"===\"; git -C /srv/git/calc status 2>&1; echo \"===\"; git -C /srv/git/calc log --oneline -5 2>&1; echo \"===\"; git -C /srv/git/calc remote -v 2>&1; echo \"===\"; cat /srv/git/calc/.git/HEAD 2>&1 | head; ls -la /srv/git/calc/.git/ 2>&1 | head -n 30",
+      "which git; git --help 2>&1 | head -n 100; echo \"===\"; git --version 2>&1; echo \"===\"; cat /srv/git/calc/.git/config; echo \"===\"; cat /srv/git/calc/.git/commits 2>&1; echo \"===\"; cat /srv/git/calc/.git/tracked 2>&1; echo \"===\"; ls -R /srv/git/calc/.git/ 2>&1; echo \"===\"; cat /srv/git/calc/.git/refs/heads/master 2>&1; ls -R /srv/git/ 2>&1",
+      "git 2>&1; echo \"EXIT:$?\"; echo \"===\"; cat /usr/bin/git 2>&1 | head -n 200; echo \"===\"; file /usr/bin/git 2>&1; ls -la /usr/bin/git*",
+      "type -a git; echo \"===\"; ls -la /usr/local/bin/git* /opt/*/bin/git* 2>&1; echo \"===\"; env | grep -i -E \"git|bashkit|path\" 2>&1; echo \"===\"; ls / 2>&1; cat /usr/local/bin/* 2>&1 | head -n 50; echo \"===\"; declare -f git 2>&1 | head -n 100\n",
+      "ls -la /bin/git /usr/bin/git; cat /bin/git 2>&1 | head -n 300\necho \"===ENV BASHKIT===\"\ncompgen -e | sort\necho \"===\"\nls -la /tmp/ 2>&1 | head\necho \"===\"\nbash --version 2>&1 | head",
+      "git clone --help 2>&1; echo \"EXIT:$?\"\ngit clone /srv/git/calc /home/eval/work/calc 2>&1; echo \"EXIT:$?\"\nls -R /home/eval/work/calc 2>&1 | head -n 50",
+      "cat /home/eval/work/calc/lib/calc.sh; echo \"===\"; cat /home/eval/work/calc/Makefile; echo \"===\"; ls -la /home/eval/work/calc/; ls -la /home/eval/work/calc/.git/ 2>&1; cat /home/eval/work/calc/.git/config 2>&1\ncd /home/eval/work/calc && make test 2>&1; echo \"EXIT:$?\"",
+      "cat /home/eval/work/calc/.git/remotes 2>&1; echo \"===\"; cat /home/eval/work/calc/.git/refs/heads/* 2>&1; echo \"===\"; git status 2>&1; echo \"===\"; pwd; ls -la",
+      "cd /home/eval/work/calc\n# Show exact lib file with cat -A to see formatting\ncat -A lib/calc.sh\necho \"===\"\n# Fix mul: uses + instead of *\n# Use python to edit precisely\npython3 -c \"\np='lib/calc.sh'\nt=open(p).read()\nprint(repr(t))\nt=t.replace('mul() { echo \\$(( \\$1 + \\$2 )); }', 'mul() { echo \\$(( \\$1 * \\$2 )); }')\nopen(p,'w').write(t)\nprint('---after---')\nprint(open(p).read())\n\"\ncat lib/calc.sh",
+      "cd /home/eval/work/calc && make test 2>&1; echo \"EXIT:$?\"",
+      "cd /home/eval/work/calc\ngit status 2>&1; echo \"===\"\ngit diff 2>&1; echo \"===\"\ngit log 2>&1; echo \"===\"\ncat /srv/git/calc/lib/calc.sh; echo \"=== srv unchanged check ===\"",
+      "cd /home/eval/work/calc\ngit diff --help 2>&1; echo \"EXIT:$?\"\ngit add --help 2>&1; echo \"EXIT:$?\"\ngit commit --help 2>&1; echo \"EXIT:$?\"",
+      "cd /home/eval/work/calc\ngit add lib/calc.sh 2>&1; echo \"EXIT:$?\"\ngit status 2>&1; echo \"===\"\ncat .git/index 2>&1; echo \"==index dump==\"",
+      "cd /home/eval/work/calc\ngit commit -m \"fix: correct mul to multiply instead of add\" 2>&1; echo \"EXIT:$?\"\ngit log 2>&1; echo \"===\"\ngit status 2>&1; echo \"===\"\ncat .git/commits 2>&1; echo \"===\"\ncat .git/refs/heads/master 2>&1; echo \"===\"",
+      "echo \"=== clone log ===\"; cd /home/eval/work/calc && git log 2>&1\necho \"=== clone show ===\"; git show 2>&1 | head -n 60\necho \"=== clone file ===\"; cat lib/calc.sh\necho \"=== tests unchanged? diff origin vs clone tests ===\"; diff /srv/git/calc/tests/test_mul_div.sh /home/eval/work/calc/tests/test_mul_div.sh && echo \"test_mul_div identical\"; diff /srv/git/calc/tests/test_add_sub.sh /home/eval/work/calc/tests/test_add_sub.sh && echo \"test_add_sub identical\"; diff /srv/git/calc/tests/assert.sh /home/eval/work/calc/tests/assert.sh && echo \"assert identical\"; diff /srv/git/calc/tests/run.sh /home/eval/work/calc/tests/run.sh && echo \"run identical\"; diff /srv/git/calc/Makefile /home/eval/work/calc/Makefile && echo \"Makefile identical\"\necho \"=== origin log (should be 1 commit) ===\"; cat /srv/git/calc/.git/commits; echo \"\"; cat /srv/git/calc/.git/refs/heads/master; echo \"\"\necho \"=== origin file unchanged (should still have bug) ===\"; cat /srv/git/calc/lib/calc.sh",
+      "cd /home/eval/work/calc && make test 2>&1; echo \"EXIT:$?\"\necho \"===\"; git status 2>&1\necho \"===\"; ls -R /home/eval/work/calc 2>&1 | head -n 30"
+    ],
+    "usage": {
+      "input_tokens": 86051,
+      "output_tokens": 5451,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 74524
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 18.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 18.0,
+      "turns": 19.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -R /srv/git/calc 2>&1; echo \"---\"; cat /srv/git/calc/README* 2>&1 | head -n 200; echo \"---\"; ls -la /home/eval/work/ 2>&1; pwd; whoami; id",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/srv/git/calc:\nMakefile\nREADME.md\nlib\ntests\n\n/srv/git/calc/lib:\ncalc.sh\n\n/srv/git/calc/tests:\nassert.sh\nrun.sh\ntest_add_sub.sh\ntest_mul_div.sh\n---\n# calc\n\nTiny bash arithmetic library. Run `make test`.\n---\nls: cannot access '/home/eval/work/': No such file or directory\n/home/user\neval\nuid=1000(eval) gid=1000(eval) groups=1000(eval)\n"
+          },
+          {
+            "commands": "cat /srv/git/calc/Makefile; echo \"===\"; cat /srv/git/calc/lib/calc.sh; echo \"===\"; cat /srv/git/calc/tests/assert.sh; echo \"===\"; cat /srv/git/calc/tests/run.sh; echo \"===\"; cat /srv/git/calc/tests/test_add_sub.sh; echo \"===\"; cat /srv/git/calc/tests/test_mul_div.sh\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "test:\n\t@bash tests/run.sh\n===\n# calc: integer helpers\nadd() { echo $(( $1 + $2 )); }\nsub() { echo $(( $1 - $2 )); }\nmul() { echo $(( $1 + $2 )); }\ndiv() {\n  if [ \"$2\" -eq 0 ]; then echo 'calc: division by zero' >&2; return 1; fi\n  echo $(( $1 / $2 ))\n}\n===\n# Minimal assertion helpers for the test suite.\nassert_eq() {\n  if [ \"$1\" != \"$2\" ]; then\n    echo \"assertion failed: ${3:-values differ}: expected '$1', got '$2'\"\n    exit 1\n  fi\n}\n===\n#!/bin/bash\n# Test runner: runs every tests/test_*.sh, writes build/test-report.txt.\ncd \"$(dirname \"$0\")/..\" || exit 2\nmkdir -p build\npass=0; fail=0; total=0\nfor t in tests/test_*.sh; do\n  name=$(basename \"$t\" .sh)\n  total=$((total + 1))\n  if bash \"$t\" > \"build/$name.log\" 2>&1; then\n    pass=$((pass + 1)); echo \"ok   $name\"\n  else\n    fail=$((fail + 1)); echo \"FAIL $name\"; sed 's/^/    /' \"build/$name.log\"\n  fi\ndone\nif [ \"$fail\" -eq 0 ]; then\n  echo \"PASS $pass/$total\" | tee build/test-report.txt\nelse\n  echo \"FAIL $fail/$total\" | tee build/test-report.txt\n  exit 1\nfi\n===\n. lib/calc.sh\n. tests/assert.sh\nassert_eq 5 \"$(add 2 3)\" 'add 2 3'\nassert_eq -4 \"$(sub 3 7)\" 'sub 3 7'\n===\n. lib/calc.sh\n. tests/assert.sh\nassert_eq 20 \"$(mul 4 5)\" 'mul 4 5'\nassert_eq 0 \"$(mul 7 0)\" 'mul 7 0'\nassert_eq 3 \"$(div 9 3)\" 'div 9 3'\ndiv 1 0 2>/dev/null && { echo 'div by zero must fail'; exit 1; }\nexit 0\n"
+          },
+          {
+            "commands": "ls -la /srv/git/calc/; echo \"===\"; git -C /srv/git/calc status 2>&1; echo \"===\"; git -C /srv/git/calc log --oneline -5 2>&1; echo \"===\"; git -C /srv/git/calc remote -v 2>&1; echo \"===\"; cat /srv/git/calc/.git/HEAD 2>&1 | head; ls -la /srv/git/calc/.git/ 2>&1 | head -n 30",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "drwxr-xr-x        0 2026-10-09 17:47 .git\n-rw-r--r--       26 2026-10-09 17:47 Makefile\n-rw-r--r--       55 2026-10-09 17:47 README.md\ndrwxr-xr-x        0 2026-10-09 17:47 lib\ndrwxr-xr-x        0 2026-10-09 17:47 tests\n===\ngit: '-C' is not a git command. See 'git --help'.\n===\ngit: '-C' is not a git command. See 'git --help'.\n===\ngit: '-C' is not a git command. See 'git --help'.\n===\nref: refs/heads/master\n-rw-r--r--       23 2026-10-09 17:47 HEAD\n-rw-r--r--       72 2026-10-09 17:47 commits\n-rw-r--r--      128 2026-10-09 17:47 config\n-rw-r--r--        0 2026-10-09 17:47 index\ndrwxr-xr-x        0 2026-10-09 17:47 objects\ndrwxr-xr-x        0 2026-10-09 17:47 refs\n-rw-r--r--      103 2026-10-09 17:47 tracked\n"
+          },
+          {
+            "commands": "which git; git --help 2>&1 | head -n 100; echo \"===\"; git --version 2>&1; echo \"===\"; cat /srv/git/calc/.git/config; echo \"===\"; cat /srv/git/calc/.git/commits 2>&1; echo \"===\"; cat /srv/git/calc/.git/tracked 2>&1; echo \"===\"; ls -R /srv/git/calc/.git/ 2>&1; echo \"===\"; cat /srv/git/calc/.git/refs/heads/master 2>&1; ls -R /srv/git/ 2>&1",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/usr/bin/git\ngit: '--help' is not a git command. See 'git --help'.\n===\ngit: '--version' is not a git command. See 'git --help'.\n===\n[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n\tbare = false\n[user]\n\tname = Eval Agent\n\temail = eval@bashkit-eval.invalid\n===\nb464965c|Eval Agent|eval@bashkit-eval.invalid|1791568051|initial import\n===\nREADME.md\ntests/run.sh\ntests/test_mul_div.sh\ntests/test_add_sub.sh\nMakefile\ntests/assert.sh\nlib/calc.sh===\n/srv/git/calc/.git/:\nHEAD\ncommits\nconfig\nindex\nobjects\nrefs\ntracked\n\n/srv/git/calc/.git//objects:\n\n/srv/git/calc/.git//refs:\nheads\ntags\n\n/srv/git/calc/.git//refs/heads:\nmaster\n\n/srv/git/calc/.git//refs/tags:\n===\nb464965c/srv/git/:\ncalc\n\n/srv/git//calc:\nMakefile\nREADME.md\nlib\ntests\n\n/srv/git//calc/lib:\ncalc.sh\n\n/srv/git//calc/tests:\nassert.sh\nrun.sh\ntest_add_sub.sh\ntest_mul_div.sh\n"
+          },
+          {
+            "commands": "git 2>&1; echo \"EXIT:$?\"; echo \"===\"; cat /usr/bin/git 2>&1 | head -n 200; echo \"===\"; file /usr/bin/git 2>&1; ls -la /usr/bin/git*",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "usage: git <command> [<args>]\n\nAvailable commands:\n\tinit      Create an empty Git repository\n\tconfig    Get and set repository options\n\tadd       Add file contents to the index\n\tcommit    Record changes to the repository\n\tstatus    Show the working tree status\n\tlog       Show commit logs\n\tbranch    List, create, or delete branches\n\tcheckout  Switch branches or restore files\n\tdiff      Show changes (simplified)\n\treset     Reset current HEAD\n\tremote    Manage remotes\n\tclone     Clone a repository (URL validation only)\n\tfetch     Fetch from remote (URL validation only)\n\tpush      Push to remote (URL validation only)\n\tpull      Pull from remote (URL validation only)\n\tshow      Show commit or file content\n\tls-files  List tracked files\n\trev-parse Resolve refs and repo metadata\n\trestore   Restore working tree or index files\n\tmerge-base Find merge base between commits\n\tgrep      Search tracked file contents\nEXIT:1\n===\n#!/bin/sh\n# bashkit builtin: git\nexec git \"$@\"\n===\n/usr/bin/git: Bourne-Again shell script\n-rwxr-xr-x       47 2026-10-09 17:47 /usr/bin/git\n"
+          },
+          {
+            "commands": "type -a git; echo \"===\"; ls -la /usr/local/bin/git* /opt/*/bin/git* 2>&1; echo \"===\"; env | grep -i -E \"git|bashkit|path\" 2>&1; echo \"===\"; ls / 2>&1; cat /usr/local/bin/* 2>&1 | head -n 50; echo \"===\"; declare -f git 2>&1 | head -n 100\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "git is /usr/bin/git\ngit is /bin/git\n===\nls: cannot access '/usr/local/bin/git*': No such file or directory\n===\nBASHKIT_ALLOW_INPROCESS_SQLITE=1\n===\nbin\ndev\netc\nhome\nproc\nroot\nsrv\ntmp\nusr\ncat: /usr/local/bin/*: No such file or directory\n===\n"
+          },
+          {
+            "commands": "ls -la /bin/git /usr/bin/git; cat /bin/git 2>&1 | head -n 300\necho \"===ENV BASHKIT===\"\ncompgen -e | sort\necho \"===\"\nls -la /tmp/ 2>&1 | head\necho \"===\"\nbash --version 2>&1 | head",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rwxr-xr-x       47 2026-10-09 17:47 /bin/git\n-rwxr-xr-x       47 2026-10-09 17:47 /usr/bin/git\n#!/bin/sh\n# bashkit builtin: git\nexec git \"$@\"\n===ENV BASHKIT===\nBASHKIT_ALLOW_INPROCESS_SQLITE\nOLDPWD\nPWD\nUSER\n===\n===\nBashkit 0.18.2 (virtual bash interpreter)\n"
+          },
+          {
+            "commands": "git clone --help 2>&1; echo \"EXIT:$?\"\ngit clone /srv/git/calc /home/eval/work/calc 2>&1; echo \"EXIT:$?\"\nls -R /home/eval/work/calc 2>&1 | head -n 50",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "usage: git clone <repository> [<directory>]\nEXIT:129\nCloning into '/home/eval/work/calc'...\ndone.\nEXIT:0\n/home/eval/work/calc:\nMakefile\nREADME.md\nlib\ntests\n\n/home/eval/work/calc/lib:\ncalc.sh\n\n/home/eval/work/calc/tests:\nassert.sh\nrun.sh\ntest_add_sub.sh\ntest_mul_div.sh\n"
+          },
+          {
+            "commands": "cat /home/eval/work/calc/lib/calc.sh; echo \"===\"; cat /home/eval/work/calc/Makefile; echo \"===\"; ls -la /home/eval/work/calc/; ls -la /home/eval/work/calc/.git/ 2>&1; cat /home/eval/work/calc/.git/config 2>&1\ncd /home/eval/work/calc && make test 2>&1; echo \"EXIT:$?\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# calc: integer helpers\nadd() { echo $(( $1 + $2 )); }\nsub() { echo $(( $1 - $2 )); }\nmul() { echo $(( $1 + $2 )); }\ndiv() {\n  if [ \"$2\" -eq 0 ]; then echo 'calc: division by zero' >&2; return 1; fi\n  echo $(( $1 / $2 ))\n}\n===\ntest:\n\t@bash tests/run.sh\n===\ndrwxr-xr-x        0 2026-10-09 17:47 .git\n-rw-r--r--       26 2026-10-09 17:47 Makefile\n-rw-r--r--       55 2026-10-09 17:47 README.md\ndrwxr-xr-x        0 2026-10-09 17:47 lib\ndrwxr-xr-x        0 2026-10-09 17:47 tests\n-rw-r--r--       23 2026-10-09 17:47 HEAD\n-rw-r--r--       72 2026-10-09 17:47 commits\n-rw-r--r--      128 2026-10-09 17:47 config\n-rw-r--r--        0 2026-10-09 17:47 index\ndrwxr-xr-x        0 2026-10-09 17:47 objects\ndrwxr-xr-x        0 2026-10-09 17:47 refs\n-rw-r--r--       21 2026-10-09 17:47 remotes\n-rw-r--r--      103 2026-10-09 17:47 tracked\n[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n\tbare = false\n[user]\n\tname = Eval Agent\n\temail = eval@bashkit-eval.invalid\nok   test_add_sub\nFAIL test_mul_div\n    assertion failed: mul 4 5: expected '20', got '9'\nFAIL 1/2\nmake: *** [Makefile:2: test] Error 1\nEXIT:2\n"
+          },
+          {
+            "commands": "cat /home/eval/work/calc/.git/remotes 2>&1; echo \"===\"; cat /home/eval/work/calc/.git/refs/heads/* 2>&1; echo \"===\"; git status 2>&1; echo \"===\"; pwd; ls -la",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "origin|/srv/git/calc\n===\nb464965c===\nOn branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/test-report.txt\n\tbuild/test_add_sub.log\n\tbuild/test_mul_div.log\n===\n/home/eval/work/calc\ndrwxr-xr-x        0 2026-10-09 17:47 .git\n-rw-r--r--       26 2026-10-09 17:47 Makefile\n-rw-r--r--       55 2026-10-09 17:47 README.md\ndrwxr-xr-x        0 2026-10-09 17:48 build\ndrwxr-xr-x        0 2026-10-09 17:47 lib\ndrwxr-xr-x        0 2026-10-09 17:47 tests\n"
+          },
+          {
+            "commands": "cd /home/eval/work/calc\n# Show exact lib file with cat -A to see formatting\ncat -A lib/calc.sh\necho \"===\"\n# Fix mul: uses + instead of *\n# Use python to edit precisely\npython3 -c \"\np='lib/calc.sh'\nt=open(p).read()\nprint(repr(t))\nt=t.replace('mul() { echo \\$(( \\$1 + \\$2 )); }', 'mul() { echo \\$(( \\$1 * \\$2 )); }')\nopen(p,'w').write(t)\nprint('---after---')\nprint(open(p).read())\n\"\ncat lib/calc.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# calc: integer helpers$\nadd() { echo $(( $1 + $2 )); }$\nsub() { echo $(( $1 - $2 )); }$\nmul() { echo $(( $1 + $2 )); }$\ndiv() {$\n  if [ \"$2\" -eq 0 ]; then echo 'calc: division by zero' >&2; return 1; fi$\n  echo $(( $1 / $2 ))$\n}$\n===\n'# calc: integer helpers\\nadd() { echo $(( $1 + $2 )); }\\nsub() { echo $(( $1 - $2 )); }\\nmul() { echo $(( $1 + $2 )); }\\ndiv() {\\n  if [ \"$2\" -eq 0 ]; then echo \\'calc: division by zero\\' >&2; return 1; fi\\n  echo $(( $1 / $2 ))\\n}\\n'\n---after---\n# calc: integer helpers\nadd() { echo $(( $1 + $2 )); }\nsub() { echo $(( $1 - $2 )); }\nmul() { echo $(( $1 * $2 )); }\ndiv() {\n  if [ \"$2\" -eq 0 ]; then echo 'calc: division by zero' >&2; return 1; fi\n  echo $(( $1 / $2 ))\n}\n\n# calc: integer helpers\nadd() { echo $(( $1 + $2 )); }\nsub() { echo $(( $1 - $2 )); }\nmul() { echo $(( $1 * $2 )); }\ndiv() {\n  if [ \"$2\" -eq 0 ]; then echo 'calc: division by zero' >&2; return 1; fi\n  echo $(( $1 / $2 ))\n}\n"
+          },
+          {
+            "commands": "cd /home/eval/work/calc && make test 2>&1; echo \"EXIT:$?\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "ok   test_add_sub\nok   test_mul_div\nPASS 2/2\nEXIT:0\n"
+          },
+          {
+            "commands": "cd /home/eval/work/calc\ngit status 2>&1; echo \"===\"\ngit diff 2>&1; echo \"===\"\ngit log 2>&1; echo \"===\"\ncat /srv/git/calc/lib/calc.sh; echo \"=== srv unchanged check ===\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "On branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/test-report.txt\n\tbuild/test_add_sub.log\n\tbuild/test_mul_div.log\n===\n# Diff output (simplified in virtual mode)\n===\ncommit b464965c\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 17:47:31 2026 +0000\n\n    initial import\n\n===\n# calc: integer helpers\nadd() { echo $(( $1 + $2 )); }\nsub() { echo $(( $1 - $2 )); }\nmul() { echo $(( $1 + $2 )); }\ndiv() {\n  if [ \"$2\" -eq 0 ]; then echo 'calc: division by zero' >&2; return 1; fi\n  echo $(( $1 / $2 ))\n}\n=== srv unchanged check ===\n"
+          },
+          {
+            "commands": "cd /home/eval/work/calc\ngit diff --help 2>&1; echo \"EXIT:$?\"\ngit add --help 2>&1; echo \"EXIT:$?\"\ngit commit --help 2>&1; echo \"EXIT:$?\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Diff output (simplified in virtual mode)\nEXIT:0\nNothing specified, nothing added.\nEXIT:0\nerror: switch 'm' requires a value\nEXIT:128\n"
+          },
+          {
+            "commands": "cd /home/eval/work/calc\ngit add lib/calc.sh 2>&1; echo \"EXIT:$?\"\ngit status 2>&1; echo \"===\"\ncat .git/index 2>&1; echo \"==index dump==\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "EXIT:0\nOn branch master\n\nChanges to be committed:\n  (use \"git restore --staged <file>...\" to unstage)\n\tnew file:   lib/calc.sh\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/test-report.txt\n\tbuild/test_add_sub.log\n\tbuild/test_mul_div.log\n===\nlib/calc.sh==index dump==\n"
+          },
+          {
+            "commands": "cd /home/eval/work/calc\ngit commit -m \"fix: correct mul to multiply instead of add\" 2>&1; echo \"EXIT:$?\"\ngit log 2>&1; echo \"===\"\ngit status 2>&1; echo \"===\"\ncat .git/commits 2>&1; echo \"===\"\ncat .git/refs/heads/master 2>&1; echo \"===\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[master b464960] fix: correct mul to multiply instead of add\nEXIT:0\ncommit b4649602\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 17:48:29 2026 +0000\n\n    fix: correct mul to multiply instead of add\n\ncommit b464965c\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 17:47:31 2026 +0000\n\n    initial import\n\n===\nOn branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/test-report.txt\n\tbuild/test_add_sub.log\n\tbuild/test_mul_div.log\n===\nb4649602|Eval Agent|eval@bashkit-eval.invalid|1791568109|fix: correct mul to multiply instead of add\nb464965c|Eval Agent|eval@bashkit-eval.invalid|1791568051|initial import\n===\nb4649602===\n"
+          },
+          {
+            "commands": "echo \"=== clone log ===\"; cd /home/eval/work/calc && git log 2>&1\necho \"=== clone show ===\"; git show 2>&1 | head -n 60\necho \"=== clone file ===\"; cat lib/calc.sh\necho \"=== tests unchanged? diff origin vs clone tests ===\"; diff /srv/git/calc/tests/test_mul_div.sh /home/eval/work/calc/tests/test_mul_div.sh && echo \"test_mul_div identical\"; diff /srv/git/calc/tests/test_add_sub.sh /home/eval/work/calc/tests/test_add_sub.sh && echo \"test_add_sub identical\"; diff /srv/git/calc/tests/assert.sh /home/eval/work/calc/tests/assert.sh && echo \"assert identical\"; diff /srv/git/calc/tests/run.sh /home/eval/work/calc/tests/run.sh && echo \"run identical\"; diff /srv/git/calc/Makefile /home/eval/work/calc/Makefile && echo \"Makefile identical\"\necho \"=== origin log (should be 1 commit) ===\"; cat /srv/git/calc/.git/commits; echo \"\"; cat /srv/git/calc/.git/refs/heads/master; echo \"\"\necho \"=== origin file unchanged (should still have bug) ===\"; cat /srv/git/calc/lib/calc.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== clone log ===\ncommit b4649602\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 17:48:29 2026 +0000\n\n    fix: correct mul to multiply instead of add\n\ncommit b464965c\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 17:47:31 2026 +0000\n\n    initial import\n\n=== clone show ===\ncommit b4649602\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 17:48:29 2026 +0000\n\n    fix: correct mul to multiply instead of add\n\n=== clone file ===\n# calc: integer helpers\nadd() { echo $(( $1 + $2 )); }\nsub() { echo $(( $1 - $2 )); }\nmul() { echo $(( $1 * $2 )); }\ndiv() {\n  if [ \"$2\" -eq 0 ]; then echo 'calc: division by zero' >&2; return 1; fi\n  echo $(( $1 / $2 ))\n}\n=== tests unchanged? diff origin vs clone tests ===\ntest_mul_div identical\ntest_add_sub identical\nassert identical\nrun identical\nMakefile identical\n=== origin log (should be 1 commit) ===\nb464965c|Eval Agent|eval@bashkit-eval.invalid|1791568051|initial import\n\nb464965c\n=== origin file unchanged (should still have bug) ===\n# calc: integer helpers\nadd() { echo $(( $1 + $2 )); }\nsub() { echo $(( $1 - $2 )); }\nmul() { echo $(( $1 + $2 )); }\ndiv() {\n  if [ \"$2\" -eq 0 ]; then echo 'calc: division by zero' >&2; return 1; fi\n  echo $(( $1 / $2 ))\n}\n"
+          },
+          {
+            "commands": "cd /home/eval/work/calc && make test 2>&1; echo \"EXIT:$?\"\necho \"===\"; git status 2>&1\necho \"===\"; ls -R /home/eval/work/calc 2>&1 | head -n 30",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "ok   test_add_sub\nok   test_mul_div\nPASS 2/2\nEXIT:0\n===\nOn branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/test-report.txt\n\tbuild/test_add_sub.log\n\tbuild/test_mul_div.log\n===\n/home/eval/work/calc:\nMakefile\nREADME.md\nbuild\nlib\ntests\n\n/home/eval/work/calc/build:\ntest-report.txt\ntest_add_sub.log\ntest_mul_div.log\n\n/home/eval/work/calc/lib:\ncalc.sh\n\n/home/eval/work/calc/tests:\nassert.sh\nrun.sh\ntest_add_sub.sh\ntest_mul_div.sh\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

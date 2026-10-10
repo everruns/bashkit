@@ -134,9 +134,12 @@ impl OpenAiResponsesProvider {
             "model": self.model,
             "instructions": system,
             "input": input,
-            "tools": api_tools,
             "store": false
         });
+        // Omit `tools` when none are offered (one-shot generate eval).
+        if !api_tools.is_empty() {
+            body["tools"] = serde_json::Value::Array(api_tools);
+        }
 
         // Codex models support reasoning effort
         if self.model.contains("codex") {
@@ -274,5 +277,24 @@ impl Provider for OpenAiResponsesProvider {
 
     fn model(&self) -> &str {
         &self.model
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_tools_are_omitted() {
+        let p = OpenAiResponsesProvider {
+            client: {
+                ensure_rustls_crypto_provider().unwrap();
+                build_http_client().unwrap()
+            },
+            api_key: String::new(),
+            model: "m".to_string(),
+        };
+        let body = p.build_request_body(&[], &[], "sys");
+        assert!(body.get("tools").is_none());
     }
 }

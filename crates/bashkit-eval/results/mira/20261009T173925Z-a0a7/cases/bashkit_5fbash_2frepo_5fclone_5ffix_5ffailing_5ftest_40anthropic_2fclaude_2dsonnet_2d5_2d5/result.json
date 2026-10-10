@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "repo_clone_fix_failing_test",
+  "target": "anthropic/claude-sonnet-5-5",
+  "input": [
+    "A git repository lives at /srv/git/calc. Clone it into /home/eval/work/calc, run its test suite with `make test`, find and fix the bug in the library code that makes a test fail (do not edit the tests), re-run `make test` until it passes, and commit the fix in the clone with a commit message that starts with `fix:`. Leave /srv/git/calc unchanged."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "`make test` now passes (2/2), and the fix is committed in `/home/eval/work/calc`.\n\n**The bug:** in `lib/calc.sh`, `mul()` used `+` instead of `*`, so `mul 4 5` returned 9 instead of 20. I changed it to `$(( $1 * $2 ))` and didn't touch the tests.\n\n**The commit:** `b46496b` with the message `fix: mul should multiply instead of add`.\n\nRunning `make test` created a `build/` directory with test logs. I left those files untracked and out of the commit. I didn't push anything, so `/srv/git/calc` is unchanged.",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "mkdir -p /home/eval/work && cd /home/eval/work && git clone /srv/git/calc calc 2>&1 | tail -2; cd calc && ls -R . | grep -v '^./.git' | head -30; make test 2>&1 | tail -20",
+      "cd /home/eval/work/calc && cat lib/calc.sh; cat tests/test_mul_div.sh",
+      "cd /home/eval/work/calc && sed -i 's/^mul() .*/mul() { echo $(( $1 * $2 )); }/' lib/calc.sh && make test 2>&1 | tail -5 && git commit -qam \"fix: mul should multiply instead of add\" && git log --oneline | head -3; git status --short"
+    ],
+    "usage": {
+      "input_tokens": 6268,
+      "output_tokens": 583,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 7010
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "mkdir -p /home/eval/work && cd /home/eval/work && git clone /srv/git/calc calc 2>&1 | tail -2; cd calc && ls -R . | grep -v '^./.git' | head -30; make test 2>&1 | tail -20",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Cloning into 'calc'...\ndone.\n.:\nMakefile\nREADME.md\nlib\ntests\n\n./lib:\ncalc.sh\n\n./tests:\nassert.sh\nrun.sh\ntest_add_sub.sh\ntest_mul_div.sh\nok   test_add_sub\nFAIL test_mul_div\n    assertion failed: mul 4 5: expected '20', got '9'\nFAIL 1/2\nmake: *** [Makefile:2: test] Error 1\n"
+          },
+          {
+            "commands": "cd /home/eval/work/calc && cat lib/calc.sh; cat tests/test_mul_div.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# calc: integer helpers\nadd() { echo $(( $1 + $2 )); }\nsub() { echo $(( $1 - $2 )); }\nmul() { echo $(( $1 + $2 )); }\ndiv() {\n  if [ \"$2\" -eq 0 ]; then echo 'calc: division by zero' >&2; return 1; fi\n  echo $(( $1 / $2 ))\n}\n. lib/calc.sh\n. tests/assert.sh\nassert_eq 20 \"$(mul 4 5)\" 'mul 4 5'\nassert_eq 0 \"$(mul 7 0)\" 'mul 7 0'\nassert_eq 3 \"$(div 9 3)\" 'div 9 3'\ndiv 1 0 2>/dev/null && { echo 'div by zero must fail'; exit 1; }\nexit 0\n"
+          },
+          {
+            "commands": "cd /home/eval/work/calc && sed -i 's/^mul() .*/mul() { echo $(( $1 * $2 )); }/' lib/calc.sh && make test 2>&1 | tail -5 && git commit -qam \"fix: mul should multiply instead of add\" && git log --oneline | head -3; git status --short",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "ok   test_add_sub\nok   test_mul_div\nPASS 2/2\n[master b46496b] fix: mul should multiply instead of add\ncommit b46496b0\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Fri Oct 09 17:46:07 2026 +0000\nOn branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/test-report.txt\n\tbuild/test_add_sub.log\n\tbuild/test_mul_div.log\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,63 @@
+{
+  "eval": "bashkit_generate",
+  "sample": "gen_config_template",
+  "target": "openrouter/meta/muse-spark-1.3-contributor",
+  "input": [
+    "Write a bash script that renders a config template.\n\nStarting files:\n--- /home/eval/app/app.conf.tmpl ---\n# generated for ${APP_ENV}\n[db]\nhost = ${DB_HOST}\nport = ${DB_PORT}\nurl = postgres://${DB_USER}@${DB_HOST}:${DB_PORT}/app\n[runtime]\nhome = ${RUNTIME_HOME}\ngreeting = Hello, ${USER_NAME}!\nprice = $5 per unit\n--- end ---\n--- /home/eval/app/prod.env ---\n# production settings\nAPP_ENV=prod/eu\nDB_HOST=db.internal\nDB_PORT=5432\n\nDB_USER=app_rw\nUNUSED_KEY=x\n--- end ---\n\nRender /home/eval/app/app.conf.tmpl into /home/eval/app/app.conf:\n- `prod.env` holds `KEY=VALUE` lines; blank lines and lines starting with `#` are ignored. Values are taken literally (they may contain `/`).\n- Every `${NAME}` placeholder whose NAME is defined in prod.env is replaced by its value.\n- Placeholders whose NAME is not defined in prod.env stay exactly as written, even if a variable of that name exists in the shell environment.\n- Everything else (including `$5`) is copied unchanged.\n\nThen print one line to stdout: `unresolved: ` followed by the names of the placeholders left unresolved, sorted, unique, space-separated (here: `unresolved: RUNTIME_HOME USER_NAME`). Exit 0."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "3/3 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "```bash\n#!/bin/bash\nTMPL=\"/home/eval/app/app.conf.tmpl\"\nENVF=\"/home/eval/app/prod.env\"\nOUT=\"/home/eval/app/app.conf\"\n: > \"$OUT\"\nunresolved=$(awk -v outfile=\"$OUT\" '\nFNR==NR {\n  if ($0 ~ /^[[:space:]]*$/) next\n  if ($0 ~ /^#/) next\n  pos=index($0, \"=\")\n  if (pos==0) next\n  k=substr($0,1,pos-1)\n  v=substr($0,pos+1)\n  if (k ~ /^[A-Za-z_][A-Za-z0-9_]*$/) m[k]=v\n  next\n}\n{\n  line=$0\n  res=\"\"\n  while (match(line, /\\$[{][A-Za-z_][A-Za-z0-9_]*[}]/)) {\n    pre=substr(line,1,RSTART-1)\n    ph=substr(line,RSTART,RLENGTH)\n    name=substr(ph,3,length(ph)-3)\n    res=res pre\n    if (name in m) res=res m[name]\n    else { res=res ph; u[name]=1 }\n    line=substr(line,RSTART+RLENGTH)\n  }\n  res=res line\n  print res > outfile\n}\nEND {\n  for (n in u) print n\n}\n' \"$ENVF\" \"$TMPL\")\nif [ -z \"$unresolved\" ]; then\n  echo \"unresolved: \"\nelse\n  list=$(printf '%s\\n' \"$unresolved\" | sort -u | paste -sd ' ' -)\n  echo \"unresolved: $list\"\nfi\nexit 0\n```",
+    "iterations": 1,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "#!/bin/bash\nTMPL=\"/home/eval/app/app.conf.tmpl\"\nENVF=\"/home/eval/app/prod.env\"\nOUT=\"/home/eval/app/app.conf\"\n: > \"$OUT\"\nunresolved=$(awk -v outfile=\"$OUT\" '\nFNR==NR {\n  if ($0 ~ /^[[:space:]]*$/) next\n  if ($0 ~ /^#/) next\n  pos=index($0, \"=\")\n  if (pos==0) next\n  k=substr($0,1,pos-1)\n  v=substr($0,pos+1)\n  if (k ~ /^[A-Za-z_][A-Za-z0-9_]*$/) m[k]=v\n  next\n}\n{\n  line=$0\n  res=\"\"\n  while (match(line, /\\$[{][A-Za-z_][A-Za-z0-9_]*[}]/)) {\n    pre=substr(line,1,RSTART-1)\n    ph=substr(line,RSTART,RLENGTH)\n    name=substr(ph,3,length(ph)-3)\n    res=res pre\n    if (name in m) res=res m[name]\n    else { res=res ph; u[name]=1 }\n    line=substr(line,RSTART+RLENGTH)\n  }\n  res=res line\n  print res > outfile\n}\nEND {\n  for (n in u) print n\n}\n' \"$ENVF\" \"$TMPL\")\nif [ -z \"$unresolved\" ]; then\n  echo \"unresolved: \"\nelse\n  list=$(printf '%s\\n' \"$unresolved\" | sort -u | paste -sd ' ' -)\n  echo \"unresolved: $list\"\nfi\nexit 0\n"
+    ],
+    "usage": {
+      "input_tokens": 606,
+      "output_tokens": 7671,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 67710
+    },
+    "metrics": {
+      "exec_ms": 12.0,
+      "exit_code": 0.0,
+      "extracted": 1.0,
+      "generate_ms": 67698.0,
+      "script_bytes": 918.0,
+      "script_found": 1.0,
+      "timed_out": 0.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "#!/bin/bash\nTMPL=\"/home/eval/app/app.conf.tmpl\"\nENVF=\"/home/eval/app/prod.env\"\nOUT=\"/home/eval/app/app.conf\"\n: > \"$OUT\"\nunresolved=$(awk -v outfile=\"$OUT\" '\nFNR==NR {\n  if ($0 ~ /^[[:space:]]*$/) next\n  if ($0 ~ /^#/) next\n  pos=index($0, \"=\")\n  if (pos==0) next\n  k=substr($0,1,pos-1)\n  v=substr($0,pos+1)\n  if (k ~ /^[A-Za-z_][A-Za-z0-9_]*$/) m[k]=v\n  next\n}\n{\n  line=$0\n  res=\"\"\n  while (match(line, /\\$[{][A-Za-z_][A-Za-z0-9_]*[}]/)) {\n    pre=substr(line,1,RSTART-1)\n    ph=substr(line,RSTART,RLENGTH)\n    name=substr(ph,3,length(ph)-3)\n    res=res pre\n    if (name in m) res=res m[name]\n    else { res=res ph; u[name]=1 }\n    line=substr(line,RSTART+RLENGTH)\n  }\n  res=res line\n  print res > outfile\n}\nEND {\n  for (n in u) print n\n}\n' \"$ENVF\" \"$TMPL\")\nif [ -z \"$unresolved\" ]; then\n  echo \"unresolved: \"\nelse\n  list=$(printf '%s\\n' \"$unresolved\" | sort -u | paste -sd ' ' -)\n  echo \"unresolved: $list\"\nfi\nexit 0\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "unresolved: RUNTIME_HOME USER_NAME\n"
+          }
+        ]
+      },
+      "generate": {
+        "extraction": "fenced",
+        "timed_out": false
+      }
+    }
+  },
+  "skipped": false
+}

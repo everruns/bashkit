@@ -1,0 +1,63 @@
+{
+  "eval": "bashkit_generate",
+  "sample": "gen_heredoc_site",
+  "target": "openrouter/google/gemini-3.8-flash",
+  "input": [
+    "Write a bash script that generates an HTML page from settings.\n\nStarting files:\n--- /home/eval/site.env ---\nTITLE=Release Notes\nVERSION=2.4.1\n--- end ---\n\nNote the values are not shell-quoted (TITLE contains a space).\n\nCreate /home/eval/site/index.html (the directory does not exist) whose content is exactly the following, where `Release Notes` and `2.4.1` come from TITLE and VERSION in site.env, and the two lines inside `<pre>` appear literally, character for character (no expansion):\n```\n<html>\n<head><title>Release Notes 2.4.1</title></head>\n<body>\n<h1>Release Notes</h1>\n<p>Version 2.4.1</p>\n<pre>\nexport PATH=\"$HOME/bin:$PATH\"\necho \"built: $(date +%F)\"\n</pre>\n</body>\n</html>\n```\nExit 0."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "```bash\n#!/bin/bash\nset -e\n\n# Parse site.env\nwhile IFS='=' read -r key val || [[ -n \"$key\" ]]; do\n    case \"$key\" in\n        TITLE) TITLE=\"$val\" ;;\n        VERSION) VERSION=\"$val\" ;;\n    esac\ndone < /home/eval/site.env\n\n# Ensure destination directory exists\nmkdir -p /home/eval/site\n\n# Generate index.html\ncat <<EOF > /home/eval/site/index.html\n<html>\n<head><title>${TITLE} ${VERSION}</title></head>\n<body>\n<h1>${TITLE}</h1>\n<p>Version ${VERSION}</p>\n<pre>\nexport PATH=\"\\$HOME/bin:\\$PATH\"\necho \"built: \\$(date +%F)\"\n</pre>\n</body>\n</html>\nEOF\n\nexit 0\n```",
+    "iterations": 1,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "#!/bin/bash\nset -e\n\n# Parse site.env\nwhile IFS='=' read -r key val || [[ -n \"$key\" ]]; do\n    case \"$key\" in\n        TITLE) TITLE=\"$val\" ;;\n        VERSION) VERSION=\"$val\" ;;\n    esac\ndone < /home/eval/site.env\n\n# Ensure destination directory exists\nmkdir -p /home/eval/site\n\n# Generate index.html\ncat <<EOF > /home/eval/site/index.html\n<html>\n<head><title>${TITLE} ${VERSION}</title></head>\n<body>\n<h1>${TITLE}</h1>\n<p>Version ${VERSION}</p>\n<pre>\nexport PATH=\"\\$HOME/bin:\\$PATH\"\necho \"built: \\$(date +%F)\"\n</pre>\n</body>\n</html>\nEOF\n\nexit 0\n"
+    ],
+    "usage": {
+      "input_tokens": 501,
+      "output_tokens": 987,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 7052
+    },
+    "metrics": {
+      "exec_ms": 2.0,
+      "exit_code": 0.0,
+      "extracted": 1.0,
+      "generate_ms": 7050.0,
+      "script_bytes": 543.0,
+      "script_found": 1.0,
+      "timed_out": 0.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "#!/bin/bash\nset -e\n\n# Parse site.env\nwhile IFS='=' read -r key val || [[ -n \"$key\" ]]; do\n    case \"$key\" in\n        TITLE) TITLE=\"$val\" ;;\n        VERSION) VERSION=\"$val\" ;;\n    esac\ndone < /home/eval/site.env\n\n# Ensure destination directory exists\nmkdir -p /home/eval/site\n\n# Generate index.html\ncat <<EOF > /home/eval/site/index.html\n<html>\n<head><title>${TITLE} ${VERSION}</title></head>\n<body>\n<h1>${TITLE}</h1>\n<p>Version ${VERSION}</p>\n<pre>\nexport PATH=\"\\$HOME/bin:\\$PATH\"\necho \"built: \\$(date +%F)\"\n</pre>\n</body>\n</html>\nEOF\n\nexit 0\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          }
+        ]
+      },
+      "generate": {
+        "extraction": "fenced",
+        "timed_out": false
+      }
+    }
+  },
+  "skipped": false
+}
