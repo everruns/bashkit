@@ -308,7 +308,7 @@ Scripts may attempt to leak sensitive information.
 
 | Threat | Attack Example | Mitigation | Status |
 |--------|---------------|------------|--------|
-| Library Debug shapes leak via stderr (TM-INF-022) | `{:?}` dumps internal struct shapes into agent-visible stderr | Static scan forbids Debug formatting in builtins, plus per-tool leak tests and fuzz invariants | MITIGATED |
+| Library Debug shapes leak via stderr (TM-INF-022) | `{:?}` dumps internal struct shapes into agent-visible stderr; separately, a diagnostic that quotes the script back can run past the 1 KB stderr budget — an arithmetic error named both the whole expression and the whole unparsed rest, echoing one input back twice over | Static scan forbids Debug formatting in builtins, plus per-tool leak tests and fuzz invariants. Each run of script text echoed into an arithmetic diagnostic is capped (`MAX_ARITHMETIC_DIAG_ECHO`), so the text that says what went wrong always survives (L-ARITH-002) | MITIGATED |
 | jq `halt`/`halt_error` exits the host process (TM-INF-023) | Filter calls `halt(N)` → `std::process::exit` | Upstream `halt` native stripped; safe replacement returns a jq error | MITIGATED |
 | Host env side-channel via clap `Arg::env` (TM-INF-024) | `ls` resolved `TABSIZE`/`TIME_STYLE` from host env | Codegen strips `.env(...)`; builtins read `ctx.env` only | MITIGATED |
 | Untrusted generated Rust in drift CI (TM-INF-025) | Malicious upstream `uu_app()` runs with a write token | Generator validates the emitted shape; drift workflow splits read/write privilege | FIXED |
