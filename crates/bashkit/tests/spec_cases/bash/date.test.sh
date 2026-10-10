@@ -171,6 +171,18 @@ date -d 'tomorrow' +%Y-%m-%d | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' && echo "
 valid
 ### end
 
+### date_next_weekday
+date -d 'next monday' '+%u %T'
+### expect
+1 00:00:00
+### end
+
+### date_unknown_word_is_invalid
+date -d 'next blursday' 2>/dev/null || echo invalid
+### expect
+invalid
+### end
+
 ### date_set_time
 ### skip: date -s (set time) not implemented and requires privileges
 date -s '2024-01-01 12:00:00' 2>/dev/null || echo "skip"
