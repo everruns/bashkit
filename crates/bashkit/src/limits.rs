@@ -1200,6 +1200,17 @@ pub(crate) struct BudgetedString {
 }
 
 impl BudgetedString {
+    /// Adopt existing storage without copying, retaining its capacity charge.
+    pub(crate) fn try_from_string(
+        inner: String,
+        budget: Option<&ExecutionBudget>,
+    ) -> Result<Self, LimitExceeded> {
+        let lease = budget
+            .map(|budget| budget.lease_bytes(inner.capacity()))
+            .transpose()?;
+        Ok(Self { inner, lease })
+    }
+
     pub(crate) fn new(budget: Option<&ExecutionBudget>) -> Result<Self, LimitExceeded> {
         Ok(Self {
             inner: String::new(),
