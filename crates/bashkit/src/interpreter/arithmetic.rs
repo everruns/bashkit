@@ -23,6 +23,23 @@ use super::*;
 /// key for associative arrays.
 pub(super) type ArithWrite = (String, Option<String>, String);
 
+/// Marker appended where [`diag_echo`] cut source text short.
+pub(super) const TRUNCATION_MARKER: &str = "...";
+
+/// Bound a run of script text that is about to be named in a diagnostic.
+///
+/// THREAT[TM-INF-022]: arithmetic errors echo the expression and the unparsed
+/// rest, both straight from the script. Real bash prints them whole, which for
+/// a long expression puts the diagnostic over bashkit's 1 KiB budget (L-ARITH-002);
+/// truncating each fragment keeps the explanatory text that follows it.
+pub(super) fn diag_echo(src: &str) -> std::borrow::Cow<'_, str> {
+    if src.len() <= Interpreter::MAX_ARITHMETIC_DIAG_ECHO {
+        return std::borrow::Cow::Borrowed(src);
+    }
+    let end = src.floor_char_boundary(Interpreter::MAX_ARITHMETIC_DIAG_ECHO);
+    std::borrow::Cow::Owned(format!("{}{TRUNCATION_MARKER}", &src[..end]))
+}
+
 #[derive(Debug, Clone, PartialEq)]
 enum Tok {
     Num(String),
@@ -236,7 +253,7 @@ impl ArithParser<'_> {
         if rest.is_empty() {
             msg.to_string()
         } else {
-            format!("{msg} (error token is \"{rest}\")")
+            format!("{msg} (error token is \"{}\")", diag_echo(rest))
         }
     }
 }
@@ -279,7 +296,7 @@ impl<'a> ArithEval<'a> {
         }
         let toks = tokenize(src).map_err(|(msg, at)| {
             let rest = src[at..].trim();
-            format!("{msg} (error token is \"{rest}\")")
+            format!("{msg} (error token is \"{}\")", diag_echo(rest))
         })?;
         let mut p = ArithParser { src, toks, pos: 0 };
         self.enter()?;
@@ -587,8 +604,8 @@ impl<'a> ArithEval<'a> {
                 Ok(v)
             }
             Tok::Num(s) => {
-                let v =
-                    parse_arith_number(&s).map_err(|m| format!("{m} (error token is \"{s}\")"))?;
+                let v = parse_arith_number(&s)
+                    .map_err(|m| format!("{m} (error token is \"{}\")", diag_echo(&s)))?;
                 p.next();
                 Ok(v)
             }
@@ -647,7 +664,10 @@ impl<'a> ArithEval<'a> {
                         return Ok(0);
                     }
                     let token = p.src.get(rhs_at..).unwrap_or("").trim();
-                    return Err(format!("division by 0 (error token is \"{token}\")"));
+                    return Err(format!(
+                        "division by 0 (error token is \"{}\")",
+                        diag_echo(token)
+                    ));
                 }
                 if op == "/" {
                     l.wrapping_div(r)
@@ -835,7 +855,7 @@ impl Interpreter {
     pub(super) fn try_evaluate_arithmetic_with_assign(&mut self, expr: &str) -> ArithResult<i64> {
         let (r, writes) = self.arith_eval(expr);
         self.apply_arith_writes(writes);
-        r.map_err(|m| format!("{}: {m}", expr.trim()))
+        r.map_err(|m| format!("{}: {m}", diag_echo(expr.trim())))
     }
 
     /// Evaluate with side effects; an error is recorded for the command
@@ -856,7 +876,7 @@ impl Interpreter {
         match self.arith_eval(expr).0 {
             Ok(v) => v,
             Err(msg) => {
-                self.record_arith_error(format!("{}: {msg}", expr.trim()));
+                self.record_arith_error(format!("{}: {msg}", diag_echo(expr.trim())));
                 0
             }
         }

@@ -6053,7 +6053,7 @@ impl Interpreter {
             match r {
                 Ok(v) => *slot = v,
                 Err(msg) => {
-                    let msg = format!("{}: {msg}", operand.trim());
+                    let msg = format!("{}: {msg}", arithmetic::diag_echo(operand.trim()));
                     let diag = self.arith_diag("[[: ", &msg);
                     self.cond_stderr.push_str(&diag);
                     return false;
@@ -13035,6 +13035,14 @@ impl Interpreter {
     /// Maximum expanded arithmetic expression size accepted before fallback to 0.
     /// THREAT[TM-DOS-026]: Prevents attacker-controlled multi-megabyte arithmetic strings.
     const MAX_ARITHMETIC_EXPANSION_BYTES: usize = 64 * 1024;
+    /// Longest run of source text echoed into one arithmetic diagnostic.
+    /// THREAT[TM-INF-022]: an arithmetic error names both the whole expression
+    /// and the unparsed rest as the "error token". Both come from the script,
+    /// so an expression just under `MAX_ARITHMETIC_EXPANSION_BYTES` rendered a
+    /// diagnostic about twice that size. Capping each echoed fragment keeps the
+    /// line inside the 1 KiB diagnostic budget while leaving room for the fixed
+    /// text that says what actually went wrong. See L-ARITH-002.
+    const MAX_ARITHMETIC_DIAG_ECHO: usize = 256;
 
     /// Expand a string as a variable reference, or return as literal.
     /// Used for associative array keys which may be variable refs or literals.
