@@ -364,8 +364,11 @@ impl Interpreter {
         word: &Word,
         prompts: Option<Vec<String>>,
     ) -> Result<String> {
-        Ok(self
-            .expand_word_buffer(word, prompts, false)
+        // THREAT[TM-DOS-089]: pin the buffer future so the loop state machine
+        // lives on the heap, not in this frame. Every `$(...)` nesting level
+        // awaits through here; an inline child future grows per-level stack
+        // and aborts depth-32 under coverage instrumentation (cf. #1089).
+        Ok(Box::pin(self.expand_word_buffer(word, prompts, false))
             .await?
             .into_inner())
     }
