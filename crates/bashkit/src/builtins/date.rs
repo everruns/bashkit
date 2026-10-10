@@ -10,8 +10,12 @@
 use async_trait::async_trait;
 
 use super::arg_parser::OptArg;
+#[cfg(feature = "tzdata")]
+use chrono::Offset;
 use chrono::format::{Item, StrftimeItems};
-use chrono::{DateTime, Duration, LocalResult, NaiveDate, NaiveDateTime, TimeZone, Utc};
+use chrono::{
+    DateTime, Datelike, Duration, LocalResult, NaiveDate, NaiveDateTime, TimeZone, Utc, Weekday,
+};
 #[cfg(feature = "tzdata")]
 use chrono_tz::Tz;
 
@@ -145,6 +149,19 @@ impl SandboxTimezone {
             Self::Utc => dt.format(format).to_string(),
             #[cfg(feature = "tzdata")]
             Self::Iana(tz) => dt.with_timezone(&tz).format(format).to_string(),
+        }
+    }
+
+    fn date_naive(self, dt: &DateTime<Utc>) -> Option<NaiveDate> {
+        match self {
+            Self::Utc => Some(dt.date_naive()),
+            #[cfg(feature = "tzdata")]
+            // A host-supplied virtual clock can reach chrono's extrema;
+            // naive_local/date_naive panic if the zone pushes it past them.
+            Self::Iana(tz) => dt
+                .naive_utc()
+                .checked_add_offset(dt.with_timezone(&tz).offset().fix())
+                .map(|local| local.date()),
         }
     }
 }
@@ -294,7 +311,7 @@ fn parse_base_date(
 
     // Special words
     match lower.as_str() {
-        "now" => return Ok(now),
+        "now" | "today" => return Ok(now),
         "yesterday" => return Ok(now - Duration::days(1)),
         "tomorrow" => return Ok(now + Duration::days(1)),
         _ => {}
@@ -372,13 +389,41 @@ fn parse_base_date(
         return Ok(dt.with_timezone(&Utc));
     }
 
+    // Day of week: "monday", "next fri", "last tuesday", at midnight. As in
+    // GNU, a bare day may be today, `next` skips today, `last` is the latest
+    // one before today.
+    let (which, day) = lower
+        .split_once(' ')
+        .map_or(("this", lower.as_str()), |(which, day)| {
+            (which, day.trim_start())
+        });
+    if let Ok(day) = day.parse::<Weekday>() {
+        let today = timezone
+            .date_naive(&now)
+            .ok_or_else(|| format!("date out of range: '{}'", s))?;
+        let ahead = i64::from(day.days_since(today.weekday()));
+        let days = match which {
+            "this" => ahead,
+            "next" if ahead == 0 => 7,
+            "next" => ahead,
+            "last" => ahead - 7,
+            _ => return Err(format!("date: invalid date '{}'", s)),
+        };
+        let midnight = today
+            .checked_add_signed(Duration::days(days))
+            .and_then(|d| d.and_hms_opt(0, 0, 0))
+            .ok_or_else(|| format!("date out of range: '{}'", s))?;
+        return timezone.local_to_utc(midnight, s);
+    }
+
     Err(format!("date: invalid date '{}'", s))
 }
 
 /// Parse a date string like GNU date's -d flag.
 ///
 /// Supports simple expressions:
-///   "now", "yesterday", "tomorrow", "N days ago", "+N days",
+///   "now", "today", "yesterday", "tomorrow", "N days ago", "+N days",
+///   "monday", "next friday", "last tuesday",
 ///   "N weeks ago", "N months ago", "N years ago", "N hours ago",
 ///   "@EPOCH", "YYYY-MM-DD[ HH:MM[:SS[.frac]]][ UTC|+HHMM]"
 ///
@@ -472,7 +517,8 @@ fn unit_duration(unit: &str, n: i64) -> Option<Duration> {
         "week" => Duration::try_weeks(n),
         "month" => n.checked_mul(30).and_then(Duration::try_days), // Approximate
         "year" => n.checked_mul(365).and_then(Duration::try_days), // Approximate
-        _ => Some(Duration::zero()),
+        // Not a unit (`next monday`): an invalid date, not a zero offset.
+        _ => None,
     }
 }
 
@@ -1064,6 +1110,76 @@ mod tests {
         assert_eq!(result.exit_code, 0);
         let date = result.stdout.trim();
         assert_eq!(date.len(), 10);
+    }
+
+    #[cfg(feature = "tzdata")]
+    #[test]
+    fn weekday_timezone_conversion_checks_range() {
+        for (now, tz) in [
+            (DateTime::<Utc>::MAX_UTC, "Etc/GMT-14"),
+            (DateTime::<Utc>::MIN_UTC, "Etc/GMT+12"),
+        ] {
+            let tz = SandboxTimezone::Iana(tz.parse().unwrap());
+            assert!(parse_date_string("monday", now, tz).is_err());
+        }
+    }
+
+    #[test]
+    fn weekday_calendar_arithmetic_checks_range() {
+        let max = DateTime::<Utc>::MAX_UTC;
+        let min = DateTime::<Utc>::MIN_UTC;
+        assert!(
+            parse_date_string(
+                &format!("next {}", max.weekday()),
+                max,
+                SandboxTimezone::Utc
+            )
+            .is_err()
+        );
+        assert!(
+            parse_date_string(
+                &format!("last {}", min.weekday()),
+                min,
+                SandboxTimezone::Utc
+            )
+            .is_err()
+        );
+    }
+
+    /// From Thursday 2026-10-08 12:00 UTC; expected days match GNU date.
+    #[test]
+    fn test_date_d_weekdays() {
+        let now = DateTime::from_timestamp(1_791_460_800, 0).unwrap();
+        for (input, expected) in [
+            ("thursday", "2026-10-08"),
+            ("next thursday", "2026-10-15"),
+            ("last thursday", "2026-10-01"),
+            ("monday", "2026-10-12"),
+            ("next mon", "2026-10-12"),
+            ("last  Fri", "2026-10-02"),
+        ] {
+            let dt = parse_date_string(input, now, SandboxTimezone::Utc).unwrap();
+            assert_eq!(
+                dt.format("%F %T").to_string(),
+                format!("{expected} 00:00:00"),
+                "{input}"
+            );
+        }
+        assert_eq!(
+            parse_date_string("today", now, SandboxTimezone::Utc),
+            Ok(now)
+        );
+    }
+
+    /// `next <word>` used to read an unknown word as a zero offset and
+    /// print the current time.
+    #[tokio::test]
+    async fn test_date_d_unknown_word_is_invalid() {
+        for input in ["next blursday", "last blah"] {
+            let result = run_date(&["-d", input]).await;
+            assert_eq!(result.exit_code, 1, "{input}");
+            assert!(result.stderr.contains("invalid date"), "{input}");
+        }
     }
 
     #[tokio::test]

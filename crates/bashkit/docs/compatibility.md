@@ -91,7 +91,7 @@ for sandbox security reasons. See the compliance spec for details.
 | `uniq` | `-c`, `-d`, `-u` | Filter duplicate lines |
 | `cut` | `-d DELIM`, `-f FIELDS` | Extract fields |
 | `tr` | `-d`, character ranges | Translate/delete chars |
-| `date` | `+FORMAT`, `-u`, `-R`, `-I`, `-r`, `-d`/`--date` (relative, compound, epoch, ISO date-times with optional seconds and zone) | Display/format date with sandboxed IANA timezone support |
+| `date` | `+FORMAT`, `-u`, `-R`, `-I`, `-r`, `-d`/`--date` (relative, weekday, compound, epoch, ISO date-times with optional seconds and zone) | Display/format date with sandboxed IANA timezone support |
 | `wait` | `[-n] [-p VAR] [-f] [ID...]` (PID or `%jobspec`) | Wait for background jobs |
 | `jobs` | `-l`, `-p` | List running background jobs |
 | `ps` | `-f`, `aux`, `-o`, `-p` | Virtual process list (shell + jobs) |

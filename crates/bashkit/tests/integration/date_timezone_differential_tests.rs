@@ -88,3 +88,66 @@ async fn matches_gnu_date_for_timezone_sensitive_inputs() {
         assert_gnu_match(tz, args).await;
     }
 }
+
+#[tokio::test]
+async fn matches_gnu_date_for_weekdays() {
+    let Some(program) = gnu_date() else {
+        eprintln!("skip: GNU date is not installed");
+        return;
+    };
+    for tz in ["UTC", "America/Chicago", "Australia/Sydney"] {
+        for input in [
+            "monday",
+            "this Mon",
+            "next tuesday",
+            "last SUN",
+            "thursday",
+            "next Thursday",
+            "last thursday",
+            "this fri",
+            "saturday",
+            "next blursday",
+            "last blah",
+        ] {
+            // Freeze Bashkit at GNU's reference instant. If the host crosses
+            // local midnight during the pair, that case has no stable oracle.
+            let reference = Command::new(&program)
+                .args(["+%s %F"])
+                .env("TZ", tz)
+                .output()
+                .unwrap();
+            assert!(reference.status.success());
+            let reference = String::from_utf8(reference.stdout).unwrap();
+            let (epoch, day) = reference.trim().split_once(' ').unwrap();
+            let host = Command::new(&program)
+                .args(["-d", input, "+%s %F %T %z"])
+                .env("TZ", tz)
+                .env("LC_ALL", "C")
+                .output()
+                .unwrap();
+            let after = Command::new(&program)
+                .arg("+%F")
+                .env("TZ", tz)
+                .output()
+                .unwrap();
+            if after.stdout != format!("{day}\n").as_bytes() {
+                eprintln!("skip: local midnight crossed during GNU weekday comparison");
+                continue;
+            }
+            let mut bash = Bash::builder()
+                .fixed_epoch(epoch.parse().unwrap())
+                .env("TZ", tz)
+                .build();
+            let result = bash
+                .exec(&format!("date -d {} '+%s %F %T %z'", shell_quote(input)))
+                .await
+                .unwrap();
+            assert_eq!(
+                result.exit_code,
+                host.status.code().unwrap_or(-1),
+                "TZ={tz} {input}"
+            );
+            assert_eq!(result.stdout.as_bytes(), host.stdout, "TZ={tz} {input}");
+        }
+    }
+}

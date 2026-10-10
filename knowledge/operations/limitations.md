@@ -151,6 +151,18 @@ fractional file timestamps, strict newer-than comparisons, and rejection before
 file effects; `date_timezone_differential_tests` compares supported forms with
 GNU date when available.
 
+The same parser accepts English full weekday names and three-letter
+abbreviations (case-insensitive), bare or preceded by `this`, `next`, or `last`.
+They resolve at midnight on the selected sandbox calendar day: bare/`this`
+include today, `next` excludes today, and `last` selects the previous occurrence.
+`today` preserves the current virtual instant, as `now` does. Unknown relative
+units are errors; abbreviations such as `next mins`, numeric weekday ordinals,
+and weekday zone suffixes remain unsupported. Midnight gaps are rejected and
+folds choose the earlier instant, using the existing naive-date policy; virtual
+clock conversion and weekday arithmetic reject dates outside chrono's range.
+`shared_weekday_parsing_*`, `weekday_midnight_observes_dst_rules`,
+`weekday_*_checks_range`, and the GNU-date differential cover these boundaries.
+
 ### CPython runtime (`cpython` feature)
 
 Boundaries of the WebAssembly CPython guest; see

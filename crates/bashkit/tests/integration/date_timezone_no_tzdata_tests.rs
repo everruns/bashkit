@@ -133,3 +133,17 @@ async fn error_is_a_clean_diagnostic_not_a_panic_or_debug_dump() {
     assert!(stderr.len() < 200, "diagnostic too long: {stderr:?}");
     assert!(!stderr.contains('{'), "looks like a Debug dump: {stderr:?}");
 }
+
+#[tokio::test]
+async fn weekdays_work_in_utc_without_tzdata() {
+    let result = fixed_date(Some("UTC"), "date -d monday '+%F %T'; date -d 'next monday' '+%F %T'; date -d 'last monday' '+%F %T'; date -d today +%s").await;
+    assert_eq!(result.exit_code, 0);
+    assert_eq!(
+        result.stdout,
+        "2024-01-15 00:00:00\n2024-01-22 00:00:00\n2024-01-08 00:00:00\n1705315200\n"
+    );
+    let result = fixed_date(Some("America/Chicago"), "date -d monday +%s").await;
+    assert_eq!(result.exit_code, 1);
+    assert!(result.stdout.is_empty());
+    assert!(result.stderr.contains(UNAVAILABLE));
+}

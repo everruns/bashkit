@@ -208,3 +208,93 @@ async fn shared_iso_date_parsing_rejects_invalid_inputs_before_file_effects() {
         assert_eq!(result.exit_code, 1, "invalid touch created a file: {input}");
     }
 }
+
+#[tokio::test]
+async fn shared_weekday_parsing_uses_sandbox_calendar_and_clock() {
+    // Monday in UTC and Sydney, still Sunday in Chicago.
+    const EPOCH: i64 = 1_705_277_400; // 2024-01-15 00:10 UTC
+    for (tz, input, expected) in [
+        ("UTC", "monday", "2024-01-15 00:00:00 +0000"),
+        ("UTC", "this Mon", "2024-01-15 00:00:00 +0000"),
+        ("UTC", "next monday", "2024-01-22 00:00:00 +0000"),
+        ("UTC", "last monday", "2024-01-08 00:00:00 +0000"),
+        ("America/Chicago", "sunday", "2024-01-14 00:00:00 -0600"),
+        ("America/Chicago", "next sun", "2024-01-21 00:00:00 -0600"),
+        ("America/Chicago", "last  SUN", "2024-01-07 00:00:00 -0600"),
+        ("Australia/Sydney", "MONDAY", "2024-01-15 00:00:00 +1100"),
+    ] {
+        let mut bash = Bash::builder().fixed_epoch(EPOCH).env("TZ", tz).build();
+        let result = bash.exec(&format!(
+            "date -d '{input}' '+%F %T %z'; touch -d '{input}' /tmp/stamp; date -r /tmp/stamp '+%F %T %z'; find /tmp/stamp -newermt '{input} - 1 second'; find /tmp/stamp -newermt '{input}'"
+        )).await.unwrap();
+        assert_eq!(result.exit_code, 0, "TZ={tz} {input}: {}", result.stderr);
+        assert_eq!(
+            result.stdout,
+            format!("{expected}\n{expected}\n/tmp/stamp\n")
+        );
+        assert!(result.stderr.is_empty());
+    }
+    let mut bash = Bash::builder()
+        .fixed_epoch(EPOCH)
+        .env("TZ", "America/Chicago")
+        .build();
+    let result = bash
+        .exec("date -d today +%s; touch -d today /tmp/stamp; date -r /tmp/stamp +%s")
+        .await
+        .unwrap();
+    assert_eq!(result.exit_code, 0);
+    assert_eq!(result.stdout, format!("{EPOCH}\n{EPOCH}\n"));
+}
+
+#[tokio::test]
+async fn shared_weekday_parsing_rejects_unknown_words_before_file_effects() {
+    for input in [
+        "next blursday",
+        "last blah",
+        "next mins",
+        "this nonsense",
+        "next monday trailing",
+        "next /etc/localtime",
+    ] {
+        let mut bash = Bash::builder().fixed_epoch(WINTER_EPOCH).build();
+        for script in [
+            format!("date -d '{input}' +%s"),
+            format!("touch -d '{input}' /tmp/rejected"),
+            format!("find /tmp -newermt '{input}'"),
+        ] {
+            let result = bash.exec(&script).await.unwrap();
+            assert_eq!(result.exit_code, 1, "{script}: {}", result.stderr);
+            assert!(result.stdout.is_empty(), "{script}: {}", result.stdout);
+            assert!(!result.stderr.is_empty());
+        }
+        assert_eq!(
+            bash.exec("test -e /tmp/rejected").await.unwrap().exit_code,
+            1
+        );
+    }
+}
+
+#[tokio::test]
+async fn weekday_midnight_observes_dst_rules() {
+    let mut bash = Bash::builder()
+        .fixed_epoch(1_710_093_600)
+        .env("TZ", "America/Chicago")
+        .build(); // 2024-03-10 18:00 UTC
+    let result = bash
+        .exec("date -d sunday '+%F %T %z'; date -d 'next sunday' '+%F %T %z'")
+        .await
+        .unwrap();
+    assert_eq!(result.exit_code, 0);
+    assert_eq!(
+        result.stdout,
+        "2024-03-10 00:00:00 -0600\n2024-03-17 00:00:00 -0500\n"
+    );
+    // Sao Paulo skipped midnight on this date: reject instead of inventing an instant.
+    let mut bash = Bash::builder()
+        .fixed_epoch(1_541_332_800)
+        .env("TZ", "America/Sao_Paulo")
+        .build(); // 2018-11-04 12:00 UTC
+    let result = bash.exec("date -d sunday +%s").await.unwrap();
+    assert_eq!(result.exit_code, 1);
+    assert!(result.stdout.is_empty());
+}
