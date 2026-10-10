@@ -115,6 +115,11 @@ behaviour on malformed input.
 behaviour parity where expected, and confirm intentional divergences where
 security requires it.
 
+Arithmetic limits cover textual dollar expansion inside expressions.
+Nested array subscripts share the enclosing expression's recursion and work
+limits, including quoted arguments to `let`. Exceeding either limit returns
+an arithmetic error; subsequent executions can reuse the session.
+
 ## Panic safety
 
 All builtin commands are wrapped with `catch_unwind`. If a builtin panics, the

@@ -6046,9 +6046,7 @@ impl Interpreter {
     fn cond_int_cmp(&mut self, left: &str, right: &str, cmp: fn(i64, i64) -> bool) -> bool {
         let mut values = [0i64; 2];
         for (slot, operand) in values.iter_mut().zip([left, right]) {
-            let mut ev = arithmetic::ArithEval::new(self);
-            let r = ev.eval_str(operand);
-            let writes = std::mem::take(&mut ev.writes);
+            let (r, writes) = self.arith_eval_unexpanded(operand);
             self.apply_arith_writes(writes);
             match r {
                 Ok(v) => *slot = v,
@@ -13079,8 +13077,10 @@ impl Interpreter {
     /// [`Self::expand_key_text`]; `plain` reads only plain scalar values
     /// (no nameref, array or special-parameter resolution).
     fn expand_key_text_with(&self, s: &str, plain: bool) -> String {
-        let lookup = |name: &str| -> String {
-            if plain {
+        let lookup = |name: &str, braced: bool| {
+            Ok::<_, std::convert::Infallible>(if !plain && !braced {
+                self.expand_variable(name)
+            } else if plain {
                 self.scoped.variables.get(name).cloned().unwrap_or_default()
             } else if let Some(arr) = name
                 .strip_suffix("[@]")
@@ -13096,8 +13096,16 @@ impl Interpreter {
                 self.array_values(self.resolve_nameref(arr)).join(&sep)
             } else {
                 self.resolve_param_expansion_name(name).1
-            }
+            })
         };
+        Self::expand_key_text_using(s, lookup).unwrap()
+    }
+
+    /// One quote/key scanner; callers own lookup semantics and recursion budgets.
+    fn expand_key_text_using<E>(
+        s: &str,
+        mut lookup: impl FnMut(&str, bool) -> std::result::Result<String, E>,
+    ) -> std::result::Result<String, E> {
         let mut out = String::new();
         let mut chars = s.chars().peekable();
         while let Some(c) = chars.next() {
@@ -13121,7 +13129,7 @@ impl Interpreter {
                         }
                         name.push(n);
                     }
-                    out.push_str(&lookup(&name));
+                    out.push_str(&lookup(&name, true)?);
                 }
                 '$' if chars
                     .peek()
@@ -13135,16 +13143,12 @@ impl Interpreter {
                         name.push(n);
                         chars.next();
                     }
-                    out.push_str(&if plain {
-                        lookup(&name)
-                    } else {
-                        self.expand_variable(&name)
-                    });
+                    out.push_str(&lookup(&name, false)?);
                 }
                 _ => out.push(c),
             }
         }
-        out
+        Ok(out)
     }
 
     /// Fully expand an associative array key using standard word expansion.
@@ -13540,6 +13544,10 @@ impl Interpreter {
 
     fn resolve_indexed_array_subscript(&self, arr_name: &str, key: &str) -> usize {
         let raw_idx = self.evaluate_arithmetic(key);
+        self.normalize_indexed_array_subscript(arr_name, raw_idx)
+    }
+
+    fn normalize_indexed_array_subscript(&self, arr_name: &str, raw_idx: i64) -> usize {
         if raw_idx < 0 {
             let len = self
                 .scoped
