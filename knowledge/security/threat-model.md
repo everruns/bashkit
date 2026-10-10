@@ -494,6 +494,18 @@ fragment is now bounded by `MAX_ARITHMETIC_DIAG_ECHO` via
 that follows it (L-ARITH-002). Any new diagnostic that quotes script text back
 has the same obligation: bound the quoted run, not the finished line.
 
+The flip side is a false positive. A diagnostic that quotes script text back
+can quote a banned shape the *input* supplied, which is not a leak: real bash
+echoes the same text, and the named internal (the arithmetic tokenizer's `Tok`
+enum, say) is never formatted. Two independent defenses handle this, and a
+fuzz target that inlines raw bytes needs one of them: either its diagnostic
+matches a template `strip_real_shell_error_lines` recognizes, or the target
+pre-filters with `input_echo_would_trip` as `glob_fuzz`, `cpython_fuzz` and
+`arithmetic_fuzz` do. Arithmetic diagnostics are not one of those templates,
+so `arithmetic_fuzz` went red in run 271 on `:A>>=::TTA:::Tok::::` until it
+pre-filtered. Adding a builtin whose errors quote user text means choosing one
+of the two, never relaxing `UNIVERSAL_BANNED`.
+
 Display of a **Bashkit** error is not a safe formatter either: `Error`'s own
 variants stringify as Rust enum shapes (`io error: `, `internal error: `) that
 no shell prints, and `internal error:` is in `UNIVERSAL_BANNED`. Builtins
