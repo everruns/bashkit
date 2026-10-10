@@ -150,3 +150,61 @@ async fn gnu_nanosecond_precision_uses_validated_formatter() {
     assert_eq!(result.exit_code, 0, "{}", result.stderr);
     assert_eq!(result.stdout.trim(), "000 000000 000000000");
 }
+
+#[tokio::test]
+async fn shared_iso_date_parsing_preserves_instants_across_builtins() {
+    for (input, expected) in [
+        ("2024-01-15 10:40", "2024-01-15 16:40:00.000000000"),
+        ("2024-01-15 10:40 UTC", "2024-01-15 10:40:00.000000000"),
+        ("2024-01-15 10:40 gmt", "2024-01-15 10:40:00.000000000"),
+        ("2024-01-15T10:40Z", "2024-01-15 10:40:00.000000000"),
+        (
+            "2024-01-15 10:40:00.5 +0200",
+            "2024-01-15 08:40:00.500000000",
+        ),
+        ("2024-01-15 10:40 -05", "2024-01-15 15:40:00.000000000"),
+    ] {
+        let script = format!(
+            "date -u -d '{input}' '+%F %T.%N'; \
+             touch -d '{input}' /tmp/stamp && date -u -r /tmp/stamp '+%F %T.%N'; \
+             find /tmp/stamp -newermt '{input}'; \
+             find /tmp/stamp -newermt '{input} + 1 second'; \
+             find /tmp/stamp -newermt '{input} - 1 second'"
+        );
+        let result = fixed_date(Some("America/Chicago"), &script).await;
+        assert_eq!(result.exit_code, 0, "{input}: {}", result.stderr);
+        assert!(result.stderr.is_empty(), "{input}: {}", result.stderr);
+        assert_eq!(
+            result.stdout,
+            format!("{expected}\n{expected}\n/tmp/stamp\n"),
+            "{input}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn shared_iso_date_parsing_rejects_invalid_inputs_before_file_effects() {
+    for input in [
+        "2024-03-10 02:30", // DST gap in the sandbox timezone.
+        "2024-02-30 10:40",
+        "2024-07-15 24:00",
+        "2024-07-15 10:40 +2500",
+        "2024-07-15 10:40 +0260",
+        "2024-07-15 10:40 UTC trailing",
+        "2024-07-15 10:40 /etc/localtime",
+    ] {
+        let mut bash = Bash::builder().env("TZ", "America/Chicago").build();
+        for script in [
+            format!("date -d '{input}' +%s"),
+            format!("touch -d '{input}' /tmp/rejected"),
+            format!("find /tmp -newermt '{input}'"),
+        ] {
+            let result = bash.exec(&script).await.unwrap();
+            assert_eq!(result.exit_code, 1, "{script}: {}", result.stderr);
+            assert!(result.stdout.is_empty(), "{script}: {}", result.stdout);
+            assert!(!result.stderr.is_empty(), "{script}");
+        }
+        let result = bash.exec("test -e /tmp/rejected").await.unwrap();
+        assert_eq!(result.exit_code, 1, "invalid touch created a file: {input}");
+    }
+}

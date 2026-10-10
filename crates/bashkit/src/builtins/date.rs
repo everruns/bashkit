@@ -307,18 +307,43 @@ fn parse_base_date(
             .ok_or_else(|| format!("date out of range: '{}'", s));
     }
 
-    // Try ISO-like formats: YYYY-MM-DD HH:MM:SS, YYYY-MM-DD
-    if let Ok(dt) = NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S") {
-        return timezone.local_to_utc(dt, s);
+    // Try ISO-like formats: YYYY-MM-DD, optionally with [ T]HH:MM[:SS[.frac]],
+    // read in the sandbox TZ unless followed by UTC/GMT, Z or a numeric offset
+    // (git's %ci)
+    const ISO: [&str; 4] = [
+        "%Y-%m-%d %H:%M:%S%.f",
+        "%Y-%m-%dT%H:%M:%S%.f",
+        "%Y-%m-%d %H:%M",
+        "%Y-%m-%dT%H:%M",
+    ];
+    let (wall, utc) = match s.rsplit_once(' ') {
+        Some((wall, zone))
+            if zone.eq_ignore_ascii_case("utc") || zone.eq_ignore_ascii_case("gmt") =>
+        {
+            (wall, true)
+        }
+        _ => (s, false),
+    };
+    let naive = ISO
+        .iter()
+        .find_map(|f| NaiveDateTime::parse_from_str(wall, f).ok())
+        .or_else(|| {
+            NaiveDate::parse_from_str(wall, "%Y-%m-%d")
+                .ok()?
+                .and_hms_opt(0, 0, 0)
+        });
+    if let Some(dt) = naive {
+        return if utc {
+            Ok(dt.and_utc())
+        } else {
+            timezone.local_to_utc(dt, s)
+        };
     }
-    if let Ok(dt) = NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S") {
-        return timezone.local_to_utc(dt, s);
-    }
-    if let Ok(d) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
-        let dt = d
-            .and_hms_opt(0, 0, 0)
-            .ok_or_else(|| format!("invalid date '{}'", s))?;
-        return timezone.local_to_utc(dt, s);
+    if let Some(dt) = ISO
+        .iter()
+        .find_map(|f| DateTime::parse_from_str(s, &format!("{f} %#z")).ok())
+    {
+        return Ok(dt.with_timezone(&Utc));
     }
 
     // Try "Mon DD, YYYY" format
@@ -355,7 +380,7 @@ fn parse_base_date(
 /// Supports simple expressions:
 ///   "now", "yesterday", "tomorrow", "N days ago", "+N days",
 ///   "N weeks ago", "N months ago", "N years ago", "N hours ago",
-///   "@EPOCH", "YYYY-MM-DD", "YYYY-MM-DD HH:MM:SS"
+///   "@EPOCH", "YYYY-MM-DD[ HH:MM[:SS[.frac]]][ UTC|+HHMM]"
 ///
 /// Supports compound expressions (base ± modifier):
 ///   "2024-01-15 + 30 days", "yesterday - 2 hours",
@@ -988,6 +1013,41 @@ mod tests {
         let result = run_date(&["-d", "not a date"]).await;
         assert_eq!(result.exit_code, 1);
         assert!(result.stderr.contains("invalid date"));
+    }
+
+    /// Expected values match GNU date 9.12.
+    #[tokio::test]
+    async fn test_date_d_iso_times_and_zones() {
+        for (input, expected) in [
+            ("2026-10-08 14:30", "2026-10-08 14:30:00.000000000"),
+            ("2026-10-08T14:30", "2026-10-08 14:30:00.000000000"),
+            ("2026-10-08 14:30:15.25", "2026-10-08 14:30:15.250000000"),
+            ("2026-10-08 14:30 UTC", "2026-10-08 14:30:00.000000000"),
+            ("2026-10-08 14:30:15 gmt", "2026-10-08 14:30:15.000000000"),
+            ("2026-10-08T14:30Z", "2026-10-08 14:30:00.000000000"),
+            ("2026-10-08 14:30:15 +0200", "2026-10-08 12:30:15.000000000"),
+            ("2026-10-08 14:30:15+02:00", "2026-10-08 12:30:15.000000000"),
+            ("2026-10-08 14:30:15 -05", "2026-10-08 19:30:15.000000000"),
+            ("2026-10-08 UTC", "2026-10-08 00:00:00.000000000"),
+        ] {
+            let result = run_date(&["-u", "-d", input, "+%F %T.%N"]).await;
+            assert_eq!(result.stdout.trim(), expected, "{input}");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_date_d_iso_invalid_fields() {
+        for input in [
+            "2026-02-30 10:00",
+            "2026-10-08 24:00",
+            "2026-10-08 12:60",
+            "2026-10-08 -05",
+            "2026-10-08 14:30 +2500",
+        ] {
+            let result = run_date(&["-d", input]).await;
+            assert_eq!(result.exit_code, 1, "{input}");
+            assert!(result.stderr.contains("invalid date"), "{input}");
+        }
     }
 
     #[tokio::test]

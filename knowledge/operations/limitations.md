@@ -139,6 +139,18 @@ builtins are currently tracked; partial boundaries follow.
 | L-DATE-001 | date | `TZ` accepts bundled IANA identifiers/aliases only. POSIX rule strings and `:zoneinfo` paths are unsupported and intentionally resolve to UTC because the sandbox has no trusted host zoneinfo filesystem. GNU nanosecond formatting supports the useful `%N`/`%3N`/`%6N`/`%9N` forms, not other widths | `date_timezone_tests` |
 | L-MAPFILE-001 | mapfile | `-u FD` reads only fd 0, and the `-C`/`-c` callback is not run; both exit 2 with a message instead of reading the wrong input | `mapfile_bad_option` (param-expansion-gaps spec) |
 
+`date -d`, `touch -d`, and `find -newermt` share ISO date-string parsing:
+`YYYY-MM-DD` and date-times with a space or `T`, `HH:MM`, optional seconds,
+and optional fractional seconds. Naive values use the sandbox `TZ`; explicit
+`UTC`/`GMT`, `Z`, and numeric offsets (`+0200`, `+02:00`, `-05`) determine the
+instant independently of that zone. Date-only values also accept `UTC`/`GMT`.
+`date -u` changes display only. Other named input zones, comma fractions,
+date-only `Z`, and offsets outside chrono's range remain rejected. Host zoneinfo
+is never consulted. `shared_iso_date_parsing_*` tests cover shared instants,
+fractional file timestamps, strict newer-than comparisons, and rejection before
+file effects; `date_timezone_differential_tests` compares supported forms with
+GNU date when available.
+
 ### CPython runtime (`cpython` feature)
 
 Boundaries of the WebAssembly CPython guest; see

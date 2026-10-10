@@ -232,6 +232,23 @@ date -d '2024-06-15 - 30 days' +%Y-%m-%d
 2024-05-16
 ### end
 
+### date_iso_without_seconds
+date -u -d '2026-10-08 14:30' '+%F %T'
+### expect
+2026-10-08 14:30:00
+### end
+
+### date_iso_zone_suffix
+# Named zones, Z, and git's %ci numeric offset
+date -u -d '2026-10-08 14:30:15 UTC' '+%F %T'
+date -u -d '2026-10-08T14:30Z' '+%F %T'
+date -u -d '2026-10-08 14:30:15 +0200' '+%F %T'
+### expect
+2026-10-08 14:30:15
+2026-10-08 14:30:00
+2026-10-08 12:30:15
+### end
+
 ### date_compound_date_plus_days
 date -d '2024-01-15 + 30 days' +%Y-%m-%d
 ### expect
