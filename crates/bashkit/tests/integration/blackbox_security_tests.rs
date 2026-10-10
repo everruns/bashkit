@@ -2060,4 +2060,83 @@ mod finding_cond_bare_not_print_overflow {
             result.stdout
         );
     }
+
+    /// Exact PoC shape: repeated parenthesized conditionals in an unexecuted
+    /// function, then `declare -f`. Deep-but-valid nesting (200x) must define
+    /// and print without overflowing; the shell stays alive and the function
+    /// is never executed.
+    #[tokio::test]
+    async fn repeated_paren_nesting_valid_max_prints() {
+        let mut bash = tight_bash();
+        let script = format!(
+            "f() {{ [[ {}-n x{} ]]; }}; declare -f f",
+            "( ".repeat(200),
+            " )".repeat(200)
+        );
+        let result = bash.exec(&script).await.unwrap();
+        assert!(
+            result.stderr.is_empty(),
+            "valid nested parens must not error, got stderr: {:?}",
+            result.stderr
+        );
+        assert!(
+            result.stdout.contains("declare -f") || result.stdout.contains("f ()"),
+            "declare -f must print the function, got stdout: {:?}",
+            result.stdout
+        );
+        let alive = bash.exec("echo alive").await.unwrap();
+        assert!(alive.stdout.contains("alive"));
+    }
+
+    /// Exact PoC shape via `type`, and excessive nesting (300x) rejected
+    /// cleanly on both the `declare -f` and `type` paths — no crash, no hang.
+    #[tokio::test]
+    async fn repeated_paren_nesting_excessive_is_bounded() {
+        for printer in ["declare -f f", "type f"] {
+            let mut bash = tight_bash();
+            let script = format!(
+                "f() {{ [[ {}-n x{} ]]; }}; {}",
+                "( ".repeat(300),
+                " )".repeat(300),
+                printer
+            );
+            let err = format!("{:?}", bash.exec(&script).await.unwrap_err());
+            assert!(
+                err.contains("nested too deeply")
+                    || err.contains("syntax error in conditional expression"),
+                "{}: expected depth/syntax rejection, got: {}",
+                printer,
+                err
+            );
+            let alive = bash.exec("echo alive").await.unwrap();
+            assert!(
+                alive.stdout.contains("alive"),
+                "{}: shell must survive, got stdout: {:?}",
+                printer,
+                alive.stdout
+            );
+        }
+    }
+
+    /// Valid nested parens resolve through `type` as well.
+    #[tokio::test]
+    async fn repeated_paren_nesting_valid_type_prints() {
+        let mut bash = tight_bash();
+        let script = format!(
+            "f() {{ [[ {}-n x{} ]]; }}; type f",
+            "( ".repeat(80),
+            " )".repeat(80)
+        );
+        let result = bash.exec(&script).await.unwrap();
+        assert!(
+            result.stderr.is_empty(),
+            "valid nested parens must not error, got stderr: {:?}",
+            result.stderr
+        );
+        assert!(
+            result.stdout.contains("-n x"),
+            "type must print the conditional body, got stdout: {:?}",
+            result.stdout
+        );
+    }
 }
