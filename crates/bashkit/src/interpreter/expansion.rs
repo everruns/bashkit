@@ -2725,9 +2725,13 @@ impl Interpreter {
             Some(expr) => {
                 let n = self.evaluate_arithmetic(expr);
                 if n < 0 {
-                    return Err(
-                        self.arith_diag("", &format!("{}: substring expression < 0", expr.trim()))
-                    );
+                    return Err(self.arith_diag(
+                        "",
+                        &format!(
+                            "{}: substring expression < 0",
+                            arithmetic::diag_echo(expr.trim())
+                        ),
+                    ));
                 }
                 usize::try_from(n).unwrap_or(usize::MAX)
             }
@@ -2780,9 +2784,13 @@ impl Interpreter {
                 (true, Some(s), Some(e)) if e >= s => return Ok((s, e)),
                 (true, None, _) => return Ok((0, 0)),
                 _ => {
-                    return Err(
-                        self.arith_diag("", &format!("{}: substring expression < 0", expr.trim()))
-                    );
+                    return Err(self.arith_diag(
+                        "",
+                        &format!(
+                            "{}: substring expression < 0",
+                            arithmetic::diag_echo(expr.trim())
+                        ),
+                    ));
                 }
             }
         }

@@ -231,3 +231,119 @@ async fn interactive_mode_keeps_bare_prefix() {
     let r = bash.exec("nocmd").await.unwrap();
     assert_eq!(r.stderr, "bash: nocmd: command not found\n");
 }
+
+// --- Arithmetic diagnostics stay inside the diagnostic budget (TM-INF-022) ---
+//
+// `$(( ))` echoes two attacker-controlled fragments into one line: the whole
+// expression, and the unparsed rest as the "error token". Both were unbounded,
+// so one bounded expression produced a diagnostic about twice its size.
+// `arithmetic_fuzz` (nightly fuzz run 270) found a 507-byte expression that
+// rendered 1,076 bytes of stderr, over the 1 KiB cap
+// `bashkit::testing::assert_no_leak` holds every builtin to.
+
+/// Same cap as `bashkit::testing::MAX_STDERR_BYTES`.
+const MAX_DIAG: usize = 1024;
+
+/// The reduced `arithmetic_fuzz` crash. The rejected `#` sits near the front,
+/// so the unparsed rest -- the "error token" -- is nearly as long as the
+/// expression echoed before it. That doubling is what went over the cap.
+fn long_bad_expression() -> String {
+    format!("~#{}", "~".repeat(500))
+}
+
+#[tokio::test]
+async fn long_arithmetic_expansion_diagnostic_is_bounded() {
+    let (err, code) = run_c(&format!("echo $(({}))", long_bad_expression())).await;
+    assert!(
+        err.len() <= MAX_DIAG,
+        "stderr is {} bytes:\n{err}",
+        err.len()
+    );
+    // Truncation keeps the part that says what went wrong.
+    assert!(err.starts_with("bash: line 1: "), "{err}");
+    assert!(err.contains("syntax error"), "{err}");
+    assert_eq!(code, 1);
+}
+
+#[tokio::test]
+async fn long_arithmetic_command_diagnostic_is_bounded() {
+    let (err, code) = run_c(&format!("(({}))", long_bad_expression())).await;
+    assert!(
+        err.len() <= MAX_DIAG,
+        "stderr is {} bytes:\n{err}",
+        err.len()
+    );
+    assert!(err.contains("syntax error"), "{err}");
+    assert_eq!(code, 1);
+}
+
+#[tokio::test]
+async fn long_let_diagnostic_is_bounded() {
+    let (err, code) = run_c(&format!("let '{}'", long_bad_expression())).await;
+    assert!(
+        err.len() <= MAX_DIAG,
+        "stderr is {} bytes:\n{err}",
+        err.len()
+    );
+    assert!(err.contains("syntax error"), "{err}");
+    assert_eq!(code, 1);
+}
+
+#[tokio::test]
+async fn long_cond_arithmetic_diagnostic_is_bounded() {
+    let (err, _) = run_c(&format!("[[ {} -eq 1 ]]", long_bad_expression())).await;
+    assert!(
+        err.len() <= MAX_DIAG,
+        "stderr is {} bytes:\n{err}",
+        err.len()
+    );
+    assert!(err.contains("syntax error"), "{err}");
+}
+
+#[tokio::test]
+async fn long_division_by_zero_diagnostic_is_bounded() {
+    // The error token here is the right-hand side, echoed from the source.
+    let (err, code) = run_c(&format!("echo $((1/(0{}) ))", "+0".repeat(400))).await;
+    assert!(
+        err.len() <= MAX_DIAG,
+        "stderr is {} bytes:\n{err}",
+        err.len()
+    );
+    assert!(err.contains("division by 0"), "{err}");
+    assert_eq!(code, 1);
+}
+
+#[tokio::test]
+async fn long_bad_number_diagnostic_is_bounded() {
+    let (err, code) = run_c(&format!("echo $((1{}x))", "9".repeat(600))).await;
+    assert!(
+        err.len() <= MAX_DIAG,
+        "stderr is {} bytes:\n{err}",
+        err.len()
+    );
+    assert_eq!(code, 1);
+}
+
+#[tokio::test]
+async fn short_arithmetic_diagnostics_are_not_truncated() {
+    // The common case stays byte for byte with bash 5.2.
+    let (err, code) = run_c("echo $((1/0))").await;
+    assert_eq!(
+        err,
+        "bash: line 1: 1/0: division by 0 (error token is \"0\")\n"
+    );
+    assert_eq!(code, 1);
+
+    let (err, code) = run_c("echo $((1/(0+0)))").await;
+    assert_eq!(
+        err,
+        "bash: line 1: 1/(0+0): division by 0 (error token is \"(0+0)\")\n"
+    );
+    assert_eq!(code, 1);
+
+    // An expression under the cap is still echoed whole, with no marker.
+    let expr = format!("{}#x", "~".repeat(100));
+    let (err, _) = run_c(&format!("echo $(({expr}))")).await;
+    assert!(err.contains(&expr), "{err}");
+    assert!(!err.contains("..."), "{err}");
+}

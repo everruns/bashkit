@@ -483,6 +483,17 @@ then generalized via the static + dynamic + fuzz guards in the table. New builti
 library errors must use Display (`{}`) or a domain formatter, reference shape:
 `format_compile_errors` in `builtins/jq/errors.rs`.
 
+The 1 KB ceiling also binds diagnostics the *interpreter* writes, not just
+builtins wrapping libraries. Arithmetic errors named the whole expression and
+the whole unparsed rest (the "error token"), both straight from the script, so
+one expression under `MAX_ARITHMETIC_EXPANSION_BYTES` rendered a diagnostic
+about twice its size -- `arithmetic_fuzz` (nightly fuzz run 270) tripped
+`assert_no_leak` with 1,076 bytes from a 507-byte expression. Each echoed
+fragment is now bounded by `MAX_ARITHMETIC_DIAG_ECHO` via
+`interpreter::arithmetic::diag_echo`, which keeps the fixed explanatory text
+that follows it (L-ARITH-002). Any new diagnostic that quotes script text back
+has the same obligation: bound the quoted run, not the finished line.
+
 Display of a **Bashkit** error is not a safe formatter either: `Error`'s own
 variants stringify as Rust enum shapes (`io error: `, `internal error: `) that
 no shell prints, and `internal error:` is in `UNIVERSAL_BANNED`. Builtins
