@@ -362,6 +362,10 @@ mod resource_exhaustion {
         signaled: bool,
         descendant_gone: bool,
         readers_joined: bool,
+        /// Reader handles that never finished inside the shared grace:
+        /// preserved here instead of silently detached, so the caller
+        /// sees the exact shortfall. Normally empty.
+        unjoined: Vec<std::thread::JoinHandle<()>>,
         elapsed: Duration,
     }
 
@@ -381,9 +385,9 @@ mod resource_exhaustion {
             let mut signaled = false;
             let mut gone = false;
             let mut joined = false;
+            let mut unjoined = Vec::new();
             if let Some(pid) = self.pid.clone() {
                 // Terminate the exact owned descendant (not self-expiry).
-                // An ESRCH answer here already proves absence.
                 // ESRCH on the kill itself already proves absence; a
                 // dispatched signal proceeds to the join/absence proof.
                 let kill = signal_bounded(&["-9", &pid], remaining());
@@ -400,11 +404,15 @@ mod resource_exhaustion {
                 if let Some(pending) = self.pending.take() {
                     let mut ok = !pending.handles.is_empty();
                     for reader in pending.handles {
-                        if !matches!(
-                            join_finished(reader, Instant::now() + remaining().min(JOIN_GRACE)),
-                            JoinOutcome::Joined
-                        ) {
-                            ok = false;
+                        match join_finished(reader, Instant::now() + remaining().min(JOIN_GRACE)) {
+                            JoinOutcome::Joined => {}
+                            JoinOutcome::Unfinished(handle) => {
+                                unjoined.push(handle);
+                                ok = false;
+                            }
+                            JoinOutcome::Panicked => {
+                                ok = false;
+                            }
                         }
                     }
                     joined = ok;
@@ -432,6 +440,7 @@ mod resource_exhaustion {
                 signaled,
                 descendant_gone: gone,
                 readers_joined: joined,
+                unjoined,
                 elapsed: start.elapsed(),
             }
         }
@@ -448,9 +457,16 @@ mod resource_exhaustion {
             for path in std::mem::take(&mut self.files) {
                 std::fs::remove_file(&path).ok();
             }
-            // Pending handles drop here (detached): their pipes close as a
-            // consequence of the kill above, so the threads finish on
-            // their own right after this test's scope ends.
+            // Pending handles get one bounded join attempt here (never an
+            // unbounded wait): their pipes close as a consequence of the
+            // kill above, so joined threads prove completion while the
+            // rest stay explicitly unjoined. No asserts, no panics.
+            if let Some(pending) = self.pending.take() {
+                let end = Instant::now() + JOIN_GRACE;
+                for reader in pending.handles {
+                    let _ = join_finished(reader, end);
+                }
+            }
         }
     }
 
@@ -1040,6 +1056,10 @@ mod resource_exhaustion {
         assert!(
             receipt.readers_joined,
             "SAME original reader handles joined after the kill"
+        );
+        assert!(
+            receipt.unjoined.is_empty(),
+            "no reader handle silently detached"
         );
         assert!(
             receipt.elapsed < Duration::from_secs(25),
@@ -1640,6 +1660,10 @@ mod resource_exhaustion {
         assert!(
             receipt.readers_joined,
             "ORIGINAL reader handles joined after the kill"
+        );
+        assert!(
+            receipt.unjoined.is_empty(),
+            "no reader handle silently detached"
         );
         assert!(
             receipt.elapsed < Duration::from_secs(25),
