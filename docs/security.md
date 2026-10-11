@@ -153,6 +153,12 @@ Arithmetic limits cover textual dollar expansion inside expressions.
 Nested array subscripts share the enclosing expression's recursion and work
 limits, including quoted arguments to `let`. Exceeding either limit returns
 an arithmetic error; subsequent executions can reuse the session.
+Expanded arithmetic expressions and associative-array keys are capped at 64 KiB.
+Their buffers reserve capacity against `max_live_intermediate_bytes` before
+allocation, including temporary copies of variable values. Each append charges
+`max_work_units` and checks cancellation and the execution deadline. Shared-budget
+exhaustion returns a resource-limit error rather than continuing the script;
+subsequent executions start with a fresh request budget.
 
 ## Panic safety
 

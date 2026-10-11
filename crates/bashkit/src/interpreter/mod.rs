@@ -2926,7 +2926,7 @@ impl Interpreter {
         Arc::make_mut(&mut self.scoped.namerefs)
     }
 
-    /// Check if cancellation has been requested.
+    /// Check cancellation and resource failures recorded by read-only expansion.
     fn check_cancelled(&self) -> Result<()> {
         if let Some(error) = &self.memory_limit_error {
             return Err(crate::error::Error::ResourceLimit(error.clone()));
@@ -2934,7 +2934,7 @@ impl Interpreter {
         if self.cancelled.load(Ordering::Relaxed) {
             Err(crate::error::Error::Cancelled)
         } else {
-            Ok(())
+            self.execution_budget.check().map_err(Into::into)
         }
     }
 
@@ -13146,57 +13146,70 @@ impl Interpreter {
                 self.resolve_param_expansion_name(name).1
             })
         };
-        Self::expand_key_text_using(s, lookup).unwrap()
+        let mut out = String::new();
+        Self::scan_key_text(s, lookup, |text| {
+            out.push_str(text);
+            Ok(())
+        })
+        .unwrap();
+        out
     }
 
     /// One quote/key scanner; callers own lookup semantics and recursion budgets.
-    fn expand_key_text_using<E>(
+    fn scan_key_text<T: std::ops::Deref<Target = str>, E>(
         s: &str,
-        mut lookup: impl FnMut(&str, bool) -> std::result::Result<String, E>,
-    ) -> std::result::Result<String, E> {
-        let mut out = String::new();
-        let mut chars = s.chars().peekable();
-        while let Some(c) = chars.next() {
+        mut lookup: impl FnMut(&str, bool) -> std::result::Result<T, E>,
+        mut append: impl FnMut(&str) -> std::result::Result<(), E>,
+    ) -> std::result::Result<(), E> {
+        // Borrow names from the source: scanners must not allocate an
+        // unmetered temporary before a fallible expansion callback runs.
+        let mut chars = s.char_indices().peekable();
+        while let Some((_, c)) = chars.next() {
             match c {
                 '"' => {}
                 '\'' => {
-                    for q in chars.by_ref() {
+                    for (_, q) in chars.by_ref() {
                         if q == '\'' {
                             break;
                         }
-                        out.push(q);
+                        append(q.encode_utf8(&mut [0; 4]))?;
                     }
                 }
-                '\\' => out.extend(chars.next()),
-                '$' if chars.peek() == Some(&'{') => {
-                    chars.next();
-                    let mut name = String::new();
-                    for n in chars.by_ref() {
+                '\\' => {
+                    if let Some((_, c)) = chars.next() {
+                        append(c.encode_utf8(&mut [0; 4]))?;
+                    }
+                }
+                '$' if chars.peek().is_some_and(|(_, c)| *c == '{') => {
+                    let (start, _) = chars.next().unwrap();
+                    let mut end = s.len();
+                    for (i, n) in chars.by_ref() {
                         if n == '}' {
+                            end = i;
                             break;
                         }
-                        name.push(n);
                     }
-                    out.push_str(&lookup(&name, true)?);
+                    append(&lookup(&s[start + 1..end], true)?)?;
                 }
                 '$' if chars
                     .peek()
-                    .is_some_and(|n| n.is_ascii_alphanumeric() || *n == '_') =>
+                    .is_some_and(|(_, n)| n.is_ascii_alphanumeric() || *n == '_') =>
                 {
-                    let mut name = String::new();
-                    while let Some(&n) = chars.peek() {
+                    let start = chars.peek().unwrap().0;
+                    let mut end = start;
+                    while let Some(&(i, n)) = chars.peek() {
                         if !(n.is_ascii_alphanumeric() || n == '_') {
                             break;
                         }
-                        name.push(n);
+                        end = i + n.len_utf8();
                         chars.next();
                     }
-                    out.push_str(&lookup(&name, false)?);
+                    append(&lookup(&s[start..end], false)?)?;
                 }
-                _ => out.push(c),
+                _ => append(c.encode_utf8(&mut [0; 4]))?,
             }
         }
-        Ok(out)
+        Ok(())
     }
 
     /// Fully expand an associative array key using standard word expansion.
