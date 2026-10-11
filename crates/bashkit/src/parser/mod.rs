@@ -345,7 +345,10 @@ impl<'a> Parser<'a> {
         let line = self.current_span.start.line;
         let near = |token: &str| {
             Some(Error::parse_at(
-                format!("syntax error near unexpected token `{token}'"),
+                // THREAT[TM-DOS-136]: a quoted token may span the whole input.
+                crate::error::bounded_diagnostic(format_args!(
+                    "syntax error near unexpected token `{token}'"
+                )),
                 line,
                 self.current_span.start.column,
             ))

@@ -9,9 +9,11 @@ use bashkit::{
     Bash, ExecutionLimits, FileSystem, FileSystemExt, FsLimits, InMemoryFs, MemoryLimits,
     OverlayFs, SessionLimits, TraceEventDetails, TraceEventKind, TraceMode,
 };
+use std::io::Read;
 use std::path::Path;
+use std::process::{Command, Stdio};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 // =============================================================================
 // 1. RESOURCE EXHAUSTION TESTS
@@ -20,14 +22,418 @@ use std::time::Duration;
 mod resource_exhaustion {
     use super::*;
 
-    /// TM-RES-INDIRECT: an indirect array target ends at the first `]`.
-    /// Trailing operator/nesting text is never re-expanded as code, so a
-    /// default operand cannot re-enter indirect expansion and exhaust the
-    /// stack (`r='a[0]:-${!r}]'`). Matches real bash: element-or-empty.
+    /// TM-DOS-135: child-process runner for hostile scripts.
+    /// Hostile reproducers never run in the test process: pre-fix they
+    /// overflowed the stack and aborted the whole runner. The CLI binary
+    /// sits next to the test binary's `deps` directory.
+    fn bashkit_cli_path() -> std::path::PathBuf {
+        let exe = std::env::current_exe().expect("current test executable");
+        let deps = exe.parent().expect("deps dir");
+        let profile = deps.parent().expect("profile dir");
+        profile.join(format!("bashkit{}", std::env::consts::EXE_SUFFIX))
+    }
+
+    struct BoundedRun {
+        timed_out: bool,
+        oversized: bool,
+        /// True when the deadline passed with readers unfinished: a foreign
+        /// descendant retains the pipes. Detection, not reaping: without
+        /// platform process-group APIs (no new dependencies) a foreign
+        /// descendant cannot be reaped portably, so the run fails visibly.
+        incomplete_readers: bool,
+        /// First stderr line from the launcher (`harness-limits: ...`),
+        /// proving the CPU/stack caps were applied to this run. Empty when
+        /// the launcher itself refused (fail-closed exit 99).
+        limits_note: String,
+        exit_code: Option<i32>,
+        stdout: String,
+        stderr: String,
+    }
+
+    /// Fail-closed launcher limits: 10 CPU seconds, 4 MiB main-thread
+    /// stack. Any refusal exits 99 before the producer starts, so a run
+    /// without limits can never be mistaken for a bounded one.
+    const BOUNDED_CLI_LIMITS: &str = "ulimit -s 4096 || exit 99; ulimit -t 10 || exit 99";
+
+    /// Per-pipe sample cap. Past the cap the reader stops draining and the
+    /// run is marked `oversized`, which fails the harness: oversize output
+    /// is never silently truncated.
+    const BOUNDED_SAMPLE_CAP: usize = 8192;
+
+    /// Reads one pipe to the sample cap on its own thread (concurrent with
+    /// the sibling pipe, so a chatty child can never deadlock the runner),
+    /// then reports its bytes. Past the cap it stops draining: the child
+    /// blocks on the full pipe until the poll loop kills it.
+    fn spawn_capped_reader(
+        id: u8,
+        pipe: Box<dyn std::io::Read + Send>,
+        tx: std::sync::mpsc::Sender<(u8, Vec<u8>, bool)>,
+    ) -> std::thread::JoinHandle<()> {
+        std::thread::spawn(move || {
+            let mut pipe = pipe;
+            let mut buf = Vec::new();
+            let mut chunk = [0u8; 4096];
+            let mut oversized = false;
+            loop {
+                match pipe.read(&mut chunk) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        buf.extend_from_slice(&chunk[..n]);
+                        if buf.len() > BOUNDED_SAMPLE_CAP {
+                            oversized = true;
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+            let _ = tx.send((id, buf, oversized));
+        })
+    }
+
+    /// Runs a script in the built CLI under `run_command_bounded`, with
+    /// trailing `$0`/ARG0 words after the `-c` script.
+    /// The launcher applies the fail-closed CPU/stack caps, reports the
+    /// effective values as the first stderr line, then `exec`s the CLI so
+    /// exit codes and diagnostics stay the real producer's own.
+    fn run_cli_argv_bounded(script: &str, extra_args: &[&str], limit: Duration) -> BoundedRun {
+        let launcher = format!(
+            "{BOUNDED_CLI_LIMITS}; echo \"harness-limits: stack=$(ulimit -s) cpu=$(ulimit -t)\" >&2; exec \"$@\""
+        );
+        let mut cmd = Command::new("bash");
+        cmd.args(["-c", &launcher, "_"])
+            .arg(bashkit_cli_path())
+            .args(["-c", script])
+            .args(extra_args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let mut run = run_command_bounded(cmd, limit);
+        (run.limits_note, run.stderr) = match run.stderr.split_once('\n') {
+            Some((first, rest)) if first.starts_with("harness-limits:") => {
+                (first.to_string(), rest.to_string())
+            }
+            _ => (String::new(), run.stderr),
+        };
+        run
+    }
+
+    /// Runs a script in the built CLI under `run_command_bounded`, with
+    /// no trailing words after the `-c` script.
+    fn run_cli_bounded(script: &str, limit: Duration) -> BoundedRun {
+        run_cli_argv_bounded(script, &[], limit)
+    }
+
+    /// Runs an already-built command with one shared wall deadline for
+    /// child exit, pipe drain, and reaping:
+    /// - wall clock: past `limit` the child is killed; if it had already
+    ///   exited, the run is not marked timed out;
+    /// - output: one reader thread per pipe stops past the sample cap, the
+    ///   child is killed, and the run is marked `oversized` (a harness
+    ///   failure, never a silent cut). Readers run concurrently, so a
+    ///   chatty child can never deadlock the runner on a full pipe;
+    /// - drain: after the break, missing readers get a short grace period.
+    ///   Anything still missing means a foreign descendant retains the
+    ///   pipe: the run is marked `incomplete_readers` and fails visibly
+    ///   instead of waiting forever. Reader threads for retained pipes are
+    ///   dropped, not joined without a deadline (one documented thread
+    ///   leak per such run, only in the retention self-test).
+    /// - CPU/stack caps are the launcher's job (see above); Rust std
+    ///   exposes no portable per-child CPU/stack/memory caps, and Darwin
+    ///   does not enforce address-space caps: documented here, not claimed.
+    fn run_command_bounded(mut cmd: Command, limit: Duration) -> BoundedRun {
+        let mut child = cmd.spawn().expect("spawn bounded child");
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut readers = Vec::new();
+        if let Some(pipe) = child.stdout.take() {
+            readers.push(spawn_capped_reader(0, Box::new(pipe), tx.clone()));
+        }
+        if let Some(pipe) = child.stderr.take() {
+            readers.push(spawn_capped_reader(1, Box::new(pipe), tx.clone()));
+        }
+        drop(tx);
+        let mut bufs: [Option<Vec<u8>>; 2] = [None, None];
+        let mut oversized = false;
+        let mut status = None;
+        let mut timed_out = false;
+        let deadline = Instant::now() + limit;
+        // Pipe EOF alone never ends the run: only an observed exit does,
+        // otherwise a child that closes output and keeps running would
+        // bypass the watchdog into an unbounded wait. The deadline verdict
+        // is recorded from pre-kill observed liveness and never recomputed
+        // after killing: reaping the SIGKILL victim must not flip a genuine
+        // timeout to false on scheduling luck.
+        loop {
+            while let Ok((id, buf, over)) = rx.try_recv() {
+                bufs[id as usize] = Some(buf);
+                oversized |= over;
+            }
+            if bufs[0].is_some() && bufs[1].is_some() && status.is_some() {
+                break;
+            }
+            if oversized {
+                // `kill` is idempotent; errors (already exited) are ignored.
+                let _ = child.kill();
+            }
+            if status.is_none() {
+                status = child.try_wait().expect("poll child");
+            }
+            if Instant::now() >= deadline {
+                if status.is_none() && !oversized {
+                    let _ = child.kill();
+                    timed_out = true;
+                }
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        // Bounded drain grace: an exited child with unretained pipes hits
+        // EOF promptly; anything still missing is a retained pipe.
+        let grace_end = Instant::now() + Duration::from_secs(2);
+        while (bufs[0].is_none() || bufs[1].is_none()) && Instant::now() < grace_end {
+            match rx.recv_timeout(Duration::from_millis(50)) {
+                Ok((id, buf, over)) => {
+                    bufs[id as usize] = Some(buf);
+                    oversized |= over;
+                }
+                Err(_) => {
+                    if bufs[0].is_some() && bufs[1].is_some() {
+                        break;
+                    }
+                }
+            }
+        }
+        let incomplete_readers = bufs[0].is_none() || bufs[1].is_none();
+        if !incomplete_readers {
+            for reader in readers {
+                let _ = reader.join();
+            }
+        }
+        // Always reaped explicitly: `try_wait` may already have seen the
+        // exit, in which case this returns immediately with the same status.
+        let reaped = child.wait().expect("reap child");
+        let status = Some(status.unwrap_or(reaped));
+        let stdout = String::from_utf8_lossy(bufs[0].as_deref().unwrap_or(&[])).into_owned();
+        let stderr = String::from_utf8_lossy(bufs[1].as_deref().unwrap_or(&[])).into_owned();
+        BoundedRun {
+            timed_out,
+            oversized,
+            incomplete_readers,
+            limits_note: String::new(),
+            exit_code: status.and_then(|s| s.code()),
+            stdout,
+            stderr,
+        }
+    }
+
+    /// TM-DOS-136: scaled multiline token x long ARG0 stays bounded in a
+    /// child. The exact finding shape: `for x "` plus N `a`+newline lines
+    /// plus the closing quote (the parser expects `do`), invoked with a long
+    /// `-c` ARG0. Diagnostic storage used to grow as token lines x ARG0
+    /// before stderr capture. Both scales must exit 2 with a Bash-compatible
+    /// shape and flat <=1 KiB stderr, proving the report no longer grows
+    /// with the product. Never runs in the test process.
+    #[test]
+    fn syntax_diagnostic_multiline_times_arg0_is_bounded_in_child() {
+        for token_lines in [200usize, 2000usize] {
+            let mut script = String::from("for x \"");
+            for _ in 0..token_lines {
+                script.push('a');
+                script.push('\n');
+            }
+            script.push('"');
+            let arg0 = "B".repeat(8192);
+            let run = run_cli_argv_bounded(&script, &[&arg0], Duration::from_secs(20));
+            assert!(
+                !run.timed_out,
+                "token_lines={token_lines}: child hit the 20s watchdog"
+            );
+            assert_eq!(
+                run.exit_code,
+                Some(2),
+                "token_lines={token_lines}: raw child exit code"
+            );
+            assert!(
+                run.stdout.is_empty(),
+                "token_lines={token_lines}: stdout must stay empty"
+            );
+            assert!(
+                run.stderr.contains("syntax error"),
+                "token_lines={token_lines}: keep the Bash-compatible shape"
+            );
+            assert!(
+                run.stderr.len() <= 1024,
+                "token_lines={token_lines}: {} stderr bytes, want <= 1024",
+                run.stderr.len()
+            );
+        }
+    }
+
+    /// TM-DOS-135: hostile indirect cycles are refused in a bounded child.
+    /// Exact finding reproducer plus the mutual variant. Both run in a
+    /// child CLI under a wall-clock watchdog (never in the test runner:
+    /// pre-fix they overflowed the stack and aborted the process) and are
+    /// refused with `invalid variable name`, like modern bash (5.x); the
+    /// real producer exit status is asserted, never relabeled.
+    #[test]
+    fn indirect_hostile_cycles_rejected_in_bounded_child() {
+        for script in [
+            "unset a\nr='a[0]:-${!r}]'\necho \"${!r}\"",
+            "unset a\nr='a[0]:-${!s}]'\ns='a[0]:-${!r}]'\necho \"${!r}\"",
+        ] {
+            let run = run_cli_bounded(script, Duration::from_secs(20));
+            assert!(!run.timed_out, "hostile script hung: {script}");
+            assert!(!run.oversized, "hostile script oversized: {script}");
+            assert!(
+                !run.incomplete_readers,
+                "hostile script readers incomplete: {script}"
+            );
+            assert!(
+                run.limits_note.contains("stack=4096") && run.limits_note.contains("cpu=10"),
+                "limits not applied: {}",
+                run.limits_note
+            );
+            assert_eq!(
+                run.exit_code,
+                Some(1),
+                "script: {script}, stdout: {}, stderr: {}",
+                run.stdout,
+                run.stderr
+            );
+            assert!(run.stdout.is_empty(), "stdout: {}", run.stdout);
+            assert!(
+                run.stderr.contains("invalid variable name"),
+                "stderr: {}",
+                run.stderr
+            );
+            assert!(run.stderr.len() < 1024, "stderr: {}", run.stderr);
+        }
+    }
+
+    /// The bounded runner itself is tested: a hung child must be
+    /// reported as a timeout, and an overproducer as oversize. Both fail
+    /// visibly (a boolean the harness asserts on), so a helper regression
+    /// cannot silently pass hostile coverage. The short-deadline case runs
+    /// repeatedly: the timeout verdict must be deterministic, never a
+    /// scheduling coin flip.
+    #[test]
+    fn bounded_helper_kills_hung_child() {
+        let run = run_cli_bounded("sleep 30", Duration::from_secs(3));
+        assert!(
+            run.timed_out,
+            "hung child not reported: {:?}",
+            run.exit_code
+        );
+        assert!(!run.oversized, "hung child misreported as oversize");
+        assert!(
+            !run.incomplete_readers,
+            "hung child misreported as incomplete"
+        );
+        // Repeated short deadlines: every run must report the timeout.
+        for _ in 0..3 {
+            let run = run_cli_bounded("sleep 30", Duration::from_secs(2));
+            assert!(run.timed_out, "short deadline flaked");
+            assert!(!run.oversized, "short deadline misreported as oversize");
+        }
+    }
+
+    /// The launcher is fail-closed: if `ulimit` refuses, the producer never
+    /// starts (exit 99) instead of running unbounded. A shadowed failing
+    /// `ulimit` exercises the refusal with a harmless instant child.
+    #[test]
+    fn bounded_launcher_failure_is_fail_closed() {
+        let probe = [
+            "ulimit() { return 1; }; ",
+            BOUNDED_CLI_LIMITS,
+            "; echo SURVIVED",
+        ]
+        .concat();
+        let out = Command::new("bash")
+            .args(["-c", &probe])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn launcher probe")
+            .wait_with_output()
+            .expect("reap launcher probe");
+        assert_eq!(
+            out.status.code(),
+            Some(99),
+            "stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            !String::from_utf8_lossy(&out.stdout).contains("SURVIVED"),
+            "launcher ran the producer without limits"
+        );
+    }
+
+    /// Both pipes hit EOF while the producer lives: only the wall deadline
+    /// may end the run. The previous loop broke on complete buffers and
+    /// then waited without a deadline; this case hung it forever.
+    #[test]
+    fn bounded_helper_covers_early_pipe_close() {
+        let run = run_cli_bounded("echo hi; exec 1>&- 2>&-; sleep 30", Duration::from_secs(5));
+        assert!(run.timed_out, "live producer with closed pipes not killed");
+        assert!(!run.oversized, "early close misreported as oversize");
+        assert!(
+            !run.incomplete_readers,
+            "closed pipes misreported as incomplete"
+        );
+        assert!(run.stdout.contains("hi"), "stdout: {}", run.stdout);
+        assert_eq!(run.exit_code, None, "expected SIGKILL, no exit code");
+    }
+
+    /// An exited child with descendant-retained pipes: the exit is observed
+    /// but readers never finish. The helper must report incomplete readers
+    /// within bounds, not wait forever. Real bash (not the CLI) is the
+    /// pipe holder here; the orphaned `sleep` is harmless and bounded.
+    #[test]
+    fn bounded_helper_flags_retained_pipes() {
+        let mut cmd = Command::new("bash");
+        cmd.args(["-c", "sleep 30 & exit 0"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let run = run_command_bounded(cmd, Duration::from_secs(5));
+        assert!(!run.timed_out, "exited child misreported as timeout");
+        assert!(
+            run.incomplete_readers,
+            "retained pipes not reported as incomplete"
+        );
+        assert_eq!(run.exit_code, Some(0), "stdout: {}", run.stdout);
+    }
+
+    #[test]
+    fn bounded_helper_flags_oversize_output() {
+        let script =
+            "i=0; while ((i < 4000)); do echo \"padding line $i padding\"; i=$((i + 1)); done";
+        let run = run_cli_bounded(script, Duration::from_secs(20));
+        assert!(!run.timed_out, "overproducer hung");
+        assert!(run.oversized, "overproducer not flagged as oversize");
+        assert!(
+            !run.incomplete_readers,
+            "overproducer misreported as incomplete"
+        );
+        assert!(
+            run.stdout.len() <= BOUNDED_SAMPLE_CAP + 4096,
+            "sample not capped: {}",
+            run.stdout.len()
+        );
+    }
+
+    /// TM-DOS-135: a bracket indirect target is refused unless the first
+    /// complete `[...]` reference consumes the whole value. Modern bash
+    /// (5.x) rejects trailing operators with `invalid variable name`;
+    /// refusal also keeps a nested `${!...}` from ever reaching the desugar
+    /// re-parse, which re-entered indirect expansion without bound.
+    /// Valid nested subscripts resolve whole.
     #[tokio::test]
-    async fn indirect_array_target_ends_at_first_close_bracket() {
-        // Trailing operator/nesting text is ignored, like real bash
-        // (verified: bash prints `out=[]`, `st=0` for every target below).
+    async fn indirect_array_boundary_rejects_trailing_operators() {
+        // Trailing operator/nesting text is refused, like bash 5.x. Older
+        // bash 3.2 ignored the tail, so no real-bash oracle is asserted
+        // for these shapes; the rejection itself is the contract.
         for target in [
             "a[0]:-injected]",
             "a[0]-injected]",
@@ -36,62 +442,82 @@ mod resource_exhaustion {
             "a[0]/x/injected]",
             "a[0][1]",
             "a[0]}${x:-injected}[0]",
+            "a[b[0]]:-D",
         ] {
             let mut bash = Bash::new();
             let result = bash
-                .exec(&format!(
-                    "r='{target}'\necho \"out=[${{!r}}]\"\necho \"st=$?\""
-                ))
+                .exec(&format!("a=(1 2)\nb=(0)\nr='{target}'\necho \"${{!r}}\""))
                 .await
                 .unwrap();
-            assert_eq!(result.stdout, "out=[]\nst=0\n", "target: {target}");
+            assert_ne!(result.exit_code, 0, "target accepted: {target}");
+            assert_eq!(result.exit_code, 1, "target: {target}");
+            assert!(result.stdout.is_empty(), "target: {target}");
             assert!(
-                result.stderr.is_empty(),
+                result.stderr.contains("invalid variable name"),
                 "target: {target}: {}",
                 result.stderr
             );
+            assert!(result.stderr.len() < 1024, "target: {target}");
         }
-        // Set element resolves through the truncated target (bash: `1`).
+
+        // Nested subscripts resolve whole (bash: `two`/`two`).
         let mut bash = Bash::new();
         let result = bash
-            .exec("a=(1 2)\nr='a[0]:-injected]'\necho \"out=[${!r}]\"\necho \"st=$?\"")
+            .exec("a=(zero one two three)\nb=(2)\nr='a[b[0]]'\nprintf \"indirect=[%s]\\n\" \"${!r}\"\nprintf \"direct=[%s]\\n\" \"${a[b[0]]}\"")
             .await
             .unwrap();
-        assert_eq!(result.stdout, "out=[1]\nst=0\n");
+        assert_eq!(result.stdout, "indirect=[two]\ndirect=[two]\n");
+        assert!(result.stderr.is_empty(), "stderr: {}", result.stderr);
+        // Associative references agree between direct and indirect use.
+        // Portable note: indexed cases above also run against real bash
+        // below; assoc arrays need bash 4+, so agreement is asserted here.
+        let mut bash = Bash::new();
+        let result = bash
+            .exec("declare -A h=([k]=V [key]=W)\nkey=k\nr='h[$key]'\necho \"dollar=[${!r}] direct=[${h[$key]}]\"\nr='h[key]'\necho \"plain=[${!r}] direct=[${h[key]}]\"\nr='h[@]'\necho \"at=[${!r}] direct=[${h[@]}]\"")
+            .await
+            .unwrap();
+        assert_eq!(
+            result.stdout,
+            "dollar=[V] direct=[V]\nplain=[W] direct=[W]\nat=[V W] direct=[V W]\n"
+        );
         assert!(result.stderr.is_empty(), "stderr: {}", result.stderr);
     }
 
-    /// TM-RES-INDIRECT: self-referential default operand terminates.
-    /// Pre-fix this exact reproducer overflowed the stack (SIGABRT).
+    // Out of scope: `]` inside an assoc key is unsupported by the
+    // direct subscript parser as well (`declare` accepts it, reads
+    // misparse), so no indirect agreement is asserted for that shape.
+    // The boundary scan still tracks quotes so a complete reference
+    // stays whole if the parser ever learns quoted brackets.
+
+    /// TM-DOS-135: finite nested indexed indirects match real bash
+    /// byte-for-byte. Indexed arrays work on bash 3.2+, so this runs on
+    /// macOS and Linux CI alike.
     #[tokio::test]
-    async fn indirect_self_cycle_default_operand_terminates() {
-        // Exact finding reproducer: unset element + self-cycle in default.
-        // Real bash prints `out=[]` with status 0 and never crashes.
-        let mut bash = Bash::new();
-        let result = bash
-            .exec("unset a\nr='a[0]:-${!r}]'\necho \"out=[${!r}]\"\necho \"st=$?\"")
-            .await
-            .unwrap();
-        assert_eq!(result.stdout, "out=[]\nst=0\n");
-        assert!(result.stderr.is_empty(), "stderr: {}", result.stderr);
-        // Set element: the cycle operand is discarded, element wins.
-        let mut bash = Bash::new();
-        let result = bash
-            .exec("a=(1 2)\nr='a[0]:-${!r}]'\necho \"out=[${!r}]\"\necho \"st=$?\"")
-            .await
-            .unwrap();
-        assert_eq!(result.stdout, "out=[1]\nst=0\n");
-        assert!(result.stderr.is_empty(), "stderr: {}", result.stderr);
-        // Mutual cycle through two names terminates as well.
-        let mut bash = Bash::new();
-        let result = bash
-            .exec(
-                "unset a\nr='a[0]:-${!s}]'\ns='a[0]:-${!r}]'\necho \"out=[${!r}]\"\necho \"st=$?\"",
-            )
-            .await
-            .unwrap();
-        assert_eq!(result.stdout, "out=[]\nst=0\n");
-        assert!(result.stderr.is_empty(), "stderr: {}", result.stderr);
+    async fn indirect_nested_indexed_matches_real_bash() {
+        for script in [
+            "a=(zero one two three); b=(2); r='a[b[0]]'; printf 'indirect=[%s]\n' \"${!r}\"; printf 'direct=[%s]\n' \"${a[b[0]]}\"",
+            "a=(1 2); r='a[0]'; echo \"out=[${!r}]\"",
+            "a=(x y); r='a[@]'; echo \"out=[${!r}]\"",
+            "a=(x y); i=1; r='a[$i]'; echo \"out=[${!r}]\"",
+        ] {
+            let expected = Command::new("bash")
+                .args(["--noprofile", "--norc", "-c", script])
+                .output()
+                .expect("run real bash");
+            assert!(
+                expected.status.success(),
+                "real bash failed: {script}: {}",
+                String::from_utf8_lossy(&expected.stderr)
+            );
+            let mut harness = Bash::new();
+            let result = harness.exec(script).await.unwrap();
+            assert_eq!(
+                result.stdout,
+                String::from_utf8_lossy(&expected.stdout).into_owned(),
+                "script: {script}"
+            );
+            assert!(result.stderr.is_empty(), "stderr: {}", result.stderr);
+        }
     }
 
     /// V1: Test that command limit prevents infinite execution

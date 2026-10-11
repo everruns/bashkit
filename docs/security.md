@@ -65,6 +65,11 @@ output and charges copied bytes to `max_work_units`. Large directory values
 cannot bypass these limits by expanding before variable insertion. A refused
 expansion returns a resource-limit error; the next host execution receives a
 fresh execution budget.
+Syntax-error reports are limited to 1 KiB during construction, including an
+explicit `[diagnostic truncated]` marker when text is omitted. This prevents
+multiline unexpected tokens and long `bash -c` shell names from multiplying
+host-memory usage before stderr capture. Ordinary short reports retain Bash's
+text, line numbers, and exit status.
 
 ## Threat model
 

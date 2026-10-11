@@ -158,6 +158,17 @@ TM-ESC-032), and the deferred error rejects the script the way bash does.
 Process substitution keeps its part for the same reason, and hard-errors on
 budget failures (TM-DOS-021).
 
+**Bounded syntax diagnostics (TM-DOS-136).** Unexpected-token messages and
+complete `Error::syntax_report` results are capped at 1 KiB during construction,
+including `[diagnostic truncated]` and its trailing newline when text is omitted.
+A fixed-capacity UTF-8 writer stops formatting on the first overflow; neither a
+multiline token, a long `$0`, nor the echoed source line can grow a temporary
+report before stderr capture applies. Short reports keep Bash's text and line
+numbers. This cap is independent of configurable capture and execution budgets.
+Regression coverage: `error::tests::syntax_report_*`,
+`error::tests::parser_bounds_unexpected_token_before_copying`, and
+`partial_parse_tests::{child_syntax_report_is_bounded, small_child_syntax_reports_match_bash}`.
+
 **Partial execution before a syntax error.** Bash reads and runs a script line
 by line, so `echo a` on line 1 runs before `if then` on line 2 is reported
 (exit 2). `Parser::parse_recovering` returns the complete top-level commands
