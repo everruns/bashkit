@@ -111,7 +111,7 @@ through configurable limits.
 | Brace range OOM (TM-DOS-041) | `{1..999999999}` | Cap range size | **MITIGATED** |
 | Brace combinatorial (TM-DOS-042) | `{1..100}{1..100}{1..100}` | Cap total expansion | **MITIGATED** |
 | Compound assign overflow (TM-DOS-043) | `((x+=1))` with x=i64::MAX | `wrapping_*` ops | **MITIGATED** |
-| Lexer stack overflow (TM-DOS-044) | ~50 nested `$()` in quotes | Depth tracking | **MITIGATED** |
+| Lexer stack overflow (TM-DOS-044) | ~50 nested `$()` in quotes | Shared AST depth, heap-owned child parsers, outlined nonrecursive parser frames | **MITIGATED** |
 | parse_word_string limits (TM-DOS-050) | Parameter expansion ignores limits | Propagate limits | **MITIGATED** |
 | Removed YAML helper parser (TM-DOS-051) | Former custom parser recursed over indentation | Parser deleted; yq uses TM-DOS-101 controls | **REMOVED** |
 | Template engine recursion (TM-DOS-052) | Nested `{{#if}}`/`{{#each}}` overflow | Add depth limit | **MITIGATED** |
@@ -656,15 +656,18 @@ The parser includes multiple layers of depth protection to prevent stack overflo
 attacks:
 
 1. **Configurable depth limit** (`max_ast_depth`, default 100): Controls maximum nesting
-   of compound commands (if/for/while/case/subshell).
+   of compound commands (if/for/while/case/subshell) and substitutions.
 
 2. **Hard cap** (`HARD_MAX_AST_DEPTH = 100`): Even if the caller configures a higher
    `max_ast_depth`, the parser clamps it to 100. This prevents misconfiguration from
    causing stack overflow.
 
 3. **Child parser inheritance** (TM-DOS-021): When parsing `$(...)` or `<(...)`,
-   the child parser inherits the *remaining* depth budget and fuel from the parent.
-   This prevents attackers from bypassing depth limits through nested substitutions.
+   each substitution consumes one level of the enclosing AST depth. Command
+   substitution child parsers inherit the same ceiling, remaining fuel, execution
+   budget, and timeout origin, and stay heap-owned while parsing. Nonrecursive
+   parameter parsing and AST assembly run outside recursive frames, keeping the
+   unchanged hard ceiling safe on default 2 MiB Rust test-thread stacks.
 
 4. **Arithmetic depth limit** (TM-DOS-026): The arithmetic evaluator (`$((expr))`)
    has its own depth limit (`MAX_ARITHMETIC_DEPTH = 50`) to prevent stack overflow
