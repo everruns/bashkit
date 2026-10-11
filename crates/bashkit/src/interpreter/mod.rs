@@ -12524,7 +12524,6 @@ impl Interpreter {
         self.last_exit_code = status;
         result.exit_code = status;
         result.control_flow = ControlFlow::Exit(status);
-        ()
     }
 
     /// Resolve a path relative to cwd, normalizing `.` and `..` components.
