@@ -301,11 +301,22 @@ pub(crate) fn syntax_report(
     // structural payload (`syntax error ...`, token excerpt, marker) out of
     // the byte budget. Short names print verbatim.
     let shell: std::borrow::Cow<'_, str> = if who.chars().count() > MAX_SHELL_NAME_CHARS {
-        let mut end = MAX_SHELL_NAME_CHARS;
-        while !who.is_char_boundary(end) {
-            end -= 1;
+        let head_len = MAX_SHELL_NAME_CHARS - SHELL_NAME_TAIL_CHARS;
+        let mut head_end = head_len;
+        while !who.is_char_boundary(head_end) {
+            head_end -= 1;
         }
-        std::borrow::Cow::Owned(format!("{}...", &who[..end]))
+        let mut tail_start = who.len();
+        for _ in 0..SHELL_NAME_TAIL_CHARS {
+            if tail_start == 0 {
+                break;
+            }
+            tail_start -= 1;
+            while !who.is_char_boundary(tail_start) {
+                tail_start -= 1;
+            }
+        }
+        std::borrow::Cow::Owned(format!("{}...{}", &who[..head_end], &who[tail_start..]))
     } else {
         std::borrow::Cow::Borrowed(who)
     };
@@ -348,8 +359,14 @@ pub(crate) fn syntax_report(
 const MAX_DIAGNOSTIC_BYTES: usize = 1024;
 /// Display width for the shell name (`-c` ARG0) inside one diagnostic.
 /// Short names print verbatim; longer ones are cut here so a long ARG0
-/// cannot evict the structural payload out of the byte budget.
-const MAX_SHELL_NAME_CHARS: usize = 64;
+/// cannot evict the structural payload out of the byte budget. The cut keeps
+/// the head and the tail: the tail carries attribution suffixes such as
+/// `: eval` (bash prints `<script>: eval: line N ...`). The width sits well
+/// above realistic script paths (the oracle pins those byte-exact) while the
+/// 1 KiB total stays the enforced bound.
+const MAX_SHELL_NAME_CHARS: usize = 256;
+/// Tail kept by the shell-name cut, so attribution suffixes survive.
+const SHELL_NAME_TAIL_CHARS: usize = 16;
 const DIAGNOSTIC_TRUNCATED: &str = "[diagnostic truncated]\n";
 
 /// Fixed-capacity writer: formatting cannot allocate the full untrusted text.
@@ -491,6 +508,18 @@ mod tests {
         assert!(report.contains("..."));
         let short = syntax_report("CASE", "", "syntax error", 1, 1);
         assert!(short.contains("CASE"), "short names print verbatim");
+        let layered = syntax_report(
+            &format!("{}: eval", "S".repeat(256)),
+            "",
+            "syntax error",
+            1,
+            1,
+        );
+        assert!(
+            layered.contains(": eval"),
+            "attribution suffix survives the shell-name cut"
+        );
+        assert!(layered.len() <= MAX_DIAGNOSTIC_BYTES);
     }
 
     #[test]
