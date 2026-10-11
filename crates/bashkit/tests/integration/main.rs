@@ -77,6 +77,7 @@ pub mod fdvar_array_tests;
 pub mod filesystem_security_conformance_tests;
 pub mod final_env_tests;
 pub mod find_multi_path_tests;
+pub mod fmt_resource_tests;
 pub mod for_in_reserved_word_tests;
 pub mod git_advanced_tests;
 pub mod git_inspection_tests;

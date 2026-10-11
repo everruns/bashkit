@@ -618,13 +618,22 @@ regex caps are TM-DOS-023/025 in the [Threat Model](../security/threat-model.md)
 `fmt` vendors the uutils/coreutils `fmt` engine (MIT): `builtins/fmt/
 linebreak.rs` (Knuth-Plass optimal fit) and `parasplit.rs` (paragraphs,
 prefixes, crown/tagged indents), pinned to the same uutils revision as the
-generated argument files. Bashkit owns only `fmt/mod.rs`: option parsing and
-I/O. Options are GNU's (`-w`, `-g`, `-c`, `-t`, `-s`, `-u`, `-p`, obsolete
+generated argument files. Bashkit owns option parsing, I/O and budget
+enforcement. Options are GNU's (`-w`, `-g`, `-c`, `-t`, `-s`, `-u`, `-p`, obsolete
 `-WIDTH`) plus the uutils extras (`-m`, `-P`, `-x`, `-X`, `-q`, `-T`). Width
 rules and error messages follow GNU: goal is 93% of the width, `-g` alone sets
 the width to goal + 10, width is capped at 2500, goal at the width. Vendored
 `panic!`/`unwrap` paths were turned into early returns. GNU `fmt.c` is GPL and
 must not be ported; line-break differences are L-FMT-001.
+
+All formatter output, including unformatted lines, retains a `BudgetedBytes`
+capacity lease against the shared live-intermediate budget before fallible
+allocation. Repeated indentation/prefix bytes consume work before copying;
+optimal-fit word/active-path searches also poll the shared work, cancellation
+and deadline budget. Sink/search errors propagate to the Bash API as resource
+failures, never successful partial output. The stdout capture ceiling does not
+limit a formatter sink used by a pipeline or VFS redirect. Regression coverage:
+`fmt_resource_tests` and the formatter's capacity/cancellation/deadline unit tests.
 
 ### Network Builtins
 
