@@ -1,5 +1,9 @@
 # Bashkit Knowledge Update Log
 
+## 2026-10-11
+
+* **Fix**: arithmetic dollar expansion and associative-key scanning reserve intermediate capacity before allocation, cap generated expression/key bytes at 64 KiB before append, and charge shared work with synchronous cancellation/deadline checks. Scalar storage is borrowed before budgeted copying; temporary value buffers keep their leases until consumed. Poisoned request budgets propagate through command boundaries as resource-limit errors. Small-budget regressions cover arithmetic entry points, read/write operations, key scanning, namerefs, size boundaries, recovery, and finite Bash parity. See [threat model](security/threat-model.md) TM-DOS-026 and [security testing](security/security-testing.md).
+
 ## 2026-10-09
 
 * **Test**: first run of the tagged 88-task `bashkit_bash` and `bashkit_generate` on five models (Opus 5.5 87/88, Kimi K3 86, Sonnet 5.5 85, Muse Spark 84, Gemini 3.8 Flash 74; generate 13-15/15); GPT-6 models pending (OpenAI credit). The homepage eval table now only lists runs over the newest run's task count, so scores on different dataset sizes never mix. Results in `crates/bashkit-eval/README.md`.

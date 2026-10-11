@@ -96,6 +96,20 @@ orphan entries or retained filename allocation. No host-exhaustion probe is need
 The real-Bash comparison sources both the original and post-unset replacement;
 Bash versions differ in the filename they assign to a definition inside `-c`.
 
+## Arithmetic Associative-Key Budgets
+
+`arithmetic_resource_tests` exercises the public `Bash::exec` path with keys
+bounded to a few KiB and small live-memory/work budgets. It covers repeated
+`$name` and `${name}` through `((...))`, quoted `let`, and `$((...))`, reads,
+assignment/compound assignment/increment/decrement, recursive key scanning,
+namerefs, 64 KiB key boundaries, and session recovery after rejection. Finite
+valid-key cases compare stdout and status with Bash >= 4 (associative arrays
+are unavailable in macOS's stock Bash 3.2; Linux CI supplies Bash 5.x).
+The interpreter unit test checks the exact UTF-8 append boundary and a
+cancellation checkpoint without growing a buffer after rejection. Resource
+probes run in externally supervised subprocesses; full memory-exhaustion
+payloads are unnecessary.
+
 ## Adding New Fail Points
 
 Add `fail_point!("module::function", |action| ...)` under
