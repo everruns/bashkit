@@ -254,6 +254,24 @@ mod resource_exhaustion {
                 "token_lines={token_lines}: raw child exit code"
             );
             assert!(
+                !run.oversized,
+                "token_lines={token_lines}: output exceeded the 64 KiB sample cap"
+            );
+            assert!(
+                !run.incomplete_readers,
+                "token_lines={token_lines}: reader threads did not finish"
+            );
+            assert!(
+                run.limits_note.contains("stack=4096"),
+                "token_lines={token_lines}: effective stack cap not read back: {}",
+                run.limits_note
+            );
+            assert!(
+                run.limits_note.contains("cpu=10"),
+                "token_lines={token_lines}: effective CPU cap not read back: {}",
+                run.limits_note
+            );
+            assert!(
                 run.stdout.is_empty(),
                 "token_lines={token_lines}: stdout must stay empty"
             );
