@@ -138,6 +138,7 @@ mod sed_resource_tests;
 pub mod set_e_and_or_tests;
 pub mod shlvl_tests;
 pub mod shuf_resource_tests;
+pub mod signal_trap_depth_tests;
 pub mod skills_tests;
 pub mod snapshot_fixture_tests;
 pub mod snapshot_history_tests;

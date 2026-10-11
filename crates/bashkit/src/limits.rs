@@ -36,6 +36,11 @@ use crate::time_compat::Instant;
 // embedders request a higher logical recursion limit.
 const HARD_MAX_FUNCTION_DEPTH: usize = 16;
 
+// Self-delivered trap handlers re-enter the interpreter synchronously, so a
+// small dedicated nesting cap trips before native frames can exhaust small
+// host stacks, independent of the shared function/source budget below.
+pub(crate) const HARD_MAX_TRAP_NESTING: usize = 3;
+
 // Prompt reparses poll recursively on the host stack, even with shallow ASTs.
 // THREAT[TM-DOS-133]: No configurable AST limit may remove this stack ceiling.
 const HARD_MAX_PROMPT_DEPTH: usize = 8;
@@ -76,7 +81,7 @@ pub struct ExecutionLimits {
     /// Default: 1,000,000
     pub max_total_loop_iterations: usize,
 
-    /// Maximum function call depth (recursion limit)
+    /// Maximum shared function, source, child-shell, and trap-handler depth
     /// Default: 16; values above 16 are capped for host stack safety.
     pub max_function_depth: usize,
 
@@ -272,8 +277,8 @@ impl ExecutionLimits {
         self
     }
 
-    /// Set maximum function depth.
-    /// A value of 0 is a valid strict limit that prevents function calls.
+    /// Set the shared function, source, child-shell, and trap-handler depth.
+    /// A value of 0 prevents entry into any of these execution frames.
     pub fn max_function_depth(mut self, depth: usize) -> Self {
         self.max_function_depth = depth;
         self
@@ -735,6 +740,8 @@ pub enum LimitExceeded {
 
     #[error("maximum prompt expansion depth exceeded ({0})")]
     MaxPromptDepth(usize),
+    #[error("maximum trap nesting depth exceeded ({0})")]
+    MaxTrapDepth(usize),
 
     #[error("maximum file descriptors exceeded ({0})")]
     MaxFileDescriptors(usize),

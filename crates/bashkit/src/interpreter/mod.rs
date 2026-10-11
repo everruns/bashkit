@@ -30,6 +30,10 @@
 // sandbox "Did you mean" / unavailable-command hints after
 // `command not found` are kept on purpose.
 
+// Decision: trap handlers share the function/source depth budget plus a
+// dedicated trap-nesting cap. Nested delivery skips an exhausted handler
+// with a diagnostic; handler logic failures never disturb the interrupted
+// command (TM-DOS-030), while the first resource-limit trip fails the exec.
 mod arithmetic;
 mod brace_expansion;
 mod completion;
@@ -87,7 +91,10 @@ use crate::builtins::{self, Builtin};
 use crate::error::Error;
 use crate::error::Result;
 use crate::fs::FileSystem;
-use crate::limits::{BudgetedString, ExecutionCounters, ExecutionLimits, SessionLimits};
+use crate::limits::{
+    BudgetedString, ExecutionCounters, ExecutionLimits, HARD_MAX_TRAP_NESTING, LimitExceeded,
+    SessionLimits,
+};
 
 /// A single command history entry.
 #[derive(Debug, Clone)]
@@ -1925,6 +1932,10 @@ pub struct Interpreter {
     /// True while executing a trap handler. Suppresses recursive DEBUG trap
     /// invocation to prevent amplification attacks (TM-DOS-035).
     in_trap: bool,
+    /// Nesting level of `run_trap_command` entries (TM-DOS-020).
+    trap_nesting: usize,
+    /// First trap-nesting depth error, surfaced at the `exec` boundary.
+    trap_depth_error: Option<LimitExceeded>,
     /// The ERR trap is inherited for display only: a subshell, command
     /// substitution or pipeline stage without `set -E` keeps the parent's
     /// handler visible to `trap -p` but does not run it (bash). `trap`
@@ -2562,6 +2573,8 @@ impl Interpreter {
             cancelled: Arc::new(AtomicBool::new(false)),
             hooks: Arc::new(crate::hooks::Hooks::default()),
             in_trap: false,
+            trap_nesting: 0,
+            trap_depth_error: None,
             err_trap_dormant: false,
             debug_trap_dormant: false,
             err_trap_skip_stage: false,
@@ -2782,6 +2795,8 @@ impl Interpreter {
             cancelled: Arc::clone(&self.cancelled),
             hooks: Arc::clone(&self.hooks),
             in_trap: false,
+            trap_nesting: 0,
+            trap_depth_error: None,
             // A job or pipeline stage is a subshell: ERR stays dormant there
             // unless `set -E`.
             err_trap_dormant: self.err_trap_dormant || !self.flags.contains(BashFlags::ERRTRACE),
@@ -3101,6 +3116,8 @@ impl Interpreter {
         // handler is awaited; clear the re-entrancy guard before each exec so
         // one cancelled script cannot suppress traps in the next script.
         self.in_trap = false;
+        self.trap_nesting = 0;
+        self.trap_depth_error = None;
         self.err_trap_dormant = false;
         self.debug_trap_dormant = false;
         self.err_trap_skip_stage = false;
@@ -9985,7 +10002,7 @@ impl Interpreter {
                 .unwrap_or(u64::MAX),
             )?;
 
-            self.apply_builtin_side_effects(&mut result).await;
+            self.apply_builtin_side_effects(&mut result).await?;
 
             let result = self.apply_redirections(result, redirects).await?;
             self.apply_after_tool(name, result)
@@ -10885,12 +10902,18 @@ impl Interpreter {
         };
 
         // THREAT[TM-DOS-056]: Check source depth (uses function depth limit)
-        self.counters.push_function(&self.limits).map_err(|_| {
-            crate::error::Error::Execution(format!(
+        if let Err(depth_error) = self.counters.push_function(&self.limits) {
+            // THREAT[TM-DOS-020]: a depth trip inside a trap handler must
+            // still fail the execution instead of silently stopping the
+            // recursion (the `source` status mapping below would hide it).
+            if self.in_trap {
+                self.note_trap_depth_error(depth_error);
+            }
+            return Err(crate::error::Error::Execution(format!(
                 "source: {}: maximum source depth exceeded",
                 filename
-            ))
-        })?;
+            )));
+        }
 
         // Track source file for BASH_SOURCE
         self.bash_source_stack.push(SourceFrame {
@@ -10909,7 +10932,10 @@ impl Interpreter {
         self.xtrace_depth += 1;
         let tempenv_pushed = self.push_pending_tempenv(false);
         let region = self.enter_output_region(redirects);
-        let mut exec_result = self.execute_script_body(&script, false, true).await;
+        // THREAT[TM-DOS-020]: Box the sourced-body execution so a source /
+        // trap recursion cycle cannot grow the parent future with each
+        // nesting level; the shared depth charge above then trips first.
+        let mut exec_result = Box::pin(self.execute_script_body(&script, false, true)).await;
         self.leave_output_region(region);
         if tempenv_pushed {
             self.tempenv_frames.pop();
@@ -12354,7 +12380,7 @@ impl Interpreter {
     }
 
     /// Process structured side effects from builtin execution.
-    async fn apply_builtin_side_effects(&mut self, result: &mut ExecResult) {
+    async fn apply_builtin_side_effects(&mut self, result: &mut ExecResult) -> Result<()> {
         // Builtins that mutate SHOPT_* directly via `ctx.variables` (e.g. the
         // `set -e` / `set +u` paths in the `set` builtin) don't update the
         // cached `flags` bitfield. Resync once after every builtin so the
@@ -12466,6 +12492,7 @@ impl Interpreter {
         if let Some(signal) = pending_self_signal {
             self.deliver_self_signal(signal, result).await;
         }
+        Ok(())
     }
 
     /// `kill -SIG $$`: bash runs that signal's trap if one is set, and
@@ -12473,11 +12500,12 @@ impl Interpreter {
     /// 128 + signal. Signals whose default is to be ignored do neither.
     async fn deliver_self_signal(&mut self, signal: i32, result: &mut ExecResult) {
         if let Some(trap_cmd) = self.signal_trap(signal) {
+            if trap_cmd.is_empty() {
+                return;
+            }
             let mut stdout = std::mem::take(&mut result.stdout);
             let mut stderr = std::mem::take(&mut result.stderr);
-            let flow = self
-                .run_trap_command(&trap_cmd, &mut stdout, &mut stderr)
-                .await;
+            let flow = Box::pin(self.run_trap_command(&trap_cmd, &mut stdout, &mut stderr)).await;
             result.stdout = stdout;
             result.stderr = stderr;
             // An `exit` inside the handler ends the script, as it does in bash.
@@ -14481,7 +14509,21 @@ impl Interpreter {
 
     /// Run a trap handler's command, merging its output into the result the
     /// caller is building.
-    /// Returns the handler's own control flow (an `exit` inside it), if any.
+    /// Returns the handler's control flow and status, or `None` when the
+    /// handler cannot run (unparsable command, exhausted depth budget, or a
+    /// failing handler): trap failures never disturb the interrupted command.
+    /// Record the first trap-nesting depth error for the `exec` boundary.
+    fn note_trap_depth_error(&mut self, error: LimitExceeded) {
+        if self.trap_depth_error.is_none() {
+            self.trap_depth_error = Some(error);
+        }
+    }
+
+    /// Take the recorded trap-nesting depth error, if any.
+    pub(crate) fn take_trap_depth_error(&mut self) -> Option<LimitExceeded> {
+        self.trap_depth_error.take()
+    }
+
     async fn run_trap_command(
         &mut self,
         trap_cmd: &str,
@@ -14492,6 +14534,26 @@ impl Interpreter {
         let Ok(trap_script) = self.parse_shell_text(trap_cmd) else {
             return None;
         };
+        // THREAT[TM-DOS-020]: Bound nested trap delivery with a dedicated
+        // hard cap that trips before native frames can exhaust small host
+        // stacks, independent of command fuel, per-handler AST depth, and
+        // the shared function/source budget (which is charged too, so a low
+        // `max_function_depth` still stops function/signal mixes early).
+        // Exhaustion skips the nested handler with a diagnostic; the first
+        // trip is surfaced as a resource-limit error at the `exec`
+        // boundary, and never disturbs the interrupted command.
+        if self.trap_nesting >= HARD_MAX_TRAP_NESTING {
+            self.note_trap_depth_error(LimitExceeded::MaxTrapDepth(HARD_MAX_TRAP_NESTING));
+            stderr.push_str("bashkit: maximum trap nesting depth exceeded\n");
+            return None;
+        }
+        self.trap_nesting += 1;
+        if let Err(depth_error) = self.counters.push_function(&self.limits) {
+            self.trap_nesting -= 1;
+            self.note_trap_depth_error(depth_error);
+            stderr.push_str("bashkit: maximum trap nesting depth exceeded\n");
+            return None;
+        }
         let was_in_trap = self.in_trap;
         self.in_trap = true;
         let saved_line_base = std::mem::replace(
@@ -14500,12 +14562,28 @@ impl Interpreter {
         );
         let emit_before = self.output_emit_count;
         self.xtrace_depth += 1;
-        let result = self.execute_command_sequence(&trap_script.commands).await;
+        // THREAT[TM-DOS-020]: Box the handler execution so a trap /
+        // source recursion cycle cannot grow the parent future with each
+        // nesting level; the shared depth charge above then trips first.
+        let result = Box::pin(self.execute_command_sequence(&trap_script.commands)).await;
         self.xtrace_depth -= 1;
         self.line_base = saved_line_base;
         self.in_trap = was_in_trap;
-        let Ok(trap_result) = result else {
-            return None;
+        self.trap_nesting -= 1;
+        self.counters.pop_function();
+        // THREAT[TM-DOS-030]: A failing handler must not disturb the
+        // interrupted command, so execution errors end the handler here.
+        // THREAT[TM-DOS-020]: resource exhaustion inside the handler
+        // (a nested function/source call tripping depth or fuel) is not a
+        // handler logic failure: record it so the `exec` boundary still
+        // fails instead of silently stopping the recursion.
+        let trap_result = match result {
+            Ok(trap_result) => trap_result,
+            Err(crate::error::Error::ResourceLimit(limit)) => {
+                self.note_trap_depth_error(limit);
+                return None;
+            }
+            Err(_) => return None,
         };
         self.maybe_emit_output(&trap_result.stdout, &trap_result.stderr, emit_before);
         stdout.append(&trap_result.stdout);
@@ -14591,7 +14669,7 @@ impl Interpreter {
             // The handler runs with `$?` of the trapping command and the
             // shell keeps that status afterwards (bash restores it).
             let saved_exit = self.last_exit_code;
-            let _ = self.run_trap_command(&trap_cmd, stdout, stderr).await;
+            let _ = Box::pin(self.run_trap_command(&trap_cmd, stdout, stderr)).await;
             self.last_exit_code = saved_exit;
         }
     }

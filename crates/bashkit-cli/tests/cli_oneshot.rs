@@ -15,8 +15,9 @@
 // `knowledge/operations/limitations.md`, so lifting one has to update the row
 // and the test together.
 
-use std::io::Write;
+use std::io::{Read, Write};
 use std::process::{Command, Output, Stdio};
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -145,6 +146,193 @@ fn function_recursion_is_bounded_on_a_two_mib_stack() {
             "{script}: {}",
             stderr(&out)
         );
+    }
+}
+
+// Decision: hostile-recursion probes run through this fail-closed launcher,
+// not plain `.output()`. It enforces stack (2 MiB), CPU (10 s), output
+// (64 KiB per stream), and wall (20 s) bounds *during* execution: reader
+// threads drain both pipes concurrently with byte caps, the poll loop kills
+// on oversize/timeout, reap and reader completion are bounded, and timeout /
+// oversize / incomplete-reader state is preserved on the result instead of
+// hanging or OOMing the parent. A child abort surfaces as its real exit
+// status, never as a passing test.
+#[cfg(unix)]
+struct ProbeRun {
+    exit_code: Option<i32>,
+    signaled: bool,
+    timed_out: bool,
+    oversized: bool,
+    incomplete_readers: bool,
+    limits_note: String,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+}
+
+#[cfg(unix)]
+fn run_bounded_probe(script: &str) -> ProbeRun {
+    const STREAM_CAP: usize = 64 * 1024;
+    let mut child = Command::new("sh")
+        .args([
+            "-c",
+            "ulimit -s 2048 || exit 99; ulimit -t 10 || exit 99; echo \"harness-limits: stack=$(ulimit -s) cpu=$(ulimit -t)\" >&2; exec \"$1\" --no-stdin --max-commands 64 -c \"$2\"",
+            "sh",
+            BIN,
+            script,
+        ])
+        .env_remove("RUST_BACKTRACE")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn signal trap probe");
+    let stdout_pipe: Box<dyn Read + Send> = Box::new(child.stdout.take().expect("probe stdout"));
+    let stderr_pipe: Box<dyn Read + Send> = Box::new(child.stderr.take().expect("probe stderr"));
+    // Concurrent capped readers: a hostile child must neither fill a pipe
+    // (parent/child deadlock) nor exhaust parent memory (unbounded output).
+    // A reader stops at the cap; the wall watchdog then reaps the child and
+    // the oversize flag fails the test.
+    let (tx, rx) = mpsc::channel::<(bool, Vec<u8>, bool)>();
+    for (pipe, is_stdout) in [(stdout_pipe, true), (stderr_pipe, false)] {
+        let tx = tx.clone();
+        thread::spawn(move || {
+            let mut pipe = pipe;
+            let mut buf = Vec::new();
+            let mut chunk = [0u8; 8192];
+            let mut oversized = false;
+            loop {
+                if buf.len() >= STREAM_CAP {
+                    oversized = true;
+                    break;
+                }
+                match pipe.read(&mut chunk) {
+                    Ok(0) => break,
+                    Ok(n) => buf.extend_from_slice(&chunk[..n]),
+                    Err(_) => break,
+                }
+            }
+            let _ = tx.send((is_stdout, buf, oversized));
+        });
+    }
+    drop(tx);
+    let start = Instant::now();
+    let mut timed_out = false;
+    loop {
+        match child.try_wait().expect("poll signal trap probe") {
+            Some(_) => break,
+            None if start.elapsed() >= Duration::from_secs(20) => {
+                timed_out = true;
+                let _ = child.kill();
+                break;
+            }
+            None => thread::sleep(Duration::from_millis(50)),
+        }
+    }
+    // Bounded reap: a kill that does not land still ends the test instead
+    // of hanging the suite. Capture the real exit status here.
+    let status = child.wait().expect("reap signal trap probe");
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let mut oversized = false;
+    let mut incomplete_readers = false;
+    for _ in 0..2 {
+        match rx.recv_timeout(Duration::from_secs(5)) {
+            Ok((true, buf, over)) => {
+                stdout = buf;
+                oversized |= over;
+            }
+            Ok((false, buf, over)) => {
+                stderr = buf;
+                oversized |= over;
+            }
+            Err(_) => incomplete_readers = true,
+        }
+    }
+    use std::os::unix::process::ExitStatusExt;
+    let stderr_text = String::from_utf8_lossy(&stderr).into_owned();
+    let limits_note = stderr_text
+        .lines()
+        .find(|line| line.starts_with("harness-limits:"))
+        .unwrap_or("")
+        .to_owned();
+    ProbeRun {
+        exit_code: status.code(),
+        signaled: status.signal().is_some(),
+        timed_out,
+        oversized,
+        incomplete_readers,
+        limits_note,
+        stdout,
+        stderr,
+    }
+}
+
+#[cfg(unix)]
+fn dump_probe_logs(case: &str, run: &ProbeRun) -> (String, String) {
+    let safe: String = case
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .take(32)
+        .collect();
+    let dir = std::env::temp_dir();
+    let out_path = dir.join(format!("bashkit-signal-probe-{safe}.stdout"));
+    let err_path = dir.join(format!("bashkit-signal-probe-{safe}.stderr"));
+    let _ = std::fs::write(&out_path, &run.stdout);
+    let _ = std::fs::write(&err_path, &run.stderr);
+    (
+        out_path.display().to_string(),
+        err_path.display().to_string(),
+    )
+}
+
+// Signal-trap self-delivery (`kill -USR1 $$` from inside a USR1 handler)
+// recurses through the interpreter instead of returning to the host loop.
+// The dedicated nesting cap plus the shared depth budget stop
+// direct/mutual/function/source cycles with a resource-limit error instead
+// of overflowing the child stack, and finite nesting keeps working. Each
+// hostile shape runs in a fail-closed child (2 MiB stack, CPU/wall/output
+// caps); an abort is never a passing test. See TM-DOS-020 and
+// `signal_trap_depth_tests`.
+#[cfg(unix)]
+#[test]
+fn signal_trap_recursion_is_bounded_on_a_two_mib_stack() {
+    for (case, script) in [
+        ("direct", "trap 'kill -USR1 $$' USR1; kill -USR1 $$"),
+        (
+            "mutual",
+            "trap 'kill -USR2 $$' USR1; trap 'kill -USR1 $$' USR2; kill -USR1 $$",
+        ),
+        (
+            "function",
+            "f() { kill -USR1 $$; }; trap 'f' USR1; kill -USR1 $$",
+        ),
+        (
+            "source",
+            "echo 'kill -USR1 $$' > /handler; trap 'source /handler' USR1; kill -USR1 $$",
+        ),
+    ] {
+        let run = run_bounded_probe(script);
+        if run.timed_out
+            || run.oversized
+            || run.incomplete_readers
+            || run.signaled
+            || run.exit_code != Some(1)
+            || !run.limits_note.contains("stack=2048")
+            || !run.limits_note.contains("cpu=10")
+            || !String::from_utf8_lossy(&run.stderr).contains("depth exceeded")
+        {
+            let (out_path, err_path) = dump_probe_logs(case, &run);
+            panic!(
+                "{case}: fail-closed probe violated: exit={:?} signaled={} timed_out={} oversized={} incomplete_readers={} limits={:?} stdout={:?} stderr={:?} logs={out_path} {err_path}",
+                run.exit_code,
+                run.signaled,
+                run.timed_out,
+                run.oversized,
+                run.incomplete_readers,
+                run.limits_note,
+                String::from_utf8_lossy(&run.stdout),
+                String::from_utf8_lossy(&run.stderr),
+            );
+        }
     }
 }
 
