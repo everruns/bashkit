@@ -23,6 +23,9 @@
 // `name: msg` for bash shell builtins) and `prefix_builtin_diagnostics`
 // rewrites the line start at the single dispatch point
 // (`execute_builtin_arc`), before redirects or streaming see the text.
+// Diagnostic names are capped at 1,024 UTF-8 bytes without changing `$0`.
+// Rewriting leases both bytes and cached text before fallible allocation;
+// leases survive routing, and each scan/emission checks the request budget.
 // Execution plans and `/dev/stderr` operand data are not rewritten; usage
 // lines (`name: usage:`) and coreutils-style builtins (cat, grep, ...:
 // external programs in bash) stay unprefixed. Interactive shells
@@ -30,6 +33,10 @@
 // sandbox "Did you mean" / unavailable-command hints after
 // `command not found` are kept on purpose.
 
+// Decision: trap handlers share the function/source depth budget plus a
+// dedicated trap-nesting cap. Nested delivery skips an exhausted handler
+// with a diagnostic; handler logic failures never disturb the interrupted
+// command (TM-DOS-030), while the first resource-limit trip fails the exec.
 mod arithmetic;
 mod brace_expansion;
 mod completion;
@@ -87,7 +94,10 @@ use crate::builtins::{self, Builtin};
 use crate::error::Error;
 use crate::error::Result;
 use crate::fs::FileSystem;
-use crate::limits::{BudgetedString, ExecutionCounters, ExecutionLimits, SessionLimits};
+use crate::limits::{
+    BudgetedString, ExecutionCounters, ExecutionLimits, HARD_MAX_TRAP_NESTING, LimitExceeded,
+    SessionLimits,
+};
 
 /// A single command history entry.
 #[derive(Debug, Clone)]
@@ -1925,6 +1935,10 @@ pub struct Interpreter {
     /// True while executing a trap handler. Suppresses recursive DEBUG trap
     /// invocation to prevent amplification attacks (TM-DOS-035).
     in_trap: bool,
+    /// Nesting level of `run_trap_command` entries (TM-DOS-020).
+    trap_nesting: usize,
+    /// First trap-nesting depth error, surfaced at the `exec` boundary.
+    trap_depth_error: Option<LimitExceeded>,
     /// The ERR trap is inherited for display only: a subshell, command
     /// substitution or pipeline stage without `set -E` keeps the parent's
     /// handler visible to `trap -p` but does not run it (bash). `trap`
@@ -2562,6 +2576,8 @@ impl Interpreter {
             cancelled: Arc::new(AtomicBool::new(false)),
             hooks: Arc::new(crate::hooks::Hooks::default()),
             in_trap: false,
+            trap_nesting: 0,
+            trap_depth_error: None,
             err_trap_dormant: false,
             debug_trap_dormant: false,
             err_trap_skip_stage: false,
@@ -2782,6 +2798,8 @@ impl Interpreter {
             cancelled: Arc::clone(&self.cancelled),
             hooks: Arc::clone(&self.hooks),
             in_trap: false,
+            trap_nesting: 0,
+            trap_depth_error: None,
             // A job or pipeline stage is a subshell: ERR stays dormant there
             // unless `set -E`.
             err_trap_dormant: self.err_trap_dormant || !self.flags.contains(BashFlags::ERRTRACE),
@@ -3101,6 +3119,8 @@ impl Interpreter {
         // handler is awaited; clear the re-entrancy guard before each exec so
         // one cancelled script cannot suppress traps in the next script.
         self.in_trap = false;
+        self.trap_nesting = 0;
+        self.trap_depth_error = None;
         self.err_trap_dormant = false;
         self.debug_trap_dormant = false;
         self.err_trap_skip_stage = false;
@@ -3174,15 +3194,21 @@ impl Interpreter {
     /// (`BASH_SOURCE[0]`, so a sourced file names itself), else `$0`. Mirrors
     /// bash's `get_name_for_error`.
     pub(crate) fn diag_name(&self) -> String {
-        if !self.interactive
+        // THREAT[TM-DOS-103]: bound attacker-controlled names before copying.
+        let name = if !self.interactive
             && let Some(src) = self.bash_source_stack.last().filter(|s| !s.file.is_empty())
         {
-            return src.file.to_string();
+            &src.file
+        } else if let Some(frame) = self.call_stack.iter().rev().find(|f| !f.keeps_arg0) {
+            frame.name.as_str()
+        } else {
+            Self::DEFAULT_ARG0
+        };
+        let mut end = name.len().min(1024);
+        while !name.is_char_boundary(end) {
+            end -= 1;
         }
-        if let Some(frame) = self.call_stack.iter().rev().find(|f| !f.keeps_arg0) {
-            return frame.name.clone();
-        }
-        Self::DEFAULT_ARG0.to_string()
+        name[..end].to_string()
     }
 
     /// Prefix of a shell diagnostic: `$0: line N: ` (non-interactive bash),
@@ -8444,7 +8470,7 @@ impl Interpreter {
                 }
                 match &assignment.value {
                     AssignmentValue::Scalar(word) => {
-                        let word = self.tilde_assignment_value(word);
+                        let (word, _tilde_leases) = self.tilde_assignment_value(word)?;
                         let value = self.expand_word(&word).await?;
                         if self.is_xtrace_enabled() {
                             // `+ v=x`, `+ a[1]='a b'`, `+ v+=y`
@@ -9954,11 +9980,20 @@ impl Interpreter {
             };
             // Before `/dev/stderr` operand data is appended and before any
             // redirect or streaming emission sees the text.
+            // Keep rewritten byte/text storage charged until redirects and
+            // result hooks finish consuming it, including discarded stderr.
+            let mut diagnostic_storage = None;
             if bundled
-                && let Some(stderr) =
-                    prefix_builtin_diagnostics(&result.stderr, name, &self.diag_prefix())
+                && !result.stderr.is_empty()
+                && let Some((stderr, storage)) = prefix_builtin_diagnostics(
+                    &result.stderr,
+                    name,
+                    &self.diag_prefix(),
+                    &self.execution_budget,
+                )?
             {
                 result.stderr = stderr;
+                diagnostic_storage = Some(storage);
             }
             if let Some(capture) = std_capture {
                 let capture =
@@ -9985,10 +10020,12 @@ impl Interpreter {
                 .unwrap_or(u64::MAX),
             )?;
 
-            self.apply_builtin_side_effects(&mut result).await;
+            self.apply_builtin_side_effects(&mut result).await?;
 
             let result = self.apply_redirections(result, redirects).await?;
-            self.apply_after_tool(name, result)
+            let result = self.apply_after_tool(name, result);
+            drop(diagnostic_storage);
+            result
         })
     }
 
@@ -10885,12 +10922,18 @@ impl Interpreter {
         };
 
         // THREAT[TM-DOS-056]: Check source depth (uses function depth limit)
-        self.counters.push_function(&self.limits).map_err(|_| {
-            crate::error::Error::Execution(format!(
+        if let Err(depth_error) = self.counters.push_function(&self.limits) {
+            // THREAT[TM-DOS-020]: a depth trip inside a trap handler must
+            // still fail the execution instead of silently stopping the
+            // recursion (the `source` status mapping below would hide it).
+            if self.in_trap {
+                self.note_trap_depth_error(depth_error);
+            }
+            return Err(crate::error::Error::Execution(format!(
                 "source: {}: maximum source depth exceeded",
                 filename
-            ))
-        })?;
+            )));
+        }
 
         // Track source file for BASH_SOURCE
         self.bash_source_stack.push(SourceFrame {
@@ -10909,7 +10952,10 @@ impl Interpreter {
         self.xtrace_depth += 1;
         let tempenv_pushed = self.push_pending_tempenv(false);
         let region = self.enter_output_region(redirects);
-        let mut exec_result = self.execute_script_body(&script, false, true).await;
+        // THREAT[TM-DOS-020]: Box the sourced-body execution so a source /
+        // trap recursion cycle cannot grow the parent future with each
+        // nesting level; the shared depth charge above then trips first.
+        let mut exec_result = Box::pin(self.execute_script_body(&script, false, true)).await;
         self.leave_output_region(region);
         if tempenv_pushed {
             self.tempenv_frames.pop();
@@ -12354,7 +12400,7 @@ impl Interpreter {
     }
 
     /// Process structured side effects from builtin execution.
-    async fn apply_builtin_side_effects(&mut self, result: &mut ExecResult) {
+    async fn apply_builtin_side_effects(&mut self, result: &mut ExecResult) -> Result<()> {
         // Builtins that mutate SHOPT_* directly via `ctx.variables` (e.g. the
         // `set -e` / `set +u` paths in the `set` builtin) don't update the
         // cached `flags` bitfield. Resync once after every builtin so the
@@ -12466,6 +12512,7 @@ impl Interpreter {
         if let Some(signal) = pending_self_signal {
             self.deliver_self_signal(signal, result).await;
         }
+        Ok(())
     }
 
     /// `kill -SIG $$`: bash runs that signal's trap if one is set, and
@@ -12473,11 +12520,12 @@ impl Interpreter {
     /// 128 + signal. Signals whose default is to be ignored do neither.
     async fn deliver_self_signal(&mut self, signal: i32, result: &mut ExecResult) {
         if let Some(trap_cmd) = self.signal_trap(signal) {
+            if trap_cmd.is_empty() {
+                return;
+            }
             let mut stdout = std::mem::take(&mut result.stdout);
             let mut stderr = std::mem::take(&mut result.stderr);
-            let flow = self
-                .run_trap_command(&trap_cmd, &mut stdout, &mut stderr)
-                .await;
+            let flow = Box::pin(self.run_trap_command(&trap_cmd, &mut stdout, &mut stderr)).await;
             result.stdout = stdout;
             result.stderr = stderr;
             // An `exit` inside the handler ends the script, as it does in bash.
@@ -14481,7 +14529,21 @@ impl Interpreter {
 
     /// Run a trap handler's command, merging its output into the result the
     /// caller is building.
-    /// Returns the handler's own control flow (an `exit` inside it), if any.
+    /// Returns the handler's control flow and status, or `None` when the
+    /// handler cannot run (unparsable command, exhausted depth budget, or a
+    /// failing handler): trap failures never disturb the interrupted command.
+    /// Record the first trap-nesting depth error for the `exec` boundary.
+    fn note_trap_depth_error(&mut self, error: LimitExceeded) {
+        if self.trap_depth_error.is_none() {
+            self.trap_depth_error = Some(error);
+        }
+    }
+
+    /// Take the recorded trap-nesting depth error, if any.
+    pub(crate) fn take_trap_depth_error(&mut self) -> Option<LimitExceeded> {
+        self.trap_depth_error.take()
+    }
+
     async fn run_trap_command(
         &mut self,
         trap_cmd: &str,
@@ -14492,6 +14554,26 @@ impl Interpreter {
         let Ok(trap_script) = self.parse_shell_text(trap_cmd) else {
             return None;
         };
+        // THREAT[TM-DOS-020]: Bound nested trap delivery with a dedicated
+        // hard cap that trips before native frames can exhaust small host
+        // stacks, independent of command fuel, per-handler AST depth, and
+        // the shared function/source budget (which is charged too, so a low
+        // `max_function_depth` still stops function/signal mixes early).
+        // Exhaustion skips the nested handler with a diagnostic; the first
+        // trip is surfaced as a resource-limit error at the `exec`
+        // boundary, and never disturbs the interrupted command.
+        if self.trap_nesting >= HARD_MAX_TRAP_NESTING {
+            self.note_trap_depth_error(LimitExceeded::MaxTrapDepth(HARD_MAX_TRAP_NESTING));
+            stderr.push_str("bashkit: maximum trap nesting depth exceeded\n");
+            return None;
+        }
+        self.trap_nesting += 1;
+        if let Err(depth_error) = self.counters.push_function(&self.limits) {
+            self.trap_nesting -= 1;
+            self.note_trap_depth_error(depth_error);
+            stderr.push_str("bashkit: maximum trap nesting depth exceeded\n");
+            return None;
+        }
         let was_in_trap = self.in_trap;
         self.in_trap = true;
         let saved_line_base = std::mem::replace(
@@ -14500,12 +14582,28 @@ impl Interpreter {
         );
         let emit_before = self.output_emit_count;
         self.xtrace_depth += 1;
-        let result = self.execute_command_sequence(&trap_script.commands).await;
+        // THREAT[TM-DOS-020]: Box the handler execution so a trap /
+        // source recursion cycle cannot grow the parent future with each
+        // nesting level; the shared depth charge above then trips first.
+        let result = Box::pin(self.execute_command_sequence(&trap_script.commands)).await;
         self.xtrace_depth -= 1;
         self.line_base = saved_line_base;
         self.in_trap = was_in_trap;
-        let Ok(trap_result) = result else {
-            return None;
+        self.trap_nesting -= 1;
+        self.counters.pop_function();
+        // THREAT[TM-DOS-030]: A failing handler must not disturb the
+        // interrupted command, so execution errors end the handler here.
+        // THREAT[TM-DOS-020]: resource exhaustion inside the handler
+        // (a nested function/source call tripping depth or fuel) is not a
+        // handler logic failure: record it so the `exec` boundary still
+        // fails instead of silently stopping the recursion.
+        let trap_result = match result {
+            Ok(trap_result) => trap_result,
+            Err(crate::error::Error::ResourceLimit(limit)) => {
+                self.note_trap_depth_error(limit);
+                return None;
+            }
+            Err(_) => return None,
         };
         self.maybe_emit_output(&trap_result.stdout, &trap_result.stderr, emit_before);
         stdout.append(&trap_result.stdout);
@@ -14591,7 +14689,7 @@ impl Interpreter {
             // The handler runs with `$?` of the trapping command and the
             // shell keeps that status afterwards (bash restores it).
             let saved_exit = self.last_exit_code;
-            let _ = self.run_trap_command(&trap_cmd, stdout, stderr).await;
+            let _ = Box::pin(self.run_trap_command(&trap_cmd, stdout, stderr)).await;
             self.last_exit_code = saved_exit;
         }
     }
@@ -14778,33 +14876,58 @@ fn prefix_builtin_diagnostics(
     stderr: &crate::StreamData,
     name: &str,
     prefix: &str,
-) -> Option<crate::StreamData> {
+    budget: &crate::limits::ExecutionBudget,
+) -> Result<Option<(crate::StreamData, crate::stream::StreamStorage)>> {
     let bytes = stderr.as_bytes();
     if bytes.is_empty() {
-        return None;
+        return Ok(None);
+    }
+    // THREAT[TM-DOS-103]: account before scanning or multiplying prefixes.
+    // Poll by input chunk even when a single diagnostic line is enormous.
+    for chunk in bytes.chunks(4096) {
+        budget.consume_work(chunk.len().div_ceil(1024) as u64)?;
     }
     let shell_builtin = BASH_SHELL_BUILTINS.contains(&name);
     let own = format!("{name}: ");
     let usage = format!("{name}: usage:");
-    let mut out = Vec::with_capacity(bytes.len() + prefix.len());
-    let mut changed = false;
+    let mut out = None;
+    let mut offset = 0;
     for line in bytes.split_inclusive(|b| *b == b'\n') {
-        if let Some(rest) = line.strip_prefix(b"bash: ".as_slice()) {
-            out.extend_from_slice(prefix.as_bytes());
-            out.extend_from_slice(rest);
-            changed = true;
-        } else if shell_builtin
-            && line.starts_with(own.as_bytes())
-            && !line.starts_with(usage.as_bytes())
-        {
-            out.extend_from_slice(prefix.as_bytes());
-            out.extend_from_slice(line);
-            changed = true;
+        let (add_prefix, rest) = if let Some(rest) = line.strip_prefix(b"bash: ".as_slice()) {
+            (true, rest)
         } else {
-            out.extend_from_slice(line);
+            (
+                shell_builtin
+                    && line.starts_with(own.as_bytes())
+                    && !line.starts_with(usage.as_bytes()),
+                line,
+            )
+        };
+        budget.consume_work(
+            1 + rest.len().div_ceil(1024) as u64
+                + if add_prefix {
+                    prefix.len().div_ceil(1024) as u64
+                } else {
+                    0
+                },
+        )?;
+        if add_prefix {
+            if out.is_none() {
+                let mut bytes_out = crate::limits::BudgetedBytes::new(Some(budget))?;
+                bytes_out.try_extend_from_slice(&bytes[..offset])?;
+                out = Some(bytes_out);
+            }
+            out.as_mut()
+                .unwrap()
+                .try_extend_from_slice(prefix.as_bytes())?;
         }
+        if let Some(out) = &mut out {
+            out.try_extend_from_slice(rest)?;
+        }
+        offset += line.len();
     }
-    changed.then(|| crate::StreamData::from(out))
+    out.map(|out| crate::StreamData::from_budgeted_bytes(out, budget).map_err(Into::into))
+        .transpose()
 }
 
 fn builtin_usage_error(msg: &str) -> ExecResult {
@@ -14847,6 +14970,22 @@ mod tests {
         assert!(weak.upgrade().is_none());
         assert_eq!(bash.interpreter.memory_budget.function_body_bytes, 0);
         assert_eq!(bash.interpreter.memory_budget.function_count, 0);
+    }
+
+    #[test]
+    fn diagnostic_rewrite_checks_work_and_cancellation() {
+        for cancelled in [false, true] {
+            let limits = crate::limits::ExecutionLimits::new().max_work_units(2);
+            let budget = crate::limits::ExecutionBudget::new(
+                &limits,
+                Arc::new(std::sync::atomic::AtomicBool::new(cancelled)),
+            );
+            let stderr = crate::StreamData::from("bash: unalias: x: not found\n".repeat(10));
+            let error = prefix_builtin_diagnostics(&stderr, "unalias", "child: line 1: ", &budget)
+                .unwrap_err();
+            let expected = if cancelled { "cancel" } else { "work" };
+            assert!(error.to_string().contains(expected), "{error}");
+        }
     }
 
     /// TM-DOS-042: comma-list brace expansion must not recurse one frame per

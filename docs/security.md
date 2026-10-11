@@ -24,6 +24,15 @@ bytes of stack padding; output capacity is admitted against
 `ExecutionLimits::max_live_intermediate_bytes` before fallible allocation.
 This memory budget applies to pipelines and redirected output too.
 
+Shell diagnostic names (`$0` or the current source file) show at most 1,024
+UTF-8 bytes; the actual `$0` value is unchanged. Repeating a prefix across
+builtin errors uses the shared live-memory and work budget before allocation,
+including the cached text representation. A refused reservation aborts the
+request before capture, streaming, or redirection; the next host execution
+can reuse the shell with a fresh budget. Capture limits remain downstream so
+command-local redirected diagnostics keep their full content when they fit
+the memory budget. An outer redirect on a child-shell invocation receives
+that child's already capped capture.
 `cd` searches `CDPATH` one candidate at a time. Temporary path and
 normalization storage is reserved against `max_live_intermediate_bytes`
 before allocation. Searches also consume the shared work budget and check
@@ -59,6 +68,12 @@ execution work and deadline budget; file contents are admitted against aggregate
 input and live intermediate limits and scanned one file at a time. `-q` stops
 at the first match, before further traversal.
 
+Tilde expansion (`~`, `~+`, `~-`, including repeated assignment prefixes after
+`:`) checks `ExecutionLimits::max_live_intermediate_bytes` before growing its
+output and charges copied bytes to `max_work_units`. Large directory values
+cannot bypass these limits by expanding before variable insertion. A refused
+expansion returns a resource-limit error; the next host execution receives a
+fresh execution budget.
 Syntax-error reports are limited to 1 KiB during construction, including an
 explicit `[diagnostic truncated]` marker when text is omitted. This prevents
 multiline unexpected tokens and long `bash -c` shell names from multiplying
@@ -101,7 +116,7 @@ Bashkit intentionally deviates from POSIX where compliance would compromise
 the sandbox. Key exclusions:
 
 - **`exec`**: would break sandbox containment (`TM-ESC-005`)
-- **`trap`**: conflicts with the stateless execution model
+- **`trap`**: handles shell events and self-sent virtual signals. Nested handlers share the function/source/child-shell depth budget (hard ceiling 16) plus a dedicated trap-nesting cap of 3 that trips first on small stacks; recursive signal delivery past either limit is skipped with a diagnostic and the first trip fails the exec with a resource-limit error
 - **Real process spawning**: all subprocess commands stay within the virtual interpreter (`TM-ESC-015`)
 
 These decisions are documented in [`knowledge/operations/limitations.md`](../knowledge/operations/limitations.md).

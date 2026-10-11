@@ -1441,7 +1441,8 @@ impl Interpreter {
                 if let Some((kw, vw, kappend)) = split_keyed_word(word).filter(|_| !braces) {
                     let key_text = self.expand_array_word(&kw).await?;
                     // `[k]=~:~` tilde-expands like an assignment value.
-                    let vw = self.tilde_assignment_value(&vw).into_owned();
+                    // `[k]=~:~` tilde-expands like an assignment value.
+                    let (vw, _tilde_leases) = self.tilde_assignment_value(&vw)?;
                     let val = self.expand_array_word(&vw).await?;
                     items.try_push(Item::Keyed(key_text, val, kappend))?;
                     continue;

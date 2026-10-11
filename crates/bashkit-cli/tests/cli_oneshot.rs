@@ -15,8 +15,9 @@
 // `knowledge/operations/limitations.md`, so lifting one has to update the row
 // and the test together.
 
-use std::io::Write;
+use std::io::{Read, Write};
 use std::process::{Command, Output, Stdio};
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -148,6 +149,567 @@ fn function_recursion_is_bounded_on_a_two_mib_stack() {
     }
 }
 
+// Decision: hostile-recursion probes run through this fail-closed launcher,
+// not plain `.output()`. One absolute deadline covers execution plus a
+// documented cleanup grace (20 s execution + 5 s grace for trap probes; the
+// suite never claims a strict 20 s bound): reader threads drain both pipes
+// concurrently with byte caps, oversize and read errors are reported live
+// while the child runs, the poll loop kills on oversize/timeout, and reaping
+// plus reader completion are bounded by the remaining grace. Unfinished
+// cleanup or readers yield truthful failure flags instead of hanging. A
+// child abort surfaces as its real exit status, never as a passing test.
+#[cfg(unix)]
+struct ProbeRun {
+    exit_code: Option<i32>,
+    signaled: bool,
+    timed_out: bool,
+    oversized: bool,
+    read_error: bool,
+    incomplete_readers: bool,
+    cleanup_failed: bool,
+    limits_note: String,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+}
+
+#[cfg(unix)]
+struct ProbeLimits {
+    exec_secs: u64,
+    grace_secs: u64,
+    stream_cap: usize,
+}
+
+#[cfg(unix)]
+const TRAP_PROBE_LIMITS: ProbeLimits = ProbeLimits {
+    exec_secs: 20,
+    grace_secs: 5,
+    stream_cap: 64 * 1024,
+};
+
+#[cfg(unix)]
+enum ReaderLive {
+    Oversize,
+    ReadError,
+}
+
+#[cfg(unix)]
+enum ReaderMsg {
+    Live(ReaderLive),
+    Finished {
+        stream_stdout: bool,
+        buf: Vec<u8>,
+        oversized: bool,
+        read_error: bool,
+    },
+}
+
+/// Drain a pipe keeping at most `cap` bytes. Returns the retained bytes,
+/// whether more input existed, and any genuine read error. `Interrupted` is
+/// retried; any other error stops the reader and is reported instead of
+/// being mistaken for EOF. Exactly-at-cap EOF is admitted, not oversized: a
+/// single-byte sentinel decides, and the sentinel byte itself is discarded
+/// so no more than `cap` bytes are ever retained. `live` reports oversize
+/// and read errors the moment they are proven, while the child may still run.
+#[cfg(unix)]
+fn drain_capped(
+    pipe: &mut dyn Read,
+    cap: usize,
+    mut live: impl FnMut(ReaderLive),
+) -> (Vec<u8>, bool, bool) {
+    let mut buf = Vec::new();
+    let mut chunk = [0u8; 8192];
+    loop {
+        if buf.len() >= cap {
+            let mut sentinel = [0u8; 1];
+            match pipe.read(&mut sentinel) {
+                Ok(0) => return (buf, false, false),
+                Ok(_) => {
+                    live(ReaderLive::Oversize);
+                    return (buf, true, false);
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(_) => {
+                    live(ReaderLive::ReadError);
+                    return (buf, false, true);
+                }
+            }
+        }
+        // Cap-before-copy: never ask for more than the remaining allowance.
+        let allowance = (cap - buf.len()).min(chunk.len());
+        match pipe.read(&mut chunk[..allowance]) {
+            Ok(0) => return (buf, false, false),
+            Ok(n) => buf.extend_from_slice(&chunk[..n]),
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => {
+                live(ReaderLive::ReadError);
+                return (buf, false, true);
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+fn spawn_pipe_reader(
+    pipe: Box<dyn Read + Send>,
+    is_stdout: bool,
+    cap: usize,
+    tx: mpsc::Sender<ReaderMsg>,
+) {
+    thread::spawn(move || {
+        let mut pipe = pipe;
+        let (buf, oversized, read_error) = drain_capped(&mut *pipe, cap, |live| {
+            let _ = tx.send(ReaderMsg::Live(live));
+        });
+        let _ = tx.send(ReaderMsg::Finished {
+            stream_stdout: is_stdout,
+            buf,
+            oversized,
+            read_error,
+        });
+    });
+}
+
+#[cfg(unix)]
+fn run_bounded_child(argv: &[&str], limits: &ProbeLimits) -> ProbeRun {
+    let start = Instant::now();
+    let exec_deadline = start + Duration::from_secs(limits.exec_secs);
+    let absolute_deadline = exec_deadline + Duration::from_secs(limits.grace_secs);
+    let mut cmd = Command::new(argv[0]);
+    cmd.args(&argv[1..]);
+    let mut child = cmd
+        .env_remove("RUST_BACKTRACE")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn bounded probe child");
+    let stdout_pipe: Box<dyn Read + Send> = Box::new(child.stdout.take().expect("probe stdout"));
+    let stderr_pipe: Box<dyn Read + Send> = Box::new(child.stderr.take().expect("probe stderr"));
+    let (tx, rx) = mpsc::channel::<ReaderMsg>();
+    spawn_pipe_reader(stdout_pipe, true, limits.stream_cap, tx.clone());
+    spawn_pipe_reader(stderr_pipe, false, limits.stream_cap, tx.clone());
+    drop(tx);
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let mut timed_out = false;
+    let mut oversized = false;
+    let mut read_error = false;
+    let mut exit_status = None;
+    let mut killed = false;
+    let mut finals = 0;
+    let kill = |child: &mut std::process::Child, killed: &mut bool| {
+        if !*killed {
+            *killed = true;
+            let _ = child.kill();
+        }
+    };
+    // Execution phase: reap promptly on exit, kill on live oversize, error,
+    // or exec-deadline expiry. The timeout decision is recorded before the
+    // kill so cleanup outcome cannot rewrite it.
+    loop {
+        while let Ok(msg) = rx.try_recv() {
+            match msg {
+                ReaderMsg::Live(ReaderLive::Oversize) => {
+                    oversized = true;
+                    kill(&mut child, &mut killed);
+                }
+                ReaderMsg::Live(ReaderLive::ReadError) => {
+                    read_error = true;
+                    kill(&mut child, &mut killed);
+                }
+                ReaderMsg::Finished {
+                    stream_stdout,
+                    buf,
+                    oversized: over,
+                    read_error: err,
+                } => {
+                    if stream_stdout {
+                        stdout = buf;
+                    } else {
+                        stderr = buf;
+                    }
+                    oversized |= over;
+                    read_error |= err;
+                    finals += 1;
+                }
+            }
+        }
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                exit_status = Some(status);
+                break;
+            }
+            Ok(None) => {}
+            Err(_) => break,
+        }
+        if Instant::now() >= exec_deadline {
+            timed_out = true;
+            kill(&mut child, &mut killed);
+            break;
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    // Cleanup phase: bounded reap, then bounded reader completion. No fresh
+    // waits start past the absolute deadline; whatever is unfinished at that
+    // point is reported truthfully instead of hanging the suite.
+    let mut cleanup_failed = false;
+    while exit_status.is_none() {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                exit_status = Some(status);
+                break;
+            }
+            Ok(None) => {
+                if Instant::now() >= absolute_deadline {
+                    cleanup_failed = true;
+                    let _ = child.kill();
+                    break;
+                }
+                thread::sleep(Duration::from_millis(20));
+            }
+            Err(_) => {
+                cleanup_failed = true;
+                break;
+            }
+        }
+    }
+    let mut incomplete_readers = false;
+    while finals < 2 {
+        let remaining = absolute_deadline.saturating_duration_since(Instant::now());
+        match rx.recv_timeout(remaining) {
+            Ok(ReaderMsg::Finished {
+                stream_stdout,
+                buf,
+                oversized: over,
+                read_error: err,
+            }) => {
+                if stream_stdout {
+                    stdout = buf;
+                } else {
+                    stderr = buf;
+                }
+                oversized |= over;
+                read_error |= err;
+                finals += 1;
+            }
+            Ok(ReaderMsg::Live(ReaderLive::Oversize)) => oversized = true,
+            Ok(ReaderMsg::Live(ReaderLive::ReadError)) => read_error = true,
+            // Timeout: readers did not finish inside the absolute deadline.
+            // Disconnected: a reader died without its final message. Both
+            // are reported truthfully instead of hanging the suite.
+            Err(_) => {
+                incomplete_readers = true;
+                break;
+            }
+        }
+    }
+    use std::os::unix::process::ExitStatusExt;
+    let (exit_code, signaled) = match exit_status {
+        Some(status) => (status.code(), status.signal().is_some()),
+        None => (None, false),
+    };
+    let stderr_text = String::from_utf8_lossy(&stderr).into_owned();
+    let limits_note = stderr_text
+        .lines()
+        .find(|line| line.starts_with("harness-limits:"))
+        .unwrap_or("")
+        .to_owned();
+    ProbeRun {
+        exit_code,
+        signaled,
+        timed_out,
+        oversized,
+        read_error,
+        incomplete_readers,
+        cleanup_failed,
+        limits_note,
+        stdout,
+        stderr,
+    }
+}
+
+#[cfg(unix)]
+fn run_bounded_probe(script: &str) -> ProbeRun {
+    run_bounded_child(
+        &[
+            "sh",
+            "-c",
+            "ulimit -s 2048 || exit 99; ulimit -t 10 || exit 99; echo \"harness-limits: stack=$(ulimit -s) cpu=$(ulimit -t)\" >&2; exec \"$1\" --no-stdin --max-commands 64 -c \"$2\"",
+            "sh",
+            BIN,
+            script,
+        ],
+        &TRAP_PROBE_LIMITS,
+    )
+}
+
+#[cfg(unix)]
+fn dump_probe_logs(case: &str, run: &ProbeRun) -> (String, String) {
+    let safe: String = case
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .take(32)
+        .collect();
+    let dir = std::env::temp_dir();
+    let out_path = dir.join(format!("bashkit-signal-probe-{safe}.stdout"));
+    let err_path = dir.join(format!("bashkit-signal-probe-{safe}.stderr"));
+    let _ = std::fs::write(&out_path, &run.stdout);
+    let _ = std::fs::write(&err_path, &run.stderr);
+    (
+        out_path.display().to_string(),
+        err_path.display().to_string(),
+    )
+}
+
+// Signal-trap self-delivery (`kill -USR1 $$` from inside a USR1 handler)
+// recurses through the interpreter instead of returning to the host loop.
+// The dedicated nesting cap plus the shared depth budget stop
+// direct/mutual/function/source cycles with a resource-limit error instead
+// of overflowing the child stack, and finite nesting keeps working. Each
+// hostile shape runs in a fail-closed child (2 MiB stack, CPU/wall/output
+// caps); an abort is never a passing test. See TM-DOS-020 and
+// `signal_trap_depth_tests`.
+#[cfg(unix)]
+#[test]
+fn signal_trap_recursion_is_bounded_on_a_two_mib_stack() {
+    for (case, script) in [
+        (
+            "direct",
+            "trap 'echo ENTRY; kill -USR1 $$' USR1; kill -USR1 $$",
+        ),
+        (
+            "mutual",
+            "trap 'echo ENTRY; kill -USR2 $$' USR1; trap 'echo ENTRY; kill -USR1 $$' USR2; kill -USR1 $$",
+        ),
+        (
+            "function",
+            "f() { echo ENTRY; kill -USR1 $$; }; trap 'f' USR1; kill -USR1 $$",
+        ),
+        (
+            "source",
+            "echo 'echo ENTRY; kill -USR1 $$' > /handler; trap 'source /handler' USR1; kill -USR1 $$",
+        ),
+    ] {
+        let run = run_bounded_probe(script);
+        // The dedicated cap admits exactly three handler executions, then
+        // trips the fourth entry: stdout is exactly three ENTRY lines.
+        if run.timed_out
+            || run.oversized
+            || run.read_error
+            || run.incomplete_readers
+            || run.cleanup_failed
+            || run.signaled
+            || run.exit_code != Some(1)
+            || run.limits_note != "harness-limits: stack=2048 cpu=10"
+            || run.stdout != b"ENTRY\nENTRY\nENTRY\n"
+            || !String::from_utf8_lossy(&run.stderr).contains("depth exceeded")
+        {
+            let (out_path, err_path) = dump_probe_logs(case, &run);
+            panic!(
+                "{case}: fail-closed probe violated: exit={:?} signaled={} timed_out={} oversized={} incomplete_readers={} limits={:?} stdout={:?} stderr={:?} logs={out_path} {err_path}",
+                run.exit_code,
+                run.signaled,
+                run.timed_out,
+                run.oversized,
+                run.incomplete_readers,
+                run.limits_note,
+                String::from_utf8_lossy(&run.stdout),
+                String::from_utf8_lossy(&run.stderr),
+            );
+        }
+    }
+}
+
+// Bounded-launcher self-tests: force every lifecycle path deterministically.
+// Reader-core tests use in-memory readers (exact cap, excess, genuine
+// errors, Interrupted); launcher tests use tiny real children with short
+// explicit bounds (overflow, timeout/kill/reap, incomplete pipes, fast exit).
+#[cfg(unix)]
+struct FailAfter {
+    data: Vec<u8>,
+    fail_at: usize,
+    pos: usize,
+}
+
+#[cfg(unix)]
+impl Read for FailAfter {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if self.pos >= self.fail_at {
+            return Err(std::io::Error::other("boom"));
+        }
+        let n = (self.fail_at - self.pos)
+            .min(buf.len())
+            .min(self.data.len() - self.pos);
+        buf[..n].copy_from_slice(&self.data[self.pos..self.pos + n]);
+        self.pos += n;
+        Ok(n)
+    }
+}
+
+#[cfg(unix)]
+struct Flaky {
+    interrupts: usize,
+    data: Vec<u8>,
+    pos: usize,
+}
+
+#[cfg(unix)]
+impl Read for Flaky {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if self.interrupts > 0 {
+            self.interrupts -= 1;
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                "retry",
+            ));
+        }
+        if self.pos >= self.data.len() {
+            return Ok(0);
+        }
+        let n = buf.len().min(self.data.len() - self.pos);
+        buf[..n].copy_from_slice(&self.data[self.pos..self.pos + n]);
+        self.pos += n;
+        Ok(n)
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn capped_reader_admits_exact_cap_eof() {
+    let mut cursor = std::io::Cursor::new(vec![b'x'; 1024]);
+    let live: Vec<bool> = Vec::new();
+    let (buf, oversized, read_error) = drain_capped(&mut cursor, 1024, |_| {});
+    assert_eq!(buf.len(), 1024);
+    assert!(!oversized);
+    assert!(!read_error);
+    assert!(live.is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn capped_reader_flags_one_byte_excess_live() {
+    let mut cursor = std::io::Cursor::new(vec![b'x'; 1025]);
+    let mut live_oversize = false;
+    let (buf, oversized, read_error) = drain_capped(&mut cursor, 1024, |ev| {
+        if matches!(ev, ReaderLive::Oversize) {
+            live_oversize = true;
+        }
+    });
+    // Exactly the cap is retained; the sentinel byte proves excess.
+    assert_eq!(buf.len(), 1024);
+    assert!(oversized);
+    assert!(!read_error);
+    assert!(live_oversize);
+}
+
+#[cfg(unix)]
+#[test]
+fn capped_reader_reports_genuine_error_not_eof() {
+    let mut pipe = FailAfter {
+        data: vec![b'y'; 100],
+        fail_at: 10,
+        pos: 0,
+    };
+    let mut live_error = false;
+    let (buf, oversized, read_error) = drain_capped(&mut pipe, 1024, |ev| {
+        if matches!(ev, ReaderLive::ReadError) {
+            live_error = true;
+        }
+    });
+    assert_eq!(buf.len(), 10);
+    assert!(!oversized);
+    assert!(read_error);
+    assert!(live_error);
+}
+
+#[cfg(unix)]
+#[test]
+fn capped_reader_retries_interrupted() {
+    let mut pipe = Flaky {
+        interrupts: 2,
+        data: vec![b'z'; 50],
+        pos: 0,
+    };
+    let (buf, oversized, read_error) = drain_capped(&mut pipe, 1024, |_| {});
+    assert_eq!(buf.len(), 50);
+    assert!(!oversized);
+    assert!(!read_error);
+}
+
+#[cfg(unix)]
+#[test]
+fn launcher_flags_output_overflow_with_cap_retained() {
+    let limits = ProbeLimits {
+        exec_secs: 10,
+        grace_secs: 5,
+        stream_cap: 4096,
+    };
+    let run = run_bounded_child(&["sh", "-c", "head -c 200000 /dev/zero"], &limits);
+    assert!(run.oversized, "overflow must be flagged");
+    assert_eq!(run.stdout.len(), 4096, "retain exactly the cap");
+    assert!(!run.timed_out);
+    assert!(!run.read_error);
+    assert!(!run.cleanup_failed);
+    assert!(!run.incomplete_readers);
+}
+
+#[cfg(unix)]
+#[test]
+fn launcher_times_out_kills_and_reaps() {
+    let limits = ProbeLimits {
+        exec_secs: 1,
+        grace_secs: 3,
+        stream_cap: 4096,
+    };
+    // `exec` forces no-fork on every platform: the kill reaps the only
+    // process and the pipes close, so this exercises timeout plus reap.
+    // (A forked grandchild would hold the pipes open; that orphan case is
+    // covered deliberately by launcher_reports_incomplete_pipes.)
+    let run = run_bounded_child(&["sh", "-c", "exec sleep 30"], &limits);
+    assert!(run.timed_out, "wall deadline must fire");
+    assert!(run.signaled, "SIGKILL must land for the reap proof");
+    assert_eq!(run.exit_code, None, "signal death has no exit code");
+    assert!(!run.oversized);
+    assert!(!run.cleanup_failed, "kill plus reap must complete");
+    assert!(!run.incomplete_readers, "pipes close after reap");
+}
+
+#[cfg(unix)]
+#[test]
+fn launcher_reports_incomplete_pipes_truthfully() {
+    // A grandchild inherits stdout and outlives the grace period, so the
+    // direct child reaps cleanly but readers cannot finish.
+    let limits = ProbeLimits {
+        exec_secs: 1,
+        grace_secs: 2,
+        stream_cap: 4096,
+    };
+    let run = run_bounded_child(&["sh", "-c", "(sleep 8 &)"], &limits);
+    assert!(!run.timed_out, "direct child exits immediately");
+    assert!(!run.cleanup_failed, "direct reap succeeds");
+    assert_eq!(run.exit_code, Some(0));
+    assert!(
+        run.incomplete_readers,
+        "open grandchild pipes must be reported, not hung on"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn launcher_reaps_fast_child_with_real_exit() {
+    let limits = ProbeLimits {
+        exec_secs: 10,
+        grace_secs: 5,
+        stream_cap: 4096,
+    };
+    let run = run_bounded_child(&["sh", "-c", "exit 3"], &limits);
+    assert_eq!(run.exit_code, Some(3), "raw child exit is distinct");
+    assert!(!run.signaled);
+    assert!(!run.timed_out);
+    assert!(!run.oversized);
+    assert!(!run.read_error);
+    assert!(!run.cleanup_failed);
+    assert!(!run.incomplete_readers);
+}
 #[cfg(unix)]
 #[test]
 fn function_nesting_below_limit_works_on_a_two_mib_stack() {
