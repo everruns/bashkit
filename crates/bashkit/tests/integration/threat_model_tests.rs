@@ -74,6 +74,22 @@ mod resource_exhaustion {
     /// 2s + reap 5s + completion 5s; every stage is finite.
     const JOIN_GRACE: Duration = Duration::from_secs(5);
 
+    /// Joins one reader handle inside the shared completion grace.
+    /// Returns true only when the handle was observed finished AND the
+    /// join succeeded: the single bounded-completion primitive used by
+    /// both the runner gate below and its deterministic proof test.
+    fn join_finished(handle: std::thread::JoinHandle<()>, end: Instant) -> bool {
+        let mut finished = handle.is_finished();
+        while !finished && Instant::now() < end {
+            std::thread::sleep(Duration::from_millis(5));
+            finished = handle.is_finished();
+        }
+        if !finished {
+            return false;
+        }
+        handle.join().is_ok()
+    }
+
     /// Reads one pipe up to the cap. Retention is truncated BEFORE the
     /// buffer can grow past it, so a hostile stream can never inflate the
     /// harness itself. `Interrupted` is retried; any other I/O error ends
@@ -164,10 +180,19 @@ mod resource_exhaustion {
         run
     }
 
+    fn run_raw_bounded(program: &str, args: &[&str], limit: Duration) -> BoundedRun {
+        run_raw_bounded_with(program, args, limit, LifecycleFaults::default())
+    }
+
     /// Runs an arbitrary program under the same fail-closed launcher (used
     /// by harness selftests so they prove the effective CPU/stack bounds
     /// instead of bypassing them). The caller supplies piped stdio.
-    fn run_raw_bounded(program: &str, args: &[&str], limit: Duration) -> BoundedRun {
+    fn run_raw_bounded_with(
+        program: &str,
+        args: &[&str],
+        limit: Duration,
+        faults: LifecycleFaults,
+    ) -> BoundedRun {
         let launcher = limit_launcher();
         let mut cmd = Command::new("bash");
         cmd.args(["-c", &launcher, "_"])
@@ -176,7 +201,7 @@ mod resource_exhaustion {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        let mut run = run_command_bounded(cmd, limit);
+        let mut run = run_command_bounded_with(cmd, limit, faults);
         strip_launcher_note(&mut run);
         run
     }
@@ -331,15 +356,13 @@ mod resource_exhaustion {
                 }
             }
             if Instant::now() >= deadline {
+                // Verdict only: termination happens in common cleanup below,
+                // so every path (timeout, oversized, poll failure) funnels
+                // through one reachable kill guard. An unobservable child
+                // keeps its distinct verdict (incomplete, exitless, and no
+                // timeout label) instead of being mislabeled.
                 if status.is_none() && !oversized && !poll_failed {
-                    let _ = child.kill();
                     timed_out = true;
-                }
-                if status.is_none() && poll_failed {
-                    // Unobservable child: kill it like a timeout victim,
-                    // but the verdict stays distinct (incomplete below,
-                    // exitless, no timeout).
-                    let _ = child.kill();
                 }
                 break;
             }
@@ -347,6 +370,15 @@ mod resource_exhaustion {
         }
         // Bounded drain grace: an exited child with unretained pipes hits
         // EOF promptly; anything still missing is a retained pipe.
+        // Common cleanup termination: every loop exit (observed
+        // completion, deadline, oversized, poll failure) funnels through
+        // this one reachable kill guard. It is idempotent — already-dead
+        // children are untouched — and the live oversize kill inside the
+        // loop stays as the early producer stop. Verdicts were recorded
+        // pre-kill above and are never recomputed from it.
+        if status.is_none() {
+            let _ = child.kill();
+        }
         let grace_end = Instant::now() + DRAIN_GRACE;
         while (bufs[0].is_none() || bufs[1].is_none()) && Instant::now() < grace_end {
             match rx.recv_timeout(Duration::from_millis(50)) {
@@ -383,16 +415,7 @@ mod resource_exhaustion {
         let completion_end = Instant::now() + JOIN_GRACE;
         if bufs[0].is_some() && bufs[1].is_some() {
             for reader in readers {
-                let mut finished = reader.is_finished();
-                while !finished && Instant::now() < completion_end {
-                    std::thread::sleep(Duration::from_millis(5));
-                    finished = reader.is_finished();
-                }
-                if finished {
-                    if reader.join().is_err() {
-                        incomplete_readers = true;
-                    }
-                } else {
+                if !join_finished(reader, completion_end) {
                     incomplete_readers = true;
                 }
             }
@@ -406,11 +429,15 @@ mod resource_exhaustion {
         // stays exactly as recorded pre-kill and is never recomputed here.
         // Unavailable reap (or injected): the seam verdict flows into
         // the real parent status instead of a helper-only simulation.
+        // The OS cleanup always runs (no zombies by construction);
+        // reap_never only discards the observation for the verdict, never
+        // the cleanup itself. Do not invent exit/reap success from it.
+        let mut poll = || child.try_wait();
+        let really_reaped = reap_with_grace(&mut poll, REAP_GRACE);
         let reaped = if faults.reap_never {
             None
         } else {
-            let mut poll = || child.try_wait();
-            reap_with_grace(&mut poll, REAP_GRACE)
+            really_reaped
         };
         let status = match (status, reaped) {
             (Some(s), _) => Some(s),
@@ -629,64 +656,85 @@ mod resource_exhaustion {
 
     #[test]
     fn harness_join_gate_proves_paused_sender_unfinished() {
-        // A sender paused after send: deterministic proof that a channel
-        // receipt is not the termination contract. The sender blocks on
-        // `release` right after sending, so it is alive by construction
-        // when the parent observes the receipt — no timing luck involved.
-        // The thread body after release is a bare return (no blocking
-        // calls), so releasing it afterwards is a bounded cleanup path.
+        // A sender paused after send, driven through the ACTUAL
+        // `join_finished` gate the runner uses — not a parallel
+        // demonstration. The sender blocks on `release` right after
+        // sending, so it is alive by construction when the parent
+        // observes the receipt: no timing luck involved. The thread body
+        // after release is a bare return (no blocking calls), so the
+        // release below is a bounded cleanup path, watched by its own
+        // finite deadline.
         let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
         let (rel_tx, rel_rx) = std::sync::mpsc::channel::<()>();
         let handle = std::thread::spawn(move || {
             let _ = done_tx.send(());
             let _ = rel_rx.recv();
         });
-        done_rx.recv().expect("sender ran to the pause point");
+        done_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("sender ran to the pause point inside the readiness bound");
         assert!(
-            !handle.is_finished(),
-            "paused-after-send thread must read unfinished"
+            !join_finished(handle, Instant::now() + Duration::from_millis(100)),
+            "paused-after-send thread must fail the gate inside a short grace"
         );
-        // Release is the explicit cleanup path: the receiver fails, the
-        // thread returns, and the watchdog below proves it terminates.
-        let start = Instant::now();
+        // Release the negative-path thread at once: its receiver fails and
+        // it returns on its own (bare return, no blocking calls), so no
+        // detached thread outlives this test's scope.
         drop(rel_tx);
-        let mut finished = handle.is_finished();
-        while !finished && start.elapsed() < Duration::from_secs(5) {
-            std::thread::sleep(Duration::from_millis(5));
-            finished = handle.is_finished();
-        }
-        assert!(finished, "released thread must finish inside the watchdog");
+        // The release twin below proves the same gate primitive joins a
+        // released thread inside the watchdog.
+        let start = Instant::now();
+        // NOTE: the negative gate above consumed the handle; spawn the
+        // release twin whose only job is the bounded cleanup path.
+        let (done2_tx, done2_rx) = std::sync::mpsc::channel::<()>();
+        let (rel2_tx, rel2_rx) = std::sync::mpsc::channel::<()>();
+        let handle2 = std::thread::spawn(move || {
+            let _ = done2_tx.send(());
+            let _ = rel2_rx.recv();
+        });
+        done2_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("twin ran to the pause point inside the readiness bound");
+        drop(rel2_tx);
         assert!(
-            start.elapsed() < Duration::from_secs(5),
+            join_finished(handle2, Instant::now() + Duration::from_secs(5)),
+            "released thread must join inside the watchdog"
+        );
+        assert!(
+            start.elapsed() < Duration::from_secs(10),
             "cleanup path bounded"
         );
     }
 
     #[test]
     fn harness_parent_verdict_covers_injected_faults() {
-        // Poll failure through the REAL parent lifecycle: no panic, and a
-        // verdict distinct from timeout (incomplete, exitless, no timeout).
-        let mut c = Command::new("bash");
-        c.args(["-c", "exit 0"])
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        let run = run_command_bounded_with(
-            c,
+        // Poll failure against a TRULY LIVE child through the REAL parent
+        // lifecycle: no panic, real termination in common cleanup, and a
+        // verdict distinct from timeout. The orphaned `sleep` is self-bound
+        // (30s); grandchildren cannot be reaped portably.
+        let start = Instant::now();
+        let run = run_raw_bounded_with(
+            "bash",
+            &["-c", "sleep 30"],
             Duration::from_secs(5),
             LifecycleFaults {
                 fail_poll: true,
                 ..Default::default()
             },
         );
-        // The reap still recovers the truthful exit of the already-dead
-        // child; the verdict stays distinct from a timeout (incomplete,
-        // exitless-timeout-absence) and from a clean run (incomplete).
-        assert_eq!(run.exit_code, Some(0), "reap recovers the true exit");
+        let elapsed = start.elapsed();
+        // The common cleanup really terminated the live child; the exit
+        // comes back signaled (no code), and the verdict stays distinct
+        // from a timeout (incomplete, exitless, no timeout label).
+        assert_eq!(run.exit_code, None, "killed live child has no exit code");
         assert!(run.incomplete_readers, "poll failure fails the run visibly");
         assert!(
             !run.timed_out,
             "poll failure must not be mislabeled as a timeout"
+        );
+        assert!(
+            elapsed < Duration::from_secs(15),
+            "cleanup bounded without waiting for the 30s sleeper: {elapsed:?}"
         );
         // Injected read failure through the REAL parent capture path:
         // partial capture with read_error set, never a clean EOF.
