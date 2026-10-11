@@ -44,7 +44,9 @@ the guest never runs native code in your process.
 The interpreter loads on the first call of a process: the first `python3`
 takes about 19 ms on the reference machine, later calls about 4.4 ms. To move
 that one-time cost out of the first request, call
-`bashkit::CPython::warm_up()` at startup.
+`bashkit::CPython::warm_up()` at startup. On hosts where the linker or loader
+cannot preserve 64 KiB module alignment, such as macOS, an aligned immutable
+copy is cached once for the process; later calls reuse it.
 
 ## Why CPython instead of Monty
 
