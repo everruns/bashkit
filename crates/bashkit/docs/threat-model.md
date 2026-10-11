@@ -88,7 +88,7 @@ through configurable limits.
 
 | Threat | Attack Example | Mitigation | Status |
 |--------|---------------|------------|--------|
-| Function recursion (TM-DOS-020) | `f() { f; }; f` | Depth limit of 16, including a hard ceiling when callers request more, protects 2 MiB host stacks | MITIGATED |
+| Function and signal-trap recursion (TM-DOS-020) | `f() { f; }; f` or `trap 'kill -USR1 $$' USR1; kill -USR1 $$` | Functions, source, child shells and trap handlers share a hard depth ceiling of 16, plus a dedicated trap-nesting cap of 3 that trips first on small stacks; nested exhaustion is skipped with a diagnostic and the first trip fails the exec as a resource-limit error, while handler logic failures never disturb the interrupted command (TM-DOS-030). Subprocess tests cover direct, mutual and mixed recursion on 2 MiB stacks | MITIGATED |
 | Command sub depth (TM-DOS-021) | `$($($($())))` nesting | Inherited depth/fuel from parent | MITIGATED |
 | Parser depth (TM-DOS-022) | `(((((...))))))` nesting | `max_ast_depth` + hard cap (100) | MITIGATED |
 | Arithmetic depth (TM-DOS-026) | `$(((((...))))))` | `MAX_ARITHMETIC_DEPTH` (50) | MITIGATED |

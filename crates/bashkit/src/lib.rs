@@ -970,6 +970,16 @@ impl Bash {
         if let Ok(exec_result) = &mut result {
             exec_result.capability_cleanup = cleanup;
         }
+        // THREAT[TM-DOS-020]: trap-nesting exhaustion skips the nested
+        // handler without disturbing the interrupted command, but resource
+        // exhaustion still fails the execution, like command fuel.
+        if let Some(depth_error) = self
+            .interpreter
+            .take_trap_depth_error()
+            .filter(|_| result.is_ok())
+        {
+            result = Err(Error::ResourceLimit(depth_error));
+        }
         result
     }
 

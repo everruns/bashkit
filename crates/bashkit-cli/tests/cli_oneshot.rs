@@ -148,6 +148,48 @@ fn function_recursion_is_bounded_on_a_two_mib_stack() {
     }
 }
 
+// Child isolation and a small command allowance keep even a missing guard safe.
+#[cfg(unix)]
+#[test]
+fn signal_trap_recursion_is_bounded_on_a_two_mib_stack() {
+    for script in [
+        "trap 'kill -USR1 $$' USR1; kill -USR1 $$",
+        "trap 'kill -USR2 $$' USR1; trap 'kill -USR1 $$' USR2; kill -USR1 $$",
+        "f() { kill -USR1 $$; }; trap 'f' USR1; kill -USR1 $$",
+        "echo 'kill -USR1 $$' > /handler; trap 'source /handler' USR1; kill -USR1 $$",
+    ] {
+        let mut child = Command::new("sh")
+            .args([
+                "-c",
+                "set -e; ulimit -s 2048; exec \"$1\" --no-stdin --max-commands 64 -c \"$2\"",
+                "sh",
+                BIN,
+                script,
+            ])
+            .env_remove("RUST_BACKTRACE")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn signal trap probe");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while child.try_wait().unwrap().is_none() {
+            if Instant::now() >= deadline {
+                child.kill().unwrap();
+                let out = child.wait_with_output().unwrap();
+                panic!("signal trap probe hung: {script}: {}", stderr(&out));
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        let out = child.wait_with_output().unwrap();
+        assert_eq!(out.status.code(), Some(1), "{script}: {}", stderr(&out));
+        assert!(
+            stderr(&out).contains("depth exceeded"),
+            "{script}: {}",
+            stderr(&out)
+        );
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn function_nesting_below_limit_works_on_a_two_mib_stack() {
