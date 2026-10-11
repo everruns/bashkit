@@ -126,6 +126,45 @@ Anything observable only through a subprocess belongs in
 `cli_oneshot.rs`; anything about how flags configure the builder stays in
 the `main.rs` unit tests, which are far cheaper.
 
+### The `bashkit` suite spawns the CLI, and must not guess its path
+
+One exception runs the CLI from the `bashkit` crate: the bounded-child
+harness in `threat_model_tests.rs` (TM-DOS-135) spawns the `bashkit`
+binary so hostile reproducers never execute in the test process, where
+pre-fix they overflowed the stack and aborted the whole runner.
+
+That binary belongs to a sibling package, so `CARGO_BIN_EXE_bashkit` is
+not available there. Two rules follow.
+
+1. The test selection must include the `bashkit-cli` package. Its own
+   integration tests do get `CARGO_BIN_EXE_bashkit`, which is what makes
+   cargo export the binary at all; `--tests` across the workspace is
+   enough, while `-p bashkit --test integration` on its own is not.
+   `--bins` is not the mechanism: on cargo 1.101-nightly it builds the
+   binary only as a test harness, inside the hashed build directory, and
+   exports nothing runnable.
+2. The harness must locate the binary by walking up from the test binary
+   until it finds it, never at a fixed depth. Where cargo puts a test
+   binary is not contractual: the pinned stable uses
+   `<profile>/deps/<test>`, cargo 1.101-nightly's separate build
+   directory uses `<profile>/build/<package>/<hash>/out/<test>`. Only the
+   export into the profile directory is guaranteed, and that directory is
+   an ancestor either way. Reading it as `exe.parent().parent()` passed on
+   stable and landed in the hashed build directory under nightly, so the
+   nightly ASAN job went red while required CI stayed green.
+
+The walk stops at cargo's target directory, recognised by the
+`CACHEDIR.TAG` cargo writes there, so an unrelated `bashkit` file above
+the build tree can never be spawned in place of the binary under test —
+that would be a false pass, worse than the failure. A depth bound applies
+whether or not the marker is present.
+
+`cli_lookup_resolves_known_cargo_layouts` covers both layouts over
+synthetic trees (the live tree only ever has its own toolchain's layout),
+plus the package-named `build/bashkit` *directory* not being mistaken for
+the binary and a decoy above the target directory being refused.
+`bashkit_cli_path()` fails closed naming every path it ruled out.
+
 ## Coverage
 
 Uploaded to Codecov from three sources: Rust unit/integration coverage via
