@@ -158,7 +158,7 @@ TM-ESC-032), and the deferred error rejects the script the way bash does.
 Process substitution keeps its part for the same reason, and hard-errors on
 budget failures (TM-DOS-021).
 
-**Bounded syntax diagnostics (TM-DOS-135).** Unexpected-token messages and
+**Bounded syntax diagnostics (TM-DOS-136).** Unexpected-token messages and
 complete `Error::syntax_report` results are capped at 1 KiB during construction,
 including `[diagnostic truncated]` and its trailing newline when text is omitted.
 A fixed-capacity UTF-8 writer stops formatting on the first overflow; neither a

@@ -295,7 +295,21 @@ pub(crate) fn syntax_report(
     line: usize,
     shift: usize,
 ) -> String {
-    // THREAT[TM-DOS-135]: stop before growth, including temporary formatting.
+    // THREAT[TM-DOS-136]: stop before growth, including temporary formatting.
+    // The shell name (`-c` ARG0) is attacker-controlled and stamped on every
+    // report line: truncate it first so a long ARG0 cannot evict the
+    // structural payload (`syntax error ...`, token excerpt, marker) out of
+    // the byte budget. Short names print verbatim.
+    let shell: std::borrow::Cow<'_, str> = if who.chars().count() > MAX_SHELL_NAME_CHARS {
+        let mut end = MAX_SHELL_NAME_CHARS;
+        while !who.is_char_boundary(end) {
+            end -= 1;
+        }
+        std::borrow::Cow::Owned(format!("{}...", &who[..end]))
+    } else {
+        std::borrow::Cow::Borrowed(who)
+    };
+    let who = shell.as_ref();
     let mut out = Diagnostic::new();
     let _ = (|| -> fmt::Result {
         let prefix = if message.starts_with("syntax error") || message.starts_with("unexpected EOF")
@@ -332,6 +346,10 @@ pub(crate) fn syntax_report(
 }
 
 const MAX_DIAGNOSTIC_BYTES: usize = 1024;
+/// Display width for the shell name (`-c` ARG0) inside one diagnostic.
+/// Short names print verbatim; longer ones are cut here so a long ARG0
+/// cannot evict the structural payload out of the byte budget.
+const MAX_SHELL_NAME_CHARS: usize = 64;
 const DIAGNOSTIC_TRUNCATED: &str = "[diagnostic truncated]\n";
 
 /// Fixed-capacity writer: formatting cannot allocate the full untrusted text.
@@ -441,8 +459,7 @@ mod tests {
     #[test]
     fn syntax_report_bounds_each_untrusted_component() {
         for (who, source, message, line) in [
-            ("é".repeat(2048), String::new(), "syntax error".into(), 0),
-            ("bash".into(), String::new(), "界".repeat(2048), 0),
+            ("bash".to_owned(), String::new(), "界".repeat(2048), 0),
             (
                 "bash".into(),
                 "界".repeat(2048),
@@ -461,6 +478,19 @@ mod tests {
             assert_eq!(report.capacity(), MAX_DIAGNOSTIC_BYTES);
             assert!(report.ends_with(DIAGNOSTIC_TRUNCATED));
         }
+    }
+
+    #[test]
+    fn syntax_report_long_shell_name_keeps_payload() {
+        // A long `-c` ARG0 is truncated first: the structural payload must
+        // survive inside the byte budget, with the marker only if the rest
+        // still overflows.
+        let report = syntax_report(&"B".repeat(8192), "", "syntax error", 1, 1);
+        assert!(report.len() <= MAX_DIAGNOSTIC_BYTES);
+        assert!(report.contains("syntax error"));
+        assert!(report.contains("..."));
+        let short = syntax_report("CASE", "", "syntax error", 1, 1);
+        assert!(short.contains("CASE"), "short names print verbatim");
     }
 
     #[test]

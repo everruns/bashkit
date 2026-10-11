@@ -78,6 +78,103 @@ mod resource_exhaustion {
         }
     }
 
+    /// Runs argv (a `-c` script plus trailing `$0`/ARG0 words) in a child
+    /// CLI process under the same bounds contract as [`run_cli_bounded`]:
+    /// wall-clock watchdog, 8 KiB output cap, real exit code preserved.
+    fn run_cli_argv_bounded(argv: &[&str], limit: Duration) -> BoundedRun {
+        use std::io::Read;
+        let mut child = Command::new(bashkit_cli_path());
+        child
+            .args(argv)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let mut child = child.spawn().expect("spawn bounded bashkit CLI");
+        let deadline = Instant::now() + limit;
+        loop {
+            match child.try_wait().expect("poll bounded CLI") {
+                Some(status) => {
+                    let mut stdout = String::new();
+                    let mut stderr = String::new();
+                    child
+                        .stdout
+                        .take()
+                        .unwrap()
+                        .read_to_string(&mut stdout)
+                        .unwrap();
+                    child
+                        .stderr
+                        .take()
+                        .unwrap()
+                        .read_to_string(&mut stderr)
+                        .unwrap();
+                    return BoundedRun {
+                        exit_code: status.code(),
+                        stdout: stdout.chars().take(8192).collect(),
+                        stderr: stderr.chars().take(8192).collect(),
+                        timed_out: false,
+                    };
+                }
+                None => {
+                    if Instant::now() >= deadline {
+                        child.kill().ok();
+                        child.wait().ok();
+                        return BoundedRun {
+                            exit_code: None,
+                            stdout: String::new(),
+                            stderr: String::new(),
+                            timed_out: true,
+                        };
+                    }
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+            }
+        }
+    }
+
+    /// TM-DOS-136: scaled multiline token x long ARG0 stays bounded in a
+    /// child. The exact finding shape: `for x "` plus N `a`+newline lines
+    /// plus the closing quote (the parser expects `do`), invoked with a long
+    /// `-c` ARG0. Diagnostic storage used to grow as token lines x ARG0
+    /// before stderr capture. Both scales must exit 2 with a Bash-compatible
+    /// shape and flat <=1 KiB stderr, proving the report no longer grows
+    /// with the product. Never runs in the test process.
+    #[test]
+    fn syntax_diagnostic_multiline_times_arg0_is_bounded_in_child() {
+        for token_lines in [200usize, 2000usize] {
+            let mut script = String::from("for x \"");
+            for _ in 0..token_lines {
+                script.push('a');
+                script.push('\n');
+            }
+            script.push('"');
+            let arg0 = "B".repeat(8192);
+            let run = run_cli_argv_bounded(&["-c", &script, &arg0], Duration::from_secs(20));
+            assert!(
+                !run.timed_out,
+                "token_lines={token_lines}: child hit the 20s watchdog"
+            );
+            assert_eq!(
+                run.exit_code,
+                Some(2),
+                "token_lines={token_lines}: raw child exit code"
+            );
+            assert!(
+                run.stdout.is_empty(),
+                "token_lines={token_lines}: stdout must stay empty"
+            );
+            assert!(
+                run.stderr.contains("syntax error"),
+                "token_lines={token_lines}: keep the Bash-compatible shape"
+            );
+            assert!(
+                run.stderr.len() <= 1024,
+                "token_lines={token_lines}: {} stderr bytes, want <= 1024",
+                run.stderr.len()
+            );
+        }
+    }
+
     /// TM-DOS-135: hostile indirect cycles are refused in a bounded child.
     /// Exact finding reproducer plus the mutual variant. Both run in a
     /// child CLI under a wall-clock watchdog (never in the test runner:
