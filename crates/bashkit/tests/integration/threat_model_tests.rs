@@ -10,8 +10,9 @@ use bashkit::{
     OverlayFs, SessionLimits, TraceEventDetails, TraceEventKind, TraceMode,
 };
 use std::path::Path;
+use std::process::{Command, Stdio};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 // =============================================================================
 // 1. RESOURCE EXHAUSTION TESTS
@@ -20,14 +21,93 @@ use std::time::Duration;
 mod resource_exhaustion {
     use super::*;
 
-    /// TM-RES-INDIRECT: an indirect array target ends at the first `]`.
-    /// Trailing operator/nesting text is never re-expanded as code, so a
-    /// default operand cannot re-enter indirect expansion and exhaust the
-    /// stack (`r='a[0]:-${!r}]'`). Matches real bash: element-or-empty.
+    /// TM-DOS-135: child-process runner for hostile scripts.
+    /// Hostile reproducers never run in the test process: pre-fix they
+    /// overflowed the stack and aborted the whole runner. The CLI binary
+    /// sits next to the test binary's `deps` directory.
+    fn bashkit_cli_path() -> std::path::PathBuf {
+        let exe = std::env::current_exe().expect("current test executable");
+        let deps = exe.parent().expect("deps dir");
+        let profile = deps.parent().expect("profile dir");
+        profile.join(format!("bashkit{}", std::env::consts::EXE_SUFFIX))
+    }
+
+    struct BoundedRun {
+        timed_out: bool,
+        status_ok: bool,
+        exit_code: Option<i32>,
+        stdout: String,
+        stderr: String,
+    }
+
+    /// Runs a script in a child CLI process under a wall-clock watchdog.
+    /// Darwin note: Rust std exposes no portable per-child CPU, stack, or
+    /// memory caps, so the watchdog kill plus the 8 KiB output cap are the
+    /// enforced bounds here. Records the real producer exit status.
+    fn run_cli_bounded(script: &str, limit: Duration) -> BoundedRun {
+        let mut child = Command::new(bashkit_cli_path())
+            .args(["-c", script])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn bashkit CLI");
+        let start = Instant::now();
+        let timed_out = loop {
+            match child.try_wait().expect("poll child") {
+                Some(_) => break false,
+                None => {
+                    if start.elapsed() >= limit {
+                        let _ = child.kill();
+                        break true;
+                    }
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+            }
+        };
+        let output = child.wait_with_output().expect("collect child output");
+        const CAP: usize = 8192;
+        let mut stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+        let mut stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        stdout.truncate(CAP);
+        stderr.truncate(CAP);
+        BoundedRun {
+            timed_out,
+            status_ok: output.status.success(),
+            exit_code: output.status.code(),
+            stdout,
+            stderr,
+        }
+    }
+
+    /// TM-DOS-135: hostile indirect cycles terminate in a bounded child.
+    /// Exact finding reproducer plus the mutual variant. Real bash prints
+    /// `out=[]` with status 0 for both and never crashes.
+    #[test]
+    fn indirect_hostile_cycles_terminate_in_bounded_child() {
+        for script in [
+            "unset a\nr='a[0]:-${!r}]'\necho \"out=[${!r}]\"\necho \"st=$?\"",
+            "unset a\nr='a[0]:-${!s}]'\ns='a[0]:-${!r}]'\necho \"out=[${!r}]\"\necho \"st=$?\"",
+        ] {
+            let run = run_cli_bounded(script, Duration::from_secs(20));
+            assert!(!run.timed_out, "hostile script hung: {script}");
+            assert!(
+                run.status_ok,
+                "exit={:?} stderr={}",
+                run.exit_code, run.stderr
+            );
+            assert_eq!(run.stdout, "out=[]\nst=0\n", "script: {script}");
+            assert!(run.stderr.is_empty(), "stderr: {}", run.stderr);
+        }
+    }
+
+    /// TM-DOS-135: an indirect array target ends at the close of the first
+    /// complete `[...]` reference; trailing operators are ignored like real
+    /// bash, while nested subscripts resolve whole.
     #[tokio::test]
-    async fn indirect_array_target_ends_at_first_close_bracket() {
-        // Trailing operator/nesting text is ignored, like real bash
-        // (verified: bash prints `out=[]`, `st=0` for every target below).
+    async fn indirect_array_boundary_ignores_trailing_operators() {
+        // Trailing operator/nesting text resolves the leading element
+        // (verified against real bash: `out=[1]`, `st=0` for each).
         for target in [
             "a[0]:-injected]",
             "a[0]-injected]",
@@ -40,58 +120,84 @@ mod resource_exhaustion {
             let mut bash = Bash::new();
             let result = bash
                 .exec(&format!(
-                    "r='{target}'\necho \"out=[${{!r}}]\"\necho \"st=$?\""
+                    "a=(1 2)\nr='{target}'\necho \"out=[${{!r}}]\"\necho \"st=$?\""
                 ))
                 .await
                 .unwrap();
-            assert_eq!(result.stdout, "out=[]\nst=0\n", "target: {target}");
+            assert_eq!(result.stdout, "out=[1]\nst=0\n", "target: {target}");
             assert!(
                 result.stderr.is_empty(),
                 "target: {target}: {}",
                 result.stderr
             );
         }
-        // Set element resolves through the truncated target (bash: `1`).
+        // Nested subscripts resolve whole (bash: `two`/`two`).
         let mut bash = Bash::new();
         let result = bash
-            .exec("a=(1 2)\nr='a[0]:-injected]'\necho \"out=[${!r}]\"\necho \"st=$?\"")
+            .exec("a=(zero one two three)\nb=(2)\nr='a[b[0]]'\nprintf \"indirect=[%s]\\n\" \"${!r}\"\nprintf \"direct=[%s]\\n\" \"${a[b[0]]}\"")
             .await
             .unwrap();
-        assert_eq!(result.stdout, "out=[1]\nst=0\n");
+        assert_eq!(result.stdout, "indirect=[two]\ndirect=[two]\n");
+        assert!(result.stderr.is_empty(), "stderr: {}", result.stderr);
+        // An operator after a nested reference is ignored (bash: `two`).
+        let mut bash = Bash::new();
+        let result = bash
+            .exec("a=(zero one two three)\nb=(2)\nr='a[b[0]]:-D'\necho \"out=[${!r}]\"\necho \"st=$?\"")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "out=[two]\nst=0\n");
+        assert!(result.stderr.is_empty(), "stderr: {}", result.stderr);
+        // Associative references agree between direct and indirect use.
+        // Portable note: indexed cases above also run against real bash
+        // below; assoc arrays need bash 4+, so agreement is asserted here.
+        let mut bash = Bash::new();
+        let result = bash
+            .exec("declare -A h=([k]=V [key]=W)\nkey=k\nr='h[$key]'\necho \"dollar=[${!r}] direct=[${h[$key]}]\"\nr='h[key]'\necho \"plain=[${!r}] direct=[${h[key]}]\"\nr='h[@]'\necho \"at=[${!r}] direct=[${h[@]}]\"")
+            .await
+            .unwrap();
+        assert_eq!(
+            result.stdout,
+            "dollar=[V] direct=[V]\nplain=[W] direct=[W]\nat=[V W] direct=[V W]\n"
+        );
         assert!(result.stderr.is_empty(), "stderr: {}", result.stderr);
     }
 
-    /// TM-RES-INDIRECT: self-referential default operand terminates.
-    /// Pre-fix this exact reproducer overflowed the stack (SIGABRT).
+    // Out of scope: `]` inside an assoc key is unsupported by the
+    // direct subscript parser as well (`declare` accepts it, reads
+    // misparse), so no indirect agreement is asserted for that shape.
+    // The boundary scan still tracks quotes so a complete reference
+    // stays whole if the parser ever learns quoted brackets.
+
+    /// TM-DOS-135: finite nested indexed indirects match real bash
+    /// byte-for-byte. Indexed arrays work on bash 3.2+, so this runs on
+    /// macOS and Linux CI alike.
     #[tokio::test]
-    async fn indirect_self_cycle_default_operand_terminates() {
-        // Exact finding reproducer: unset element + self-cycle in default.
-        // Real bash prints `out=[]` with status 0 and never crashes.
-        let mut bash = Bash::new();
-        let result = bash
-            .exec("unset a\nr='a[0]:-${!r}]'\necho \"out=[${!r}]\"\necho \"st=$?\"")
-            .await
-            .unwrap();
-        assert_eq!(result.stdout, "out=[]\nst=0\n");
-        assert!(result.stderr.is_empty(), "stderr: {}", result.stderr);
-        // Set element: the cycle operand is discarded, element wins.
-        let mut bash = Bash::new();
-        let result = bash
-            .exec("a=(1 2)\nr='a[0]:-${!r}]'\necho \"out=[${!r}]\"\necho \"st=$?\"")
-            .await
-            .unwrap();
-        assert_eq!(result.stdout, "out=[1]\nst=0\n");
-        assert!(result.stderr.is_empty(), "stderr: {}", result.stderr);
-        // Mutual cycle through two names terminates as well.
-        let mut bash = Bash::new();
-        let result = bash
-            .exec(
-                "unset a\nr='a[0]:-${!s}]'\ns='a[0]:-${!r}]'\necho \"out=[${!r}]\"\necho \"st=$?\"",
-            )
-            .await
-            .unwrap();
-        assert_eq!(result.stdout, "out=[]\nst=0\n");
-        assert!(result.stderr.is_empty(), "stderr: {}", result.stderr);
+    async fn indirect_nested_indexed_matches_real_bash() {
+        for script in [
+            "a=(zero one two three); b=(2); r='a[b[0]]'; printf 'indirect=[%s]\n' \"${!r}\"; printf 'direct=[%s]\n' \"${a[b[0]]}\"",
+            "a=(zero one two three); b=(2); r='a[b[0]]:-D'; echo \"out=[${!r}]\"",
+            "a=(1 2); r='a[0][1]'; echo \"out=[${!r}]\"",
+            "a=(1 2); r='a[1]EXTRA'; echo \"out=[${!r}]\"",
+            "a=(x y); i=1; r='a[$i]'; echo \"out=[${!r}]\"",
+        ] {
+            let expected = Command::new("bash")
+                .args(["--noprofile", "--norc", "-c", script])
+                .output()
+                .expect("run real bash");
+            assert!(
+                expected.status.success(),
+                "real bash failed: {script}: {}",
+                String::from_utf8_lossy(&expected.stderr)
+            );
+            let mut harness = Bash::new();
+            let result = harness.exec(script).await.unwrap();
+            assert_eq!(
+                result.stdout,
+                String::from_utf8_lossy(&expected.stdout).into_owned(),
+                "script: {script}"
+            );
+            assert!(result.stderr.is_empty(), "stderr: {}", result.stderr);
+        }
     }
 
     /// V1: Test that command limit prevents infinite execution

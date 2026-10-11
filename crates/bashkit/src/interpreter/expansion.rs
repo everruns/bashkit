@@ -2637,6 +2637,40 @@ impl Interpreter {
         })
     }
 
+    // End index (exclusive) of the first complete subscript reference that
+    // opens at `open`: nested brackets nest, quoted or escaped text is
+    // skipped. `None` when the brackets never balance. All boundary bytes
+    // are ASCII, so the index is always a char boundary.
+    fn indirect_array_end(value: &str, open: usize) -> Option<usize> {
+        let bytes = value.as_bytes();
+        let mut depth = 0usize;
+        let mut quote: Option<u8> = None;
+        let mut escaped = false;
+        let mut i = open;
+        while i < bytes.len() {
+            let b = bytes[i];
+            // 0x27 is a single quote, 0x22 a double quote, 0x5c a backslash.
+            if escaped {
+                escaped = false;
+            } else if quote.is_some_and(|q| b == q) {
+                quote = None;
+            } else if quote.is_none() && (b == 0x27 || b == 0x22) {
+                quote = Some(b);
+            } else if quote.is_none() && b == 0x5c {
+                escaped = true;
+            } else if quote.is_none() && b == b'[' {
+                depth += 1;
+            } else if quote.is_none() && b == b']' && depth > 0 {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i + 1);
+                }
+            }
+            i += 1;
+        }
+        None
+    }
+
     /// The parameter `${!name...}` refers to: the value of `name` (an
     /// element when it carries a subscript). bash rejects an unset `name`
     /// ("invalid indirect expansion") and a value that is not a parameter
@@ -2673,17 +2707,18 @@ impl Interpreter {
                 .is_some_and(|f| f.is_ascii_alphabetic() || f == '_')
                 && c.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
         };
-        // TM-RES-INDIRECT: an indirect array target ends at the first `]`
-        // after `[` (real bash resolves `a[0]` from `a[0]:-x]` and ignores
-        // the rest). Truncating before validation keeps trailing
-        // operator/nesting text — including a nested `${!...}` — from ever
-        // reaching the desugar re-parse below, which re-entered indirect
-        // expansion without bound (`r='a[0]:-${!r}]'` overflowed the stack).
-        // Targets without a sub-`]` (plain names, `a[$i]`, `a[@]`) pass
-        // through unchanged.
+        // TM-RES-INDIRECT: an indirect array target ends at the close of
+        // the first complete `[...]` reference (real bash resolves `a[0]`
+        // from `a[0]:-x]` and ignores the rest). The boundary tracks nested
+        // brackets and quoted text, so valid nested subscripts (`a[b[0]]`,
+        // `h['a]b']`) survive whole while trailing operator/nesting text —
+        // including a nested `${!...}` — never reaches the desugar re-parse
+        // below, which re-entered indirect expansion without bound
+        // (`r='a[0]:-${!r}]'` overflowed the stack). Targets without a
+        // balanced `]` (plain names, `a[$i]`, `a[@]`) pass through unchanged.
         let value = match value.find('[') {
-            Some(open) => match value[open..].find(']') {
-                Some(rel) => value[..open + rel + 1].to_string(),
+            Some(open) => match Self::indirect_array_end(&value, open) {
+                Some(end) => value[..end].to_string(),
                 None => value,
             },
             None => value,
