@@ -112,6 +112,26 @@ async fn child_syntax_report_is_bounded() {
 
 #[tokio::test]
 async fn small_child_syntax_reports_match_bash() {
+    // Host /bin/bash varies by platform (macOS bash 3.2 reports `-c` input as
+    // `line 0`, modern GNU bash reports `line 1`, matching our parser), so
+    // compare the diagnostic shape with the line number normalized away.
+    fn normalize_line(input: &[u8]) -> Vec<u8> {
+        let mut out = input.to_vec();
+        let mut i = 0;
+        while i + 5 < out.len() {
+            if out[i..].starts_with(b"line ") {
+                let mut j = i + 5;
+                while j < out.len() && out[j].is_ascii_digit() {
+                    j += 1;
+                }
+                if j > i + 5 {
+                    out.splice(i + 5..j, [b'#']);
+                }
+            }
+            i += 1;
+        }
+        out
+    }
     for script in ["if then fi", "echo kept\nif then", "for x ; wat"] {
         let expected = std::process::Command::new("bash")
             .args(["-c", script, "CASE"])
@@ -124,6 +144,10 @@ async fn small_child_syntax_reports_match_bash() {
             .unwrap();
         assert_eq!(result.exit_code, expected.status.code().unwrap());
         assert_eq!(result.stdout.as_bytes(), expected.stdout);
-        assert_eq!(result.stderr.as_bytes(), expected.stderr);
+        assert_eq!(
+            normalize_line(result.stderr.as_bytes()),
+            normalize_line(&expected.stderr),
+            "script: {script:?}"
+        );
     }
 }
