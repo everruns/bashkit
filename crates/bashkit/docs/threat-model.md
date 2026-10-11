@@ -92,7 +92,7 @@ through configurable limits.
 | Command sub depth (TM-DOS-021) | `$($($($())))` nesting | Inherited depth/fuel from parent | MITIGATED |
 | Parser depth (TM-DOS-022) | `(((((...))))))` nesting | `max_ast_depth` + hard cap (100) | MITIGATED |
 | Arithmetic depth (TM-DOS-026) | `$(((((...))))))` | `MAX_ARITHMETIC_DEPTH` (50) | MITIGATED |
-| Builtin parser depth (TM-DOS-027) | Deeply nested awk/jq | `MAX_AWK_PARSER_DEPTH` (100) + `MAX_JQ_JSON_DEPTH` (100) | MITIGATED |
+| Builtin parser depth (TM-DOS-027) | Deeply nested awk/jq, including awk field-operand unary chains | Shared `MAX_AWK_PARSER_DEPTH` (100) across every recursive awk expression path + `MAX_JQ_JSON_DEPTH` (100) | MITIGATED |
 | Collect dirs recursion (TM-DOS-049) | Deep VFS tree | Mitigated by `max_path_depth` | MITIGATED |
 | Python read-only self-mount recursion (TM-DOS-118) | `bash.mount("/", bash.fs(), read_only=True)` hides the live filesystem identity behind a wrapper | Python validates the resolved filesystem identity before wrapping it | MITIGATED |
 | find traversal amplification (TM-DOS-121) | `find -L` over a symlink cycle, unbounded `-exec ... {} +` batches, or `*`-heavy `-name` patterns | Canonical-path loop detection with a 40-hop symlink cap, budget-charged directory listings, capped output, batches flushed every 4096 paths, linear-time glob matching | MITIGATED |
