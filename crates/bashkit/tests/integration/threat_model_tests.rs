@@ -264,6 +264,23 @@ mod resource_exhaustion {
     /// errors fail closed). EOF for the drain is construction-specific:
     /// these helpers hold the only write end and exit promptly, so an
     /// observed exit closes it; anything else stays Unknown.
+    /// Resolves a helper binary to an absolute executable path by an
+    /// explicit PATH search (no silent per-spawn fallback): missing or
+    /// non-executable helpers fail closed as Unknown at the call site.
+    /// Callers additionally assert the binary runs (the trichotomy test
+    /// below), which is the executable evidence behind the documented
+    /// single-writer EOF contract.
+    fn resolve_helper(name: &str) -> Option<std::path::PathBuf> {
+        let path_var = std::env::var_os("PATH")?;
+        for dir in std::env::split_paths(&path_var) {
+            let candidate = dir.join(name);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+        None
+    }
+
     fn run_helper_bounded(program: &str, args: &[&str], end: Instant) -> HelperOutcome {
         let blank = HelperOutcome {
             exit: None,
@@ -272,7 +289,19 @@ mod resource_exhaustion {
             reaped: false,
             signaled: false,
         };
-        let mut child = match Command::new(program)
+        let bin = match resolve_helper(program) {
+            Some(b) => b,
+            None => {
+                return HelperOutcome {
+                    exit: None,
+                    stderr: Vec::new(),
+                    drained_ok: false,
+                    reaped: false,
+                    signaled: false,
+                };
+            }
+        };
+        let mut child = match Command::new(&bin)
             .args(args)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -416,6 +445,10 @@ mod resource_exhaustion {
         marker: Option<String>,
         pending: Option<PendingJoiners>,
         files: Vec<std::path::PathBuf>,
+        /// Optional outcome receipt for the Drop path: Drop writes how
+        /// far best-effort cleanup got (kill/join/files), and the test
+        /// reads it back instead of inferring cleanup from silence.
+        drop_note: Option<std::path::PathBuf>,
     }
 
     impl RetainedCleanup {
@@ -544,24 +577,39 @@ mod resource_exhaustion {
 
     impl Drop for RetainedCleanup {
         fn drop(&mut self) {
-            // Best-effort only: fire the kill without asserts so an
-            // unwinding test never leaks the sleeper. Return values are
-            // intentionally ignored; files are removed quietly.
+            // Best-effort only (no asserts, no panics): terminate by pid
+            // identity first, marker ownership channel as fallback, then
+            // one bounded join attempt for retained handles, then file
+            // removal. The outcome receipt below makes this observable
+            // instead of inferred; the caller removes it after reading.
+            // Fixed short graces: Drop owns no outer deadline, so each
+            // stage carries its own finite bound, documented here.
+            let mut killed = false;
+            let mut joined = false;
             if let Some(pid) = self.pid.take() {
-                let _ = signal_bounded(&["-9", &pid], Duration::from_secs(5));
+                let end = Instant::now() + Duration::from_secs(5);
+                let o = run_helper_bounded("kill", &["-9", &pid], end);
+                killed = o.exit == Some(0);
+            } else if let Some(m) = self.marker.take() {
+                let end = Instant::now() + Duration::from_secs(5);
+                let o = run_helper_bounded("pkill", &["-9", "-f", &m], end);
+                killed = o.exit == Some(0);
+            }
+            if let Some(pending) = self.pending.take() {
+                let end = Instant::now() + JOIN_GRACE;
+                let mut ok = true;
+                for reader in pending.handles {
+                    if !matches!(join_finished(reader, end), JoinOutcome::Joined) {
+                        ok = false;
+                    }
+                }
+                joined = ok;
             }
             for path in std::mem::take(&mut self.files) {
                 std::fs::remove_file(&path).ok();
             }
-            // Pending handles get one bounded join attempt here (never an
-            // unbounded wait): their pipes close as a consequence of the
-            // kill above, so joined threads prove completion while the
-            // rest stay explicitly unjoined. No asserts, no panics.
-            if let Some(pending) = self.pending.take() {
-                let end = Instant::now() + JOIN_GRACE;
-                for reader in pending.handles {
-                    let _ = join_finished(reader, end);
-                }
+            if let Some(note) = self.drop_note.take() {
+                let _ = std::fs::write(&note, format!("killed={killed} joined={joined}"));
             }
         }
     }
@@ -1070,6 +1118,7 @@ mod resource_exhaustion {
         // is Absent by ESRCH receipt, and an invalid PID string is
         // Unknown (never successful absence).
         let me_pid = std::process::id().to_string();
+        let tri_start = Instant::now();
         let me_check = signal_bounded(&["-0", &me_pid], Duration::from_secs(5));
         assert!(me_check.dispatched, "self-signal delivers");
         assert!(me_check.helper_reaped, "helper reaped on every path");
@@ -1091,6 +1140,42 @@ mod resource_exhaustion {
         assert!(
             matches!(bad_check.presence, PidPresence::Unknown),
             "undecipherable outcome stays Unknown, never absence"
+        );
+        assert!(
+            tri_start.elapsed() < Duration::from_secs(20),
+            "all three helper calls finished inside finite bounds: {:?}",
+            tri_start.elapsed()
+        );
+    }
+
+    /// An infinite writer that never yields EOF: proves the drain
+    /// terminates at the cap by retention bound alone, without any EOF.
+    struct EndlessWriter;
+    impl Read for EndlessWriter {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            for b in buf.iter_mut() {
+                *b = b'x';
+            }
+            Ok(buf.len())
+        }
+    }
+
+    #[test]
+    fn harness_drain_ends_without_eof_at_cap() {
+        let start = Instant::now();
+        let mut src = EndlessWriter;
+        let (buf, oversized, read_error) = drain_capped(&mut src);
+        assert_eq!(
+            buf.len(),
+            BOUNDED_SAMPLE_CAP,
+            "retention never passes the cap"
+        );
+        assert!(oversized, "uncapped stream is real excess");
+        assert!(!read_error);
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "no EOF needed for termination: {:?}",
+            start.elapsed()
         );
     }
 
@@ -1148,6 +1233,7 @@ mod resource_exhaustion {
         // pidA handshake proves identity; without it there is honestly
         // nothing to terminate.
         let mut guard = RetainedCleanup {
+            drop_note: None,
             marker: None,
             pid: None,
             pending: Some(pending),
@@ -1229,6 +1315,7 @@ mod resource_exhaustion {
         // marker (established in the script text pre-launch) is the
         // usable control channel, and complete() terminates through it.
         let mut guard = RetainedCleanup {
+            drop_note: None,
             pid: None,
             marker: Some(marker.clone()),
             pending: Some(pending),
@@ -1284,6 +1371,70 @@ mod resource_exhaustion {
     }
 
     #[test]
+    fn harness_marker_drop_cleans_up_on_unwind() {
+        // Caught failure through a MARKER-owned fixture (no pid identity
+        // anywhere): the guard is built before any assert, the panic
+        // unwinds through it, and Drop terminates via the marker channel,
+        // joins the SAME original readers, removes files, and writes its
+        // outcome receipt. The test reads that receipt back instead of
+        // inferring cleanup from silence.
+        let marker = format!("syntax-unwind-{}", std::process::id());
+        let note = std::env::temp_dir().join(format!("syntax-unwind-note-{}", std::process::id()));
+        let script = format!("exec -a '{marker}' sleep 30 & exit 0");
+        let (run, pending) = run_raw_core(
+            "bash",
+            &["-c", &script],
+            Duration::from_secs(5),
+            LifecycleFaults::default(),
+        );
+        let guard = RetainedCleanup {
+            pid: None,
+            marker: Some(marker.clone()),
+            pending: Some(pending),
+            files: vec![],
+            drop_note: Some(note.clone()),
+        };
+        assert!(
+            run.incomplete_readers,
+            "fixture holds pipes as designed before the panic"
+        );
+        let start = Instant::now();
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+            let _guard = guard;
+            panic!("simulated assertion failure with marker-owned guard");
+        }));
+        assert!(outcome.is_err(), "the simulated failure unwinds");
+        // Drop fired on unwind: read its outcome receipt (written before
+        // the guard was consumed), then prove absence independently.
+        let note_text = std::fs::read_to_string(&note).expect("Drop wrote its outcome receipt");
+        std::fs::remove_file(&note).ok();
+        assert_eq!(
+            note_text, "killed=true joined=true",
+            "Drop terminated and joined, observed not inferred"
+        );
+        let end = Instant::now() + Duration::from_secs(10);
+        let mut gone = false;
+        while Instant::now() < end {
+            let o = run_helper_bounded(
+                "pgrep",
+                &["-f", &marker],
+                Instant::now() + Duration::from_secs(5),
+            );
+            if o.exit == Some(1) {
+                gone = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(gone, "unwind path absence observed via pgrep exit 1");
+        assert!(
+            start.elapsed() < Duration::from_secs(25),
+            "marker unwind cleanup bounded: {:?}",
+            start.elapsed()
+        );
+    }
+
+    #[test]
     fn harness_owned_guard_survives_unwind_then_completes() {
         // The guard survives a borrow-only panic (never consumed by it),
         // then runs its explicit finite cleanup AFTER catch_unwind: same
@@ -1303,6 +1454,7 @@ mod resource_exhaustion {
         // failure here still cleans up via Drop. The pid binds after its
         // read; the post-unwind stage below then uses this SAME guard.
         let mut guard_opt = Some(RetainedCleanup {
+            drop_note: None,
             marker: None,
             pid: None,
             pending: Some(pending),
@@ -1380,6 +1532,7 @@ mod resource_exhaustion {
         // a failure here still cleans up via Drop (no identity to kill,
         // files removed, threads documented). The pid binds below.
         let mut guard = RetainedCleanup {
+            drop_note: None,
             marker: None,
             pid: None,
             pending: Some(pending),
@@ -1444,6 +1597,7 @@ mod resource_exhaustion {
         let start = Instant::now();
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let _guard = RetainedCleanup {
+                drop_note: None,
                 marker: None,
                 pid: Some(pid.clone()),
                 pending: None,
@@ -1919,6 +2073,7 @@ mod resource_exhaustion {
         // itself binds after the pidfile read; without an identity there
         // is nothing to terminate, which Drop records honestly.
         let mut guard = RetainedCleanup {
+            drop_note: None,
             marker: None,
             pid: None,
             pending: Some(pending),
