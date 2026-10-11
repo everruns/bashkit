@@ -1028,12 +1028,20 @@ mod resource_exhaustion {
     /// assertion proves the run returns without waiting for it.
     #[test]
     fn bounded_helper_flags_retained_pipes() {
+        // The sleeper's PID is retained through a second receipt file so
+        // the test itself terminates and finitely observes the exact
+        // descendant it created — no waiting for the 30s self-expiry, no
+        // universal process-tree reaper, just test-scoped cleanup of owned
+        // resources. Unique per process; removed below.
         let receipt =
             std::env::temp_dir().join(format!("syntax-retained-limits-{}", std::process::id()));
+        let pidfile =
+            std::env::temp_dir().join(format!("syntax-retained-pid-{}", std::process::id()));
         let script = format!(
-            "ulimit -s > '{}'; ulimit -t >> '{}'; sleep 30 & exit 0",
+            "ulimit -s > '{}'; ulimit -t >> '{}'; sleep 30 & echo $! > '{}'; exit 0",
             receipt.display(),
-            receipt.display()
+            receipt.display(),
+            pidfile.display()
         );
         let start = Instant::now();
         let run = run_raw_bounded("bash", &["-c", &script], Duration::from_secs(5));
@@ -1041,6 +1049,39 @@ mod resource_exhaustion {
         let receipt_text =
             std::fs::read_to_string(&receipt).expect("fixture shell ran under the launcher");
         std::fs::remove_file(&receipt).ok();
+        // Controlled descendant cleanup AFTER the negative verdict above:
+        // terminate the exact retained sleeper and finitely observe its
+        // completion (absence via kill -0 polling inside a 5s bound).
+        // The orphan is reparented to init on the shell's death, so init
+        // reaps it promptly after the kill; the poll proves it is gone.
+        let sleeper = std::fs::read_to_string(&pidfile)
+            .expect("fixture recorded its descendant identity")
+            .trim()
+            .to_string();
+        std::fs::remove_file(&pidfile).ok();
+        let kill_ok = Command::new("kill")
+            .args(["-9", &sleeper])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        assert!(kill_ok, "owned descendant {sleeper} terminated");
+        let gone_start = Instant::now();
+        loop {
+            let alive = Command::new("kill")
+                .args(["-0", &sleeper])
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            if !alive {
+                break;
+            }
+            assert!(
+                gone_start.elapsed() < Duration::from_secs(5),
+                "descendant {sleeper} completion observed inside the cleanup bound"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let total = start.elapsed();
         assert!(!run.timed_out, "exited child misreported as timeout");
         assert!(
             run.incomplete_readers,
@@ -1056,6 +1097,10 @@ mod resource_exhaustion {
         assert!(
             elapsed < Duration::from_secs(15),
             "returned in {elapsed:?} without waiting for the 30s sleeper"
+        );
+        assert!(
+            total < Duration::from_secs(20),
+            "verdict plus descendant cleanup bounded end to end: {total:?}"
         );
     }
 
