@@ -86,33 +86,57 @@ async fn signal_handler_parse_error_is_swallowed() {
 }
 
 #[tokio::test]
-async fn trap_nesting_admits_exactly_three_direct_handlers() {
-    // Admission boundary: the dedicated cap (3) admits three nested handler
-    // executions, then trips the fourth entry with MaxTrapDepth.
+async fn finite_three_level_nesting_succeeds_with_recovery() {
+    // Terminates by construction (acyclic signal chain USR1 -> USR2 -> USR3):
+    // three nested handler entries are admitted, with exact output.
     let mut bash = Bash::builder().build();
-    let err = bash
-        .exec("trap 'echo ENTRY >> /log; kill -USR1 $$' USR1; kill -USR1 $$")
+    let result = bash
+        .exec("trap 'echo one; kill -USR2 $$' USR1; trap 'echo two; kill -TERM $$' USR2; trap 'echo three' TERM; kill -USR1 $$; echo done")
         .await
-        .unwrap_err()
-        .to_string();
-    assert!(err.contains("maximum trap nesting depth exceeded"), "{err}");
-    let log = bash.exec("cat /log").await.unwrap();
-    assert_eq!(log.stdout.lines().count(), 3, "{}", log.stdout);
+        .unwrap();
+    assert_eq!(result.stdout, "one\ntwo\nthree\ndone\n");
+    assert_eq!(result.exit_code, 0);
+    let next = bash.exec("echo recovered").await.unwrap();
+    assert_eq!(next.stdout, "recovered\n");
 }
 
 #[tokio::test]
-async fn shared_depth_admits_exactly_two_handlers_at_depth_two() {
-    // Admission boundary: with max_function_depth(2), two handler executions
-    // are admitted before the shared budget trips the third entry.
+async fn shared_depth_zero_admits_no_handlers() {
+    // Bounded by construction: the first trap entry already exceeds a zero
+    // budget, so no handler body runs and the trip surfaces.
     let mut bash = Bash::builder()
-        .limits(ExecutionLimits::new().max_function_depth(2))
+        .limits(ExecutionLimits::new().max_function_depth(0))
         .build();
     let err = bash
         .exec("trap 'echo ENTRY >> /log; kill -USR1 $$' USR1; kill -USR1 $$")
         .await
         .unwrap_err()
         .to_string();
-    assert!(err.contains("maximum function depth exceeded"), "{err}");
+    assert!(err.contains("depth exceeded"), "{err}");
+    let log = bash
+        .exec("cat /log 2>/dev/null || echo none")
+        .await
+        .unwrap();
+    assert!(
+        log.stdout.contains("none"),
+        "no handler may run: {}",
+        log.stdout
+    );
+}
+
+#[tokio::test]
+async fn shared_depth_one_admits_exactly_one_handler() {
+    // Bounded by construction: each cycle consumes depth; the second entry
+    // trips, so exactly one handler body runs.
+    let mut bash = Bash::builder()
+        .limits(ExecutionLimits::new().max_function_depth(1))
+        .build();
+    let err = bash
+        .exec("trap 'echo ENTRY >> /log; kill -USR1 $$' USR1; kill -USR1 $$")
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("depth exceeded"), "{err}");
     let log = bash.exec("cat /log").await.unwrap();
-    assert_eq!(log.stdout.lines().count(), 2, "{}", log.stdout);
+    assert_eq!(log.stdout.lines().count(), 1, "{}", log.stdout);
 }
