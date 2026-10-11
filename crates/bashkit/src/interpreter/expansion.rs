@@ -2707,34 +2707,36 @@ impl Interpreter {
                 .is_some_and(|f| f.is_ascii_alphabetic() || f == '_')
                 && c.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
         };
-        // TM-RES-INDIRECT: an indirect array target ends at the close of
-        // the first complete `[...]` reference (real bash resolves `a[0]`
-        // from `a[0]:-x]` and ignores the rest). The boundary tracks nested
-        // brackets and quoted text, so valid nested subscripts (`a[b[0]]`,
-        // `h['a]b']`) survive whole while trailing operator/nesting text —
-        // including a nested `${!...}` — never reaches the desugar re-parse
+        // TM-RES-INDIRECT: a bracket indirect target is only valid when
+        // the first complete `[...]` reference consumes the entire value.
+        // Modern bash (5.x) rejects trailing operator/nesting text with
+        // `invalid variable name` (older 3.2 ignored it); rejection also
+        // keeps a nested `${!...}` from ever reaching the desugar re-parse
         // below, which re-entered indirect expansion without bound
-        // (`r='a[0]:-${!r}]'` overflowed the stack). Targets without a
-        // balanced `]` (plain names, `a[$i]`, `a[@]`) pass through unchanged.
-        let value = match value.find('[') {
-            Some(open) => match Self::indirect_array_end(&value, open) {
-                Some(end) => value[..end].to_string(),
-                None => value,
-            },
-            None => value,
+        // (`r='a[0]:-${!r}]'` overflowed the stack). The boundary tracks
+        // nested brackets and quoted text, so valid nested subscripts
+        // (`a[b[0]]`) resolve whole, while `a[0]:-x]`, `a[0][1]`, and
+        // unbalanced shapes are refused. Plain names, `a[$i]`, and `a[@]`
+        // have no trailing text and pass through unchanged.
+        let valid_boundary = match value.find('[') {
+            Some(open) => {
+                Self::indirect_array_end(&value, open).is_some_and(|end| end == value.len())
+            }
+            None => true,
         };
-        let valid = ident(&value)
-            || (!value.is_empty() && value.bytes().all(|b| b.is_ascii_digit()))
-            || matches!(value.as_str(), "@" | "*" | "#" | "?" | "$" | "!" | "-")
-            || value.find('[').is_some_and(|open| {
-                ident(&value[..open])
-                    && value.ends_with(']')
-                    && value.len() > open + 2
-                    && !value.contains("$(")
-                    && !value.contains('`')
-                    && !value.contains("<(")
-                    && !value.contains(">(")
-            });
+        let valid = valid_boundary
+            && (ident(&value)
+                || (!value.is_empty() && value.bytes().all(|b| b.is_ascii_digit()))
+                || matches!(value.as_str(), "@" | "*" | "#" | "?" | "$" | "!" | "-")
+                || value.find('[').is_some_and(|open| {
+                    ident(&value[..open])
+                        && value.ends_with(']')
+                        && value.len() > open + 2
+                        && !value.contains("$(")
+                        && !value.contains('`')
+                        && !value.contains("<(")
+                        && !value.contains(">(")
+                }));
         if !valid {
             // THREAT[TM-DOS-130]: echo a bounded prefix of the bad target.
             let shown: String = value.chars().take(256).collect();

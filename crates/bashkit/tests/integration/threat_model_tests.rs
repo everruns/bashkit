@@ -34,7 +34,6 @@ mod resource_exhaustion {
 
     struct BoundedRun {
         timed_out: bool,
-        status_ok: bool,
         exit_code: Option<i32>,
         stdout: String,
         stderr: String,
@@ -73,41 +72,54 @@ mod resource_exhaustion {
         stderr.truncate(CAP);
         BoundedRun {
             timed_out,
-            status_ok: output.status.success(),
             exit_code: output.status.code(),
             stdout,
             stderr,
         }
     }
 
-    /// TM-DOS-135: hostile indirect cycles terminate in a bounded child.
-    /// Exact finding reproducer plus the mutual variant. Real bash prints
-    /// `out=[]` with status 0 for both and never crashes.
+    /// TM-DOS-135: hostile indirect cycles are refused in a bounded child.
+    /// Exact finding reproducer plus the mutual variant. Both run in a
+    /// child CLI under a wall-clock watchdog (never in the test runner:
+    /// pre-fix they overflowed the stack and aborted the process) and are
+    /// refused with `invalid variable name`, like modern bash (5.x); the
+    /// real producer exit status is asserted, never relabeled.
     #[test]
-    fn indirect_hostile_cycles_terminate_in_bounded_child() {
+    fn indirect_hostile_cycles_rejected_in_bounded_child() {
         for script in [
-            "unset a\nr='a[0]:-${!r}]'\necho \"out=[${!r}]\"\necho \"st=$?\"",
-            "unset a\nr='a[0]:-${!s}]'\ns='a[0]:-${!r}]'\necho \"out=[${!r}]\"\necho \"st=$?\"",
+            "unset a\nr='a[0]:-${!r}]'\necho \"${!r}\"",
+            "unset a\nr='a[0]:-${!s}]'\ns='a[0]:-${!r}]'\necho \"${!r}\"",
         ] {
             let run = run_cli_bounded(script, Duration::from_secs(20));
             assert!(!run.timed_out, "hostile script hung: {script}");
-            assert!(
-                run.status_ok,
-                "exit={:?} stderr={}",
-                run.exit_code, run.stderr
+            assert_eq!(
+                run.exit_code,
+                Some(1),
+                "script: {script}, stdout: {}, stderr: {}",
+                run.stdout,
+                run.stderr
             );
-            assert_eq!(run.stdout, "out=[]\nst=0\n", "script: {script}");
-            assert!(run.stderr.is_empty(), "stderr: {}", run.stderr);
+            assert!(run.stdout.is_empty(), "stdout: {}", run.stdout);
+            assert!(
+                run.stderr.contains("invalid variable name"),
+                "stderr: {}",
+                run.stderr
+            );
+            assert!(run.stderr.len() < 1024, "stderr: {}", run.stderr);
         }
     }
 
-    /// TM-DOS-135: an indirect array target ends at the close of the first
-    /// complete `[...]` reference; trailing operators are ignored like real
-    /// bash, while nested subscripts resolve whole.
+    /// TM-DOS-135: a bracket indirect target is refused unless the first
+    /// complete `[...]` reference consumes the whole value. Modern bash
+    /// (5.x) rejects trailing operators with `invalid variable name`;
+    /// refusal also keeps a nested `${!...}` from ever reaching the desugar
+    /// re-parse, which re-entered indirect expansion without bound.
+    /// Valid nested subscripts resolve whole.
     #[tokio::test]
-    async fn indirect_array_boundary_ignores_trailing_operators() {
-        // Trailing operator/nesting text resolves the leading element
-        // (verified against real bash: `out=[1]`, `st=0` for each).
+    async fn indirect_array_boundary_rejects_trailing_operators() {
+        // Trailing operator/nesting text is refused, like bash 5.x. Older
+        // bash 3.2 ignored the tail, so no real-bash oracle is asserted
+        // for these shapes; the rejection itself is the contract.
         for target in [
             "a[0]:-injected]",
             "a[0]-injected]",
@@ -116,21 +128,24 @@ mod resource_exhaustion {
             "a[0]/x/injected]",
             "a[0][1]",
             "a[0]}${x:-injected}[0]",
+            "a[b[0]]:-D",
         ] {
             let mut bash = Bash::new();
             let result = bash
-                .exec(&format!(
-                    "a=(1 2)\nr='{target}'\necho \"out=[${{!r}}]\"\necho \"st=$?\""
-                ))
+                .exec(&format!("a=(1 2)\nb=(0)\nr='{target}'\necho \"${{!r}}\""))
                 .await
                 .unwrap();
-            assert_eq!(result.stdout, "out=[1]\nst=0\n", "target: {target}");
+            assert_ne!(result.exit_code, 0, "target accepted: {target}");
+            assert_eq!(result.exit_code, 1, "target: {target}");
+            assert!(result.stdout.is_empty(), "target: {target}");
             assert!(
-                result.stderr.is_empty(),
+                result.stderr.contains("invalid variable name"),
                 "target: {target}: {}",
                 result.stderr
             );
+            assert!(result.stderr.len() < 1024, "target: {target}");
         }
+
         // Nested subscripts resolve whole (bash: `two`/`two`).
         let mut bash = Bash::new();
         let result = bash
@@ -138,14 +153,6 @@ mod resource_exhaustion {
             .await
             .unwrap();
         assert_eq!(result.stdout, "indirect=[two]\ndirect=[two]\n");
-        assert!(result.stderr.is_empty(), "stderr: {}", result.stderr);
-        // An operator after a nested reference is ignored (bash: `two`).
-        let mut bash = Bash::new();
-        let result = bash
-            .exec("a=(zero one two three)\nb=(2)\nr='a[b[0]]:-D'\necho \"out=[${!r}]\"\necho \"st=$?\"")
-            .await
-            .unwrap();
-        assert_eq!(result.stdout, "out=[two]\nst=0\n");
         assert!(result.stderr.is_empty(), "stderr: {}", result.stderr);
         // Associative references agree between direct and indirect use.
         // Portable note: indexed cases above also run against real bash
@@ -175,9 +182,8 @@ mod resource_exhaustion {
     async fn indirect_nested_indexed_matches_real_bash() {
         for script in [
             "a=(zero one two three); b=(2); r='a[b[0]]'; printf 'indirect=[%s]\n' \"${!r}\"; printf 'direct=[%s]\n' \"${a[b[0]]}\"",
-            "a=(zero one two three); b=(2); r='a[b[0]]:-D'; echo \"out=[${!r}]\"",
-            "a=(1 2); r='a[0][1]'; echo \"out=[${!r}]\"",
-            "a=(1 2); r='a[1]EXTRA'; echo \"out=[${!r}]\"",
+            "a=(1 2); r='a[0]'; echo \"out=[${!r}]\"",
+            "a=(x y); r='a[@]'; echo \"out=[${!r}]\"",
             "a=(x y); i=1; r='a[$i]'; echo \"out=[${!r}]\"",
         ] {
             let expected = Command::new("bash")
