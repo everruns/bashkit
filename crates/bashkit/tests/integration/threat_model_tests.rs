@@ -9,6 +9,7 @@ use bashkit::{
     Bash, ExecutionLimits, FileSystem, FileSystemExt, FsLimits, InMemoryFs, MemoryLimits,
     OverlayFs, SessionLimits, TraceEventDetails, TraceEventKind, TraceMode,
 };
+use std::io::Read;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::Arc;
@@ -34,45 +35,138 @@ mod resource_exhaustion {
 
     struct BoundedRun {
         timed_out: bool,
+        oversized: bool,
         exit_code: Option<i32>,
         stdout: String,
         stderr: String,
     }
 
-    /// Runs a script in a child CLI process under a wall-clock watchdog.
-    /// Darwin note: Rust std exposes no portable per-child CPU, stack, or
-    /// memory caps, so the watchdog kill plus the 8 KiB output cap are the
-    /// enforced bounds here. Records the real producer exit status.
+    /// Per-pipe sample cap. Past the cap the reader stops draining and the
+    /// run is marked `oversized`, which fails the harness: oversize output
+    /// is never silently truncated.
+    const BOUNDED_SAMPLE_CAP: usize = 8192;
+
+    /// Reads one pipe to the sample cap on its own thread (concurrent with
+    /// the sibling pipe, so a chatty child can never deadlock the runner),
+    /// then reports its bytes. Past the cap it stops draining: the child
+    /// blocks on the full pipe until the poll loop kills it.
+    fn spawn_capped_reader(
+        id: u8,
+        pipe: Box<dyn std::io::Read + Send>,
+        tx: std::sync::mpsc::Sender<(u8, Vec<u8>, bool)>,
+    ) -> std::thread::JoinHandle<()> {
+        std::thread::spawn(move || {
+            let mut pipe = pipe;
+            let mut buf = Vec::new();
+            let mut chunk = [0u8; 4096];
+            let mut oversized = false;
+            loop {
+                match pipe.read(&mut chunk) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        buf.extend_from_slice(&chunk[..n]);
+                        if buf.len() > BOUNDED_SAMPLE_CAP {
+                            oversized = true;
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+            let _ = tx.send((id, buf, oversized));
+        })
+    }
+
+    /// Runs a script in a child CLI process with enforced bounds, and
+    /// records the real producer exit status:
+    /// - wall clock: the poll loop kills the child past `limit`;
+    /// - output: one reader thread per pipe stops past the sample cap, the
+    ///   child is killed, and the run is marked `oversized` (a harness
+    ///   failure, never a silent cut);
+    /// - CPU/stack: the child is launched through `ulimit -t/-s` where the
+    ///   launcher shell supports it (best effort; Linux and macOS do), with
+    ///   `exec` keeping the CLI as the real producer so exit codes and
+    ///   diagnostics stay its own. Rust std exposes no portable per-child
+    ///   CPU/stack/memory caps, and Darwin does not enforce address-space
+    ///   caps: those are documented here, not claimed.
     fn run_cli_bounded(script: &str, limit: Duration) -> BoundedRun {
-        let mut child = Command::new(bashkit_cli_path())
+        // Best-effort launcher limits: 10 CPU seconds, 4 MiB main-thread
+        // stack. Failures fall through; the watchdog stays the hard bound.
+        let launcher = "ulimit -s 4096 2>/dev/null; ulimit -t 10 2>/dev/null; exec \"$@\"";
+        let mut child = Command::new("bash")
+            .args(["-c", launcher, "_"])
+            .arg(bashkit_cli_path())
             .args(["-c", script])
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .expect("spawn bashkit CLI");
+            .expect("spawn bounded CLI");
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut readers = Vec::new();
+        if let Some(pipe) = child.stdout.take() {
+            readers.push(spawn_capped_reader(0, Box::new(pipe), tx.clone()));
+        }
+        if let Some(pipe) = child.stderr.take() {
+            readers.push(spawn_capped_reader(1, Box::new(pipe), tx.clone()));
+        }
+        drop(tx);
+        let mut bufs: [Option<Vec<u8>>; 2] = [None, None];
+        let mut oversized = false;
+        let mut status = None;
+        let mut timed_out = false;
         let start = Instant::now();
-        let timed_out = loop {
-            match child.try_wait().expect("poll child") {
-                Some(_) => break false,
-                None => {
-                    if start.elapsed() >= limit {
-                        let _ = child.kill();
-                        break true;
-                    }
-                    std::thread::sleep(Duration::from_millis(10));
-                }
+        loop {
+            while let Ok((id, buf, over)) = rx.try_recv() {
+                bufs[id as usize] = Some(buf);
+                oversized |= over;
             }
-        };
-        let output = child.wait_with_output().expect("collect child output");
-        const CAP: usize = 8192;
-        let mut stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-        let mut stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-        stdout.truncate(CAP);
-        stderr.truncate(CAP);
+            if bufs[0].is_some() && bufs[1].is_some() {
+                break;
+            }
+            if oversized {
+                let _ = child.kill();
+            }
+            if status.is_none() {
+                status = child.try_wait().expect("poll child");
+            }
+            if status.is_some() && bufs[0].is_some() && bufs[1].is_some() {
+                break;
+            }
+            if status.is_none() && start.elapsed() >= limit {
+                let _ = child.kill();
+                timed_out = true;
+            }
+            if (status.is_some() || timed_out) && bufs[0].is_some() && bufs[1].is_some() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+            if timed_out && bufs[0].is_some() && bufs[1].is_some() {
+                break;
+            }
+        }
+        while bufs[0].is_none() || bufs[1].is_none() {
+            match rx.recv() {
+                Ok((id, buf, over)) => {
+                    bufs[id as usize] = Some(buf);
+                    oversized |= over;
+                }
+                Err(_) => break,
+            }
+        }
+        for reader in readers {
+            let _ = reader.join();
+        }
+        // Always reaped explicitly: `try_wait` may already have seen the
+        // exit, in which case this returns immediately with the same status.
+        let reaped = child.wait().expect("reap child");
+        let status = Some(status.unwrap_or(reaped));
+        let stdout = String::from_utf8_lossy(bufs[0].as_deref().unwrap_or(&[])).into_owned();
+        let stderr = String::from_utf8_lossy(bufs[1].as_deref().unwrap_or(&[])).into_owned();
         BoundedRun {
             timed_out,
-            exit_code: output.status.code(),
+            oversized,
+            exit_code: status.and_then(|s| s.code()),
             stdout,
             stderr,
         }
@@ -92,6 +186,7 @@ mod resource_exhaustion {
         ] {
             let run = run_cli_bounded(script, Duration::from_secs(20));
             assert!(!run.timed_out, "hostile script hung: {script}");
+            assert!(!run.oversized, "hostile script oversized: {script}");
             assert_eq!(
                 run.exit_code,
                 Some(1),
@@ -107,6 +202,35 @@ mod resource_exhaustion {
             );
             assert!(run.stderr.len() < 1024, "stderr: {}", run.stderr);
         }
+    }
+
+    /// The bounded runner itself is tested: a hung child must be
+    /// reported as a timeout, and an overproducer as oversize. Both fail
+    /// visibly (a boolean the harness asserts on), so a helper regression
+    /// cannot silently pass hostile coverage.
+    #[test]
+    fn bounded_helper_kills_hung_child() {
+        let run = run_cli_bounded("sleep 30", Duration::from_secs(3));
+        assert!(
+            run.timed_out,
+            "hung child not reported: {:?}",
+            run.exit_code
+        );
+        assert!(!run.oversized, "hung child misreported as oversize");
+    }
+
+    #[test]
+    fn bounded_helper_flags_oversize_output() {
+        let script =
+            "i=0; while ((i < 4000)); do echo \"padding line $i padding\"; i=$((i + 1)); done";
+        let run = run_cli_bounded(script, Duration::from_secs(20));
+        assert!(!run.timed_out, "overproducer hung");
+        assert!(run.oversized, "overproducer not flagged as oversize");
+        assert!(
+            run.stdout.len() <= BOUNDED_SAMPLE_CAP + 4096,
+            "sample not capped: {}",
+            run.stdout.len()
+        );
     }
 
     /// TM-DOS-135: a bracket indirect target is refused unless the first
