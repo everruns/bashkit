@@ -211,6 +211,21 @@ mod resource_exhaustion {
         limit: Duration,
         faults: LifecycleFaults,
     ) -> BoundedRun {
+        let (mut run, pending) = run_raw_core(program, args, limit, faults);
+        if !finish_joiners(pending) {
+            run.incomplete_readers = true;
+        }
+        run
+    }
+
+    /// Launcher-wrapped core without joining: the fixture owns the reader
+    /// threads from here (retained-pipe cleanup proof).
+    fn run_raw_core(
+        program: &str,
+        args: &[&str],
+        limit: Duration,
+        faults: LifecycleFaults,
+    ) -> (BoundedRun, PendingJoiners) {
         let launcher = limit_launcher();
         let mut cmd = Command::new("bash");
         cmd.args(["-c", &launcher, "_"])
@@ -219,9 +234,9 @@ mod resource_exhaustion {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        let mut run = run_command_bounded_with(cmd, limit, faults);
+        let (mut run, pending) = run_core(cmd, limit, faults);
         strip_launcher_note(&mut run);
-        run
+        (run, pending)
     }
 
     /// Runs a script in the built CLI under `run_command_bounded`, with
@@ -308,15 +323,60 @@ mod resource_exhaustion {
         run_command_bounded_with(cmd, limit, LifecycleFaults::default())
     }
 
+    /// Standard runner: core lifecycle plus the bounded join gate. Reader
+    /// threads that never reported stay detached by contract.
+    fn run_command_bounded_with(
+        cmd: Command,
+        limit: Duration,
+        faults: LifecycleFaults,
+    ) -> BoundedRun {
+        let (mut run, pending) = run_core(cmd, limit, faults);
+        if !finish_joiners(pending) {
+            run.incomplete_readers = true;
+        }
+        run
+    }
+
     // Reaping is done by the bounded try_wait poll inside reap_with_grace;
     // an unconditional wait() would hang past the cleanup grace on an
     // unkillable victim, which is exactly what this harness forbids.
     #[allow(clippy::zombie_processes)]
-    fn run_command_bounded_with(
+    /// Owned reader handles for tests that must observe completion
+    /// themselves: the runner's verdict plus the actual threads.
+    struct PendingJoiners {
+        handles: Vec<std::thread::JoinHandle<()>>,
+        all_reported: bool,
+    }
+
+    /// Applies the bounded join gate to owned reader threads: joins only
+    /// while `is_finished` inside the shared completion grace, drops the
+    /// rest detached. Returns true only when every reported thread joined
+    /// cleanly; unfinished or panicking threads fail the verdict instead.
+    /// Callers OR the result into `incomplete_readers`.
+    fn finish_joiners(pending: PendingJoiners) -> bool {
+        if !pending.all_reported {
+            return false;
+        }
+        let end = Instant::now() + JOIN_GRACE;
+        let mut ok = true;
+        for reader in pending.handles {
+            match join_finished(reader, end) {
+                JoinOutcome::Joined => {}
+                JoinOutcome::Unfinished(_) | JoinOutcome::Panicked => {
+                    ok = false;
+                }
+            }
+        }
+        ok
+    }
+
+    /// Core lifecycle without joining: spawn, observe, terminate, reap,
+    /// drain, verdict. Callers own the reader threads from here.
+    fn run_core(
         mut cmd: Command,
         limit: Duration,
         faults: LifecycleFaults,
-    ) -> BoundedRun {
+    ) -> (BoundedRun, PendingJoiners) {
         let mut child = cmd.spawn().expect("spawn bounded child");
         let (tx, rx) = std::sync::mpsc::channel();
         let mut readers = Vec::new();
@@ -426,7 +486,7 @@ mod resource_exhaustion {
                 }
             }
         }
-        let mut incomplete_readers = bufs[0].is_none() || bufs[1].is_none() || read_error;
+        let incomplete_readers = bufs[0].is_none() || bufs[1].is_none() || read_error;
         // Bounded completion gate: a channel receipt proves its thread
         // finished every blocking call, but scheduling can pause the sender
         // between send and return, so a receipt is not the termination
@@ -437,17 +497,10 @@ mod resource_exhaustion {
         // gate plus the elapsed-total assertions are the termination proof.
         // No reproduced production hang is claimed from the static shape:
         // the gate exists so none can occur.
-        let completion_end = Instant::now() + JOIN_GRACE;
-        if bufs[0].is_some() && bufs[1].is_some() {
-            for reader in readers {
-                match join_finished(reader, completion_end) {
-                    JoinOutcome::Joined => {}
-                    JoinOutcome::Unfinished(_) | JoinOutcome::Panicked => {
-                        incomplete_readers = true;
-                    }
-                }
-            }
-        }
+        let pending = PendingJoiners {
+            handles: readers,
+            all_reported: bufs[0].is_some() && bufs[1].is_some(),
+        };
         // Reaps the victim inside a finite grace through a poll seam, so
         // the unavailable-reap verdict is unit-testable without OS fakery.
         // Bounded reap inside a finite cleanup grace: the execution deadline
@@ -475,7 +528,7 @@ mod resource_exhaustion {
         let incomplete_readers = incomplete_readers || status.is_none() || poll_failed;
         let stdout = String::from_utf8_lossy(bufs[0].as_deref().unwrap_or(&[])).into_owned();
         let stderr = String::from_utf8_lossy(bufs[1].as_deref().unwrap_or(&[])).into_owned();
-        BoundedRun {
+        let run = BoundedRun {
             timed_out,
             oversized,
             incomplete_readers,
@@ -489,7 +542,8 @@ mod resource_exhaustion {
             exit_code: status.and_then(|s| s.code()),
             stdout,
             stderr,
-        }
+        };
+        (run, pending)
     }
 
     /// TM-DOS-136: scaled multiline token x long ARG0 stays bounded in a
@@ -1043,8 +1097,15 @@ mod resource_exhaustion {
             receipt.display(),
             pidfile.display()
         );
+        // Handle-retaining core: this fixture owns the ORIGINAL reader
+        // threads from here (not a twin, not detached-while-asserting).
         let start = Instant::now();
-        let run = run_raw_bounded("bash", &["-c", &script], Duration::from_secs(5));
+        let (run, pending) = run_raw_core(
+            "bash",
+            &["-c", &script],
+            Duration::from_secs(5),
+            LifecycleFaults::default(),
+        );
         let elapsed = start.elapsed();
         let receipt_text =
             std::fs::read_to_string(&receipt).expect("fixture shell ran under the launcher");
@@ -1059,29 +1120,6 @@ mod resource_exhaustion {
             .trim()
             .to_string();
         std::fs::remove_file(&pidfile).ok();
-        let kill_ok = Command::new("kill")
-            .args(["-9", &sleeper])
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
-        assert!(kill_ok, "owned descendant {sleeper} terminated");
-        let gone_start = Instant::now();
-        loop {
-            let alive = Command::new("kill")
-                .args(["-0", &sleeper])
-                .status()
-                .map(|s| s.success())
-                .unwrap_or(false);
-            if !alive {
-                break;
-            }
-            assert!(
-                gone_start.elapsed() < Duration::from_secs(5),
-                "descendant {sleeper} completion observed inside the cleanup bound"
-            );
-            std::thread::sleep(Duration::from_millis(50));
-        }
-        let total = start.elapsed();
         assert!(!run.timed_out, "exited child misreported as timeout");
         assert!(
             run.incomplete_readers,
@@ -1098,6 +1136,46 @@ mod resource_exhaustion {
             elapsed < Duration::from_secs(15),
             "returned in {elapsed:?} without waiting for the 30s sleeper"
         );
+        // Controlled cleanup of the ACTUAL owned resources, after the
+        // negative verdict above: terminate the exact retained descendant,
+        // then join the ORIGINAL reader handles (their pipes close on the
+        // kill, so the join completes inside the shared grace). Both
+        // receipts plus the total elapsed bound prove finite completion.
+        let kill_ok = Command::new("kill")
+            .args(["-9", &sleeper])
+            .status()
+            .map(|st| st.success())
+            .unwrap_or(false);
+        assert!(kill_ok, "owned descendant {sleeper} terminated");
+        // The kill closed the retained pipes, so the ORIGINAL reader
+        // threads (never reported, hence no receipts to gate on) must now
+        // finish: join each through the same bounded primitive inline,
+        // since finish_joiners only joins receipted handles by design.
+        let join_end = Instant::now() + JOIN_GRACE;
+        let mut joined = true;
+        for reader in pending.handles {
+            if !matches!(join_finished(reader, join_end), JoinOutcome::Joined) {
+                joined = false;
+            }
+        }
+        assert!(joined, "original reader handles joined after the kill");
+        let gone_start = Instant::now();
+        loop {
+            // A spawn error is UNKNOWN (not absence): only an observed
+            // non-zero exit proves the descendant gone. Each kill query
+            // itself exits immediately; the loop bound makes it finite.
+            match Command::new("kill").args(["-0", &sleeper]).status() {
+                Ok(st) if st.success() => {}
+                Ok(_) => break,
+                Err(_) => {}
+            }
+            assert!(
+                gone_start.elapsed() < Duration::from_secs(5),
+                "descendant {sleeper} completion observed inside the cleanup bound"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let total = start.elapsed();
         assert!(
             total < Duration::from_secs(20),
             "verdict plus descendant cleanup bounded end to end: {total:?}"
