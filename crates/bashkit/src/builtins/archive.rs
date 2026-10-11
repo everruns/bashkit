@@ -10,6 +10,9 @@
 //! normalize it to the regular short-option path instead of maintaining a
 //! second parser.
 //!
+//! File lists retain budget-owned names, never an eager `Vec<String>`; raw
+//! reads are admitted by metadata size and every line checks shared work.
+//!
 //! bzip2 0.6 uses the maintained pure-Rust libbz2-rs backend by default. Its
 //! fixed codec state plus bounded, pre-charged output avoids native-library
 //! deployment differences while retaining standard bzip2 CRC validation.
@@ -75,6 +78,29 @@ fn budgeted_string(ctx: &Context<'_>) -> Result<BudgetedString> {
 
 fn budgeted_vec<T>(ctx: &Context<'_>) -> Result<BudgetedVec<T>> {
     with_execution_budget(ctx, |budget| BudgetedVec::new(budget).map_err(Into::into))
+}
+
+// THREAT[TM-DOS-103]: Decode directly into admitted storage, including UTF-8
+// replacement expansion. `from_utf8_lossy(...).into_owned()` allocates first.
+fn tar_list_name(ctx: &Context<'_>, mut bytes: &[u8]) -> Result<BudgetedString> {
+    let mut name = budgeted_string(ctx)?;
+    while !bytes.is_empty() {
+        ctx.consume_budget_work(1)?;
+        match std::str::from_utf8(bytes) {
+            Ok(text) => {
+                name.try_push_str(text)?;
+                break;
+            }
+            Err(error) => {
+                let valid = error.valid_up_to();
+                name.try_push_str(std::str::from_utf8(&bytes[..valid]).unwrap())?;
+                name.try_push('\u{fffd}')?;
+                let invalid = error.error_len().unwrap_or(bytes.len() - valid);
+                bytes = &bytes[valid + invalid..];
+            }
+        }
+    }
+    Ok(name)
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -397,34 +423,66 @@ impl Builtin for Tar {
 
         // `-T FILE` / `--files-from=FILE`: one member name per line, blank
         // lines skipped, `-` reads stdin.
-        let mut listed_names: Vec<String> = Vec::new();
+        // THREAT[TM-DOS-103]: Both name capacity and vector slots must be
+        // charged before allocation, even when the members do not exist.
+        let mut listed_names = budgeted_vec(&ctx)?;
         for list in &files_from {
+            let missing_list = || {
+                ExecResult::err(
+                    format!(
+                        "tar: {list}: Cannot stat: No such file or directory\ntar: Error is not recoverable: exiting now\n"
+                    ),
+                    2,
+                )
+            };
+            let bytes;
+            let _read_lease;
+            let _extra_lease;
             let content = if list == "-" {
-                String::from_utf8_lossy(ctx.stdin_bytes().unwrap_or_default()).into_owned()
+                let input = ctx.stdin_bytes().unwrap_or_default();
+                ctx.consume_budget_input(input.len())?;
+                input
             } else {
                 let path = resolve_path(ctx.cwd, list);
-                match ctx.fs.read_file(&path).await {
-                    Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
-                    Err(_) => {
-                        return Ok(ExecResult::err(
-                            format!(
-                                "tar: {list}: Cannot stat: No such file or directory\ntar: Error is not recoverable: exiting now\n"
-                            ),
-                            2,
-                        ));
+                let metadata = match ctx.fs.stat(&path).await {
+                    Ok(metadata) => metadata,
+                    Err(error @ (crate::Error::ResourceLimit(_) | crate::Error::Cancelled)) => {
+                        return Err(error);
                     }
-                }
+                    Err(_) => return Ok(missing_list()),
+                };
+                let size = usize::try_from(metadata.size).unwrap_or(usize::MAX);
+                ctx.consume_budget_input(size)?;
+                _read_lease = ctx.lease_budget_bytes(size)?;
+                bytes = match ctx.fs.read_file(&path).await {
+                    Ok(bytes) => bytes,
+                    Err(error @ (crate::Error::ResourceLimit(_) | crate::Error::Cancelled)) => {
+                        return Err(error);
+                    }
+                    Err(_) => return Ok(missing_list()),
+                };
+                // Host-backed files may grow between stat/read; the backend
+                // owns read-allocation admission, as for other VFS consumers.
+                ctx.consume_budget_input(bytes.len().saturating_sub(size))?;
+                _extra_lease = ctx.lease_budget_bytes(bytes.capacity().saturating_sub(size))?;
+                bytes.as_slice()
             };
-            ctx.consume_budget_input(content.len())?;
-            listed_names.extend(
-                content
-                    .lines()
-                    .filter(|l| !l.is_empty())
-                    .map(str::to_string),
-            );
+            ctx.consume_budget_work(u64::try_from(content.len().div_ceil(64)).unwrap_or(u64::MAX))?;
+            for line in content.split_inclusive(|byte| *byte == b'\n') {
+                ctx.consume_budget_work(1)?;
+                // Match str::lines(): strip CR only as part of CRLF.
+                let line = if let Some(line) = line.strip_suffix(b"\n") {
+                    line.strip_suffix(b"\r").unwrap_or(line)
+                } else {
+                    line
+                };
+                if !line.is_empty() {
+                    listed_names.try_push(tar_list_name(&ctx, line)?)?;
+                }
+            }
         }
-        for name in &listed_names {
-            files.try_push(name.as_str())?;
+        for name in &*listed_names {
+            files.try_push(&**name)?;
         }
 
         // Check for exactly one of -c, -x, -t
@@ -1893,6 +1951,36 @@ mod tests {
     }
 
     // ==================== tar tests ====================
+
+    #[tokio::test]
+    async fn tar_files_from_lossy_decoder_matches_std() {
+        let (fs, mut cwd, mut variables) = create_test_ctx().await;
+        let env = HashMap::new();
+        let ctx = Context {
+            args: &[],
+            env: &env,
+            variables: &mut variables,
+            cwd: &mut cwd,
+            fs,
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
+            shell: None,
+        };
+        // Valid prefixes, malformed multi-byte sequences, and incomplete
+        // tails must retain the previous standard-library decoding semantics.
+        for byte in 0..=255 {
+            let bytes = [b'A', byte, 0xf0, 0x9f, 0x92, byte, b'Z', 0xe2, 0x82];
+            for input in [bytes.as_slice(), &bytes[..7]] {
+                let name = tar_list_name(&ctx, input).unwrap();
+                assert_eq!(&*name, String::from_utf8_lossy(input).as_ref());
+            }
+        }
+    }
 
     #[tokio::test]
     async fn test_tar_create_and_list() {
