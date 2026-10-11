@@ -135,6 +135,15 @@ compression paths use these builders because their expansion ratios and nested
 buffers make post-hoc leasing unsafe. Atomic compare/exchange admission keeps
 concurrent descendants from wrapping or temporarily exceeding the shared cap.
 
+Tilde expansion uses the same owning string builder before each append; it
+borrows `HOME`/`PWD`/`OLDPWD` instead of cloning the directory on each prefix.
+Scan and copy work polls the shared deadline and cancellation flag. Assignment
+preprocessing retains leases for expanded literal buffers and their word copies
+through consumption; mixed-word segments retain leases through field splitting.
+The synchronous operand pipeline records a refused reservation in the existing
+sticky resource-error slot, checked before the completed word is returned.
+Retained-variable admission remains a separate check after expansion.
+
 ### `set -e` contexts
 
 `errexit_active()` is `set -e` plus `condition_sequence_depth == 0`. The

@@ -17,6 +17,8 @@
 //! another part (`~"x"`, `~$v`) is not a tilde prefix. Assignment values
 //! are pre-resolved by `tilde_assignment_value` (after `=` and each `:`);
 //! `${...}` operands use the `operand_tilde` flag, set per operator.
+//! Tilde directories are borrowed; expanded buffers reserve capacity before
+//! allocation and keep their leases through preprocessing and word consumption.
 
 use super::*;
 
@@ -416,12 +418,19 @@ impl Interpreter {
                 WordPart::Literal(s) => {
                     // Tilde expansion (`~`, `~/x`, `x=~:~`); quoted literals
                     // keep their tilde.
-                    match (!Self::part_is_quoted(word, idx) && s.contains('~'))
-                        .then(|| self.tilde_expand_word_literal(word, idx, s))
-                        .flatten()
-                    {
-                        Some(expanded) => result.try_push_str(&expanded)?,
-                        None => result.try_push_str(s)?,
+                    let expanded = if !Self::part_is_quoted(word, idx) && s.contains('~') {
+                        self.tilde_expand_word_literal(word, idx, s)?
+                    } else {
+                        None
+                    };
+                    if let Some(expanded) = expanded {
+                        let tilde_lease = self.execution_budget.lease_bytes(expanded.len())?;
+                        result.try_push_str(&expanded)?;
+                        if !leased {
+                            substitution_leases.push(tilde_lease);
+                        }
+                    } else {
+                        result.try_push_str(s)?;
                     }
                 }
                 WordPart::Variable(name) => {
@@ -713,6 +722,7 @@ impl Interpreter {
             }
         }
 
+        self.check_cancelled()?;
         Ok(result)
     }
 
@@ -852,26 +862,29 @@ impl Interpreter {
     /// Directory for the tilde prefix `~name`: `~` is `$HOME`, `~+` `$PWD`,
     /// `~-` `$OLDPWD`; `~root` and `~<sandbox user>` are the fixed homes.
     /// `None` keeps the text literal (unknown user, unset `OLDPWD`).
-    pub(super) fn tilde_dir(&self, prefix: &str) -> Option<String> {
+    fn tilde_dir(&self, prefix: &str) -> Option<std::borrow::Cow<'_, str>> {
+        use std::borrow::Cow;
         let lookup = |name: &str| {
             self.scoped
                 .variables
                 .get(name)
                 .or_else(|| self.env.get(name))
-                .cloned()
+                .map(|value| Cow::Borrowed(value.as_str()))
         };
         match prefix {
             "" => Some(
                 self.env
                     .get("HOME")
                     .or_else(|| self.scoped.variables.get("HOME"))
-                    .cloned()
-                    .unwrap_or_else(|| format!("/home/{}", self.tilde_user)),
+                    .map(|value| Cow::Borrowed(value.as_str()))
+                    .unwrap_or_else(|| Cow::Owned(format!("/home/{}", self.tilde_user))),
             ),
-            "+" => Some(lookup("PWD").unwrap_or_else(|| self.cwd.display().to_string())),
+            "+" => {
+                Some(lookup("PWD").unwrap_or_else(|| Cow::Owned(self.cwd.display().to_string())))
+            }
             "-" => lookup("OLDPWD"),
-            "root" => Some("/root".to_string()),
-            user if user == &*self.tilde_user => Some(format!("/home/{user}")),
+            "root" => Some(Cow::Borrowed("/root")),
+            user if user == &*self.tilde_user => Some(Cow::Owned(format!("/home/{user}"))),
             _ => None,
         }
     }
@@ -888,13 +901,21 @@ impl Interpreter {
         starts: &[usize],
         after_colons: bool,
         word_continues: bool,
-    ) -> Option<String> {
-        let first = *starts.first()?;
-        let mut out = String::new();
+    ) -> std::result::Result<Option<BudgetedString>, crate::limits::LimitExceeded> {
+        let Some(&first) = starts.first() else {
+            return Ok(None);
+        };
+        // THREAT[TM-DOS-134]: directory length times prefix count is untrusted.
+        // Reserve before allocation; copying bytes also polls deadline/cancellation.
+        self.execution_budget.consume_work(s.len() as u64)?;
+        let mut out = BudgetedString::new(Some(&self.execution_budget))?;
         let mut copied = 0;
         let mut pos = first;
         let bytes = s.as_bytes();
         while pos < s.len() {
+            if pos.is_multiple_of(1_024) {
+                self.execution_budget.check()?;
+            }
             let eligible =
                 starts.contains(&pos) || (after_colons && pos > first && bytes[pos - 1] == b':');
             if eligible && bytes[pos] == b'~' {
@@ -905,8 +926,10 @@ impl Interpreter {
                 if (end < s.len() || !word_continues)
                     && let Some(dir) = self.tilde_dir(&s[pos + 1..end])
                 {
-                    out.push_str(&s[copied..pos]);
-                    out.push_str(&dir);
+                    self.execution_budget.consume_work((pos - copied) as u64)?;
+                    self.execution_budget.consume_work(dir.len() as u64)?;
+                    out.try_push_str(&s[copied..pos])?;
+                    out.try_push_str(&dir)?;
                     copied = end;
                     pos = end;
                     continue;
@@ -915,16 +938,23 @@ impl Interpreter {
             pos += 1;
         }
         if copied == 0 {
-            return None;
+            return Ok(None);
         }
-        out.push_str(&s[copied..]);
-        Some(out)
+        self.execution_budget
+            .consume_work((s.len() - copied) as u64)?;
+        out.try_push_str(&s[copied..])?;
+        Ok(Some(out))
     }
 
     /// Tilde expansion for literal part `idx` of `word`: a leading `~`, and
     /// in a word that looks like an assignment (`x=~:~`, as an argument to
     /// `echo` or `local`) the `~` after its `=` and after each `:`.
-    fn tilde_expand_word_literal(&self, word: &Word, idx: usize, s: &str) -> Option<String> {
+    fn tilde_expand_word_literal(
+        &self,
+        word: &Word,
+        idx: usize,
+        s: &str,
+    ) -> std::result::Result<Option<BudgetedString>, crate::limits::LimitExceeded> {
         let word_continues = idx + 1 < word.parts.len();
         let assign_eq = match word.parts.first() {
             Some(WordPart::Literal(first)) if Self::is_assignment_prefix(first) => first.find('='),
@@ -937,9 +967,13 @@ impl Interpreter {
             }
             return self.tilde_expand_literal(s, &starts, assign_eq.is_some(), word_continues);
         }
-        assign_eq?;
+        if assign_eq.is_none() {
+            return Ok(None);
+        }
         // Only `:` inside this part can start a prefix here.
-        let colon = s.find(':')?;
+        let Some(colon) = s.find(':') else {
+            return Ok(None);
+        };
         self.tilde_expand_literal(s, &[colon + 1], true, word_continues)
     }
 
@@ -990,7 +1024,13 @@ impl Interpreter {
         })
     }
 
-    pub(super) fn tilde_assignment_value<'w>(&self, word: &'w Word) -> std::borrow::Cow<'w, Word> {
+    pub(super) fn tilde_assignment_value<'w>(
+        &self,
+        word: &'w Word,
+    ) -> Result<(
+        std::borrow::Cow<'w, Word>,
+        Vec<crate::limits::ExecutionBudgetLease>,
+    )> {
         use std::borrow::Cow;
         let quoted_at = |i: usize| Self::part_is_quoted(word, i);
         let has_tilde = word.parts.iter().enumerate().any(|(i, p)| match p {
@@ -999,8 +1039,9 @@ impl Interpreter {
             _ => false,
         });
         if !has_tilde {
-            return Cow::Borrowed(word);
+            return Ok((Cow::Borrowed(word), Vec::new()));
         }
+        let mut leases = Vec::new();
         let mut out = word.clone();
         out.part_quoted = (0..word.parts.len()).map(quoted_at).collect();
         let n = word.parts.len();
@@ -1019,6 +1060,9 @@ impl Interpreter {
             {
                 // `x=${undef-~:~}`: the operand of an assignment value
                 // expands `~` after each `:` too.
+                // THREAT[TM-DOS-134]: budget the rebuilt operand the
+                // declaration retains across expansion.
+                leases.push(self.execution_budget.lease_bytes(expanded.len())?);
                 out.parts[i] = WordPart::ParameterExpansion {
                     name: name.clone(),
                     operator: op.clone(),
@@ -1045,13 +1089,17 @@ impl Interpreter {
                 starts.push(c + 1);
             }
             starts.sort_unstable();
-            if let Some(expanded) = self.tilde_expand_literal(s, &starts, true, i + 1 < n) {
+            if let Some(expanded) = self.tilde_expand_literal(s, &starts, true, i + 1 < n)? {
+                // The preprocessed literal and expand_word's copy coexist.
+                leases.push(self.execution_budget.lease_bytes(expanded.len())?);
+                let (expanded, lease) = expanded.into_parts();
+                leases.extend(lease);
                 out.parts[i] = WordPart::Literal(expanded);
             }
             // Done with this part's tildes (`x=a=~` keeps its `~`).
             out.part_quoted[i] = true;
         }
-        Cow::Owned(out)
+        Ok((Cow::Owned(out), leases))
     }
 
     /// Expand a word to multiple fields (for array iteration and command args)
@@ -1337,6 +1385,7 @@ impl Interpreter {
         let ifs_null = matches!(self.scoped.variables.get("IFS"), Some(v) if v.is_empty());
         // A null IFS never splits, but unquoted `$@`/`$*` still yield one
         // field per parameter: each starts a new group of segments.
+        let mut tilde_leases = Vec::new();
         let mut groups: Vec<Vec<(String, bool, bool)>> = vec![Vec::new()];
         for (idx, part) in word.parts.iter().enumerate() {
             let quoted = word.part_quoted.get(idx).copied().unwrap_or(word.quoted);
@@ -1400,7 +1449,10 @@ impl Interpreter {
                     let segment = match p {
                         // Unquoted operand text is expansion output: it splits.
                         WordPart::Literal(s) if !q => (s.clone(), false, false),
-                        _ => self.mixed_word_segment(&inner, i, p, q).await?,
+                        _ => {
+                            self.mixed_word_segment(&inner, i, p, q, &mut tilde_leases)
+                                .await?
+                        }
                     };
                     if let Some(group) = groups.last_mut() {
                         group.push(segment);
@@ -1408,7 +1460,9 @@ impl Interpreter {
                 }
                 continue;
             }
-            let segment = self.mixed_word_segment(word, idx, part, quoted).await?;
+            let segment = self
+                .mixed_word_segment(word, idx, part, quoted, &mut tilde_leases)
+                .await?;
             if let Some(group) = groups.last_mut() {
                 group.push(segment);
             }
@@ -1436,14 +1490,23 @@ impl Interpreter {
         idx: usize,
         part: &WordPart,
         part_is_quoted: bool,
+        tilde_leases: &mut Vec<crate::limits::ExecutionBudgetLease>,
     ) -> Result<(String, bool, bool)> {
         let part_has_expansion = Self::is_field_split_expansion(part);
         let value = if let WordPart::Literal(s) = part {
             // A leading `~` sees the whole word (`~$v` stays literal).
-            (idx == 0 && !part_is_quoted && s.contains('~'))
-                .then(|| self.tilde_expand_word_literal(word, 0, s))
-                .flatten()
-                .unwrap_or_else(|| s.clone())
+            let expanded = if idx == 0 && !part_is_quoted && s.contains('~') {
+                self.tilde_expand_word_literal(word, 0, s)?
+            } else {
+                None
+            };
+            if let Some(expanded) = expanded {
+                let (value, lease) = expanded.into_parts();
+                tilde_leases.extend(lease);
+                value
+            } else {
+                s.clone()
+            }
         } else {
             let single = Word {
                 parts: vec![part.clone()],
@@ -1561,6 +1624,7 @@ impl Interpreter {
             return Ok(None);
         }
         // Each field under construction is a list of segments.
+        let mut tilde_leases = Vec::new();
         let mut fields: Vec<Vec<(String, bool, bool)>> = vec![Vec::new()];
         for (idx, part) in word.parts.iter().enumerate() {
             let q = part_quoted(idx);
@@ -1580,7 +1644,9 @@ impl Interpreter {
                 }
                 continue;
             }
-            let segment = self.mixed_word_segment(word, idx, part, q).await?;
+            let segment = self
+                .mixed_word_segment(word, idx, part, q, &mut tilde_leases)
+                .await?;
             if let Some(field) = fields.last_mut() {
                 field.push(segment);
             }
@@ -2122,19 +2188,35 @@ impl Interpreter {
             self.limits.max_parser_operations,
         );
         let mut result = String::new();
+        let mut operand_leases = Vec::new();
         let mut in_marked = false;
         for (idx, part) in word.parts.iter().enumerate() {
             match part {
                 WordPart::Literal(s) => {
                     // `${x:-~}`, `${x#~/}`: a leading unquoted `~`.
-                    let tilde_expanded = (tilde && idx == 0 && !force_quoted)
-                        .then(|| {
-                            let seg_end = quote_mark.and_then(|m| s.find(m)).unwrap_or(s.len());
-                            let continues = seg_end < s.len() || word.parts.len() > 1;
-                            self.tilde_expand_literal(&s[..seg_end], &[0], false, continues)
-                                .map(|e| format!("{e}{}", &s[seg_end..]))
-                        })
-                        .flatten();
+                    let tilde_expanded = if tilde && idx == 0 && !force_quoted {
+                        let seg_end = quote_mark.and_then(|m| s.find(m)).unwrap_or(s.len());
+                        let continues = seg_end < s.len() || word.parts.len() > 1;
+                        let expansion = (|| {
+                            let Some(mut expanded) =
+                                self.tilde_expand_literal(&s[..seg_end], &[0], false, continues)?
+                            else {
+                                return Ok(None);
+                            };
+                            expanded.try_push_str(&s[seg_end..])?;
+                            operand_leases.push(self.execution_budget.lease_bytes(expanded.len())?);
+                            Ok::<_, crate::limits::LimitExceeded>(Some(expanded))
+                        })();
+                        match expansion {
+                            Ok(expanded) => expanded,
+                            Err(error) => {
+                                self.memory_limit_error.get_or_insert(error);
+                                return String::new();
+                            }
+                        }
+                    } else {
+                        None
+                    };
                     let text = tilde_expanded.as_deref().unwrap_or(s);
                     if repl {
                         Self::push_replacement_literal(
