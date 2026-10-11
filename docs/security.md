@@ -59,6 +59,12 @@ execution work and deadline budget; file contents are admitted against aggregate
 input and live intermediate limits and scanned one file at a time. `-q` stops
 at the first match, before further traversal.
 
+Tilde expansion (`~`, `~+`, `~-`, including repeated assignment prefixes after
+`:`) checks `ExecutionLimits::max_live_intermediate_bytes` before growing its
+output and charges copied bytes to `max_work_units`. Large directory values
+cannot bypass these limits by expanding before variable insertion. A refused
+expansion returns a resource-limit error; the next host execution receives a
+fresh execution budget.
 Syntax-error reports are limited to 1 KiB during construction, including an
 explicit `[diagnostic truncated]` marker when text is omitted. This prevents
 multiline unexpected tokens and long `bash -c` shell names from multiplying

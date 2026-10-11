@@ -8444,7 +8444,7 @@ impl Interpreter {
                 }
                 match &assignment.value {
                     AssignmentValue::Scalar(word) => {
-                        let word = self.tilde_assignment_value(word);
+                        let (word, _tilde_leases) = self.tilde_assignment_value(word)?;
                         let value = self.expand_word(&word).await?;
                         if self.is_xtrace_enabled() {
                             // `+ v=x`, `+ a[1]='a b'`, `+ v+=y`
