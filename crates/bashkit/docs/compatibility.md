@@ -300,7 +300,7 @@ Chrono's validated strftime implementation, plus GNU `%N`, `%3N`, `%6N`, and
 | Syntax | Status | Example |
 |--------|--------|---------|
 | `$(cmd)` | ✅ | `x=$(pwd)` |
-| `` `cmd` `` | ✅ | Backticks (deprecated but supported) |
+| `` `cmd` `` | ✅ | Backticks, including after quoted word segments; unquoted output splits and globs |
 
 ### Arithmetic
 
