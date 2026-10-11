@@ -352,7 +352,27 @@ mod resource_exhaustion {
                 };
             }
         };
-        let (stderr, _, read_error) = drain_capped(&mut pipe);
+        // Owned finite drain: the reader runs on its own thread and the
+        // result is collected under the shared end, so even a retained
+        // writer (no EOF ever) cannot stall this call past its deadline.
+        // The cap inside drain_capped bounds retention; the timeout below
+        // bounds duration. A timed-out drain thread is detached by design
+        // (documented, bounded count) and only reachable with a helper
+        // that outlives its own observed exit.
+        let (drain_tx, drain_rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = drain_tx.send(drain_capped(&mut pipe));
+        });
+        let (stderr, _, read_error) =
+            match drain_rx.recv_timeout(end.saturating_duration_since(Instant::now())) {
+                Ok(v) => v,
+                Err(_) => {
+                    return HelperOutcome {
+                        reaped: true,
+                        ..blank
+                    };
+                }
+            };
         // wait() past an observed exit reaps at once; it never blocks
         // beyond the end above.
         let code = child.wait().ok().and_then(|s| s.code());
@@ -580,26 +600,42 @@ mod resource_exhaustion {
             // Best-effort only (no asserts, no panics): terminate by pid
             // identity first, marker ownership channel as fallback, then
             // one bounded join attempt for retained handles, then file
-            // removal. The outcome receipt below makes this observable
-            // instead of inferred; the caller removes it after reading.
-            // Fixed short graces: Drop owns no outer deadline, so each
-            // stage carries its own finite bound, documented here.
+            // removal. ONE shared end bounds every stage below (kill,
+            // join, files): allowances derive from the remainder, never
+            // fresh stacked graces. The outcome receipt records helper
+            // health too, so callers observe rather than infer; the
+            // caller removes it after reading.
+            let end = Instant::now() + Duration::from_secs(10);
+            let remaining = || end.saturating_duration_since(Instant::now());
             let mut killed = false;
             let mut joined = false;
+            let mut helper_clean = true;
             if let Some(pid) = self.pid.take() {
-                let end = Instant::now() + Duration::from_secs(5);
-                let o = run_helper_bounded("kill", &["-9", &pid], end);
+                let o = run_helper_bounded(
+                    "kill",
+                    &["-9", &pid],
+                    Instant::now() + remaining().min(Duration::from_secs(5)),
+                );
                 killed = o.exit == Some(0);
+                if !(o.reaped && o.drained_ok) {
+                    helper_clean = false;
+                }
             } else if let Some(m) = self.marker.take() {
-                let end = Instant::now() + Duration::from_secs(5);
-                let o = run_helper_bounded("pkill", &["-9", "-f", &m], end);
+                let o = run_helper_bounded(
+                    "pkill",
+                    &["-9", "-f", &m],
+                    Instant::now() + remaining().min(Duration::from_secs(5)),
+                );
                 killed = o.exit == Some(0);
+                if !(o.reaped && o.drained_ok) {
+                    helper_clean = false;
+                }
             }
             if let Some(pending) = self.pending.take() {
-                let end = Instant::now() + JOIN_GRACE;
+                let join_end = Instant::now() + remaining().min(JOIN_GRACE);
                 let mut ok = true;
                 for reader in pending.handles {
-                    if !matches!(join_finished(reader, end), JoinOutcome::Joined) {
+                    if !matches!(join_finished(reader, join_end), JoinOutcome::Joined) {
                         ok = false;
                     }
                 }
@@ -609,7 +645,10 @@ mod resource_exhaustion {
                 std::fs::remove_file(&path).ok();
             }
             if let Some(note) = self.drop_note.take() {
-                let _ = std::fs::write(&note, format!("killed={killed} joined={joined}"));
+                let _ = std::fs::write(
+                    &note,
+                    format!("killed={killed} joined={joined} helper_clean={helper_clean}"),
+                );
             }
         }
     }
@@ -1409,18 +1448,25 @@ mod resource_exhaustion {
         let note_text = std::fs::read_to_string(&note).expect("Drop wrote its outcome receipt");
         std::fs::remove_file(&note).ok();
         assert_eq!(
-            note_text, "killed=true joined=true",
-            "Drop terminated and joined, observed not inferred"
+            note_text, "killed=true joined=true helper_clean=true",
+            "Drop terminated and joined with healthy helpers, observed not inferred"
         );
+        // ONE shared end for the whole absence proof: each pgrep
+        // derives its allowance from the remainder, and only a healthy
+        // helper reporting exit 1 counts as absence (unhealthy helpers
+        // retry inside the bound, never prove anything).
         let end = Instant::now() + Duration::from_secs(10);
         let mut gone = false;
         while Instant::now() < end {
             let o = run_helper_bounded(
                 "pgrep",
                 &["-f", &marker],
-                Instant::now() + Duration::from_secs(5),
+                Instant::now()
+                    + end
+                        .saturating_duration_since(Instant::now())
+                        .min(Duration::from_secs(5)),
             );
-            if o.exit == Some(1) {
+            if o.exit == Some(1) && o.reaped && o.drained_ok {
                 gone = true;
                 break;
             }
