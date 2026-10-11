@@ -45,6 +45,11 @@ mod resource_exhaustion {
         /// which is retried). Capture is then partial by definition, so the
         /// run fails closed instead of relabeling the error as a clean EOF.
         read_error: bool,
+        /// OS termination accounted for: the loop observed an exit or
+        /// the bounded reap recovered one. Orthogonal to `exit_code`
+        /// (signaled victims have no code) and to injected observation
+        /// faults (which discard the observation, never the cleanup).
+        reaped: bool,
         /// First stderr line from the launcher (`harness-limits: ...`),
         /// proving the CPU/stack caps were applied to this run. Empty when
         /// the launcher itself refused (fail-closed exit 99).
@@ -274,7 +279,7 @@ mod resource_exhaustion {
     // Test-only fault injection for the parent lifecycle: each flag
     // drives the real lifecycle path with exactly one hostile condition.
     // All flags stay off outside these tests.
-    #[derive(Clone, Copy, Default)]
+    #[derive(Clone, Default)]
     struct LifecycleFaults {
         /// Child poll fails: the parent must fail closed, never panic.
         fail_poll: bool,
@@ -282,6 +287,11 @@ mod resource_exhaustion {
         /// `read_error` with partial capture.
         fail_read: bool,
         /// Reaping never observes an exit: the unavailable-reap verdict.
+        /// Optional readiness gate for `fail_poll`: the fault fires only
+        /// after this file exists, proving the fixture victim truly live
+        /// under bounds before observation is broken. Without it the fault
+        /// could mask a spawn failure as poll breakage.
+        ready_file: Option<std::path::PathBuf>,
         reap_never: bool,
     }
 
@@ -356,7 +366,16 @@ mod resource_exhaustion {
                 // A failed poll is an unobservable child, never a panic: fail
                 // closed through the kill/reap path with a distinct verdict
                 // (incomplete, no exit, not mislabeled as a timeout below).
-                if faults.fail_poll {
+                // fail_poll fires only once the readiness file proves the
+                // victim truly live; before that the parent polls normally, so
+                // the fault can never mask a spawn/launch failure.
+                let armed = faults.fail_poll
+                    && faults
+                        .ready_file
+                        .as_ref()
+                        .map(|p| p.exists())
+                        .unwrap_or(true);
+                if armed {
                     poll_failed = true;
                     break;
                 }
@@ -408,13 +427,6 @@ mod resource_exhaustion {
             }
         }
         let mut incomplete_readers = bufs[0].is_none() || bufs[1].is_none() || read_error;
-        // Bounded join gate: a channel receipt proves its thread finished
-        // every blocking call (sending is the sender's last act before
-        // return), so joining after all receipts is bounded by construction
-        // to epilogue reclamation; std offers no timed join. Missing
-        // receipts skip the join (those threads stay detached) and fail the
-        // run as incomplete instead. A panicking reader surfaces here as
-        // incomplete too, never silent.
         // Bounded completion gate: a channel receipt proves its thread
         // finished every blocking call, but scheduling can pause the sender
         // between send and return, so a receipt is not the termination
@@ -468,6 +480,11 @@ mod resource_exhaustion {
             oversized,
             incomplete_readers,
             read_error,
+            // OS termination accounted for: the loop observed an exit or
+            // the bounded reap recovered one. Independent of `exit_code`
+            // (signaled victims have no code) and of injected observation
+            // faults (which discard the observation, never the cleanup).
+            reaped: status.is_some() || really_reaped.is_some(),
             limits_note: String::new(),
             exit_code: status.and_then(|s| s.code()),
             stdout,
@@ -716,31 +733,47 @@ mod resource_exhaustion {
         // lifecycle: no panic, real termination in common cleanup, and a
         // verdict distinct from timeout. The orphaned `sleep` is self-bound
         // (30s); grandchildren cannot be reaped portably.
+        // Readiness file: the victim proves itself truly live under bounds
+        // before observation is broken. Direct exec replaces the shell, so
+        // killing closes the pipes at once with no orphan.
+        let ready = std::env::temp_dir().join(format!("syntax-poll-ready-{}", std::process::id()));
+        let script = format!("echo live > '{}'; exec sleep 30", ready.display());
         let start = Instant::now();
         let run = run_raw_bounded_with(
             "bash",
-            &[
-                "-c",
-                // Direct exec: the shell replaces itself with sleep, so no
-                // grandchild can inherit the pipes. Killing the victim
-                // closes them at once; nothing outlives the run.
-                "exec sleep 30",
-            ],
+            &["-c", &script],
             Duration::from_secs(5),
             LifecycleFaults {
                 fail_poll: true,
+                ready_file: Some(ready.clone()),
                 ..Default::default()
             },
         );
         let elapsed = start.elapsed();
+        let ready_seen = ready.exists();
+        std::fs::remove_file(&ready).ok();
         // The common cleanup really terminated the live child; the exit
         // comes back signaled (no code), and the verdict stays distinct
         // from a timeout (incomplete, exitless, no timeout label).
+        assert!(ready_seen, "victim proved truly live before poll breakage");
         assert_eq!(run.exit_code, None, "killed live child has no exit code");
+        assert!(
+            run.reaped,
+            "actual OS reap observed, separate from the exit verdict"
+        );
+        assert!(
+            run.limits_note.contains("stack=4096") && run.limits_note.contains("cpu=10"),
+            "effective caps read back: {}",
+            run.limits_note
+        );
         assert!(run.incomplete_readers, "poll failure fails the run visibly");
         assert!(
             !run.timed_out,
             "poll failure must not be mislabeled as a timeout"
+        );
+        assert!(
+            elapsed < Duration::from_secs(15),
+            "cleanup bounded without waiting for any descendant: {elapsed:?}"
         );
         assert!(
             elapsed < Duration::from_secs(15),
@@ -788,6 +821,10 @@ mod resource_exhaustion {
             "unavailable reap fails the run visibly"
         );
         assert!(run.timed_out, "the deadline did trip");
+        assert!(
+            run.reaped,
+            "real OS cleanup ran despite discarded observation"
+        );
         assert!(
             run.limits_note.contains("stack=4096") && run.limits_note.contains("cpu=10"),
             "effective caps read back: {}",
