@@ -30,8 +30,10 @@
 // sandbox "Did you mean" / unavailable-command hints after
 // `command not found` are kept on purpose.
 
-// Decision: trap handlers share the function/source depth budget. Signal delivery
-// propagates handler failures; swallowing a nested limit error reports success.
+// Decision: trap handlers share the function/source depth budget plus a
+// dedicated trap-nesting cap. Nested delivery skips an exhausted handler
+// with a diagnostic; handler logic failures never disturb the interrupted
+// command (TM-DOS-030), while the first resource-limit trip fails the exec.
 mod arithmetic;
 mod brace_expansion;
 mod completion;

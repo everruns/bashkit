@@ -84,3 +84,35 @@ async fn signal_handler_parse_error_is_swallowed() {
     let next = bash.exec("echo recovered").await.unwrap();
     assert_eq!(next.stdout, "recovered\n");
 }
+
+#[tokio::test]
+async fn trap_nesting_admits_exactly_three_direct_handlers() {
+    // Admission boundary: the dedicated cap (3) admits three nested handler
+    // executions, then trips the fourth entry with MaxTrapDepth.
+    let mut bash = Bash::builder().build();
+    let err = bash
+        .exec("trap 'echo ENTRY >> /log; kill -USR1 $$' USR1; kill -USR1 $$")
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("maximum trap nesting depth exceeded"), "{err}");
+    let log = bash.exec("cat /log").await.unwrap();
+    assert_eq!(log.stdout.lines().count(), 3, "{}", log.stdout);
+}
+
+#[tokio::test]
+async fn shared_depth_admits_exactly_two_handlers_at_depth_two() {
+    // Admission boundary: with max_function_depth(2), two handler executions
+    // are admitted before the shared budget trips the third entry.
+    let mut bash = Bash::builder()
+        .limits(ExecutionLimits::new().max_function_depth(2))
+        .build();
+    let err = bash
+        .exec("trap 'echo ENTRY >> /log; kill -USR1 $$' USR1; kill -USR1 $$")
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("maximum function depth exceeded"), "{err}");
+    let log = bash.exec("cat /log").await.unwrap();
+    assert_eq!(log.stdout.lines().count(), 2, "{}", log.stdout);
+}
