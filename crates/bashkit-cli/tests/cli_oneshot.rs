@@ -660,7 +660,11 @@ fn launcher_times_out_kills_and_reaps() {
         grace_secs: 3,
         stream_cap: 4096,
     };
-    let run = run_bounded_child(&["sh", "-c", "sleep 30"], &limits);
+    // `exec` forces no-fork on every platform: the kill reaps the only
+    // process and the pipes close, so this exercises timeout plus reap.
+    // (A forked grandchild would hold the pipes open; that orphan case is
+    // covered deliberately by launcher_reports_incomplete_pipes.)
+    let run = run_bounded_child(&["sh", "-c", "exec sleep 30"], &limits);
     assert!(run.timed_out, "wall deadline must fire");
     assert!(run.signaled, "SIGKILL must land for the reap proof");
     assert_eq!(run.exit_code, None, "signal death has no exit code");
