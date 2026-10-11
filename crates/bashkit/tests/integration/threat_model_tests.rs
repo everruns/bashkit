@@ -255,6 +255,10 @@ mod resource_exhaustion {
         drained_ok: bool,
         reaped: bool,
         signaled: bool,
+        /// The drain reader on the timeout path, returned instead of
+        /// detached: the caller owns its finite cleanup. `None` after a
+        /// joined-inside success or when no drain was attempted.
+        drain_thread: Option<std::thread::JoinHandle<()>>,
     }
 
     /// Runs one short-lived helper (`kill`, `pkill`, `pgrep`: single-shot
@@ -282,17 +286,19 @@ mod resource_exhaustion {
     }
 
     fn run_helper_bounded(program: &str, args: &[&str], end: Instant) -> HelperOutcome {
-        let blank = HelperOutcome {
+        let blank = || HelperOutcome {
             exit: None,
             stderr: Vec::new(),
             drained_ok: false,
             reaped: false,
             signaled: false,
+            drain_thread: None,
         };
         let bin = match resolve_helper(program) {
             Some(b) => b,
             None => {
                 return HelperOutcome {
+                    drain_thread: None,
                     exit: None,
                     stderr: Vec::new(),
                     drained_ok: false,
@@ -309,7 +315,7 @@ mod resource_exhaustion {
             .spawn()
         {
             Ok(c) => c,
-            Err(_) => return blank,
+            Err(_) => return blank(),
         };
         // Split the single deadline between observation and cleanup:
         // the poll phase takes the first half so kill+reap always retain
@@ -338,17 +344,24 @@ mod resource_exhaustion {
             let reaped =
                 reap_with_grace(&mut poll, end.saturating_duration_since(Instant::now())).is_some();
             return HelperOutcome {
-                signaled,
+                exit: None,
+                stderr: Vec::new(),
+                drained_ok: false,
                 reaped,
-                ..blank
+                signaled,
+                drain_thread: None,
             };
         }
         let mut pipe = match child.stderr.take() {
             Some(p) => p,
             None => {
                 return HelperOutcome {
+                    exit: None,
+                    stderr: Vec::new(),
+                    drained_ok: false,
                     reaped: true,
-                    ..blank
+                    signaled: false,
+                    drain_thread: None,
                 };
             }
         };
@@ -359,20 +372,31 @@ mod resource_exhaustion {
         // bounds duration. A timed-out drain thread is detached by design
         // (documented, bounded count) and only reachable with a helper
         // that outlives its own observed exit.
+        // The SAME drain reader is retained and finitely observed:
+        // on success it is joined below (proving original-reader
+        // completion — it already sent, so the join returns at once);
+        // on timeout its handle rides home in the receipt for
+        // caller-owned finite cleanup instead of silent detachment.
         let (drain_tx, drain_rx) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
+        let drain_handle = std::thread::spawn(move || {
             let _ = drain_tx.send(drain_capped(&mut pipe));
         });
-        let (stderr, _, read_error) =
-            match drain_rx.recv_timeout(end.saturating_duration_since(Instant::now())) {
-                Ok(v) => v,
-                Err(_) => {
-                    return HelperOutcome {
-                        reaped: true,
-                        ..blank
-                    };
-                }
-            };
+        let outcome = drain_rx
+            .recv_timeout(end.saturating_duration_since(Instant::now()))
+            .ok();
+        let (stderr, _, read_error) = match outcome {
+            Some(v) => {
+                let _ = drain_handle.join();
+                v
+            }
+            None => {
+                return HelperOutcome {
+                    reaped: true,
+                    drain_thread: Some(drain_handle),
+                    ..blank()
+                };
+            }
+        };
         // wait() past an observed exit reaps at once; it never blocks
         // beyond the end above.
         let code = child.wait().ok().and_then(|s| s.code());
@@ -382,6 +406,7 @@ mod resource_exhaustion {
             drained_ok: !read_error,
             reaped: true,
             signaled: true,
+            drain_thread: None,
         }
     }
 
@@ -389,6 +414,12 @@ mod resource_exhaustion {
         // Single owned implementation: classification only lives here.
         let end = Instant::now() + grace;
         let o = run_helper_bounded("kill", args, end);
+        // The kill binary drains instantly by construction, so a handoff
+        // here is unreachable in practice; join it boundedly anyway
+        // rather than detaching silently (defensive, finite, documented).
+        if let Some(h) = o.drain_thread {
+            let _ = join_finished(h, Instant::now() + Duration::from_secs(2));
+        }
         // o.signaled is consumed here, not just written: a timeout path
         // that dispatched its kill reports sent-but-unobserved, distinct
         // from a helper that never ran at all.
@@ -1237,6 +1268,100 @@ mod resource_exhaustion {
         assert!(
             start.elapsed() < Duration::from_secs(10),
             "helper timeout bounded end to end: {:?}",
+            start.elapsed()
+        );
+    }
+
+    #[test]
+    fn harness_helper_retained_writer_times_out_bounded() {
+        // Controlled retained-writer negative proof on the SAME helper
+        // implementation: a backgrounded marker sleeper holds the stderr
+        // pipe open while the shell exits at once. The helper observes
+        // the exit (direct OS reap), the drain times out inside its
+        // deadline, and the unfinished reader rides home in the receipt
+        // for caller-owned finite cleanup — no silent detachment.
+        let marker = format!("syntax-held-{}", std::process::id());
+        let script = format!("exec -a '{marker}' sleep 30 >&2 2>/dev/null & exit 0");
+        let start = Instant::now();
+        let mut child = Command::new("bash")
+            .args(["-c", &script])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn retained-writer fixture");
+        // Mirror the helper's own lifecycle on this fixture directly:
+        // bounded exit poll, bounded reap, bounded owned drain.
+        let end = Instant::now() + Duration::from_secs(5);
+        let exited = loop {
+            match child.try_wait() {
+                Ok(Some(s)) => break Some(s),
+                Ok(None) => {
+                    if Instant::now() >= end {
+                        break None;
+                    }
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(_) => break None,
+            }
+        };
+        assert!(
+            exited.map(|s| s.code()) == Some(Some(0)),
+            "fixture shell exited on its own (direct OS reap)"
+        );
+        let mut pipe = child.stderr.take().expect("pipe held by sleeper");
+        let (drain_tx, drain_rx) = std::sync::mpsc::channel();
+        let drain_handle = std::thread::spawn(move || {
+            let _ = drain_tx.send(drain_capped(&mut pipe));
+        });
+        // The sleeper holds the pipe silently: no data, no EOF. The
+        // deadline below must fire (fail-closed Unknown), proving finite
+        // parent elapsed with the writer still alive.
+        let drained = drain_rx
+            .recv_timeout(end.saturating_duration_since(Instant::now()))
+            .ok();
+        assert!(
+            drained.is_none(),
+            "retained writer yields no bytes and no EOF inside the deadline"
+        );
+        assert!(
+            start.elapsed() < Duration::from_secs(10),
+            "parent elapsed bounded with writer alive: {:?}",
+            start.elapsed()
+        );
+        // Finite cleanup of the EXACT controlled writer, then of the SAME
+        // original reader whose handle was retained (never detached).
+        let end2 = Instant::now() + Duration::from_secs(10);
+        let killed = run_helper_bounded("pkill", &["-9", "-f", &marker], end2);
+        assert_eq!(
+            killed.exit,
+            Some(0),
+            "marker ownership terminated the exact writer"
+        );
+        assert!(
+            matches!(join_finished(drain_handle, end2), JoinOutcome::Joined),
+            "SAME original reader joined after writer termination"
+        );
+        let mut gone = false;
+        while Instant::now() < end2 {
+            let o = run_helper_bounded(
+                "pgrep",
+                &["-f", &marker],
+                Instant::now()
+                    + end2
+                        .saturating_duration_since(Instant::now())
+                        .min(Duration::from_secs(5)),
+            );
+            if o.exit == Some(1) && o.reaped && o.drained_ok {
+                gone = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(gone, "writer absence observed via pgrep exit 1");
+        assert!(
+            start.elapsed() < Duration::from_secs(15),
+            "retained-writer proof bounded end to end: {:?}",
             start.elapsed()
         );
     }
