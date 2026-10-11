@@ -227,7 +227,35 @@ mod resource_exhaustion {
     /// process`); EPERM and anything undecipherable stay Unknown — never
     /// successful absence. Every wait inside is a bounded try_wait poll,
     /// so the call itself always terminates.
-    fn signal_bounded(args: &[&str], grace: Duration) -> (bool, PidPresence) {
+    /// What a bounded signal query actually proved, stage by stage.
+    /// Unknowns stay explicit on every error path; no stage infers the
+    /// success of another. Callers assert the fields they depend on.
+    struct SignalReceipt {
+        /// The signal was dispatched to the target (for `-9`), or the
+        /// query itself ran (for `-0`). False when the helper never ran
+        /// or its kill failed.
+        dispatched: bool,
+        /// The helper child was reaped inside the grace (no leak); a
+        /// try_wait error counts as unreaped, never as completion.
+        helper_reaped: bool,
+        /// The stderr drain completed within its cap without I/O error.
+        pipe_ok: bool,
+        /// Target presence: Absent only by observed ESRCH receipt text.
+        presence: PidPresence,
+    }
+
+    impl SignalReceipt {
+        fn unknown() -> Self {
+            SignalReceipt {
+                dispatched: false,
+                helper_reaped: false,
+                pipe_ok: false,
+                presence: PidPresence::Unknown,
+            }
+        }
+    }
+
+    fn signal_bounded(args: &[&str], grace: Duration) -> SignalReceipt {
         let mut child = match Command::new("kill")
             .args(args)
             .stdin(Stdio::null())
@@ -236,46 +264,86 @@ mod resource_exhaustion {
             .spawn()
         {
             Ok(c) => c,
-            Err(_) => return (false, PidPresence::Unknown),
+            Err(_) => return SignalReceipt::unknown(),
         };
         let end = Instant::now() + grace;
+        let mut reaped = false;
         let exited = loop {
             match child.try_wait() {
-                Ok(Some(_)) => break true,
+                Ok(Some(_)) => {
+                    reaped = true;
+                    break true;
+                }
                 Ok(None) => {
                     if Instant::now() >= end {
                         break false;
                     }
                     std::thread::sleep(Duration::from_millis(10));
                 }
+                // A poll error observes nothing: not exited, not reaped.
                 Err(_) => break false,
             }
         };
         if !exited {
-            // The helper itself did not finish inside the grace: terminate
-            // it first so no path leaks a running child, then reap bounded
-            // through the shared seam. Verdict stays Unknown regardless.
-            let _ = child.kill();
+            // The helper itself did not finish inside the grace, or its
+            // state is unobservable: terminate it first so no path leaks
+            // a running child (a failed kill is recorded, not ignored),
+            // then reap bounded through the shared seam. A try_wait error
+            // there is unreaped, never completion. Verdict stays Unknown.
+            let killed = child.kill().is_ok();
             let mut poll = || child.try_wait();
-            let _ = reap_with_grace(&mut poll, grace);
-            return (false, PidPresence::Unknown);
+            let helper_reaped = reap_with_grace(&mut poll, grace).is_some();
+            let _ = killed;
+            return SignalReceipt {
+                dispatched: false,
+                helper_reaped,
+                pipe_ok: false,
+                presence: PidPresence::Unknown,
+            };
         }
         let mut pipe = match child.stderr.take() {
             Some(p) => p,
-            None => return (false, PidPresence::Unknown),
+            None => {
+                return SignalReceipt {
+                    dispatched: false,
+                    helper_reaped: reaped,
+                    pipe_ok: false,
+                    presence: PidPresence::Unknown,
+                };
+            }
         };
         let (stderr, _, read_error) = drain_capped(&mut pipe);
         if read_error {
-            return (false, PidPresence::Unknown);
+            return SignalReceipt {
+                dispatched: false,
+                helper_reaped: reaped,
+                pipe_ok: false,
+                presence: PidPresence::Unknown,
+            };
         }
         // wait() past this point reaps an already-exited child and returns
         // at once; it never blocks beyond the grace above.
         let code = child.wait().ok().and_then(|s| s.code());
         let lowered = String::from_utf8_lossy(&stderr).to_lowercase();
         match code {
-            Some(0) => (true, PidPresence::Present),
-            _ if lowered.contains("no such process") => (true, PidPresence::Absent),
-            _ => (false, PidPresence::Unknown),
+            Some(0) => SignalReceipt {
+                dispatched: true,
+                helper_reaped: reaped,
+                pipe_ok: true,
+                presence: PidPresence::Present,
+            },
+            _ if lowered.contains("no such process") => SignalReceipt {
+                dispatched: true,
+                helper_reaped: reaped,
+                pipe_ok: true,
+                presence: PidPresence::Absent,
+            },
+            _ => SignalReceipt {
+                dispatched: false,
+                helper_reaped: reaped,
+                pipe_ok: true,
+                presence: PidPresence::Unknown,
+            },
         }
     }
 
@@ -316,13 +384,15 @@ mod resource_exhaustion {
             if let Some(pid) = self.pid.clone() {
                 // Terminate the exact owned descendant (not self-expiry).
                 // An ESRCH answer here already proves absence.
-                match signal_bounded(&["-9", &pid], remaining()) {
-                    (true, _) => signaled = true,
-                    (false, PidPresence::Absent) => {
-                        signaled = true;
-                        gone = true;
-                    }
-                    (false, _) => {}
+                // ESRCH on the kill itself already proves absence; a
+                // dispatched signal proceeds to the join/absence proof.
+                let kill = signal_bounded(&["-9", &pid], remaining());
+                if kill.dispatched {
+                    signaled = true;
+                }
+                if matches!(kill.presence, PidPresence::Absent) {
+                    signaled = true;
+                    gone = true;
                 }
                 // Join the ORIGINAL reader handles: the kill closed the
                 // retained pipes, so they must finish inside the shared
@@ -342,12 +412,14 @@ mod resource_exhaustion {
                 // Absence receipt: only ESRCH counts; anything unknown
                 // retries inside the shared end, then stays false.
                 while !gone && Instant::now() < end {
-                    match signal_bounded(&["-0", &pid], remaining()) {
-                        (_, PidPresence::Absent) => {
+                    match signal_bounded(&["-0", &pid], remaining()).presence {
+                        PidPresence::Absent => {
                             gone = true;
                             break;
                         }
-                        _ => std::thread::sleep(Duration::from_millis(50)),
+                        PidPresence::Present | PidPresence::Unknown => {
+                            std::thread::sleep(Duration::from_millis(50))
+                        }
                     }
                 }
             }
@@ -886,37 +958,46 @@ mod resource_exhaustion {
         // is Absent by ESRCH receipt, and an invalid PID string is
         // Unknown (never successful absence).
         let me_pid = std::process::id().to_string();
-        let (sent, presence) = signal_bounded(&["-0", &me_pid], Duration::from_secs(5));
-        assert!(sent, "self-signal delivers");
+        let me_check = signal_bounded(&["-0", &me_pid], Duration::from_secs(5));
+        assert!(me_check.dispatched, "self-signal delivers");
+        assert!(me_check.helper_reaped, "helper reaped on every path");
+        assert!(me_check.pipe_ok, "pipe drained cleanly");
         assert!(
-            matches!(presence, PidPresence::Present),
+            matches!(me_check.presence, PidPresence::Present),
             "own PID reads Present"
         );
-        let (sent, presence) = signal_bounded(&["-0", "2147483647"], Duration::from_secs(5));
-        assert!(sent, "query itself delivered");
+        let gone_check = signal_bounded(&["-0", "2147483647"], Duration::from_secs(5));
+        assert!(gone_check.dispatched, "query itself delivered");
+        assert!(gone_check.helper_reaped, "helper reaped on every path");
         assert!(
-            matches!(presence, PidPresence::Absent),
+            matches!(gone_check.presence, PidPresence::Absent),
             "impossible PID reads Absent by ESRCH receipt"
         );
-        let (sent, presence) = signal_bounded(&["-9", "not-a-pid"], Duration::from_secs(5));
-        assert!(!sent, "invalid PID string cannot deliver");
+        let bad_check = signal_bounded(&["-9", "not-a-pid"], Duration::from_secs(5));
+        assert!(!bad_check.dispatched, "invalid PID string cannot deliver");
+        assert!(bad_check.helper_reaped, "helper reaped on every path");
         assert!(
-            matches!(presence, PidPresence::Unknown),
+            matches!(bad_check.presence, PidPresence::Unknown),
             "undecipherable outcome stays Unknown, never absence"
         );
     }
 
     #[test]
     fn harness_handshake_failure_has_owned_unknown_verdict() {
-        // Fixture WITHOUT the pid echo: identity handshake fails
-        // deterministically while the run itself stays bounded. The guard
-        // still owns threads and files, so cleanup runs and reports
-        // explicit unknowns instead of relying on pid-None silence.
+        // Two identity channels for the SAME controlled victim: pidA is
+        // written by the fixture and establishes independent ownership
+        // BEFORE the fallible handshake; pidB is never written, so its
+        // handshake fails deterministically. The run verdict stays the
+        // helper's own (incomplete, exitless-timeout-free); cleanup runs
+        // through the owned channel with the SAME original readers.
         let receipt = std::env::temp_dir().join(format!("syntax-hs-limits-{}", std::process::id()));
+        let pid_a = std::env::temp_dir().join(format!("syntax-hs-pid-a-{}", std::process::id()));
+        let pid_b = std::env::temp_dir().join(format!("syntax-hs-pid-b-{}", std::process::id()));
         let script = format!(
-            "ulimit -s > '{}'; ulimit -t >> '{}'; sleep 30 & exit 0",
+            "ulimit -s > '{}'; ulimit -t >> '{}'; sleep 30 & echo $! > '{}'; exit 0",
             receipt.display(),
-            receipt.display()
+            receipt.display(),
+            pid_a.display()
         );
         let start = Instant::now();
         let (run, pending) = run_raw_core(
@@ -925,10 +1006,16 @@ mod resource_exhaustion {
             Duration::from_secs(5),
             LifecycleFaults::default(),
         );
+        // Ownership first: pidA binds the exact victim before the
+        // handshake on pidB is even attempted.
+        let owned = std::fs::read_to_string(&pid_a)
+            .expect("ownership channel recorded")
+            .trim()
+            .to_string();
         let mut guard = RetainedCleanup {
-            pid: None,
+            pid: Some(owned.clone()),
             pending: Some(pending),
-            files: vec![receipt],
+            files: vec![receipt, pid_a],
         };
         assert!(!run.timed_out, "exited child misreported as timeout");
         assert_eq!(run.exit_code, Some(0));
@@ -936,28 +1023,91 @@ mod resource_exhaustion {
             run.incomplete_readers,
             "retained pipes are reported, not hidden"
         );
-        // No pidfile was ever written: the identity handshake fails here,
-        // deterministically, before any verdict about the descendant.
-        let handshake = std::fs::read_to_string(
-            std::env::temp_dir().join(format!("syntax-hs-pid-{}", std::process::id())),
+        // The pidB handshake fails deterministically: nothing ever wrote
+        // it, and the verdict above was reached without it.
+        assert!(
+            std::fs::read_to_string(&pid_b).is_err(),
+            "unwritten handshake channel stays failed"
         );
-        assert!(handshake.is_err(), "no identity was recorded");
+        // Cleanup through the OWNED channel with the SAME original
+        // readers: terminate, join, observe absence, bound the total.
         let receipt = guard.complete(start);
+        assert!(receipt.signaled, "owned descendant terminated");
         assert!(
-            !receipt.descendant_gone,
-            "unknown descendant stays unknown, never absence"
+            receipt.descendant_gone,
+            "ESRCH-observed absence of the owned victim"
         );
         assert!(
-            !receipt.readers_joined,
-            "unjoined handles stay reported, never success"
+            receipt.readers_joined,
+            "SAME original reader handles joined after the kill"
         );
         assert!(
             receipt.elapsed < Duration::from_secs(25),
-            "unknown-verdict cleanup bounded: {:?}",
+            "owned cleanup bounded end to end: {:?}",
             receipt.elapsed
         );
     }
 
+    #[test]
+    fn harness_handshake_fixture_cleans_up_on_unwind() {
+        // Caught setup/assertion failure through the owned handshake
+        // fixture: panic BEFORE normal complete, then prove the guard's
+        // Drop terminated the exact owned descendant inside a finite
+        // bound. No success flags come from the unwound path — only the
+        // absence receipt plus the reaped-termination observation below.
+        let pid_a =
+            std::env::temp_dir().join(format!("syntax-hs-unwind-pid-{}", std::process::id()));
+        let script = format!("sleep 30 & echo $! > '{}'; exit 0", pid_a.display());
+        let (run, pending) = run_raw_core(
+            "bash",
+            &["-c", &script],
+            Duration::from_secs(5),
+            LifecycleFaults::default(),
+        );
+        assert!(
+            run.incomplete_readers,
+            "fixture holds pipes as designed before the panic"
+        );
+        let owned = std::fs::read_to_string(&pid_a)
+            .expect("ownership channel recorded")
+            .trim()
+            .to_string();
+        let start = Instant::now();
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = RetainedCleanup {
+                pid: Some(owned.clone()),
+                pending: Some(pending),
+                files: vec![pid_a.clone()],
+            };
+            panic!("simulated assertion failure before complete");
+        }));
+        assert!(outcome.is_err(), "the simulated failure unwinds");
+        // The guard's Drop fired its kill; reap the signaled exit through
+        // the (bounded) absence poll below — kill -0 succeeds on zombies,
+        // so absence alone would prove nothing without this note: the
+        // sleeper here was orphaned (reparented past the fixture shell),
+        // hence no zombie lingers for this test to reap.
+        let end = Instant::now() + Duration::from_secs(10);
+        let mut gone = false;
+        while Instant::now() < end {
+            match signal_bounded(&["-0", &owned], Duration::from_secs(5)).presence {
+                PidPresence::Absent => {
+                    gone = true;
+                    break;
+                }
+                PidPresence::Present | PidPresence::Unknown => {
+                    std::thread::sleep(Duration::from_millis(50))
+                }
+            }
+        }
+        assert!(gone, "unwind path still terminated the owned descendant");
+        assert!(
+            start.elapsed() < Duration::from_secs(20),
+            "unwind cleanup bounded: {:?}",
+            start.elapsed()
+        );
+        std::fs::remove_file(&pid_a).ok();
+    }
     #[test]
     fn harness_cleanup_guard_fires_on_unwind() {
         // A live sleeper owned by a guard that never reaches complete():
@@ -1008,12 +1158,14 @@ mod resource_exhaustion {
         let end = Instant::now() + Duration::from_secs(10);
         let mut gone = false;
         while Instant::now() < end {
-            match signal_bounded(&["-0", &pid], Duration::from_secs(5)) {
-                (_, PidPresence::Absent) => {
+            match signal_bounded(&["-0", &pid], Duration::from_secs(5)).presence {
+                PidPresence::Absent => {
                     gone = true;
                     break;
                 }
-                _ => std::thread::sleep(Duration::from_millis(50)),
+                PidPresence::Present | PidPresence::Unknown => {
+                    std::thread::sleep(Duration::from_millis(50))
+                }
             }
         }
         assert!(gone, "unwind path still terminated the owned descendant");
