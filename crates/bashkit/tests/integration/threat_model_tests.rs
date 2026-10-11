@@ -147,12 +147,14 @@ mod resource_exhaustion {
         let mut bufs: [Option<Vec<u8>>; 2] = [None, None];
         let mut oversized = false;
         let mut status = None;
-        let mut killed = false;
         let mut timed_out = false;
         let deadline = Instant::now() + limit;
         // Pipe EOF alone never ends the run: only an observed exit does,
         // otherwise a child that closes output and keeps running would
-        // bypass the watchdog into an unbounded wait.
+        // bypass the watchdog into an unbounded wait. The deadline verdict
+        // is recorded from pre-kill observed liveness and never recomputed
+        // after killing: reaping the SIGKILL victim must not flip a genuine
+        // timeout to false on scheduling luck.
         loop {
             while let Ok((id, buf, over)) = rx.try_recv() {
                 bufs[id as usize] = Some(buf);
@@ -161,15 +163,18 @@ mod resource_exhaustion {
             if bufs[0].is_some() && bufs[1].is_some() && status.is_some() {
                 break;
             }
-            if (oversized || Instant::now() >= deadline) && !killed {
+            if oversized {
+                // `kill` is idempotent; errors (already exited) are ignored.
                 let _ = child.kill();
-                killed = true;
             }
             if status.is_none() {
                 status = child.try_wait().expect("poll child");
             }
             if Instant::now() >= deadline {
-                timed_out = status.is_none();
+                if status.is_none() && !oversized {
+                    let _ = child.kill();
+                    timed_out = true;
+                }
                 break;
             }
             std::thread::sleep(Duration::from_millis(10));
@@ -257,7 +262,9 @@ mod resource_exhaustion {
     /// The bounded runner itself is tested: a hung child must be
     /// reported as a timeout, and an overproducer as oversize. Both fail
     /// visibly (a boolean the harness asserts on), so a helper regression
-    /// cannot silently pass hostile coverage.
+    /// cannot silently pass hostile coverage. The short-deadline case runs
+    /// repeatedly: the timeout verdict must be deterministic, never a
+    /// scheduling coin flip.
     #[test]
     fn bounded_helper_kills_hung_child() {
         let run = run_cli_bounded("sleep 30", Duration::from_secs(3));
@@ -271,6 +278,12 @@ mod resource_exhaustion {
             !run.incomplete_readers,
             "hung child misreported as incomplete"
         );
+        // Repeated short deadlines: every run must report the timeout.
+        for _ in 0..3 {
+            let run = run_cli_bounded("sleep 30", Duration::from_secs(2));
+            assert!(run.timed_out, "short deadline flaked");
+            assert!(!run.oversized, "short deadline misreported as oversize");
+        }
     }
 
     /// The launcher is fail-closed: if `ulimit` refuses, the producer never
