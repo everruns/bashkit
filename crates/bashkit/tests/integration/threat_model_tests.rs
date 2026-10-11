@@ -208,11 +208,19 @@ mod resource_exhaustion {
     }
 
     /// Runs `kill` with the given args under a finite grace and classifies
-    /// the outcome from the observed exit plus stderr text. Every wait on
-    /// the helper child is a bounded try_wait poll (never a bare wait), so
-    /// the call itself always terminates: `Unknown` covers spawn errors,
-    /// grace expiry, and undecipherable output. ESRCH receipt text is
-    /// matched case-insensitively (`no such process`).
+    /// the outcome from the observed exit plus stderr text. Built from the
+    /// same bounded primitives as the runner itself: the helper child is
+    /// terminated and reaped through `reap_with_grace` on every path that
+    /// does not observe its exit (no leaked running helpers), and its
+    /// stderr is drained through `drain_capped` (bounded retention, real
+    /// errors fail closed). EOF for that drain is construction-specific,
+    /// not assumed for arbitrary executables: this stderr pipe is private
+    /// to the `kill` helper binary, which performs one kill(2) and exits
+    /// without forking, so the observed exit closes its only write end.
+    /// ESRCH receipt text is matched case-insensitively (`no such
+    /// process`); EPERM and anything undecipherable stay Unknown — never
+    /// successful absence. Every wait inside is a bounded try_wait poll,
+    /// so the call itself always terminates.
     fn signal_bounded(args: &[&str], grace: Duration) -> (bool, PidPresence) {
         let mut child = match Command::new("kill")
             .args(args)
@@ -224,35 +232,43 @@ mod resource_exhaustion {
             Ok(c) => c,
             Err(_) => return (false, PidPresence::Unknown),
         };
-        let mut stderr = String::new();
         let end = Instant::now() + grace;
-        let code = loop {
+        let exited = loop {
             match child.try_wait() {
-                Ok(Some(s)) => break s.code(),
+                Ok(Some(_)) => break true,
                 Ok(None) => {
                     if Instant::now() >= end {
-                        return (false, PidPresence::Unknown);
+                        break false;
                     }
                     std::thread::sleep(Duration::from_millis(10));
                 }
-                Err(_) => return (false, PidPresence::Unknown),
+                Err(_) => break false,
             }
         };
-        use std::io::Read as _;
-        let _ = child
-            .stderr
-            .take()
-            .map(|mut p| p.read_to_string(&mut stderr));
-        let _ = child.wait();
-        let lowered = stderr.to_lowercase();
+        if !exited {
+            // The helper itself did not finish inside the grace: terminate
+            // it first so no path leaks a running child, then reap bounded
+            // through the shared seam. Verdict stays Unknown regardless.
+            let _ = child.kill();
+            let mut poll = || child.try_wait();
+            let _ = reap_with_grace(&mut poll, grace);
+            return (false, PidPresence::Unknown);
+        }
+        let mut pipe = match child.stderr.take() {
+            Some(p) => p,
+            None => return (false, PidPresence::Unknown),
+        };
+        let (stderr, _, read_error) = drain_capped(&mut pipe);
+        if read_error {
+            return (false, PidPresence::Unknown);
+        }
+        // wait() past this point reaps an already-exited child and returns
+        // at once; it never blocks beyond the grace above.
+        let code = child.wait().ok().and_then(|s| s.code());
+        let lowered = String::from_utf8_lossy(&stderr).to_lowercase();
         match code {
             Some(0) => (true, PidPresence::Present),
             _ if lowered.contains("no such process") => (true, PidPresence::Absent),
-            _ if lowered.contains("not permitted")
-                || lowered.contains("operation not permitted") =>
-            {
-                (false, PidPresence::Unknown)
-            }
             _ => (false, PidPresence::Unknown),
         }
     }
@@ -1215,9 +1231,11 @@ mod resource_exhaustion {
     /// because the retained pipes keep even the launcher's own readback
     /// line unread, the effective bounds are proven through a per-process
     /// receipt file the fixture shell writes before parking the sleeper
-    /// (removed below). The sleeper's own 30s lifetime is the outer
-    /// deadline (grandchildren cannot be reaped portably); the elapsed
-    /// assertion proves the run returns without waiting for it.
+    /// (removed below). The guard terminates the exact descendant
+    /// promptly after the verdict; the sleeper's own 30s lifetime remains
+    /// only as the backstop bound (grandchildren cannot be reaped
+    /// portably). The elapsed assertion proves the run returns without
+    /// waiting for it.
     #[test]
     fn bounded_helper_flags_retained_pipes() {
         // The sleeper's PID is retained through a second receipt file so
@@ -1245,26 +1263,24 @@ mod resource_exhaustion {
             LifecycleFaults::default(),
         );
         let elapsed = start.elapsed();
-        let receipt_text =
-            std::fs::read_to_string(&receipt).expect("fixture shell ran under the launcher");
-        // Controlled descendant cleanup AFTER the negative verdict above:
-        // terminate the exact retained sleeper and finitely observe its
-        // completion (absence via kill -0 polling inside a 5s bound).
-        // The orphan is reparented to init on the shell's death, so init
-        // reaps it promptly after the kill; the poll proves it is gone.
-        let sleeper = std::fs::read_to_string(&pidfile)
-            .expect("fixture recorded its descendant identity")
-            .trim()
-            .to_string();
-        std::fs::remove_file(&pidfile).ok();
-        // Guard owns the exact descendant, the ORIGINAL reader handles,
-        // and both receipt files from here: any later assert failure still
-        // cleans up via Drop (best-effort kill, no panics).
+        // Guard owns the ORIGINAL reader handles and both receipt paths
+        // BEFORE any fallible setup read below: a panic in the reads or
+        // in the verdict asserts still cleans up via Drop (best-effort
+        // kill once the pid binds, file removal, no panics). The pid
+        // itself binds after the pidfile read; without an identity there
+        // is nothing to terminate, which Drop records honestly.
         let mut guard = RetainedCleanup {
-            pid: Some(sleeper.clone()),
+            pid: None,
             pending: Some(pending),
             files: vec![receipt, pidfile],
         };
+        let receipt_text =
+            std::fs::read_to_string(&guard.files[0]).expect("fixture shell ran under the launcher");
+        let sleeper = std::fs::read_to_string(&guard.files[1])
+            .expect("fixture recorded its descendant identity")
+            .trim()
+            .to_string();
+        guard.pid = Some(sleeper.clone());
         assert!(!run.timed_out, "exited child misreported as timeout");
         assert!(
             run.incomplete_readers,
