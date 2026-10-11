@@ -88,7 +88,7 @@ through configurable limits.
 
 | Threat | Attack Example | Mitigation | Status |
 |--------|---------------|------------|--------|
-| Function recursion (TM-DOS-020) | `f() { f; }; f` | Depth limit of 16, including a hard ceiling when callers request more, protects 2 MiB host stacks | MITIGATED |
+| Function and signal-trap recursion (TM-DOS-020) | `f() { f; }; f` or `trap 'kill -USR1 $$' USR1; kill -USR1 $$` | Functions, source, child shells and trap handlers share a hard depth ceiling of 16, plus a dedicated trap-nesting cap of 3 that trips first on small stacks; nested exhaustion is skipped with a diagnostic and the first trip fails the exec as a resource-limit error, while handler logic failures never disturb the interrupted command (TM-DOS-030). Subprocess tests cover direct, mutual and mixed recursion on 2 MiB stacks | MITIGATED |
 | Command sub depth (TM-DOS-021) | `$($($($())))` nesting | Inherited depth/fuel from parent | MITIGATED |
 | Parser depth (TM-DOS-022) | `(((((...))))))` nesting | `max_ast_depth` + hard cap (100) | MITIGATED |
 | Arithmetic depth (TM-DOS-026) | `$(((((...))))))` | `MAX_ARITHMETIC_DEPTH` (50) | MITIGATED |
@@ -185,6 +185,7 @@ let bash = Bash::builder()
 | Persistent history memory DoS (TM-DOS-094) | Unbounded command history in long-lived instances | `ExecutionLimits` caps history entries/bytes/output | FIXED |
 | Multi-component glob amplification (TM-DOS-095) | `/*/*/*/*` multiplies the candidate set at each component | Reject patterns deeper than `max_path_depth`; cap live candidates at `max_file_count` | FIXED |
 | Aggregate budget refresh (TM-DOS-096) | Nest/mix parsers, pipelines, traversal, runtimes, archives, and callbacks to restart local ceilings | One poisoned request-scoped `ExecutionBudget` meters aggregate work/input/live bytes without replacing subsystem caps | MITIGATED |
+| Tilde expansion amplification (TM-DOS-134) | Large `HOME`/`PWD`/`OLDPWD` repeated after assignment colons | Borrowed directories, checked pre-allocation live-byte reservations, byte-proportional work/deadline checks, and leases retained through assignment/field consumption; failures abort expansion | MITIGATED |
 | Contradictory execution-profile limits (TM-DOS-097) | Host config silently requests ineffective or impossible limits | Validate profile cross-field invariants before `BashBuilder` accepts it | MITIGATED |
 | Suspended host-call retention (TM-DOS-098) | Script repeats event-backed calls or host never resumes one | Capacity-one channel; an independently driven execution future keeps the deadline armed while parked and drops the timed-out session without another host poll; handle drop aborts the driver | MITIGATED |
 | `time` report amplification (TM-DOS-099) | Attacker-controlled `-f` format expands repeatedly or targets the VFS with `-o` | Incremental rendering is capped by the stderr limit before emission or file replacement | MITIGATED |

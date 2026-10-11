@@ -68,6 +68,12 @@ execution work and deadline budget; file contents are admitted against aggregate
 input and live intermediate limits and scanned one file at a time. `-q` stops
 at the first match, before further traversal.
 
+Tilde expansion (`~`, `~+`, `~-`, including repeated assignment prefixes after
+`:`) checks `ExecutionLimits::max_live_intermediate_bytes` before growing its
+output and charges copied bytes to `max_work_units`. Large directory values
+cannot bypass these limits by expanding before variable insertion. A refused
+expansion returns a resource-limit error; the next host execution receives a
+fresh execution budget.
 Syntax-error reports are limited to 1 KiB during construction, including an
 explicit `[diagnostic truncated]` marker when text is omitted. This prevents
 multiline unexpected tokens and long `bash -c` shell names from multiplying
@@ -110,7 +116,7 @@ Bashkit intentionally deviates from POSIX where compliance would compromise
 the sandbox. Key exclusions:
 
 - **`exec`**: would break sandbox containment (`TM-ESC-005`)
-- **`trap`**: conflicts with the stateless execution model
+- **`trap`**: handles shell events and self-sent virtual signals. Nested handlers share the function/source/child-shell depth budget (hard ceiling 16) plus a dedicated trap-nesting cap of 3 that trips first on small stacks; recursive signal delivery past either limit is skipped with a diagnostic and the first trip fails the exec with a resource-limit error
 - **Real process spawning**: all subprocess commands stay within the virtual interpreter (`TM-ESC-015`)
 
 These decisions are documented in [`knowledge/operations/limitations.md`](../knowledge/operations/limitations.md).

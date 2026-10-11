@@ -103,6 +103,21 @@ Recursive bare-variable evaluation and syntax parsing share the depth
 counter. Expansion errors propagate to the arithmetic boundary; later host
 executions receive fresh state. Regression and Bash differential coverage:
 `crates/bashkit/tests/integration/arithmetic_resource_tests.rs` (TM-DOS-026).
+### Trap nesting
+
+Self-sent signals run handlers inline. Every handler entered through
+`run_trap_command` charges the existing function-depth counter, also used by
+functions, source, and child shells; its hard ceiling is 16. This preserves
+finite nested signal delivery while bounding direct, mutual, and mixed cycles
+without relying on command fuel or per-handler AST depth. The signal path boxes
+the handler future to keep each native frame small; when the budget is
+exhausted the nested handler is skipped with a diagnostic on the handler
+stderr, and unparsable or failing handlers never disturb the interrupted
+command (TM-DOS-030). Trap state and depth are restored on every path. DEBUG,
+ERR, and RETURN retain their reentrancy suppression and existing error
+handling.
+See [Threat Model](../security/threat-model.md), TM-DOS-020, and
+`signal_trap_depth_tests` plus CLI small-stack regression coverage.
 
 ### Shared execution budget
 
@@ -145,6 +160,14 @@ redirections, so command-local redirected diagnostics retain full content.
 A child shell captures uncaught stderr before an outer redirect on the
 `bash -c` invocation sees it; that outer redirect receives the child's capped
 capture. Put the redirect on the child command to bypass capture.
+Tilde expansion uses the same owning string builder before each append; it
+borrows `HOME`/`PWD`/`OLDPWD` instead of cloning the directory on each prefix.
+Scan and copy work polls the shared deadline and cancellation flag. Assignment
+preprocessing retains leases for expanded literal buffers and their word copies
+through consumption; mixed-word segments retain leases through field splitting.
+The synchronous operand pipeline records a refused reservation in the existing
+sticky resource-error slot, checked before the completed word is returned.
+Retained-variable admission remains a separate check after expansion.
 
 ### `set -e` contexts
 
