@@ -429,22 +429,13 @@ impl Interpreter {
                     result.try_push_str(&text)?;
                 }
                 WordPart::Literal(s) => {
-                    // Tilde expansion (`~`, `~/x`, `x=~:~`); quoted literals
-                    // keep their tilde.
-                    let expanded = if !part_quoted && s.contains('~') {
-                        self.tilde_expand_word_literal(word, idx, s)?
-                    } else {
-                        None
-                    };
-                    if let Some(expanded) = expanded {
-                        let tilde_lease = self.execution_budget.lease_bytes(expanded.len())?;
-                        result.try_push_str(&expanded)?;
-                        if !leased {
-                            substitution_leases.push(tilde_lease);
-                        }
-                    } else {
-                        result.try_push_str(s)?;
-                    }
+                    self.append_literal_segment(
+                        &mut result,
+                        (word, idx, s),
+                        part_quoted,
+                        leased,
+                        &mut substitution_leases,
+                    )?;
                 }
                 WordPart::Variable(name) => {
                     if self.is_nounset() && !self.is_variable_set(name) {
@@ -911,6 +902,41 @@ impl Interpreter {
     /// Directory for the tilde prefix `~name`: `~` is `$HOME`, `~+` `$PWD`,
     /// `~-` `$OLDPWD`; `~root` and `~<sandbox user>` are the fixed homes.
     /// `None` keeps the text literal (unknown user, unset `OLDPWD`).
+    /// Append one literal segment, tilde-expanding when unquoted and eligible.
+    /// Tilde expansion (`~`, `~/x`, `x=~:~`) runs during substitution: `~`
+    /// only expands at the start of the word or after `:`/`=` in an
+    /// assignment-like prefix. Quoted literals keep their tilde.
+    ///
+    /// Split out of `expand_word_buffer` so the per-level poll frame holds no
+    /// `BudgetedString` temporaries: every `$(...)` nesting level awaits
+    /// through that future, and heavy arm locals abort depth-32 under
+    /// coverage instrumentation (cf. #1089).
+    fn append_literal_segment(
+        &self,
+        result: &mut BudgetedString,
+        segment: (&Word, usize, &str),
+        part_quoted: bool,
+        leased: bool,
+        substitution_leases: &mut Vec<crate::limits::ExecutionBudgetLease>,
+    ) -> Result<()> {
+        let (word, idx, s) = segment;
+        let expanded = if !part_quoted && s.contains('~') {
+            self.tilde_expand_word_literal(word, idx, s)?
+        } else {
+            None
+        };
+        if let Some(expanded) = expanded {
+            let tilde_lease = self.execution_budget.lease_bytes(expanded.len())?;
+            result.try_push_str(&expanded)?;
+            if !leased {
+                substitution_leases.push(tilde_lease);
+            }
+        } else {
+            result.try_push_str(s)?;
+        }
+        Ok(())
+    }
+
     fn tilde_dir(&self, prefix: &str) -> Option<std::borrow::Cow<'_, str>> {
         use std::borrow::Cow;
         let lookup = |name: &str| {
