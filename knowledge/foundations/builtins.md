@@ -649,10 +649,22 @@ corpus: page layout (5-line header with date, centered title and page number,
 body, 5-line trailer, 66 lines), `-COLUMN` down/across with last-page
 balancing, `-m`, `-n`, `-d`, `-o`, `-s`/`-S`/`-J`, `-l`/`-w`/`-W`, `+FIRST:LAST`
 and the error messages. Multi-column padding uses GNU's tab rule: padding and
-blank runs of two or more become tabs where they reach a tab stop. Header
-dates come from the sandbox clock and `TZ` (the `date` builtin's), file dates
+blank runs of two or more become tabs where they reach a tab stop. Line
+number separators expand at local field tab stops before column rendering,
+including unpadded `-J -n` columns; the finite GNU oracle covers this combination.
+Header dates come from the sandbox clock and `TZ` (the `date` builtin's), file dates
 from VFS mtimes. Output is capped at 16 MiB because padding can multiply
-input size. Gaps: L-PR-001.
+input size. Every row/output append checks that cap before growth, including
+headers, offsets, newlines and form feeds. Header text is appended directly;
+page slices and cells borrow existing storage instead of copying headers/text.
+Inputs retain date timestamps; formatted `-D` headers live only while emitting
+one nonempty stream, avoiding repeated date storage for empty files.
+Input lines, cell/row vectors and rendered/output buffers lease capacity from
+the shared live-memory budget. VFS bytes charge aggregate input; input splitting,
+row construction and each page (including skipped pages) charge work and poll
+cancellation/deadlines. Limit failures abort the execution; a subsequent host
+`exec()` starts with a fresh budget. Regressions: `pr_resource_tests`,
+`pr_allocation_tests`, and `builtins::pr::tests`. Gaps: L-PR-001.
 
 ### Archive Compression
 

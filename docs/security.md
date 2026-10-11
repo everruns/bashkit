@@ -18,6 +18,15 @@ individual threat IDs and mitigation status, see the
 | **Resource limits** | Configurable caps on commands, loop iterations, recursion depth, AST depth, timeouts, and parser operations prevent denial-of-service from malicious scripts. |
 | **Filesystem limits** | Total bytes, per-file size, file count, path depth, and filename length are all capped to prevent storage exhaustion (zip bombs, tar bombs, recursive copies). |
 
+`pr` checks its 16 MiB output cap before appending headers, rows, margins,
+newlines or form feeds. Repeated long headers cannot grow the output buffer past that cap.
+Input dates are retained as timestamps, so long date formats are not copied
+for every input, including empty files.
+Input, row and output storage also share `max_live_intermediate_bytes`; work,
+aggregate input, cancellation and deadline checks apply during pagination.
+Exceeding a limit returns a resource-limit error. A subsequent host execution
+can reuse the session with a fresh execution budget.
+
 `od -w` / `od --width` accepts at most 65,536 bytes per row. Larger widths
 fail before rendering, even with empty input. Numeric fields use at most eight
 bytes of stack padding; output capacity is admitted against

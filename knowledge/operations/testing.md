@@ -101,6 +101,13 @@ collector peak while asserting bounded rejection and subsequent session use.
 The consolidated `tar_files_from_budget_tests` covers live/input/work limits,
 stdin, repeated lists, blank/CRLF/lossy names, and GNU tar differential behavior.
 
+`pr_allocation_tests.rs` also needs its own binary: its counting allocator
+proves repeated headers stay within three times a 128 KiB live budget,
+including transient reallocation overlap and interpreter dispatch storage.
+The bounded production request uses a 1 KiB header and 256 empty lines.
+It also checks 256 empty file operands with a 4 KiB date format: no pages
+means no retained per-file date strings.
+
 Filtering still works as usual: `cargo test --test integration -- foo`
 matches `integration::*::foo*` test paths.
 
