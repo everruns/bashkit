@@ -233,11 +233,9 @@ mod resource_exhaustion {
     // Reaping is done by the bounded `try_wait` poll inside the cleanup
     // grace below; an unconditional `wait()` would hang past the grace on
     // an unkillable victim, which is exactly what this harness forbids.
-    #[allow(clippy::zombie_processes)]
-    /// Test-only fault injection for the parent lifecycle. Each flag
-    /// drives the real spawn/readers/drain/kill/reap/verdict path with
-    /// exactly one hostile condition instead of a disconnected helper
-    /// simulation. All flags stay off outside these tests.
+    // Test-only fault injection for the parent lifecycle: each flag
+    // drives the real lifecycle path with exactly one hostile condition.
+    // All flags stay off outside these tests.
     #[derive(Clone, Copy, Default)]
     struct LifecycleFaults {
         /// Child poll fails: the parent must fail closed, never panic.
@@ -262,6 +260,10 @@ mod resource_exhaustion {
         run_command_bounded_with(cmd, limit, LifecycleFaults::default())
     }
 
+    // Reaping is done by the bounded try_wait poll inside reap_with_grace;
+    // an unconditional wait() would hang past the cleanup grace on an
+    // unkillable victim, which is exactly what this harness forbids.
+    #[allow(clippy::zombie_processes)]
     fn run_command_bounded_with(
         mut cmd: Command,
         limit: Duration,
