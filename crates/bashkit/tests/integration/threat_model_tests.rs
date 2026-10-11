@@ -41,6 +41,10 @@ mod resource_exhaustion {
         /// platform process-group APIs (no new dependencies) a foreign
         /// descendant cannot be reaped portably, so the run fails visibly.
         incomplete_readers: bool,
+        /// A pipe reader hit a real I/O error (anything but `Interrupted`,
+        /// which is retried). Capture is then partial by definition, so the
+        /// run fails closed instead of relabeling the error as a clean EOF.
+        read_error: bool,
         /// First stderr line from the launcher (`harness-limits: ...`),
         /// proving the CPU/stack caps were applied to this run. Empty when
         /// the launcher itself refused (fail-closed exit 99).
@@ -59,35 +63,56 @@ mod resource_exhaustion {
     /// run is marked `oversized`, which fails the harness: oversize output
     /// is never silently truncated.
     const BOUNDED_SAMPLE_CAP: usize = 8192;
+    /// Finite cleanup grace after the execution deadline: at most 2s more
+    /// for pipe drains plus at most 5s to reap the victim. `limit` is the
+    /// execution deadline for the child itself; these graces bound the
+    /// harness teardown after it, so the whole run always terminates.
+    const DRAIN_GRACE: Duration = Duration::from_secs(2);
+    const REAP_GRACE: Duration = Duration::from_secs(5);
 
-    /// Reads one pipe to the sample cap on its own thread (concurrent with
-    /// the sibling pipe, so a chatty child can never deadlock the runner),
-    /// then reports its bytes. Past the cap it stops draining: the child
-    /// blocks on the full pipe until the poll loop kills it.
-    fn spawn_capped_reader(
-        id: u8,
-        pipe: Box<dyn std::io::Read + Send>,
-        tx: std::sync::mpsc::Sender<(u8, Vec<u8>, bool)>,
-    ) -> std::thread::JoinHandle<()> {
-        std::thread::spawn(move || {
-            let mut pipe = pipe;
-            let mut buf = Vec::new();
-            let mut chunk = [0u8; 4096];
-            let mut oversized = false;
-            loop {
-                match pipe.read(&mut chunk) {
-                    Ok(0) => break,
-                    Ok(n) => {
-                        buf.extend_from_slice(&chunk[..n]);
-                        if buf.len() > BOUNDED_SAMPLE_CAP {
-                            oversized = true;
-                            break;
-                        }
+    /// Reads one pipe up to the cap. Retention is truncated BEFORE the
+    /// buffer can grow past it, so a hostile stream can never inflate the
+    /// harness itself. `Interrupted` is retried; any other I/O error ends
+    /// the capture with the bytes kept so far and `read_error` set, never
+    /// relabeled as a clean EOF. Reaching exactly the cap followed by EOF
+    /// is not oversize; only real excess is flagged.
+    fn drain_capped<R: Read>(reader: &mut R) -> (Vec<u8>, bool, bool) {
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 4096];
+        loop {
+            match reader.read(&mut chunk) {
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(_) => {
+                    let over = buf.len() > BOUNDED_SAMPLE_CAP;
+                    return (buf, over, true);
+                }
+                Ok(0) => {
+                    let over = buf.len() > BOUNDED_SAMPLE_CAP;
+                    return (buf, over, false);
+                }
+                Ok(n) => {
+                    if buf.len() + n > BOUNDED_SAMPLE_CAP {
+                        buf.extend_from_slice(&chunk[..BOUNDED_SAMPLE_CAP - buf.len()]);
+                        return (buf, true, false);
                     }
-                    Err(_) => break,
+                    buf.extend_from_slice(&chunk[..n]);
                 }
             }
-            let _ = tx.send((id, buf, oversized));
+        }
+    }
+
+    /// Bounded reader: one thread per pipe so a chatty stderr cannot
+    /// starve stdout. The worker stops at the cap instead of buffering the
+    /// whole hostile stream, then reports back with live oversize/error
+    /// flags observed at read time.
+    fn spawn_capped_reader(
+        id: u8,
+        mut pipe: Box<dyn Read + Send>,
+        tx: std::sync::mpsc::Sender<(u8, Vec<u8>, bool, bool)>,
+    ) -> std::thread::JoinHandle<()> {
+        std::thread::spawn(move || {
+            let (buf, oversized, read_error) = drain_capped(&mut pipe);
+            let _ = tx.send((id, buf, oversized, read_error));
         })
     }
 
@@ -125,6 +150,9 @@ mod resource_exhaustion {
     }
 
     /// Runs an already-built command with one shared wall deadline for
+    /// the child, plus finite drain/reap graces after it. The caller
+    /// supplies piped stdio: inherited pipes never report back and fail
+    /// the run as incomplete instead of hanging it.
     /// child exit, pipe drain, and reaping:
     /// - wall clock: past `limit` the child is killed; if it had already
     ///   exited, the run is not marked timed out;
@@ -141,6 +169,10 @@ mod resource_exhaustion {
     /// - CPU/stack caps are the launcher's job (see above); Rust std
     ///   exposes no portable per-child CPU/stack/memory caps, and Darwin
     ///   does not enforce address-space caps: documented here, not claimed.
+    // Reaping is done by the bounded `try_wait` poll inside the cleanup
+    // grace below; an unconditional `wait()` would hang past the grace on
+    // an unkillable victim, which is exactly what this harness forbids.
+    #[allow(clippy::zombie_processes)]
     fn run_command_bounded(mut cmd: Command, limit: Duration) -> BoundedRun {
         let mut child = cmd.spawn().expect("spawn bounded child");
         let (tx, rx) = std::sync::mpsc::channel();
@@ -154,6 +186,7 @@ mod resource_exhaustion {
         drop(tx);
         let mut bufs: [Option<Vec<u8>>; 2] = [None, None];
         let mut oversized = false;
+        let mut read_error = false;
         let mut status = None;
         let mut timed_out = false;
         let deadline = Instant::now() + limit;
@@ -164,9 +197,10 @@ mod resource_exhaustion {
         // after killing: reaping the SIGKILL victim must not flip a genuine
         // timeout to false on scheduling luck.
         loop {
-            while let Ok((id, buf, over)) = rx.try_recv() {
+            while let Ok((id, buf, over, rerr)) = rx.try_recv() {
                 bufs[id as usize] = Some(buf);
                 oversized |= over;
+                read_error |= rerr;
             }
             if bufs[0].is_some() && bufs[1].is_some() && status.is_some() {
                 break;
@@ -189,12 +223,13 @@ mod resource_exhaustion {
         }
         // Bounded drain grace: an exited child with unretained pipes hits
         // EOF promptly; anything still missing is a retained pipe.
-        let grace_end = Instant::now() + Duration::from_secs(2);
+        let grace_end = Instant::now() + DRAIN_GRACE;
         while (bufs[0].is_none() || bufs[1].is_none()) && Instant::now() < grace_end {
             match rx.recv_timeout(Duration::from_millis(50)) {
-                Ok((id, buf, over)) => {
+                Ok((id, buf, over, rerr)) => {
                     bufs[id as usize] = Some(buf);
                     oversized |= over;
+                    read_error |= rerr;
                 }
                 Err(_) => {
                     if bufs[0].is_some() && bufs[1].is_some() {
@@ -203,22 +238,41 @@ mod resource_exhaustion {
                 }
             }
         }
-        let incomplete_readers = bufs[0].is_none() || bufs[1].is_none();
+        let incomplete_readers = bufs[0].is_none() || bufs[1].is_none() || read_error;
         if !incomplete_readers {
             for reader in readers {
                 let _ = reader.join();
             }
         }
-        // Always reaped explicitly: `try_wait` may already have seen the
-        // exit, in which case this returns immediately with the same status.
-        let reaped = child.wait().expect("reap child");
-        let status = Some(status.unwrap_or(reaped));
+        // Bounded reap inside a finite cleanup grace: the execution deadline
+        // (`limit`) is already over, so reaping must never become an
+        // unbounded `wait`. A victim that cannot be reaped inside the grace
+        // fails the run visibly instead of hanging the suite; `timed_out`
+        // stays exactly as recorded pre-kill and is never recomputed here.
+        let reap_end = Instant::now() + REAP_GRACE;
+        let mut reaped = None;
+        while reaped.is_none() && Instant::now() < reap_end {
+            match child.try_wait() {
+                Ok(found) => reaped = found,
+                Err(_) => break,
+            }
+            if reaped.is_none() {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+        let status = match (status, reaped) {
+            (Some(s), _) => Some(s),
+            (None, Some(s)) => Some(s),
+            (None, None) => None,
+        };
+        let incomplete_readers = incomplete_readers || status.is_none();
         let stdout = String::from_utf8_lossy(bufs[0].as_deref().unwrap_or(&[])).into_owned();
         let stderr = String::from_utf8_lossy(bufs[1].as_deref().unwrap_or(&[])).into_owned();
         BoundedRun {
             timed_out,
             oversized,
             incomplete_readers,
+            read_error,
             limits_note: String::new(),
             exit_code: status.and_then(|s| s.code()),
             stdout,
@@ -255,11 +309,15 @@ mod resource_exhaustion {
             );
             assert!(
                 !run.oversized,
-                "token_lines={token_lines}: output exceeded the 64 KiB sample cap"
+                "token_lines={token_lines}: output exceeded the 8192-byte sample cap"
             );
             assert!(
                 !run.incomplete_readers,
                 "token_lines={token_lines}: reader threads did not finish"
+            );
+            assert!(
+                !run.read_error,
+                "token_lines={token_lines}: pipe reader hit a real I/O error"
             );
             assert!(
                 run.limits_note.contains("stack=4096"),
@@ -285,6 +343,126 @@ mod resource_exhaustion {
                 run.stderr.len()
             );
         }
+    }
+
+    /// Scripted pipe source for `drain_capped` selftests: replays
+    /// `Interrupted` retries, data, real errors, and EOF on demand.
+    enum ReadOp {
+        Interrupted,
+        Data(&'static [u8]),
+        Fail,
+        Eof,
+    }
+    struct ScriptedRead {
+        ops: Vec<ReadOp>,
+        off: usize,
+    }
+    impl Read for ScriptedRead {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if self.off >= self.ops.len() {
+                return Ok(0);
+            }
+            match self.ops[self.off] {
+                ReadOp::Interrupted => {
+                    self.off += 1;
+                    Err(std::io::Error::from(std::io::ErrorKind::Interrupted))
+                }
+                ReadOp::Data(d) => {
+                    self.off += 1;
+                    let n = d.len().min(buf.len());
+                    buf[..n].copy_from_slice(&d[..n]);
+                    Ok(n)
+                }
+                ReadOp::Fail => {
+                    self.off += 1;
+                    Err(std::io::Error::new(std::io::ErrorKind::BrokenPipe, "boom"))
+                }
+                ReadOp::Eof => Ok(0),
+            }
+        }
+    }
+
+    #[test]
+    fn harness_reader_exact_cap_eof_is_clean() {
+        // Two 4096-byte reads land exactly on the 8192 cap, then EOF:
+        // full retention, no excess flag.
+        static CHUNK: [u8; 4096] = [b'x'; 4096];
+        let mut exact = ScriptedRead {
+            ops: vec![ReadOp::Data(&CHUNK), ReadOp::Data(&CHUNK), ReadOp::Eof],
+            off: 0,
+        };
+        let (buf, oversized, read_error) = drain_capped(&mut exact);
+        assert_eq!(buf.len(), BOUNDED_SAMPLE_CAP);
+        assert!(!oversized, "exact cap + EOF is not excess");
+        assert!(!read_error);
+    }
+
+    #[test]
+    fn harness_reader_real_excess_flags_oversized() {
+        let mut over: &[u8] = &vec![b'x'; BOUNDED_SAMPLE_CAP + 1];
+        let (buf, oversized, read_error) = drain_capped(&mut over);
+        assert_eq!(
+            buf.len(),
+            BOUNDED_SAMPLE_CAP,
+            "retention never passes the cap"
+        );
+        assert!(oversized, "cap + 1 is real excess");
+        assert!(!read_error);
+    }
+
+    #[test]
+    fn harness_reader_retries_interrupted_and_reports_errors() {
+        let mut ok = ScriptedRead {
+            ops: vec![ReadOp::Interrupted, ReadOp::Data(b"hi"), ReadOp::Eof],
+            off: 0,
+        };
+        let (buf, oversized, read_error) = drain_capped(&mut ok);
+        assert_eq!(buf, b"hi");
+        assert!(!oversized);
+        assert!(!read_error, "Interrupted is retried, not reported");
+        let mut bad = ScriptedRead {
+            ops: vec![ReadOp::Data(b"par"), ReadOp::Fail],
+            off: 0,
+        };
+        let (buf, _, read_error) = drain_capped(&mut bad);
+        assert_eq!(buf, b"par", "partial bytes are kept");
+        assert!(read_error, "real errors fail closed, never EOF");
+    }
+
+    #[test]
+    fn harness_timeout_kills_and_reaps_within_grace() {
+        // Pure-builtin busy loop: no grandchildren can inherit the pipes,
+        // so killing the shell closes them and the readers finish.
+        let mut c = Command::new("bash");
+        c.args(["-c", "while true; do :; done"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let run = run_command_bounded(c, Duration::from_secs(2));
+        assert!(run.timed_out, "sleep 30 must trip the 2s deadline");
+        assert_eq!(run.exit_code, None, "killed victim has no exit code");
+        assert!(!run.oversized);
+        assert!(!run.read_error);
+        assert!(
+            !run.incomplete_readers,
+            "silent child: pipes close on kill, readers finish"
+        );
+    }
+
+    #[test]
+    fn harness_overflow_child_is_flagged_with_clean_read() {
+        // 9000 bytes: just over the 8192 cap, small enough to exit on its
+        // own through the pipe buffer, so the verdict is overflow alone.
+        let mut c = Command::new("bash");
+        c.args(["-c", "head -c 9000 /dev/zero"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let run = run_command_bounded(c, Duration::from_secs(10));
+        assert!(run.oversized, "9000 retained bytes are real excess");
+        assert_eq!(run.stderr.len() + run.stdout.len(), 8192);
+        assert!(!run.read_error);
+        assert!(!run.timed_out);
     }
 
     /// TM-DOS-135: hostile indirect cycles are refused in a bounded child.
