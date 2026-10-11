@@ -665,7 +665,6 @@ blank lines, stdin, and missing-member behavior. Tests:
 `tar_files_from_budget_tests` and the isolated counting-allocator
 `tar_files_from_allocation_tests` (TM-DOS-103).
 
-
 The implementation uses `bzip2` 0.6 with its default pure-Rust
 `libbz2-rs-sys` backend. The crate is maintained by the Trifecta Tech
 Foundation, dual MIT/Apache-2.0; its backend retains the permissive
