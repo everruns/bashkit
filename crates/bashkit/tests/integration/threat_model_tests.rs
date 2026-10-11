@@ -22,15 +22,81 @@ use std::time::{Duration, Instant};
 mod resource_exhaustion {
     use super::*;
 
+    /// Ancestor levels searched for the CLI binary. Five are needed for the
+    /// deepest known layout (`out`, hash, package, `build`, profile); the
+    /// spare one absorbs another level without reaching above `target`.
+    const CLI_SEARCH_DEPTH: usize = 6;
+
+    /// Locates the `bashkit` binary exported next to this test binary's
+    /// build tree, or returns the candidates it ruled out.
+    ///
+    /// Where cargo puts a *test* binary is not contractual and differs by
+    /// toolchain: the pinned stable builds it into `<profile>/deps/`, while
+    /// cargo 1.101-nightly's separate build directory uses
+    /// `<profile>/build/<package>/<hash>/out/`. What cargo does guarantee is
+    /// that the final `bashkit` binary is exported to the profile directory,
+    /// an ancestor of the test binary under either layout — so the profile
+    /// directory is found by walking up until the binary turns up, never by
+    /// assuming a fixed depth. Taking it as `exe.parent().parent()` passed on
+    /// stable and resolved into the hashed build directory under nightly,
+    /// which is how the nightly ASAN job went red while required CI on the
+    /// same commits stayed green.
+    ///
+    /// `is_file` is load-bearing: the nightly layout puts a *directory*
+    /// named after the package at `<profile>/build/bashkit`, which a bare
+    /// existence check would accept.
+    ///
+    /// The walk stops at cargo's target directory, marked by the
+    /// `CACHEDIR.TAG` cargo writes there, so an unrelated `bashkit` file
+    /// above the build tree can never be spawned in place of the binary
+    /// under test. That marker is belt-and-braces over `CLI_SEARCH_DEPTH`,
+    /// which bounds the walk whether or not it is present.
+    fn cli_in_ancestors(exe: &Path) -> Result<std::path::PathBuf, Vec<std::path::PathBuf>> {
+        let name = format!("bashkit{}", std::env::consts::EXE_SUFFIX);
+        let mut ruled_out = Vec::new();
+        for dir in exe.ancestors().skip(1).take(CLI_SEARCH_DEPTH) {
+            let candidate = dir.join(&name);
+            if candidate.is_file() {
+                return Ok(candidate);
+            }
+            ruled_out.push(candidate);
+            if dir.join("CACHEDIR.TAG").is_file() {
+                break;
+            }
+        }
+        Err(ruled_out)
+    }
+
     /// TM-DOS-135: child-process runner for hostile scripts.
     /// Hostile reproducers never run in the test process: pre-fix they
-    /// overflowed the stack and aborted the whole runner. The CLI binary
-    /// sits next to the test binary's `deps` directory.
+    /// overflowed the stack and aborted the whole runner.
+    ///
+    /// The binary belongs to a sibling package, so `CARGO_BIN_EXE_*` is not
+    /// available here; it is built because the invocation selects that
+    /// package's own integration tests, which do get that variable. A
+    /// selection narrow enough to exclude them (`-p bashkit --test
+    /// integration` alone) leaves nothing to find, which used to surface as a
+    /// bare spawn `NotFound` and, once the launcher was introduced, as an
+    /// unexplained exit 127 with the bound assertions failing — both read
+    /// like product failures. Fail on the precondition instead, naming every
+    /// path ruled out.
     fn bashkit_cli_path() -> std::path::PathBuf {
         let exe = std::env::current_exe().expect("current test executable");
-        let deps = exe.parent().expect("deps dir");
-        let profile = deps.parent().expect("profile dir");
-        profile.join(format!("bashkit{}", std::env::consts::EXE_SUFFIX))
+        match cli_in_ancestors(&exe) {
+            Ok(cli) => cli,
+            Err(ruled_out) => panic!(
+                "bashkit CLI binary not found above the test binary {}: this suite spawns \
+                 it to run hostile reproducers out of process, so the test selection must \
+                 include the bashkit-cli package (its own integration tests are what make \
+                 cargo export the binary). Ruled out: {}",
+                exe.display(),
+                ruled_out
+                    .iter()
+                    .map(|p| p.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        }
     }
 
     struct BoundedRun {
@@ -1148,6 +1214,69 @@ mod resource_exhaustion {
             );
             assert!(run.stderr.len() < 1024, "stderr: {}", run.stderr);
         }
+    }
+
+    /// Layout regression for the CLI lookup, over synthetic trees rather
+    /// than this run's own: the live tree only ever has the one layout its
+    /// toolchain produces, so the other would go uncovered until a nightly
+    /// job went red. Both known layouts must resolve the exported binary;
+    /// the package-named `build/bashkit` directory must not be mistaken for
+    /// it; and absence must stay an error, never a path that fails later as
+    /// a spawn error or an exit 127.
+    #[test]
+    fn cli_lookup_resolves_known_cargo_layouts() {
+        let root = std::env::temp_dir().join(format!("bashkit-cli-layout-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let profile = root.join("target/x86_64-unknown-linux-gnu/debug");
+        // Stable: `<profile>/deps/<test>`. Nightly 1.101 separate build
+        // directory: `<profile>/build/<package>/<hash>/out/<test>`, whose
+        // package level collides by name with the binary being sought.
+        let stable_exe = profile.join("deps/integration-0a5939c1");
+        let nightly_exe = profile.join("build/bashkit/f7e14526a94504a4/out/integration-f7e1");
+        for exe in [&stable_exe, &nightly_exe] {
+            std::fs::create_dir_all(exe.parent().expect("test binary dir"))
+                .expect("create test binary dir");
+            std::fs::write(exe, b"").expect("create test binary");
+        }
+
+        for exe in [&stable_exe, &nightly_exe] {
+            let ruled_out = cli_in_ancestors(exe).expect_err("no binary exported yet");
+            assert!(
+                ruled_out.contains(&profile.join("bashkit")),
+                "the profile directory must be among the paths reported: {ruled_out:?}"
+            );
+        }
+
+        // A same-named file above the build tree is never a substitute for
+        // the binary under test: spawning it would be a false pass, worse
+        // than the failure. The target directory marker stops the walk.
+        std::fs::write(root.join("target/CACHEDIR.TAG"), b"Signature: 8a477f59")
+            .expect("mark target dir");
+        std::fs::write(
+            root.join(format!("bashkit{}", std::env::consts::EXE_SUFFIX)),
+            b"",
+        )
+        .expect("decoy above the build tree");
+        for exe in [&stable_exe, &nightly_exe] {
+            let ruled_out = cli_in_ancestors(exe).expect_err("decoy must not be accepted");
+            assert!(
+                !ruled_out.iter().any(|p| p.parent() == Some(root.as_path())),
+                "walk escaped the target directory: {ruled_out:?}"
+            );
+        }
+
+        let cli = profile.join(format!("bashkit{}", std::env::consts::EXE_SUFFIX));
+        std::fs::write(&cli, b"").expect("export cli binary");
+        for exe in [&stable_exe, &nightly_exe] {
+            assert_eq!(
+                cli_in_ancestors(exe).as_deref().ok(),
+                Some(cli.as_path()),
+                "layout not resolved for {}",
+                exe.display()
+            );
+        }
+
+        std::fs::remove_dir_all(&root).expect("clean up layout fixture");
     }
 
     /// The bounded runner itself is tested: a hung child must be
