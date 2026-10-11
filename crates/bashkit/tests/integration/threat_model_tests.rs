@@ -41,6 +41,15 @@ mod resource_exhaustion {
         /// platform process-group APIs (no new dependencies) a foreign
         /// descendant cannot be reaped portably, so the run fails visibly.
         incomplete_readers: bool,
+        /// A pipe reader hit a real I/O error (anything but `Interrupted`,
+        /// which is retried). Capture is then partial by definition, so the
+        /// run fails closed instead of relabeling the error as a clean EOF.
+        read_error: bool,
+        /// OS termination accounted for: the loop observed an exit or
+        /// the bounded reap recovered one. Orthogonal to `exit_code`
+        /// (signaled victims have no code) and to injected observation
+        /// faults (which discard the observation, never the cleanup).
+        reaped: bool,
         /// First stderr line from the launcher (`harness-limits: ...`),
         /// proving the CPU/stack caps were applied to this run. Empty when
         /// the launcher itself refused (fail-closed exit 99).
@@ -59,35 +68,89 @@ mod resource_exhaustion {
     /// run is marked `oversized`, which fails the harness: oversize output
     /// is never silently truncated.
     const BOUNDED_SAMPLE_CAP: usize = 8192;
+    /// Finite cleanup grace after the execution deadline: at most 2s more
+    /// for pipe drains plus at most 5s to reap the victim. `limit` is the
+    /// execution deadline for the child itself; these graces bound the
+    /// harness teardown after it, so the whole run always terminates.
+    const DRAIN_GRACE: Duration = Duration::from_secs(2);
+    const REAP_GRACE: Duration = Duration::from_secs(5);
+    /// Shared completion grace for joining reader threads after all
+    /// receipts arrived. Full budget equation: execution `limit` + drain
+    /// 2s + reap 5s + completion 5s; every stage is finite.
+    const JOIN_GRACE: Duration = Duration::from_secs(5);
 
-    /// Reads one pipe to the sample cap on its own thread (concurrent with
-    /// the sibling pipe, so a chatty child can never deadlock the runner),
-    /// then reports its bytes. Past the cap it stops draining: the child
-    /// blocks on the full pipe until the poll loop kills it.
-    fn spawn_capped_reader(
-        id: u8,
-        pipe: Box<dyn std::io::Read + Send>,
-        tx: std::sync::mpsc::Sender<(u8, Vec<u8>, bool)>,
-    ) -> std::thread::JoinHandle<()> {
-        std::thread::spawn(move || {
-            let mut pipe = pipe;
-            let mut buf = Vec::new();
-            let mut chunk = [0u8; 4096];
-            let mut oversized = false;
-            loop {
-                match pipe.read(&mut chunk) {
-                    Ok(0) => break,
-                    Ok(n) => {
-                        buf.extend_from_slice(&chunk[..n]);
-                        if buf.len() > BOUNDED_SAMPLE_CAP {
-                            oversized = true;
-                            break;
-                        }
+    /// Join verdict for one reader handle inside the shared completion
+    /// grace. `Unfinished` carries the SAME handle back so the caller can
+    /// release it and observe that thread's actual join — never a twin,
+    /// never detached-while-asserting-cleanup. `Panicked` means the thread
+    /// terminated by panicking (join returned, work failed).
+    enum JoinOutcome {
+        Joined,
+        Unfinished(std::thread::JoinHandle<()>),
+        Panicked,
+    }
+
+    /// Joins one reader handle inside the shared completion grace: the
+    /// single bounded-completion primitive used by both the runner gate
+    /// below and its deterministic proof test.
+    fn join_finished(handle: std::thread::JoinHandle<()>, end: Instant) -> JoinOutcome {
+        let mut finished = handle.is_finished();
+        while !finished && Instant::now() < end {
+            std::thread::sleep(Duration::from_millis(5));
+            finished = handle.is_finished();
+        }
+        if !finished {
+            return JoinOutcome::Unfinished(handle);
+        }
+        match handle.join() {
+            Ok(()) => JoinOutcome::Joined,
+            Err(_) => JoinOutcome::Panicked,
+        }
+    }
+
+    /// Reads one pipe up to the cap. Retention is truncated BEFORE the
+    /// buffer can grow past it, so a hostile stream can never inflate the
+    /// harness itself. `Interrupted` is retried; any other I/O error ends
+    /// the capture with the bytes kept so far and `read_error` set, never
+    /// relabeled as a clean EOF. Reaching exactly the cap followed by EOF
+    /// is not oversize; only real excess is flagged.
+    fn drain_capped<R: Read>(reader: &mut R) -> (Vec<u8>, bool, bool) {
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 4096];
+        loop {
+            match reader.read(&mut chunk) {
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(_) => {
+                    let over = buf.len() > BOUNDED_SAMPLE_CAP;
+                    return (buf, over, true);
+                }
+                Ok(0) => {
+                    let over = buf.len() > BOUNDED_SAMPLE_CAP;
+                    return (buf, over, false);
+                }
+                Ok(n) => {
+                    if buf.len() + n > BOUNDED_SAMPLE_CAP {
+                        buf.extend_from_slice(&chunk[..BOUNDED_SAMPLE_CAP - buf.len()]);
+                        return (buf, true, false);
                     }
-                    Err(_) => break,
+                    buf.extend_from_slice(&chunk[..n]);
                 }
             }
-            let _ = tx.send((id, buf, oversized));
+        }
+    }
+
+    /// Bounded reader: one thread per pipe so a chatty stderr cannot
+    /// starve stdout. The worker stops at the cap instead of buffering the
+    /// whole hostile stream, then reports back with live oversize/error
+    /// flags observed at read time.
+    fn spawn_capped_reader(
+        id: u8,
+        mut pipe: Box<dyn Read + Send>,
+        tx: std::sync::mpsc::Sender<(u8, Vec<u8>, bool, bool)>,
+    ) -> std::thread::JoinHandle<()> {
+        std::thread::spawn(move || {
+            let (buf, oversized, read_error) = drain_capped(&mut pipe);
+            let _ = tx.send((id, buf, oversized, read_error));
         })
     }
 
@@ -96,10 +159,32 @@ mod resource_exhaustion {
     /// The launcher applies the fail-closed CPU/stack caps, reports the
     /// effective values as the first stderr line, then `exec`s the CLI so
     /// exit codes and diagnostics stay the real producer's own.
-    fn run_cli_argv_bounded(script: &str, extra_args: &[&str], limit: Duration) -> BoundedRun {
-        let launcher = format!(
+    /// Fail-closed launcher shared by every bounded child: applies the
+    /// CPU/stack caps (exiting 99 when the platform refuses them), reports
+    /// the effective values as the first stderr line, then `exec`s the
+    /// target so exit codes stay the real producer's own. Portable limits
+    /// only: what the kernel enforces afterwards is platform behavior, and
+    /// the readback below proves what took effect here.
+    fn limit_launcher() -> String {
+        format!(
             "{BOUNDED_CLI_LIMITS}; echo \"harness-limits: stack=$(ulimit -s) cpu=$(ulimit -t)\" >&2; exec \"$@\""
-        );
+        )
+    }
+
+    /// Splits the launcher's readback line off stderr. An absent line
+    /// means the launcher never ran (fail-closed before the target), and
+    /// the empty note records exactly that.
+    fn strip_launcher_note(run: &mut BoundedRun) {
+        (run.limits_note, run.stderr) = match run.stderr.split_once('\n') {
+            Some((first, rest)) if first.starts_with("harness-limits:") => {
+                (first.to_string(), rest.to_string())
+            }
+            _ => (String::new(), std::mem::take(&mut run.stderr)),
+        };
+    }
+
+    fn run_cli_argv_bounded(script: &str, extra_args: &[&str], limit: Duration) -> BoundedRun {
+        let launcher = limit_launcher();
         let mut cmd = Command::new("bash");
         cmd.args(["-c", &launcher, "_"])
             .arg(bashkit_cli_path())
@@ -109,13 +194,203 @@ mod resource_exhaustion {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         let mut run = run_command_bounded(cmd, limit);
-        (run.limits_note, run.stderr) = match run.stderr.split_once('\n') {
-            Some((first, rest)) if first.starts_with("harness-limits:") => {
-                (first.to_string(), rest.to_string())
-            }
-            _ => (String::new(), run.stderr),
-        };
+        strip_launcher_note(&mut run);
         run
+    }
+
+    /// Presence of one PID as an explicit receipt, never inferred from a
+    /// bare nonzero exit: only an observed ESRCH text proves absence, while
+    /// EPERM or anything unknown keeps polling inside the bound.
+    enum PidPresence {
+        Present,
+        Absent,
+        Unknown,
+    }
+
+    /// Runs `kill` with the given args under a finite grace and classifies
+    /// the outcome from the observed exit plus stderr text. Built from the
+    /// same bounded primitives as the runner itself: the helper child is
+    /// terminated and reaped through `reap_with_grace` on every path that
+    /// does not observe its exit (no leaked running helpers), and its
+    /// stderr is drained through `drain_capped` (bounded retention, real
+    /// errors fail closed). EOF for that drain is construction-specific,
+    /// not assumed for arbitrary executables: this stderr pipe is private
+    /// to the `kill` helper binary, which performs one kill(2) and exits
+    /// without forking, so the observed exit closes its only write end.
+    /// ESRCH receipt text is matched case-insensitively (`no such
+    /// process`); EPERM and anything undecipherable stay Unknown — never
+    /// successful absence. Every wait inside is a bounded try_wait poll,
+    /// so the call itself always terminates.
+    fn signal_bounded(args: &[&str], grace: Duration) -> (bool, PidPresence) {
+        let mut child = match Command::new("kill")
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+        {
+            Ok(c) => c,
+            Err(_) => return (false, PidPresence::Unknown),
+        };
+        let end = Instant::now() + grace;
+        let exited = loop {
+            match child.try_wait() {
+                Ok(Some(_)) => break true,
+                Ok(None) => {
+                    if Instant::now() >= end {
+                        break false;
+                    }
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(_) => break false,
+            }
+        };
+        if !exited {
+            // The helper itself did not finish inside the grace: terminate
+            // it first so no path leaks a running child, then reap bounded
+            // through the shared seam. Verdict stays Unknown regardless.
+            let _ = child.kill();
+            let mut poll = || child.try_wait();
+            let _ = reap_with_grace(&mut poll, grace);
+            return (false, PidPresence::Unknown);
+        }
+        let mut pipe = match child.stderr.take() {
+            Some(p) => p,
+            None => return (false, PidPresence::Unknown),
+        };
+        let (stderr, _, read_error) = drain_capped(&mut pipe);
+        if read_error {
+            return (false, PidPresence::Unknown);
+        }
+        // wait() past this point reaps an already-exited child and returns
+        // at once; it never blocks beyond the grace above.
+        let code = child.wait().ok().and_then(|s| s.code());
+        let lowered = String::from_utf8_lossy(&stderr).to_lowercase();
+        match code {
+            Some(0) => (true, PidPresence::Present),
+            _ if lowered.contains("no such process") => (true, PidPresence::Absent),
+            _ => (false, PidPresence::Unknown),
+        }
+    }
+
+    /// Test-scoped owned cleanup for the retained-pipe fixture: the exact
+    /// recorded descendant plus the ORIGINAL reader handles. The normal
+    /// path (`complete`) terminates the descendant, observes its absence
+    /// via ESRCH receipt, joins the original handles, and proves the total
+    /// elapsed bound. `Drop` fires the same kill best-effort (no asserts,
+    /// no panics) so setup/assertion failures never leak the 30s sleeper;
+    /// threads then finish on pipe close (joining from `Drop` could block,
+    /// so detached finish there is documented, not silent).
+    struct RetainedCleanup {
+        pid: Option<String>,
+        pending: Option<PendingJoiners>,
+        files: Vec<std::path::PathBuf>,
+    }
+
+    impl RetainedCleanup {
+        fn complete(&mut self, start: Instant) {
+            // Terminate the exact owned descendant (not the 30s self-expiry).
+            if let Some(pid) = self.pid.clone() {
+                let (sent, _) = signal_bounded(&["-9", &pid], Duration::from_secs(5));
+                assert!(sent, "owned descendant {pid} terminated");
+            }
+            // Join the ORIGINAL reader handles: the kill closed the
+            // retained pipes, so they must finish inside the shared grace.
+            if let Some(pending) = self.pending.take() {
+                let end = Instant::now() + JOIN_GRACE;
+                let mut joined = true;
+                for reader in pending.handles {
+                    if !matches!(join_finished(reader, end), JoinOutcome::Joined) {
+                        joined = false;
+                    }
+                }
+                assert!(joined, "original reader handles joined after the kill");
+            }
+            // Absence receipt: only ESRCH counts; anything unknown retries
+            // inside the bound, then fails visibly.
+            if let Some(pid) = self.pid.clone() {
+                let end = Instant::now() + Duration::from_secs(5);
+                loop {
+                    match signal_bounded(&["-0", &pid], Duration::from_secs(5)) {
+                        (_, PidPresence::Absent) => break,
+                        _ => {
+                            assert!(
+                                Instant::now() < end,
+                                "descendant {pid} completion observed inside the cleanup bound"
+                            );
+                            std::thread::sleep(Duration::from_millis(50));
+                        }
+                    }
+                }
+            }
+            for path in std::mem::take(&mut self.files) {
+                std::fs::remove_file(&path).ok();
+            }
+            self.pid = None;
+            assert!(
+                start.elapsed() < Duration::from_secs(20),
+                "verdict plus owned cleanup bounded end to end: {:?}",
+                start.elapsed()
+            );
+        }
+    }
+
+    impl Drop for RetainedCleanup {
+        fn drop(&mut self) {
+            // Best-effort only: fire the kill without asserts so an
+            // unwinding test never leaks the sleeper. Return values are
+            // intentionally ignored; files are removed quietly.
+            if let Some(pid) = self.pid.take() {
+                let _ = signal_bounded(&["-9", &pid], Duration::from_secs(5));
+            }
+            for path in std::mem::take(&mut self.files) {
+                std::fs::remove_file(&path).ok();
+            }
+            // Pending handles drop here (detached): their pipes close as a
+            // consequence of the kill above, so the threads finish on
+            // their own right after this test's scope ends.
+        }
+    }
+
+    fn run_raw_bounded(program: &str, args: &[&str], limit: Duration) -> BoundedRun {
+        run_raw_bounded_with(program, args, limit, LifecycleFaults::default())
+    }
+
+    /// Runs an arbitrary program under the same fail-closed launcher (used
+    /// by harness selftests so they prove the effective CPU/stack bounds
+    /// instead of bypassing them). The caller supplies piped stdio.
+    fn run_raw_bounded_with(
+        program: &str,
+        args: &[&str],
+        limit: Duration,
+        faults: LifecycleFaults,
+    ) -> BoundedRun {
+        let (mut run, pending) = run_raw_core(program, args, limit, faults);
+        if !finish_joiners(pending) {
+            run.incomplete_readers = true;
+        }
+        run
+    }
+
+    /// Launcher-wrapped core without joining: the fixture owns the reader
+    /// threads from here (retained-pipe cleanup proof).
+    fn run_raw_core(
+        program: &str,
+        args: &[&str],
+        limit: Duration,
+        faults: LifecycleFaults,
+    ) -> (BoundedRun, PendingJoiners) {
+        let launcher = limit_launcher();
+        let mut cmd = Command::new("bash");
+        cmd.args(["-c", &launcher, "_"])
+            .arg(program)
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let (mut run, pending) = run_core(cmd, limit, faults);
+        strip_launcher_note(&mut run);
+        (run, pending)
     }
 
     /// Runs a script in the built CLI under `run_command_bounded`, with
@@ -124,7 +399,33 @@ mod resource_exhaustion {
         run_cli_argv_bounded(script, &[], limit)
     }
 
+    /// Reaps a victim inside a finite grace via caller-supplied polling.
+    /// Returns the observed status, or `None` when the victim cannot be
+    /// reaped inside the grace (or polling itself errors): the safe seam
+    /// for the unavailable-reap verdict.
+    fn reap_with_grace(
+        poll: &mut dyn FnMut() -> std::io::Result<Option<std::process::ExitStatus>>,
+        grace: Duration,
+    ) -> Option<std::process::ExitStatus> {
+        let end = Instant::now() + grace;
+        loop {
+            match poll() {
+                Ok(Some(s)) => return Some(s),
+                Ok(None) => {
+                    if Instant::now() >= end {
+                        return None;
+                    }
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(_) => return None,
+            }
+        }
+    }
+
     /// Runs an already-built command with one shared wall deadline for
+    /// the child, plus finite drain/reap graces after it. The caller
+    /// supplies piped stdio: inherited pipes never report back and fail
+    /// the run as incomplete instead of hanging it.
     /// child exit, pipe drain, and reaping:
     /// - wall clock: past `limit` the child is killed; if it had already
     ///   exited, the run is not marked timed out;
@@ -141,11 +442,108 @@ mod resource_exhaustion {
     /// - CPU/stack caps are the launcher's job (see above); Rust std
     ///   exposes no portable per-child CPU/stack/memory caps, and Darwin
     ///   does not enforce address-space caps: documented here, not claimed.
-    fn run_command_bounded(mut cmd: Command, limit: Duration) -> BoundedRun {
+    // Reaping is done by the bounded `try_wait` poll inside the cleanup
+    // grace below; an unconditional `wait()` would hang past the grace on
+    // an unkillable victim, which is exactly what this harness forbids.
+    // Test-only fault injection for the parent lifecycle: each flag
+    // drives the real lifecycle path with exactly one hostile condition.
+    // All flags stay off outside these tests.
+    #[derive(Clone, Default)]
+    struct LifecycleFaults {
+        /// Child poll fails: the parent must fail closed, never panic.
+        fail_poll: bool,
+        /// Stdout pipe reads fail: the parent verdict must carry
+        /// `read_error` with partial capture.
+        fail_read: bool,
+        /// Reaping never observes an exit: the unavailable-reap verdict.
+        /// Optional readiness gate for `fail_poll`: the fault fires only
+        /// after this file exists, proving the fixture victim truly live
+        /// under bounds before observation is broken. Without it the fault
+        /// could mask a spawn failure as poll breakage.
+        ready_file: Option<std::path::PathBuf>,
+        reap_never: bool,
+    }
+
+    /// A pipe that always fails reads: plugs a real I/O error into the
+    /// actual parent capture path (reader thread, channel, verdict).
+    struct FailRead;
+    impl Read for FailRead {
+        fn read(&mut self, _buf: &mut [u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::other("injected read failure"))
+        }
+    }
+
+    fn run_command_bounded(cmd: Command, limit: Duration) -> BoundedRun {
+        run_command_bounded_with(cmd, limit, LifecycleFaults::default())
+    }
+
+    /// Standard runner: core lifecycle plus the bounded join gate. Reader
+    /// threads that never reported stay detached by contract.
+    fn run_command_bounded_with(
+        cmd: Command,
+        limit: Duration,
+        faults: LifecycleFaults,
+    ) -> BoundedRun {
+        let (mut run, pending) = run_core(cmd, limit, faults);
+        if !finish_joiners(pending) {
+            run.incomplete_readers = true;
+        }
+        run
+    }
+
+    // Reaping is done by the bounded try_wait poll inside reap_with_grace;
+    // an unconditional wait() would hang past the cleanup grace on an
+    // unkillable victim, which is exactly what this harness forbids.
+    #[allow(clippy::zombie_processes)]
+    /// Owned reader handles for tests that must observe completion
+    /// themselves: the runner's verdict plus the actual threads.
+    struct PendingJoiners {
+        handles: Vec<std::thread::JoinHandle<()>>,
+        all_reported: bool,
+    }
+
+    /// Applies the bounded join gate to owned reader threads: joins only
+    /// while `is_finished` inside the shared completion grace, drops the
+    /// rest detached. Returns true only when every reported thread joined
+    /// cleanly; unfinished or panicking threads fail the verdict instead.
+    /// Callers OR the result into `incomplete_readers`.
+    fn finish_joiners(pending: PendingJoiners) -> bool {
+        if !pending.all_reported {
+            return false;
+        }
+        let end = Instant::now() + JOIN_GRACE;
+        let mut ok = true;
+        for reader in pending.handles {
+            match join_finished(reader, end) {
+                JoinOutcome::Joined => {}
+                JoinOutcome::Unfinished(_) | JoinOutcome::Panicked => {
+                    ok = false;
+                }
+            }
+        }
+        ok
+    }
+
+    /// Core lifecycle without joining: spawn, observe, terminate, reap,
+    /// drain, verdict. Callers own the reader threads from here.
+    fn run_core(
+        mut cmd: Command,
+        limit: Duration,
+        faults: LifecycleFaults,
+    ) -> (BoundedRun, PendingJoiners) {
         let mut child = cmd.spawn().expect("spawn bounded child");
         let (tx, rx) = std::sync::mpsc::channel();
         let mut readers = Vec::new();
-        if let Some(pipe) = child.stdout.take() {
+        // Injected read failure plugs a real I/O error into the actual
+        // parent capture path (reader thread, channel, verdict). Without
+        // faults the take() path below is byte-identical to before.
+        if faults.fail_read {
+            readers.push(spawn_capped_reader(
+                0,
+                Box::new(FailRead) as Box<dyn Read + Send>,
+                tx.clone(),
+            ));
+        } else if let Some(pipe) = child.stdout.take() {
             readers.push(spawn_capped_reader(0, Box::new(pipe), tx.clone()));
         }
         if let Some(pipe) = child.stderr.take() {
@@ -154,8 +552,10 @@ mod resource_exhaustion {
         drop(tx);
         let mut bufs: [Option<Vec<u8>>; 2] = [None, None];
         let mut oversized = false;
+        let mut read_error = false;
         let mut status = None;
         let mut timed_out = false;
+        let mut poll_failed = false;
         let deadline = Instant::now() + limit;
         // Pipe EOF alone never ends the run: only an observed exit does,
         // otherwise a child that closes output and keeps running would
@@ -164,9 +564,10 @@ mod resource_exhaustion {
         // after killing: reaping the SIGKILL victim must not flip a genuine
         // timeout to false on scheduling luck.
         loop {
-            while let Ok((id, buf, over)) = rx.try_recv() {
+            while let Ok((id, buf, over, rerr)) = rx.try_recv() {
                 bufs[id as usize] = Some(buf);
                 oversized |= over;
+                read_error |= rerr;
             }
             if bufs[0].is_some() && bufs[1].is_some() && status.is_some() {
                 break;
@@ -176,11 +577,37 @@ mod resource_exhaustion {
                 let _ = child.kill();
             }
             if status.is_none() {
-                status = child.try_wait().expect("poll child");
+                // A failed poll is an unobservable child, never a panic: fail
+                // closed through the kill/reap path with a distinct verdict
+                // (incomplete, no exit, not mislabeled as a timeout below).
+                // fail_poll fires only once the readiness file proves the
+                // victim truly live; before that the parent polls normally, so
+                // the fault can never mask a spawn/launch failure.
+                let armed = faults.fail_poll
+                    && faults
+                        .ready_file
+                        .as_ref()
+                        .map(|p| p.exists())
+                        .unwrap_or(true);
+                if armed {
+                    poll_failed = true;
+                    break;
+                }
+                match child.try_wait() {
+                    Ok(found) => status = found,
+                    Err(_) => {
+                        poll_failed = true;
+                        break;
+                    }
+                }
             }
             if Instant::now() >= deadline {
-                if status.is_none() && !oversized {
-                    let _ = child.kill();
+                // Verdict only: termination happens in common cleanup below,
+                // so every path (timeout, oversized, poll failure) funnels
+                // through one reachable kill guard. An unobservable child
+                // keeps its distinct verdict (incomplete, exitless, and no
+                // timeout label) instead of being mislabeled.
+                if status.is_none() && !oversized && !poll_failed {
                     timed_out = true;
                 }
                 break;
@@ -189,12 +616,22 @@ mod resource_exhaustion {
         }
         // Bounded drain grace: an exited child with unretained pipes hits
         // EOF promptly; anything still missing is a retained pipe.
-        let grace_end = Instant::now() + Duration::from_secs(2);
+        // Common cleanup termination: every loop exit (observed
+        // completion, deadline, oversized, poll failure) funnels through
+        // this one reachable kill guard. It is idempotent — already-dead
+        // children are untouched — and the live oversize kill inside the
+        // loop stays as the early producer stop. Verdicts were recorded
+        // pre-kill above and are never recomputed from it.
+        if status.is_none() {
+            let _ = child.kill();
+        }
+        let grace_end = Instant::now() + DRAIN_GRACE;
         while (bufs[0].is_none() || bufs[1].is_none()) && Instant::now() < grace_end {
             match rx.recv_timeout(Duration::from_millis(50)) {
-                Ok((id, buf, over)) => {
+                Ok((id, buf, over, rerr)) => {
                     bufs[id as usize] = Some(buf);
                     oversized |= over;
+                    read_error |= rerr;
                 }
                 Err(_) => {
                     if bufs[0].is_some() && bufs[1].is_some() {
@@ -203,27 +640,64 @@ mod resource_exhaustion {
                 }
             }
         }
-        let incomplete_readers = bufs[0].is_none() || bufs[1].is_none();
-        if !incomplete_readers {
-            for reader in readers {
-                let _ = reader.join();
-            }
-        }
-        // Always reaped explicitly: `try_wait` may already have seen the
-        // exit, in which case this returns immediately with the same status.
-        let reaped = child.wait().expect("reap child");
-        let status = Some(status.unwrap_or(reaped));
+        let incomplete_readers = bufs[0].is_none() || bufs[1].is_none() || read_error;
+        // Bounded completion gate: a channel receipt proves its thread
+        // finished every blocking call, but scheduling can pause the sender
+        // between send and return, so a receipt is not the termination
+        // contract. Poll is_finished inside the shared completion grace and
+        // join only finished handles; unfinished handles stay detached and
+        // fail the run as incomplete instead. A panicking reader surfaces
+        // as incomplete too, never silent. std offers no timed join; this
+        // gate plus the elapsed-total assertions are the termination proof.
+        // No reproduced production hang is claimed from the static shape:
+        // the gate exists so none can occur.
+        let pending = PendingJoiners {
+            handles: readers,
+            all_reported: bufs[0].is_some() && bufs[1].is_some(),
+        };
+        // Reaps the victim inside a finite grace through a poll seam, so
+        // the unavailable-reap verdict is unit-testable without OS fakery.
+        // Bounded reap inside a finite cleanup grace: the execution deadline
+        // (`limit`) is already over, so reaping must never become an
+        // unbounded `wait`. A victim that cannot be reaped inside the grace
+        // fails the run visibly instead of hanging the suite; `timed_out`
+        // stays exactly as recorded pre-kill and is never recomputed here.
+        // Unavailable reap (or injected): the seam verdict flows into
+        // the real parent status instead of a helper-only simulation.
+        // The OS cleanup always runs (no zombies by construction);
+        // reap_never only discards the observation for the verdict, never
+        // the cleanup itself. Do not invent exit/reap success from it.
+        let mut poll = || child.try_wait();
+        let really_reaped = reap_with_grace(&mut poll, REAP_GRACE);
+        let reaped = if faults.reap_never {
+            None
+        } else {
+            really_reaped
+        };
+        let status = match (status, reaped) {
+            (Some(s), _) => Some(s),
+            (None, Some(s)) => Some(s),
+            (None, None) => None,
+        };
+        let incomplete_readers = incomplete_readers || status.is_none() || poll_failed;
         let stdout = String::from_utf8_lossy(bufs[0].as_deref().unwrap_or(&[])).into_owned();
         let stderr = String::from_utf8_lossy(bufs[1].as_deref().unwrap_or(&[])).into_owned();
-        BoundedRun {
+        let run = BoundedRun {
             timed_out,
             oversized,
             incomplete_readers,
+            read_error,
+            // OS termination accounted for: the loop observed an exit or
+            // the bounded reap recovered one. Independent of `exit_code`
+            // (signaled victims have no code) and of injected observation
+            // faults (which discard the observation, never the cleanup).
+            reaped: status.is_some() || really_reaped.is_some(),
             limits_note: String::new(),
             exit_code: status.and_then(|s| s.code()),
             stdout,
             stderr,
-        }
+        };
+        (run, pending)
     }
 
     /// TM-DOS-136: scaled multiline token x long ARG0 stays bounded in a
@@ -255,11 +729,15 @@ mod resource_exhaustion {
             );
             assert!(
                 !run.oversized,
-                "token_lines={token_lines}: output exceeded the 64 KiB sample cap"
+                "token_lines={token_lines}: output exceeded the 8192-byte sample cap"
             );
             assert!(
                 !run.incomplete_readers,
                 "token_lines={token_lines}: reader threads did not finish"
+            );
+            assert!(
+                !run.read_error,
+                "token_lines={token_lines}: pipe reader hit a real I/O error"
             );
             assert!(
                 run.limits_note.contains("stack=4096"),
@@ -285,6 +763,350 @@ mod resource_exhaustion {
                 run.stderr.len()
             );
         }
+    }
+
+    /// Scripted pipe source for `drain_capped` selftests: replays
+    /// `Interrupted` retries, data, real errors, and EOF on demand.
+    enum ReadOp {
+        Interrupted,
+        Data(&'static [u8]),
+        Fail,
+        Eof,
+    }
+    struct ScriptedRead {
+        ops: Vec<ReadOp>,
+        off: usize,
+    }
+    impl Read for ScriptedRead {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if self.off >= self.ops.len() {
+                return Ok(0);
+            }
+            match self.ops[self.off] {
+                ReadOp::Interrupted => {
+                    self.off += 1;
+                    Err(std::io::Error::from(std::io::ErrorKind::Interrupted))
+                }
+                ReadOp::Data(d) => {
+                    self.off += 1;
+                    let n = d.len().min(buf.len());
+                    buf[..n].copy_from_slice(&d[..n]);
+                    Ok(n)
+                }
+                ReadOp::Fail => {
+                    self.off += 1;
+                    Err(std::io::Error::new(std::io::ErrorKind::BrokenPipe, "boom"))
+                }
+                ReadOp::Eof => Ok(0),
+            }
+        }
+    }
+
+    #[test]
+    fn harness_reader_exact_cap_eof_is_clean() {
+        // Two 4096-byte reads land exactly on the 8192 cap, then EOF:
+        // full retention, no excess flag.
+        static CHUNK: [u8; 4096] = [b'x'; 4096];
+        let mut exact = ScriptedRead {
+            ops: vec![ReadOp::Data(&CHUNK), ReadOp::Data(&CHUNK), ReadOp::Eof],
+            off: 0,
+        };
+        let (buf, oversized, read_error) = drain_capped(&mut exact);
+        assert_eq!(buf.len(), BOUNDED_SAMPLE_CAP);
+        assert!(!oversized, "exact cap + EOF is not excess");
+        assert!(!read_error);
+    }
+
+    #[test]
+    fn harness_reader_real_excess_flags_oversized() {
+        let mut over: &[u8] = &vec![b'x'; BOUNDED_SAMPLE_CAP + 1];
+        let (buf, oversized, read_error) = drain_capped(&mut over);
+        assert_eq!(
+            buf.len(),
+            BOUNDED_SAMPLE_CAP,
+            "retention never passes the cap"
+        );
+        assert!(oversized, "cap + 1 is real excess");
+        assert!(!read_error);
+    }
+
+    #[test]
+    fn harness_reader_retries_interrupted_and_reports_errors() {
+        let mut ok = ScriptedRead {
+            ops: vec![ReadOp::Interrupted, ReadOp::Data(b"hi"), ReadOp::Eof],
+            off: 0,
+        };
+        let (buf, oversized, read_error) = drain_capped(&mut ok);
+        assert_eq!(buf, b"hi");
+        assert!(!oversized);
+        assert!(!read_error, "Interrupted is retried, not reported");
+        let mut bad = ScriptedRead {
+            ops: vec![ReadOp::Data(b"par"), ReadOp::Fail],
+            off: 0,
+        };
+        let (buf, _, read_error) = drain_capped(&mut bad);
+        assert_eq!(buf, b"par", "partial bytes are kept");
+        assert!(read_error, "real errors fail closed, never EOF");
+    }
+
+    #[test]
+    fn harness_reap_seam_covers_poll_verdicts() {
+        // A pre-reaped status to replay through the seam.
+        let mut done = Command::new("bash");
+        done.args(["-c", "exit 3"]);
+        let mut done = done.spawn().expect("spawn seam status source");
+        let status = loop {
+            if let Some(s) = done.try_wait().expect("poll seam source") {
+                break s;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        // Immediate exit reaps at once.
+        let mut once = Some(status);
+        assert!(reap_with_grace(&mut || Ok(once.take()), Duration::from_secs(5)).is_some());
+        // Delayed exit reaps once observed.
+        let mut pending = 2;
+        let got = reap_with_grace(
+            &mut || {
+                if pending == 0 {
+                    Ok(Some(status))
+                } else {
+                    pending -= 1;
+                    Ok(None)
+                }
+            },
+            Duration::from_secs(5),
+        );
+        assert_eq!(got.map(|s| s.code()), Some(Some(3)));
+        // A victim that never exits fails the verdict inside the grace.
+        let start = Instant::now();
+        let none: Option<std::process::ExitStatus> =
+            reap_with_grace(&mut || Ok(None), Duration::from_millis(50));
+        assert!(none.is_none(), "unreapable victim fails visibly");
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "grace bounds the wait"
+        );
+        // Poll errors fail closed too.
+        let err: Option<std::process::ExitStatus> = reap_with_grace(
+            &mut || Err(std::io::Error::other("gone")),
+            Duration::from_secs(5),
+        );
+        assert!(err.is_none());
+    }
+
+    #[test]
+    fn harness_join_gate_proves_paused_sender_unfinished() {
+        // A sender paused after send, driven through the ACTUAL
+        // `join_finished` gate the runner uses. The sender blocks on
+        // `release` right after sending, so it is alive by construction
+        // when the parent observes the receipt: no timing luck involved.
+        // The thread body after release is a bare return (no blocking
+        // calls), so the release below is a bounded cleanup path watched
+        // by its own finite deadline. The SAME handle goes through both
+        // verdicts: unfinished first, then actually joined — never a twin,
+        // never detached-while-asserting-cleanup.
+        let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+        let (rel_tx, rel_rx) = std::sync::mpsc::channel::<()>();
+        let handle = std::thread::spawn(move || {
+            let _ = done_tx.send(());
+            let _ = rel_rx.recv();
+        });
+        done_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("sender ran to the pause point inside the readiness bound");
+        let handle = match join_finished(handle, Instant::now() + Duration::from_millis(100)) {
+            JoinOutcome::Unfinished(h) => h,
+            JoinOutcome::Joined => panic!("paused-after-send thread must fail the gate"),
+            JoinOutcome::Panicked => panic!("paused sender must not panic"),
+        };
+        // Explicit release of THAT SAME thread with finite join cleanup:
+        // dropping the release sender unblocks the receiver with an error,
+        // the thread returns, and the gate joins it inside the watchdog.
+        drop(rel_tx);
+        let start = Instant::now();
+        match join_finished(handle, start + Duration::from_secs(5)) {
+            JoinOutcome::Joined => {}
+            JoinOutcome::Unfinished(_) => panic!("released thread must join inside the watchdog"),
+            JoinOutcome::Panicked => panic!("released thread must not panic"),
+        }
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "cleanup path bounded"
+        );
+    }
+    #[test]
+    fn harness_parent_verdict_covers_injected_faults() {
+        // Poll failure against a TRULY LIVE child through the REAL parent
+        // lifecycle: no panic, real termination in common cleanup, and a
+        // verdict distinct from timeout. The orphaned `sleep` is self-bound
+        // (30s); grandchildren cannot be reaped portably.
+        // Readiness file: the victim proves itself truly live under bounds
+        // before observation is broken. Direct exec replaces the shell, so
+        // killing closes the pipes at once with no orphan.
+        let ready = std::env::temp_dir().join(format!("syntax-poll-ready-{}", std::process::id()));
+        let script = format!("echo live > '{}'; exec sleep 30", ready.display());
+        let start = Instant::now();
+        let run = run_raw_bounded_with(
+            "bash",
+            &["-c", &script],
+            Duration::from_secs(5),
+            LifecycleFaults {
+                fail_poll: true,
+                ready_file: Some(ready.clone()),
+                ..Default::default()
+            },
+        );
+        let elapsed = start.elapsed();
+        let ready_seen = ready.exists();
+        std::fs::remove_file(&ready).ok();
+        // The common cleanup really terminated the live child; the exit
+        // comes back signaled (no code), and the verdict stays distinct
+        // from a timeout (incomplete, exitless, no timeout label).
+        assert!(ready_seen, "victim proved truly live before poll breakage");
+        assert_eq!(run.exit_code, None, "killed live child has no exit code");
+        assert!(
+            run.reaped,
+            "actual OS reap observed, separate from the exit verdict"
+        );
+        assert!(
+            run.limits_note.contains("stack=4096") && run.limits_note.contains("cpu=10"),
+            "effective caps read back: {}",
+            run.limits_note
+        );
+        assert!(run.incomplete_readers, "poll failure fails the run visibly");
+        assert!(
+            !run.timed_out,
+            "poll failure must not be mislabeled as a timeout"
+        );
+        assert!(
+            elapsed < Duration::from_secs(15),
+            "cleanup bounded without waiting for any descendant: {elapsed:?}"
+        );
+        assert!(
+            elapsed < Duration::from_secs(15),
+            "cleanup bounded without waiting for the 30s sleeper: {elapsed:?}"
+        );
+        // Injected read failure through the REAL parent capture path:
+        // partial capture with read_error set, never a clean EOF.
+        let mut c = Command::new("bash");
+        c.args(["-c", "exit 0"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let run = run_command_bounded_with(
+            c,
+            Duration::from_secs(5),
+            LifecycleFaults {
+                fail_read: true,
+                ..Default::default()
+            },
+        );
+        assert!(run.read_error, "injected read error propagates");
+        assert!(
+            run.incomplete_readers,
+            "partial capture fails the run visibly"
+        );
+        // Unavailable reap through the REAL parent verdict: the victim is
+        // killed on the deadline but its exit can never be observed. Runs
+        // under the fail-closed launcher so the effective bounds apply;
+        // the injected verdict (None) stays separate from the successful
+        // OS cleanup the runner still performs (no zombies by construction).
+        let start = Instant::now();
+        let run = run_raw_bounded_with(
+            "bash",
+            &["-c", "while true; do :; done"],
+            Duration::from_secs(2),
+            LifecycleFaults {
+                reap_never: true,
+                ..Default::default()
+            },
+        );
+        let elapsed = start.elapsed();
+        assert_eq!(run.exit_code, None, "unreaped victim has no exit code");
+        assert!(
+            run.incomplete_readers,
+            "unavailable reap fails the run visibly"
+        );
+        assert!(run.timed_out, "the deadline did trip");
+        assert!(
+            run.reaped,
+            "real OS cleanup ran despite discarded observation"
+        );
+        assert!(
+            run.limits_note.contains("stack=4096") && run.limits_note.contains("cpu=10"),
+            "effective caps read back: {}",
+            run.limits_note
+        );
+        assert!(
+            elapsed < Duration::from_secs(12),
+            "deadline 2s + drain 2s + reap 5s bound the run: {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn harness_timeout_kills_and_reaps_within_grace() {
+        // Pure-builtin busy loop: no grandchildren can inherit the pipes,
+        // so killing the shell closes them and the readers finish.
+        // Pure-builtin busy loop: no grandchildren can inherit the pipes,
+        // so killing the shell closes them and the readers finish. Runs
+        // under the fail-closed launcher so the effective CPU/stack bounds
+        // are applied and read back, not bypassed.
+        let start = Instant::now();
+        let run = run_raw_bounded(
+            "bash",
+            &["-c", "while true; do :; done"],
+            Duration::from_secs(2),
+        );
+        let elapsed = start.elapsed();
+        assert!(run.timed_out, "busy loop must trip the 2s deadline");
+        assert_eq!(run.exit_code, None, "killed victim has no exit code");
+        assert!(!run.oversized);
+        assert!(!run.read_error);
+        assert!(
+            !run.incomplete_readers,
+            "silent child: pipes close on kill, readers finish"
+        );
+        assert!(
+            run.limits_note.contains("stack=4096"),
+            "effective stack cap read back: {}",
+            run.limits_note
+        );
+        assert!(
+            run.limits_note.contains("cpu=10"),
+            "effective CPU cap read back: {}",
+            run.limits_note
+        );
+        assert!(
+            elapsed < Duration::from_secs(12),
+            "deadline 2s + drain 2s + reap 5s bound the run: {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn harness_overflow_child_is_flagged_with_clean_read() {
+        // 9000 bytes: just over the 8192 cap, small enough to exit on its
+        // own through the pipe buffer, so the verdict is overflow alone.
+        let start = Instant::now();
+        let run = run_raw_bounded(
+            "bash",
+            &["-c", "head -c 9000 /dev/zero"],
+            Duration::from_secs(10),
+        );
+        let elapsed = start.elapsed();
+        assert!(run.oversized, "9000 retained bytes are real excess");
+        assert_eq!(run.stderr.len() + run.stdout.len(), 8192);
+        assert!(!run.read_error);
+        assert!(!run.timed_out);
+        assert!(
+            run.limits_note.contains("stack=4096") && run.limits_note.contains("cpu=10"),
+            "effective caps read back: {}",
+            run.limits_note
+        );
+        assert!(
+            elapsed < Duration::from_secs(19),
+            "limit 10s + drain 2s + reap 5s bound the run: {elapsed:?}"
+        );
     }
 
     /// TM-DOS-135: hostile indirect cycles are refused in a bounded child.
@@ -405,22 +1227,81 @@ mod resource_exhaustion {
 
     /// An exited child with descendant-retained pipes: the exit is observed
     /// but readers never finish. The helper must report incomplete readers
-    /// within bounds, not wait forever. Real bash (not the CLI) is the
-    /// pipe holder here; the orphaned `sleep` is harmless and bounded.
+    /// within bounds, not wait forever. Runs under the fail-closed launcher;
+    /// because the retained pipes keep even the launcher's own readback
+    /// line unread, the effective bounds are proven through a per-process
+    /// receipt file the fixture shell writes before parking the sleeper
+    /// (removed below). The guard terminates the exact descendant
+    /// promptly after the verdict; the sleeper's own 30s lifetime remains
+    /// only as the backstop bound (grandchildren cannot be reaped
+    /// portably). The elapsed assertion proves the run returns without
+    /// waiting for it.
     #[test]
     fn bounded_helper_flags_retained_pipes() {
-        let mut cmd = Command::new("bash");
-        cmd.args(["-c", "sleep 30 & exit 0"])
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        let run = run_command_bounded(cmd, Duration::from_secs(5));
+        // The sleeper's PID is retained through a second receipt file so
+        // the test itself terminates and finitely observes the exact
+        // descendant it created — no waiting for the 30s self-expiry, no
+        // universal process-tree reaper, just test-scoped cleanup of owned
+        // resources. Unique per process; removed below.
+        let receipt =
+            std::env::temp_dir().join(format!("syntax-retained-limits-{}", std::process::id()));
+        let pidfile =
+            std::env::temp_dir().join(format!("syntax-retained-pid-{}", std::process::id()));
+        let script = format!(
+            "ulimit -s > '{}'; ulimit -t >> '{}'; sleep 30 & echo $! > '{}'; exit 0",
+            receipt.display(),
+            receipt.display(),
+            pidfile.display()
+        );
+        // Handle-retaining core: this fixture owns the ORIGINAL reader
+        // threads from here (not a twin, not detached-while-asserting).
+        let start = Instant::now();
+        let (run, pending) = run_raw_core(
+            "bash",
+            &["-c", &script],
+            Duration::from_secs(5),
+            LifecycleFaults::default(),
+        );
+        let elapsed = start.elapsed();
+        // Guard owns the ORIGINAL reader handles and both receipt paths
+        // BEFORE any fallible setup read below: a panic in the reads or
+        // in the verdict asserts still cleans up via Drop (best-effort
+        // kill once the pid binds, file removal, no panics). The pid
+        // itself binds after the pidfile read; without an identity there
+        // is nothing to terminate, which Drop records honestly.
+        let mut guard = RetainedCleanup {
+            pid: None,
+            pending: Some(pending),
+            files: vec![receipt, pidfile],
+        };
+        let receipt_text =
+            std::fs::read_to_string(&guard.files[0]).expect("fixture shell ran under the launcher");
+        let sleeper = std::fs::read_to_string(&guard.files[1])
+            .expect("fixture recorded its descendant identity")
+            .trim()
+            .to_string();
+        guard.pid = Some(sleeper.clone());
         assert!(!run.timed_out, "exited child misreported as timeout");
         assert!(
             run.incomplete_readers,
             "retained pipes not reported as incomplete"
         );
+        assert!(!run.read_error, "open pipes are not I/O errors");
+        assert!(
+            receipt_text.lines().next() == Some("4096")
+                && receipt_text.lines().nth(1) == Some("10"),
+            "effective stack/cpu bounds applied to the fixture: {receipt_text:?}"
+        );
         assert_eq!(run.exit_code, Some(0), "stdout: {}", run.stdout);
+        assert!(
+            elapsed < Duration::from_secs(15),
+            "returned in {elapsed:?} without waiting for the 30s sleeper"
+        );
+        // Controlled cleanup of the ACTUAL owned resources through the
+        // guard (its Drop covers any failure above too): terminate the
+        // exact retained descendant, join the ORIGINAL reader handles,
+        // observe absence, prove the total bound.
+        guard.complete(start);
     }
 
     #[test]

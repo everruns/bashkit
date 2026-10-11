@@ -111,7 +111,7 @@ through configurable limits.
 | Brace range OOM (TM-DOS-041) | `{1..999999999}` | Cap range size | **MITIGATED** |
 | Brace combinatorial (TM-DOS-042) | `{1..100}{1..100}{1..100}` | Cap total expansion | **MITIGATED** |
 | Compound assign overflow (TM-DOS-043) | `((x+=1))` with x=i64::MAX | `wrapping_*` ops | **MITIGATED** |
-| Lexer stack overflow (TM-DOS-044) | ~50 nested `$()` in quotes | Depth tracking | **MITIGATED** |
+| Lexer stack overflow (TM-DOS-044) | ~50 nested `$()` in quotes | Shared AST depth, heap-owned child parsers, outlined nonrecursive parser frames | **MITIGATED** |
 | parse_word_string limits (TM-DOS-050) | Parameter expansion ignores limits | Propagate limits | **MITIGATED** |
 | Removed YAML helper parser (TM-DOS-051) | Former custom parser recursed over indentation | Parser deleted; yq uses TM-DOS-101 controls | **REMOVED** |
 | Template engine recursion (TM-DOS-052) | Nested `{{#if}}`/`{{#each}}` overflow | Add depth limit | **MITIGATED** |
@@ -135,6 +135,7 @@ through configurable limits.
 | `$(<file)` resource-accounting bypass (TM-DOS-115) | Repeated file-read substitutions skip command limits and accumulate file contents during argument expansion | Optimized reads charge command, session-command, and work budgets; file and accumulated substitution bytes hold live-intermediate leases | **MITIGATED** |
 | Silent scalar assignment rejection (TM-DOS-111) | A variable write over the byte or count limit is dropped while the script exits 0 | The first rejected write fails execution with a memory-limit error; a later exec can reuse the session | **MITIGATED** |
 | AWK `close()` recycles getline read quotas (TM-DOS-116) | `getline x < file; close(file)` in a loop reloads the same large VFS file while retained-cache accounting returns to zero | Every cache miss charges the shared aggregate-input and work budgets before decoding the file; `close()` still releases retained cache bytes but cannot refund either charge | **MITIGATED** |
+| Diagnostic prefix amplification (TM-DOS-103) | A long child-shell `$0` repeated across builtin error lines multiplies stderr before capture limits apply | Diagnostic names show at most 1,024 UTF-8 bytes without changing `$0`; rewritten bytes and cached text acquire shared memory leases before fallible growth, retain them through routing, and check work, cancellation and deadlines. Exhaustion aborts the request, including redirected or streamed diagnostics | **MITIGATED** |
 | `sed r` output amplification (TM-DOS-112) | `sed 'r FILE' FILE` re-emits the whole file after every input line, growing output quadratically inside the engine | Every sed sink leases from `max_live_intermediate_bytes` before growing; a refused lease is `sed: <error>` with exit 1. The stdout *capture* cap is deliberately not a sink limit, since sed output is often piped onward or redirected to a file | **MITIGATED** |
 | Newline-dense head/tail input (TM-DOS-117) | A small line selection over a newline-dense file builds an offset for every line | Line selection scans from the nearest end and stores no per-line offset collection | **MITIGATED** |
 | Param expansion bomb (TM-DOS-059) | `${x//a/bigstring}` multiplicative amplification | `max_total_variable_bytes` + `max_stdout_bytes` | MITIGATED |
@@ -191,7 +192,7 @@ let bash = Bash::builder()
 | jq control normalization amplification (TM-DOS-100) | Literal controls expand sixfold as `\u00XX` | Charge single-pass work and lease live bytes before allocation growth | MITIGATED |
 | yq structured-data amplification (TM-DOS-101) | Deep/multi-document YAML or JSON, runaway filters, expanded output | Parser depth and 4096-document caps, aggregate budgets, shared jaq work/deadline/output limits, final render cap | MITIGATED |
 | Archive decoder pre-allocation (TM-DOS-102) | Compressed output grows before memory checks | Validate and charge each decoder chunk before reserve/copy | MITIGATED |
-| Post-allocation charging (TM-DOS-103) | Archive/compression buffers grow before their live-byte check | Owning budget-aware string/vector/byte builders charge before reserve, roll back errors, and release on drop | MITIGATED |
+| Post-allocation charging (TM-DOS-103) | Archive/compression buffers or tar file-list names grow before their live-byte check | Owning budget-aware string/vector/byte builders charge before reserve, roll back errors, and release on drop; tar file lists also lease raw reads and charge per-line work | MITIGATED |
 | Pipeline stderr aggregation (TM-DOS-104) | Many stderr-producing pipeline stages accumulate past the output cap | Stop appending at `max_stderr_bytes` and propagate the truncation flag to the result | MITIGATED |
 | Zip creation pre-allocation (TM-DOS-106) | Recursive inputs and encoded output allocate before live-memory checks | Collect paths only, lease file sizes before VFS reads, and encode through a budget-aware byte buffer | MITIGATED |
 | Analysis command-name validation (TM-DOS-107) | A huge comment before thousands of commands makes validation rescan the source per command | Index source character positions once, then binary-search each name | MITIGATED |
@@ -655,15 +656,18 @@ The parser includes multiple layers of depth protection to prevent stack overflo
 attacks:
 
 1. **Configurable depth limit** (`max_ast_depth`, default 100): Controls maximum nesting
-   of compound commands (if/for/while/case/subshell).
+   of compound commands (if/for/while/case/subshell) and substitutions.
 
 2. **Hard cap** (`HARD_MAX_AST_DEPTH = 100`): Even if the caller configures a higher
    `max_ast_depth`, the parser clamps it to 100. This prevents misconfiguration from
    causing stack overflow.
 
 3. **Child parser inheritance** (TM-DOS-021): When parsing `$(...)` or `<(...)`,
-   the child parser inherits the *remaining* depth budget and fuel from the parent.
-   This prevents attackers from bypassing depth limits through nested substitutions.
+   each substitution consumes one level of the enclosing AST depth. Command
+   substitution child parsers inherit the same ceiling, remaining fuel, execution
+   budget, and timeout origin, and stay heap-owned while parsing. Nonrecursive
+   parameter parsing and AST assembly run outside recursive frames, keeping the
+   unchanged hard ceiling safe on default 2 MiB Rust test-thread stacks.
 
 4. **Arithmetic depth limit** (TM-DOS-026): The arithmetic evaluator (`$((expr))`)
    has its own depth limit (`MAX_ARITHMETIC_DEPTH = 50`) to prevent stack overflow

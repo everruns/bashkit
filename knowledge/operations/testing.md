@@ -94,6 +94,13 @@ bounded 1,024-entry / 1,024-byte-target request that previously retained over
 1 MiB of candidate paths. It complements the shared-budget integration tests
 rather than substituting budget counters for an actual allocation measurement.
 
+`tar_files_from_allocation_tests.rs` also needs its own binary for its
+process-wide counting allocator. It uses a 40 KB newline-dense list and a
+64 KB live budget through `Bash::exec`, rejecting the former >1 MB eager
+collector peak while asserting bounded rejection and subsequent session use.
+The consolidated `tar_files_from_budget_tests` covers live/input/work limits,
+stdin, repeated lists, blank/CRLF/lossy names, and GNU tar differential behavior.
+
 Filtering still works as usual: `cargo test --test integration -- foo`
 matches `integration::*::foo*` test paths.
 

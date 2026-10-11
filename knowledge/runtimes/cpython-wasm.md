@@ -62,6 +62,12 @@ call:
 3. **Zero-copy load**: the `.cwasm` is embedded 64 KiB-aligned and loaded with
    `Module::deserialize_raw`; wasmtime registers code by address, so only the
    first load in a process maps in place, later loads copy (`load_module`).
+   Mach-O linking/ASLR only preserves host-page alignment, so Apple targets
+   embed a byte slice rather than an over-aligned Rust reference. If its runtime
+   address is not 64 KiB aligned, one immutable padded `Vec` copy is cached for
+   the process lifetime; retaining the allocation preserves the chosen aligned
+   offset. Other hosts retain the aligned static fast path. The original
+   64 KiB pointer assertion plus byte-preservation tests cover this contract.
 4. **Copy-on-write instances**: `memory_init_cow` +
    `memory_guaranteed_dense_image_size(128 MB)` map the ~40 MB snapshot heap
    instead of copying it (without the dense image every instantiation copied

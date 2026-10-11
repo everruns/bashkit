@@ -30,17 +30,58 @@ pub const STDLIB_PREFIX: &str = "/usr/local/lib";
 /// Stdlib sources, deflate-compressed zip read by CPython's `zipimport`.
 pub static STDLIB_ZIP: &[u8] = include_bytes!("../artifacts/python314.zip");
 
-// Wasmtime maps the module's data segments copy-on-write straight from these
-// bytes, which requires host-page alignment. 64 KiB covers every supported
-// page size (4 KiB x86-64, 16 KiB Apple silicon, 64 KiB some aarch64 Linux).
+// Wasmtime maps data segments from immutable host-page-aligned bytes. Keep
+// 64 KiB alignment for every supported host. Mach-O only preserves host-page
+// alignment through linking/ASLR; do not form an over-aligned Rust reference
+// there. Cache a padded, aligned copy once when the embedded slice needs one.
+const MODULE_ALIGNMENT: usize = 65536;
+
+#[cfg(not(target_vendor = "apple"))]
 #[repr(C, align(65536))]
 struct Aligned<T: ?Sized>(T);
 
+#[cfg(not(target_vendor = "apple"))]
 static CWASM: &Aligned<[u8]> = &Aligned(*include_bytes!(concat!(env!("OUT_DIR"), "/python.cwasm")));
+#[cfg(target_vendor = "apple")]
+static CWASM: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/python.cwasm"));
+
+struct PaddedModule {
+    // Retain the Vec allocation: converting to a boxed slice can relocate it
+    // after we chose the aligned offset. No mutation is exposed after copying.
+    storage: Vec<u8>,
+    start: usize,
+    len: usize,
+}
+
+impl PaddedModule {
+    fn new(bytes: &[u8]) -> Self {
+        let mut storage = vec![0; bytes.len() + MODULE_ALIGNMENT - 1];
+        let start = storage.as_ptr().align_offset(MODULE_ALIGNMENT);
+        storage[start..start + bytes.len()].copy_from_slice(bytes);
+        Self {
+            storage,
+            start,
+            len: bytes.len(),
+        }
+    }
+
+    fn bytes(&self) -> &[u8] {
+        &self.storage[self.start..self.start + self.len]
+    }
+}
 
 /// Precompiled module bytes (Pulley, or native with the `native` feature) (for diagnostics and size reporting).
+/// The returned slice is immutable and 64 KiB aligned for the process lifetime.
 pub fn cwasm_bytes() -> &'static [u8] {
-    &CWASM.0
+    #[cfg(not(target_vendor = "apple"))]
+    let bytes: &[u8] = &CWASM.0;
+    #[cfg(target_vendor = "apple")]
+    let bytes = CWASM;
+    if bytes.as_ptr().align_offset(MODULE_ALIGNMENT) == 0 {
+        return bytes;
+    }
+    static PADDED: std::sync::OnceLock<PaddedModule> = std::sync::OnceLock::new();
+    PADDED.get_or_init(|| PaddedModule::new(bytes)).bytes()
 }
 
 /// Create an engine compatible with the embedded module.
@@ -53,13 +94,15 @@ pub fn engine() -> wasmtime::Result<wasmtime::Engine> {
 /// `engine` must come from [`engine`] or use [`engine_config`] unchanged
 /// (plus runtime-only settings).
 ///
-/// The first load in a process maps the embedded bytes in place (no copy).
+/// The first load in a process maps the aligned bytes in place. On hosts whose
+/// linker/loader cannot preserve 64 KiB alignment, these bytes are copied once
+/// into cached aligned storage first.
 /// Wasmtime registers code by address, so the same bytes cannot back two live
 /// modules; every later load copies them instead (tens of milliseconds).
 /// Hosts should load once and share the module.
 pub fn load_module(engine: &wasmtime::Engine) -> wasmtime::Result<wasmtime::Module> {
     static MAPPED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-    let bytes: &'static [u8] = &CWASM.0;
+    let bytes = cwasm_bytes();
     // Native code must live in executable memory, never the read-only static,
     // so it is always copied (the first load costs ~35 ms more than Pulley's).
     if cfg!(feature = "native") || MAPPED.swap(true, std::sync::atomic::Ordering::AcqRel) {
@@ -68,7 +111,7 @@ pub fn load_module(engine: &wasmtime::Engine) -> wasmtime::Result<wasmtime::Modu
     }
     // SAFETY: the bytes were produced by `Engine::precompile_module` in this
     // crate's build script with the same wasmtime version and `engine_config`,
-    // live in immutable static memory for the life of the process, and are
+    // live in immutable process-lifetime storage, and are
     // mapped by at most one module (guarded by `MAPPED`).
     unsafe { wasmtime::Module::deserialize_raw(engine, std::ptr::NonNull::from(bytes)) }
 }
@@ -95,6 +138,16 @@ mod tests {
     #[test]
     fn module_bytes_are_page_aligned() {
         assert_eq!(cwasm_bytes().as_ptr() as usize % 65536, 0);
+    }
+
+    #[test]
+    fn padded_module_preserves_bytes_and_alignment() {
+        for len in [0, 1, 127, 65535, 65536, 65537] {
+            let input: Vec<_> = (0..len).map(|i| (i % 251) as u8).collect();
+            let module = PaddedModule::new(&input);
+            assert_eq!(module.bytes().as_ptr() as usize % 65536, 0);
+            assert_eq!(module.bytes(), input);
+        }
     }
 
     #[test]

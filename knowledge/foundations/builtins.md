@@ -652,6 +652,19 @@ bundles (`-cjf`, `cjf`) and `--bzip2`, and detects gzip/bzip2 magic while listin
 or extracting so `.tar.bz2`/`.tbz2` inputs work without an explicit codec flag.
 `bzip2`, `bunzip2`, and `bzcat` share the same byte-native codec path.
 
+`tar -T` / `--files-from` admits each VFS read using its metadata size,
+retains the read lease through parsing, and charges any extra returned capacity.
+The filesystem backend owns allocation admission if a host-backed file grows
+between stat and read. Stdin is borrowed. Names are decoded directly into
+`BudgetedString` owners held by a `BudgetedVec`; neither per-line copies nor
+lossy UTF-8 replacement can allocate before live-budget admission. Shared work
+charges cover source bytes, every line (including blanks), and decoding steps,
+checking the request deadline/cancellation during dense-list scans. Repeated
+sources share input/live/work budgets, preserving order, duplicates, CRLF,
+blank lines, stdin, and missing-member behavior. Tests:
+`tar_files_from_budget_tests` and the isolated counting-allocator
+`tar_files_from_allocation_tests` (TM-DOS-103).
+
 The implementation uses `bzip2` 0.6 with its default pure-Rust
 `libbz2-rs-sys` backend. The crate is maintained by the Trifecta Tech
 Foundation, dual MIT/Apache-2.0; its backend retains the permissive

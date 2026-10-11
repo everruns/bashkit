@@ -86,6 +86,59 @@ mod finding_nested_cmd_subst_stack_overflow {
             Err(_) => {}
         }
     }
+    #[tokio::test]
+    async fn hard_ast_cap_rejects_substitutions_and_session_recovers() {
+        let mut bash = Bash::builder()
+            .limits(ExecutionLimits::new().max_ast_depth(usize::MAX))
+            .build();
+        let mut script = String::from("echo deep > /should-not-exist");
+        for _ in 0..120 {
+            script = format!("echo $({script})");
+        }
+        let diagnostic = match bash.exec(&script).await {
+            Ok(result) => {
+                assert_eq!(result.exit_code, 2);
+                assert!(result.stdout.is_empty());
+                result.stderr.to_string()
+            }
+            Err(err) => err.to_string(),
+        };
+        assert!(diagnostic.contains("AST nesting too deep"), "{diagnostic}");
+        assert!(
+            !bash
+                .fs()
+                .exists(std::path::Path::new("/should-not-exist"))
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            bash.exec("echo recovered").await.unwrap().stdout,
+            "recovered\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn moderate_substitutions_match_real_bash() {
+        for template in [
+            "echo $(BODY)",
+            "x=$(BODY); echo \"$x\"",
+            "echo $(true; BODY)",
+        ] {
+            let mut script = String::from("echo hello");
+            for _ in 0..6 {
+                script = template.replace("BODY", &script);
+            }
+            let reference = std::process::Command::new("/bin/bash")
+                .args(["--noprofile", "--norc", "-c", &script])
+                .output()
+                .unwrap();
+            assert!(reference.status.success());
+            let result = tight_bash().exec(&script).await.unwrap();
+            assert_eq!(result.exit_code, 0);
+            assert_eq!(result.stdout.as_bytes(), reference.stdout, "{template}");
+            assert_eq!(result.stderr.as_bytes(), reference.stderr, "{template}");
+        }
+    }
 }
 
 // =============================================================================
