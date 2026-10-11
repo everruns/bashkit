@@ -2624,6 +2624,21 @@ impl Interpreter {
                 .is_some_and(|f| f.is_ascii_alphabetic() || f == '_')
                 && c.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
         };
+        // TM-RES-INDIRECT: an indirect array target ends at the first `]`
+        // after `[` (real bash resolves `a[0]` from `a[0]:-x]` and ignores
+        // the rest). Truncating before validation keeps trailing
+        // operator/nesting text — including a nested `${!...}` — from ever
+        // reaching the desugar re-parse below, which re-entered indirect
+        // expansion without bound (`r='a[0]:-${!r}]'` overflowed the stack).
+        // Targets without a sub-`]` (plain names, `a[$i]`, `a[@]`) pass
+        // through unchanged.
+        let value = match value.find('[') {
+            Some(open) => match value[open..].find(']') {
+                Some(rel) => value[..open + rel + 1].to_string(),
+                None => value,
+            },
+            None => value,
+        };
         let valid = ident(&value)
             || (!value.is_empty() && value.bytes().all(|b| b.is_ascii_digit()))
             || matches!(value.as_str(), "@" | "*" | "#" | "?" | "$" | "!" | "-")

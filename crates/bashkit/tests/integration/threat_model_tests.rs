@@ -20,6 +20,80 @@ use std::time::Duration;
 mod resource_exhaustion {
     use super::*;
 
+    /// TM-RES-INDIRECT: an indirect array target ends at the first `]`.
+    /// Trailing operator/nesting text is never re-expanded as code, so a
+    /// default operand cannot re-enter indirect expansion and exhaust the
+    /// stack (`r='a[0]:-${!r}]'`). Matches real bash: element-or-empty.
+    #[tokio::test]
+    async fn indirect_array_target_ends_at_first_close_bracket() {
+        // Trailing operator/nesting text is ignored, like real bash
+        // (verified: bash prints `out=[]`, `st=0` for every target below).
+        for target in [
+            "a[0]:-injected]",
+            "a[0]-injected]",
+            "a[0]:=injected]",
+            "a[0]+injected]",
+            "a[0]/x/injected]",
+            "a[0][1]",
+            "a[0]}${x:-injected}[0]",
+        ] {
+            let mut bash = Bash::new();
+            let result = bash
+                .exec(&format!(
+                    "r='{target}'\necho \"out=[${{!r}}]\"\necho \"st=$?\""
+                ))
+                .await
+                .unwrap();
+            assert_eq!(result.stdout, "out=[]\nst=0\n", "target: {target}");
+            assert!(
+                result.stderr.is_empty(),
+                "target: {target}: {}",
+                result.stderr
+            );
+        }
+        // Set element resolves through the truncated target (bash: `1`).
+        let mut bash = Bash::new();
+        let result = bash
+            .exec("a=(1 2)\nr='a[0]:-injected]'\necho \"out=[${!r}]\"\necho \"st=$?\"")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "out=[1]\nst=0\n");
+        assert!(result.stderr.is_empty(), "stderr: {}", result.stderr);
+    }
+
+    /// TM-RES-INDIRECT: self-referential default operand terminates.
+    /// Pre-fix this exact reproducer overflowed the stack (SIGABRT).
+    #[tokio::test]
+    async fn indirect_self_cycle_default_operand_terminates() {
+        // Exact finding reproducer: unset element + self-cycle in default.
+        // Real bash prints `out=[]` with status 0 and never crashes.
+        let mut bash = Bash::new();
+        let result = bash
+            .exec("unset a\nr='a[0]:-${!r}]'\necho \"out=[${!r}]\"\necho \"st=$?\"")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "out=[]\nst=0\n");
+        assert!(result.stderr.is_empty(), "stderr: {}", result.stderr);
+        // Set element: the cycle operand is discarded, element wins.
+        let mut bash = Bash::new();
+        let result = bash
+            .exec("a=(1 2)\nr='a[0]:-${!r}]'\necho \"out=[${!r}]\"\necho \"st=$?\"")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "out=[1]\nst=0\n");
+        assert!(result.stderr.is_empty(), "stderr: {}", result.stderr);
+        // Mutual cycle through two names terminates as well.
+        let mut bash = Bash::new();
+        let result = bash
+            .exec(
+                "unset a\nr='a[0]:-${!s}]'\ns='a[0]:-${!r}]'\necho \"out=[${!r}]\"\necho \"st=$?\"",
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "out=[]\nst=0\n");
+        assert!(result.stderr.is_empty(), "stderr: {}", result.stderr);
+    }
+
     /// V1: Test that command limit prevents infinite execution
     #[tokio::test]
     async fn threat_infinite_commands_blocked() {

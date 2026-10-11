@@ -82,6 +82,7 @@ through configurable limits.
 | History files (TM-DOS-131) | `history -a` loops, huge `$HISTSIZE`, giant `$HISTFILE` | History list bounded by `max_history_entries`/`max_history_bytes`; `$HISTFILE` reads refused past `max_input_bytes`; VFS only | MITIGATED |
 | Completion specs and bindings (TM-DOS-132) | `complete`/`bind` in a loop | 1024 specs (64 KiB each) and 1024 binding changes (4 KiB each) per interpreter; never shared between instances | MITIGATED |
 | Prompt recursion (TM-DOS-133) | `x='${x@P}'; echo "${x@P}"`, mutual cycles or substitution-mediated cycles | Cumulative prompt depth capped at `min(max_ast_depth, 8)`; shared work, aggregate input, cancellation and deadline checks on each prompt; descendant shells inherit depth | MITIGATED |
+| Indirect operand recursion (TM-DOS-134) | `r='a[0]:-${!r}]'` re-entering `${!...}` through an unset-element default | Bracket targets truncate at the first `]` (bash parity: `a[0]` resolves, rest ignored), so trailing operands never reach the indirect re-parse | MITIGATED |
 
 **Stack Overflow / Recursion:**
 
