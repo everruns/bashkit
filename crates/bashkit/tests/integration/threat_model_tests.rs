@@ -198,6 +198,144 @@ mod resource_exhaustion {
         run
     }
 
+    /// Presence of one PID as an explicit receipt, never inferred from a
+    /// bare nonzero exit: only an observed ESRCH text proves absence, while
+    /// EPERM or anything unknown keeps polling inside the bound.
+    enum PidPresence {
+        Present,
+        Absent,
+        Unknown,
+    }
+
+    /// Runs `kill` with the given args under a finite grace and classifies
+    /// the outcome from the observed exit plus stderr text. Every wait on
+    /// the helper child is a bounded try_wait poll (never a bare wait), so
+    /// the call itself always terminates: `Unknown` covers spawn errors,
+    /// grace expiry, and undecipherable output. ESRCH receipt text is
+    /// matched case-insensitively (`no such process`).
+    fn signal_bounded(args: &[&str], grace: Duration) -> (bool, PidPresence) {
+        let mut child = match Command::new("kill")
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+        {
+            Ok(c) => c,
+            Err(_) => return (false, PidPresence::Unknown),
+        };
+        let mut stderr = String::new();
+        let end = Instant::now() + grace;
+        let code = loop {
+            match child.try_wait() {
+                Ok(Some(s)) => break s.code(),
+                Ok(None) => {
+                    if Instant::now() >= end {
+                        return (false, PidPresence::Unknown);
+                    }
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(_) => return (false, PidPresence::Unknown),
+            }
+        };
+        use std::io::Read as _;
+        let _ = child
+            .stderr
+            .take()
+            .map(|mut p| p.read_to_string(&mut stderr));
+        let _ = child.wait();
+        let lowered = stderr.to_lowercase();
+        match code {
+            Some(0) => (true, PidPresence::Present),
+            _ if lowered.contains("no such process") => (true, PidPresence::Absent),
+            _ if lowered.contains("not permitted")
+                || lowered.contains("operation not permitted") =>
+            {
+                (false, PidPresence::Unknown)
+            }
+            _ => (false, PidPresence::Unknown),
+        }
+    }
+
+    /// Test-scoped owned cleanup for the retained-pipe fixture: the exact
+    /// recorded descendant plus the ORIGINAL reader handles. The normal
+    /// path (`complete`) terminates the descendant, observes its absence
+    /// via ESRCH receipt, joins the original handles, and proves the total
+    /// elapsed bound. `Drop` fires the same kill best-effort (no asserts,
+    /// no panics) so setup/assertion failures never leak the 30s sleeper;
+    /// threads then finish on pipe close (joining from `Drop` could block,
+    /// so detached finish there is documented, not silent).
+    struct RetainedCleanup {
+        pid: Option<String>,
+        pending: Option<PendingJoiners>,
+        files: Vec<std::path::PathBuf>,
+    }
+
+    impl RetainedCleanup {
+        fn complete(&mut self, start: Instant) {
+            // Terminate the exact owned descendant (not the 30s self-expiry).
+            if let Some(pid) = self.pid.clone() {
+                let (sent, _) = signal_bounded(&["-9", &pid], Duration::from_secs(5));
+                assert!(sent, "owned descendant {pid} terminated");
+            }
+            // Join the ORIGINAL reader handles: the kill closed the
+            // retained pipes, so they must finish inside the shared grace.
+            if let Some(pending) = self.pending.take() {
+                let end = Instant::now() + JOIN_GRACE;
+                let mut joined = true;
+                for reader in pending.handles {
+                    if !matches!(join_finished(reader, end), JoinOutcome::Joined) {
+                        joined = false;
+                    }
+                }
+                assert!(joined, "original reader handles joined after the kill");
+            }
+            // Absence receipt: only ESRCH counts; anything unknown retries
+            // inside the bound, then fails visibly.
+            if let Some(pid) = self.pid.clone() {
+                let end = Instant::now() + Duration::from_secs(5);
+                loop {
+                    match signal_bounded(&["-0", &pid], Duration::from_secs(5)) {
+                        (_, PidPresence::Absent) => break,
+                        _ => {
+                            assert!(
+                                Instant::now() < end,
+                                "descendant {pid} completion observed inside the cleanup bound"
+                            );
+                            std::thread::sleep(Duration::from_millis(50));
+                        }
+                    }
+                }
+            }
+            for path in std::mem::take(&mut self.files) {
+                std::fs::remove_file(&path).ok();
+            }
+            self.pid = None;
+            assert!(
+                start.elapsed() < Duration::from_secs(20),
+                "verdict plus owned cleanup bounded end to end: {:?}",
+                start.elapsed()
+            );
+        }
+    }
+
+    impl Drop for RetainedCleanup {
+        fn drop(&mut self) {
+            // Best-effort only: fire the kill without asserts so an
+            // unwinding test never leaks the sleeper. Return values are
+            // intentionally ignored; files are removed quietly.
+            if let Some(pid) = self.pid.take() {
+                let _ = signal_bounded(&["-9", &pid], Duration::from_secs(5));
+            }
+            for path in std::mem::take(&mut self.files) {
+                std::fs::remove_file(&path).ok();
+            }
+            // Pending handles drop here (detached): their pipes close as a
+            // consequence of the kill above, so the threads finish on
+            // their own right after this test's scope ends.
+        }
+    }
+
     fn run_raw_bounded(program: &str, args: &[&str], limit: Duration) -> BoundedRun {
         run_raw_bounded_with(program, args, limit, LifecycleFaults::default())
     }
@@ -1109,7 +1247,6 @@ mod resource_exhaustion {
         let elapsed = start.elapsed();
         let receipt_text =
             std::fs::read_to_string(&receipt).expect("fixture shell ran under the launcher");
-        std::fs::remove_file(&receipt).ok();
         // Controlled descendant cleanup AFTER the negative verdict above:
         // terminate the exact retained sleeper and finitely observe its
         // completion (absence via kill -0 polling inside a 5s bound).
@@ -1120,6 +1257,14 @@ mod resource_exhaustion {
             .trim()
             .to_string();
         std::fs::remove_file(&pidfile).ok();
+        // Guard owns the exact descendant, the ORIGINAL reader handles,
+        // and both receipt files from here: any later assert failure still
+        // cleans up via Drop (best-effort kill, no panics).
+        let mut guard = RetainedCleanup {
+            pid: Some(sleeper.clone()),
+            pending: Some(pending),
+            files: vec![receipt, pidfile],
+        };
         assert!(!run.timed_out, "exited child misreported as timeout");
         assert!(
             run.incomplete_readers,
@@ -1136,50 +1281,11 @@ mod resource_exhaustion {
             elapsed < Duration::from_secs(15),
             "returned in {elapsed:?} without waiting for the 30s sleeper"
         );
-        // Controlled cleanup of the ACTUAL owned resources, after the
-        // negative verdict above: terminate the exact retained descendant,
-        // then join the ORIGINAL reader handles (their pipes close on the
-        // kill, so the join completes inside the shared grace). Both
-        // receipts plus the total elapsed bound prove finite completion.
-        let kill_ok = Command::new("kill")
-            .args(["-9", &sleeper])
-            .status()
-            .map(|st| st.success())
-            .unwrap_or(false);
-        assert!(kill_ok, "owned descendant {sleeper} terminated");
-        // The kill closed the retained pipes, so the ORIGINAL reader
-        // threads (never reported, hence no receipts to gate on) must now
-        // finish: join each through the same bounded primitive inline,
-        // since finish_joiners only joins receipted handles by design.
-        let join_end = Instant::now() + JOIN_GRACE;
-        let mut joined = true;
-        for reader in pending.handles {
-            if !matches!(join_finished(reader, join_end), JoinOutcome::Joined) {
-                joined = false;
-            }
-        }
-        assert!(joined, "original reader handles joined after the kill");
-        let gone_start = Instant::now();
-        loop {
-            // A spawn error is UNKNOWN (not absence): only an observed
-            // non-zero exit proves the descendant gone. Each kill query
-            // itself exits immediately; the loop bound makes it finite.
-            match Command::new("kill").args(["-0", &sleeper]).status() {
-                Ok(st) if st.success() => {}
-                Ok(_) => break,
-                Err(_) => {}
-            }
-            assert!(
-                gone_start.elapsed() < Duration::from_secs(5),
-                "descendant {sleeper} completion observed inside the cleanup bound"
-            );
-            std::thread::sleep(Duration::from_millis(50));
-        }
-        let total = start.elapsed();
-        assert!(
-            total < Duration::from_secs(20),
-            "verdict plus descendant cleanup bounded end to end: {total:?}"
-        );
+        // Controlled cleanup of the ACTUAL owned resources through the
+        // guard (its Drop covers any failure above too): terminate the
+        // exact retained descendant, join the ORIGINAL reader handles,
+        // observe absence, prove the total bound.
+        guard.complete(start);
     }
 
     #[test]
