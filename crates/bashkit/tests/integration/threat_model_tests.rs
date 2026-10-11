@@ -244,19 +244,35 @@ mod resource_exhaustion {
         presence: PidPresence,
     }
 
-    impl SignalReceipt {
-        fn unknown() -> Self {
-            SignalReceipt {
-                dispatched: false,
-                helper_reaped: false,
-                pipe_ok: false,
-                presence: PidPresence::Unknown,
-            }
-        }
+    /// What one bounded helper execution actually proved, stage by
+    /// stage. Callers interpret `exit` per binary (`pkill` 0 = matched,
+    /// `pgrep` 0 = present / 1 = absent receipt / else unknown); every
+    /// wait inside is bounded by the single caller-owned `end` instant,
+    /// never a fresh grace stacked after a timeout.
+    struct HelperOutcome {
+        exit: Option<i32>,
+        stderr: Vec<u8>,
+        drained_ok: bool,
+        reaped: bool,
+        signaled: bool,
     }
 
-    fn signal_bounded(args: &[&str], grace: Duration) -> SignalReceipt {
-        let mut child = match Command::new("kill")
+    /// Runs one short-lived helper (`kill`, `pkill`, `pgrep`: single-shot
+    /// binaries that never fork) to completion inside `end`. Kill/reap on
+    /// every non-exit path (a failed kill is recorded, never ignored);
+    /// stderr drained through the bounded primitive (retention capped,
+    /// errors fail closed). EOF for the drain is construction-specific:
+    /// these helpers hold the only write end and exit promptly, so an
+    /// observed exit closes it; anything else stays Unknown.
+    fn run_helper_bounded(program: &str, args: &[&str], end: Instant) -> HelperOutcome {
+        let blank = HelperOutcome {
+            exit: None,
+            stderr: Vec::new(),
+            drained_ok: false,
+            reaped: false,
+            signaled: false,
+        };
+        let mut child = match Command::new(program)
             .args(args)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -264,83 +280,102 @@ mod resource_exhaustion {
             .spawn()
         {
             Ok(c) => c,
-            Err(_) => return SignalReceipt::unknown(),
+            Err(_) => return blank,
         };
-        let end = Instant::now() + grace;
-        let mut reaped = false;
+        // Split the single deadline between observation and cleanup:
+        // the poll phase takes the first half so kill+reap always retain
+        // the second half — a timeout never leaves zero remaining reap
+        // time with ownership silently abandoned, and the total never
+        // exceeds `end`. (A fixed-second reserve cannot work here: for an
+        // end nearer than the reserve, checked_sub lands in the past and
+        // the poll phase would be skipped entirely.)
+        let remaining = end.saturating_duration_since(Instant::now());
+        let poll_end = Instant::now() + remaining / 2;
         let exited = loop {
             match child.try_wait() {
-                Ok(Some(_)) => {
-                    reaped = true;
-                    break true;
-                }
+                Ok(Some(_)) => break true,
                 Ok(None) => {
-                    if Instant::now() >= end {
+                    if Instant::now() >= poll_end.min(end) {
                         break false;
                     }
                     std::thread::sleep(Duration::from_millis(10));
                 }
-                // A poll error observes nothing: not exited, not reaped.
                 Err(_) => break false,
             }
         };
         if !exited {
-            // The helper itself did not finish inside the grace, or its
-            // state is unobservable: terminate it first so no path leaks
-            // a running child (a failed kill is recorded, not ignored),
-            // then reap bounded through the shared seam. A try_wait error
-            // there is unreaped, never completion. Verdict stays Unknown.
-            let killed = child.kill().is_ok();
+            let signaled = child.kill().is_ok();
             let mut poll = || child.try_wait();
-            let helper_reaped = reap_with_grace(&mut poll, grace).is_some();
-            let _ = killed;
-            return SignalReceipt {
-                dispatched: false,
-                helper_reaped,
-                pipe_ok: false,
-                presence: PidPresence::Unknown,
+            let reaped =
+                reap_with_grace(&mut poll, end.saturating_duration_since(Instant::now())).is_some();
+            return HelperOutcome {
+                signaled,
+                reaped,
+                ..blank
             };
         }
         let mut pipe = match child.stderr.take() {
             Some(p) => p,
             None => {
-                return SignalReceipt {
-                    dispatched: false,
-                    helper_reaped: reaped,
-                    pipe_ok: false,
-                    presence: PidPresence::Unknown,
+                return HelperOutcome {
+                    reaped: true,
+                    ..blank
                 };
             }
         };
         let (stderr, _, read_error) = drain_capped(&mut pipe);
-        if read_error {
+        // wait() past an observed exit reaps at once; it never blocks
+        // beyond the end above.
+        let code = child.wait().ok().and_then(|s| s.code());
+        HelperOutcome {
+            exit: code,
+            stderr,
+            drained_ok: !read_error,
+            reaped: true,
+            signaled: true,
+        }
+    }
+
+    fn signal_bounded(args: &[&str], grace: Duration) -> SignalReceipt {
+        // Single owned implementation: classification only lives here.
+        let end = Instant::now() + grace;
+        let o = run_helper_bounded("kill", args, end);
+        // o.signaled is consumed here, not just written: a timeout path
+        // that dispatched its kill reports sent-but-unobserved, distinct
+        // from a helper that never ran at all.
+        if o.exit.is_none() && !o.reaped {
             return SignalReceipt {
-                dispatched: false,
-                helper_reaped: reaped,
+                dispatched: o.signaled,
+                helper_reaped: false,
                 pipe_ok: false,
                 presence: PidPresence::Unknown,
             };
         }
-        // wait() past this point reaps an already-exited child and returns
-        // at once; it never blocks beyond the grace above.
-        let code = child.wait().ok().and_then(|s| s.code());
-        let lowered = String::from_utf8_lossy(&stderr).to_lowercase();
-        match code {
+        if !o.drained_ok {
+            return SignalReceipt {
+                dispatched: o.signaled,
+                helper_reaped: o.reaped,
+                pipe_ok: false,
+                presence: PidPresence::Unknown,
+            };
+        }
+        let lowered = String::from_utf8_lossy(&o.stderr).to_lowercase();
+        match o.exit {
             Some(0) => SignalReceipt {
                 dispatched: true,
-                helper_reaped: reaped,
+                helper_reaped: o.reaped,
                 pipe_ok: true,
                 presence: PidPresence::Present,
             },
             _ if lowered.contains("no such process") => SignalReceipt {
                 dispatched: true,
-                helper_reaped: reaped,
+                helper_reaped: o.reaped,
                 pipe_ok: true,
                 presence: PidPresence::Absent,
             },
             _ => SignalReceipt {
                 dispatched: false,
-                helper_reaped: reaped,
+                helper_reaped: o.reaped,
                 pipe_ok: true,
                 presence: PidPresence::Unknown,
             },
@@ -375,6 +410,10 @@ mod resource_exhaustion {
 
     struct RetainedCleanup {
         pid: Option<String>,
+        /// Test-controlled argv marker identifying the exact fixture
+        /// without any pid channel: usable even when pidfiles fail.
+        /// Bound before verdict asserts, like everything else owned here.
+        marker: Option<String>,
         pending: Option<PendingJoiners>,
         files: Vec<std::path::PathBuf>,
     }
@@ -391,20 +430,45 @@ mod resource_exhaustion {
             let mut joined = false;
             let mut unjoined = Vec::new();
             let mut helper_clean = true;
-            if let Some(pid) = self.pid.clone() {
-                // Terminate the exact owned descendant (not self-expiry).
-                // ESRCH on the kill itself already proves absence; a
-                // dispatched signal proceeds to the join/absence proof.
-                let kill = signal_bounded(&["-9", &pid], remaining());
-                if kill.dispatched {
-                    signaled = true;
-                }
-                if !(kill.helper_reaped && kill.pipe_ok) {
-                    helper_clean = false;
-                }
-                if matches!(kill.presence, PidPresence::Absent) {
-                    signaled = true;
-                    gone = true;
+            // Termination prefers the pid identity and falls back to the
+            // marker ownership channel; both run under the shared end.
+            // A missing identity with no marker is honestly unowned.
+            let target = self.pid.clone();
+            let marker = self.marker.clone();
+            if target.is_some() || marker.is_some() {
+                // Terminate the exact owned descendant (not self-expiry):
+                // pid identity first, marker ownership channel as the
+                // fallback when no pid was ever recorded. ESRCH on the
+                // kill itself already proves absence; a dispatched signal
+                // proceeds to the join/absence proof. Every helper runs
+                // under the shared end (never a fresh stacked grace).
+                match (target.as_deref(), marker.as_deref()) {
+                    (Some(pid), _) => {
+                        let kill = signal_bounded(&["-9", pid], remaining());
+                        if kill.dispatched {
+                            signaled = true;
+                        }
+                        if !(kill.helper_reaped && kill.pipe_ok) {
+                            helper_clean = false;
+                        }
+                        if matches!(kill.presence, PidPresence::Absent) {
+                            signaled = true;
+                            gone = true;
+                        }
+                    }
+                    (None, Some(m)) => {
+                        // pkill exit 0 matched exactly this fixture's
+                        // marker; anything else leaves absence to the
+                        // poll below (no inference from failure).
+                        let o = run_helper_bounded("pkill", &["-9", "-f", m], end);
+                        if !(o.reaped && o.drained_ok) {
+                            helper_clean = false;
+                        }
+                        if o.exit == Some(0) {
+                            signaled = true;
+                        }
+                    }
+                    (None, None) => {}
                 }
                 // Join the ORIGINAL reader handles: the kill closed the
                 // retained pipes, so they must finish inside the shared
@@ -413,19 +477,32 @@ mod resource_exhaustion {
                 // Absence receipt: only ESRCH counts; anything unknown
                 // retries inside the shared end, then stays false.
                 while !gone && Instant::now() < end {
-                    let probe = signal_bounded(&["-0", &pid], remaining());
-                    if !(probe.helper_reaped && probe.pipe_ok) {
-                        helper_clean = false;
-                    }
-                    match probe.presence {
-                        PidPresence::Absent => {
-                            gone = true;
-                            break;
+                    // Absence receipt: pid ESRCH text, or pgrep exit 1
+                    // (no match) for the marker channel. Anything else —
+                    // present, errors, undecipherable — retries inside the
+                    // shared end, then stays false. Never inferred.
+                    let absent = match (target.as_deref(), marker.as_deref()) {
+                        (Some(pid), _) => {
+                            let probe = signal_bounded(&["-0", pid], remaining());
+                            if !(probe.helper_reaped && probe.pipe_ok) {
+                                helper_clean = false;
+                            }
+                            matches!(probe.presence, PidPresence::Absent)
                         }
-                        PidPresence::Present | PidPresence::Unknown => {
-                            std::thread::sleep(Duration::from_millis(50))
+                        (None, Some(m)) => {
+                            let o = run_helper_bounded("pgrep", &["-f", m], end);
+                            if !(o.reaped && o.drained_ok) {
+                                helper_clean = false;
+                            }
+                            o.exit == Some(1)
                         }
+                        (None, None) => break,
+                    };
+                    if absent {
+                        gone = true;
+                        break;
                     }
+                    std::thread::sleep(Duration::from_millis(50));
                 }
             }
             // Join ORIGINAL handles unconditionally (not only with an
@@ -1018,6 +1095,29 @@ mod resource_exhaustion {
     }
 
     #[test]
+    fn harness_helper_timeout_kills_and_reaps_bounded() {
+        // Deterministic timeout path through the shared helper: a 30s
+        // sleeper against a 200ms end always trips the deadline first.
+        // The helper must kill it, reap the signaled exit inside the
+        // reserved floor, and report exit-None with reaped true — never
+        // an abandoned running child, never an inferred exit.
+        let start = Instant::now();
+        let o = run_helper_bounded(
+            "sleep",
+            &["30"],
+            Instant::now() + Duration::from_millis(200),
+        );
+        assert_eq!(o.exit, None, "timed-out helper has no exit code");
+        assert!(o.signaled, "timeout path dispatched its kill");
+        assert!(o.reaped, "kill was reaped inside the reserved floor");
+        assert!(
+            start.elapsed() < Duration::from_secs(10),
+            "helper timeout bounded end to end: {:?}",
+            start.elapsed()
+        );
+    }
+
+    #[test]
     fn harness_handshake_failure_has_owned_unknown_verdict() {
         // Two identity channels for the SAME controlled victim: pidA is
         // written by the fixture and establishes independent ownership
@@ -1048,6 +1148,7 @@ mod resource_exhaustion {
         // pidA handshake proves identity; without it there is honestly
         // nothing to terminate.
         let mut guard = RetainedCleanup {
+            marker: None,
             pid: None,
             pending: Some(pending),
             files: vec![receipt, pid_a],
@@ -1122,9 +1223,14 @@ mod resource_exhaustion {
             Duration::from_secs(5),
             LifecycleFaults::default(),
         );
-        // Guard owns threads and files BEFORE any assert below.
+        // Guard owns threads, files, AND the marker ownership channel
+        // BEFORE any assert below: a panic anywhere still cleans up via
+        // Drop. No pid identity was ever recorded for this fixture; the
+        // marker (established in the script text pre-launch) is the
+        // usable control channel, and complete() terminates through it.
         let mut guard = RetainedCleanup {
             pid: None,
+            marker: Some(marker.clone()),
             pending: Some(pending),
             files: vec![receipt],
         };
@@ -1134,63 +1240,42 @@ mod resource_exhaustion {
             run.incomplete_readers,
             "retained pipes are reported, not hidden"
         );
-        // The helper verdict is honestly unknown about termination: no
-        // identity was ever recorded, and the join below expires against
-        // the held pipes with both ORIGINAL handles preserved.
+        // No pid identity was ever recorded for this fixture (proven
+        // below): the marker ownership channel drove full cleanup, so the
+        // helper verdict stays honestly pid-less while every cleanup step
+        // carries an observed receipt.
         let receipt = guard.complete(start);
-        assert!(!receipt.signaled, "nothing signaled without an identity");
         assert!(
-            !receipt.descendant_gone,
-            "unknown descendant stays unknown, never absence"
+            std::fs::read_to_string(
+                std::env::temp_dir().join(format!("syntax-hs-nopid-pid-{}", std::process::id()))
+            )
+            .is_err(),
+            "no pid identity was ever recorded for this fixture"
         );
         assert!(
-            !receipt.readers_joined,
-            "unjoined handles stay reported, never success"
+            receipt.signaled,
+            "marker ownership terminated the exact fixture"
         );
-        assert_eq!(
-            receipt.unjoined.len(),
-            2,
-            "both original handles preserved as explicit unknowns, not detached"
+        assert!(
+            receipt.descendant_gone,
+            "marker absence observed (pgrep exit 1), not inferred"
+        );
+        assert!(
+            receipt.readers_joined,
+            "SAME original handles joined after marker termination"
+        );
+        assert!(
+            receipt.unjoined.is_empty(),
+            "no reader handle silently detached"
         );
         assert!(
             receipt.helper_clean,
             "cleanup helpers reaped and drained on every call"
         );
-        // Terminate the EXACT fixture through the marker ownership
-        // channel (usable despite the missing pid identity), then join
-        // the SAME original handles the receipt preserved: their pipes
-        // close on the kill, so this bounded join must succeed.
-        let kill = Command::new("pkill")
-            .args(["-9", "-f", &marker])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .expect("pkill runs");
-        assert!(
-            kill.success(),
-            "marker ownership terminated the exact fixture"
-        );
-        let join_end = Instant::now() + JOIN_GRACE;
-        let mut rejoined = true;
-        for reader in receipt.unjoined {
-            if !matches!(join_finished(reader, join_end), JoinOutcome::Joined) {
-                rejoined = false;
-            }
-        }
-        assert!(
-            rejoined,
-            "SAME original handles joined after marker termination"
-        );
-        // Absence receipt: pgrep exit 1 means no process matched.
-        let gone = Command::new("pgrep")
-            .args(["-f", &marker])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .expect("pgrep runs");
-        assert!(!gone.success(), "marker absence observed, not inferred");
+        // Termination, SAME-original-handle join, and absence all ran
+        // inside complete() through the marker channel (no pid identity
+        // was ever recorded): the receipt asserts below prove each, with
+        // no unbounded waits and no post-hoc inference.
         assert!(
             start.elapsed() < Duration::from_secs(25),
             "owned unknown-verdict cleanup bounded end to end: {:?}",
@@ -1218,6 +1303,7 @@ mod resource_exhaustion {
         // failure here still cleans up via Drop. The pid binds after its
         // read; the post-unwind stage below then uses this SAME guard.
         let mut guard_opt = Some(RetainedCleanup {
+            marker: None,
             pid: None,
             pending: Some(pending),
             files: vec![pid_a.clone()],
@@ -1294,6 +1380,7 @@ mod resource_exhaustion {
         // a failure here still cleans up via Drop (no identity to kill,
         // files removed, threads documented). The pid binds below.
         let mut guard = RetainedCleanup {
+            marker: None,
             pid: None,
             pending: Some(pending),
             files: vec![pid_a.clone()],
@@ -1357,6 +1444,7 @@ mod resource_exhaustion {
         let start = Instant::now();
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let _guard = RetainedCleanup {
+                marker: None,
                 pid: Some(pid.clone()),
                 pending: None,
                 files: vec![],
@@ -1831,6 +1919,7 @@ mod resource_exhaustion {
         // itself binds after the pidfile read; without an identity there
         // is nothing to terminate, which Drop records honestly.
         let mut guard = RetainedCleanup {
+            marker: None,
             pid: None,
             pending: Some(pending),
             files: vec![receipt, pidfile],
