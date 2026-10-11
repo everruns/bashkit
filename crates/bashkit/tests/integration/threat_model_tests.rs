@@ -409,22 +409,7 @@ mod resource_exhaustion {
                 // Join the ORIGINAL reader handles: the kill closed the
                 // retained pipes, so they must finish inside the shared
                 // grace. Missing receipts fail here, never silently.
-                if let Some(pending) = self.pending.take() {
-                    let mut ok = !pending.handles.is_empty();
-                    for reader in pending.handles {
-                        match join_finished(reader, Instant::now() + remaining().min(JOIN_GRACE)) {
-                            JoinOutcome::Joined => {}
-                            JoinOutcome::Unfinished(handle) => {
-                                unjoined.push(handle);
-                                ok = false;
-                            }
-                            JoinOutcome::Panicked => {
-                                ok = false;
-                            }
-                        }
-                    }
-                    joined = ok;
-                }
+                // Join deferred past absence: see below.
                 // Absence receipt: only ESRCH counts; anything unknown
                 // retries inside the shared end, then stays false.
                 while !gone && Instant::now() < end {
@@ -442,6 +427,27 @@ mod resource_exhaustion {
                         }
                     }
                 }
+            }
+            // Join ORIGINAL handles unconditionally (not only with an
+            // identity): with no pid the pipes may stay held, in which
+            // case the shared grace expires and the handles are preserved
+            // in the receipt as explicit unknowns — never silently
+            // detached, never a vacuous success.
+            if let Some(pending) = self.pending.take() {
+                let mut ok = !pending.handles.is_empty();
+                for reader in pending.handles {
+                    match join_finished(reader, Instant::now() + remaining().min(JOIN_GRACE)) {
+                        JoinOutcome::Joined => {}
+                        JoinOutcome::Unfinished(handle) => {
+                            unjoined.push(handle);
+                            ok = false;
+                        }
+                        JoinOutcome::Panicked => {
+                            ok = false;
+                        }
+                    }
+                }
+                joined = ok;
             }
             // Receipt files are removed on every path, success or unwind.
             for path in std::mem::take(&mut self.files) {
@@ -1092,18 +1098,22 @@ mod resource_exhaustion {
 
     #[test]
     fn harness_ownership_channel_failure_has_owned_unknown_verdict() {
-        // Fixture with NO pid echo anywhere: the ownership channel itself
-        // fails, not just a secondary handshake. The guard is still built
-        // first (owning threads and files), so cleanup runs and reports
-        // explicit unknowns instead of relying on pid-None silence: no
-        // termination possible, no handles joined, files removed, verdict
-        // preserved, all bounded.
+        // Fixture with NO pid echo anywhere: no per-process identity
+        // channel exists, so the parent verdict stays honestly unknown.
+        // Ownership comes instead from a test-controlled argv marker
+        // (established in the script text before the run, usable whether
+        // or not any pidfile handshake succeeds): pkill/pgrep address the
+        // exact fixture through it, with exit codes as the receipts
+        // (pkill 0 = matched, pgrep 1 = gone). No twin handles, no
+        // self-expiry reliance: every assertion below is observed.
+        let marker = format!("syntax-sleeper-{}", std::process::id());
         let receipt =
             std::env::temp_dir().join(format!("syntax-hs-nopid-limits-{}", std::process::id()));
         let script = format!(
-            "ulimit -s > '{}'; ulimit -t >> '{}'; sleep 30 & exit 0",
+            "ulimit -s > '{}'; ulimit -t >> '{}'; exec -a '{}' sleep 30 & exit 0",
             receipt.display(),
-            receipt.display()
+            receipt.display(),
+            marker
         );
         let start = Instant::now();
         let (run, pending) = run_raw_core(
@@ -1112,6 +1122,7 @@ mod resource_exhaustion {
             Duration::from_secs(5),
             LifecycleFaults::default(),
         );
+        // Guard owns threads and files BEFORE any assert below.
         let mut guard = RetainedCleanup {
             pid: None,
             pending: Some(pending),
@@ -1123,11 +1134,11 @@ mod resource_exhaustion {
             run.incomplete_readers,
             "retained pipes are reported, not hidden"
         );
+        // The helper verdict is honestly unknown about termination: no
+        // identity was ever recorded, and the join below expires against
+        // the held pipes with both ORIGINAL handles preserved.
         let receipt = guard.complete(start);
-        assert!(
-            !receipt.signaled,
-            "nothing was terminated without an identity"
-        );
+        assert!(!receipt.signaled, "nothing signaled without an identity");
         assert!(
             !receipt.descendant_gone,
             "unknown descendant stays unknown, never absence"
@@ -1136,18 +1147,54 @@ mod resource_exhaustion {
             !receipt.readers_joined,
             "unjoined handles stay reported, never success"
         );
-        assert!(
-            receipt.unjoined.is_empty(),
-            "no handle silently detached without ownership"
+        assert_eq!(
+            receipt.unjoined.len(),
+            2,
+            "both original handles preserved as explicit unknowns, not detached"
         );
         assert!(
             receipt.helper_clean,
             "cleanup helpers reaped and drained on every call"
         );
+        // Terminate the EXACT fixture through the marker ownership
+        // channel (usable despite the missing pid identity), then join
+        // the SAME original handles the receipt preserved: their pipes
+        // close on the kill, so this bounded join must succeed.
+        let kill = Command::new("pkill")
+            .args(["-9", "-f", &marker])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .expect("pkill runs");
         assert!(
-            receipt.elapsed < Duration::from_secs(25),
-            "unknown-verdict cleanup bounded: {:?}",
-            receipt.elapsed
+            kill.success(),
+            "marker ownership terminated the exact fixture"
+        );
+        let join_end = Instant::now() + JOIN_GRACE;
+        let mut rejoined = true;
+        for reader in receipt.unjoined {
+            if !matches!(join_finished(reader, join_end), JoinOutcome::Joined) {
+                rejoined = false;
+            }
+        }
+        assert!(
+            rejoined,
+            "SAME original handles joined after marker termination"
+        );
+        // Absence receipt: pgrep exit 1 means no process matched.
+        let gone = Command::new("pgrep")
+            .args(["-f", &marker])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .expect("pgrep runs");
+        assert!(!gone.success(), "marker absence observed, not inferred");
+        assert!(
+            start.elapsed() < Duration::from_secs(25),
+            "owned unknown-verdict cleanup bounded end to end: {:?}",
+            start.elapsed()
         );
     }
 
@@ -1167,20 +1214,26 @@ mod resource_exhaustion {
             Duration::from_secs(5),
             LifecycleFaults::default(),
         );
-        assert!(
-            run.incomplete_readers,
-            "fixture holds pipes as designed before the panic"
-        );
+        // Guard owns threads and file paths BEFORE the assert below: a
+        // failure here still cleans up via Drop. The pid binds after its
+        // read; the post-unwind stage below then uses this SAME guard.
         let mut guard_opt = Some(RetainedCleanup {
             pid: None,
             pending: Some(pending),
             files: vec![pid_a.clone()],
         });
+        // Identity binds before any assert below: the pidfile read is
+        // fallible setup, and the guard already owns threads and files
+        // while it runs.
         let owned = std::fs::read_to_string(&pid_a)
             .expect("ownership channel recorded")
             .trim()
             .to_string();
         guard_opt.as_mut().unwrap().pid = Some(owned.clone());
+        assert!(
+            run.incomplete_readers,
+            "fixture holds pipes as designed before the panic"
+        );
         let start = Instant::now();
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let g = guard_opt.as_mut().unwrap();
@@ -1233,21 +1286,30 @@ mod resource_exhaustion {
             Duration::from_secs(5),
             LifecycleFaults::default(),
         );
-        assert!(
-            run.incomplete_readers,
-            "fixture holds pipes as designed before the panic"
-        );
+        // Guard acquired BEFORE any assert below: a failure in the
+        // ownership read or in the verdict assert still cleans up via
+        // Drop. The incomplete assert runs inside the closure, after the
+        // guard owns the exact descendant and the original handles.
+        // Guard owns threads and files BEFORE the fallible pidA read:
+        // a failure here still cleans up via Drop (no identity to kill,
+        // files removed, threads documented). The pid binds below.
+        let mut guard = RetainedCleanup {
+            pid: None,
+            pending: Some(pending),
+            files: vec![pid_a.clone()],
+        };
         let owned = std::fs::read_to_string(&pid_a)
             .expect("ownership channel recorded")
             .trim()
             .to_string();
+        guard.pid = Some(owned.clone());
         let start = Instant::now();
-        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let _guard = RetainedCleanup {
-                pid: Some(owned.clone()),
-                pending: Some(pending),
-                files: vec![pid_a.clone()],
-            };
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+            let _guard = guard;
+            assert!(
+                run.incomplete_readers,
+                "fixture holds pipes as designed before the panic"
+            );
             panic!("simulated assertion failure before complete");
         }));
         assert!(outcome.is_err(), "the simulated failure unwinds");
