@@ -121,10 +121,32 @@ mod resource_exhaustion {
     /// The launcher applies the fail-closed CPU/stack caps, reports the
     /// effective values as the first stderr line, then `exec`s the CLI so
     /// exit codes and diagnostics stay the real producer's own.
-    fn run_cli_argv_bounded(script: &str, extra_args: &[&str], limit: Duration) -> BoundedRun {
-        let launcher = format!(
+    /// Fail-closed launcher shared by every bounded child: applies the
+    /// CPU/stack caps (exiting 99 when the platform refuses them), reports
+    /// the effective values as the first stderr line, then `exec`s the
+    /// target so exit codes stay the real producer's own. Portable limits
+    /// only: what the kernel enforces afterwards is platform behavior, and
+    /// the readback below proves what took effect here.
+    fn limit_launcher() -> String {
+        format!(
             "{BOUNDED_CLI_LIMITS}; echo \"harness-limits: stack=$(ulimit -s) cpu=$(ulimit -t)\" >&2; exec \"$@\""
-        );
+        )
+    }
+
+    /// Splits the launcher's readback line off stderr. An absent line
+    /// means the launcher never ran (fail-closed before the target), and
+    /// the empty note records exactly that.
+    fn strip_launcher_note(run: &mut BoundedRun) {
+        (run.limits_note, run.stderr) = match run.stderr.split_once('\n') {
+            Some((first, rest)) if first.starts_with("harness-limits:") => {
+                (first.to_string(), rest.to_string())
+            }
+            _ => (String::new(), std::mem::take(&mut run.stderr)),
+        };
+    }
+
+    fn run_cli_argv_bounded(script: &str, extra_args: &[&str], limit: Duration) -> BoundedRun {
+        let launcher = limit_launcher();
         let mut cmd = Command::new("bash");
         cmd.args(["-c", &launcher, "_"])
             .arg(bashkit_cli_path())
@@ -134,12 +156,24 @@ mod resource_exhaustion {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         let mut run = run_command_bounded(cmd, limit);
-        (run.limits_note, run.stderr) = match run.stderr.split_once('\n') {
-            Some((first, rest)) if first.starts_with("harness-limits:") => {
-                (first.to_string(), rest.to_string())
-            }
-            _ => (String::new(), run.stderr),
-        };
+        strip_launcher_note(&mut run);
+        run
+    }
+
+    /// Runs an arbitrary program under the same fail-closed launcher (used
+    /// by harness selftests so they prove the effective CPU/stack bounds
+    /// instead of bypassing them). The caller supplies piped stdio.
+    fn run_raw_bounded(program: &str, args: &[&str], limit: Duration) -> BoundedRun {
+        let launcher = limit_launcher();
+        let mut cmd = Command::new("bash");
+        cmd.args(["-c", &launcher, "_"])
+            .arg(program)
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let mut run = run_command_bounded(cmd, limit);
+        strip_launcher_note(&mut run);
         run
     }
 
@@ -147,6 +181,29 @@ mod resource_exhaustion {
     /// no trailing words after the `-c` script.
     fn run_cli_bounded(script: &str, limit: Duration) -> BoundedRun {
         run_cli_argv_bounded(script, &[], limit)
+    }
+
+    /// Reaps a victim inside a finite grace via caller-supplied polling.
+    /// Returns the observed status, or `None` when the victim cannot be
+    /// reaped inside the grace (or polling itself errors): the safe seam
+    /// for the unavailable-reap verdict.
+    fn reap_with_grace(
+        poll: &mut dyn FnMut() -> std::io::Result<Option<std::process::ExitStatus>>,
+        grace: Duration,
+    ) -> Option<std::process::ExitStatus> {
+        let end = Instant::now() + grace;
+        loop {
+            match poll() {
+                Ok(Some(s)) => return Some(s),
+                Ok(None) => {
+                    if Instant::now() >= end {
+                        return None;
+                    }
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(_) => return None,
+            }
+        }
     }
 
     /// Runs an already-built command with one shared wall deadline for
@@ -238,28 +295,30 @@ mod resource_exhaustion {
                 }
             }
         }
-        let incomplete_readers = bufs[0].is_none() || bufs[1].is_none() || read_error;
-        if !incomplete_readers {
+        let mut incomplete_readers = bufs[0].is_none() || bufs[1].is_none() || read_error;
+        // Bounded join gate: a channel receipt proves its thread finished
+        // every blocking call (sending is the sender's last act before
+        // return), so joining after all receipts is bounded by construction
+        // to epilogue reclamation; std offers no timed join. Missing
+        // receipts skip the join (those threads stay detached) and fail the
+        // run as incomplete instead. A panicking reader surfaces here as
+        // incomplete too, never silent.
+        if bufs[0].is_some() && bufs[1].is_some() {
             for reader in readers {
-                let _ = reader.join();
+                if reader.join().is_err() {
+                    incomplete_readers = true;
+                }
             }
         }
+        // Reaps the victim inside a finite grace through a poll seam, so
+        // the unavailable-reap verdict is unit-testable without OS fakery.
         // Bounded reap inside a finite cleanup grace: the execution deadline
         // (`limit`) is already over, so reaping must never become an
         // unbounded `wait`. A victim that cannot be reaped inside the grace
         // fails the run visibly instead of hanging the suite; `timed_out`
         // stays exactly as recorded pre-kill and is never recomputed here.
-        let reap_end = Instant::now() + REAP_GRACE;
-        let mut reaped = None;
-        while reaped.is_none() && Instant::now() < reap_end {
-            match child.try_wait() {
-                Ok(found) => reaped = found,
-                Err(_) => break,
-            }
-            if reaped.is_none() {
-                std::thread::sleep(Duration::from_millis(10));
-            }
-        }
+        let mut poll = || child.try_wait();
+        let reaped = reap_with_grace(&mut poll, REAP_GRACE);
         let status = match (status, reaped) {
             (Some(s), _) => Some(s),
             (None, Some(s)) => Some(s),
@@ -430,16 +489,67 @@ mod resource_exhaustion {
     }
 
     #[test]
+    fn harness_reap_seam_covers_poll_verdicts() {
+        // A pre-reaped status to replay through the seam.
+        let mut done = Command::new("bash");
+        done.args(["-c", "exit 3"]);
+        let mut done = done.spawn().expect("spawn seam status source");
+        let status = loop {
+            if let Some(s) = done.try_wait().expect("poll seam source") {
+                break s;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        // Immediate exit reaps at once.
+        let mut once = Some(status);
+        assert!(reap_with_grace(&mut || Ok(once.take()), Duration::from_secs(5)).is_some());
+        // Delayed exit reaps once observed.
+        let mut pending = 2;
+        let got = reap_with_grace(
+            &mut || {
+                if pending == 0 {
+                    Ok(Some(status))
+                } else {
+                    pending -= 1;
+                    Ok(None)
+                }
+            },
+            Duration::from_secs(5),
+        );
+        assert_eq!(got.map(|s| s.code()), Some(Some(3)));
+        // A victim that never exits fails the verdict inside the grace.
+        let start = Instant::now();
+        let none: Option<std::process::ExitStatus> =
+            reap_with_grace(&mut || Ok(None), Duration::from_millis(50));
+        assert!(none.is_none(), "unreapable victim fails visibly");
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "grace bounds the wait"
+        );
+        // Poll errors fail closed too.
+        let err: Option<std::process::ExitStatus> = reap_with_grace(
+            &mut || Err(std::io::Error::other("gone")),
+            Duration::from_secs(5),
+        );
+        assert!(err.is_none());
+    }
+
+    #[test]
     fn harness_timeout_kills_and_reaps_within_grace() {
         // Pure-builtin busy loop: no grandchildren can inherit the pipes,
         // so killing the shell closes them and the readers finish.
-        let mut c = Command::new("bash");
-        c.args(["-c", "while true; do :; done"])
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        let run = run_command_bounded(c, Duration::from_secs(2));
-        assert!(run.timed_out, "sleep 30 must trip the 2s deadline");
+        // Pure-builtin busy loop: no grandchildren can inherit the pipes,
+        // so killing the shell closes them and the readers finish. Runs
+        // under the fail-closed launcher so the effective CPU/stack bounds
+        // are applied and read back, not bypassed.
+        let start = Instant::now();
+        let run = run_raw_bounded(
+            "bash",
+            &["-c", "while true; do :; done"],
+            Duration::from_secs(2),
+        );
+        let elapsed = start.elapsed();
+        assert!(run.timed_out, "busy loop must trip the 2s deadline");
         assert_eq!(run.exit_code, None, "killed victim has no exit code");
         assert!(!run.oversized);
         assert!(!run.read_error);
@@ -447,22 +557,40 @@ mod resource_exhaustion {
             !run.incomplete_readers,
             "silent child: pipes close on kill, readers finish"
         );
+        assert!(
+            run.limits_note.contains("stack=4096"),
+            "effective stack cap read back: {}",
+            run.limits_note
+        );
+        assert!(
+            run.limits_note.contains("cpu=10"),
+            "effective CPU cap read back: {}",
+            run.limits_note
+        );
+        assert!(
+            elapsed < Duration::from_secs(12),
+            "deadline 2s + drain 2s + reap 5s bound the run: {elapsed:?}"
+        );
     }
 
     #[test]
     fn harness_overflow_child_is_flagged_with_clean_read() {
         // 9000 bytes: just over the 8192 cap, small enough to exit on its
         // own through the pipe buffer, so the verdict is overflow alone.
-        let mut c = Command::new("bash");
-        c.args(["-c", "head -c 9000 /dev/zero"])
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        let run = run_command_bounded(c, Duration::from_secs(10));
+        let run = run_raw_bounded(
+            "bash",
+            &["-c", "head -c 9000 /dev/zero"],
+            Duration::from_secs(10),
+        );
         assert!(run.oversized, "9000 retained bytes are real excess");
         assert_eq!(run.stderr.len() + run.stdout.len(), 8192);
         assert!(!run.read_error);
         assert!(!run.timed_out);
+        assert!(
+            run.limits_note.contains("stack=4096") && run.limits_note.contains("cpu=10"),
+            "effective caps read back: {}",
+            run.limits_note
+        );
     }
 
     /// TM-DOS-135: hostile indirect cycles are refused in a bounded child.
@@ -585,6 +713,9 @@ mod resource_exhaustion {
     /// but readers never finish. The helper must report incomplete readers
     /// within bounds, not wait forever. Real bash (not the CLI) is the
     /// pipe holder here; the orphaned `sleep` is harmless and bounded.
+    /// The sleeper's own 30s lifetime is the outer deadline (grandchildren
+    /// cannot be reaped portably); the elapsed assertion proves the run
+    /// returns without waiting for it.
     #[test]
     fn bounded_helper_flags_retained_pipes() {
         let mut cmd = Command::new("bash");
@@ -592,13 +723,20 @@ mod resource_exhaustion {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        let start = Instant::now();
         let run = run_command_bounded(cmd, Duration::from_secs(5));
+        let elapsed = start.elapsed();
         assert!(!run.timed_out, "exited child misreported as timeout");
         assert!(
             run.incomplete_readers,
             "retained pipes not reported as incomplete"
         );
+        assert!(!run.read_error, "open pipes are not I/O errors");
         assert_eq!(run.exit_code, Some(0), "stdout: {}", run.stdout);
+        assert!(
+            elapsed < Duration::from_secs(15),
+            "returned in {elapsed:?} without waiting for the 30s sleeper"
+        );
     }
 
     #[test]
