@@ -36,10 +36,24 @@ mod resource_exhaustion {
     struct BoundedRun {
         timed_out: bool,
         oversized: bool,
+        /// True when the deadline passed with readers unfinished: a foreign
+        /// descendant retains the pipes. Detection, not reaping: without
+        /// platform process-group APIs (no new dependencies) a foreign
+        /// descendant cannot be reaped portably, so the run fails visibly.
+        incomplete_readers: bool,
+        /// First stderr line from the launcher (`harness-limits: ...`),
+        /// proving the CPU/stack caps were applied to this run. Empty when
+        /// the launcher itself refused (fail-closed exit 99).
+        limits_note: String,
         exit_code: Option<i32>,
         stdout: String,
         stderr: String,
     }
+
+    /// Fail-closed launcher limits: 10 CPU seconds, 4 MiB main-thread
+    /// stack. Any refusal exits 99 before the producer starts, so a run
+    /// without limits can never be mistaken for a bounded one.
+    const BOUNDED_CLI_LIMITS: &str = "ulimit -s 4096 || exit 99; ulimit -t 10 || exit 99";
 
     /// Per-pipe sample cap. Past the cap the reader stops draining and the
     /// run is marked `oversized`, which fails the harness: oversize output
@@ -77,31 +91,50 @@ mod resource_exhaustion {
         })
     }
 
-    /// Runs a script in a child CLI process with enforced bounds, and
-    /// records the real producer exit status:
-    /// - wall clock: the poll loop kills the child past `limit`;
-    /// - output: one reader thread per pipe stops past the sample cap, the
-    ///   child is killed, and the run is marked `oversized` (a harness
-    ///   failure, never a silent cut);
-    /// - CPU/stack: the child is launched through `ulimit -t/-s` where the
-    ///   launcher shell supports it (best effort; Linux and macOS do), with
-    ///   `exec` keeping the CLI as the real producer so exit codes and
-    ///   diagnostics stay its own. Rust std exposes no portable per-child
-    ///   CPU/stack/memory caps, and Darwin does not enforce address-space
-    ///   caps: those are documented here, not claimed.
+    /// Runs a script in the built CLI under `run_command_bounded`.
+    /// The launcher applies the fail-closed CPU/stack caps, reports the
+    /// effective values as the first stderr line, then `exec`s the CLI so
+    /// exit codes and diagnostics stay the real producer's own.
     fn run_cli_bounded(script: &str, limit: Duration) -> BoundedRun {
-        // Best-effort launcher limits: 10 CPU seconds, 4 MiB main-thread
-        // stack. Failures fall through; the watchdog stays the hard bound.
-        let launcher = "ulimit -s 4096 2>/dev/null; ulimit -t 10 2>/dev/null; exec \"$@\"";
-        let mut child = Command::new("bash")
-            .args(["-c", launcher, "_"])
+        let launcher = format!(
+            "{BOUNDED_CLI_LIMITS}; echo \"harness-limits: stack=$(ulimit -s) cpu=$(ulimit -t)\" >&2; exec \"$@\""
+        );
+        let mut cmd = Command::new("bash");
+        cmd.args(["-c", &launcher, "_"])
             .arg(bashkit_cli_path())
             .args(["-c", script])
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("spawn bounded CLI");
+            .stderr(Stdio::piped());
+        let mut run = run_command_bounded(cmd, limit);
+        (run.limits_note, run.stderr) = match run.stderr.split_once('\n') {
+            Some((first, rest)) if first.starts_with("harness-limits:") => {
+                (first.to_string(), rest.to_string())
+            }
+            _ => (String::new(), run.stderr),
+        };
+        run
+    }
+
+    /// Runs an already-built command with one shared wall deadline for
+    /// child exit, pipe drain, and reaping:
+    /// - wall clock: past `limit` the child is killed; if it had already
+    ///   exited, the run is not marked timed out;
+    /// - output: one reader thread per pipe stops past the sample cap, the
+    ///   child is killed, and the run is marked `oversized` (a harness
+    ///   failure, never a silent cut). Readers run concurrently, so a
+    ///   chatty child can never deadlock the runner on a full pipe;
+    /// - drain: after the break, missing readers get a short grace period.
+    ///   Anything still missing means a foreign descendant retains the
+    ///   pipe: the run is marked `incomplete_readers` and fails visibly
+    ///   instead of waiting forever. Reader threads for retained pipes are
+    ///   dropped, not joined without a deadline (one documented thread
+    ///   leak per such run, only in the retention self-test).
+    /// - CPU/stack caps are the launcher's job (see above); Rust std
+    ///   exposes no portable per-child CPU/stack/memory caps, and Darwin
+    ///   does not enforce address-space caps: documented here, not claimed.
+    fn run_command_bounded(mut cmd: Command, limit: Duration) -> BoundedRun {
+        let mut child = cmd.spawn().expect("spawn bounded child");
         let (tx, rx) = std::sync::mpsc::channel();
         let mut readers = Vec::new();
         if let Some(pipe) = child.stdout.take() {
@@ -114,48 +147,54 @@ mod resource_exhaustion {
         let mut bufs: [Option<Vec<u8>>; 2] = [None, None];
         let mut oversized = false;
         let mut status = None;
+        let mut killed = false;
         let mut timed_out = false;
-        let start = Instant::now();
+        let deadline = Instant::now() + limit;
+        // Pipe EOF alone never ends the run: only an observed exit does,
+        // otherwise a child that closes output and keeps running would
+        // bypass the watchdog into an unbounded wait.
         loop {
             while let Ok((id, buf, over)) = rx.try_recv() {
                 bufs[id as usize] = Some(buf);
                 oversized |= over;
             }
-            if bufs[0].is_some() && bufs[1].is_some() {
+            if bufs[0].is_some() && bufs[1].is_some() && status.is_some() {
                 break;
             }
-            if oversized {
+            if (oversized || Instant::now() >= deadline) && !killed {
                 let _ = child.kill();
+                killed = true;
             }
             if status.is_none() {
                 status = child.try_wait().expect("poll child");
             }
-            if status.is_some() && bufs[0].is_some() && bufs[1].is_some() {
-                break;
-            }
-            if status.is_none() && start.elapsed() >= limit {
-                let _ = child.kill();
-                timed_out = true;
-            }
-            if (status.is_some() || timed_out) && bufs[0].is_some() && bufs[1].is_some() {
+            if Instant::now() >= deadline {
+                timed_out = status.is_none();
                 break;
             }
             std::thread::sleep(Duration::from_millis(10));
-            if timed_out && bufs[0].is_some() && bufs[1].is_some() {
-                break;
-            }
         }
-        while bufs[0].is_none() || bufs[1].is_none() {
-            match rx.recv() {
+        // Bounded drain grace: an exited child with unretained pipes hits
+        // EOF promptly; anything still missing is a retained pipe.
+        let grace_end = Instant::now() + Duration::from_secs(2);
+        while (bufs[0].is_none() || bufs[1].is_none()) && Instant::now() < grace_end {
+            match rx.recv_timeout(Duration::from_millis(50)) {
                 Ok((id, buf, over)) => {
                     bufs[id as usize] = Some(buf);
                     oversized |= over;
                 }
-                Err(_) => break,
+                Err(_) => {
+                    if bufs[0].is_some() && bufs[1].is_some() {
+                        break;
+                    }
+                }
             }
         }
-        for reader in readers {
-            let _ = reader.join();
+        let incomplete_readers = bufs[0].is_none() || bufs[1].is_none();
+        if !incomplete_readers {
+            for reader in readers {
+                let _ = reader.join();
+            }
         }
         // Always reaped explicitly: `try_wait` may already have seen the
         // exit, in which case this returns immediately with the same status.
@@ -166,6 +205,8 @@ mod resource_exhaustion {
         BoundedRun {
             timed_out,
             oversized,
+            incomplete_readers,
+            limits_note: String::new(),
             exit_code: status.and_then(|s| s.code()),
             stdout,
             stderr,
@@ -187,6 +228,15 @@ mod resource_exhaustion {
             let run = run_cli_bounded(script, Duration::from_secs(20));
             assert!(!run.timed_out, "hostile script hung: {script}");
             assert!(!run.oversized, "hostile script oversized: {script}");
+            assert!(
+                !run.incomplete_readers,
+                "hostile script readers incomplete: {script}"
+            );
+            assert!(
+                run.limits_note.contains("stack=4096") && run.limits_note.contains("cpu=10"),
+                "limits not applied: {}",
+                run.limits_note
+            );
             assert_eq!(
                 run.exit_code,
                 Some(1),
@@ -217,6 +267,78 @@ mod resource_exhaustion {
             run.exit_code
         );
         assert!(!run.oversized, "hung child misreported as oversize");
+        assert!(
+            !run.incomplete_readers,
+            "hung child misreported as incomplete"
+        );
+    }
+
+    /// The launcher is fail-closed: if `ulimit` refuses, the producer never
+    /// starts (exit 99) instead of running unbounded. A shadowed failing
+    /// `ulimit` exercises the refusal with a harmless instant child.
+    #[test]
+    fn bounded_launcher_failure_is_fail_closed() {
+        let probe = [
+            "ulimit() { return 1; }; ",
+            BOUNDED_CLI_LIMITS,
+            "; echo SURVIVED",
+        ]
+        .concat();
+        let out = Command::new("bash")
+            .args(["-c", &probe])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn launcher probe")
+            .wait_with_output()
+            .expect("reap launcher probe");
+        assert_eq!(
+            out.status.code(),
+            Some(99),
+            "stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            !String::from_utf8_lossy(&out.stdout).contains("SURVIVED"),
+            "launcher ran the producer without limits"
+        );
+    }
+
+    /// Both pipes hit EOF while the producer lives: only the wall deadline
+    /// may end the run. The previous loop broke on complete buffers and
+    /// then waited without a deadline; this case hung it forever.
+    #[test]
+    fn bounded_helper_covers_early_pipe_close() {
+        let run = run_cli_bounded("echo hi; exec 1>&- 2>&-; sleep 30", Duration::from_secs(5));
+        assert!(run.timed_out, "live producer with closed pipes not killed");
+        assert!(!run.oversized, "early close misreported as oversize");
+        assert!(
+            !run.incomplete_readers,
+            "closed pipes misreported as incomplete"
+        );
+        assert!(run.stdout.contains("hi"), "stdout: {}", run.stdout);
+        assert_eq!(run.exit_code, None, "expected SIGKILL, no exit code");
+    }
+
+    /// An exited child with descendant-retained pipes: the exit is observed
+    /// but readers never finish. The helper must report incomplete readers
+    /// within bounds, not wait forever. Real bash (not the CLI) is the
+    /// pipe holder here; the orphaned `sleep` is harmless and bounded.
+    #[test]
+    fn bounded_helper_flags_retained_pipes() {
+        let mut cmd = Command::new("bash");
+        cmd.args(["-c", "sleep 30 & exit 0"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let run = run_command_bounded(cmd, Duration::from_secs(5));
+        assert!(!run.timed_out, "exited child misreported as timeout");
+        assert!(
+            run.incomplete_readers,
+            "retained pipes not reported as incomplete"
+        );
+        assert_eq!(run.exit_code, Some(0), "stdout: {}", run.stdout);
     }
 
     #[test]
@@ -226,6 +348,10 @@ mod resource_exhaustion {
         let run = run_cli_bounded(script, Duration::from_secs(20));
         assert!(!run.timed_out, "overproducer hung");
         assert!(run.oversized, "overproducer not flagged as oversize");
+        assert!(
+            !run.incomplete_readers,
+            "overproducer misreported as incomplete"
+        );
         assert!(
             run.stdout.len() <= BOUNDED_SAMPLE_CAP + 4096,
             "sample not capped: {}",
