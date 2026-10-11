@@ -362,6 +362,10 @@ mod resource_exhaustion {
         signaled: bool,
         descendant_gone: bool,
         readers_joined: bool,
+        /// Every signal helper call inside cleanup reported its own
+        /// bounded reap plus a clean pipe drain. A false here means the
+        /// observations above rest on unhealthy helpers, never silent.
+        helper_clean: bool,
         /// Reader handles that never finished inside the shared grace:
         /// preserved here instead of silently detached, so the caller
         /// sees the exact shortfall. Normally empty.
@@ -386,6 +390,7 @@ mod resource_exhaustion {
             let mut gone = false;
             let mut joined = false;
             let mut unjoined = Vec::new();
+            let mut helper_clean = true;
             if let Some(pid) = self.pid.clone() {
                 // Terminate the exact owned descendant (not self-expiry).
                 // ESRCH on the kill itself already proves absence; a
@@ -393,6 +398,9 @@ mod resource_exhaustion {
                 let kill = signal_bounded(&["-9", &pid], remaining());
                 if kill.dispatched {
                     signaled = true;
+                }
+                if !(kill.helper_reaped && kill.pipe_ok) {
+                    helper_clean = false;
                 }
                 if matches!(kill.presence, PidPresence::Absent) {
                     signaled = true;
@@ -420,7 +428,11 @@ mod resource_exhaustion {
                 // Absence receipt: only ESRCH counts; anything unknown
                 // retries inside the shared end, then stays false.
                 while !gone && Instant::now() < end {
-                    match signal_bounded(&["-0", &pid], remaining()).presence {
+                    let probe = signal_bounded(&["-0", &pid], remaining());
+                    if !(probe.helper_reaped && probe.pipe_ok) {
+                        helper_clean = false;
+                    }
+                    match probe.presence {
                         PidPresence::Absent => {
                             gone = true;
                             break;
@@ -440,6 +452,7 @@ mod resource_exhaustion {
                 signaled,
                 descendant_gone: gone,
                 readers_joined: joined,
+                helper_clean,
                 unjoined,
                 elapsed: start.elapsed(),
             }
@@ -1024,15 +1037,20 @@ mod resource_exhaustion {
         );
         // Ownership first: pidA binds the exact victim before the
         // handshake on pidB is even attempted.
-        let owned = std::fs::read_to_string(&pid_a)
-            .expect("ownership channel recorded")
-            .trim()
-            .to_string();
+        // Guard owns threads and file paths BEFORE any fallible read:
+        // a panic below still cleans up via Drop. The pid binds once the
+        // pidA handshake proves identity; without it there is honestly
+        // nothing to terminate.
         let mut guard = RetainedCleanup {
-            pid: Some(owned.clone()),
+            pid: None,
             pending: Some(pending),
             files: vec![receipt, pid_a],
         };
+        let owned = std::fs::read_to_string(&guard.files[1])
+            .expect("ownership channel recorded")
+            .trim()
+            .to_string();
+        guard.pid = Some(owned.clone());
         assert!(!run.timed_out, "exited child misreported as timeout");
         assert_eq!(run.exit_code, Some(0));
         assert!(
@@ -1058,6 +1076,10 @@ mod resource_exhaustion {
             "SAME original reader handles joined after the kill"
         );
         assert!(
+            receipt.helper_clean,
+            "cleanup helpers reaped and drained on every call"
+        );
+        assert!(
             receipt.unjoined.is_empty(),
             "no reader handle silently detached"
         );
@@ -1065,6 +1087,133 @@ mod resource_exhaustion {
             receipt.elapsed < Duration::from_secs(25),
             "owned cleanup bounded end to end: {:?}",
             receipt.elapsed
+        );
+    }
+
+    #[test]
+    fn harness_ownership_channel_failure_has_owned_unknown_verdict() {
+        // Fixture with NO pid echo anywhere: the ownership channel itself
+        // fails, not just a secondary handshake. The guard is still built
+        // first (owning threads and files), so cleanup runs and reports
+        // explicit unknowns instead of relying on pid-None silence: no
+        // termination possible, no handles joined, files removed, verdict
+        // preserved, all bounded.
+        let receipt =
+            std::env::temp_dir().join(format!("syntax-hs-nopid-limits-{}", std::process::id()));
+        let script = format!(
+            "ulimit -s > '{}'; ulimit -t >> '{}'; sleep 30 & exit 0",
+            receipt.display(),
+            receipt.display()
+        );
+        let start = Instant::now();
+        let (run, pending) = run_raw_core(
+            "bash",
+            &["-c", &script],
+            Duration::from_secs(5),
+            LifecycleFaults::default(),
+        );
+        let mut guard = RetainedCleanup {
+            pid: None,
+            pending: Some(pending),
+            files: vec![receipt],
+        };
+        assert!(!run.timed_out, "exited child misreported as timeout");
+        assert_eq!(run.exit_code, Some(0));
+        assert!(
+            run.incomplete_readers,
+            "retained pipes are reported, not hidden"
+        );
+        let receipt = guard.complete(start);
+        assert!(
+            !receipt.signaled,
+            "nothing was terminated without an identity"
+        );
+        assert!(
+            !receipt.descendant_gone,
+            "unknown descendant stays unknown, never absence"
+        );
+        assert!(
+            !receipt.readers_joined,
+            "unjoined handles stay reported, never success"
+        );
+        assert!(
+            receipt.unjoined.is_empty(),
+            "no handle silently detached without ownership"
+        );
+        assert!(
+            receipt.helper_clean,
+            "cleanup helpers reaped and drained on every call"
+        );
+        assert!(
+            receipt.elapsed < Duration::from_secs(25),
+            "unknown-verdict cleanup bounded: {:?}",
+            receipt.elapsed
+        );
+    }
+
+    #[test]
+    fn harness_owned_guard_survives_unwind_then_completes() {
+        // The guard survives a borrow-only panic (never consumed by it),
+        // then runs its explicit finite cleanup AFTER catch_unwind: same
+        // owned descendant terminated, SAME original handles joined,
+        // absence observed, verdict asserted. This is the unwind path
+        // with receipts, complementing the Drop-consumed proof.
+        let pid_a =
+            std::env::temp_dir().join(format!("syntax-hs-postunwind-pid-{}", std::process::id()));
+        let script = format!("sleep 30 & echo $! > '{}'; exit 0", pid_a.display());
+        let (run, pending) = run_raw_core(
+            "bash",
+            &["-c", &script],
+            Duration::from_secs(5),
+            LifecycleFaults::default(),
+        );
+        assert!(
+            run.incomplete_readers,
+            "fixture holds pipes as designed before the panic"
+        );
+        let mut guard_opt = Some(RetainedCleanup {
+            pid: None,
+            pending: Some(pending),
+            files: vec![pid_a.clone()],
+        });
+        let owned = std::fs::read_to_string(&pid_a)
+            .expect("ownership channel recorded")
+            .trim()
+            .to_string();
+        guard_opt.as_mut().unwrap().pid = Some(owned.clone());
+        let start = Instant::now();
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let g = guard_opt.as_mut().unwrap();
+            let _ = g;
+            panic!("simulated assertion failure with guard alive");
+        }));
+        assert!(outcome.is_err(), "the simulated failure unwinds");
+        // The SAME guard survived (only borrowed): explicit finite cleanup
+        // after unwind, then the negative verdict and original-handle
+        // completion on the actual owned resources.
+        let mut guard = guard_opt.take().expect("guard survived unwind");
+        let receipt = guard.complete(start);
+        assert!(receipt.signaled, "owned descendant terminated");
+        assert!(
+            receipt.descendant_gone,
+            "ESRCH-observed absence of the owned victim"
+        );
+        assert!(
+            receipt.readers_joined,
+            "SAME original reader handles joined after the kill"
+        );
+        assert!(
+            receipt.unjoined.is_empty(),
+            "no reader handle silently detached"
+        );
+        assert!(
+            receipt.elapsed < Duration::from_secs(25),
+            "post-unwind cleanup bounded: {:?}",
+            receipt.elapsed
+        );
+        assert!(
+            run.incomplete_readers,
+            "negative verdict preserved through unwind and cleanup"
         );
     }
 
@@ -1660,6 +1809,10 @@ mod resource_exhaustion {
         assert!(
             receipt.readers_joined,
             "ORIGINAL reader handles joined after the kill"
+        );
+        assert!(
+            receipt.helper_clean,
+            "cleanup helpers reaped and drained on every call"
         );
         assert!(
             receipt.unjoined.is_empty(),
