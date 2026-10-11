@@ -3181,7 +3181,7 @@ impl Interpreter {
         let name = if !self.interactive
             && let Some(src) = self.bash_source_stack.last().filter(|s| !s.file.is_empty())
         {
-            src.file.as_str()
+            &src.file
         } else if let Some(frame) = self.call_stack.iter().rev().find(|f| !f.keeps_arg0) {
             frame.name.as_str()
         } else {

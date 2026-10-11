@@ -410,6 +410,29 @@ async fn diagnostic_name_is_bounded_utf8_without_changing_arg0() {
     );
 }
 
+/// Replace the `line N` counter with `line N*` so oracle comparisons hold
+/// across bash versions: bash 5.x numbers `bash -c` text from line 1 while the
+/// macOS bash 3.2 oracle numbers it from line 0. Our own output stays pinned
+/// to the bash 5.2 contract asserted below.
+fn normalize_line_numbers(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(idx) = rest.find("line ") {
+        let (head, tail) = rest.split_at(idx);
+        out.push_str(head);
+        let digits = tail[5..].chars().take_while(char::is_ascii_digit).count();
+        if digits == 0 {
+            out.push_str("line ");
+            rest = &tail[5..];
+        } else {
+            out.push_str("line N*");
+            rest = &tail[5 + digits..];
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 #[tokio::test]
 async fn diagnostic_prefix_matches_bash_and_redirect_keeps_full_output() {
     let name = "child".repeat(24);
@@ -425,7 +448,19 @@ async fn diagnostic_prefix_matches_bash_and_redirect_keeps_full_output() {
         .limits(bashkit::ExecutionLimits::new().max_live_intermediate_bytes(8192))
         .build();
     let result = bash.exec(&script).await.unwrap();
-    assert_eq!(result.stderr.as_bytes(), oracle.stderr);
+    let stderr = String::from_utf8_lossy(result.stderr.as_bytes()).into_owned();
+    let line1 = format!("{name}: line 1: unalias: ");
+    let expected = line1.clone()
+        + "first: not found\n"
+        + &line1
+        + "second: not found\n"
+        + &line1
+        + "third: not found\n";
+    assert_eq!(stderr, expected);
+    assert_eq!(
+        normalize_line_numbers(&stderr),
+        normalize_line_numbers(&String::from_utf8_lossy(&oracle.stderr))
+    );
     assert_eq!(result.stdout.as_bytes(), oracle.stdout);
     assert_eq!(Some(result.exit_code), oracle.status.code());
 
@@ -445,5 +480,10 @@ async fn diagnostic_prefix_matches_bash_and_redirect_keeps_full_output() {
         .await
         .unwrap();
     assert!(result.stderr.is_empty());
-    assert_eq!(result.stdout.as_bytes(), oracle.stderr);
+    let stdout = String::from_utf8_lossy(result.stdout.as_bytes()).into_owned();
+    assert_eq!(stdout, expected);
+    assert_eq!(
+        normalize_line_numbers(&stdout),
+        normalize_line_numbers(&String::from_utf8_lossy(&oracle.stderr))
+    );
 }
