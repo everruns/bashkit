@@ -1019,23 +1019,15 @@ mod resource_exhaustion {
 
     /// An exited child with descendant-retained pipes: the exit is observed
     /// but readers never finish. The helper must report incomplete readers
-    /// within bounds, not wait forever. Real bash (not the CLI) is the
-    /// pipe holder here; the orphaned `sleep` is harmless and bounded.
-    /// The sleeper's own 30s lifetime is the outer deadline (grandchildren
-    /// cannot be reaped portably); the elapsed assertion proves the run
-    /// returns without waiting for it.
+    /// within bounds, not wait forever. Runs under the fail-closed launcher;
+    /// because the retained pipes keep even the launcher's own readback
+    /// line unread, the effective bounds are proven through a per-process
+    /// receipt file the fixture shell writes before parking the sleeper
+    /// (removed below). The sleeper's own 30s lifetime is the outer
+    /// deadline (grandchildren cannot be reaped portably); the elapsed
+    /// assertion proves the run returns without waiting for it.
     #[test]
     fn bounded_helper_flags_retained_pipes() {
-        // Runs direct (no launcher): readback needs drained capture,
-        // which the retained-pipe verdict precludes by design — the
-        // launcher's own readback line sits unread in the held pipe. The
-        // launcher-bound timeout/overflow/consumer tests prove the
-        // effective bounds; this fixture proves the incomplete verdict.
-        // File side-channel receipt: the pipe capture stays incomplete
-        // by design (the sleeper holds the pipes, so even the launcher's
-        // own readback line sits unread), therefore the effective bounds
-        // are proven through a receipt file the fixture shell writes
-        // before parking the sleeper. Unique per process; removed below.
         let receipt =
             std::env::temp_dir().join(format!("syntax-retained-limits-{}", std::process::id()));
         let script = format!(
