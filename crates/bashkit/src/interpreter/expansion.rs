@@ -918,7 +918,11 @@ impl Interpreter {
         part_quoted: bool,
         leased: bool,
         substitution_leases: &mut Vec<crate::limits::ExecutionBudgetLease>,
-    ) -> Result<()> {
+    ) -> std::result::Result<(), crate::limits::LimitExceeded> {
+        // Small error type on purpose: every fallible op in here already
+        // reports LimitExceeded, and a lean Result keeps the caller's hot
+        // poll frame small. The caller converts to the shared Error once,
+        // outside this path (same Error::from(LimitExceeded) as `?` uses).
         let (word, idx, s) = segment;
         let expanded = if !part_quoted && s.contains('~') {
             self.tilde_expand_word_literal(word, idx, s)?
