@@ -1953,6 +1953,36 @@ mod tests {
     // ==================== tar tests ====================
 
     #[tokio::test]
+    async fn tar_files_from_lossy_decoder_matches_std() {
+        let (fs, mut cwd, mut variables) = create_test_ctx().await;
+        let env = HashMap::new();
+        let ctx = Context {
+            args: &[],
+            env: &env,
+            variables: &mut variables,
+            cwd: &mut cwd,
+            fs,
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
+            shell: None,
+        };
+        // Valid prefixes, malformed multi-byte sequences, and incomplete
+        // tails must retain the previous standard-library decoding semantics.
+        for byte in 0..=255 {
+            let bytes = [b'A', byte, 0xf0, 0x9f, 0x92, byte, b'Z', 0xe2, 0x82];
+            for input in [bytes.as_slice(), &bytes[..7]] {
+                let name = tar_list_name(&ctx, input).unwrap();
+                assert_eq!(&*name, String::from_utf8_lossy(input).as_ref());
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn test_tar_create_and_list() {
         let (fs, mut cwd, mut variables) = create_test_ctx().await;
         let env = HashMap::new();

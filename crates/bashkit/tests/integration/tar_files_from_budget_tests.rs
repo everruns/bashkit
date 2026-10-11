@@ -32,12 +32,17 @@ async fn tar_files_from_large_content_obeys_live_budget() {
 
 #[tokio::test]
 async fn tar_files_from_dense_lines_obey_work_budget() {
-    for content in ["x\n".repeat(2000), "\n".repeat(2000), "x".repeat(20_000)] {
+    for content in [
+        "x\n".repeat(2000).into_bytes(),
+        "\n".repeat(2000).into_bytes(),
+        "x".repeat(20_000).into_bytes(),
+        vec![0xff; 128],
+    ] {
         let mut bash = Bash::builder()
             .limits(ExecutionLimits::new().max_work_units(100))
             .build();
         bash.fs()
-            .write_file(Path::new("/list"), content.as_bytes())
+            .write_file(Path::new("/list"), &content)
             .await
             .unwrap();
         let result = bash.exec("tar -cf /out.tar -T /list").await;
