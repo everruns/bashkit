@@ -158,7 +158,6 @@ fn function_recursion_is_bounded_on_a_two_mib_stack() {
 // plus reader completion are bounded by the remaining grace. Unfinished
 // cleanup or readers yield truthful failure flags instead of hanging. A
 // child abort surfaces as its real exit status, never as a passing test.
-#[cfg(unix)]
 struct ProbeRun {
     exit_code: Option<i32>,
     signaled: bool,
@@ -167,32 +166,72 @@ struct ProbeRun {
     read_error: bool,
     incomplete_readers: bool,
     cleanup_failed: bool,
+    elapsed: Duration,
+    max_rss_kb: Option<u64>,
     limits_note: String,
     stdout: Vec<u8>,
     stderr: Vec<u8>,
 }
 
-#[cfg(unix)]
 struct ProbeLimits {
     exec_secs: u64,
     grace_secs: u64,
     stream_cap: usize,
 }
 
+/// Best-effort peak-RSS readback for a live child via unix `ps` (`None`
+/// where unavailable, e.g. Windows — there the wall/kill/cap bounds below
+/// still hold, only the numeric RSS readback is absent).
 #[cfg(unix)]
+fn sample_rss_kb(pid: u32) -> Option<u64> {
+    let out = Command::new("ps")
+        .args(["-o", "rss=", "-p", &pid.to_string()])
+        .output()
+        .ok()?;
+    String::from_utf8(out.stdout)
+        .ok()?
+        .trim()
+        .parse::<u64>()
+        .ok()
+}
+
+/// No RSS readback off unix; the deadline/kill/cap bounds are platform-wide.
+#[cfg(not(unix))]
+fn sample_rss_kb(_pid: u32) -> Option<u64> {
+    None
+}
+
+/// Portable signal-death readback (`ExitStatusExt::signal` is unix-only).
+#[cfg(unix)]
+fn status_signaled(status: &std::process::ExitStatus) -> bool {
+    use std::os::unix::process::ExitStatusExt;
+    status.signal().is_some()
+}
+
+/// No signal concept off unix; exit codes carry the outcome there.
+#[cfg(not(unix))]
+fn status_signaled(_status: &std::process::ExitStatus) -> bool {
+    false
+}
+
+/// Bounds for jq error-preview probes: fail-closed on wall, pipes, cleanup.
+const JQ_PREVIEW_LIMITS: ProbeLimits = ProbeLimits {
+    exec_secs: 20,
+    grace_secs: 5,
+    stream_cap: 64 * 1024,
+};
+
 const TRAP_PROBE_LIMITS: ProbeLimits = ProbeLimits {
     exec_secs: 20,
     grace_secs: 5,
     stream_cap: 64 * 1024,
 };
 
-#[cfg(unix)]
 enum ReaderLive {
     Oversize,
     ReadError,
 }
 
-#[cfg(unix)]
 enum ReaderMsg {
     Live(ReaderLive),
     Finished {
@@ -210,7 +249,6 @@ enum ReaderMsg {
 /// single-byte sentinel decides, and the sentinel byte itself is discarded
 /// so no more than `cap` bytes are ever retained. `live` reports oversize
 /// and read errors the moment they are proven, while the child may still run.
-#[cfg(unix)]
 fn drain_capped(
     pipe: &mut dyn Read,
     cap: usize,
@@ -248,7 +286,6 @@ fn drain_capped(
     }
 }
 
-#[cfg(unix)]
 fn spawn_pipe_reader(
     pipe: Box<dyn Read + Send>,
     is_stdout: bool,
@@ -269,7 +306,6 @@ fn spawn_pipe_reader(
     });
 }
 
-#[cfg(unix)]
 fn run_bounded_child(argv: &[&str], limits: &ProbeLimits) -> ProbeRun {
     let start = Instant::now();
     let exec_deadline = start + Duration::from_secs(limits.exec_secs);
@@ -282,6 +318,8 @@ fn run_bounded_child(argv: &[&str], limits: &ProbeLimits) -> ProbeRun {
         .stderr(Stdio::piped())
         .spawn()
         .expect("spawn bounded probe child");
+    let child_id: u32 = child.id();
+    let mut max_rss_kb: Option<u64> = None;
     let stdout_pipe: Box<dyn Read + Send> = Box::new(child.stdout.take().expect("probe stdout"));
     let stderr_pipe: Box<dyn Read + Send> = Box::new(child.stderr.take().expect("probe stderr"));
     let (tx, rx) = mpsc::channel::<ReaderMsg>();
@@ -346,6 +384,14 @@ fn run_bounded_child(argv: &[&str], limits: &ProbeLimits) -> ProbeRun {
             kill(&mut child, &mut killed);
             break;
         }
+        // Active RSS readback while the child runs (unix only). Every poll:
+        // the child is provably alive here (it has not yet reaped), so a
+        // RSS readback, unix only: the child is alive at each poll,
+        // so a gap only means the sampler found no live PID. Off unix
+        // the wall/kill/cap bounds still hold without numeric readback.
+        if let Some(rss) = sample_rss_kb(child_id) {
+            max_rss_kb = Some(max_rss_kb.unwrap_or(0).max(rss));
+        }
         thread::sleep(Duration::from_millis(20));
     }
     // Cleanup phase: bounded reap, then bounded reader completion. No fresh
@@ -402,9 +448,8 @@ fn run_bounded_child(argv: &[&str], limits: &ProbeLimits) -> ProbeRun {
             }
         }
     }
-    use std::os::unix::process::ExitStatusExt;
     let (exit_code, signaled) = match exit_status {
-        Some(status) => (status.code(), status.signal().is_some()),
+        Some(status) => (status.code(), status_signaled(&status)),
         None => (None, false),
     };
     let stderr_text = String::from_utf8_lossy(&stderr).into_owned();
@@ -421,6 +466,8 @@ fn run_bounded_child(argv: &[&str], limits: &ProbeLimits) -> ProbeRun {
         read_error,
         incomplete_readers,
         cleanup_failed,
+        elapsed: start.elapsed(),
+        max_rss_kb,
         limits_note,
         stdout,
         stderr,
@@ -1288,35 +1335,48 @@ fn jq_math_error_on_shared_tree_stays_bounded() {
     // Exact filter from the security finding: `reduce` over `range(0; 40)`
     // builds a shared structure whose naive error dump would expand ~2^40
     // elements. The preview budget must bound both allocation and traversal.
-    // The child is wall-bounded (deadline poll + kill) and output is
-    // collected only after exit, so a regression fails here by timeout/kill
-    // without ever OOMing this harness. Raw jq exits 5 on runtime errors;
-    // the harness itself exits 0.
-    let mut child = cli()
-        .args([
+    // Fail-closed harness: concurrent capped drains on both pipes, one
+    // shared absolute deadline, owned kill/reap, truthful flags. Raw jq
+    // exits 5 on runtime errors; the harness itself exits 0. The child runs
+    // on the default main-thread stack (deep-call discipline is covered by
+    // the two_mib_stack tests); elapsed/RSS readback is asserted below.
+    let run = run_bounded_child(
+        &[
+            BIN,
             "--no-stdin",
             "--timeout",
             "10",
             "-c",
             "jq -n 'reduce range(0; 40) as $i (1; [., .]) | . + 1'",
-        ])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("spawn bashkit");
-    let deadline = Instant::now() + Duration::from_secs(30);
-    while child.try_wait().expect("poll bashkit").is_none() && Instant::now() < deadline {
-        thread::sleep(Duration::from_millis(20));
-    }
-    if child.try_wait().expect("final poll bashkit").is_none() {
-        child.kill().expect("kill hung bashkit");
-        let _ = child.wait();
-        panic!("jq shared-tree math error hung (error preview escaped its budget)");
-    }
-    let out = child.wait_with_output().expect("collect bashkit output");
-    assert_eq!(code(&out), 5, "stderr: {}", stderr(&out));
-    assert!(stdout(&out).is_empty(), "stdout: {}", stdout(&out));
-    let err = stderr(&out);
+        ],
+        &JQ_PREVIEW_LIMITS,
+    );
+    assert!(
+        !run.timed_out,
+        "preview exceeded {}ms wall",
+        run.elapsed.as_millis()
+    );
+    assert!(
+        !run.cleanup_failed && !run.incomplete_readers && !run.read_error && !run.oversized,
+        "harness flags fired: cleanup_failed={} incomplete_readers={} read_error={} oversized={}",
+        run.cleanup_failed,
+        run.incomplete_readers,
+        run.read_error,
+        run.oversized
+    );
+    assert!(!run.signaled, "child died by signal");
+    assert_eq!(
+        run.exit_code,
+        Some(5),
+        "stderr: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert!(
+        run.stdout.is_empty(),
+        "stdout: {}",
+        String::from_utf8_lossy(&run.stdout)
+    );
+    let err = String::from_utf8_lossy(&run.stderr);
     assert!(
         err.len() < 1024,
         "math error on shared tree leaked {} bytes",
@@ -1327,18 +1387,54 @@ fn jq_math_error_on_shared_tree_stays_bounded() {
         err.contains("..."),
         "shared-tree preview should truncate: {err}"
     );
+    assert!(
+        run.elapsed < Duration::from_secs(JQ_PREVIEW_LIMITS.exec_secs),
+        "effective CPU/wall readback: {}ms exceeds exec budget",
+        run.elapsed.as_millis()
+    );
+    #[cfg(unix)]
+    {
+        let rss = run.max_rss_kb.unwrap_or(u64::MAX);
+        assert!(
+            rss < 512 * 1024,
+            "peak child RSS {rss} KiB exceeds 512 MiB bound"
+        );
+    }
 }
 
 #[test]
 fn shell_recovers_after_huge_operand_math_error() {
-    // True same-session recovery: one shell hits a truncated huge-operand
-    // math error, then the SAME session runs on normally.
-    let out = run(&[
-        "-c",
-        "jq -n 'try ([range(0;200000)] + 1) catch .'; echo RECOVERED",
-    ]);
-    assert_eq!(code(&out), 0, "stderr: {}", stderr(&out));
-    let body = stdout(&out);
+    // True same-session recovery through the bounded harness: one shell hits
+    // a truncated huge-operand math error, then the SAME session runs on.
+    let run = run_bounded_child(
+        &[
+            BIN,
+            "--no-stdin",
+            "-c",
+            "jq -n 'try ([range(0;200000)] + 1) catch .'; echo RECOVERED",
+        ],
+        &JQ_PREVIEW_LIMITS,
+    );
+    assert!(
+        !run.timed_out,
+        "session exceeded {}ms wall",
+        run.elapsed.as_millis()
+    );
+    assert!(
+        !run.cleanup_failed && !run.incomplete_readers && !run.read_error && !run.oversized,
+        "harness flags fired: cleanup_failed={} incomplete_readers={} read_error={} oversized={}",
+        run.cleanup_failed,
+        run.incomplete_readers,
+        run.read_error,
+        run.oversized
+    );
+    assert_eq!(
+        run.exit_code,
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let body = String::from_utf8_lossy(&run.stdout);
     assert!(
         body.len() < 1024,
         "in-session math error leaked {} bytes",
@@ -1349,7 +1445,10 @@ fn shell_recovers_after_huge_operand_math_error() {
         "huge operand preview should truncate: {body}"
     );
     assert!(
-        body.ends_with("RECOVERED\n"),
+        body.ends_with(
+            "RECOVERED
+"
+        ),
         "session did not continue: {body}"
     );
 }
