@@ -52,6 +52,21 @@ impl std::fmt::Write for Capped {
         Ok(())
     }
 }
+/// Preview oracle for math/index error messages.
+///
+/// The value renders through [`Capped`] (15-byte budget). Exact contract:
+/// - rendering fits without tripping the budget -> returned verbatim
+///   (e.g. `"ok"` stays `"ok"`, a 14-byte rendering is untouched);
+/// - budget spent -> keep at most the first 11 bytes floored to a UTF-8
+///   boundary and always append `...` (e.g. a 15-byte rendering becomes
+///   its 11-byte prefix plus `...`; a multibyte char straddling the cut
+///   yields a boundary-floored prefix plus `...`, never a split char and
+///   never a silent drop);
+/// - the sink reports `fmt::Error` once the budget is spent, so the
+///   `?`-laden display machinery aborts the traversal instead of walking
+///   the rest of a hostile value just to discard it.
+/// Small-value output is byte-identical to plain truncation; only the CPU
+/// cost and the truncation marker on short aborted buffers differ.
 fn dump_trunc(v: &Val) -> String {
     use std::fmt::Write as _;
     // One byte past the 14-byte cut: enough to tell "fits" from "truncate",
@@ -187,7 +202,10 @@ mod tests {
     }
 
     #[test]
-    fn preview_recovers_after_truncation() {
+    fn preview_stateless_across_calls() {
+        // `dump_trunc` keeps no global state: a truncated huge preview must
+        // not affect later previews (fresh-invocation recovery; same-shell
+        // recovery is covered by `shell_recovers_after_huge_operand_math_error`).
         let _ = math(huge_array_key(), ops::Math::Add, huge_array_key(), false).to_string();
         assert_eq!(dump_trunc(&Val::utf8_str("ok")), "\"ok\"");
     }

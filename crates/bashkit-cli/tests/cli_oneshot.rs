@@ -1283,6 +1283,77 @@ fn jq_non_tail_recursion_is_bounded_on_a_two_mib_stack() {
     assert!(stderr(&out).contains("recursion limit (64) exceeded"));
 }
 
+#[test]
+fn jq_math_error_on_shared_tree_stays_bounded() {
+    // Exact filter from the security finding: `reduce` over `range(0; 40)`
+    // builds a shared structure whose naive error dump would expand ~2^40
+    // elements. The preview budget must bound both allocation and traversal.
+    // The child is wall-bounded (deadline poll + kill) and output is
+    // collected only after exit, so a regression fails here by timeout/kill
+    // without ever OOMing this harness. Raw jq exits 5 on runtime errors;
+    // the harness itself exits 0.
+    let mut child = cli()
+        .args([
+            "--no-stdin",
+            "--timeout",
+            "10",
+            "-c",
+            "jq -n 'reduce range(0; 40) as $i (1; [., .]) | . + 1'",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn bashkit");
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while child.try_wait().expect("poll bashkit").is_none() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(20));
+    }
+    if child.try_wait().expect("final poll bashkit").is_none() {
+        child.kill().expect("kill hung bashkit");
+        let _ = child.wait();
+        panic!("jq shared-tree math error hung (error preview escaped its budget)");
+    }
+    let out = child.wait_with_output().expect("collect bashkit output");
+    assert_eq!(code(&out), 5, "stderr: {}", stderr(&out));
+    assert!(stdout(&out).is_empty(), "stdout: {}", stdout(&out));
+    let err = stderr(&out);
+    assert!(
+        err.len() < 1024,
+        "math error on shared tree leaked {} bytes",
+        err.len()
+    );
+    assert!(err.contains("cannot be added"), "stderr: {err}");
+    assert!(
+        err.contains("..."),
+        "shared-tree preview should truncate: {err}"
+    );
+}
+
+#[test]
+fn shell_recovers_after_huge_operand_math_error() {
+    // True same-session recovery: one shell hits a truncated huge-operand
+    // math error, then the SAME session runs on normally.
+    let out = run(&[
+        "-c",
+        "jq -n 'try ([range(0;200000)] + 1) catch .'; echo RECOVERED",
+    ]);
+    assert_eq!(code(&out), 0, "stderr: {}", stderr(&out));
+    let body = stdout(&out);
+    assert!(
+        body.len() < 1024,
+        "in-session math error leaked {} bytes",
+        body.len()
+    );
+    assert!(
+        body.contains("..."),
+        "huge operand preview should truncate: {body}"
+    );
+    assert!(
+        body.ends_with("RECOVERED\n"),
+        "session did not continue: {body}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Streaming
 // ---------------------------------------------------------------------------

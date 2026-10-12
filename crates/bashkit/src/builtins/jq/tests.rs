@@ -2043,7 +2043,7 @@ async fn math_errors_use_jq_wording() {
 }
 
 #[tokio::test]
-async fn math_error_on_huge_operands_stays_bounded_and_session_recovers() {
+async fn math_error_on_huge_operands_stays_bounded() {
     let out = run_jq_with_args(&["-c", "try ([range(0;200000)] + 1) catch ."], "null")
         .await
         .unwrap();
@@ -2053,6 +2053,8 @@ async fn math_error_on_huge_operands_stays_bounded_and_session_recovers() {
         out.len()
     );
     assert!(out.contains("..."), "huge operand preview should truncate");
+    // Fresh-context follow-up (each helper builds a new shell); true
+    // same-session recovery is covered by `shell_recovers_after_huge_operand_math_error`.
     let recovered = run_jq_with_args(&["-c", "1 + 2"], "null").await.unwrap();
     assert_eq!(recovered, "3\n");
 }
