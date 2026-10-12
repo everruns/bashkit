@@ -360,6 +360,15 @@ async fn stdin_clone_trip_recovers() {
 #[tokio::test]
 async fn original_shape_bounded_child_default_limits() {
     let script = format!(":{}", " 3</dev/zero".repeat(1024));
+    // Controlled sink for instrumented-coverage artifacts: under coverage
+    // jobs the spawned CLI inherits LLVM_PROFILE_FILE and flushes a
+    // multi-MiB profraw at exit, which must not share the producer tight
+    // file cap (SIGXFSZ) nor pollute the workspace. Coverage stays enabled;
+    // only the sink location is controlled, and the artifact size gets an
+    // explicit bounded receipt below.
+    let sink_dir = std::env::temp_dir().join(format!("bashkit-ir-child-{}", std::process::id()));
+    std::fs::create_dir_all(&sink_dir).expect("artifact sink dir");
+    let profile = sink_dir.join("child.profraw");
     let outcome = tokio::task::spawn_blocking(move || {
         let exe = std::env::current_exe().expect("test executable path");
         let cli = exe
@@ -367,7 +376,12 @@ async fn original_shape_bounded_child_default_limits() {
             .flat_map(|dir| [dir.join(format!("bashkit{}", std::env::consts::EXE_SUFFIX))])
             .find(|path| path.is_file())
             .expect("build the CLI first: cargo build -p bashkit-cli");
-        // rlimits apply to the exec'd CLI only; fsize caps stray outputs.
+        // rlimits apply to the launched CLI only. -f is an explicit 128MiB
+        // artifact allowance for one short instrumented run (profraws are
+        // O(MB)); the producer itself writes no files (VFS in-memory,
+        // stdout/stderr piped), so anything near the cap is a regression.
+        // Pipes are kernel-bounded, not FSIZE-capped: the poll loop
+        // plus kill-on-deadline keeps collection finite either way.
         let launcher =
             "ulimit -v 1572864; ulimit -t 120; ulimit -s 8192; ulimit -f 2048; exec \"$@\"";
         let mut child = std::process::Command::new("bash")
@@ -382,23 +396,33 @@ async fn original_shape_bounded_child_default_limits() {
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
+            .env("LLVM_PROFILE_FILE", &profile)
             .spawn()
             .expect("spawn bounded child");
         let start = std::time::Instant::now();
         let deadline = std::time::Duration::from_secs(100);
-        loop {
+        // wait_with_output runs only on an already-exited child, so
+        // collection is limited to kernel pipe buffers; the deadline branch
+        // kills first, then reaps. Either path returns promptly, and the
+        // artifact sink is cleaned below.
+        let (status, output, elapsed, overran) = loop {
             if let Some(status) = child.try_wait().expect("poll child") {
                 let output = child.wait_with_output().expect("reap child");
-                return (status, output, start.elapsed(), false);
+                break (status, output, start.elapsed(), false);
             }
             if start.elapsed() > deadline {
                 child.kill().expect("kill overrun child");
                 let _ = child.wait();
-                use std::os::unix::process::ExitStatusExt;
-                return (
-                    std::process::ExitStatus::from_raw(9),
+                break (
+                    {
+                        use std::os::unix::process::ExitStatusExt;
+                        std::process::ExitStatus::from_raw(9)
+                    },
                     std::process::Output {
-                        status: std::process::ExitStatus::from_raw(9),
+                        status: {
+                            use std::os::unix::process::ExitStatusExt;
+                            std::process::ExitStatus::from_raw(9)
+                        },
                         stdout: Vec::new(),
                         stderr: b"wall-clock overrun".to_vec(),
                     },
@@ -407,7 +431,19 @@ async fn original_shape_bounded_child_default_limits() {
                 );
             }
             std::thread::sleep(std::time::Duration::from_millis(50));
+        };
+        // Artifact receipt (when coverage writes one) plus finite cleanup.
+        const ARTIFACT_BOUND: u64 = 128 * 1024 * 1024;
+        if let Ok(meta) = std::fs::metadata(&profile) {
+            assert!(
+                meta.len() < ARTIFACT_BOUND,
+                "coverage artifact receipt: {} bytes exceeds {}",
+                meta.len(),
+                ARTIFACT_BOUND
+            );
         }
+        let _ = std::fs::remove_dir_all(sink_dir);
+        (status, output, elapsed, overran)
     })
     .await
     .expect("child harness join");
@@ -420,7 +456,9 @@ async fn original_shape_bounded_child_default_limits() {
     assert_eq!(
         status.code(),
         Some(1),
-        "producer must fail cleanly (signal death = OOM, 0 = unbounded success): {status:?}"
+        // Signal death here means OOM kill, an artifact-cap trip (SIGXFSZ),
+        // or a crash, never success; producer diagnostics included.
+        "producer must fail cleanly, got {status:?} with stderr {stderr:?}",
     );
     assert!(
         stderr.contains("aggregate input bytes"),
