@@ -615,12 +615,16 @@ async fn sample_child_rss(pid: u32) -> Result<u64, String> {
         .kill_on_drop(true)
         .spawn()
         .map_err(|e| format!("spawn ps for rss of {pid}: {e:?}"))?;
-    // Take the pipe upfront so the bounded drain below owns capture; the
-    // one-line output then cannot block or grow past its cap.
+    // Both pipes are taken upfront so the bounded drains below own capture;
+    // neither stream can block the sampler, and both are capped.
     let mut out_pipe = ps
         .stdout
         .take()
         .ok_or_else(|| format!("ps {pid} has no stdout"))?;
+    let mut err_pipe = ps
+        .stderr
+        .take()
+        .ok_or_else(|| format!("ps {pid} has no stderr"))?;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     loop {
         match ps.try_wait() {
@@ -629,8 +633,9 @@ async fn sample_child_rss(pid: u32) -> Result<u64, String> {
                 if tokio::time::Instant::now() >= deadline {
                     ps.start_kill()
                         .map_err(|e| format!("kill stuck ps for rss of {pid}: {e:?}"))?;
-                    // Finite reap with explicit receipt (not `let _`): either
-                    // the kill is confirmed or the timeout is recorded.
+                    // Finite reap with explicit receipt: timeout, kill
+                    // failure, and success are three distinct outcomes, never
+                    // conflated into one boolean.
                     let reaped =
                         tokio::time::timeout_at(deadline + Duration::from_secs(2), ps.wait())
                             .await
@@ -642,27 +647,35 @@ async fn sample_child_rss(pid: u32) -> Result<u64, String> {
             Err(e) => return Err(format!("poll ps for rss of {pid}: {e:?}")),
         }
     }
-    // Reap explicitly (already exited: prompt), then bounded-drain the
-    // one-line output. Never wait_with_output without bounds.
-    match tokio::time::timeout_at(
+    // Reap explicitly (already exited: prompt) with all three outcomes
+    // distinguished, then bounded-drain both captures.
+    let status = match tokio::time::timeout_at(
         tokio::time::Instant::now() + Duration::from_secs(2),
         ps.wait(),
     )
     .await
     {
-        Ok(Ok(_)) => {}
+        Ok(Ok(status)) => status,
         Ok(Err(e)) => return Err(format!("reap ps for rss of {pid}: {e:?}")),
         Err(_) => return Err(format!("reap ps for rss of {pid} timed out")),
-    }
-    let (kept, trunc, had_error) = ir_drain_capped_async(&mut out_pipe, 4096).await;
-    if had_error {
+    };
+    let (out_kept, out_trunc, out_err) = ir_drain_capped_async(&mut out_pipe, 4096).await;
+    let (_err_kept, err_trunc, err_err) = ir_drain_capped_async(&mut err_pipe, 4096).await;
+    if out_err || err_err {
         return Err(format!("ps rss of {pid} output unreadable"));
     }
-    if trunc > 0 {
+    if out_trunc > 0 || err_trunc > 0 {
         return Err(format!("ps rss of {pid} output oversize"));
     }
-    parse_ps_rss(&String::from_utf8_lossy(&kept))
+    if !status.success() {
+        return Err(format!("ps rss of {pid} failed"));
+    }
+    parse_ps_rss(&String::from_utf8_lossy(&out_kept))
 }
+/// One in-flight RSS sample: boxed so the select! arm can poll it
+/// alongside drains, exit, and deadline without awaiting inline.
+type SampleFuture = std::pin::Pin<Box<dyn Future<Output = Result<u64, String>>>>;
+
 async fn run_input_shape_bounded(script: &str, wall_secs: u64, tag: &str) -> InputShapeRun {
     let sink = TempWorkdir::create(&format!("{tag}-sink")).expect("artifact sink setup");
     let work = TempWorkdir::create(&format!("{tag}-work")).expect("producer workdir setup");
@@ -710,14 +723,12 @@ async fn run_input_shape_bounded(script: &str, wall_secs: u64, tag: &str) -> Inp
     let mut err_trunc = 0usize;
     let mut err_err = false;
     let mut incomplete_readers = false;
-    // Drain futures live for the whole supervision scope and are polled
-    // alongside exit, RSS, and deadline from the first iteration: output can
-    // never block the producer. No spawned tasks; dropping the futures on
-    // timeout is cancel-safe, and the pipes die with the reaped child.
-    // Admission stays capped: each drain keeps PIPE_CAP bytes and counts the
-    // rest without storing.
     let mut out_fut = std::pin::pin!(ir_drain_capped_async(&mut out_pipe, PIPE_CAP));
     let mut err_fut = std::pin::pin!(ir_drain_capped_async(&mut err_pipe, PIPE_CAP));
+    // Sampler slot: at most one RSS sample in flight. The ticker below only
+    // CREATES it; a dedicated select arm below POLLS it, so slow sampling
+    // never suspends drains, exit detection, or the wall deadline.
+    let mut sample_fut: Option<SampleFuture> = None;
     loop {
         let running_done = final_status.is_some() || overran || rss_exceeded;
         if running_done && out_done && err_done {
@@ -746,28 +757,8 @@ async fn run_input_shape_bounded(script: &str, wall_secs: u64, tag: &str) -> Inp
                     continue;
                 }
                 ticks += 1;
-                if ticks == 1 || ticks.is_multiple_of(10) {
-                    match sample_child_rss(rss_pid).await {
-                        Ok(rss) => {
-                            rss_samples += 1;
-                            peak_rss_kb = peak_rss_kb.max(rss);
-                            if rss > IR_RSS_CAP_KIB {
-                                child.start_kill().expect("kill RSS overrun child");
-                                rss_exceeded = true;
-                            }
-                        }
-                        Err(e) => {
-                            if let Some(status) = child.try_wait().expect("re-poll child") {
-                                if rss_samples == 0 {
-                                    exited_fast = true;
-                                }
-                                final_status = Some(status);
-                                reaped = true;
-                            } else {
-                                panic!("RSS policing failed on live child {rss_pid}: {e}");
-                            }
-                        }
-                    }
+                if (ticks == 1 || ticks.is_multiple_of(10)) && sample_fut.is_none() {
+                    sample_fut = Some(Box::pin(sample_child_rss(rss_pid)));
                 }
                 if !rss_exceeded && final_status.is_none() && tokio::time::Instant::now() >= deadline {
                     child.start_kill().expect("kill overrun child");
@@ -788,11 +779,42 @@ async fn run_input_shape_bounded(script: &str, wall_secs: u64, tag: &str) -> Inp
                 err_err = err;
                 err_done = true;
             }
+            // Take-then-poll is safe HERE (unlike one-shot-gated designs, see
+            // ir_helper_concurrent_schedule): each tick mints a fresh
+            // idempotent sampler, so losing a race only wastes one bounded ps
+            // run (kill_on_drop bounds it) and the ticker re-arms. The slot
+            // being None simply disables this arm until then.
+            res = async { sample_fut.take().expect("armed with sampler").await },
+                if sample_fut.is_some() =>
+            {
+                match res {
+                    Ok(rss) => {
+                        rss_samples += 1;
+                        peak_rss_kb = peak_rss_kb.max(rss);
+                        if rss > IR_RSS_CAP_KIB {
+                            child.start_kill().expect("kill RSS overrun child");
+                            rss_exceeded = true;
+                        }
+                    }
+                    Err(e) => {
+                        if let Some(status) = child.try_wait().expect("re-poll child") {
+                            if rss_samples == 0 {
+                                exited_fast = true;
+                            }
+                            final_status = Some(status);
+                            reaped = true;
+                        } else {
+                            panic!("RSS policing failed on live child {rss_pid}: {e}");
+                        }
+                    }
+                }
+            }
         }
     }
     // Finite reap for killed paths (exited paths already reaped via wait):
     // Child::wait is cancel-safe; the timeout bounds it. start_kill was
-    // already sent on every non-exit path above.
+    // already sent on every non-exit path above. kill_on_drop stays armed
+    // as a backstop only, never proof.
     if final_status.is_none() {
         match tokio::time::timeout_at(
             tokio::time::Instant::now() + Duration::from_secs(5),
@@ -810,8 +832,6 @@ async fn run_input_shape_bounded(script: &str, wall_secs: u64, tag: &str) -> Inp
             }
         }
     }
-    let elapsed = start.elapsed();
-    let _ = elapsed;
     // Receipt first: the launcher note proves the caps ran; without it the
     // run is untrusted regardless of exit code.
     let stderr_full = String::from_utf8_lossy(&err_kept).into_owned();
@@ -1245,4 +1265,79 @@ async fn ir_helper_timeout_contract() {
     )
     .await;
     assert!(timed_out.is_err());
+}
+
+/// Scheduling contract: a release-gated sampler, two 32B duplex drains, and
+/// a timer must ALL complete concurrently in one select! scope. The release
+/// fires only after both drains finish, so awaiting the sampler first (as
+/// the old ticker arm did) would stall at the gate until the outer bound;
+/// polling everything together finishes in milliseconds. 64B total fixture
+/// data, 2s outer bound, fully deterministic (no timing margins asserted,
+/// only completion).
+#[tokio::test]
+async fn ir_helper_concurrent_schedule() {
+    use std::time::Duration;
+    let (tx, rx) = tokio::sync::oneshot::channel::<u32>();
+    let (mut w1, mut r1) = tokio::io::duplex(64);
+    let (mut w2, mut r2) = tokio::io::duplex(64);
+    tokio::io::AsyncWriteExt::write_all(&mut w1, &[1u8; 32])
+        .await
+        .expect("fill one");
+    tokio::io::AsyncWriteExt::write_all(&mut w2, &[2u8; 32])
+        .await
+        .expect("fill two");
+    drop((w1, w2));
+    // Pinned once and polled by &mut every round: taking it out would
+    // destroy the only release path on the first lost select race (that
+    // exact bug hung this fixture), so ownership stays in the slot.
+    let mut sampler = std::pin::pin!(async move { rx.await.expect("release") });
+    let mut d1 = std::pin::pin!(ir_drain_capped_async(&mut r1, 64));
+    let mut d2 = std::pin::pin!(ir_drain_capped_async(&mut r2, 64));
+    let mut tx_opt = Some(tx);
+    let mut got = 0u32;
+    let mut k1 = Vec::new();
+    let mut k2 = Vec::new();
+    let mut sampler_done = false;
+    let mut d1_done = false;
+    let mut d2_done = false;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    let finished = tokio::time::timeout_at(deadline, async {
+        loop {
+            eprintln!("tick s={} d1={} d2={}", sampler_done, d1_done, d2_done);
+            if sampler_done && d1_done && d2_done {
+                break;
+            }
+            tokio::select! {
+                biased;
+                v = &mut sampler, if !sampler_done => {
+                    got = v;
+                    sampler_done = true;
+                }
+                _ = tokio::time::sleep(Duration::from_millis(5)) => {
+                    if d1_done && d2_done && let Some(tx) = tx_opt.take() {
+                        let _ = tx.send(7);
+                    }
+                }
+                r = &mut d1, if !d1_done => {
+                    let (kept, trunc, err) = r;
+                    k1 = kept;
+                    assert_eq!(trunc, 0);
+                    assert!(!err);
+                    d1_done = true;
+                }
+                r = &mut d2, if !d2_done => {
+                    let (kept, trunc, err) = r;
+                    k2 = kept;
+                    assert_eq!(trunc, 0);
+                    assert!(!err);
+                    d2_done = true;
+                }
+            }
+        }
+    })
+    .await;
+    assert!(finished.is_ok(), "concurrent schedule must finish fast");
+    assert_eq!(got, 7);
+    assert_eq!(k1, vec![1u8; 32]);
+    assert_eq!(k2, vec![2u8; 32]);
 }
