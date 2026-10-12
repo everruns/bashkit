@@ -373,9 +373,8 @@ mod resource_exhaustion {
         // result is collected under the shared end, so even a retained
         // writer (no EOF ever) cannot stall this call past its deadline.
         // The cap inside drain_capped bounds retention; the timeout below
-        // bounds duration. A timed-out drain thread is detached by design
-        // (documented, bounded count) and only reachable with a helper
-        // that outlives its own observed exit.
+        // bounds duration. A timed-out drain returns its original handle
+        // so the controlled fixture can terminate the writer and join it.
         // The SAME drain reader is retained and finitely observed:
         // on success it is joined below (proving original-reader
         // completion — it already sent, so the join returns at once);
@@ -501,14 +500,29 @@ mod resource_exhaustion {
         }
     }
 
+    fn retain_join(
+        handle: std::thread::JoinHandle<()>,
+        end: Instant,
+        unfinished: &mut Vec<std::thread::JoinHandle<()>>,
+    ) -> bool {
+        match join_finished(handle, end) {
+            JoinOutcome::Joined => true,
+            JoinOutcome::Unfinished(handle) => {
+                unfinished.push(handle);
+                false
+            }
+            JoinOutcome::Panicked => false,
+        }
+    }
+
     /// Test-scoped owned cleanup for the retained-pipe fixture: the exact
     /// recorded descendant plus the ORIGINAL reader handles. The normal
     /// path (`complete`) terminates the descendant, observes its absence
     /// via ESRCH receipt, joins the original handles, and proves the total
     /// elapsed bound. `Drop` fires the same kill best-effort (no asserts,
     /// no panics) so setup/assertion failures never leak the 30s sleeper;
-    /// threads then finish on pipe close (joining from `Drop` could block,
-    /// so detached finish there is documented, not silent).
+    /// unfinished ORIGINAL handles return to the caller-owned observer,
+    /// which remains alive after this guard is consumed.
     /// What finite cleanup actually proved: unknowns stay explicit,
     /// never successful. The test asserts these instead of inferring
     /// success from the absence of a hang.
@@ -527,7 +541,8 @@ mod resource_exhaustion {
         elapsed: Duration,
     }
 
-    struct RetainedCleanup {
+    struct RetainedCleanup<'a> {
+        drop_readers: &'a mut Vec<std::thread::JoinHandle<()>>,
         pid: Option<String>,
         /// Test-controlled argv marker identifying the exact fixture
         /// without any pid channel: usable even when pidfiles fail.
@@ -541,7 +556,7 @@ mod resource_exhaustion {
         drop_note: Option<std::path::PathBuf>,
     }
 
-    impl RetainedCleanup {
+    impl RetainedCleanup<'_> {
         fn complete(&mut self, start: Instant) -> CleanupReceipt {
             let end = Instant::now() + CLEANUP_TOTAL;
             let remaining = || {
@@ -729,7 +744,7 @@ mod resource_exhaustion {
         }
     }
 
-    impl Drop for RetainedCleanup {
+    impl Drop for RetainedCleanup<'_> {
         fn drop(&mut self) {
             // Best-effort only (no asserts, no panics): terminate by pid
             // identity first, marker ownership channel as fallback, then
@@ -744,6 +759,7 @@ mod resource_exhaustion {
             let mut killed = false;
             let mut joined = false;
             let mut helper_clean = true;
+            // The caller retains ownership even if this bounded Drop cannot join.
             if let Some(pid) = self.pid.take() {
                 let o = run_helper_bounded(
                     "kill",
@@ -758,10 +774,7 @@ mod resource_exhaustion {
                     // Best-effort backstop for the unreachable handoff:
                     // bounded attempt under the shared end, outcome
                     // recorded (Drop cannot return handles).
-                    if !matches!(
-                        join_finished(h, Instant::now() + remaining().min(Duration::from_secs(2))),
-                        JoinOutcome::Joined
-                    ) {
+                    if !retain_join(h, end, self.drop_readers) {
                         helper_clean = false;
                     }
                 }
@@ -777,10 +790,7 @@ mod resource_exhaustion {
                 }
                 let handoff_joined = match o.drain_thread {
                     None => true,
-                    Some(h) => matches!(
-                        join_finished(h, Instant::now() + remaining().min(Duration::from_secs(2))),
-                        JoinOutcome::Joined
-                    ),
+                    Some(h) => retain_join(h, end, self.drop_readers),
                 };
                 if !handoff_joined {
                     helper_clean = false;
@@ -790,7 +800,7 @@ mod resource_exhaustion {
                 let join_end = Instant::now() + remaining().min(JOIN_GRACE);
                 let mut ok = true;
                 for reader in pending.handles {
-                    if !matches!(join_finished(reader, join_end), JoinOutcome::Joined) {
+                    if !retain_join(reader, join_end, self.drop_readers) {
                         ok = false;
                     }
                 }
@@ -1313,14 +1323,17 @@ mod resource_exhaustion {
         // Unknown (never successful absence).
         let me_pid = std::process::id().to_string();
         let tri_start = Instant::now();
-        let me_check = signal_bounded(&["-0", &me_pid], Duration::from_secs(5));
+        let end = tri_start + Duration::from_secs(20);
+        let mut unfinished = Vec::new();
+        let me_check = signal_bounded(
+            &["-0", &me_pid],
+            end.saturating_duration_since(Instant::now())
+                .min(Duration::from_secs(5)),
+        );
         match me_check.drain_thread {
             None => {}
             Some(h) => assert!(
-                matches!(
-                    join_finished(h, Instant::now() + Duration::from_secs(2)),
-                    JoinOutcome::Joined
-                ),
+                retain_join(h, end, &mut unfinished),
                 "handoff joined under a finite bound"
             ),
         }
@@ -1331,14 +1344,15 @@ mod resource_exhaustion {
             matches!(me_check.presence, PidPresence::Present),
             "own PID reads Present"
         );
-        let gone_check = signal_bounded(&["-0", "2147483647"], Duration::from_secs(5));
+        let gone_check = signal_bounded(
+            &["-0", "2147483647"],
+            end.saturating_duration_since(Instant::now())
+                .min(Duration::from_secs(5)),
+        );
         match gone_check.drain_thread {
             None => {}
             Some(h) => assert!(
-                matches!(
-                    join_finished(h, Instant::now() + Duration::from_secs(2)),
-                    JoinOutcome::Joined
-                ),
+                retain_join(h, end, &mut unfinished),
                 "handoff joined under a finite bound"
             ),
         }
@@ -1348,14 +1362,15 @@ mod resource_exhaustion {
             matches!(gone_check.presence, PidPresence::Absent),
             "impossible PID reads Absent by ESRCH receipt"
         );
-        let bad_check = signal_bounded(&["-9", "not-a-pid"], Duration::from_secs(5));
+        let bad_check = signal_bounded(
+            &["-9", "not-a-pid"],
+            end.saturating_duration_since(Instant::now())
+                .min(Duration::from_secs(5)),
+        );
         match bad_check.drain_thread {
             None => {}
             Some(h) => assert!(
-                matches!(
-                    join_finished(h, Instant::now() + Duration::from_secs(2)),
-                    JoinOutcome::Joined
-                ),
+                retain_join(h, end, &mut unfinished),
                 "handoff joined under a finite bound"
             ),
         }
@@ -1411,24 +1426,16 @@ mod resource_exhaustion {
         // reserved floor, and report exit-None with reaped true — never
         // an abandoned running child, never an inferred exit.
         let start = Instant::now();
-        let o = run_helper_bounded(
-            "sleep",
-            &["30"],
-            Instant::now() + Duration::from_millis(200),
-        );
+        let end = start + Duration::from_millis(200);
+        let mut unfinished = Vec::new();
+        let o = run_helper_bounded("sleep", &["30"], end);
         assert_eq!(o.exit, None, "timed-out helper has no exit code");
         assert!(o.signaled, "timeout path dispatched its kill");
         assert!(o.reaped, "kill was reaped inside the reserved floor");
         // SAME-handle rule even here: sleep drains instantly, so the join
         // below succeeds at once and proves it (no assert-away).
         if let Some(h) = o.drain_thread {
-            assert!(
-                matches!(
-                    join_finished(h, Instant::now() + Duration::from_secs(2)),
-                    JoinOutcome::Joined
-                ),
-                "handoff joined"
-            );
+            assert!(retain_join(h, end, &mut unfinished), "handoff joined");
         }
         assert!(
             start.elapsed() < Duration::from_secs(10),
@@ -1462,7 +1469,9 @@ mod resource_exhaustion {
             receipt.display()
         );
         let start = Instant::now();
+        let mut drop_readers = Vec::new();
         let mut guard = RetainedCleanup {
+            drop_readers: &mut drop_readers,
             pid: None,
             marker: Some(marker.clone()),
             pending: None,
@@ -1558,7 +1567,9 @@ mod resource_exhaustion {
         // a panic below still cleans up via Drop. The pid binds once the
         // pidA handshake proves identity; without it there is honestly
         // nothing to terminate.
+        let mut drop_readers = Vec::new();
         let mut guard = RetainedCleanup {
+            drop_readers: &mut drop_readers,
             drop_note: None,
             marker: None,
             pid: None,
@@ -1640,7 +1651,9 @@ mod resource_exhaustion {
         // Drop. No pid identity was ever recorded for this fixture; the
         // marker (established in the script text pre-launch) is the
         // usable control channel, and complete() terminates through it.
+        let mut drop_readers = Vec::new();
         let mut guard = RetainedCleanup {
+            drop_readers: &mut drop_readers,
             drop_note: None,
             pid: None,
             marker: Some(marker.clone()),
@@ -1697,6 +1710,46 @@ mod resource_exhaustion {
     }
 
     #[test]
+    fn harness_drop_preserves_unfinished_reader_for_owner() {
+        let (release, wait) = std::sync::mpsc::channel();
+        let handle = std::thread::spawn(move || {
+            let _ = wait.recv_timeout(Duration::from_secs(20));
+        });
+        let original_id = handle.thread().id();
+        let mut readers = Vec::new();
+        let start = Instant::now();
+        {
+            let _guard = RetainedCleanup {
+                drop_readers: &mut readers,
+                pid: None,
+                marker: None,
+                pending: Some(PendingJoiners {
+                    handles: vec![handle],
+                    all_reported: false,
+                }),
+                files: Vec::new(),
+                drop_note: None,
+            };
+        }
+        // Release before any assertion, then observe the ORIGINAL returned handle.
+        let _ = release.send(());
+        let count = readers.len();
+        let returned_id = readers.first().map(|h| h.thread().id());
+        let end = start + Duration::from_secs(10);
+        let mut all_joined = true;
+        for handle in std::mem::take(&mut readers) {
+            all_joined &= retain_join(handle, end, &mut readers);
+        }
+        assert_eq!(
+            count, 1,
+            "Drop returns unfinished ownership, not just a count"
+        );
+        assert_eq!(returned_id, Some(original_id));
+        assert!(all_joined && readers.is_empty());
+        assert!(start.elapsed() < Duration::from_secs(10));
+    }
+
+    #[test]
     fn harness_marker_drop_cleans_up_on_unwind() {
         // Caught failure through a MARKER-owned fixture (no pid identity
         // anywhere): the guard is built before any assert, the panic
@@ -1713,7 +1766,9 @@ mod resource_exhaustion {
             Duration::from_secs(5),
             LifecycleFaults::default(),
         );
+        let mut drop_readers = Vec::new();
         let guard = RetainedCleanup {
+            drop_readers: &mut drop_readers,
             pid: None,
             marker: Some(marker.clone()),
             pending: Some(pending),
@@ -1794,7 +1849,9 @@ mod resource_exhaustion {
         // Guard owns threads and file paths BEFORE the assert below: a
         // failure here still cleans up via Drop. The pid binds after its
         // read; the post-unwind stage below then uses this SAME guard.
+        let mut drop_readers = Vec::new();
         let mut guard_opt = Some(RetainedCleanup {
+            drop_readers: &mut drop_readers,
             drop_note: None,
             marker: None,
             pid: None,
@@ -1872,7 +1929,9 @@ mod resource_exhaustion {
         // Guard owns threads and files BEFORE the fallible pidA read:
         // a failure here still cleans up via Drop (no identity to kill,
         // files removed, threads documented). The pid binds below.
+        let mut drop_readers = Vec::new();
         let mut guard = RetainedCleanup {
+            drop_readers: &mut drop_readers,
             drop_note: None,
             marker: None,
             pid: None,
@@ -1937,7 +1996,9 @@ mod resource_exhaustion {
         let pid = child.id().to_string();
         let start = Instant::now();
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut drop_readers = Vec::new();
             let _guard = RetainedCleanup {
+                drop_readers: &mut drop_readers,
                 drop_note: None,
                 marker: None,
                 pid: Some(pid.clone()),
@@ -2413,7 +2474,9 @@ mod resource_exhaustion {
         // kill once the pid binds, file removal, no panics). The pid
         // itself binds after the pidfile read; without an identity there
         // is nothing to terminate, which Drop records honestly.
+        let mut drop_readers = Vec::new();
         let mut guard = RetainedCleanup {
+            drop_readers: &mut drop_readers,
             drop_note: None,
             marker: None,
             pid: None,

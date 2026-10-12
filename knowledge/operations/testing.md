@@ -196,6 +196,12 @@ surfaces as a 404 in an already-green job.
 
 ## Resource-cap tests must not race the deadline
 
+Controlled retained-pipe fixtures keep a caller-owned reader-handoff vector
+outside their cleanup guard. A bounded `Drop` returns any unfinished ORIGINAL
+handle to that owner rather than recording a count and detaching it. The owner
+releases the controlled writer and joins the returned handle before asserting
+completion; a timeout or failed drain remains a negative verdict.
+
 A test whose expected outcome is a **memory or output cap** must pin its own
 generous execution timeout instead of inheriting the `ExecutionLimits::default()`
 30 s deadline. Otherwise the asserted diagnostic becomes a function of machine
