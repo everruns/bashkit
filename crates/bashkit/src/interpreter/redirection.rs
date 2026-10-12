@@ -56,6 +56,33 @@ fn redirect_target_may_split(redirect: &Redirect) -> bool {
     })
 }
 
+/// Stdin slot: the buffer plus the live-bytes lease when the buffer is a
+/// budgeted clone minted here. Assigning the slot drops any previous
+/// buffer and its clone lease together.
+type StdinSlot = Option<(
+    crate::StreamData,
+    Option<crate::limits::ExecutionBudgetLease>,
+)>;
+
+/// Assign the stdin slot, dropping any previous buffer and its clone lease
+/// together. Fresh reads pass `lease: None`; budgeted clones pass the lease
+/// from `charge_input_retention` so it lives as long as stdin does.
+fn set_stdin_slot(
+    slot: &mut StdinSlot,
+    value: Option<crate::StreamData>,
+    lease: Option<crate::limits::ExecutionBudgetLease>,
+) {
+    *slot = value.map(|data| (data, lease));
+}
+
+/// Result of input-redirection processing: the stdin buffer plus the
+/// live-bytes lease for it when stdin is a budgeted clone minted here.
+/// Callers hold `stdin_lease` for as long as they retain `stdin`.
+pub(crate) struct StdinSetup {
+    pub stdin: Option<crate::StreamData>,
+    pub stdin_lease: Option<crate::limits::ExecutionBudgetLease>,
+}
+
 /// Numbered-fd table with replace semantics: re-redirecting an fd drops the
 /// superseded buffer — and its live-bytes lease — instead of piling clones.
 /// Aggregate input consumption stays cumulative.
@@ -268,8 +295,11 @@ impl Interpreter {
         redirects: &[Redirect],
         demand: StdinDemand,
         high_fd_stdin: HighFdStdin,
-    ) -> Result<Option<crate::StreamData>> {
-        let mut stdin = existing_stdin;
+    ) -> crate::error::Result<StdinSetup> {
+        // Stdin slot: a budgeted clone's live lease travels with the buffer
+        // so replacing stdin drops both together; the surviving lease is
+        // handed to the caller with stdin.
+        let mut stdin: StdinSlot = existing_stdin.map(|data| (data, None));
         // Readable fds this command's own redirects open (`4<<E <&4`).
         let mut own_fds: Vec<OwnFdEntry> = Vec::new();
 
@@ -306,7 +336,7 @@ impl Interpreter {
                             let lease = self.charge_input_retention(content.retained_len())?;
                             replace_own_fd(&mut own_fds, fd, content, lease);
                         }
-                        None => stdin = Some(content),
+                        None => set_stdin_slot(&mut stdin, Some(content), None),
                     }
                 }
                 RedirectKind::Input => {
@@ -324,7 +354,7 @@ impl Interpreter {
                     if self.fd_alias(&path) == Some(0) {
                         // `< /dev/stdin` re-reads the current stdin: no-op.
                     } else if is_dev_null(&path) {
-                        stdin = Some(crate::StreamData::new()); // EOF
+                        set_stdin_slot(&mut stdin, Some(crate::StreamData::new()), None); // EOF
                     } else if !self.shell_features.has_file_redirects() {
                         return Err(crate::error::Error::Execution(
                             self.diag(format!("{}: filesystem redirection disabled", target_path)),
@@ -350,7 +380,7 @@ impl Interpreter {
                                     (Some(_), HighFdStdin::Never) => false,
                                 };
                                 if feeds {
-                                    stdin = Some(content);
+                                    set_stdin_slot(&mut stdin, Some(content), None);
                                 }
                             }
                             Err(e) => {
@@ -370,7 +400,7 @@ impl Interpreter {
                             let lease = self.charge_input_retention(content.retained_len())?;
                             replace_own_fd(&mut own_fds, fd, content, lease);
                         }
-                        None => stdin = Some(content),
+                        None => set_stdin_slot(&mut stdin, Some(content), None),
                     }
                 }
                 RedirectKind::HereDoc | RedirectKind::HereDocStrip => {
@@ -383,7 +413,7 @@ impl Interpreter {
                             let lease = self.charge_input_retention(content.retained_len())?;
                             replace_own_fd(&mut own_fds, fd, content, lease);
                         }
-                        None => stdin = Some(content),
+                        None => set_stdin_slot(&mut stdin, Some(content), None),
                     }
                 }
                 RedirectKind::DupInput => {
@@ -411,7 +441,7 @@ impl Interpreter {
                         let content = content.clone();
                         match high_fd {
                             Some(fd) => replace_own_fd(&mut own_fds, fd, content, lease),
-                            None => stdin = Some(content),
+                            None => set_stdin_slot(&mut stdin, Some(content), Some(lease)),
                         }
                         continue;
                     }
@@ -437,11 +467,15 @@ impl Interpreter {
                                     text.push('\n');
                                 }
                             }
-                            stdin = Some(text.into());
+                            set_stdin_slot(&mut stdin, Some(text.into()), None);
                         }
                         Some(coproc::InputFd::Pipe(end)) => {
                             let pipe = Arc::clone(&end.0);
-                            stdin = Some(Box::pin(coproc::read_coproc_input(pipe, demand)).await);
+                            set_stdin_slot(
+                                &mut stdin,
+                                Some(Box::pin(coproc::read_coproc_input(pipe, demand)).await),
+                                None,
+                            );
                         }
                         // `<&5` with fd 5 never opened (or closed): bash
                         // reports it and does not run the command.
@@ -462,7 +496,12 @@ impl Interpreter {
             }
         }
 
-        Ok(stdin)
+        let mut stdin_lease = None;
+        let stdin = stdin.map(|(data, lease)| {
+            stdin_lease = lease;
+            data
+        });
+        Ok(StdinSetup { stdin, stdin_lease })
     }
 
     /// Apply output redirections to command output

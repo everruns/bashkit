@@ -124,7 +124,9 @@ async fn both_backing_buffers_admitted() {
 
 #[tokio::test]
 /// Replacing a superseded same-fd entry releases its live lease: eight
-/// same-fd repeats hold only one 64B lease under a 64B live cap.
+/// same-fd repeats never hold more than two 64B buffers transiently (one
+/// retained plus one incoming during replacement), so a 128B live cap
+/// suffices where append-only leases would grow without bound.
 async fn superseded_entry_releases_live_lease() {
     let mut bash = Bash::builder()
         .limits(ExecutionLimits::new().max_live_intermediate_bytes(128_u64))
@@ -165,32 +167,71 @@ async fn cumulative_aggregate_survives_replace() {
 }
 
 #[tokio::test]
-/// Every reachable cloning/retaining numbered-input branch charges: DupInput
-/// clone and ReadWrite each trip a 31B aggregate cap (16B payload retains
-/// 32B). (`3<<<` drops its fd in the parser and always feeds stdin, and
-/// numbered heredoc bodies are parse-metered with no per-exec retention, so
-/// those arms keep their charges as defense-in-depth.)
-async fn all_numbered_input_branches_charge() {
-    let cases = [": 3</big 4<&3", ": 3<>/big"];
-    for script in cases {
-        let mut bash = Bash::builder()
-            .limits(ExecutionLimits::new().max_aggregate_input_bytes(31))
-            .build();
-        bash.fs()
-            .write_file(Path::new("/big"), b"sixteen-bytesxx")
-            .await
-            .unwrap();
-        let result = bash.exec(script).await;
-        assert!(
-            matches!(
-                result,
-                Err(Error::ResourceLimit(LimitExceeded::ExecutionBudget(
-                    ExecutionBudgetExceeded::InputBytes { .. }
-                )))
-            ),
-            "script {script:?} should trip the input budget, got {result:?}"
-        );
-    }
+/// The DupInput target duplication itself is charged: with a 16B payload
+/// (32B retained), a 47B aggregate cap admits the 15B script plus the source
+/// fd (47B total) but the `4<&3` clone (79B) trips `InputBytes`. Controls
+/// prove the script text and source fd fit on their own.
+async fn dup_target_duplication_charges() {
+    // Control 1: source fd alone fits (7B script + 32B retained = 39B).
+    let mut bash = Bash::builder()
+        .limits(ExecutionLimits::new().max_aggregate_input_bytes(39))
+        .build();
+    bash.fs()
+        .write_file(Path::new("/big"), b"sixteen-bytesxx")
+        .await
+        .unwrap();
+    assert!(bash.exec(": 3</big").await.is_ok());
+    // Control 2: source plus dup fits under a 79B cap.
+    let mut bash = Bash::builder()
+        .limits(ExecutionLimits::new().max_aggregate_input_bytes(79))
+        .build();
+    bash.fs()
+        .write_file(Path::new("/big"), b"sixteen-bytesxx")
+        .await
+        .unwrap();
+    assert!(bash.exec(": 3</big 4<&3").await.is_ok());
+    // The duplication itself trips: script (15B) + source (32B) fits 47B,
+    // the target clone (+32B = 79B) does not.
+    let mut bash = Bash::builder()
+        .limits(ExecutionLimits::new().max_aggregate_input_bytes(47))
+        .build();
+    bash.fs()
+        .write_file(Path::new("/big"), b"sixteen-bytesxx")
+        .await
+        .unwrap();
+    let result = bash.exec(": 3</big 4<&3").await;
+    assert!(
+        matches!(
+            result,
+            Err(Error::ResourceLimit(LimitExceeded::ExecutionBudget(
+                ExecutionBudgetExceeded::InputBytes { .. }
+            )))
+        ),
+        "target duplication should trip InputBytes, got {result:?}"
+    );
+}
+
+#[tokio::test]
+/// ReadWrite numbered retention is charged: 10B script + 32B retained trips
+/// a 31B aggregate cap with `InputBytes`.
+async fn readwrite_numbered_retention_charges() {
+    let mut bash = Bash::builder()
+        .limits(ExecutionLimits::new().max_aggregate_input_bytes(31))
+        .build();
+    bash.fs()
+        .write_file(Path::new("/big"), b"sixteen-bytesxx")
+        .await
+        .unwrap();
+    let result = bash.exec(": 3<>/big").await;
+    assert!(
+        matches!(
+            result,
+            Err(Error::ResourceLimit(LimitExceeded::ExecutionBudget(
+                ExecutionBudgetExceeded::InputBytes { .. }
+            )))
+        ),
+        "ReadWrite retention should trip InputBytes, got {result:?}"
+    );
 }
 
 #[tokio::test]
@@ -241,4 +282,153 @@ async fn large_numbered_heredoc_stays_bounded() {
         .build();
     let result = bash.exec(&script).await.unwrap();
     assert_eq!(result.exit_code, 0);
+}
+
+#[tokio::test]
+/// Stdin-clone live overlap: `cat 3</a <&3 4</b` simultaneously owns three
+/// 64B buffers (fd-3 entry, stdin clone, fd-4 entry), so a 192B live cap
+/// succeeds while 191B trips `LiveBytes` on the third admission.
+async fn stdin_clone_live_overlap() {
+    for (cap, ok) in [(192_u64, true), (191, false)] {
+        let mut bash = Bash::builder()
+            .limits(ExecutionLimits::new().max_live_intermediate_bytes(cap))
+            .build();
+        bash.fs()
+            .write_file(Path::new("/a"), &[b'A'; 32])
+            .await
+            .unwrap();
+        bash.fs()
+            .write_file(Path::new("/b"), &[b'B'; 32])
+            .await
+            .unwrap();
+        let result = bash.exec("cat 3</a <&3 4</b").await;
+        if ok {
+            let out = result.unwrap();
+            assert_eq!(out.exit_code, 0);
+            assert_eq!(out.stdout.text().unwrap(), "A".repeat(32));
+        } else {
+            assert!(
+                matches!(
+                    result,
+                    Err(Error::ResourceLimit(LimitExceeded::ExecutionBudget(
+                        ExecutionBudgetExceeded::LiveBytes { .. }
+                    )))
+                ),
+                "live cap {cap} should trip LiveBytes, got {result:?}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+/// After a live-budget trip on a stdin-clone overlap, the session recovers
+/// for commands within the remaining budget.
+async fn stdin_clone_trip_recovers() {
+    let mut bash = Bash::builder()
+        .limits(ExecutionLimits::new().max_live_intermediate_bytes(191_u64))
+        .build();
+    bash.fs()
+        .write_file(Path::new("/a"), &[b'A'; 32])
+        .await
+        .unwrap();
+    bash.fs()
+        .write_file(Path::new("/b"), &[b'B'; 32])
+        .await
+        .unwrap();
+    let tripped = bash.exec("cat 3</a <&3 4</b").await;
+    assert!(
+        tripped.is_err(),
+        "expected the overlap to trip, got {tripped:?}"
+    );
+    let result = bash.exec("echo recovered").await.unwrap();
+    assert_eq!(result.exit_code, 0);
+    assert!(result.stdout.text().unwrap().contains("recovered"));
+}
+
+/// Original shape under default limits in an owned bounded child: `:` plus
+/// 1024 same-fd `/dev/zero` redirects is denied quickly by the aggregate
+/// input budget (each 1MiB read retains ~2MiB against the 100MB default cap,
+/// tripping after ~50 redirects) instead of piling ~2GiB of retained clones.
+/// The harness asserts the exact denial: clean exit code 1 naming `aggregate
+/// input bytes` (production retention admission, far above the ~7KiB script
+/// text), which distinguishes budget denial from OOM/signal death (no exit
+/// code) and from pre-fix success (exit 0). The 1536MiB RLIMIT_AS
+/// additionally caps any regression to append-only retention. The child is
+/// always reaped, killed first on wall-clock expiry. Unix-only: needs bash +
+/// ulimit for enforcement.
+#[cfg(unix)]
+#[tokio::test]
+async fn original_shape_bounded_child_default_limits() {
+    let script = format!(":{}", " 3</dev/zero".repeat(1024));
+    let outcome = tokio::task::spawn_blocking(move || {
+        let exe = std::env::current_exe().expect("test executable path");
+        let cli = exe
+            .ancestors()
+            .flat_map(|dir| [dir.join(format!("bashkit{}", std::env::consts::EXE_SUFFIX))])
+            .find(|path| path.is_file())
+            .expect("build the CLI first: cargo build -p bashkit-cli");
+        // rlimits apply to the exec'd CLI only; fsize caps stray outputs.
+        let launcher =
+            "ulimit -v 1572864; ulimit -t 120; ulimit -s 8192; ulimit -f 2048; exec \"$@\"";
+        let mut child = std::process::Command::new("bash")
+            .args([
+                "-c",
+                launcher,
+                "ir-child",
+                &cli.to_string_lossy(),
+                "-c",
+                &script,
+            ])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("spawn bounded child");
+        let start = std::time::Instant::now();
+        let deadline = std::time::Duration::from_secs(100);
+        loop {
+            if let Some(status) = child.try_wait().expect("poll child") {
+                let output = child.wait_with_output().expect("reap child");
+                return (status, output, start.elapsed(), false);
+            }
+            if start.elapsed() > deadline {
+                child.kill().expect("kill overrun child");
+                let _ = child.wait();
+                use std::os::unix::process::ExitStatusExt;
+                return (
+                    std::process::ExitStatus::from_raw(9),
+                    std::process::Output {
+                        status: std::process::ExitStatus::from_raw(9),
+                        stdout: Vec::new(),
+                        stderr: b"wall-clock overrun".to_vec(),
+                    },
+                    start.elapsed(),
+                    true,
+                );
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+    })
+    .await
+    .expect("child harness join");
+    let (status, output, elapsed, overran) = outcome;
+    assert!(
+        !overran,
+        "bounded child overran the wall clock; killed and reaped"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        status.code(),
+        Some(1),
+        "producer must fail cleanly (signal death = OOM, 0 = unbounded success): {status:?}"
+    );
+    assert!(
+        stderr.contains("aggregate input bytes"),
+        "denial must name the aggregate input budget phase, got: {stderr:?}"
+    );
+    assert!(output.stdout.len() < 4096, "producer output capped");
+    assert!(
+        elapsed < std::time::Duration::from_secs(60),
+        "producer took {elapsed:?}"
+    );
 }

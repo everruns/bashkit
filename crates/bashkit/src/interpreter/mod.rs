@@ -9379,7 +9379,7 @@ impl Interpreter {
             }
 
             // Handle input redirections first
-            let stdin = match self
+            let stdin_setup = match self
                 .process_input_redirections(
                     stdin,
                     &command.redirects,
@@ -9394,6 +9394,10 @@ impl Interpreter {
                 }
                 Err(e) => return Err(e),
             };
+            // Hold the stdin clone's live lease (if stdin is a budgeted
+            // clone minted above) for as long as `stdin` is retained below.
+            let _stdin_storage = stdin_setup.stdin_lease;
+            let stdin = stdin_setup.stdin;
 
             // `read -u FD` on a readable fd (`exec 3<f`, a coproc): its
             // next line is stdin.
@@ -12868,7 +12872,7 @@ impl Interpreter {
             // WTF: a coproc fd as a compound's stdin (`while read l; do
             // ...; done <&${C[0]}`) is read to end of input up front, not
             // line by line as the loop runs.
-            let stdin = match self
+            let stdin_setup = match self
                 .process_input_redirections(None, redirects, StdinDemand::All, HighFdStdin::Any)
                 .await
             {
@@ -12878,6 +12882,10 @@ impl Interpreter {
                 }
                 Err(e) => return Err(e),
             };
+            // Hold the stdin clone's live lease (if stdin is a budgeted
+            // clone minted above) for as long as `stdin` is retained below.
+            let _stdin_storage = stdin_setup.stdin_lease;
+            let stdin = stdin_setup.stdin;
             let prev_pipeline_stdin = if stdin.is_some() {
                 let prev = self.pipeline_stdin.take();
                 self.pipeline_stdin = stdin;
@@ -12974,8 +12982,11 @@ impl Interpreter {
                     .await
                 };
                 match read {
-                    Ok(content) => {
-                        if let Some(content) = content {
+                    Ok(setup) => {
+                        // Hold the stdin clone's live lease while the
+                        // substitution output derived from it is live.
+                        let _stdin_storage = setup.stdin_lease;
+                        if let Some(content) = setup.stdin {
                             // Account for the VFS-owned input while it and the
                             // decoded substitution text are simultaneously live.
                             let _content_lease =
