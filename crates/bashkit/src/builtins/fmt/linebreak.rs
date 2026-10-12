@@ -1,15 +1,16 @@
 // Vendored from uutils/coreutils (MIT, Copyright (c) uutils developers),
 // src/uu/fmt/src/linebreak.rs at rev 6579cc2. Changes: output goes to a
-// `Vec<u8>`, input is any `BufRead`, options come from `super::FmtOptions`.
+// budgeted sink, search steps poll the shared execution budget, and options
+// come from `super::FmtOptions`.
 // Keep in sync with upstream; see knowledge/foundations/builtins.md "fmt".
 
 // spell-checker:ignore (ToDO) INFTY MULT accum breakwords linebreak linebreaking linebreaks linelen maxlength minlength nchars ostream overlen parasplit plass posn powf punct signum slen sstart tabwidth tlen underlen winfo wlen wordlen
 
-use std::io::Write;
 use std::mem;
 
-use super::FmtOptions;
 use super::parasplit::{ParaWords, Paragraph, WordInfo};
+use super::{FmtOptions, FmtOutput};
+use crate::error::Result;
 
 struct BreakArgs<'a> {
     opts: &'a FmtOptions,
@@ -17,7 +18,7 @@ struct BreakArgs<'a> {
     indent: &'a [u8],
     indent_len: usize,
     uniform: bool,
-    ostream: &'a mut Vec<u8>,
+    ostream: &'a mut FmtOutput,
 }
 
 impl BreakArgs<'_> {
@@ -36,11 +37,7 @@ impl BreakArgs<'_> {
     }
 }
 
-pub fn break_lines(
-    para: &Paragraph,
-    opts: &FmtOptions,
-    ostream: &mut Vec<u8>,
-) -> std::io::Result<()> {
+pub fn break_lines(para: &Paragraph, opts: &FmtOptions, ostream: &mut FmtOutput) -> Result<()> {
     // indent
     let p_indent = &para.indent_str;
     let p_indent_len = para.indent_len;
@@ -97,7 +94,7 @@ pub fn break_lines(
 fn break_simple<'a, T: Iterator<Item = &'a WordInfo<'a>>>(
     mut iter: T,
     args: &mut BreakArgs<'a>,
-) -> std::io::Result<()> {
+) -> Result<()> {
     iter.try_fold((args.init_len, false), |(l, prev_punct), winfo| {
         accum_words_simple(args, l, prev_punct, winfo)
     })?;
@@ -109,7 +106,7 @@ fn accum_words_simple<'a>(
     l: usize,
     prev_punct: bool,
     winfo: &'a WordInfo<'a>,
-) -> std::io::Result<(usize, bool)> {
+) -> Result<(usize, bool)> {
     // compute the length of this word, considering how tabs will expand at this position on the line
     let wlen = winfo.word_nchars + args.compute_width(winfo, l, false);
 
@@ -137,12 +134,12 @@ fn accum_words_simple<'a>(
 fn break_knuth_plass<'a, T: Clone + Iterator<Item = &'a WordInfo<'a>>>(
     mut iter: T,
     args: &mut BreakArgs<'a>,
-) -> std::io::Result<()> {
+) -> Result<()> {
     // run the algorithm to get the breakpoints
-    let breakpoints = find_kp_breakpoints(iter.clone(), args);
+    let breakpoints = find_kp_breakpoints(iter.clone(), args)?;
 
     // iterate through the breakpoints (note that breakpoints is in reverse break order, so we .rev() it
-    let result: std::io::Result<(bool, bool)> = breakpoints.iter().rev().try_fold(
+    let result: Result<(bool, bool)> = breakpoints.iter().rev().try_fold(
         (false, false),
         |(mut prev_punct, mut fresh), &(next_break, break_before)| {
             if fresh {
@@ -218,7 +215,7 @@ struct LineBreak<'a> {
 fn find_kp_breakpoints<'a, T: Clone + Iterator<Item = &'a WordInfo<'a>>>(
     iter: T,
     args: &BreakArgs<'a>,
-) -> Vec<(&'a WordInfo<'a>, bool)> {
+) -> Result<Vec<(&'a WordInfo<'a>, bool)>> {
     let mut iter = iter.peekable();
     // set up the initial null linebreak
     let mut linebreaks = vec![LineBreak {
@@ -244,6 +241,7 @@ fn find_kp_breakpoints<'a, T: Clone + Iterator<Item = &'a WordInfo<'a>>>(
     let mut new_linebreaks = vec![];
     let mut is_sentence_start = false;
     while let Some(w) = iter.next() {
+        args.ostream.consume_work(1)?;
         let next_word_sentence_final = is_next_word_sentence_final(iter.clone());
         // if this is the last word, we don't add additional demerits for this break
         let (is_last_word, is_sentence_end) = match iter.peek() {
@@ -268,6 +266,7 @@ fn find_kp_breakpoints<'a, T: Clone + Iterator<Item = &'a WordInfo<'a>>>(
         // break if we are above the minimum required length
         #[allow(clippy::explicit_iter_loop)]
         for &i in active_breaks.iter() {
+            args.ostream.consume_work(1)?;
             let active = &mut linebreaks[i];
             if active.demerits < best_active_demerits {
                 best_active_demerits = active.demerits;
@@ -381,7 +380,7 @@ fn find_kp_breakpoints<'a, T: Clone + Iterator<Item = &'a WordInfo<'a>>>(
     }
 
     // return the best path
-    build_best_path(&linebreaks, &active_breaks)
+    Ok(build_best_path(&linebreaks, &active_breaks))
 }
 
 fn build_best_path<'a>(paths: &[LineBreak<'a>], active: &[usize]) -> Vec<(&'a WordInfo<'a>, bool)> {
@@ -531,13 +530,13 @@ fn slice_if_fresh(
 }
 
 /// Write a newline and add the indent.
-fn write_newline(indent: &[u8], ostream: &mut Vec<u8>) -> std::io::Result<()> {
+fn write_newline(indent: &[u8], ostream: &mut FmtOutput) -> Result<()> {
     ostream.write_all(b"\n")?;
     ostream.write_all(indent)
 }
 
 /// Write the word, along with slen spaces.
-fn write_with_spaces(word: &[u8], slen: usize, ostream: &mut Vec<u8>) -> std::io::Result<()> {
+fn write_with_spaces(word: &[u8], slen: usize, ostream: &mut FmtOutput) -> Result<()> {
     if slen == 2 {
         ostream.write_all(b"  ")?;
     } else if slen == 1 {

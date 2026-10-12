@@ -618,13 +618,22 @@ regex caps are TM-DOS-023/025 in the [Threat Model](../security/threat-model.md)
 `fmt` vendors the uutils/coreutils `fmt` engine (MIT): `builtins/fmt/
 linebreak.rs` (Knuth-Plass optimal fit) and `parasplit.rs` (paragraphs,
 prefixes, crown/tagged indents), pinned to the same uutils revision as the
-generated argument files. Bashkit owns only `fmt/mod.rs`: option parsing and
-I/O. Options are GNU's (`-w`, `-g`, `-c`, `-t`, `-s`, `-u`, `-p`, obsolete
+generated argument files. Bashkit owns option parsing, I/O and budget
+enforcement. Options are GNU's (`-w`, `-g`, `-c`, `-t`, `-s`, `-u`, `-p`, obsolete
 `-WIDTH`) plus the uutils extras (`-m`, `-P`, `-x`, `-X`, `-q`, `-T`). Width
 rules and error messages follow GNU: goal is 93% of the width, `-g` alone sets
 the width to goal + 10, width is capped at 2500, goal at the width. Vendored
 `panic!`/`unwrap` paths were turned into early returns. GNU `fmt.c` is GPL and
 must not be ported; line-break differences are L-FMT-001.
+
+All formatter output, including unformatted lines, retains a `BudgetedBytes`
+capacity lease against the shared live-intermediate budget before fallible
+allocation. Repeated indentation/prefix bytes consume work before copying;
+optimal-fit word/active-path searches also poll the shared work, cancellation
+and deadline budget. Sink/search errors propagate to the Bash API as resource
+failures, never successful partial output. The stdout capture ceiling does not
+limit a formatter sink used by a pipeline or VFS redirect. Regression coverage:
+`fmt_resource_tests` and the formatter's capacity/cancellation/deadline unit tests.
 
 ### Network Builtins
 
@@ -640,10 +649,22 @@ corpus: page layout (5-line header with date, centered title and page number,
 body, 5-line trailer, 66 lines), `-COLUMN` down/across with last-page
 balancing, `-m`, `-n`, `-d`, `-o`, `-s`/`-S`/`-J`, `-l`/`-w`/`-W`, `+FIRST:LAST`
 and the error messages. Multi-column padding uses GNU's tab rule: padding and
-blank runs of two or more become tabs where they reach a tab stop. Header
-dates come from the sandbox clock and `TZ` (the `date` builtin's), file dates
+blank runs of two or more become tabs where they reach a tab stop. Line
+number separators expand at local field tab stops before column rendering,
+including unpadded `-J -n` columns; the finite GNU oracle covers this combination.
+Header dates come from the sandbox clock and `TZ` (the `date` builtin's), file dates
 from VFS mtimes. Output is capped at 16 MiB because padding can multiply
-input size. Gaps: L-PR-001.
+input size. Every row/output append checks that cap before growth, including
+headers, offsets, newlines and form feeds. Header text is appended directly;
+page slices and cells borrow existing storage instead of copying headers/text.
+Inputs retain date timestamps; formatted `-D` headers live only while emitting
+one nonempty stream, avoiding repeated date storage for empty files.
+Input lines, cell/row vectors and rendered/output buffers lease capacity from
+the shared live-memory budget. VFS bytes charge aggregate input; input splitting,
+row construction and each page (including skipped pages) charge work and poll
+cancellation/deadlines. Limit failures abort the execution; a subsequent host
+`exec()` starts with a fresh budget. Regressions: `pr_resource_tests`,
+`pr_allocation_tests`, and `builtins::pr::tests`. Gaps: L-PR-001.
 
 ### Archive Compression
 
@@ -651,6 +672,19 @@ input size. Gaps: L-PR-001.
 bundles (`-cjf`, `cjf`) and `--bzip2`, and detects gzip/bzip2 magic while listing
 or extracting so `.tar.bz2`/`.tbz2` inputs work without an explicit codec flag.
 `bzip2`, `bunzip2`, and `bzcat` share the same byte-native codec path.
+
+`tar -T` / `--files-from` admits each VFS read using its metadata size,
+retains the read lease through parsing, and charges any extra returned capacity.
+The filesystem backend owns allocation admission if a host-backed file grows
+between stat and read. Stdin is borrowed. Names are decoded directly into
+`BudgetedString` owners held by a `BudgetedVec`; neither per-line copies nor
+lossy UTF-8 replacement can allocate before live-budget admission. Shared work
+charges cover source bytes, every line (including blanks), and decoding steps,
+checking the request deadline/cancellation during dense-list scans. Repeated
+sources share input/live/work budgets, preserving order, duplicates, CRLF,
+blank lines, stdin, and missing-member behavior. Tests:
+`tar_files_from_budget_tests` and the isolated counting-allocator
+`tar_files_from_allocation_tests` (TM-DOS-103).
 
 The implementation uses `bzip2` 0.6 with its default pure-Rust
 `libbz2-rs-sys` backend. The crate is maintained by the Trifecta Tech

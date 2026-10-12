@@ -24,6 +24,27 @@ Input → Lexer → Tokens → Parser → AST
 Token types, AST structures, and parser grammar live in
 `crates/bashkit/src/parser/`. They evolve as features are added.
 
+### Native Stack and Substitution Depth
+
+`max_ast_depth` (default and hard ceiling 100) counts compound commands,
+process substitutions, and each child command-substitution parser. A child
+inherits the enclosing depth plus one, the same ceiling, remaining fuel,
+execution budget, options, timeout, and original start time. A simple-command
+`$(...)` cannot reset the depth counter or restart its timeout.
+
+Child parsers stay boxed while parsing by mutable reference. Private grammar
+results also carry boxed command nodes across recursive calls; commands are
+unboxed into the existing public AST vectors. A lone pipeline reuses its first
+boxed command without building an intermediate vector. This avoids retaining
+large command move temporaries on the native stack. Nonrecursive
+braced-parameter parsing and AST assembly are outlined so their debug-build
+stack temporaries are not retained at every recursive level (TM-DOS-044).
+The default 2 MiB Rust test-thread stack must handle depth-50 substitutions
+and reject input beyond the hard ceiling, including oversized caller limits.
+Do not increase thread stacks or reduce the existing ceiling to hide a crash.
+Parser unit tests cover exact depth boundaries and mixed compound/substitution
+nesting; integration tests cover execution, shell recovery, and real Bash parity.
+
 ### Parser Rules (Simplified)
 
 ```

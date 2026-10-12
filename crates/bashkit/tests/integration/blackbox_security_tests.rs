@@ -86,6 +86,59 @@ mod finding_nested_cmd_subst_stack_overflow {
             Err(_) => {}
         }
     }
+    #[tokio::test]
+    async fn hard_ast_cap_rejects_substitutions_and_session_recovers() {
+        let mut bash = Bash::builder()
+            .limits(ExecutionLimits::new().max_ast_depth(usize::MAX))
+            .build();
+        let mut script = String::from("echo deep > /should-not-exist");
+        for _ in 0..120 {
+            script = format!("echo $({script})");
+        }
+        let diagnostic = match bash.exec(&script).await {
+            Ok(result) => {
+                assert_eq!(result.exit_code, 2);
+                assert!(result.stdout.is_empty());
+                result.stderr.to_string()
+            }
+            Err(err) => err.to_string(),
+        };
+        assert!(diagnostic.contains("AST nesting too deep"), "{diagnostic}");
+        assert!(
+            !bash
+                .fs()
+                .exists(std::path::Path::new("/should-not-exist"))
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            bash.exec("echo recovered").await.unwrap().stdout,
+            "recovered\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn moderate_substitutions_match_real_bash() {
+        for template in [
+            "echo $(BODY)",
+            "x=$(BODY); echo \"$x\"",
+            "echo $(true; BODY)",
+        ] {
+            let mut script = String::from("echo hello");
+            for _ in 0..6 {
+                script = template.replace("BODY", &script);
+            }
+            let reference = std::process::Command::new("/bin/bash")
+                .args(["--noprofile", "--norc", "-c", &script])
+                .output()
+                .unwrap();
+            assert!(reference.status.success());
+            let result = tight_bash().exec(&script).await.unwrap();
+            assert_eq!(result.exit_code, 0);
+            assert_eq!(result.stdout.as_bytes(), reference.stdout, "{template}");
+            assert_eq!(result.stderr.as_bytes(), reference.stderr, "{template}");
+        }
+    }
 }
 
 // =============================================================================
@@ -2139,4 +2192,40 @@ mod finding_cond_bare_not_print_overflow {
             result.stdout
         );
     }
+}
+
+/// Default value with command substitution ${VAR:-$(cmd)}
+#[tokio::test]
+async fn parameter_expansion_default_with_cmdsubst() {
+    let mut bash = tight_bash();
+
+    // Unset variable - should run command substitution
+    let result = bash
+        .exec(r#"unset VAR; echo ${VAR:-$(echo hello)}"#)
+        .await
+        .unwrap();
+    assert!(result.stdout.contains("hello"));
+
+    // Empty variable - should run command substitution (:- means unset OR empty)
+    let result = bash
+        .exec(r#"VAR=""; echo ${VAR:-$(echo hello)}"#)
+        .await
+        .unwrap();
+    assert!(result.stdout.contains("hello"));
+
+    // Set variable - should NOT run command substitution
+    let result = bash
+        .exec(r#"VAR="value"; echo ${VAR:-$(echo hello)}"#)
+        .await
+        .unwrap();
+    assert!(result.stdout.contains("value"));
+    assert!(!result.stdout.contains("hello"));
+
+    // Also test without colon (:-) - only unset, not empty
+    let result = bash
+        .exec(r#"VAR=""; echo ${VAR-$(echo hello)}"#)
+        .await
+        .unwrap();
+    // Empty is considered set, so should print empty
+    assert!(result.stdout.trim().is_empty() || result.stdout == "\n");
 }

@@ -107,13 +107,15 @@ executions receive fresh state. Regression and Bash differential coverage:
 
 Self-sent signals run handlers inline. Every handler entered through
 `run_trap_command` charges the existing function-depth counter, also used by
-functions, source, and child shells; its hard ceiling is 16. This preserves
-finite nested signal delivery while bounding direct, mutual, and mixed cycles
-without relying on command fuel or per-handler AST depth. The signal path boxes
-the handler future to keep each native frame small; when the budget is
-exhausted the nested handler is skipped with a diagnostic on the handler
-stderr, and unparsable or failing handlers never disturb the interrupted
-command (TM-DOS-030). Trap state and depth are restored on every path. DEBUG,
+functions, source, and child shells; its hard ceiling is 16. A dedicated
+trap-nesting cap of 3 trips first on small stacks: exactly three nested
+handler executions are admitted, and the fourth entry is skipped with a
+diagnostic on the handler stderr. This preserves finite nested signal
+delivery while bounding direct, mutual, and mixed cycles without relying on
+command fuel or per-handler AST depth. The first trip is surfaced as a
+resource-limit error at the `exec` boundary; unparsable or failing handlers
+still never disturb the interrupted command (TM-DOS-030). The signal path
+boxes the handler future to keep each native frame small. Trap state and depth are restored on every path. DEBUG,
 ERR, and RETURN retain their reentrancy suppression and existing error
 handling.
 See [Threat Model](../security/threat-model.md), TM-DOS-020, and

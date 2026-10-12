@@ -1288,12 +1288,26 @@ impl BudgetedString {
     }
 
     pub(crate) fn try_push_str(&mut self, value: &str) -> Result<(), LimitExceeded> {
+        self.try_push_str_with_limit(value, usize::MAX)
+    }
+
+    /// Bound both logical size and geometric capacity growth before allocation.
+    pub(crate) fn try_push_str_with_limit(
+        &mut self,
+        value: &str,
+        limit: usize,
+    ) -> Result<(), LimitExceeded> {
         let required = self
             .inner
             .len()
             .checked_add(value.len())
             .ok_or_else(|| LimitExceeded::Memory("intermediate string size overflow".into()))?;
-        let capacity = self.growth_capacity(required)?;
+        if required > limit {
+            return Err(LimitExceeded::Memory(
+                "intermediate string size limit exceeded".into(),
+            ));
+        }
+        let capacity = self.growth_capacity(required)?.min(limit);
         self.try_reserve_capacity(capacity)?;
         self.inner.push_str(value);
         Ok(())

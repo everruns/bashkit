@@ -4,6 +4,10 @@
 //!
 //! # Design Notes
 //!
+//! Substitution parsers share the enclosing AST depth and start time. Keep child
+//! parsers heap-owned and nonrecursive AST assembly out of recursive frames so
+//! the hard depth ceiling is safe on default 2 MiB test-thread stacks (TM-DOS-044).
+//!
 //! Reserved words (like `done`, `fi`, `then`) are only treated as special in command
 //! position - when they would start a command. In argument position, they are regular
 //! words. The termination of compound commands is handled by `parse_compound_list_until`
@@ -492,6 +496,12 @@ impl<'a> Parser<'a> {
 
     /// Parse the input and return the AST.
     pub fn parse(mut self) -> Result<Script> {
+        self.parse_inner()
+    }
+
+    // Child parsers remain heap-owned throughout recursion; consuming a
+    // boxed Parser through `parse(self)` would move it back onto the stack.
+    fn parse_inner(&mut self) -> Result<Script> {
         let mut commands = Vec::new();
         let start_span = self.current_span;
         self.parse_script_into(&mut commands)?;
@@ -585,10 +595,13 @@ impl<'a> Parser<'a> {
             self.failed_command_line = start_line;
             self.failed_command_start = (start_offset, start_line);
             self.top_level_list = true;
-            if let Some(cmd) = self.parse_command_list()? {
+            let parsed = self.parse_command_list()?.map(|cmd| {
                 self.top_starts.push((start_offset, start_line));
-                commands.push((cmd, self.current_span.start.line));
-            } else if self.current_token.is_some() && self.current_span.start.offset == start_offset
+                commands.push((*cmd, self.current_span.start.line));
+            });
+            if parsed.is_none()
+                && self.current_token.is_some()
+                && self.current_span.start.offset == start_offset
             {
                 return Err(self.error("unexpected token"));
             }
@@ -652,8 +665,11 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
+    // THREAT[TM-DOS-044]: Command enums are large. Heap-owned grammar results
+    // avoid retaining their move temporaries on every recursive parser frame.
+    // Unbox only when inserting into the public AST's command vectors.
     /// Parse a command list (commands connected by && or ||)
-    fn parse_command_list(&mut self) -> Result<Option<Command>> {
+    fn parse_command_list(&mut self) -> Result<Option<Box<Command>>> {
         self.tick()?;
         let top_level = std::mem::take(&mut self.top_level_list);
         match self.current_token {
@@ -663,10 +679,10 @@ impl<'a> Parser<'a> {
             _ => {}
         }
         let start_span = self.current_span;
-        let first = match self.parse_pipeline()? {
-            Some(cmd) => cmd,
-            None => return Ok(None),
-        };
+        let first = self.parse_pipeline()?;
+        if first.is_none() {
+            return Ok(None);
+        }
 
         let mut rest = Vec::new();
 
@@ -708,16 +724,7 @@ impl<'a> Parser<'a> {
                         || matches!(self.current_token, Some(tokens::Token::Newline))
                     {
                         // Just & at end - return as background
-                        rest.push((
-                            ListOperator::Background,
-                            Command::Simple(SimpleCommand {
-                                name: Word::literal(""),
-                                args: vec![],
-                                redirects: vec![],
-                                assignments: vec![],
-                                span: self.current_span,
-                            }),
-                        ));
+                        rest.push(empty_background(self.current_span));
                         break;
                     }
                     ListOperator::Background
@@ -727,9 +734,8 @@ impl<'a> Parser<'a> {
 
             self.skip_newlines()?;
 
-            if let Some(cmd) = self.parse_pipeline()? {
-                rest.push((op, cmd));
-            } else {
+            let parsed = self.parse_pipeline()?.map(|cmd| rest.push((op, *cmd)));
+            if parsed.is_none() {
                 // `{ cmd & }`, `do cmd & done`: the `&` before a closing
                 // keyword still backgrounds `cmd`.
                 if matches!(op, ListOperator::Background) {
@@ -739,21 +745,13 @@ impl<'a> Parser<'a> {
             }
         }
 
-        if rest.is_empty() {
-            Ok(Some(first))
-        } else {
-            Ok(Some(Command::List(CommandList {
-                first: Box::new(first),
-                rest,
-                span: start_span.merge(self.current_span),
-            })))
-        }
+        finish_command_list(first, rest, start_span.merge(self.current_span))
     }
 
     /// Parse a pipeline (commands connected by |)
     ///
     /// Handles `!` pipeline negation: `! cmd | cmd2` negates the exit code.
-    fn parse_pipeline(&mut self) -> Result<Option<Command>> {
+    fn parse_pipeline(&mut self) -> Result<Option<Box<Command>>> {
         let start_span = self.current_span;
 
         // Check for pipeline negation: `! command`
@@ -765,17 +763,22 @@ impl<'a> Parser<'a> {
             _ => false,
         };
 
-        let first = match self.parse_command()? {
-            Some(cmd) => cmd,
-            None => {
-                if negated {
-                    return Err(self.error("expected command after !"));
-                }
-                return Ok(None);
+        let first = self.parse_command()?;
+        if first.is_none() {
+            if negated {
+                return Err(self.error("expected command after !"));
             }
-        };
-
-        let mut commands = vec![first];
+            return Ok(None);
+        }
+        if !negated
+            && !matches!(
+                self.current_token,
+                Some(tokens::Token::Pipe | tokens::Token::PipeBoth)
+            )
+        {
+            return Ok(first);
+        }
+        let mut commands: Vec<Command> = first.into_iter().map(|cmd| *cmd).collect();
 
         while matches!(
             self.current_token,
@@ -789,22 +792,16 @@ impl<'a> Parser<'a> {
             self.advance();
             self.skip_newlines()?;
 
-            if let Some(cmd) = self.parse_command()? {
-                commands.push(cmd);
-            } else {
+            if self
+                .parse_command()?
+                .map(|cmd| commands.push(*cmd))
+                .is_none()
+            {
                 return Err(self.error("expected command after |"));
             }
         }
 
-        if commands.len() == 1 && !negated {
-            Ok(Some(commands.remove(0)))
-        } else {
-            Ok(Some(Command::Pipeline(Pipeline {
-                negated,
-                commands,
-                span: start_span.merge(self.current_span),
-            })))
-        }
+        finish_pipeline(commands, negated, start_span.merge(self.current_span))
     }
 
     /// Parse redirections that follow a compound command (>, >>, 2>, etc.)
@@ -1063,10 +1060,10 @@ impl<'a> Parser<'a> {
     fn parse_compound_with_redirects(
         &mut self,
         parser: impl FnOnce(&mut Self) -> Result<CompoundCommand>,
-    ) -> Result<Option<Command>> {
+    ) -> Result<Option<Box<Command>>> {
         let compound = parser(self)?;
         let redirects = self.parse_trailing_redirects()?;
-        Ok(Some(Command::Compound(compound, redirects)))
+        Ok(Some(Box::new(Command::Compound(compound, redirects))))
     }
 
     /// The subscript of `name[sub]=...` as written in the source.
@@ -1114,7 +1111,7 @@ impl<'a> Parser<'a> {
     }
 
     /// Parse a single command (simple or compound)
-    fn parse_command(&mut self) -> Result<Option<Command>> {
+    fn parse_command(&mut self) -> Result<Option<Box<Command>>> {
         self.skip_newlines()?;
         self.check_error_token()?;
         self.expand_command_alias();
@@ -1131,7 +1128,7 @@ impl<'a> Parser<'a> {
                 "select" => return self.parse_compound_with_redirects(|s| s.parse_select()),
                 "time" => return self.parse_compound_with_redirects(|s| s.parse_time()),
                 "coproc" => return self.parse_compound_with_redirects(|s| s.parse_coproc()),
-                "function" => return self.parse_function_keyword().map(Some),
+                "function" => return self.parse_function_keyword().map(|cmd| Some(Box::new(cmd))),
                 _ => {
                     // Check for POSIX-style function: name() { body }
                     // Don't match if word contains '=' (that's an assignment like arr=(a b c))
@@ -1143,7 +1140,7 @@ impl<'a> Parser<'a> {
                         )
                         && matches!(self.peek_next(), Some(tokens::Token::LeftParen))
                     {
-                        return self.parse_function_posix().map(Some);
+                        return self.parse_function_posix().map(|cmd| Some(Box::new(cmd)));
                     }
                 }
             }
@@ -1170,10 +1167,8 @@ impl<'a> Parser<'a> {
         }
 
         // Default to simple command
-        match self.parse_simple_command()? {
-            Some(cmd) => Ok(Some(Command::Simple(cmd))),
-            None => Ok(None),
-        }
+        self.parse_simple_command()
+            .map(|cmd| cmd.map(|cmd| Box::new(Command::Simple(cmd))))
     }
 
     /// Parse an if statement
@@ -1791,7 +1786,7 @@ impl<'a> Parser<'a> {
                 && self.current_token.is_some()
             {
                 if let Some(cmd) = self.parse_command_list()? {
-                    commands.push(cmd);
+                    commands.push(*cmd);
                 }
                 self.skip_newlines()?;
             }
@@ -1889,7 +1884,7 @@ impl<'a> Parser<'a> {
             append,
             verbose,
             option_error,
-            command: command.map(Box::new),
+            command,
             span: start_span.merge(self.current_span),
         })))
     }
@@ -1940,7 +1935,7 @@ impl<'a> Parser<'a> {
 
             Ok(CompoundCommand::Coproc(ast::CoprocCommand {
                 name,
-                body: Box::new(body),
+                body,
                 span: start_span.merge(self.current_span),
             }))
         })();
@@ -1997,7 +1992,7 @@ impl<'a> Parser<'a> {
                 break;
             }
             if let Some(cmd) = self.parse_command_list()? {
-                commands.push(cmd);
+                commands.push(*cmd);
             }
         }
 
@@ -2028,7 +2023,7 @@ impl<'a> Parser<'a> {
                 break;
             }
             if let Some(cmd) = self.parse_command_list()? {
-                commands.push(cmd);
+                commands.push(*cmd);
             }
         }
 
@@ -2604,7 +2599,7 @@ impl<'a> Parser<'a> {
             return Err(self.error("expected '{' for function body"));
         }
         match self.parse_command()? {
-            Some(cmd @ Command::Compound(..)) => Ok(cmd),
+            Some(cmd) if matches!(*cmd, Command::Compound(..)) => Ok(*cmd),
             _ => Err(self.error("expected '{' for function body")),
         }
     }
@@ -2633,7 +2628,7 @@ impl<'a> Parser<'a> {
             }
 
             if let Some(cmd) = self.parse_command_list()? {
-                commands.push(cmd);
+                commands.push(*cmd);
             } else {
                 break;
             }
@@ -3388,33 +3383,12 @@ impl<'a> Parser<'a> {
             };
         }
 
-        // Handle assignment-only and redirect-only commands (`VAR=value`,
-        // `< file`, `> file`): bash runs them as null commands that still
-        // perform their assignments/redirections (#2448: `$(<file)`).
-        if words.is_empty() && (!assignments.is_empty() || !redirects.is_empty()) {
-            return Ok(Some(SimpleCommand {
-                name: Word::literal(""),
-                args: Vec::new(),
-                redirects,
-                assignments,
-                span: start_span.merge(self.current_span),
-            }));
-        }
-
-        if words.is_empty() {
-            return Ok(None);
-        }
-
-        let name = words.remove(0);
-        let args = words;
-
-        Ok(Some(SimpleCommand {
-            name,
-            args,
-            redirects,
+        finish_simple_command(
+            words,
             assignments,
-            span: start_span.merge(self.current_span),
-        }))
+            redirects,
+            start_span.merge(self.current_span),
+        )
     }
 
     /// `x<(true)`, `<(true)x`, `x=<(true)`: a process substitution and the
@@ -3519,35 +3493,7 @@ impl<'a> Parser<'a> {
                     if matches!(n.as_str(), "declare" | "typeset" | "local" | "export" | "readonly" | "let" | "eval"))
         });
         if w.ends_with('=') && decl_command {
-            let saved_raw = self.current_raw.clone();
-            self.advance();
-            if let Some(word) = self.try_parse_compound_array_arg(w.clone(), saved_raw.clone()) {
-                words.push(word);
-                return true;
-            }
-            // Not a compound assignment — treat as regular word
-            let word = if is_literal {
-                Word {
-                    parts: vec![WordPart::Literal(w)],
-                    quoted: true,
-                    has_unquoted_glob: false,
-                    part_quoted: Vec::new(),
-                    raw: saved_raw.clone(),
-                }
-            } else {
-                let mut word = self.parse_word(w);
-                if is_quoted {
-                    word.quoted = true;
-                }
-                if is_glob_quoted {
-                    word.has_unquoted_glob = true;
-                }
-                word
-            };
-            let mut word = word;
-            word.raw = saved_raw;
-            words.push(word);
-            return true;
+            return self.parse_declaration_word(words, w, is_literal, is_quoted, is_glob_quoted);
         }
 
         let word = if is_literal {
@@ -3570,6 +3516,46 @@ impl<'a> Parser<'a> {
         };
         words.push(self.with_raw(word));
         self.advance();
+        true
+    }
+
+    #[inline(never)]
+    fn parse_declaration_word(
+        &mut self,
+        words: &mut Vec<Word>,
+        w: String,
+        is_literal: bool,
+        is_quoted: bool,
+        is_glob_quoted: bool,
+    ) -> bool {
+        let saved_raw = self.current_raw.clone();
+        self.advance();
+        if let Some(word) = self.try_parse_compound_array_arg(w.clone(), saved_raw.clone()) {
+            words.push(word);
+            return true;
+        }
+        // Not a compound assignment — treat as regular word
+        let word = if is_literal {
+            Word {
+                parts: vec![WordPart::Literal(w)],
+                quoted: true,
+                has_unquoted_glob: false,
+                part_quoted: Vec::new(),
+                raw: saved_raw.clone(),
+            }
+        } else {
+            let mut word = self.parse_word(w);
+            if is_quoted {
+                word.quoted = true;
+            }
+            if is_glob_quoted {
+                word.has_unquoted_glob = true;
+            }
+            word
+        };
+        let mut word = word;
+        word.raw = saved_raw;
+        words.push(word);
         true
     }
 
@@ -4009,16 +3995,28 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Parse a word string into a Word with proper parts (variables, literals)
     /// Parser for a `$(...)` body, on the heap: one lives per nesting level
     /// while the inner script parses, so keeping it out of `parse_word`'s
     /// frame leaves room for deep nesting (TM-DOS-044).
     // THREAT[TM-DOS-021]: Propagate parent parser limits to child parser
     // to prevent depth limit bypass via nested command substitution.
     #[inline(never)]
-    fn nested_parser<'b>(&self, src: &'b str) -> Box<Parser<'b>> {
-        let remaining_depth = self.max_depth.saturating_sub(self.current_depth);
-        let mut parser = Box::new(Parser::with_limits(src, remaining_depth, self.fuel));
+    fn nested_parser<'b>(&self, src: &'b str) -> Result<Box<Parser<'b>>> {
+        if self.current_depth >= self.max_depth {
+            return Err(Error::parse(format!(
+                "AST nesting too deep ({} levels, max {})",
+                self.current_depth + 1,
+                self.max_depth
+            )));
+        }
+        let mut parser = Box::new(Parser::with_limits_and_timeout(
+            src,
+            self.max_depth,
+            self.fuel,
+            self.timeout,
+        ));
+        parser.current_depth = self.current_depth + 1;
+        parser.started_at = self.started_at;
         parser.execution_budget = self.execution_budget.clone();
         parser.set_options(self.options.clone());
         // `$( )` spans count from the outer word's line, so `$LINENO` and
@@ -4029,7 +4027,697 @@ impl<'a> Parser<'a> {
             parser.current_span.start.line += shift;
             parser.current_span.end.line += shift;
         }
-        parser
+        Ok(parser)
+    }
+
+    // THREAT[TM-DOS-044]: This nonrecursive branch has many WordPart
+    // temporaries. Keep its frame out of every nested substitution parse.
+    #[inline(never)]
+    fn parse_braced_parameter(
+        &self,
+        chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
+        parts: &mut Vec<WordPart>,
+        part_quoted: &mut Vec<bool>,
+        in_quoted_segment: bool,
+    ) {
+        macro_rules! push_part {
+            ($part:expr) => {{
+                parts.push($part);
+                part_quoted.push(in_quoted_segment);
+            }};
+        }
+        // ${VAR} format with possible parameter expansion
+        chars.next(); // consume '{'
+
+        if let Some(inner) = bad_brace_parameter(chars) {
+            // Bash accepts the word and fails when expanding it.
+            for _ in 0..=inner.chars().count() {
+                chars.next();
+            }
+            push_part!(WordPart::BadSubstitution(bad_substitution_text(&inner)));
+        } else if chars.peek() == Some(&'#') && !hash_param_with_op(chars) {
+            // ${#var} or ${#arr[@]} - length expansion
+            chars.next(); // consume '#'
+            let mut var_name = String::new();
+            while let Some(&c) = chars.peek() {
+                if c == '}' || c == '[' {
+                    break;
+                }
+                var_name.push(chars.next().unwrap());
+            }
+            // Check for array length ${#arr[@]} or ${#arr[*]}
+            if chars.peek() == Some(&'[') {
+                chars.next(); // consume '['
+                let mut index = String::new();
+                while let Some(&c) = chars.peek() {
+                    if c == ']' {
+                        chars.next();
+                        break;
+                    }
+                    index.push(chars.next().unwrap());
+                }
+                // Consume closing }
+                if chars.peek() == Some(&'}') {
+                    chars.next();
+                }
+                if index == "@" || index == "*" {
+                    push_part!(WordPart::ArrayLength(var_name));
+                } else {
+                    // ${#arr[n]} - length of element (same as ${#arr[n]})
+                    push_part!(WordPart::Length(format!("{}[{}]", var_name, index)));
+                }
+            } else {
+                // Consume closing }
+                if chars.peek() == Some(&'}') {
+                    chars.next();
+                }
+                if var_name.is_empty() {
+                    // `${#}` is `$#`, not a length.
+                    push_part!(WordPart::Variable("#".to_string()));
+                } else {
+                    push_part!(WordPart::Length(var_name));
+                }
+            }
+        } else if chars.peek() == Some(&'!') {
+            // Check for ${!arr[@]} or ${!arr[*]} - array indices
+            // or ${!var} - indirect expansion
+            chars.next(); // consume '!'
+            let mut var_name = String::new();
+            while let Some(&c) = chars.peek() {
+                if c == '}'
+                    || c == '['
+                    || c == '*'
+                    || c == '@'
+                    || c == ':'
+                    || c == '-'
+                    || c == '='
+                    || c == '+'
+                    || c == '?'
+                {
+                    break;
+                }
+                // `${!x#y}`, `${!x/a/b}`: an operator ends the name
+                // (`${!#}` is still the indirect `$#`).
+                if !var_name.is_empty() && matches!(c, '#' | '%' | '/' | '^' | ',' | '~') {
+                    break;
+                }
+                var_name.push(chars.next().unwrap());
+            }
+            // Check for array indices ${!arr[@]} or ${!arr[*]}
+            if chars.peek() == Some(&'[') {
+                chars.next(); // consume '['
+                let mut index = String::new();
+                while let Some(&c) = chars.peek() {
+                    if c == ']' {
+                        chars.next();
+                        break;
+                    }
+                    index.push(chars.next().unwrap());
+                }
+                if chars.peek() == Some(&'}') {
+                    chars.next();
+                    if index == "@" || index == "*" {
+                        push_part!(WordPart::ArrayIndices {
+                            name: var_name,
+                            star: index == "*",
+                        });
+                    } else {
+                        // `${!a[1]}`: the element names the variable.
+                        push_part!(WordPart::IndirectSuffix {
+                            name: format!("{var_name}[{index}]"),
+                            suffix: String::new(),
+                        });
+                    }
+                } else {
+                    // `${!ref[@]:2}`, `${!a[0]#x}`: the elements'
+                    // value names the variable the operator applies to.
+                    let suffix = self.read_brace_operand(chars);
+                    push_part!(WordPart::IndirectSuffix {
+                        name: format!("{var_name}[{index}]"),
+                        suffix,
+                    });
+                }
+            } else if chars.peek() == Some(&'}') {
+                // ${!var} - indirect expansion (no operator)
+                chars.next(); // consume '}'
+                push_part!(WordPart::IndirectExpansion {
+                    name: var_name,
+                    operator: None,
+                    operand: String::new(),
+                    colon_variant: false,
+                });
+            } else if chars.peek() == Some(&':') {
+                // ${!var:op} - indirect expansion with colon operator
+                let mut lookahead = chars.clone();
+                lookahead.next(); // skip ':'
+                if matches!(
+                    lookahead.peek(),
+                    Some(&'-') | Some(&'=') | Some(&'+') | Some(&'?')
+                ) {
+                    chars.next(); // consume ':'
+                    let op_char = chars.next().unwrap();
+                    let operand = self.read_brace_operand(chars);
+                    let operator = match op_char {
+                        '-' => ParameterOp::UseDefault,
+                        '=' => ParameterOp::AssignDefault,
+                        '+' => ParameterOp::UseReplacement,
+                        '?' => ParameterOp::Error,
+                        _ => unreachable!(),
+                    };
+                    push_part!(WordPart::IndirectExpansion {
+                        name: var_name,
+                        operator: Some(operator),
+                        operand,
+                        colon_variant: true,
+                    });
+                } else {
+                    // `${!x:1:2}`: substring of the named variable.
+                    let suffix = self.read_brace_operand(chars);
+                    push_part!(WordPart::IndirectSuffix {
+                        name: var_name,
+                        suffix,
+                    });
+                }
+            } else if matches!(
+                chars.peek(),
+                Some(&'-') | Some(&'=') | Some(&'+') | Some(&'?')
+            ) {
+                // ${!var-op} - indirect expansion with non-colon operator
+                let op_char = chars.next().unwrap();
+                let operand = self.read_brace_operand(chars);
+                let operator = match op_char {
+                    '-' => ParameterOp::UseDefault,
+                    '=' => ParameterOp::AssignDefault,
+                    '+' => ParameterOp::UseReplacement,
+                    '?' => ParameterOp::Error,
+                    _ => unreachable!(),
+                };
+                push_part!(WordPart::IndirectExpansion {
+                    name: var_name,
+                    operator: Some(operator),
+                    operand,
+                    colon_variant: false,
+                });
+            } else {
+                // ${!prefix*} or ${!prefix@} - prefix matching
+                let suffix = self.read_brace_operand(chars);
+                // `${!ref@a}`: transform the variable `ref` names.
+                if push_indirect_transformation(
+                    parts,
+                    part_quoted,
+                    in_quoted_segment,
+                    &var_name,
+                    &suffix,
+                ) {
+                } else if suffix.ends_with('*') || suffix.ends_with('@') {
+                    let full_prefix = format!("{}{}", var_name, &suffix[..suffix.len() - 1]);
+                    push_part!(WordPart::PrefixMatch {
+                        prefix: full_prefix,
+                        star: suffix.ends_with('*'),
+                    });
+                } else {
+                    push_part!(WordPart::IndirectSuffix {
+                        name: var_name,
+                        suffix,
+                    });
+                }
+            }
+        } else {
+            // Read variable name
+            let mut var_name = String::new();
+            while let Some(&c) = chars.peek() {
+                if c.is_ascii_alphanumeric() || c == '_' {
+                    var_name.push(chars.next().unwrap());
+                } else {
+                    break;
+                }
+            }
+
+            // Handle special parameters: ${@...}, ${*...}, ${-...},
+            // ${?...}, ${$...}
+            if var_name.is_empty()
+                && let Some(&c) = chars.peek()
+                && matches!(c, '@' | '*' | '-' | '?' | '$' | '#')
+            {
+                var_name.push(chars.next().unwrap());
+            }
+
+            // Check for array access ${arr[index]} or ${arr[@]:offset:length}
+            // `${arr[i]OP...}` with a pattern/case/transform OP reuses the
+            // scalar operator parsing below on the name `arr[i]`.
+            let mut subscript_op = false;
+            let had_subscript = chars.peek() == Some(&'[');
+            if chars.peek() == Some(&'[') {
+                chars.next(); // consume '['
+                let mut index = String::new();
+                // Track nesting so nested ${...} containing
+                // brackets (e.g. ${#arr[@]}) don't prematurely
+                // close the subscript.
+                let mut bracket_depth: i32 = 0;
+                let mut brace_depth: i32 = 0;
+                while let Some(&c) = chars.peek() {
+                    if c == ']' && bracket_depth == 0 && brace_depth == 0 {
+                        chars.next();
+                        break;
+                    }
+                    match c {
+                        '[' => bracket_depth += 1,
+                        ']' => bracket_depth -= 1,
+                        '$' => {
+                            index.push(chars.next().unwrap());
+                            if chars.peek() == Some(&'{') {
+                                brace_depth += 1;
+                                index.push(chars.next().unwrap());
+                                continue;
+                            }
+                            continue;
+                        }
+                        '{' => brace_depth += 1,
+                        '}' if brace_depth > 0 => brace_depth -= 1,
+                        '}' => {}
+                        _ => {}
+                    }
+                    index.push(chars.next().unwrap());
+                }
+                // Strip surrounding quotes from index (e.g. "foo" -> foo)
+                if index.len() >= 2
+                    && ((index.starts_with('"') && index.ends_with('"'))
+                        || (index.starts_with('\'') && index.ends_with('\'')))
+                {
+                    index = index[1..index.len() - 1].to_string();
+                }
+                // After ], check for operators on array subscripts
+                if let Some(&next_c) = chars.peek() {
+                    if next_c == ':' {
+                        // Peek ahead to distinguish param ops (:- := :+ :?) from slice (:N)
+                        let mut lookahead = chars.clone();
+                        lookahead.next(); // skip ':'
+                        let is_param_op = matches!(
+                            lookahead.peek(),
+                            Some(&'-') | Some(&'=') | Some(&'+') | Some(&'?')
+                        );
+                        if is_param_op {
+                            chars.next(); // consume ':'
+                            let arr_name = format!("{}[{}]", var_name, index);
+                            let op_char = chars.next().unwrap();
+                            let operand = self.read_brace_operand(chars);
+                            let operator = match op_char {
+                                '-' => ParameterOp::UseDefault,
+                                '=' => ParameterOp::AssignDefault,
+                                '+' => ParameterOp::UseReplacement,
+                                '?' => ParameterOp::Error,
+                                _ => unreachable!(),
+                            };
+                            push_part!(WordPart::ParameterExpansion {
+                                name: arr_name,
+                                operator,
+                                operand,
+                                colon_variant: true,
+                            });
+                        } else {
+                            // Array slice ${arr[@]:offset:length}
+                            chars.next(); // consume ':'
+                            let offset = read_slice_field(chars, true);
+                            let length = if chars.peek() == Some(&':') {
+                                chars.next();
+                                Some(read_slice_field(chars, false))
+                            } else {
+                                None
+                            };
+                            if chars.peek() == Some(&'}') {
+                                chars.next();
+                            }
+                            // `${a[@]:}`: an empty offset is a
+                            // bad substitution (bash).
+                            if offset.is_empty() && length.is_none() {
+                                push_part!(WordPart::BadSubstitution(format!(
+                                    "${{{}[{index}]:}}",
+                                    std::mem::take(&mut var_name)
+                                )));
+                            } else {
+                                // `${a[@]:o:l}` slices the elements,
+                                // `${a[1]:o:l}` the element's text.
+                                push_part!(WordPart::Substring {
+                                    name: format!("{}[{}]", std::mem::take(&mut var_name), index),
+                                    offset,
+                                    length,
+                                });
+                            }
+                        }
+                    } else if matches!(next_c, '-' | '+' | '=' | '?') {
+                        // Non-colon operators on array: ${arr[@]-default}
+                        let arr_name = format!("{}[{}]", var_name, index);
+                        let op_char = chars.next().unwrap();
+                        let operand = self.read_brace_operand(chars);
+                        let operator = match op_char {
+                            '-' => ParameterOp::UseDefault,
+                            '=' => ParameterOp::AssignDefault,
+                            '+' => ParameterOp::UseReplacement,
+                            '?' => ParameterOp::Error,
+                            _ => unreachable!(),
+                        };
+                        push_part!(WordPart::ParameterExpansion {
+                            name: arr_name,
+                            operator,
+                            operand,
+                            colon_variant: false,
+                        });
+                    } else if matches!(next_c, '#' | '%' | '/' | '^' | ',' | '~' | '@') {
+                        var_name = format!("{}[{}]", var_name, index);
+                        subscript_op = true;
+                    } else {
+                        // Plain array access ${arr[index]}
+                        if chars.peek() == Some(&'}') {
+                            chars.next();
+                        }
+                        push_part!(WordPart::ArrayAccess {
+                            name: std::mem::take(&mut var_name),
+                            index,
+                        });
+                    }
+                } else {
+                    push_part!(WordPart::ArrayAccess {
+                        name: std::mem::take(&mut var_name),
+                        index,
+                    });
+                }
+            }
+            if (!had_subscript || subscript_op)
+                && let Some(&c) = chars.peek()
+            {
+                // Check for operator
+                match c {
+                    ':' => {
+                        chars.next(); // consume ':'
+                        match chars.peek() {
+                            Some(&'-') | Some(&'=') | Some(&'+') | Some(&'?') => {
+                                let op_char = chars.next().unwrap();
+                                let operand = self.read_brace_operand(chars);
+                                let operator = match op_char {
+                                    '-' => ParameterOp::UseDefault,
+                                    '=' => ParameterOp::AssignDefault,
+                                    '+' => ParameterOp::UseReplacement,
+                                    '?' => ParameterOp::Error,
+                                    _ => unreachable!(),
+                                };
+                                push_part!(WordPart::ParameterExpansion {
+                                    name: var_name,
+                                    operator,
+                                    operand,
+                                    colon_variant: true,
+                                });
+                            }
+                            _ => {
+                                // Substring extraction ${var:offset} or ${var:offset:length}
+                                let offset = read_slice_field(chars, true);
+                                let length = if chars.peek() == Some(&':') {
+                                    chars.next(); // consume ':'
+                                    Some(read_slice_field(chars, false))
+                                } else {
+                                    None
+                                };
+                                if chars.peek() == Some(&'}') {
+                                    chars.next();
+                                }
+                                if offset.is_empty() && length.is_none() {
+                                    push_part!(WordPart::BadSubstitution(format!(
+                                        "${{{var_name}:}}"
+                                    )));
+                                } else {
+                                    push_part!(WordPart::Substring {
+                                        name: var_name,
+                                        offset,
+                                        length,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                    // Non-colon test operators: ${var-default}, ${var+alt}, ${var=assign}, ${var?err}
+                    '-' | '=' | '+' | '?' => {
+                        let op_char = chars.next().unwrap();
+                        let operand = self.read_brace_operand(chars);
+                        let operator = match op_char {
+                            '-' => ParameterOp::UseDefault,
+                            '=' => ParameterOp::AssignDefault,
+                            '+' => ParameterOp::UseReplacement,
+                            '?' => ParameterOp::Error,
+                            _ => unreachable!(),
+                        };
+                        push_part!(WordPart::ParameterExpansion {
+                            name: var_name,
+                            operator,
+                            operand,
+                            colon_variant: false,
+                        });
+                    }
+                    '#' => {
+                        chars.next();
+                        if chars.peek() == Some(&'#') {
+                            chars.next();
+                            let op = self.read_brace_operand(chars);
+                            push_part!(WordPart::ParameterExpansion {
+                                name: var_name,
+                                operator: ParameterOp::RemovePrefixLong,
+                                operand: op,
+                                colon_variant: false,
+                            });
+                        } else {
+                            let op = self.read_brace_operand(chars);
+                            push_part!(WordPart::ParameterExpansion {
+                                name: var_name,
+                                operator: ParameterOp::RemovePrefixShort,
+                                operand: op,
+                                colon_variant: false,
+                            });
+                        }
+                    }
+                    '%' => {
+                        chars.next();
+                        if chars.peek() == Some(&'%') {
+                            chars.next();
+                            let op = self.read_brace_operand(chars);
+                            push_part!(WordPart::ParameterExpansion {
+                                name: var_name,
+                                operator: ParameterOp::RemoveSuffixLong,
+                                operand: op,
+                                colon_variant: false,
+                            });
+                        } else {
+                            let op = self.read_brace_operand(chars);
+                            push_part!(WordPart::ParameterExpansion {
+                                name: var_name,
+                                operator: ParameterOp::RemoveSuffixShort,
+                                operand: op,
+                                colon_variant: false,
+                            });
+                        }
+                    }
+                    '/' => {
+                        chars.next();
+                        let replace_all = if chars.peek() == Some(&'/') {
+                            chars.next();
+                            true
+                        } else {
+                            false
+                        };
+                        let mut pattern = String::new();
+                        // `${x///}`, `${x////c}`: the pattern
+                        // cannot be empty, so a `/` right after
+                        // `//` is the pattern itself.
+                        if replace_all && chars.peek() == Some(&'/') {
+                            chars.next();
+                            pattern.push('/');
+                        }
+                        let mut in_dq = false;
+                        while let Some(&ch) = chars.peek() {
+                            if ch == '\x00' {
+                                pattern.push(chars.next().unwrap());
+                                if let Some(n) = chars.next() {
+                                    pattern.push(n);
+                                }
+                                continue;
+                            }
+                            if ch == '"' {
+                                in_dq = !in_dq;
+                            } else if !in_dq && (ch == '/' || ch == '}') {
+                                break;
+                            }
+                            if ch == '\\' {
+                                chars.next();
+                                if let Some(&next) = chars.peek()
+                                    && next == '/'
+                                {
+                                    pattern.push(chars.next().unwrap());
+                                    continue;
+                                }
+                                pattern.push('\\');
+                                if let Some(n) = chars.next() {
+                                    pattern.push(n);
+                                }
+                                continue;
+                            }
+                            pattern.push(chars.next().unwrap());
+                        }
+                        let replacement = if chars.peek() == Some(&'/') {
+                            chars.next();
+                            let mut repl = String::new();
+                            let mut in_dq = false;
+                            while let Some(&ch) = chars.peek() {
+                                if ch == '\x00' {
+                                    repl.push(chars.next().unwrap());
+                                    if let Some(n) = chars.next() {
+                                        repl.push(n);
+                                    }
+                                    continue;
+                                }
+                                if ch == '"' {
+                                    in_dq = !in_dq;
+                                } else if ch == '\'' && !in_dq {
+                                    // `"${y/b/'}'}"`: a single-quoted span
+                                    // hides `}`; the expansion quote-removes it.
+                                    repl.push(chars.next().unwrap());
+                                    for q in chars.by_ref() {
+                                        repl.push(q);
+                                        if q == '\'' {
+                                            break;
+                                        }
+                                    }
+                                    continue;
+                                } else if ch == '\\' {
+                                    repl.push(chars.next().unwrap());
+                                    if let Some(n) = chars.next() {
+                                        // `\/` is a literal slash, as in the
+                                        // pattern (bash removes the backslash).
+                                        if n == '/' {
+                                            repl.pop();
+                                        }
+                                        repl.push(n);
+                                    }
+                                    continue;
+                                } else if !in_dq && ch == '}' {
+                                    break;
+                                }
+                                repl.push(chars.next().unwrap());
+                            }
+                            repl
+                        } else {
+                            String::new()
+                        };
+                        if chars.peek() == Some(&'}') {
+                            chars.next();
+                        }
+                        let op = if replace_all {
+                            ParameterOp::ReplaceAll {
+                                pattern,
+                                replacement,
+                            }
+                        } else {
+                            ParameterOp::ReplaceFirst {
+                                pattern,
+                                replacement,
+                            }
+                        };
+                        push_part!(WordPart::ParameterExpansion {
+                            name: var_name,
+                            operator: op,
+                            operand: String::new(),
+                            colon_variant: false,
+                        });
+                    }
+                    '^' => {
+                        chars.next();
+                        let op = if chars.peek() == Some(&'^') {
+                            chars.next();
+                            ParameterOp::UpperAll
+                        } else {
+                            ParameterOp::UpperFirst
+                        };
+                        // `${v^^pat}`: only characters matching `pat`.
+                        let operand = self.read_brace_operand(chars);
+                        push_part!(WordPart::ParameterExpansion {
+                            name: var_name,
+                            operator: op,
+                            operand,
+                            colon_variant: false,
+                        });
+                    }
+                    '~' => {
+                        // `${v~}` / `${v~~}`: toggle case (undocumented
+                        // in the bash manual, supported by bash 4+).
+                        chars.next();
+                        let op = if chars.peek() == Some(&'~') {
+                            chars.next();
+                            ParameterOp::ToggleAll
+                        } else {
+                            ParameterOp::ToggleFirst
+                        };
+                        let operand = self.read_brace_operand(chars);
+                        push_part!(WordPart::ParameterExpansion {
+                            name: var_name,
+                            operator: op,
+                            operand,
+                            colon_variant: false,
+                        });
+                    }
+                    ',' => {
+                        chars.next();
+                        let op = if chars.peek() == Some(&',') {
+                            chars.next();
+                            ParameterOp::LowerAll
+                        } else {
+                            ParameterOp::LowerFirst
+                        };
+                        // `${v^^pat}`: only characters matching `pat`.
+                        let operand = self.read_brace_operand(chars);
+                        push_part!(WordPart::ParameterExpansion {
+                            name: var_name,
+                            operator: op,
+                            operand,
+                            colon_variant: false,
+                        });
+                    }
+                    '@' => {
+                        chars.next();
+                        if let Some(&op) = chars.peek() {
+                            chars.next();
+                            if chars.peek() == Some(&'}') {
+                                chars.next();
+                            }
+                            push_part!(WordPart::Transformation {
+                                name: var_name,
+                                operator: op,
+                            });
+                        } else {
+                            if chars.peek() == Some(&'}') {
+                                chars.next();
+                            }
+                            push_part!(WordPart::Variable(var_name));
+                        }
+                    }
+                    '}' => {
+                        chars.next();
+                        if !var_name.is_empty() {
+                            push_part!(WordPart::Variable(var_name));
+                        }
+                    }
+                    _ => {
+                        while let Some(&ch) = chars.peek() {
+                            if ch == '}' {
+                                chars.next();
+                                break;
+                            }
+                            chars.next();
+                        }
+                        if !var_name.is_empty() {
+                            push_part!(WordPart::Variable(var_name));
+                        }
+                    }
+                }
+            } else if !had_subscript && !var_name.is_empty() {
+                push_part!(WordPart::Variable(var_name));
+            }
+        }
     }
 
     fn parse_word(&self, s: String) -> Word {
@@ -4160,7 +4848,6 @@ impl<'a> Parser<'a> {
                             }
                             cmd_str.push(c);
                         }
-                        let inner_parser = self.nested_parser(&cmd_str);
                         // A failed inner parse must never make the part vanish:
                         // dropping it splices the literals on either side into a
                         // word that appears nowhere in the source (`a$(|)b` ->
@@ -4168,7 +4855,10 @@ impl<'a> Parser<'a> {
                         // permission gate as a real command name. Keep the part
                         // so the word stays non-literal, and remember the error so
                         // `parse_script` can reject the script like bash does.
-                        match inner_parser.parse() {
+                        match self
+                            .nested_parser(&cmd_str)
+                            .and_then(|mut parser| parser.parse_inner())
+                        {
                             Ok(script) => {
                                 push_part!(WordPart::CommandSubstitution(script.commands));
                             }
@@ -4181,686 +4871,12 @@ impl<'a> Parser<'a> {
                         }
                     }
                 } else if chars.peek() == Some(&'{') {
-                    // ${VAR} format with possible parameter expansion
-                    chars.next(); // consume '{'
-
-                    if let Some(inner) = bad_brace_parameter(&chars) {
-                        // Bash accepts the word and fails when expanding it.
-                        for _ in 0..=inner.chars().count() {
-                            chars.next();
-                        }
-                        push_part!(WordPart::BadSubstitution(bad_substitution_text(&inner)));
-                    } else if chars.peek() == Some(&'#') && !hash_param_with_op(&chars) {
-                        // ${#var} or ${#arr[@]} - length expansion
-                        chars.next(); // consume '#'
-                        let mut var_name = String::new();
-                        while let Some(&c) = chars.peek() {
-                            if c == '}' || c == '[' {
-                                break;
-                            }
-                            var_name.push(chars.next().unwrap());
-                        }
-                        // Check for array length ${#arr[@]} or ${#arr[*]}
-                        if chars.peek() == Some(&'[') {
-                            chars.next(); // consume '['
-                            let mut index = String::new();
-                            while let Some(&c) = chars.peek() {
-                                if c == ']' {
-                                    chars.next();
-                                    break;
-                                }
-                                index.push(chars.next().unwrap());
-                            }
-                            // Consume closing }
-                            if chars.peek() == Some(&'}') {
-                                chars.next();
-                            }
-                            if index == "@" || index == "*" {
-                                push_part!(WordPart::ArrayLength(var_name));
-                            } else {
-                                // ${#arr[n]} - length of element (same as ${#arr[n]})
-                                push_part!(WordPart::Length(format!("{}[{}]", var_name, index)));
-                            }
-                        } else {
-                            // Consume closing }
-                            if chars.peek() == Some(&'}') {
-                                chars.next();
-                            }
-                            if var_name.is_empty() {
-                                // `${#}` is `$#`, not a length.
-                                push_part!(WordPart::Variable("#".to_string()));
-                            } else {
-                                push_part!(WordPart::Length(var_name));
-                            }
-                        }
-                    } else if chars.peek() == Some(&'!') {
-                        // Check for ${!arr[@]} or ${!arr[*]} - array indices
-                        // or ${!var} - indirect expansion
-                        chars.next(); // consume '!'
-                        let mut var_name = String::new();
-                        while let Some(&c) = chars.peek() {
-                            if c == '}'
-                                || c == '['
-                                || c == '*'
-                                || c == '@'
-                                || c == ':'
-                                || c == '-'
-                                || c == '='
-                                || c == '+'
-                                || c == '?'
-                            {
-                                break;
-                            }
-                            // `${!x#y}`, `${!x/a/b}`: an operator ends the name
-                            // (`${!#}` is still the indirect `$#`).
-                            if !var_name.is_empty()
-                                && matches!(c, '#' | '%' | '/' | '^' | ',' | '~')
-                            {
-                                break;
-                            }
-                            var_name.push(chars.next().unwrap());
-                        }
-                        // Check for array indices ${!arr[@]} or ${!arr[*]}
-                        if chars.peek() == Some(&'[') {
-                            chars.next(); // consume '['
-                            let mut index = String::new();
-                            while let Some(&c) = chars.peek() {
-                                if c == ']' {
-                                    chars.next();
-                                    break;
-                                }
-                                index.push(chars.next().unwrap());
-                            }
-                            if chars.peek() == Some(&'}') {
-                                chars.next();
-                                if index == "@" || index == "*" {
-                                    push_part!(WordPart::ArrayIndices {
-                                        name: var_name,
-                                        star: index == "*",
-                                    });
-                                } else {
-                                    // `${!a[1]}`: the element names the variable.
-                                    push_part!(WordPart::IndirectSuffix {
-                                        name: format!("{var_name}[{index}]"),
-                                        suffix: String::new(),
-                                    });
-                                }
-                            } else {
-                                // `${!ref[@]:2}`, `${!a[0]#x}`: the elements'
-                                // value names the variable the operator applies to.
-                                let suffix = self.read_brace_operand(&mut chars);
-                                push_part!(WordPart::IndirectSuffix {
-                                    name: format!("{var_name}[{index}]"),
-                                    suffix,
-                                });
-                            }
-                        } else if chars.peek() == Some(&'}') {
-                            // ${!var} - indirect expansion (no operator)
-                            chars.next(); // consume '}'
-                            push_part!(WordPart::IndirectExpansion {
-                                name: var_name,
-                                operator: None,
-                                operand: String::new(),
-                                colon_variant: false,
-                            });
-                        } else if chars.peek() == Some(&':') {
-                            // ${!var:op} - indirect expansion with colon operator
-                            let mut lookahead = chars.clone();
-                            lookahead.next(); // skip ':'
-                            if matches!(
-                                lookahead.peek(),
-                                Some(&'-') | Some(&'=') | Some(&'+') | Some(&'?')
-                            ) {
-                                chars.next(); // consume ':'
-                                let op_char = chars.next().unwrap();
-                                let operand = self.read_brace_operand(&mut chars);
-                                let operator = match op_char {
-                                    '-' => ParameterOp::UseDefault,
-                                    '=' => ParameterOp::AssignDefault,
-                                    '+' => ParameterOp::UseReplacement,
-                                    '?' => ParameterOp::Error,
-                                    _ => unreachable!(),
-                                };
-                                push_part!(WordPart::IndirectExpansion {
-                                    name: var_name,
-                                    operator: Some(operator),
-                                    operand,
-                                    colon_variant: true,
-                                });
-                            } else {
-                                // `${!x:1:2}`: substring of the named variable.
-                                let suffix = self.read_brace_operand(&mut chars);
-                                push_part!(WordPart::IndirectSuffix {
-                                    name: var_name,
-                                    suffix,
-                                });
-                            }
-                        } else if matches!(
-                            chars.peek(),
-                            Some(&'-') | Some(&'=') | Some(&'+') | Some(&'?')
-                        ) {
-                            // ${!var-op} - indirect expansion with non-colon operator
-                            let op_char = chars.next().unwrap();
-                            let operand = self.read_brace_operand(&mut chars);
-                            let operator = match op_char {
-                                '-' => ParameterOp::UseDefault,
-                                '=' => ParameterOp::AssignDefault,
-                                '+' => ParameterOp::UseReplacement,
-                                '?' => ParameterOp::Error,
-                                _ => unreachable!(),
-                            };
-                            push_part!(WordPart::IndirectExpansion {
-                                name: var_name,
-                                operator: Some(operator),
-                                operand,
-                                colon_variant: false,
-                            });
-                        } else {
-                            // ${!prefix*} or ${!prefix@} - prefix matching
-                            let suffix = self.read_brace_operand(&mut chars);
-                            // `${!ref@a}`: transform the variable `ref` names.
-                            if push_indirect_transformation(
-                                &mut parts,
-                                &mut part_quoted,
-                                in_quoted_segment,
-                                &var_name,
-                                &suffix,
-                            ) {
-                            } else if suffix.ends_with('*') || suffix.ends_with('@') {
-                                let full_prefix =
-                                    format!("{}{}", var_name, &suffix[..suffix.len() - 1]);
-                                push_part!(WordPart::PrefixMatch {
-                                    prefix: full_prefix,
-                                    star: suffix.ends_with('*'),
-                                });
-                            } else {
-                                push_part!(WordPart::IndirectSuffix {
-                                    name: var_name,
-                                    suffix,
-                                });
-                            }
-                        }
-                    } else {
-                        // Read variable name
-                        let mut var_name = String::new();
-                        while let Some(&c) = chars.peek() {
-                            if c.is_ascii_alphanumeric() || c == '_' {
-                                var_name.push(chars.next().unwrap());
-                            } else {
-                                break;
-                            }
-                        }
-
-                        // Handle special parameters: ${@...}, ${*...}, ${-...},
-                        // ${?...}, ${$...}
-                        if var_name.is_empty()
-                            && let Some(&c) = chars.peek()
-                            && matches!(c, '@' | '*' | '-' | '?' | '$' | '#')
-                        {
-                            var_name.push(chars.next().unwrap());
-                        }
-
-                        // Check for array access ${arr[index]} or ${arr[@]:offset:length}
-                        // `${arr[i]OP...}` with a pattern/case/transform OP reuses the
-                        // scalar operator parsing below on the name `arr[i]`.
-                        let mut subscript_op = false;
-                        let had_subscript = chars.peek() == Some(&'[');
-                        if chars.peek() == Some(&'[') {
-                            chars.next(); // consume '['
-                            let mut index = String::new();
-                            // Track nesting so nested ${...} containing
-                            // brackets (e.g. ${#arr[@]}) don't prematurely
-                            // close the subscript.
-                            let mut bracket_depth: i32 = 0;
-                            let mut brace_depth: i32 = 0;
-                            while let Some(&c) = chars.peek() {
-                                if c == ']' && bracket_depth == 0 && brace_depth == 0 {
-                                    chars.next();
-                                    break;
-                                }
-                                match c {
-                                    '[' => bracket_depth += 1,
-                                    ']' => bracket_depth -= 1,
-                                    '$' => {
-                                        index.push(chars.next().unwrap());
-                                        if chars.peek() == Some(&'{') {
-                                            brace_depth += 1;
-                                            index.push(chars.next().unwrap());
-                                            continue;
-                                        }
-                                        continue;
-                                    }
-                                    '{' => brace_depth += 1,
-                                    '}' if brace_depth > 0 => brace_depth -= 1,
-                                    '}' => {}
-                                    _ => {}
-                                }
-                                index.push(chars.next().unwrap());
-                            }
-                            // Strip surrounding quotes from index (e.g. "foo" -> foo)
-                            if index.len() >= 2
-                                && ((index.starts_with('"') && index.ends_with('"'))
-                                    || (index.starts_with('\'') && index.ends_with('\'')))
-                            {
-                                index = index[1..index.len() - 1].to_string();
-                            }
-                            // After ], check for operators on array subscripts
-                            if let Some(&next_c) = chars.peek() {
-                                if next_c == ':' {
-                                    // Peek ahead to distinguish param ops (:- := :+ :?) from slice (:N)
-                                    let mut lookahead = chars.clone();
-                                    lookahead.next(); // skip ':'
-                                    let is_param_op = matches!(
-                                        lookahead.peek(),
-                                        Some(&'-') | Some(&'=') | Some(&'+') | Some(&'?')
-                                    );
-                                    if is_param_op {
-                                        chars.next(); // consume ':'
-                                        let arr_name = format!("{}[{}]", var_name, index);
-                                        let op_char = chars.next().unwrap();
-                                        let operand = self.read_brace_operand(&mut chars);
-                                        let operator = match op_char {
-                                            '-' => ParameterOp::UseDefault,
-                                            '=' => ParameterOp::AssignDefault,
-                                            '+' => ParameterOp::UseReplacement,
-                                            '?' => ParameterOp::Error,
-                                            _ => unreachable!(),
-                                        };
-                                        push_part!(WordPart::ParameterExpansion {
-                                            name: arr_name,
-                                            operator,
-                                            operand,
-                                            colon_variant: true,
-                                        });
-                                    } else {
-                                        // Array slice ${arr[@]:offset:length}
-                                        chars.next(); // consume ':'
-                                        let offset = read_slice_field(&mut chars, true);
-                                        let length = if chars.peek() == Some(&':') {
-                                            chars.next();
-                                            Some(read_slice_field(&mut chars, false))
-                                        } else {
-                                            None
-                                        };
-                                        if chars.peek() == Some(&'}') {
-                                            chars.next();
-                                        }
-                                        // `${a[@]:}`: an empty offset is a
-                                        // bad substitution (bash).
-                                        if offset.is_empty() && length.is_none() {
-                                            push_part!(WordPart::BadSubstitution(format!(
-                                                "${{{}[{index}]:}}",
-                                                std::mem::take(&mut var_name)
-                                            )));
-                                        } else {
-                                            // `${a[@]:o:l}` slices the elements,
-                                            // `${a[1]:o:l}` the element's text.
-                                            push_part!(WordPart::Substring {
-                                                name: format!(
-                                                    "{}[{}]",
-                                                    std::mem::take(&mut var_name),
-                                                    index
-                                                ),
-                                                offset,
-                                                length,
-                                            });
-                                        }
-                                    }
-                                } else if matches!(next_c, '-' | '+' | '=' | '?') {
-                                    // Non-colon operators on array: ${arr[@]-default}
-                                    let arr_name = format!("{}[{}]", var_name, index);
-                                    let op_char = chars.next().unwrap();
-                                    let operand = self.read_brace_operand(&mut chars);
-                                    let operator = match op_char {
-                                        '-' => ParameterOp::UseDefault,
-                                        '=' => ParameterOp::AssignDefault,
-                                        '+' => ParameterOp::UseReplacement,
-                                        '?' => ParameterOp::Error,
-                                        _ => unreachable!(),
-                                    };
-                                    push_part!(WordPart::ParameterExpansion {
-                                        name: arr_name,
-                                        operator,
-                                        operand,
-                                        colon_variant: false,
-                                    });
-                                } else if matches!(next_c, '#' | '%' | '/' | '^' | ',' | '~' | '@')
-                                {
-                                    var_name = format!("{}[{}]", var_name, index);
-                                    subscript_op = true;
-                                } else {
-                                    // Plain array access ${arr[index]}
-                                    if chars.peek() == Some(&'}') {
-                                        chars.next();
-                                    }
-                                    push_part!(WordPart::ArrayAccess {
-                                        name: std::mem::take(&mut var_name),
-                                        index,
-                                    });
-                                }
-                            } else {
-                                push_part!(WordPart::ArrayAccess {
-                                    name: std::mem::take(&mut var_name),
-                                    index,
-                                });
-                            }
-                        }
-                        if (!had_subscript || subscript_op)
-                            && let Some(&c) = chars.peek()
-                        {
-                            // Check for operator
-                            match c {
-                                ':' => {
-                                    chars.next(); // consume ':'
-                                    match chars.peek() {
-                                        Some(&'-') | Some(&'=') | Some(&'+') | Some(&'?') => {
-                                            let op_char = chars.next().unwrap();
-                                            let operand = self.read_brace_operand(&mut chars);
-                                            let operator = match op_char {
-                                                '-' => ParameterOp::UseDefault,
-                                                '=' => ParameterOp::AssignDefault,
-                                                '+' => ParameterOp::UseReplacement,
-                                                '?' => ParameterOp::Error,
-                                                _ => unreachable!(),
-                                            };
-                                            push_part!(WordPart::ParameterExpansion {
-                                                name: var_name,
-                                                operator,
-                                                operand,
-                                                colon_variant: true,
-                                            });
-                                        }
-                                        _ => {
-                                            // Substring extraction ${var:offset} or ${var:offset:length}
-                                            let offset = read_slice_field(&mut chars, true);
-                                            let length = if chars.peek() == Some(&':') {
-                                                chars.next(); // consume ':'
-                                                Some(read_slice_field(&mut chars, false))
-                                            } else {
-                                                None
-                                            };
-                                            if chars.peek() == Some(&'}') {
-                                                chars.next();
-                                            }
-                                            if offset.is_empty() && length.is_none() {
-                                                push_part!(WordPart::BadSubstitution(format!(
-                                                    "${{{var_name}:}}"
-                                                )));
-                                            } else {
-                                                push_part!(WordPart::Substring {
-                                                    name: var_name,
-                                                    offset,
-                                                    length,
-                                                });
-                                            }
-                                        }
-                                    }
-                                }
-                                // Non-colon test operators: ${var-default}, ${var+alt}, ${var=assign}, ${var?err}
-                                '-' | '=' | '+' | '?' => {
-                                    let op_char = chars.next().unwrap();
-                                    let operand = self.read_brace_operand(&mut chars);
-                                    let operator = match op_char {
-                                        '-' => ParameterOp::UseDefault,
-                                        '=' => ParameterOp::AssignDefault,
-                                        '+' => ParameterOp::UseReplacement,
-                                        '?' => ParameterOp::Error,
-                                        _ => unreachable!(),
-                                    };
-                                    push_part!(WordPart::ParameterExpansion {
-                                        name: var_name,
-                                        operator,
-                                        operand,
-                                        colon_variant: false,
-                                    });
-                                }
-                                '#' => {
-                                    chars.next();
-                                    if chars.peek() == Some(&'#') {
-                                        chars.next();
-                                        let op = self.read_brace_operand(&mut chars);
-                                        push_part!(WordPart::ParameterExpansion {
-                                            name: var_name,
-                                            operator: ParameterOp::RemovePrefixLong,
-                                            operand: op,
-                                            colon_variant: false,
-                                        });
-                                    } else {
-                                        let op = self.read_brace_operand(&mut chars);
-                                        push_part!(WordPart::ParameterExpansion {
-                                            name: var_name,
-                                            operator: ParameterOp::RemovePrefixShort,
-                                            operand: op,
-                                            colon_variant: false,
-                                        });
-                                    }
-                                }
-                                '%' => {
-                                    chars.next();
-                                    if chars.peek() == Some(&'%') {
-                                        chars.next();
-                                        let op = self.read_brace_operand(&mut chars);
-                                        push_part!(WordPart::ParameterExpansion {
-                                            name: var_name,
-                                            operator: ParameterOp::RemoveSuffixLong,
-                                            operand: op,
-                                            colon_variant: false,
-                                        });
-                                    } else {
-                                        let op = self.read_brace_operand(&mut chars);
-                                        push_part!(WordPart::ParameterExpansion {
-                                            name: var_name,
-                                            operator: ParameterOp::RemoveSuffixShort,
-                                            operand: op,
-                                            colon_variant: false,
-                                        });
-                                    }
-                                }
-                                '/' => {
-                                    chars.next();
-                                    let replace_all = if chars.peek() == Some(&'/') {
-                                        chars.next();
-                                        true
-                                    } else {
-                                        false
-                                    };
-                                    let mut pattern = String::new();
-                                    // `${x///}`, `${x////c}`: the pattern
-                                    // cannot be empty, so a `/` right after
-                                    // `//` is the pattern itself.
-                                    if replace_all && chars.peek() == Some(&'/') {
-                                        chars.next();
-                                        pattern.push('/');
-                                    }
-                                    let mut in_dq = false;
-                                    while let Some(&ch) = chars.peek() {
-                                        if ch == '\x00' {
-                                            pattern.push(chars.next().unwrap());
-                                            if let Some(n) = chars.next() {
-                                                pattern.push(n);
-                                            }
-                                            continue;
-                                        }
-                                        if ch == '"' {
-                                            in_dq = !in_dq;
-                                        } else if !in_dq && (ch == '/' || ch == '}') {
-                                            break;
-                                        }
-                                        if ch == '\\' {
-                                            chars.next();
-                                            if let Some(&next) = chars.peek()
-                                                && next == '/'
-                                            {
-                                                pattern.push(chars.next().unwrap());
-                                                continue;
-                                            }
-                                            pattern.push('\\');
-                                            if let Some(n) = chars.next() {
-                                                pattern.push(n);
-                                            }
-                                            continue;
-                                        }
-                                        pattern.push(chars.next().unwrap());
-                                    }
-                                    let replacement = if chars.peek() == Some(&'/') {
-                                        chars.next();
-                                        let mut repl = String::new();
-                                        let mut in_dq = false;
-                                        while let Some(&ch) = chars.peek() {
-                                            if ch == '\x00' {
-                                                repl.push(chars.next().unwrap());
-                                                if let Some(n) = chars.next() {
-                                                    repl.push(n);
-                                                }
-                                                continue;
-                                            }
-                                            if ch == '"' {
-                                                in_dq = !in_dq;
-                                            } else if ch == '\'' && !in_dq {
-                                                // `"${y/b/'}'}"`: a single-quoted span
-                                                // hides `}`; the expansion quote-removes it.
-                                                repl.push(chars.next().unwrap());
-                                                for q in chars.by_ref() {
-                                                    repl.push(q);
-                                                    if q == '\'' {
-                                                        break;
-                                                    }
-                                                }
-                                                continue;
-                                            } else if ch == '\\' {
-                                                repl.push(chars.next().unwrap());
-                                                if let Some(n) = chars.next() {
-                                                    // `\/` is a literal slash, as in the
-                                                    // pattern (bash removes the backslash).
-                                                    if n == '/' {
-                                                        repl.pop();
-                                                    }
-                                                    repl.push(n);
-                                                }
-                                                continue;
-                                            } else if !in_dq && ch == '}' {
-                                                break;
-                                            }
-                                            repl.push(chars.next().unwrap());
-                                        }
-                                        repl
-                                    } else {
-                                        String::new()
-                                    };
-                                    if chars.peek() == Some(&'}') {
-                                        chars.next();
-                                    }
-                                    let op = if replace_all {
-                                        ParameterOp::ReplaceAll {
-                                            pattern,
-                                            replacement,
-                                        }
-                                    } else {
-                                        ParameterOp::ReplaceFirst {
-                                            pattern,
-                                            replacement,
-                                        }
-                                    };
-                                    push_part!(WordPart::ParameterExpansion {
-                                        name: var_name,
-                                        operator: op,
-                                        operand: String::new(),
-                                        colon_variant: false,
-                                    });
-                                }
-                                '^' => {
-                                    chars.next();
-                                    let op = if chars.peek() == Some(&'^') {
-                                        chars.next();
-                                        ParameterOp::UpperAll
-                                    } else {
-                                        ParameterOp::UpperFirst
-                                    };
-                                    // `${v^^pat}`: only characters matching `pat`.
-                                    let operand = self.read_brace_operand(&mut chars);
-                                    push_part!(WordPart::ParameterExpansion {
-                                        name: var_name,
-                                        operator: op,
-                                        operand,
-                                        colon_variant: false,
-                                    });
-                                }
-                                '~' => {
-                                    // `${v~}` / `${v~~}`: toggle case (undocumented
-                                    // in the bash manual, supported by bash 4+).
-                                    chars.next();
-                                    let op = if chars.peek() == Some(&'~') {
-                                        chars.next();
-                                        ParameterOp::ToggleAll
-                                    } else {
-                                        ParameterOp::ToggleFirst
-                                    };
-                                    let operand = self.read_brace_operand(&mut chars);
-                                    push_part!(WordPart::ParameterExpansion {
-                                        name: var_name,
-                                        operator: op,
-                                        operand,
-                                        colon_variant: false,
-                                    });
-                                }
-                                ',' => {
-                                    chars.next();
-                                    let op = if chars.peek() == Some(&',') {
-                                        chars.next();
-                                        ParameterOp::LowerAll
-                                    } else {
-                                        ParameterOp::LowerFirst
-                                    };
-                                    // `${v^^pat}`: only characters matching `pat`.
-                                    let operand = self.read_brace_operand(&mut chars);
-                                    push_part!(WordPart::ParameterExpansion {
-                                        name: var_name,
-                                        operator: op,
-                                        operand,
-                                        colon_variant: false,
-                                    });
-                                }
-                                '@' => {
-                                    chars.next();
-                                    if let Some(&op) = chars.peek() {
-                                        chars.next();
-                                        if chars.peek() == Some(&'}') {
-                                            chars.next();
-                                        }
-                                        push_part!(WordPart::Transformation {
-                                            name: var_name,
-                                            operator: op,
-                                        });
-                                    } else {
-                                        if chars.peek() == Some(&'}') {
-                                            chars.next();
-                                        }
-                                        push_part!(WordPart::Variable(var_name));
-                                    }
-                                }
-                                '}' => {
-                                    chars.next();
-                                    if !var_name.is_empty() {
-                                        push_part!(WordPart::Variable(var_name));
-                                    }
-                                }
-                                _ => {
-                                    while let Some(&ch) = chars.peek() {
-                                        if ch == '}' {
-                                            chars.next();
-                                            break;
-                                        }
-                                        chars.next();
-                                    }
-                                    if !var_name.is_empty() {
-                                        push_part!(WordPart::Variable(var_name));
-                                    }
-                                }
-                            }
-                        } else if !had_subscript && !var_name.is_empty() {
-                            push_part!(WordPart::Variable(var_name));
-                        }
-                    }
+                    self.parse_braced_parameter(
+                        &mut chars,
+                        &mut parts,
+                        &mut part_quoted,
+                        in_quoted_segment,
+                    );
                 } else if let Some(&c) = chars.peek() {
                     // Check for special single-character variables ($?, $#, $@, $*, $!, $$, $-, $0-$9)
                     if matches!(c, '?' | '#' | '@' | '*' | '!' | '$' | '-') || c.is_ascii_digit() {
@@ -4896,60 +4912,13 @@ impl<'a> Parser<'a> {
             push_part!(WordPart::Literal(current));
         }
 
-        // Empty quoted parts only matter next to an unquoted expansion
-        // (`""$x""` keeps empty fields) or a quoted `@` expansion (`"$@"""`
-        // is one empty field when there are no positional parameters);
-        // elsewhere drop them so the word keeps its plain shape.
-        if has_empty_quoted {
-            let unquoted_expansion = parts
-                .iter()
-                .zip(&part_quoted)
-                .any(|(p, q)| !*q && !matches!(p, WordPart::Literal(_)));
-            let quoted_at = parts.iter().zip(&part_quoted).any(|(p, q)| {
-                *q && match p {
-                    WordPart::Variable(name) => name == "@",
-                    WordPart::ArrayAccess { index, .. } => index == "@",
-                    WordPart::ParameterExpansion { name, .. }
-                    | WordPart::Transformation { name, .. }
-                    | WordPart::Substring { name, .. } => name == "@" || name.ends_with("[@]"),
-                    _ => false,
-                }
-            });
-            // `{X,,Y,}''`: brace items next to the empty quotes are words
-            // even when empty.
-            let brace_candidate = parts
-                .iter()
-                .zip(&part_quoted)
-                .any(|(p, q)| !*q && matches!(p, WordPart::Literal(t) if t.contains('{')));
-            if !unquoted_expansion && !quoted_at && !brace_candidate {
-                let mut kept_parts = Vec::with_capacity(parts.len());
-                let mut kept_quoted = Vec::with_capacity(parts.len());
-                for (p, q) in parts.into_iter().zip(part_quoted) {
-                    if !matches!(&p, WordPart::Literal(s) if s.is_empty()) {
-                        kept_parts.push(p);
-                        kept_quoted.push(q);
-                    }
-                }
-                parts = kept_parts;
-                part_quoted = kept_quoted;
-            }
-        }
-
-        // If no parts, create an empty literal
-        if parts.is_empty() {
-            push_part!(WordPart::Literal(String::new()));
-        }
-
-        // Every part quoted (`'a'"$x"`, `"$x"""`): the word is quoted, so its
-        // expansions are not field-split.
-        let quoted = saw_quote_marker && part_quoted.iter().all(|q| *q);
-        Word {
+        finish_word(
             parts,
-            quoted,
-            has_unquoted_glob: false,
             part_quoted,
-            raw: None,
-        }
+            has_empty_quoted,
+            saw_quote_marker,
+            in_quoted_segment,
+        )
     }
 
     /// Read operand for brace expansion (everything until closing brace)
@@ -5012,9 +4981,146 @@ fn add_stderr_to_pipe(cmd: &mut Command) {
     }
 }
 
-/// `cmd &` right before a closing keyword: an empty command carrying the `&`.
-/// Out of line so the `Command` temporary does not enlarge the recursive
-/// `parse_command_list` frame (nested `$(...)` parse depth, TM-DOS-044).
+// AST assembly runs after recursive parsing returns, keeping its temporaries
+// off the recursive grammar frames (TM-DOS-044).
+#[inline(never)]
+fn finish_command_list(
+    first: Option<Box<Command>>,
+    rest: Vec<(ListOperator, Command)>,
+    span: Span,
+) -> Result<Option<Box<Command>>> {
+    let Some(first) = first else {
+        return Ok(None);
+    };
+    if rest.is_empty() {
+        Ok(Some(first))
+    } else {
+        Ok(Some(Box::new(Command::List(CommandList {
+            first,
+            rest,
+            span,
+        }))))
+    }
+}
+
+#[inline(never)]
+fn finish_pipeline(
+    commands: Vec<Command>,
+    negated: bool,
+    span: Span,
+) -> Result<Option<Box<Command>>> {
+    Ok(Some(Box::new(Command::Pipeline(Pipeline {
+        negated,
+        commands,
+        span,
+    }))))
+}
+
+#[inline(never)]
+fn finish_word(
+    mut parts: Vec<WordPart>,
+    mut part_quoted: Vec<bool>,
+    has_empty_quoted: bool,
+    saw_quote_marker: bool,
+    in_quoted_segment: bool,
+) -> Word {
+    // Empty quoted parts only matter next to an unquoted expansion
+    // (`""$x""` keeps empty fields) or a quoted `@` expansion (`"$@"""`
+    // is one empty field when there are no positional parameters);
+    // elsewhere drop them so the word keeps its plain shape.
+    if has_empty_quoted {
+        let unquoted_expansion = parts
+            .iter()
+            .zip(&part_quoted)
+            .any(|(p, q)| !*q && !matches!(p, WordPart::Literal(_)));
+        let quoted_at = parts.iter().zip(&part_quoted).any(|(p, q)| {
+            *q && match p {
+                WordPart::Variable(name) => name == "@",
+                WordPart::ArrayAccess { index, .. } => index == "@",
+                WordPart::ParameterExpansion { name, .. }
+                | WordPart::Transformation { name, .. }
+                | WordPart::Substring { name, .. } => name == "@" || name.ends_with("[@]"),
+                _ => false,
+            }
+        });
+        // `{X,,Y,}''`: brace items next to the empty quotes are words
+        // even when empty.
+        let brace_candidate = parts
+            .iter()
+            .zip(&part_quoted)
+            .any(|(p, q)| !*q && matches!(p, WordPart::Literal(t) if t.contains('{')));
+        if !unquoted_expansion && !quoted_at && !brace_candidate {
+            let mut kept_parts = Vec::with_capacity(parts.len());
+            let mut kept_quoted = Vec::with_capacity(parts.len());
+            for (p, q) in parts.into_iter().zip(part_quoted) {
+                if !matches!(&p, WordPart::Literal(s) if s.is_empty()) {
+                    kept_parts.push(p);
+                    kept_quoted.push(q);
+                }
+            }
+            parts = kept_parts;
+            part_quoted = kept_quoted;
+        }
+    }
+
+    // If no parts, create an empty literal
+    if parts.is_empty() {
+        parts.push(WordPart::Literal(String::new()));
+        part_quoted.push(in_quoted_segment);
+    }
+
+    // Every part quoted (`'a'"$x"`, `"$x"""`): the word is quoted, so its
+    // expansions are not field-split.
+    let quoted = saw_quote_marker && part_quoted.iter().all(|q| *q);
+    Word {
+        parts,
+        quoted,
+        has_unquoted_glob: false,
+        part_quoted,
+        raw: None,
+    }
+}
+
+// AST assembly runs after recursive parsing returns, keeping its temporaries
+// off the recursive grammar frames (TM-DOS-044).
+#[inline(never)]
+fn finish_simple_command(
+    mut words: Vec<Word>,
+    assignments: Vec<Assignment>,
+    redirects: Vec<Redirect>,
+    span: Span,
+) -> Result<Option<SimpleCommand>> {
+    // Handle assignment-only and redirect-only commands (`VAR=value`,
+    // `< file`, `> file`): bash runs them as null commands that still
+    // perform their assignments/redirections (#2448: `$(<file)`).
+    if words.is_empty() && (!assignments.is_empty() || !redirects.is_empty()) {
+        return Ok(Some(SimpleCommand {
+            name: Word::literal(""),
+            args: Vec::new(),
+            redirects,
+            assignments,
+            span,
+        }));
+    }
+
+    if words.is_empty() {
+        return Ok(None);
+    }
+
+    let name = words.remove(0);
+    let args = words;
+
+    Ok(Some(SimpleCommand {
+        name,
+        args,
+        redirects,
+        assignments,
+        span,
+    }))
+}
+
+/// `cmd &` before a closing keyword: an empty command carrying the `&`.
+/// Keep its `Command` temporary off the recursive list frame (TM-DOS-044).
 #[inline(never)]
 fn empty_background(span: Span) -> (ListOperator, Command) {
     (
@@ -6100,6 +6206,87 @@ mod tests {
             AssignmentValue::Scalar(word) => assert_eq!(word.to_string(), "x"),
             AssignmentValue::Array(_) => panic!("expected scalar assignment"),
         }
+    }
+
+    fn nested_command_substitution(levels: usize) -> String {
+        let mut script = String::from("echo ok");
+        for _ in 0..levels {
+            script = format!("echo $({script})");
+        }
+        script
+    }
+
+    #[test]
+    fn nested_command_substitution_consumes_ast_depth() {
+        let script = nested_command_substitution(4);
+        let err = Parser::with_limits(&script, 3, 10_000)
+            .parse()
+            .expect_err("substitution parsers must share AST depth");
+        assert!(err.to_string().contains("AST nesting too deep"));
+    }
+
+    #[test]
+    fn nested_command_substitution_parser_is_stack_safe() {
+        let script = nested_command_substitution(50);
+        Parser::new(&script)
+            .parse()
+            .expect("depth 50 remains within the hard AST limit");
+    }
+
+    #[test]
+    fn nested_command_substitution_hard_cap_is_stack_safe() {
+        let script = nested_command_substitution(120);
+        let err = Parser::with_limits(&script, usize::MAX, 100_000)
+            .parse()
+            .expect_err("the hard AST cap also covers substitution parsers");
+        assert!(err.to_string().contains("AST nesting too deep"));
+    }
+
+    #[test]
+    fn nested_command_substitution_depth_boundary() {
+        let valid = nested_command_substitution(3);
+        Parser::with_limits(&valid, 3, 10_000).parse().unwrap();
+        let mixed = "if true; then echo $(echo $(echo ok)); fi";
+        Parser::with_limits(mixed, 3, 10_000).parse().unwrap();
+        let err = Parser::with_limits(mixed, 2, 10_000).parse().unwrap_err();
+        assert!(err.to_string().contains("AST nesting too deep"));
+    }
+
+    #[test]
+    fn nested_command_substitution_hard_cap_in_other_grammar_positions() {
+        for template in [
+            "echo $(true; BODY)",
+            "echo $(true | BODY)",
+            "x=$(BODY)",
+            "echo $(>out BODY)",
+            "a=($(BODY))",
+            "declare a=($(BODY))",
+            "echo $(echo ${v:-x}; BODY)",
+        ] {
+            let mut script = String::from("echo ok");
+            for _ in 0..120 {
+                script = template.replace("BODY", &script);
+            }
+            let err = Parser::with_limits(&script, usize::MAX, 100_000)
+                .parse()
+                .unwrap_err();
+            assert!(
+                err.to_string().contains("AST nesting too deep"),
+                "{template}: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn nested_command_substitution_preserves_timeout_origin() {
+        let mut parent =
+            Parser::with_limits_and_timeout("echo ok", 10, 1000, Some(Duration::from_millis(1)));
+        parent.started_at = Instant::now() - Duration::from_secs(1);
+        let mut child = parent.nested_parser("echo ok").unwrap();
+        assert!(matches!(
+            child.parse_inner(),
+            Err(Error::ResourceLimit(LimitExceeded::ParserTimeout(_)))
+        ));
     }
 
     fn nested_process_substitution(levels: usize) -> String {
