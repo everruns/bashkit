@@ -599,10 +599,25 @@ mod resource_exhaustion {
                         // marker; anything else leaves absence to the
                         // poll below (no inference from failure).
                         let o = run_helper_bounded("pkill", &["-9", "-f", m], end);
-                        assert!(
-                            o.drain_thread.is_none(),
-                            "pkill drains instantly by construction; a handoff here fails closed"
-                        );
+                        // SAME-handle rule: a handoff here (unreachable for
+                        // pkill) is joined boundedly under the shared end,
+                        // with unfinished handles preserved, never asserted
+                        // away or detached.
+                        if let Some(h) = o.drain_thread {
+                            match join_finished(
+                                h,
+                                Instant::now() + remaining().min(Duration::from_secs(2)),
+                            ) {
+                                JoinOutcome::Joined => {}
+                                JoinOutcome::Unfinished(handle) => {
+                                    unjoined.push(handle);
+                                    helper_clean = false;
+                                }
+                                JoinOutcome::Panicked => {
+                                    helper_clean = false;
+                                }
+                            }
+                        }
                         if !(o.reaped && o.drained_ok) {
                             helper_clean = false;
                         }
@@ -648,10 +663,21 @@ mod resource_exhaustion {
                         }
                         (None, Some(m)) => {
                             let o = run_helper_bounded("pgrep", &["-f", m], end);
-                            assert!(
-                                o.drain_thread.is_none(),
-                                "pgrep drains instantly by construction; a handoff here fails closed"
-                            );
+                            if let Some(h) = o.drain_thread {
+                                match join_finished(
+                                    h,
+                                    Instant::now() + remaining().min(Duration::from_secs(2)),
+                                ) {
+                                    JoinOutcome::Joined => {}
+                                    JoinOutcome::Unfinished(handle) => {
+                                        unjoined.push(handle);
+                                        helper_clean = false;
+                                    }
+                                    JoinOutcome::Panicked => {
+                                        helper_clean = false;
+                                    }
+                                }
+                            }
                             if !(o.reaped && o.drained_ok) {
                                 helper_clean = false;
                             }
@@ -1288,10 +1314,16 @@ mod resource_exhaustion {
         let me_pid = std::process::id().to_string();
         let tri_start = Instant::now();
         let me_check = signal_bounded(&["-0", &me_pid], Duration::from_secs(5));
-        assert!(
-            me_check.drain_thread.is_none(),
-            "kill drains instantly; a handoff here fails closed"
-        );
+        match me_check.drain_thread {
+            None => {}
+            Some(h) => assert!(
+                matches!(
+                    join_finished(h, Instant::now() + Duration::from_secs(2)),
+                    JoinOutcome::Joined
+                ),
+                "handoff joined under a finite bound"
+            ),
+        }
         assert!(me_check.dispatched, "self-signal delivers");
         assert!(me_check.helper_reaped, "helper reaped on every path");
         assert!(me_check.pipe_ok, "pipe drained cleanly");
@@ -1300,10 +1332,16 @@ mod resource_exhaustion {
             "own PID reads Present"
         );
         let gone_check = signal_bounded(&["-0", "2147483647"], Duration::from_secs(5));
-        assert!(
-            gone_check.drain_thread.is_none(),
-            "kill drains instantly; a handoff here fails closed"
-        );
+        match gone_check.drain_thread {
+            None => {}
+            Some(h) => assert!(
+                matches!(
+                    join_finished(h, Instant::now() + Duration::from_secs(2)),
+                    JoinOutcome::Joined
+                ),
+                "handoff joined under a finite bound"
+            ),
+        }
         assert!(gone_check.dispatched, "query itself delivered");
         assert!(gone_check.helper_reaped, "helper reaped on every path");
         assert!(
@@ -1311,10 +1349,16 @@ mod resource_exhaustion {
             "impossible PID reads Absent by ESRCH receipt"
         );
         let bad_check = signal_bounded(&["-9", "not-a-pid"], Duration::from_secs(5));
-        assert!(
-            bad_check.drain_thread.is_none(),
-            "kill drains instantly; a handoff here fails closed"
-        );
+        match bad_check.drain_thread {
+            None => {}
+            Some(h) => assert!(
+                matches!(
+                    join_finished(h, Instant::now() + Duration::from_secs(2)),
+                    JoinOutcome::Joined
+                ),
+                "handoff joined under a finite bound"
+            ),
+        }
         assert!(!bad_check.dispatched, "invalid PID string cannot deliver");
         assert!(bad_check.helper_reaped, "helper reaped on every path");
         assert!(
@@ -1375,10 +1419,17 @@ mod resource_exhaustion {
         assert_eq!(o.exit, None, "timed-out helper has no exit code");
         assert!(o.signaled, "timeout path dispatched its kill");
         assert!(o.reaped, "kill was reaped inside the reserved floor");
-        assert!(
-            o.drain_thread.is_none(),
-            "sleep drains instantly; a handoff here fails closed"
-        );
+        // SAME-handle rule even here: sleep drains instantly, so the join
+        // below succeeds at once and proves it (no assert-away).
+        if let Some(h) = o.drain_thread {
+            assert!(
+                matches!(
+                    join_finished(h, Instant::now() + Duration::from_secs(2)),
+                    JoinOutcome::Joined
+                ),
+                "handoff joined"
+            );
+        }
         assert!(
             start.elapsed() < Duration::from_secs(10),
             "helper timeout bounded end to end: {:?}",
