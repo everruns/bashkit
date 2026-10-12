@@ -119,12 +119,18 @@ async fn pattern_hold_doubling_stops_at_live_intermediate_budget() {
 
     // 1500 lines x 2 B = ~3 KB of input; h;G every 100 lines doubles the
     // pattern, so it would need ~13 MB against a 1 MB budget.
+    // No trailing pipe: the asserted status is sed's own, not wc's.
     let script = "for i in $(seq 1 1500); do printf 'x\\n'; \
-                  done > /in.txt; sed -n ':a;N;100~100{h;G};ba' /in.txt | wc -c";
+                  done > /in.txt; sed -n ':a;N;100~100{h;G};ba' /in.txt";
 
     match bash.exec(script).await {
         Ok(result) => {
             assert_ne!(result.exit_code, 0, "stdout: {}", result.stdout);
+            assert!(
+                result.stdout.is_empty(),
+                "refused run must print nothing, got {} bytes",
+                result.stdout.len()
+            );
             assert!(result.stderr.contains("sed:"), "stderr: {}", result.stderr);
             assert!(result.stderr.len() < 1024, "diagnostic must stay bounded");
         }
@@ -138,10 +144,28 @@ async fn pattern_hold_doubling_stops_at_live_intermediate_budget() {
     }
 }
 
-/// TM-DOS-018 follow-up: every sed command charges aggregate work. The
-/// 200-command script must charge past a cap the trivial one-printf setup
-/// cannot reach alone; whatever layer trips first, the run is refused with
-/// a bounded diagnostic and a nonzero status, never silently completed.
+/// Same PoC shape under the default budget is finite GNU behavior, not a
+/// hang: it terminates with exit 0 and (under `-n`) empty output. This
+/// control proves the refusal above comes from the budget, not from
+/// breaking the script.
+#[tokio::test]
+async fn pattern_hold_doubling_succeeds_at_default_budget() {
+    let mut bash = Bash::builder().build();
+    let script = "for i in $(seq 1 1500); do printf 'x\\n'; \
+                  done > /in.txt; sed -n ':a;N;100~100{h;G};ba' /in.txt";
+    let result = bash.exec(script).await.expect("sed runs");
+    assert_eq!(
+        result.exit_code, 0,
+        "default budget must run the PoC to completion; stderr: {}",
+        result.stderr
+    );
+    assert!(
+        result.stdout.is_empty(),
+        "nothing printed under -n, got {} bytes",
+        result.stdout.len()
+    );
+}
+
 #[tokio::test]
 async fn sed_commands_stop_at_work_budget() {
     let limits = ExecutionLimits::new().max_work_units(100);
@@ -152,7 +176,7 @@ async fn sed_commands_stop_at_work_budget() {
     for _ in 0..200 {
         script.push_str("p;");
     }
-    script.push_str("' /in.txt | wc -c");
+    script.push_str("' /in.txt");
     match bash.exec(&script).await {
         Ok(result) => {
             assert_ne!(result.exit_code, 0, "stdout: {}", result.stdout);
@@ -175,7 +199,7 @@ async fn sed_commands_stop_at_work_budget() {
 async fn sed_lines_stop_at_input_budget() {
     let limits = ExecutionLimits::new().max_aggregate_input_bytes(100);
     let mut bash = Bash::builder().limits(limits).build();
-    let script = "printf '%.0shello\\n' {1..100} > /in.txt; sed -n 'p' /in.txt | wc -c";
+    let script = "printf '%.0shello\\n' {1..100} > /in.txt; sed -n 'p' /in.txt";
     match bash.exec(script).await {
         Ok(result) => {
             assert_ne!(result.exit_code, 0, "stdout: {}", result.stdout);
