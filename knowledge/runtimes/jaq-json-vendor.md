@@ -116,7 +116,7 @@ same rewrite applies to every release:
   timeout (`jq: execution timed out`).
 - Output conversion is capped by `max_stdout_bytes`, so a value built from
   shared parts (`reduce range(40) as $i (1; [., .])`) cannot expand when
-  rendered. Runtime error messages render at most 64 KiB of a value. Short error previews (`jqmsg::dump_trunc`, object-key and cannot-index messages) render through a capped sink, so even the intermediate preview never materializes a huge value's full dump.
+  rendered. Runtime error messages render at most 64 KiB of a value. Short error previews (`jqmsg::dump_trunc`, object-key and cannot-index messages) render through a capped sink that aborts the traversal once the budget is spent, so even the intermediate preview never materializes a huge value's full dump (and never walks the rest of it just to discard the output).
 
 Builds with `panic = "abort"` cannot unwind. There the fallible checks still
 apply, over-limit infallible constructions are cut short with the meter

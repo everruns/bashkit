@@ -2043,6 +2043,21 @@ async fn math_errors_use_jq_wording() {
 }
 
 #[tokio::test]
+async fn math_error_on_huge_operands_stays_bounded_and_session_recovers() {
+    let out = run_jq_with_args(&["-c", "try ([range(0;200000)] + 1) catch ."], "null")
+        .await
+        .unwrap();
+    assert!(
+        out.len() < 1024,
+        "math error on huge operand leaked {} bytes",
+        out.len()
+    );
+    assert!(out.contains("..."), "huge operand preview should truncate");
+    let recovered = run_jq_with_args(&["-c", "1 + 2"], "null").await.unwrap();
+    assert_eq!(recovered, "3\n");
+}
+
+#[tokio::test]
 async fn division_by_zero_is_a_runtime_error() {
     let result = run_jq_result_with_args(&["-c", "1 / .x"], "{\"x\": 2} {\"x\": 0} {\"x\": 4}")
         .await
