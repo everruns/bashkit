@@ -2193,3 +2193,39 @@ mod finding_cond_bare_not_print_overflow {
         );
     }
 }
+
+/// Default value with command substitution ${VAR:-$(cmd)}
+#[tokio::test]
+async fn parameter_expansion_default_with_cmdsubst() {
+    let mut bash = tight_bash();
+
+    // Unset variable - should run command substitution
+    let result = bash
+        .exec(r#"unset VAR; echo ${VAR:-$(echo hello)}"#)
+        .await
+        .unwrap();
+    assert!(result.stdout.contains("hello"));
+
+    // Empty variable - should run command substitution (:- means unset OR empty)
+    let result = bash
+        .exec(r#"VAR=""; echo ${VAR:-$(echo hello)}"#)
+        .await
+        .unwrap();
+    assert!(result.stdout.contains("hello"));
+
+    // Set variable - should NOT run command substitution
+    let result = bash
+        .exec(r#"VAR="value"; echo ${VAR:-$(echo hello)}"#)
+        .await
+        .unwrap();
+    assert!(result.stdout.contains("value"));
+    assert!(!result.stdout.contains("hello"));
+
+    // Also test without colon (:-) - only unset, not empty
+    let result = bash
+        .exec(r#"VAR=""; echo ${VAR-$(echo hello)}"#)
+        .await
+        .unwrap();
+    // Empty is considered set, so should print empty
+    assert!(result.stdout.trim().is_empty() || result.stdout == "\n");
+}
