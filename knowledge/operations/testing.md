@@ -249,6 +249,14 @@ surfaces as a 404 in an already-green job.
 
 ## Resource-cap tests must not race the deadline
 
+The opt-in input-redirect helper polls its one in-flight RSS sampling future by
+mutable reference across `select!` rounds. A losing branch must leave that future
+in its owned slot; only observing its result clears the slot. The ordinary
+`ir_helper_concurrent_schedule` fixture uses the wrapper's same
+`poll_owned_sample` helper with 64 bytes of in-memory pipe data and a release-gated
+future. This verifies scheduling ownership, not subprocess cleanup, effective
+resource caps, platform coverage or merged security proof.
+
 Controlled retained-pipe fixtures keep a caller-owned reader-handoff vector
 outside their cleanup guard. A bounded `Drop` returns any unfinished ORIGINAL
 handle to that owner rather than recording a count and detaching it. The owner

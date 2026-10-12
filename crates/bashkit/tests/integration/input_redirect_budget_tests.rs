@@ -676,6 +676,11 @@ async fn sample_child_rss(pid: u32) -> Result<u64, String> {
 /// alongside drains, exit, and deadline without awaiting inline.
 type SampleFuture = std::pin::Pin<Box<dyn Future<Output = Result<u64, String>>>>;
 
+async fn poll_owned_sample(slot: &mut Option<SampleFuture>) -> Result<u64, String> {
+    // Losing a select branch must not destroy the pending sampler it borrows.
+    slot.as_mut().expect("armed with sampler").as_mut().await
+}
+
 async fn run_input_shape_bounded(script: &str, wall_secs: u64, tag: &str) -> InputShapeRun {
     let sink = TempWorkdir::create(&format!("{tag}-sink")).expect("artifact sink setup");
     let work = TempWorkdir::create(&format!("{tag}-work")).expect("producer workdir setup");
@@ -779,14 +784,10 @@ async fn run_input_shape_bounded(script: &str, wall_secs: u64, tag: &str) -> Inp
                 err_err = err;
                 err_done = true;
             }
-            // Take-then-poll is safe HERE (unlike one-shot-gated designs, see
-            // ir_helper_concurrent_schedule): each tick mints a fresh
-            // idempotent sampler, so losing a race only wastes one bounded ps
-            // run (kill_on_drop bounds it) and the ticker re-arms. The slot
-            // being None simply disables this arm until then.
-            res = async { sample_fut.take().expect("armed with sampler").await },
+            res = poll_owned_sample(&mut sample_fut),
                 if sample_fut.is_some() =>
             {
+                sample_fut = None;
                 match res {
                     Ok(rss) => {
                         rss_samples += 1;
@@ -1269,9 +1270,8 @@ async fn ir_helper_timeout_contract() {
 
 /// Scheduling contract: a release-gated sampler, two 32B duplex drains, and
 /// a timer must ALL complete concurrently in one select! scope. The release
-/// fires only after both drains finish, so awaiting the sampler first (as
-/// the old ticker arm did) would stall at the gate until the outer bound;
-/// polling everything together finishes in milliseconds. 64B total fixture
+/// fires only after both drains finish. Poll the wrapper's actual owned-slot
+/// helper so losing a selection cannot destroy that release path. 64B total fixture
 /// data, 2s outer bound, fully deterministic (no timing margins asserted,
 /// only completion).
 #[tokio::test]
@@ -1287,14 +1287,13 @@ async fn ir_helper_concurrent_schedule() {
         .await
         .expect("fill two");
     drop((w1, w2));
-    // Pinned once and polled by &mut every round: taking it out would
-    // destroy the only release path on the first lost select race (that
-    // exact bug hung this fixture), so ownership stays in the slot.
-    let mut sampler = std::pin::pin!(async move { rx.await.expect("release") });
+    let mut sampler: Option<SampleFuture> = Some(Box::pin(async move {
+        rx.await.map(u64::from).map_err(|error| error.to_string())
+    }));
     let mut d1 = std::pin::pin!(ir_drain_capped_async(&mut r1, 64));
     let mut d2 = std::pin::pin!(ir_drain_capped_async(&mut r2, 64));
     let mut tx_opt = Some(tx);
-    let mut got = 0u32;
+    let mut got = 0u64;
     let mut k1 = Vec::new();
     let mut k2 = Vec::new();
     let mut sampler_done = false;
@@ -1303,14 +1302,14 @@ async fn ir_helper_concurrent_schedule() {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
     let finished = tokio::time::timeout_at(deadline, async {
         loop {
-            eprintln!("tick s={} d1={} d2={}", sampler_done, d1_done, d2_done);
             if sampler_done && d1_done && d2_done {
                 break;
             }
             tokio::select! {
                 biased;
-                v = &mut sampler, if !sampler_done => {
-                    got = v;
+                v = poll_owned_sample(&mut sampler), if sampler.is_some() => {
+                    got = v.expect("sampler completed");
+                    sampler = None;
                     sampler_done = true;
                 }
                 _ = tokio::time::sleep(Duration::from_millis(5)) => {
