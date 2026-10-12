@@ -297,9 +297,6 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dev-dependencies]
-# TEST-ONLY: process feature for the opt-in bounded child-test runner.
-# Production builds never see this feature; versions and lock unchanged.
-tokio = { workspace = true, features = ["process"] }
 tokio-test = { workspace = true }
 pretty_assertions = { workspace = true }
 insta = { workspace = true }
@@ -453,3 +450,8 @@ wasm-bindgen-futures = { version = "0.4", optional = true }
 # not flag the vendored code. See knowledge/runtimes/coreutils-args-port.md.
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("i18n-decimal"))'] }
+
+# The process feature is native test infrastructure only; keep WASM builds
+# on the workspace Tokio feature set without changing versions or the lock.
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+tokio = { workspace = true, features = ["process"] }

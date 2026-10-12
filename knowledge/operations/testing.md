@@ -257,6 +257,17 @@ in its owned slot; only observing its result clears the slot. The ordinary
 future. This verifies scheduling ownership, not subprocess cleanup, effective
 resource caps, platform coverage or merged security proof.
 
+The native input-redirect runner shares one owned lifecycle for the main child
+and RSS sampler: wait, both capped captures and live first-failure notices are
+polled together. Ordinary errors request kill before finite reap/capture completion;
+completion waits for an owned pending sample and records incomplete cleanup as a
+negative verdict. Reap timeout, I/O failure and success are separate outcomes.
+The process feature is a native-only Tokio dev-dependency; WASM builds keep the
+workspace feature set. Drop remains a best-effort backstop, not evidence of
+reap or capture completion on panic or external cancellation. Tiny in-memory
+fixtures verify notice delivery before EOF, nested reap failures and pending-sample
+ownership. They do not establish subprocess, Linux or full security shipping proof.
+
 Controlled retained-pipe fixtures keep a caller-owned reader-handoff vector
 outside their cleanup guard. A bounded `Drop` returns any unfinished ORIGINAL
 handle to that owner rather than recording a count and detaching it. The owner

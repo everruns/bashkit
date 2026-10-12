@@ -349,9 +349,12 @@ async fn stdin_clone_trip_recovers() {
 // Reuses reviewed primitives (`drain_capped`, `reap_with_grace`) with a
 // job-specific launcher. Shared defaults for other products are untouched.
 
+#[cfg(not(target_arch = "wasm32"))]
 use crate::threat_model_tests::resource_exhaustion::bashkit_cli_path;
+#[cfg(not(target_arch = "wasm32"))]
 use std::process::Stdio;
 use std::time::Duration;
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::process::Command;
 
 /// Address-space cap in KiB for the bash `ulimit -v` knob (Linux only).
@@ -366,10 +369,13 @@ const IR_FILE_BLOCKS: u64 = 131_072;
 /// Active RSS cutoff in KiB (`ps -o rss=` reports KiB on Linux and macOS):
 /// catches runaway growth far below RAM/disk exhaustion while legit runs
 /// peak at O(MB). Policed by polling, not assumed from any cap.
+#[cfg(not(target_arch = "wasm32"))]
 const IR_RSS_CAP_KIB: u64 = 1_048_576; // 1GiB
 /// Explicit allowance for one short instrumented run's coverage artifact.
+#[cfg(not(target_arch = "wasm32"))]
 const IR_ARTIFACT_BOUND: u64 = 64 * 1024 * 1024; // 64MiB
 /// Per-stream kept bytes for concurrent diagnostic drains.
+#[cfg(not(target_arch = "wasm32"))]
 const PIPE_CAP: usize = 256 * 1024;
 
 /// Opt-in launcher for the input-redirect job: shared CPU/stack caps plus an
@@ -543,6 +549,7 @@ fn file_size_unit_factor(blocks: u64, bytes: u64) -> Result<u64, String> {
 /// Outcome of one opt-in bounded input-shape run: the reviewed verdict plus
 /// job-specific receipts. Setup faults panic with context (fail-closed);
 /// runtime observations are flags for the caller to assert on.
+#[cfg(not(target_arch = "wasm32"))]
 struct InputShapeRun {
     exit_code: Option<i32>,
     stdout: String,
@@ -550,6 +557,8 @@ struct InputShapeRun {
     timed_out: bool,
     oversized: bool,
     incomplete_readers: bool,
+    sampler_complete: bool,
+    lifecycle_error: Option<String>,
     read_error: bool,
     reaped: bool,
     limits: IrLimitsNote,
@@ -571,7 +580,17 @@ struct InputShapeRun {
 /// 1.53.2): dropping the future abandons only unread bytes, so a deadline
 /// timeout followed by kill+reap stays finite. Never collects unbounded
 /// `read_to_end`.
-async fn ir_drain_capped_async<R>(pipe: &mut R, cap: usize) -> (Vec<u8>, usize, bool)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StreamNotice {
+    Excess,
+    ReadError,
+}
+
+async fn ir_drain_capped_async<R>(
+    pipe: &mut R,
+    cap: usize,
+    mut notice: Option<tokio::sync::mpsc::Sender<StreamNotice>>,
+) -> (Vec<u8>, usize, bool)
 where
     R: tokio::io::AsyncRead + Unpin,
 {
@@ -584,12 +603,25 @@ where
         match pipe.read(&mut chunk).await {
             Ok(0) => break,
             Ok(n) => {
-                let room = cap.saturating_sub(total).min(n);
+                let room = cap.saturating_sub(kept.len()).min(n);
                 kept.extend_from_slice(&chunk[..room]);
-                total += n;
+                total = total.saturating_add(n);
+                // One notice per stream; the shared channel has two slots.
+                // Notify before EOF while continuing bounded capture.
+                if total > cap
+                    && let Some(sender) = notice.take()
+                    && sender.try_send(StreamNotice::Excess).is_err()
+                {
+                    had_error = true;
+                    break;
+                }
             }
             Err(_) => {
                 had_error = true;
+                if let Some(sender) = notice.take() {
+                    // A closed receiver cannot turn a failed read into success.
+                    let _ = sender.try_send(StreamNotice::ReadError);
+                }
                 break;
             }
         }
@@ -598,89 +630,423 @@ where
     (kept, total.saturating_sub(kept_len), had_error)
 }
 
-/// Bounded RSS sampler on the same async machinery (no std `output()` or
-/// `wait` escape): timeout, kill with finite reap, loud errors. Preserves
-/// the effective pid receipt and distinguishes sampling failure from a
-/// child that simply exited fast.
-async fn sample_child_rss(pid: u32) -> Result<u64, String> {
-    use std::time::Duration;
-    let mut ps = tokio::process::Command::new("ps")
+#[derive(Debug)]
+enum ReapOutcome<T> {
+    Reaped(T),
+    Failed(std::io::Error),
+    TimedOut,
+}
+
+async fn reap_before<T>(
+    future: impl Future<Output = std::io::Result<T>>,
+    deadline: tokio::time::Instant,
+) -> ReapOutcome<T> {
+    match tokio::time::timeout_at(deadline, future).await {
+        Ok(Ok(status)) => ReapOutcome::Reaped(status),
+        Ok(Err(error)) => ReapOutcome::Failed(error),
+        Err(_) => ReapOutcome::TimedOut,
+    }
+}
+
+#[derive(Debug)]
+struct SampleError {
+    message: String,
+    cleanup_complete: bool,
+}
+
+/// One lifecycle owns wait, captures and the optional RSS sampler. Errors
+/// request kill once, then retain all futures through finite completion.
+/// Drop remains a best-effort backstop, never a completion receipt.
+#[cfg(not(target_arch = "wasm32"))]
+struct ChildCompletion {
+    status: Option<std::process::ExitStatus>,
+    out: (Vec<u8>, usize, bool),
+    err: (Vec<u8>, usize, bool),
+    reaped: bool,
+    readers_complete: bool,
+    sampler_complete: bool,
+    timed_out: bool,
+    failure: Option<String>,
+    rss_samples: u32,
+    peak_rss_kb: u64,
+    rss_exceeded: bool,
+    exited_fast: bool,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+async fn complete_owned_child(
+    child: &mut OwnedChild,
+    cap: usize,
+    deadline: tokio::time::Instant,
+    sample_pid: Option<u32>,
+    grace: Duration,
+) -> ChildCompletion {
+    let (mut out_pipe, mut err_pipe) = child.take_pipes();
+    let missing_pipe = out_pipe.is_none() || err_pipe.is_none();
+    let (notice_tx, mut notices) = tokio::sync::mpsc::channel(2);
+    let err_notice = notice_tx.clone();
+    let mut out_fut = std::pin::pin!(async {
+        match out_pipe.as_mut() {
+            Some(pipe) => ir_drain_capped_async(pipe, cap, Some(notice_tx)).await,
+            None => (Vec::new(), 0, true),
+        }
+    });
+    let mut err_fut = std::pin::pin!(async {
+        match err_pipe.as_mut() {
+            Some(pipe) => ir_drain_capped_async(pipe, cap, Some(err_notice)).await,
+            None => (Vec::new(), 0, true),
+        }
+    });
+    let mut completion = ChildCompletion {
+        status: None,
+        out: (Vec::new(), 0, false),
+        err: (Vec::new(), 0, false),
+        reaped: false,
+        readers_complete: false,
+        sampler_complete: false,
+        timed_out: false,
+        failure: missing_pipe.then(|| "child capture pipe missing".into()),
+        rss_samples: 0,
+        peak_rss_kb: 0,
+        rss_exceeded: false,
+        exited_fast: false,
+    };
+    let mut stop_requested = missing_pipe;
+    let mut kill_sent = false;
+    let mut wait_failed = false;
+    let mut out_done = false;
+    let mut err_done = false;
+    let mut notices_open = true;
+    let mut sample_fut: Option<SampleFuture> = None;
+    let mut ticker = tokio::time::interval_at(
+        tokio::time::Instant::now() + Duration::from_millis(50),
+        Duration::from_millis(500),
+    );
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let finish_deadline = deadline + grace;
+    let mut sampler_cleanup_complete = true;
+    loop {
+        if stop_requested && !kill_sent && completion.status.is_none() {
+            kill_sent = true;
+            if let Err(error) = child.start_kill() {
+                completion
+                    .failure
+                    .get_or_insert_with(|| format!("kill child: {error}"));
+            }
+        }
+        if (completion.status.is_some() || wait_failed)
+            && out_done
+            && err_done
+            && sample_fut.is_none()
+        {
+            break;
+        }
+        tokio::select! {
+            biased;
+            _ = tokio::time::sleep_until(finish_deadline) => {
+                completion.failure.get_or_insert_with(|| "child completion timed out".into());
+                // Send before leaving the owner loop, including a failed wait.
+                if !kill_sent && completion.status.is_none()
+                    && let Err(error) = child.start_kill()
+                {
+                    completion.failure.get_or_insert_with(|| format!("kill child: {error}"));
+                }
+                break;
+            }
+            _ = tokio::time::sleep_until(deadline),
+                if !stop_requested && completion.status.is_none() =>
+            {
+                completion.timed_out = true;
+                stop_requested = true;
+            }
+            result = child.wait(), if completion.status.is_none() && !wait_failed => {
+                match result {
+                    Ok(status) => {
+                        completion.status = Some(status);
+                        completion.reaped = true;
+                        completion.exited_fast = completion.rss_samples == 0;
+                    }
+                    Err(error) => {
+                        completion.failure = Some(format!("wait child: {error}"));
+                        wait_failed = true;
+                        stop_requested = true;
+                    }
+                }
+            }
+            notice = notices.recv(), if notices_open => {
+                match notice {
+                    Some(notice) => {
+                        completion.failure.get_or_insert_with(|| format!("child stream: {notice:?}"));
+                        stop_requested = true;
+                    }
+                    None => notices_open = false,
+                }
+            }
+            out = &mut out_fut, if !out_done => {
+                if out.1 > 0 || out.2 {
+                    completion.failure.get_or_insert_with(|| "stdout capture failed".into());
+                    stop_requested = true;
+                }
+                completion.out = out;
+                out_done = true;
+            }
+            err = &mut err_fut, if !err_done => {
+                if err.1 > 0 || err.2 {
+                    completion.failure.get_or_insert_with(|| "stderr capture failed".into());
+                    stop_requested = true;
+                }
+                completion.err = err;
+                err_done = true;
+            }
+            res = poll_owned_sample(&mut sample_fut), if sample_fut.is_some() => {
+                sample_fut = None;
+                match res {
+                    Ok(rss) => {
+                        completion.rss_samples += 1;
+                        completion.peak_rss_kb = completion.peak_rss_kb.max(rss);
+                        if rss > IR_RSS_CAP_KIB {
+                            completion.rss_exceeded = true;
+                            stop_requested = true;
+                        }
+                    }
+                    Err(error) => {
+                        if !error.cleanup_complete {
+                            sampler_cleanup_complete = false;
+                            completion.failure = Some(error.message);
+                            stop_requested = true;
+                        } else if completion.status.is_none() {
+                            match child.try_wait() {
+                                Ok(Some(status)) => {
+                                    completion.status = Some(status);
+                                    completion.reaped = true;
+                                    completion.exited_fast = completion.rss_samples == 0;
+                                }
+                                Ok(None) => {
+                                    completion.failure = Some(error.message);
+                                    stop_requested = true;
+                                }
+                                Err(poll_error) => {
+                                    completion.failure = Some(format!("poll child: {poll_error}; {}", error.message));
+                                    stop_requested = true;
+                                    wait_failed = true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            _ = ticker.tick(),
+                if sample_pid.is_some() && !stop_requested
+                    && completion.status.is_none() && sample_fut.is_none() =>
+            {
+                sample_fut = Some(Box::pin(sample_child_rss(sample_pid.expect("sampling enabled"))));
+            }
+        }
+    }
+    completion.readers_complete = out_done && err_done;
+    match finish_owned_sample(&mut sample_fut, finish_deadline).await {
+        Ok(Some(rss)) => {
+            completion.rss_samples += 1;
+            completion.peak_rss_kb = completion.peak_rss_kb.max(rss);
+            completion.rss_exceeded |= rss > IR_RSS_CAP_KIB;
+        }
+        Ok(None) => {}
+        Err(error) => {
+            sampler_cleanup_complete &= error.cleanup_complete;
+            if !error.cleanup_complete {
+                completion.failure.get_or_insert(error.message);
+            }
+        }
+    }
+    completion.sampler_complete = sample_fut.is_none() && sampler_cleanup_complete;
+    if completion.status.is_none() {
+        match reap_before(
+            child.wait(),
+            tokio::time::Instant::now() + grace.min(Duration::from_secs(5)),
+        )
+        .await
+        {
+            ReapOutcome::Reaped(status) => {
+                completion.status = Some(status);
+                completion.reaped = true;
+            }
+            ReapOutcome::Failed(error) => {
+                completion
+                    .failure
+                    .get_or_insert_with(|| format!("reap child: {error}"));
+            }
+            ReapOutcome::TimedOut => {
+                completion
+                    .failure
+                    .get_or_insert_with(|| "reap child timed out".into());
+            }
+        }
+    }
+    completion
+}
+
+/// RSS sampling uses the same finite owned lifecycle as the main child.
+/// Sampling failure and incomplete reap/capture are distinct verdicts.
+#[cfg(not(target_arch = "wasm32"))]
+async fn sample_child_rss(pid: u32) -> Result<u64, SampleError> {
+    let ps = Command::new("ps")
         .arg("-o")
         .arg("rss=")
         .arg("-p")
         .arg(pid.to_string())
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .kill_on_drop(true)
         .spawn()
-        .map_err(|e| format!("spawn ps for rss of {pid}: {e:?}"))?;
-    // Both pipes are taken upfront so the bounded drains below own capture;
-    // neither stream can block the sampler, and both are capped.
-    let mut out_pipe = ps
-        .stdout
-        .take()
-        .ok_or_else(|| format!("ps {pid} has no stdout"))?;
-    let mut err_pipe = ps
-        .stderr
-        .take()
-        .ok_or_else(|| format!("ps {pid} has no stderr"))?;
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-    loop {
-        match ps.try_wait() {
-            Ok(Some(_)) => break,
-            Ok(None) => {
-                if tokio::time::Instant::now() >= deadline {
-                    ps.start_kill()
-                        .map_err(|e| format!("kill stuck ps for rss of {pid}: {e:?}"))?;
-                    // Finite reap with explicit receipt: timeout, kill
-                    // failure, and success are three distinct outcomes, never
-                    // conflated into one boolean.
-                    let reaped =
-                        tokio::time::timeout_at(deadline + Duration::from_secs(2), ps.wait())
-                            .await
-                            .is_ok();
-                    return Err(format!("ps rss of {pid} timed out (reaped: {reaped})"));
-                }
-                tokio::time::sleep(Duration::from_millis(50)).await;
-            }
-            Err(e) => return Err(format!("poll ps for rss of {pid}: {e:?}")),
-        }
-    }
-    // Reap explicitly (already exited: prompt) with all three outcomes
-    // distinguished, then bounded-drain both captures.
-    let status = match tokio::time::timeout_at(
-        tokio::time::Instant::now() + Duration::from_secs(2),
-        ps.wait(),
+        .map_err(|error| SampleError {
+            message: format!("spawn ps for rss of {pid}: {error}"),
+            cleanup_complete: true, // Spawn failed; no child exists.
+        })?;
+    let mut ps = OwnedChild::new(ps);
+    let capture = complete_owned_child(
+        &mut ps,
+        4096,
+        tokio::time::Instant::now() + Duration::from_secs(5),
+        None,
+        Duration::from_secs(2),
     )
-    .await
+    .await;
+    let cleanup_complete = capture.reaped && capture.readers_complete && capture.sampler_complete;
+    if !cleanup_complete
+        || capture.timed_out
+        || capture.failure.is_some()
+        || !capture.status.is_some_and(|status| status.success())
     {
-        Ok(Ok(status)) => status,
-        Ok(Err(e)) => return Err(format!("reap ps for rss of {pid}: {e:?}")),
-        Err(_) => return Err(format!("reap ps for rss of {pid} timed out")),
-    };
-    let (out_kept, out_trunc, out_err) = ir_drain_capped_async(&mut out_pipe, 4096).await;
-    let (_err_kept, err_trunc, err_err) = ir_drain_capped_async(&mut err_pipe, 4096).await;
-    if out_err || err_err {
-        return Err(format!("ps rss of {pid} output unreadable"));
+        return Err(SampleError {
+            message: format!(
+                "ps rss of {pid} failed: {} (reaped={}, captures={})",
+                capture.failure.as_deref().unwrap_or("unsuccessful sample"),
+                capture.reaped,
+                capture.readers_complete
+            ),
+            cleanup_complete,
+        });
     }
-    if out_trunc > 0 || err_trunc > 0 {
-        return Err(format!("ps rss of {pid} output oversize"));
-    }
-    if !status.success() {
-        return Err(format!("ps rss of {pid} failed"));
-    }
-    parse_ps_rss(&String::from_utf8_lossy(&out_kept))
+    parse_ps_rss(&String::from_utf8_lossy(&capture.out.0)).map_err(|message| SampleError {
+        message,
+        cleanup_complete,
+    })
 }
-/// One in-flight RSS sample: boxed so the select! arm can poll it
-/// alongside drains, exit, and deadline without awaiting inline.
-type SampleFuture = std::pin::Pin<Box<dyn Future<Output = Result<u64, String>>>>;
+type SampleFuture = std::pin::Pin<Box<dyn Future<Output = Result<u64, SampleError>>>>;
 
-async fn poll_owned_sample(slot: &mut Option<SampleFuture>) -> Result<u64, String> {
+async fn poll_owned_sample(slot: &mut Option<SampleFuture>) -> Result<u64, SampleError> {
     // Losing a select branch must not destroy the pending sampler it borrows.
     slot.as_mut().expect("armed with sampler").as_mut().await
 }
 
+async fn finish_owned_sample(
+    slot: &mut Option<SampleFuture>,
+    deadline: tokio::time::Instant,
+) -> Result<Option<u64>, SampleError> {
+    if slot.is_none() {
+        return Ok(None);
+    }
+    match tokio::time::timeout_at(deadline, poll_owned_sample(slot)).await {
+        Ok(result) => {
+            *slot = None;
+            result.map(Some)
+        }
+        Err(_) => Err(SampleError {
+            message: "owned sampler completion timed out".into(),
+            cleanup_complete: false,
+        }),
+    }
+}
+
+#[tokio::test]
+async fn ir_helper_reap_outcomes() {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+    assert!(matches!(
+        reap_before(std::future::ready(Ok(7_u8)), deadline).await,
+        ReapOutcome::Reaped(7)
+    ));
+    match reap_before(
+        std::future::ready(Err::<u8, _>(std::io::Error::other("injected"))),
+        deadline,
+    )
+    .await
+    {
+        ReapOutcome::Failed(error) => assert_eq!(error.kind(), std::io::ErrorKind::Other),
+        outcome => panic!("failed wait must remain an error: {outcome:?}"),
+    }
+    assert!(matches!(
+        reap_before(
+            std::future::pending::<std::io::Result<u8>>(),
+            tokio::time::Instant::now()
+        )
+        .await,
+        ReapOutcome::TimedOut
+    ));
+}
+
+#[tokio::test]
+async fn ir_helper_live_excess_notice() {
+    let (mut writer, mut reader) = tokio::io::duplex(64);
+    tokio::io::AsyncWriteExt::write_all(&mut writer, &[1_u8; 32])
+        .await
+        .unwrap();
+    let (tx, mut rx) = tokio::sync::mpsc::channel(2);
+    let mut drain = std::pin::pin!(ir_drain_capped_async(&mut reader, 16, Some(tx)));
+    let notice = tokio::time::timeout(Duration::from_secs(1), async {
+        tokio::select! {
+            notice = rx.recv() => notice,
+            _ = &mut drain => panic!("writer is open; capture must remain pending"),
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(notice, Some(StreamNotice::Excess));
+    drop(writer);
+    let (kept, truncated, error) = drain.await;
+    assert_eq!(kept, vec![1_u8; 16]);
+    assert_eq!(truncated, 16);
+    assert!(!error);
+}
+
+#[tokio::test]
+async fn ir_helper_live_error_notice() {
+    let (tx, mut rx) = tokio::sync::mpsc::channel(2);
+    let mut reader = FailOnce { failed: false };
+    let (notice, (kept, truncated, error)) =
+        tokio::join!(rx.recv(), ir_drain_capped_async(&mut reader, 16, Some(tx)),);
+    assert_eq!(notice, Some(StreamNotice::ReadError));
+    assert!(kept.is_empty() && truncated == 0 && error);
+}
+
+#[tokio::test]
+async fn ir_helper_terminal_sampler_completion() {
+    let (tx, rx) = tokio::sync::oneshot::channel::<u64>();
+    let mut slot: Option<SampleFuture> = Some(Box::pin(async move {
+        rx.await.map_err(|error| SampleError {
+            message: error.to_string(),
+            cleanup_complete: true,
+        })
+    }));
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+    let (result, ()) = tokio::join!(finish_owned_sample(&mut slot, deadline), async {
+        tx.send(7).unwrap();
+    },);
+    assert_eq!(result.unwrap(), Some(7));
+    assert!(slot.is_none());
+    slot = Some(Box::pin(std::future::pending()));
+    let error = finish_owned_sample(&mut slot, tokio::time::Instant::now())
+        .await
+        .unwrap_err();
+    assert!(!error.cleanup_complete);
+    assert_eq!(error.message, "owned sampler completion timed out");
+    assert!(
+        slot.is_some(),
+        "timeout cannot claim completion or discard the owned future"
+    );
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 async fn run_input_shape_bounded(script: &str, wall_secs: u64, tag: &str) -> InputShapeRun {
     let sink = TempWorkdir::create(&format!("{tag}-sink")).expect("artifact sink setup");
     let work = TempWorkdir::create(&format!("{tag}-work")).expect("producer workdir setup");
@@ -703,136 +1069,16 @@ async fn run_input_shape_bounded(script: &str, wall_secs: u64, tag: &str) -> Inp
         .kill_on_drop(true);
     let mut child = OwnedChild::new(cmd.spawn().expect("spawn bounded child"));
     let rss_pid = child.id();
-    // Pipes are taken before the first poll so the concurrent drains below
-    // own them outright; the owner guard keeps pid and lifecycle.
-    let (out_pipe, err_pipe) = child.take_pipes();
-    let mut out_pipe = out_pipe.expect("take child stdout");
-    let mut err_pipe = err_pipe.expect("take child stderr");
-    let start = tokio::time::Instant::now();
-    let deadline = start + Duration::from_secs(wall_secs);
-    let join_deadline = start + Duration::from_secs(wall_secs + 15);
-    let mut ticks = 0u64;
-    let mut rss_samples = 0u32;
-    let mut peak_rss_kb = 0u64;
-    let mut rss_exceeded = false;
-    let mut exited_fast = false;
-    let mut overran = false;
-    let mut final_status: Option<std::process::ExitStatus> = None;
-    let mut reaped = false;
-    let mut out_done = false;
-    let mut err_done = false;
-    let mut out_kept = Vec::new();
-    let mut out_trunc = 0usize;
-    let mut out_err = false;
-    let mut err_kept = Vec::new();
-    let mut err_trunc = 0usize;
-    let mut err_err = false;
-    let mut incomplete_readers = false;
-    let mut out_fut = std::pin::pin!(ir_drain_capped_async(&mut out_pipe, PIPE_CAP));
-    let mut err_fut = std::pin::pin!(ir_drain_capped_async(&mut err_pipe, PIPE_CAP));
-    // Sampler slot: at most one RSS sample in flight. The ticker below only
-    // CREATES it; a dedicated select arm below POLLS it, so slow sampling
-    // never suspends drains, exit detection, or the wall deadline.
-    let mut sample_fut: Option<SampleFuture> = None;
-    loop {
-        let running_done = final_status.is_some() || overran || rss_exceeded;
-        if running_done && out_done && err_done {
-            break;
-        }
-        if running_done && tokio::time::Instant::now() >= join_deadline {
-            incomplete_readers = true;
-            break;
-        }
-        tokio::select! {
-            biased;
-            status = child.wait(), if !running_done => {
-                match status {
-                    Ok(s) => {
-                        if rss_samples == 0 {
-                            exited_fast = true;
-                        }
-                        final_status = Some(s);
-                        reaped = true;
-                    }
-                    Err(e) => panic!("wait child {rss_pid} failed: {e:?}"),
-                }
-            }
-            _ = tokio::time::sleep(Duration::from_millis(50)) => {
-                if running_done {
-                    continue;
-                }
-                ticks += 1;
-                if (ticks == 1 || ticks.is_multiple_of(10)) && sample_fut.is_none() {
-                    sample_fut = Some(Box::pin(sample_child_rss(rss_pid)));
-                }
-                if !rss_exceeded && final_status.is_none() && tokio::time::Instant::now() >= deadline {
-                    child.start_kill().expect("kill overrun child");
-                    overran = true;
-                }
-            }
-            out = &mut out_fut, if !out_done => {
-                let (kept, trunc, err) = out;
-                out_kept = kept;
-                out_trunc = trunc;
-                out_err = err;
-                out_done = true;
-            }
-            err = &mut err_fut, if !err_done => {
-                let (kept, trunc, err) = err;
-                err_kept = kept;
-                err_trunc = trunc;
-                err_err = err;
-                err_done = true;
-            }
-            res = poll_owned_sample(&mut sample_fut),
-                if sample_fut.is_some() =>
-            {
-                sample_fut = None;
-                match res {
-                    Ok(rss) => {
-                        rss_samples += 1;
-                        peak_rss_kb = peak_rss_kb.max(rss);
-                        if rss > IR_RSS_CAP_KIB {
-                            child.start_kill().expect("kill RSS overrun child");
-                            rss_exceeded = true;
-                        }
-                    }
-                    Err(e) => {
-                        if let Some(status) = child.try_wait().expect("re-poll child") {
-                            if rss_samples == 0 {
-                                exited_fast = true;
-                            }
-                            final_status = Some(status);
-                            reaped = true;
-                        } else {
-                            panic!("RSS policing failed on live child {rss_pid}: {e}");
-                        }
-                    }
-                }
-            }
-        }
-    }
-    // Finite reap for killed paths (exited paths already reaped via wait):
-    // Child::wait is cancel-safe; the timeout bounds it. start_kill was
-    // already sent on every non-exit path above. kill_on_drop stays armed
-    // as a backstop only, never proof.
-    if final_status.is_none() {
-        match tokio::time::timeout_at(
-            tokio::time::Instant::now() + Duration::from_secs(5),
-            child.wait(),
-        )
-        .await
-        {
-            Ok(Ok(status)) => {
-                final_status = Some(status);
-                reaped = true;
-            }
-            Ok(Err(e)) => panic!("reap child {rss_pid} failed: {e:?}"),
-            Err(_) => {
-                reaped = false;
-            }
-        }
-    }
+    let completion = complete_owned_child(
+        &mut child,
+        PIPE_CAP,
+        tokio::time::Instant::now() + Duration::from_secs(wall_secs),
+        Some(rss_pid),
+        Duration::from_secs(15),
+    )
+    .await;
+    let (out_kept, out_trunc, out_err) = completion.out;
+    let (err_kept, err_trunc, err_err) = completion.err;
     // Receipt first: the launcher note proves the caps ran; without it the
     // run is untrusted regardless of exit code.
     let stderr_full = String::from_utf8_lossy(&err_kept).into_owned();
@@ -868,23 +1114,25 @@ async fn run_input_shape_bounded(script: &str, wall_secs: u64, tag: &str) -> Inp
     sink.cleanup().expect("artifact sink cleanup");
     work.cleanup().expect("work dir cleanup");
     InputShapeRun {
-        exit_code: final_status.and_then(|s| s.code()),
+        exit_code: completion.status.and_then(|s| s.code()),
         stdout: String::from_utf8_lossy(&out_kept).into_owned(),
         stderr,
-        timed_out: overran,
+        timed_out: completion.timed_out,
         oversized: out_trunc > 0 || err_trunc > 0,
-        incomplete_readers,
+        incomplete_readers: !completion.readers_complete,
+        sampler_complete: completion.sampler_complete,
+        lifecycle_error: completion.failure,
         read_error: out_err || err_err,
-        reaped,
+        reaped: completion.reaped,
         limits,
         artifact,
         leftovers,
         file_unit,
         rss_pid,
-        rss_samples,
-        peak_rss_kb,
-        rss_exceeded,
-        exited_fast,
+        rss_samples: completion.rss_samples,
+        peak_rss_kb: completion.peak_rss_kb,
+        rss_exceeded: completion.rss_exceeded,
+        exited_fast: completion.exited_fast,
     }
 }
 
@@ -897,7 +1145,14 @@ async fn run_input_shape_bounded(script: &str, wall_secs: u64, tag: &str) -> Inp
 /// (fail-closed on any unit surprise); RSS policing receipts (a real pid,
 /// no exceedance, peak under the cutoff, samples taken unless the child
 /// exited before the first poll).
+#[cfg(not(target_arch = "wasm32"))]
 fn assert_effective_bounds(r: &InputShapeRun) {
+    assert!(r.sampler_complete, "owned sampler completion unknown");
+    assert!(
+        r.lifecycle_error.is_none(),
+        "child lifecycle failed: {:?}",
+        r.lifecycle_error
+    );
     let limits = &r.limits;
     assert_eq!(limits.stack_raw, "4096", "stack cap round-trip");
     assert_eq!(limits.cpu_raw, "10", "cpu cap round-trip");
@@ -953,7 +1208,7 @@ fn assert_effective_bounds(r: &InputShapeRun) {
 /// (no exit code) and from pre-fix success (exit 0).
 /// NOT EXECUTED in this environment (hostile-fixture ban); kept as the
 /// blocked-verification target with full harness assertions intact.
-#[cfg(unix)]
+#[cfg(all(unix, not(target_arch = "wasm32")))]
 #[tokio::test]
 async fn original_shape_bounded_child_default_limits() {
     let r =
@@ -1072,7 +1327,7 @@ fn ir_helper_workdir_drop_cleans() {
 /// Finite normal child completion through the full opt-in wrapper with an
 /// ordinary harmless script: proves the harness itself works end to end.
 /// NOT vulnerability proof: `true` exercises no budget path.
-#[cfg(unix)]
+#[cfg(all(unix, not(target_arch = "wasm32")))]
 #[tokio::test]
 async fn ir_helper_normal_child_completes() {
     let r = run_input_shape_bounded("true", 30, "ir-true").await;
@@ -1143,10 +1398,12 @@ fn ir_helper_ps_parse_cases() {
 /// explicitly with a finite deadline and then drop the guard; Drop sends
 /// SIGKILL best-effort via sync `start_kill` (documented backstop, never the
 /// primary path) but never waits, so Drop cannot block.
+#[cfg(not(target_arch = "wasm32"))]
 struct OwnedChild {
     inner: Option<tokio::process::Child>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl OwnedChild {
     fn new(child: tokio::process::Child) -> Self {
         Self { inner: Some(child) }
@@ -1193,6 +1450,7 @@ impl OwnedChild {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Drop for OwnedChild {
     fn drop(&mut self) {
         if let Some(child) = self.inner.as_mut() {
@@ -1212,7 +1470,7 @@ async fn ir_helper_async_drain_bounded() {
         .await
         .expect("fill duplex");
     drop(writer);
-    let (kept, trunc, err) = ir_drain_capped_async(&mut reader, 16).await;
+    let (kept, trunc, err) = ir_drain_capped_async(&mut reader, 16, None).await;
     assert_eq!(kept.len(), 16);
     assert_eq!(trunc, 84);
     assert!(!err);
@@ -1242,7 +1500,7 @@ impl tokio::io::AsyncRead for FailOnce {
 #[tokio::test]
 async fn ir_helper_async_drain_error() {
     let mut reader = FailOnce { failed: false };
-    let (kept, trunc, err) = ir_drain_capped_async(&mut reader, 16).await;
+    let (kept, trunc, err) = ir_drain_capped_async(&mut reader, 16, None).await;
     assert!(kept.is_empty());
     assert_eq!(trunc, 0);
     assert!(err);
@@ -1288,10 +1546,13 @@ async fn ir_helper_concurrent_schedule() {
         .expect("fill two");
     drop((w1, w2));
     let mut sampler: Option<SampleFuture> = Some(Box::pin(async move {
-        rx.await.map(u64::from).map_err(|error| error.to_string())
+        rx.await.map(u64::from).map_err(|error| SampleError {
+            message: error.to_string(),
+            cleanup_complete: true,
+        })
     }));
-    let mut d1 = std::pin::pin!(ir_drain_capped_async(&mut r1, 64));
-    let mut d2 = std::pin::pin!(ir_drain_capped_async(&mut r2, 64));
+    let mut d1 = std::pin::pin!(ir_drain_capped_async(&mut r1, 64, None));
+    let mut d2 = std::pin::pin!(ir_drain_capped_async(&mut r2, 64, None));
     let mut tx_opt = Some(tx);
     let mut got = 0u64;
     let mut k1 = Vec::new();
