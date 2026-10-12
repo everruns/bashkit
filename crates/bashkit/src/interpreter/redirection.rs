@@ -25,6 +25,16 @@ use crate::error::io_error_reason;
 /// expansion could turn into other than one word (`> $f`, `> out-*`,
 /// `> a-{1,2}`), or one with a quoted expansion. Plain words skip the
 /// field pass.
+/// Numbered-fd table with replace semantics (input-redirect budget fix): re-redirecting
+/// an fd drops the superseded buffer instead of accumulating clones.
+fn replace_own_fd(own_fds: &mut Vec<(i32, crate::StreamData)>, fd: i32, data: crate::StreamData) {
+    if let Some(slot) = own_fds.iter_mut().find(|(existing, _)| *existing == fd) {
+        *slot = (fd, data);
+    } else {
+        own_fds.push((fd, data));
+    }
+}
+
 fn redirect_target_may_split(redirect: &Redirect) -> bool {
     if !matches!(
         redirect.kind,
@@ -229,6 +239,21 @@ impl Interpreter {
         self.diag(format!("{path}: {reason}\n"))
     }
 
+    /// Charging helper for numbered input redirects (input-redirect budget fix). Every
+    /// retained buffer counts against the aggregate input budget and holds
+    /// a live-bytes lease while the redirect list is processed. Charges run
+    /// before the clone/allocation they cover; re-redirecting the same fd
+    /// replaces the superseded entry instead of piling clones.
+    fn charge_input_retention(
+        &self,
+        leases: &mut Vec<crate::limits::ExecutionBudgetLease>,
+        len: usize,
+    ) -> crate::error::Result<()> {
+        self.execution_budget.consume_input(len)?;
+        leases.push(self.execution_budget.lease_bytes(len)?);
+        Ok(())
+    }
+
     /// Process input redirections (< file, <<< string). `demand` is how
     /// much the command reads, for stdin taken from a coproc's pipe.
     pub(super) async fn process_input_redirections(
@@ -241,6 +266,9 @@ impl Interpreter {
         let mut stdin = existing_stdin;
         // Readable fds this command's own redirects open (`4<<E <&4`).
         let mut own_fds: Vec<(i32, crate::StreamData)> = Vec::new();
+        // Live-bytes leases for buffers retained by numbered
+        // input redirects, held until the redirect list is fully processed.
+        let mut input_leases: Vec<crate::limits::ExecutionBudgetLease> = Vec::new();
 
         for redirect in redirects {
             // Fd N >= 1 for an input-side redirect (`3<f`, `4<<<w`, `5<>f`).
@@ -271,7 +299,10 @@ impl Interpreter {
                         }
                     };
                     match high_fd {
-                        Some(fd) => own_fds.push((fd, content)),
+                        Some(fd) => {
+                            self.charge_input_retention(&mut input_leases, content.len())?;
+                            replace_own_fd(&mut own_fds, fd, content);
+                        }
                         None => stdin = Some(content),
                     }
                 }
@@ -300,7 +331,8 @@ impl Interpreter {
                             Ok(content) => {
                                 let content: crate::StreamData = content.into();
                                 if let Some(fd) = high_fd {
-                                    own_fds.push((fd, content.clone()));
+                                    self.charge_input_retention(&mut input_leases, content.len())?;
+                                    replace_own_fd(&mut own_fds, fd, content.clone());
                                 }
                                 // WTF: on a compound `3<file` also feeds
                                 // stdin; loops like `while read -u 3 ...;
@@ -330,7 +362,10 @@ impl Interpreter {
                     let content = self.expand_word(&redirect.target).await?;
                     let content: crate::StreamData = format!("{}\n", content).into();
                     match high_fd {
-                        Some(fd) => own_fds.push((fd, content)),
+                        Some(fd) => {
+                            self.charge_input_retention(&mut input_leases, content.len())?;
+                            replace_own_fd(&mut own_fds, fd, content);
+                        }
                         None => stdin = Some(content),
                     }
                 }
@@ -340,7 +375,10 @@ impl Interpreter {
                     let content: crate::StreamData =
                         self.expand_word(&redirect.target).await?.into();
                     match high_fd {
-                        Some(fd) => own_fds.push((fd, content)),
+                        Some(fd) => {
+                            self.charge_input_retention(&mut input_leases, content.len())?;
+                            replace_own_fd(&mut own_fds, fd, content);
+                        }
                         None => stdin = Some(content),
                     }
                 }
@@ -360,11 +398,13 @@ impl Interpreter {
                     let Ok(src) = target.parse::<i32>() else {
                         continue;
                     };
-                    // `<&4` after this command's own `4<<E`.
+                    // `<&4` after this command's own `4<<E`: the clone below is
+                    // charged before allocation.
                     if let Some((_, content)) = own_fds.iter().rev().find(|(fd, _)| *fd == src) {
+                        self.charge_input_retention(&mut input_leases, content.len())?;
                         let content = content.clone();
                         match high_fd {
-                            Some(fd) => own_fds.push((fd, content)),
+                            Some(fd) => replace_own_fd(&mut own_fds, fd, content),
                             None => stdin = Some(content),
                         }
                         continue;
