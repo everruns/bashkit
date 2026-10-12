@@ -30,6 +30,7 @@ pub mod backtick_quote_tests;
 pub mod base64_binary_tests;
 pub mod bash_source_tests;
 pub mod blackbox_security_tests;
+pub mod bounded_child_launcher_scan_tests;
 pub mod builtin_cap_security_tests;
 pub mod builtin_error_security_tests;
 pub mod builtin_fs_error_tests;

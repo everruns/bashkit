@@ -272,6 +272,36 @@ Only a test that asserts a timeout sets a short deadline, and it sets it
 explicitly. Before adding a cap test, confirm the cap is the sole limit that can
 stop the script.
 
+## Bounded-child launchers cap CPU and stack, never address space
+
+A supervised-child harness bounds its child with `ulimit -t` (CPU) and
+`ulimit -s` (stack), plus parent-side wall, output-drain and peak-RSS
+watchdogs. It must **not** set an address-space cap (`ulimit -v`,
+`RLIMIT_AS`).
+
+AddressSanitizer reserves roughly 14 TiB of *virtual* address space for its
+shadow map during startup, so any `RLIMIT_AS` makes an instrumented child die
+in `ReserveShadowMemoryRange` before it executes a line of test code. The
+child's failure is then the launcher's cap, not the bound under test, and the
+test fails for a reason unrelated to what it asserts. This reddened the
+nightly ASAN job on run 257 (`awk_field_depth_bounded`, the only harness that
+still used `ulimit -v`) while required CI, which is not instrumented, stayed
+green on the same commit -- the same divergence shape as the CLI-path bug in
+run 252.
+
+Cap resident memory instead: sample the live child's RSS from the parent
+(`ps -o rss=`) each poll, keep the maximum, kill on breach and assert the
+peak afterwards so growth fails closed even when the child exits between
+polls. RSS is also the better proxy for the runaway *allocation* such a bound
+exists to catch, and it costs nothing in virtual space, so it holds on
+instrumented and native builds alike. Size the ceiling from a measured native
+peak with room for instrumentation: `awk_field_depth_bounded` peaks near
+29 MiB natively against a 2 GiB ceiling, which an ASAN build fits comfortably
+while multi-gigabyte growth still trips it.
+
+`BOUNDED_CLI_LIMITS` in `threat_model_tests.rs` and the probe harness in
+`bashkit-cli/tests/cli_oneshot.rs` are the reference launchers.
+
 The same file holds one test whose guard is **throughput**, not a cap
 (`ordinary_workloads_still_fit`), and it has the opposite constraint: its
 budget has to sit *between* the linear cost and the quadratic one on the

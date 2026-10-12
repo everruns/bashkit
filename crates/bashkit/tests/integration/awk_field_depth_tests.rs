@@ -1,5 +1,18 @@
 //! THREAT[TM-DOS-027]: field-operand recursion must share AWK depth accounting.
 //! Run potentially aborting programs only in a supervised child test process.
+//!
+//! The child is bounded by OS CPU/stack/core limits plus a parent-side wall
+//! watchdog, output drain cap and peak-RSS watchdog. Memory containment is
+//! deliberately RSS-based rather than an address-space cap (`ulimit -v`):
+//! AddressSanitizer reserves ~14 TiB of *virtual* address space for its
+//! shadow map at startup, so any `RLIMIT_AS` cap makes a sanitizer-
+//! instrumented child die in `ReserveShadowMemoryRange` before it runs a
+//! line of test code. That is what reddened the nightly ASAN job on run 257
+//! while required CI, which is not instrumented, stayed green on the same
+//! commit. RSS is also the better proxy for the runaway *allocation* this
+//! bound exists to catch, and it is the convention the other bounded-child
+//! harnesses already use (`BOUNDED_CLI_LIMITS` in `threat_model_tests`,
+//! the probe harness in `bashkit-cli/tests/cli_oneshot.rs`).
 
 use std::io::Read;
 use std::path::Path;
@@ -32,15 +45,40 @@ fn drain(
     })
 }
 
+/// Peak-RSS ceiling for the bounded child, enforced by the parent watchdog.
+///
+/// Generous enough for an AddressSanitizer build of the whole integration
+/// binary (instrumentation plus redzones cost several times the native
+/// footprint) and still orders of magnitude below the multi-gigabyte growth
+/// an unbounded field-operand recursion would reach, so the bound stays
+/// discriminating without being toolchain-specific.
+#[cfg(unix)]
+const RSS_CAP_KB: u64 = 2 * 1024 * 1024;
+
+/// Best-effort peak-RSS readback for a live child via unix `ps`.
+///
+/// `None` only means this poll found no live PID; the CPU/stack/wall/output
+/// bounds hold regardless of whether the numeric readback is available.
+#[cfg(unix)]
+fn sample_rss_kb(pid: u32) -> Option<u64> {
+    let out = Command::new("ps")
+        .args(["-o", "rss=", "-p", &pid.to_string()])
+        .output()
+        .ok()?;
+    String::from_utf8(out.stdout)
+        .ok()?
+        .trim()
+        .parse::<u64>()
+        .ok()
+}
+
 #[test]
 #[cfg(unix)]
 fn awk_field_depth_bounded() {
-    // OS CPU/stack/core limits, Linux address-space cap, continuous output
-    // drains and a wall watchdog also contain a regression that aborts/hangs.
-    #[cfg(target_os = "linux")]
-    let limits =
-        "ulimit -t 10 && ulimit -s 8192 && ulimit -c 0 && ulimit -v 2097152 && exec \"$@\"";
-    #[cfg(not(target_os = "linux"))]
+    // OS CPU/stack/core limits, continuous output drains, a wall watchdog and
+    // the RSS watchdog below also contain a regression that aborts/hangs. No
+    // address-space cap: see the module header -- it would kill an ASAN child
+    // at startup. Growth is bounded by RSS_CAP_KB instead.
     let limits = "ulimit -t 10 && ulimit -s 8192 && ulimit -c 0 && exec \"$@\"";
     let mut command = Command::new("/bin/sh");
     command.args(["-c", limits, "awk-depth"]);
@@ -58,15 +96,23 @@ fn awk_field_depth_bounded() {
         .spawn()
         .expect("spawn bounded child");
     let exceeded = Arc::new(AtomicBool::new(false));
+    let child_id = child.id();
     let stdout = drain(child.stdout.take().unwrap(), exceeded.clone());
     let stderr = drain(child.stderr.take().unwrap(), exceeded.clone());
     let start = Instant::now();
     let mut stopped = false;
+    let mut max_rss_kb: Option<u64> = None;
     let status = loop {
         if let Some(status) = child.try_wait().unwrap() {
             break status;
         }
-        if exceeded.load(Ordering::Relaxed) || start.elapsed() > Duration::from_secs(20) {
+        // The child has not been reaped yet, so it is alive for this readback.
+        if let Some(rss) = sample_rss_kb(child_id) {
+            max_rss_kb = Some(max_rss_kb.unwrap_or(0).max(rss));
+        }
+        let over_rss = max_rss_kb.is_some_and(|rss| rss > RSS_CAP_KB);
+        if exceeded.load(Ordering::Relaxed) || over_rss || start.elapsed() > Duration::from_secs(20)
+        {
             stopped = true;
             child.kill().unwrap();
             break child.wait().unwrap();
@@ -77,7 +123,16 @@ fn awk_field_depth_bounded() {
     let stderr = stderr.join().unwrap();
     assert!(
         !stopped && !exceeded.load(Ordering::Relaxed),
-        "child exceeded bounds"
+        "child exceeded bounds (peak RSS {} KiB, cap {RSS_CAP_KB} KiB)",
+        max_rss_kb.map_or("unavailable".to_owned(), |rss| rss.to_string())
+    );
+    // The loop leaves via `try_wait` before it re-checks the cap, so a child
+    // that breached on its last poll and then exited on its own reaches here
+    // with `stopped` false. Assert the peak so that still fails closed.
+    assert!(
+        max_rss_kb.is_none_or(|rss| rss <= RSS_CAP_KB),
+        "peak child RSS {} KiB exceeds {RSS_CAP_KB} KiB bound",
+        max_rss_kb.unwrap_or_default()
     );
     assert!(
         status.success(),
