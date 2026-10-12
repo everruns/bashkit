@@ -511,7 +511,7 @@ just pre-pr       # Pre-PR checks
 
 Bashkit includes a [mira eval study](crates/bashkit-eval/) that measures how well LLMs use bashkit: one tagged 88-task dataset (`bashkit_bash`) covering agent tool use (58 basic, 8 multi-turn repo, 10 hard) and 12 runtime tasks (python3, sqlite3, state on the VFS), plus a 15-task one-shot script generation eval (`bashkit_generate`).
 
-_Latest run: 2026-10-09, on the mira eval framework. GPT-6.1 Sol and GPT-6 Luna are pending a rerun on the 88-task set (their 58-task scores are in the [detailed results](crates/bashkit-eval/README.md#results))._
+_Latest run: 2026-10-09 (GPT-6 models added 2026-10-12), on the mira eval framework._
 
 | Model | Score | Tasks Passed | Basic | Repo | Hard | Runtime | Generate |
 |-------|-------|-------------|-------|------|------|---------|----------|
@@ -519,10 +519,13 @@ _Latest run: 2026-10-09, on the mira eval framework. GPT-6.1 Sol and GPT-6 Luna 
 | Kimi K3 | 98% | 86/88 | 57/58 | **8/8** | 9/10 | **12/12** | **15/15** |
 | Claude Sonnet 5.5 | 97% | 85/88 | 56/58 | **8/8** | 9/10 | **12/12** | **15/15** |
 | Muse Spark 1.3 Contributor | 95% | 84/88 | **58/58** | 5/8 | 9/10 | **12/12** | **15/15** |
+| GPT-6.1 Sol | 86% | 76/88 | 54/58 | 3/8 | 8/10 | 11/12 | 14/15 |
 | Gemini 3.8 Flash | 84% | 74/88 | 55/58 | 4/8 | 6/10 | 9/12 | 13/15 |
+| GPT-6 Luna | 81% | 71/88 | 53/58 | 1/8 | 5/10 | **12/12** | 14/15 |
 
 Repo and hard tasks carry most of the spread; the new runtime tasks (python3
-and sqlite3 inside the sandbox) separate only Gemini so far. See the [detailed analysis](crates/bashkit-eval/README.md#results).
+and sqlite3 inside the sandbox) are near-saturated, with only Gemini and GPT-6.1
+Sol missing any. See the [detailed analysis](crates/bashkit-eval/README.md#results).
 
 ```bash
 cargo install mira-cli       # one-time: the `mira` host CLI

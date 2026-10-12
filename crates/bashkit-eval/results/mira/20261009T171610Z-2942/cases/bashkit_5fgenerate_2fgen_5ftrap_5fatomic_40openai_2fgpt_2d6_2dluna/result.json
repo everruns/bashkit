@@ -1,0 +1,63 @@
+{
+  "eval": "bashkit_generate",
+  "sample": "gen_trap_atomic",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "Write a bash script that creates and runs a safe file converter.\n\nStarting files:\n--- /home/eval/in/good.txt ---\nhello\nworld\n--- end ---\n--- /home/eval/in/bad.txt ---\none\nSTOP\nthree\n--- end ---\n--- /home/eval/build/bad.out ---\nprevious\n--- end ---\n\n1. Create the executable script /home/eval/bin/upper.sh (`#!/bin/bash`; /home/eval/bin does not exist) taking `SRC DEST`:\n   - It creates a private temporary directory with `mktemp -d` and installs an EXIT trap that removes that directory and appends `cleanup <exit status of upper.sh>` to /home/eval/build/cleanup.log.\n   - It converts SRC to uppercase into a file inside the temporary directory.\n   - If any line of SRC is exactly `STOP`, it exits with status 4 and DEST is left untouched.\n   - Otherwise it moves the converted file onto DEST (atomic replace) and exits 0.\n2. Run `/home/eval/bin/upper.sh /home/eval/in/good.txt /home/eval/build/good.out`, then `/home/eval/bin/upper.sh /home/eval/in/bad.txt /home/eval/build/bad.out`, and write their exit statuses to /home/eval/build/status.txt as two lines: `good <status>` and `bad <status>`.\n3. Exit 0."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "```bash\n#!/bin/bash\n\nmkdir -p /home/eval/bin /home/eval/build\n\ncat > /home/eval/bin/upper.sh <<'UPPER_SCRIPT'\n#!/bin/bash\n\nsrc=$1\ndest=$2\ntmpdir=$(mktemp -d) || exit 1\n\ncleanup() {\n    local exit_status=$?\n    rm -rf -- \"$tmpdir\"\n    printf 'cleanup %s\\n' \"$exit_status\" >> /home/eval/build/cleanup.log\n}\ntrap cleanup EXIT\n\nif ! tr '[:lower:]' '[:upper:]' < \"$src\" > \"$tmpdir/converted\"; then\n    exit 1\nfi\n\nif grep -Fxq -- 'STOP' \"$src\"; then\n    exit 4\nelse\n    grep_status=$?\n    if [[ $grep_status -ne 1 ]]; then\n        exit 1\n    fi\nfi\n\nmv -f -- \"$tmpdir/converted\" \"$dest\" || exit 1\nexit 0\nUPPER_SCRIPT\n\nchmod +x /home/eval/bin/upper.sh\n\n/home/eval/bin/upper.sh /home/eval/in/good.txt /home/eval/build/good.out\ngood_status=$?\n\n/home/eval/bin/upper.sh /home/eval/in/bad.txt /home/eval/build/bad.out\nbad_status=$?\n\nprintf 'good %s\\nbad %s\\n' \"$good_status\" \"$bad_status\" > /home/eval/build/status.txt\nexit 0\n```",
+    "iterations": 1,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "#!/bin/bash\n\nmkdir -p /home/eval/bin /home/eval/build\n\ncat > /home/eval/bin/upper.sh <<'UPPER_SCRIPT'\n#!/bin/bash\n\nsrc=$1\ndest=$2\ntmpdir=$(mktemp -d) || exit 1\n\ncleanup() {\n    local exit_status=$?\n    rm -rf -- \"$tmpdir\"\n    printf 'cleanup %s\\n' \"$exit_status\" >> /home/eval/build/cleanup.log\n}\ntrap cleanup EXIT\n\nif ! tr '[:lower:]' '[:upper:]' < \"$src\" > \"$tmpdir/converted\"; then\n    exit 1\nfi\n\nif grep -Fxq -- 'STOP' \"$src\"; then\n    exit 4\nelse\n    grep_status=$?\n    if [[ $grep_status -ne 1 ]]; then\n        exit 1\n    fi\nfi\n\nmv -f -- \"$tmpdir/converted\" \"$dest\" || exit 1\nexit 0\nUPPER_SCRIPT\n\nchmod +x /home/eval/bin/upper.sh\n\n/home/eval/bin/upper.sh /home/eval/in/good.txt /home/eval/build/good.out\ngood_status=$?\n\n/home/eval/bin/upper.sh /home/eval/in/bad.txt /home/eval/build/bad.out\nbad_status=$?\n\nprintf 'good %s\\nbad %s\\n' \"$good_status\" \"$bad_status\" > /home/eval/build/status.txt\nexit 0\n"
+    ],
+    "usage": {
+      "input_tokens": 588,
+      "output_tokens": 1487,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 14388
+    },
+    "metrics": {
+      "exec_ms": 10.0,
+      "exit_code": 0.0,
+      "extracted": 1.0,
+      "generate_ms": 14378.0,
+      "script_bytes": 905.0,
+      "script_found": 1.0,
+      "timed_out": 0.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "#!/bin/bash\n\nmkdir -p /home/eval/bin /home/eval/build\n\ncat > /home/eval/bin/upper.sh <<'UPPER_SCRIPT'\n#!/bin/bash\n\nsrc=$1\ndest=$2\ntmpdir=$(mktemp -d) || exit 1\n\ncleanup() {\n    local exit_status=$?\n    rm -rf -- \"$tmpdir\"\n    printf 'cleanup %s\\n' \"$exit_status\" >> /home/eval/build/cleanup.log\n}\ntrap cleanup EXIT\n\nif ! tr '[:lower:]' '[:upper:]' < \"$src\" > \"$tmpdir/converted\"; then\n    exit 1\nfi\n\nif grep -Fxq -- 'STOP' \"$src\"; then\n    exit 4\nelse\n    grep_status=$?\n    if [[ $grep_status -ne 1 ]]; then\n        exit 1\n    fi\nfi\n\nmv -f -- \"$tmpdir/converted\" \"$dest\" || exit 1\nexit 0\nUPPER_SCRIPT\n\nchmod +x /home/eval/bin/upper.sh\n\n/home/eval/bin/upper.sh /home/eval/in/good.txt /home/eval/build/good.out\ngood_status=$?\n\n/home/eval/bin/upper.sh /home/eval/in/bad.txt /home/eval/build/bad.out\nbad_status=$?\n\nprintf 'good %s\\nbad %s\\n' \"$good_status\" \"$bad_status\" > /home/eval/build/status.txt\nexit 0\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          }
+        ]
+      },
+      "generate": {
+        "extraction": "fenced",
+        "timed_out": false
+      }
+    }
+  },
+  "skipped": false
+}

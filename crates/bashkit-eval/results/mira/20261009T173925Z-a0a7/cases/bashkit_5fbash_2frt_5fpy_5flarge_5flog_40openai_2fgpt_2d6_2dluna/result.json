@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "rt_py_large_log",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "/data/app.log is a large access log; valid lines look like `2026-10-01T00:00:00Z GET /api/items/42?x=1 200 35ms` (timestamp, method, path, status, latency). Any line not matching that shape is malformed.\n\nGroup valid lines by method and normalised path: drop the query string, drop one trailing '/' (except for the root path '/'), and replace every path segment made only of digits with `:id`. For each group compute count, p50 and p95 latency (integer ms, nearest-rank: the value at position ceil(p/100 * count) in ascending order) and error_pct = percentage of lines with status >= 500, rounded half up to 1 decimal.\n\nWrite /out/endpoints.tsv (tab-separated) with header method, path, count, p50, p95, error_pct, sorted by count descending, then method, then path; error_pct always printed with 1 decimal. Write /out/malformed.txt with just the number of malformed lines."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Created `/out/endpoints.tsv` with the grouped endpoint statistics and `/out/malformed.txt` with the malformed-line count: **13**.",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "ls -l /data/app.log; head -5 /data/app.log; wc -l /data/app.log; ls -la /out 2>/dev/null || true",
+      "python3 - <<'PY'\nimport re\nfrom collections import Counter\np=re.compile(r'^(\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z) ([A-Z]+) (\\S+) (\\d{3}) (\\d+)ms$')\nco=Counter(); examples=[]\nfor i,line in enumerate(open('/data/app.log'),1):\n s=line.rstrip('\\n')\n if not p.fullmatch(s):\n  co['bad']+=1\n  if len(examples)<30: examples.append((i,repr(s)))\n else: co['good']+=1\nprint(co)\nprint(*examples,sep='\\n')\nPY",
+      "mkdir -p /out\npython3 - <<'PY'\nimport re\nfrom collections import defaultdict\nfrom decimal import Decimal, ROUND_HALF_UP\n\nline_re = re.compile(r'^(\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z) ([A-Z]+) (/\\S*) (\\d{3}) (\\d+)ms$')\ngroups = defaultdict(lambda: [[], 0])\nmalformed = 0\nwith open('/data/app.log', 'r', encoding='utf-8') as f:\n    for raw in f:\n        line = raw.rstrip('\\n')\n        if line.endswith('\\r'):\n            line = line[:-1]\n        m = line_re.fullmatch(line)\n        if not m:\n            malformed += 1\n            continue\n        _, method, path, status, latency = m.groups()\n        path = path.split('?', 1)[0]\n        if path != '/' and path.endswith('/'):\n            path = path[:-1]\n        path = '/'.join(':id' if segment.isdigit() else segment for segment in path.split('/'))\n        values = groups[(method, path)]\n        values[0].append(int(latency))\n        if int(status) >= 500:\n            values[1] += 1\n\nrows = []\nfor (method, path), (latencies, errors) in groups.items():\n    latencies.sort()\n    n = len(latencies)\n    p50 = latencies[(50*n + 99)//100 - 1]\n    p95 = latencies[(95*n + 99)//100 - 1]\n    error_pct = (Decimal(errors) * Decimal(100) / Decimal(n)).quantize(Decimal('0.1'), rounding=ROUND_HALF_UP)\n    rows.append((method, path, n, p50, p95, error_pct))\nrows.sort(key=lambda row: (-row[2], row[0], row[1]))\nwith open('/out/endpoints.tsv', 'w', encoding='utf-8', newline='') as f:\n    f.write('method\\tpath\\tcount\\tp50\\tp95\\terror_pct\\n')\n    for method, path, count, p50, p95, error_pct in rows:\n        f.write(f'{method}\\t{path}\\t{count}\\t{p50}\\t{p95}\\t{error_pct:.1f}\\n')\nwith open('/out/malformed.txt', 'w', encoding='utf-8') as f:\n    f.write(str(malformed) + '\\n')\nprint(f'groups={len(rows)} malformed={malformed}')\nPY\nhead -12 /out/endpoints.tsv; cat /out/malformed.txt; wc -l /out/endpoints.tsv"
+    ],
+    "usage": {
+      "input_tokens": 4878,
+      "output_tokens": 1606,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 24261
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -l /data/app.log; head -5 /data/app.log; wc -l /data/app.log; ls -la /out 2>/dev/null || true",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--   600216 2026-10-12 18:59 /data/app.log\n2026-10-01T00:00:00Z GET /health 502 203ms\n2026-10-01T00:00:01Z POST /health 200 751ms\n2026-10-01T00:00:02Z GET /api/users/862/orders?page=4 200 31ms\n2026-10-01T00:00:03Z GET /api/search?q=a1 200 50ms\n2026-10-01T00:00:04Z DELETE /api/items/0/ 200 300ms\n12000 /data/app.log\n"
+          },
+          {
+            "commands": "python3 - <<'PY'\nimport re\nfrom collections import Counter\np=re.compile(r'^(\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z) ([A-Z]+) (\\S+) (\\d{3}) (\\d+)ms$')\nco=Counter(); examples=[]\nfor i,line in enumerate(open('/data/app.log'),1):\n s=line.rstrip('\\n')\n if not p.fullmatch(s):\n  co['bad']+=1\n  if len(examples)<30: examples.append((i,repr(s)))\n else: co['good']+=1\nprint(co)\nprint(*examples,sep='\\n')\nPY",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Counter({'good': 11987, 'bad': 13})\n(14, \"'2026-10-01T00:13:00Z GET'\")\n(1011, \"'2026-10-01T00:50:00Z GET'\")\n(2008, \"'2026-10-01T00:27:00Z GET'\")\n(3005, \"'2026-10-01T00:04:00Z GET'\")\n(4002, \"'2026-10-01T00:41:00Z GET'\")\n(4999, \"'2026-10-01T00:18:00Z GET'\")\n(5996, \"'2026-10-01T00:55:00Z GET'\")\n(6993, \"'2026-10-01T00:32:00Z GET'\")\n(7990, \"'2026-10-01T00:09:00Z GET'\")\n(8987, \"'2026-10-01T00:46:00Z GET'\")\n(9984, \"'2026-10-01T00:23:00Z GET'\")\n(10981, \"'2026-10-01T00:00:00Z GET'\")\n(11978, \"'2026-10-01T00:37:00Z GET'\")\n"
+          },
+          {
+            "commands": "mkdir -p /out\npython3 - <<'PY'\nimport re\nfrom collections import defaultdict\nfrom decimal import Decimal, ROUND_HALF_UP\n\nline_re = re.compile(r'^(\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z) ([A-Z]+) (/\\S*) (\\d{3}) (\\d+)ms$')\ngroups = defaultdict(lambda: [[], 0])\nmalformed = 0\nwith open('/data/app.log', 'r', encoding='utf-8') as f:\n    for raw in f:\n        line = raw.rstrip('\\n')\n        if line.endswith('\\r'):\n            line = line[:-1]\n        m = line_re.fullmatch(line)\n        if not m:\n            malformed += 1\n            continue\n        _, method, path, status, latency = m.groups()\n        path = path.split('?', 1)[0]\n        if path != '/' and path.endswith('/'):\n            path = path[:-1]\n        path = '/'.join(':id' if segment.isdigit() else segment for segment in path.split('/'))\n        values = groups[(method, path)]\n        values[0].append(int(latency))\n        if int(status) >= 500:\n            values[1] += 1\n\nrows = []\nfor (method, path), (latencies, errors) in groups.items():\n    latencies.sort()\n    n = len(latencies)\n    p50 = latencies[(50*n + 99)//100 - 1]\n    p95 = latencies[(95*n + 99)//100 - 1]\n    error_pct = (Decimal(errors) * Decimal(100) / Decimal(n)).quantize(Decimal('0.1'), rounding=ROUND_HALF_UP)\n    rows.append((method, path, n, p50, p95, error_pct))\nrows.sort(key=lambda row: (-row[2], row[0], row[1]))\nwith open('/out/endpoints.tsv', 'w', encoding='utf-8', newline='') as f:\n    f.write('method\\tpath\\tcount\\tp50\\tp95\\terror_pct\\n')\n    for method, path, count, p50, p95, error_pct in rows:\n        f.write(f'{method}\\t{path}\\t{count}\\t{p50}\\t{p95}\\t{error_pct:.1f}\\n')\nwith open('/out/malformed.txt', 'w', encoding='utf-8') as f:\n    f.write(str(malformed) + '\\n')\nprint(f'groups={len(rows)} malformed={malformed}')\nPY\nhead -12 /out/endpoints.tsv; cat /out/malformed.txt; wc -l /out/endpoints.tsv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "groups=28 malformed=13\nmethod\tpath\tcount\tp50\tp95\terror_pct\nGET\t/api/items/:id\t1711\t470\t863\t4.0\nGET\t/health\t890\t440\t860\t4.5\nGET\t/\t880\t475\t860\t4.1\nGET\t/static/app.js\t878\t447\t871\t5.4\nGET\t/api/items\t858\t453\t866\t3.6\nGET\t/api/search\t843\t474\t862\t4.2\nGET\t/api/users/:id/orders\t828\t444\t859\t4.6\nPOST\t/api/items/:id\t446\t468\t860\t4.5\nPUT\t/api/items/:id\t420\t447\t861\t3.6\nDELETE\t/api/items/:id\t406\t496\t852\t3.9\nPOST\t/api/search\t238\t459\t832\t4.6\n13\n29 /out/endpoints.tsv\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

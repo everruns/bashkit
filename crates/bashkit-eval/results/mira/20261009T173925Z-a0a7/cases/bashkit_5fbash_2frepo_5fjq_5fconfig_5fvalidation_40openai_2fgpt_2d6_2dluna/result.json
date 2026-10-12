@@ -1,0 +1,92 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "repo_jq_config_validation",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "In the git repo /home/eval/svc, `make test` validates every config/*.json file with jq. Make it pass by fixing the config files (not the validator), keeping every value's meaning the same. Then commit with a message starting with `config:`."
+  ],
+  "passed": false,
+  "aggregate": 0.8333333333333334,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 0.8333333333333334,
+      "pass": false,
+      "reason": "5/6 checks passed (weighted rate 83%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Updated `config/prod.json` and `config/staging.json` so their values satisfy the test’s environment-name and JSON type requirements. `make test` passes.\n\nCommitted as `config: fix JSON config value types`.",
+    "iterations": 7,
+    "tool_calls_count": 6,
+    "tool_calls": [
+      "cd /home/eval/svc && ls -la && git status --short && find config -maxdepth 2 -type f -print && sed -n '1,200p' Makefile",
+      "cd /home/eval/svc && cat tests/run.sh && for f in config/*.json; do echo ===$f; cat \"$f\"; done && make test",
+      "cd /home/eval/svc && cat tests/test_configs.sh && git log --oneline -5 && git status --short",
+      "cd /home/eval/svc && python3 - <<'PY'\nfrom pathlib import Path\np=Path('config/prod.json')\ns=p.read_text().replace('\"env\": \"production\"', '\"env\": \"prod\"').replace('\"audit\": \"true\"', '\"audit\": true')\np.write_text(s)\np=Path('config/staging.json')\ns=p.read_text().replace('\"port\": \"8080\"', '\"port\": 8080')\np.write_text(s)\nPY\nmake test && git diff -- config && git add config/prod.json config/staging.json && git commit -m 'config: fix JSON config value types' && git status --short",
+      "cd /home/eval/svc && git status --short && git log --oneline -3 && git show --stat --oneline HEAD && cat config/prod.json && cat config/staging.json",
+      "cd /home/eval/svc && cat config/prod.json && cat config/staging.json && git diff HEAD^ HEAD && rm -rf build && git status --short"
+    ],
+    "usage": {
+      "input_tokens": 9035,
+      "output_tokens": 1120,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 17538
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 6.0,
+      "tool_calls_err": 2.0,
+      "tool_calls_ok": 4.0,
+      "turns": 7.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cd /home/eval/svc && ls -la && git status --short && find config -maxdepth 2 -type f -print && sed -n '1,200p' Makefile",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "drwxr-xr-x        0 2026-10-12 18:54 .git\n-rw-r--r--       26 2026-10-12 18:54 Makefile\ndrwxr-xr-x        0 2026-10-12 18:54 config\ndrwxr-xr-x        0 2026-10-12 18:54 tests\nOn branch master\n\nnothing to commit, working tree clean\nconfig/dev.json\nconfig/prod.json\nconfig/staging.json\ntest:\n\t@bash tests/run.sh\n"
+          },
+          {
+            "commands": "cd /home/eval/svc && cat tests/run.sh && for f in config/*.json; do echo ===$f; cat \"$f\"; done && make test",
+            "exit_code": 2,
+            "stderr": "make: *** [Makefile:2: test] Error 1\n",
+            "stdout": "#!/bin/bash\n# Test runner: runs every tests/test_*.sh, writes build/test-report.txt.\ncd \"$(dirname \"$0\")/..\" || exit 2\nmkdir -p build\npass=0; fail=0; total=0\nfor t in tests/test_*.sh; do\n  name=$(basename \"$t\" .sh)\n  total=$((total + 1))\n  if bash \"$t\" > \"build/$name.log\" 2>&1; then\n    pass=$((pass + 1)); echo \"ok   $name\"\n  else\n    fail=$((fail + 1)); echo \"FAIL $name\"; sed 's/^/    /' \"build/$name.log\"\n  fi\ndone\nif [ \"$fail\" -eq 0 ]; then\n  echo \"PASS $pass/$total\" | tee build/test-report.txt\nelse\n  echo \"FAIL $fail/$total\" | tee build/test-report.txt\n  exit 1\nfi\n===config/dev.json\n{\n  \"env\": \"dev\",\n  \"port\": 3000,\n  \"replicas\": 1,\n  \"features\": {\n    \"beta\": true,\n    \"audit\": false\n  }\n}\n===config/prod.json\n{\n  \"env\": \"production\",\n  \"port\": 443,\n  \"replicas\": 6,\n  \"features\": {\n    \"beta\": false,\n    \"audit\": \"true\"\n  }\n}\n===config/staging.json\n{\n  \"env\": \"staging\",\n  \"port\": \"8080\",\n  \"replicas\": 2,\n  \"features\": {\n    \"beta\": true,\n    \"audit\": true\n  }\n}\nFAIL test_configs\n    invalid: config/prod.json\n    invalid: config/staging.json\nFAIL 1/1\n"
+          },
+          {
+            "commands": "cd /home/eval/svc && cat tests/test_configs.sh && git log --oneline -5 && git status --short",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Each config: env matches the file name, port is a number, replicas >= 1,\n# and every feature flag is a boolean.\nstatus=0\nfor f in config/*.json; do\n  env=$(basename \"$f\" .json)\n  jq -e --arg env \"$env\" '\n    (.env == $env) and (.port | type == \"number\") and (.replicas >= 1)\n    and ([.features[] | type == \"boolean\"] | all)' \"$f\" > /dev/null \\\n    || { echo \"invalid: $f\"; status=1; }\ndone\nexit $status\ncommit b4609209\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Mon Oct 12 18:54:30 2026 +0000\n\n    initial import\n\nOn branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/test-report.txt\n\tbuild/test_configs.log\n"
+          },
+          {
+            "commands": "cd /home/eval/svc && python3 - <<'PY'\nfrom pathlib import Path\np=Path('config/prod.json')\ns=p.read_text().replace('\"env\": \"production\"', '\"env\": \"prod\"').replace('\"audit\": \"true\"', '\"audit\": true')\np.write_text(s)\np=Path('config/staging.json')\ns=p.read_text().replace('\"port\": \"8080\"', '\"port\": 8080')\np.write_text(s)\nPY\nmake test && git diff -- config && git add config/prod.json config/staging.json && git commit -m 'config: fix JSON config value types' && git status --short",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "ok   test_configs\nPASS 1/1\n# Diff output (simplified in virtual mode)\n[master b460920] config: fix JSON config value types\nOn branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/test-report.txt\n\tbuild/test_configs.log\n"
+          },
+          {
+            "commands": "cd /home/eval/svc && git status --short && git log --oneline -3 && git show --stat --oneline HEAD && cat config/prod.json && cat config/staging.json",
+            "exit_code": 128,
+            "stderr": "internal error: fatal: bad object --stat\n",
+            "stdout": "On branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/test-report.txt\n\tbuild/test_configs.log\ncommit b4609201\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Mon Oct 12 18:54:38 2026 +0000\n\n    config: fix JSON config value types\n\ncommit b4609209\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Mon Oct 12 18:54:30 2026 +0000\n\n    initial import\n\n"
+          },
+          {
+            "commands": "cd /home/eval/svc && cat config/prod.json && cat config/staging.json && git diff HEAD^ HEAD && rm -rf build && git status --short",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "{\n  \"env\": \"prod\",\n  \"port\": 443,\n  \"replicas\": 6,\n  \"features\": {\n    \"beta\": false,\n    \"audit\": true\n  }\n}\n{\n  \"env\": \"staging\",\n  \"port\": 8080,\n  \"replicas\": 2,\n  \"features\": {\n    \"beta\": true,\n    \"audit\": true\n  }\n}\n# Diff output (simplified in virtual mode)\nOn branch master\n\nnothing to commit, working tree clean\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

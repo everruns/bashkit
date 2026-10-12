@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "data_column_transform",
+  "target": "openai/gpt-6.1-sol",
+  "input": [
+    "Read /data/export.tsv which is tab-separated with columns: id, last_name, first_name, email, department. Convert it to /data/import.csv (comma-separated) with columns reordered to: email, first_name, last_name, department (dropping the id column). Include a header row. Print the result."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Created `/data/import.csv`:\n\n```csv\nemail,first_name,last_name,department\nalice@co.com,Alice,Smith,Eng\nbob@co.com,Bob,Jones,Sales\ncarol@co.com,Carol,Davis,Eng\ndave@co.com,Dave,Wilson,HR\n```",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "python3 - <<'PY'\nimport csv\nfrom pathlib import Path\nfields = ['email', 'first_name', 'last_name', 'department']\nwith open('/data/export.tsv', newline='') as src, open('/data/import.csv', 'w', newline='') as dst:\n    reader = csv.DictReader(src, delimiter='\\t')\n    writer = csv.DictWriter(dst, fieldnames=fields, extrasaction='ignore')\n    writer.writeheader()\n    writer.writerows(reader)\nprint(Path('/data/import.csv').read_text(), end='')\nPY"
+    ],
+    "usage": {
+      "input_tokens": 1086,
+      "output_tokens": 220,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 6429
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "python3 - <<'PY'\nimport csv\nfrom pathlib import Path\nfields = ['email', 'first_name', 'last_name', 'department']\nwith open('/data/export.tsv', newline='') as src, open('/data/import.csv', 'w', newline='') as dst:\n    reader = csv.DictReader(src, delimiter='\\t')\n    writer = csv.DictWriter(dst, fieldnames=fields, extrasaction='ignore')\n    writer.writeheader()\n    writer.writerows(reader)\nprint(Path('/data/import.csv').read_text(), end='')\nPY",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "email,first_name,last_name,department\nalice@co.com,Alice,Smith,Eng\nbob@co.com,Bob,Jones,Sales\ncarol@co.com,Carol,Davis,Eng\ndave@co.com,Dave,Wilson,HR\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

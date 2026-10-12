@@ -1,0 +1,92 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "rt_sqlite_hr_report",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "Load /data/employees.csv and /data/departments.csv (CSV with header rows; fields may be double-quoted) into a new SQLite database /data/hr.db using the sqlite3 command, with tables:\n  departments(id INTEGER PRIMARY KEY, name TEXT NOT NULL)\n  employees(id INTEGER PRIMARY KEY, name TEXT NOT NULL, dept_id INTEGER, salary INTEGER NOT NULL, hired TEXT NOT NULL)\nEvery CSV row must be loaded with its values unchanged.\n\nThen produce /out/dept_report.csv from a query on hr.db: header department,headcount,avg_salary,top_earner; one row per department including departments with no employees (headcount 0, avg_salary and top_earner empty), plus a row named (none) for employees whose dept_id matches no department. avg_salary has exactly 2 decimals; top_earner is the highest-paid employee, ties broken by name alphabetically. Sort by headcount descending, then department name. Use standard CSV quoting (quote only fields containing a comma, quote or newline) and \\n line endings."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Created `/data/hr.db` with the requested tables and loaded the CSV rows. Created `/out/dept_report.csv` from a query on that database, including the unmatched-department row and departments with no employees.",
+    "iterations": 7,
+    "tool_calls_count": 6,
+    "tool_calls": [
+      "ls -l /data /out 2>/dev/null; head -5 /data/employees.csv; head -5 /data/departments.csv; sqlite --help 2>&1 | head -50",
+      "command -v sqlite3 || true; wc -l /data/*.csv; cat /data/departments.csv; cat /data/employees.csv;",
+      "sqlite3 --version;",
+      "sqlite3 :memory: '.help'",
+      "python3 - <<'PY'\nimport csv, pathlib\nout=[]\nout.append('DROP TABLE IF EXISTS employees;')\nout.append('DROP TABLE IF EXISTS departments;')\nout.append('CREATE TABLE departments(id INTEGER PRIMARY KEY, name TEXT NOT NULL);')\nout.append('CREATE TABLE employees(id INTEGER PRIMARY KEY, name TEXT NOT NULL, dept_id INTEGER, salary INTEGER NOT NULL, hired TEXT NOT NULL);')\ndef sqlval(v): return \"'\"+v.replace(\"'\", \"''\")+\"'\"\nfor filename, table, fields in [('/data/departments.csv','departments',2),('/data/employees.csv','employees',5)]:\n    with open(filename,newline='',encoding='utf-8') as f:\n        reader=csv.reader(f)\n        headers=next(reader)\n        if len(headers)!=fields: raise ValueError(headers)\n        for row in reader:\n            if len(row)!=fields: raise ValueError(row)\n            out.append('INSERT INTO '+table+' VALUES ('+', '.join(sqlval(v) for v in row)+');')\npathlib.Path('/data/load_hr.sql').write_text('\\n'.join(out)+'\\n', encoding='utf-8')\nPY\nsqlite3 /data/hr.db < /data/load_hr.sql\nsqlite3 /data/hr.db '.schema'\nsqlite3 /data/hr.db -csv -header <<'SQL' > /out/dept_report.csv\nWITH ranked AS (\n  SELECT dept_id, name, salary,\n         ROW_NUMBER() OVER (PARTITION BY dept_id ORDER BY salary DESC, name COLLATE BINARY ASC) AS rn\n  FROM employees\n),\nknown AS (\n  SELECT d.name AS department,\n         COUNT(e.id) AS headcount,\n         CASE WHEN COUNT(e.id)=0 THEN NULL ELSE printf('%.2f', AVG(e.salary)) END AS avg_salary,\n         MAX(CASE WHEN r.rn=1 THEN r.name END) AS top_earner\n  FROM departments d\n  LEFT JOIN employees e ON e.dept_id=d.id\n  LEFT JOIN ranked r ON r.dept_id=d.id AND r.rn=1\n  GROUP BY d.id, d.name\n),\nunknown AS (\n  SELECT '(none)' AS department,\n         COUNT(*) AS headcount,\n         printf('%.2f', AVG(e.salary)) AS avg_salary,\n         (SELECT r.name FROM ranked r WHERE r.dept_id IS NOT (SELECT id FROM departments WHERE 0)\n          LIMIT 1) AS unused\n  FROM employees e\n  WHERE NOT EXISTS (SELECT 1 FROM departments d WHERE d.id=e.dept_id)\n)\nSELECT department, headcount, avg_salary, top_earner\nFROM (\n  SELECT department, headcount, avg_salary, top_earner FROM known\n  UNION ALL\n  SELECT '(none)', COUNT(*), printf('%.2f', AVG(e.salary)),\n         (SELECT e2.name FROM employees e2 WHERE NOT EXISTS (SELECT 1 FROM departments d2 WHERE d2.id=e2.dept_id)\n          ORDER BY e2.salary DESC, e2.name COLLATE BINARY ASC LIMIT 1)\n  FROM employees e\n  WHERE NOT EXISTS (SELECT 1 FROM departments d WHERE d.id=e.dept_id)\n  HAVING COUNT(*) > 0\n)\nORDER BY headcount DESC, department COLLATE BINARY ASC;\nSQL\ncat /out/dept_report.csv\nls -l /data/hr.db /out/dept_report.csv",
+      "mkdir -p /out\nsqlite3 /data/hr.db -csv -header <<'SQL' > /out/dept_report.csv\nWITH ranked AS (\n  SELECT dept_id, name, salary,\n         ROW_NUMBER() OVER (PARTITION BY dept_id ORDER BY salary DESC, name COLLATE BINARY ASC) AS rn\n  FROM employees\n),\nknown AS (\n  SELECT d.name AS department,\n         COUNT(e.id) AS headcount,\n         CASE WHEN COUNT(e.id)=0 THEN NULL ELSE printf('%.2f', AVG(e.salary)) END AS avg_salary,\n         MAX(CASE WHEN r.rn=1 THEN r.name END) AS top_earner\n  FROM departments d\n  LEFT JOIN employees e ON e.dept_id=d.id\n  LEFT JOIN ranked r ON r.dept_id=d.id AND r.rn=1\n  GROUP BY d.id, d.name\n)\nSELECT department, headcount, avg_salary, top_earner\nFROM (\n  SELECT department, headcount, avg_salary, top_earner FROM known\n  UNION ALL\n  SELECT '(none)', COUNT(*), printf('%.2f', AVG(e.salary)),\n         (SELECT e2.name FROM employees e2\n          WHERE NOT EXISTS (SELECT 1 FROM departments d2 WHERE d2.id=e2.dept_id)\n          ORDER BY e2.salary DESC, e2.name COLLATE BINARY ASC LIMIT 1)\n  FROM employees e\n  WHERE NOT EXISTS (SELECT 1 FROM departments d WHERE d.id=e.dept_id)\n  HAVING COUNT(*) > 0\n)\nORDER BY headcount DESC, department COLLATE BINARY ASC;\nSQL\ncat /out/dept_report.csv\n"
+    ],
+    "usage": {
+      "input_tokens": 11109,
+      "output_tokens": 2694,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 31718
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 6.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 5.0,
+      "turns": 7.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -l /data /out 2>/dev/null; head -5 /data/employees.csv; head -5 /data/departments.csv; sqlite --help 2>&1 | head -50",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "id,name,dept_id,salary,hired\n1,Ana Lima,10,72000,2021-04-01\n2,\"O'Brien, Pat\",10,91000,2019-11-15\n3,Chen Wei,20,64000,2022-01-10\n4,Dara Okoye,20,64000,2020-06-30\nid,name\n10,Engineering\n20,Sales\n30,Support\n40,Legal\nusage: sqlite [OPTIONS] DB [SQL ...]\n       sqlite [OPTIONS] :memory: [SQL ...]\nOptions:\n  -header, --header        Include column headers\n  -noheader, --noheader    Suppress column headers (default)\n  -csv, --csv              Output mode: CSV\n  -tabs, --tabs            Output mode: tabs\n  -line, --line            Output mode: name=value lines\n  -list, --list            Output mode: separator-joined (default)\n  -box, --box              Output mode: ASCII box table\n  -column, --column        Output mode: column-aligned\n  -json, --json            Output mode: JSON array of objects\n  -markdown, --markdown    Output mode: Markdown table\n  -separator SEP           Field separator (e.g. '|', ',', '\\t')\n  -nullvalue STR           Placeholder for NULL\n  -cmd SQL                 Run extra SQL before positional script\n  -backend memory|vfs      Pick the IO backend (default: memory)\n  --help                   Show this message\n  --version                Print engine version\nDot-commands: .help .quit .exit .tables .schema .indexes\n              .headers .mode .separator .nullvalue\n              .dump .read PATH\n"
+          },
+          {
+            "commands": "command -v sqlite3 || true; wc -l /data/*.csv; cat /data/departments.csv; cat /data/employees.csv;",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/usr/bin/sqlite3\n  5 /data/departments.csv\n 10 /data/employees.csv\n 15 total\nid,name\n10,Engineering\n20,Sales\n30,Support\n40,Legal\nid,name,dept_id,salary,hired\n1,Ana Lima,10,72000,2021-04-01\n2,\"O'Brien, Pat\",10,91000,2019-11-15\n3,Chen Wei,20,64000,2022-01-10\n4,Dara Okoye,20,64000,2020-06-30\n5,Eli Stone,10,91000,2023-02-01\n6,Farah Aziz,30,58000,2024-07-15\n7,Gus O'Neil,99,50000,2018-03-03\n8,Hana Sato,20,70500,2021-09-09\n9,Ivo Petrov,10,66000,2020-01-20\n"
+          },
+          {
+            "commands": "sqlite3 --version;",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "sqlite (turso 0.5)\n"
+          },
+          {
+            "commands": "sqlite3 :memory: '.help'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ".help                   Show this message\n.quit / .exit           End execution\n.tables                 List tables\n.schema [TABLE]         Show CREATE statements\n.indexes [TABLE]        List indexes\n.headers on|off         Toggle column headers\n.mode MODE              Set output mode (list, csv, tabs, line, box,\n                        column, json, markdown)\n.separator SEP          Set output separator\n.nullvalue STR          Set NULL placeholder\n.dump                   Dump schema + data as SQL\n.read PATH              Execute SQL from a VFS file\n"
+          },
+          {
+            "commands": "python3 - <<'PY'\nimport csv, pathlib\nout=[]\nout.append('DROP TABLE IF EXISTS employees;')\nout.append('DROP TABLE IF EXISTS departments;')\nout.append('CREATE TABLE departments(id INTEGER PRIMARY KEY, name TEXT NOT NULL);')\nout.append('CREATE TABLE employees(id INTEGER PRIMARY KEY, name TEXT NOT NULL, dept_id INTEGER, salary INTEGER NOT NULL, hired TEXT NOT NULL);')\ndef sqlval(v): return \"'\"+v.replace(\"'\", \"''\")+\"'\"\nfor filename, table, fields in [('/data/departments.csv','departments',2),('/data/employees.csv','employees',5)]:\n    with open(filename,newline='',encoding='utf-8') as f:\n        reader=csv.reader(f)\n        headers=next(reader)\n        if len(headers)!=fields: raise ValueError(headers)\n        for row in reader:\n            if len(row)!=fields: raise ValueError(row)\n            out.append('INSERT INTO '+table+' VALUES ('+', '.join(sqlval(v) for v in row)+');')\npathlib.Path('/data/load_hr.sql').write_text('\\n'.join(out)+'\\n', encoding='utf-8')\nPY\nsqlite3 /data/hr.db < /data/load_hr.sql\nsqlite3 /data/hr.db '.schema'\nsqlite3 /data/hr.db -csv -header <<'SQL' > /out/dept_report.csv\nWITH ranked AS (\n  SELECT dept_id, name, salary,\n         ROW_NUMBER() OVER (PARTITION BY dept_id ORDER BY salary DESC, name COLLATE BINARY ASC) AS rn\n  FROM employees\n),\nknown AS (\n  SELECT d.name AS department,\n         COUNT(e.id) AS headcount,\n         CASE WHEN COUNT(e.id)=0 THEN NULL ELSE printf('%.2f', AVG(e.salary)) END AS avg_salary,\n         MAX(CASE WHEN r.rn=1 THEN r.name END) AS top_earner\n  FROM departments d\n  LEFT JOIN employees e ON e.dept_id=d.id\n  LEFT JOIN ranked r ON r.dept_id=d.id AND r.rn=1\n  GROUP BY d.id, d.name\n),\nunknown AS (\n  SELECT '(none)' AS department,\n         COUNT(*) AS headcount,\n         printf('%.2f', AVG(e.salary)) AS avg_salary,\n         (SELECT r.name FROM ranked r WHERE r.dept_id IS NOT (SELECT id FROM departments WHERE 0)\n          LIMIT 1) AS unused\n  FROM employees e\n  WHERE NOT EXISTS (SELECT 1 FROM departments d WHERE d.id=e.dept_id)\n)\nSELECT department, headcount, avg_salary, top_earner\nFROM (\n  SELECT department, headcount, avg_salary, top_earner FROM known\n  UNION ALL\n  SELECT '(none)', COUNT(*), printf('%.2f', AVG(e.salary)),\n         (SELECT e2.name FROM employees e2 WHERE NOT EXISTS (SELECT 1 FROM departments d2 WHERE d2.id=e2.dept_id)\n          ORDER BY e2.salary DESC, e2.name COLLATE BINARY ASC LIMIT 1)\n  FROM employees e\n  WHERE NOT EXISTS (SELECT 1 FROM departments d WHERE d.id=e.dept_id)\n  HAVING COUNT(*) > 0\n)\nORDER BY headcount DESC, department COLLATE BINARY ASC;\nSQL\ncat /out/dept_report.csv\nls -l /data/hr.db /out/dept_report.csv",
+            "exit_code": 2,
+            "stderr": "bash: line 21: /out/dept_report.csv: No such file or directory\ncat: /out/dept_report.csv: No such file or directory\nls: cannot access '/out/dept_report.csv': No such file or directory\n",
+            "stdout": "CREATE TABLE departments (id INTEGER PRIMARY KEY, name TEXT NOT NULL);\nCREATE TABLE employees (id INTEGER PRIMARY KEY, name TEXT NOT NULL, dept_id INTEGER, salary INTEGER NOT NULL, hired TEXT NOT NULL);\n"
+          },
+          {
+            "commands": "mkdir -p /out\nsqlite3 /data/hr.db -csv -header <<'SQL' > /out/dept_report.csv\nWITH ranked AS (\n  SELECT dept_id, name, salary,\n         ROW_NUMBER() OVER (PARTITION BY dept_id ORDER BY salary DESC, name COLLATE BINARY ASC) AS rn\n  FROM employees\n),\nknown AS (\n  SELECT d.name AS department,\n         COUNT(e.id) AS headcount,\n         CASE WHEN COUNT(e.id)=0 THEN NULL ELSE printf('%.2f', AVG(e.salary)) END AS avg_salary,\n         MAX(CASE WHEN r.rn=1 THEN r.name END) AS top_earner\n  FROM departments d\n  LEFT JOIN employees e ON e.dept_id=d.id\n  LEFT JOIN ranked r ON r.dept_id=d.id AND r.rn=1\n  GROUP BY d.id, d.name\n)\nSELECT department, headcount, avg_salary, top_earner\nFROM (\n  SELECT department, headcount, avg_salary, top_earner FROM known\n  UNION ALL\n  SELECT '(none)', COUNT(*), printf('%.2f', AVG(e.salary)),\n         (SELECT e2.name FROM employees e2\n          WHERE NOT EXISTS (SELECT 1 FROM departments d2 WHERE d2.id=e2.dept_id)\n          ORDER BY e2.salary DESC, e2.name COLLATE BINARY ASC LIMIT 1)\n  FROM employees e\n  WHERE NOT EXISTS (SELECT 1 FROM departments d WHERE d.id=e.dept_id)\n  HAVING COUNT(*) > 0\n)\nORDER BY headcount DESC, department COLLATE BINARY ASC;\nSQL\ncat /out/dept_report.csv\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "department,headcount,avg_salary,top_earner\nEngineering,4,80000.00,Eli Stone\nSales,3,66166.67,Hana Sato\n(none),1,50000.00,Gus O'Neil\nSupport,1,58000.00,Farah Aziz\nLegal,0,,\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

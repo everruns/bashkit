@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "rt_py_sessionize",
+  "target": "openai/gpt-6.1-sol",
+  "input": [
+    "/data/access.log has lines `<timestamp> user=<name> path=<path> status=<3 digits>` in no particular order. A valid timestamp is ISO 8601 `YYYY-MM-DDTHH:MM:SS` followed by `Z` or a `+HH:MM`/`-HH:MM` offset; a line with any other timestamp (no offset, a space instead of T, an impossible time) or not matching the format exactly is skipped. Duplicate lines are separate events.\n\nSplit each user's events, ordered by instant, into sessions: a new session starts when the gap to the previous event is more than 30 minutes (a gap of exactly 30:00 stays in the same session).\n\nWrite /out/sessions.tsv (tab-separated) with header user, session, start, end, events, seconds: one row per session, sorted by user then start; session numbers start at 1 per user; start/end are UTC as YYYY-MM-DDTHH:MM:SSZ; seconds = end minus start.\nWrite /out/summary.txt with the single line `users=U sessions=S events=E skipped=K`."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Created `/out/sessions.tsv` and `/out/summary.txt`.\n\n```text\nusers=4 sessions=5 events=14 skipped=6\n```",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "mkdir -p /out\ncat > /tmp/sessions.py <<'PY'\nimport re\nfrom datetime import datetime, timezone\nfrom collections import defaultdict\n\npattern = re.compile(r'([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:Z|[+-][0-9]{2}:[0-9]{2})) user=(\\S+) path=(\\S+) status=[0-9]{3}')\nevents = defaultdict(list)\nskipped = 0\nwith open('/data/access.log', encoding='utf-8', errors='replace', newline='') as f:\n    for line in f:\n        # Remove only the line terminator, not other whitespace.\n        if line.endswith('\\n'):\n            line = line[:-1]\n            if line.endswith('\\r'):\n                line = line[:-1]\n        match = pattern.fullmatch(line)\n        if not match:\n            skipped += 1\n            continue\n        stamp, user, path = match.groups()\n        try:\n            if stamp[-1] != 'Z':\n                if int(stamp[-5:-3]) > 23 or int(stamp[-2:]) > 59:\n                    raise ValueError('Invalid offset')\n            instant = datetime.fromisoformat(stamp).astimezone(timezone.utc)\n        except (ValueError, OverflowError):\n            skipped += 1\n            continue\n        events[user].append(instant)\n\nsessions = 0\ncount = 0\ndef utc(dt):\n    return f'{dt.year:04d}-{dt.month:02d}-{dt.day:02d}T{dt.hour:02d}:{dt.minute:02d}:{dt.second:02d}Z'\nwith open('/out/sessions.tsv', 'w', encoding='utf-8', newline='') as f:\n    f.write('user\\tsession\\tstart\\tend\\tevents\\tseconds\\n')\n    for user in sorted(events):\n        ordered = sorted(events[user])\n        number = 0\n        start = end = ordered[0]\n        n = 0\n        def write_session():\n            f.write(f'{user}\\t{number}\\t{utc(start)}\\t{utc(end)}\\t{n}\\t{int((end-start).total_seconds())}\\n')\n        for instant in ordered:\n            count += 1\n            if n and (instant - end).total_seconds() > 1800:\n                number += 1\n                sessions += 1\n                write_session()\n                start = instant\n                n = 0\n            end = instant\n            n += 1\n        number += 1\n        sessions += 1\n        write_session()\nwith open('/out/summary.txt', 'w', encoding='utf-8') as f:\n    f.write(f'users={len(events)} sessions={sessions} events={count} skipped={skipped}\\n')\nPY\npython /tmp/sessions.py\ncat /out/summary.txt\nhead -n 5 /out/sessions.tsv"
+    ],
+    "usage": {
+      "input_tokens": 2120,
+      "output_tokens": 764,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 13235
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "mkdir -p /out\ncat > /tmp/sessions.py <<'PY'\nimport re\nfrom datetime import datetime, timezone\nfrom collections import defaultdict\n\npattern = re.compile(r'([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:Z|[+-][0-9]{2}:[0-9]{2})) user=(\\S+) path=(\\S+) status=[0-9]{3}')\nevents = defaultdict(list)\nskipped = 0\nwith open('/data/access.log', encoding='utf-8', errors='replace', newline='') as f:\n    for line in f:\n        # Remove only the line terminator, not other whitespace.\n        if line.endswith('\\n'):\n            line = line[:-1]\n            if line.endswith('\\r'):\n                line = line[:-1]\n        match = pattern.fullmatch(line)\n        if not match:\n            skipped += 1\n            continue\n        stamp, user, path = match.groups()\n        try:\n            if stamp[-1] != 'Z':\n                if int(stamp[-5:-3]) > 23 or int(stamp[-2:]) > 59:\n                    raise ValueError('Invalid offset')\n            instant = datetime.fromisoformat(stamp).astimezone(timezone.utc)\n        except (ValueError, OverflowError):\n            skipped += 1\n            continue\n        events[user].append(instant)\n\nsessions = 0\ncount = 0\ndef utc(dt):\n    return f'{dt.year:04d}-{dt.month:02d}-{dt.day:02d}T{dt.hour:02d}:{dt.minute:02d}:{dt.second:02d}Z'\nwith open('/out/sessions.tsv', 'w', encoding='utf-8', newline='') as f:\n    f.write('user\\tsession\\tstart\\tend\\tevents\\tseconds\\n')\n    for user in sorted(events):\n        ordered = sorted(events[user])\n        number = 0\n        start = end = ordered[0]\n        n = 0\n        def write_session():\n            f.write(f'{user}\\t{number}\\t{utc(start)}\\t{utc(end)}\\t{n}\\t{int((end-start).total_seconds())}\\n')\n        for instant in ordered:\n            count += 1\n            if n and (instant - end).total_seconds() > 1800:\n                number += 1\n                sessions += 1\n                write_session()\n                start = instant\n                n = 0\n            end = instant\n            n += 1\n        number += 1\n        sessions += 1\n        write_session()\nwith open('/out/summary.txt', 'w', encoding='utf-8') as f:\n    f.write(f'users={len(events)} sessions={sessions} events={count} skipped={skipped}\\n')\nPY\npython /tmp/sessions.py\ncat /out/summary.txt\nhead -n 5 /out/sessions.tsv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "users=4 sessions=5 events=14 skipped=6\nuser\tsession\tstart\tend\tevents\tseconds\nalice\t1\t2026-05-04T08:00:00Z\t2026-05-04T08:45:00Z\t6\t2700\nbob\t1\t2026-05-04T07:59:59Z\t2026-05-04T08:59:59Z\t3\t3600\nbob\t2\t2026-05-04T09:30:00Z\t2026-05-04T09:30:00Z\t1\t0\ncarol\t1\t2026-05-05T00:30:00Z\t2026-05-05T01:05:00Z\t3\t2100\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "script_getopts_parser",
+  "target": "openai/gpt-6.1-sol",
+  "input": [
+    "Create /scripts/report.sh that uses getopts to parse these options: -f <format> (output format: csv or json, default csv), -o <file> (output file, default stdout), -v (verbose mode flag), -h (print usage and exit). After parsing, the script should read /data/input.csv and: if format is csv, output it as-is; if format is json, convert each row to a JSON object. Run the script with: 'bash /scripts/report.sh -f json -v' to process the input in verbose mode. Verbose mode should print 'Verbose: processing N rows' before output."
+  ],
+  "passed": false,
+  "aggregate": 0.8,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 0.8,
+      "pass": false,
+      "reason": "4/5 checks passed (weighted rate 80%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Created `/scripts/report.sh` with `getopts` parsing and ran:\n\n```bash\nbash /scripts/report.sh -f json -v\n```\n\nVerbose message (stderr, emitted before output):\n```text\nVerbose: processing 3 rows\n```\n\nJSON output:\n```json\n[\n  {\n    \"name\": \"alice\",\n    \"score\": \"95\"\n  },\n  {\n    \"name\": \"bob\",\n    \"score\": \"87\"\n  },\n  {\n    \"name\": \"carol\",\n    \"score\": \"92\"\n  }\n]\n```\n\nVerbose messages go to stderr to keep stdout or the output file valid CSV/JSON.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "ls -l /data/input.csv /scripts 2>/dev/null; if [[ -f /data/input.csv ]]; then head -n 5 /data/input.csv; fi",
+      "mkdir -p /scripts\ncat > /scripts/report.sh <<'EOF'\n#!/usr/bin/env bash\nset -euo pipefail\n\nusage() {\n    printf 'Usage: %s [-f csv|json] [-o file] [-v] [-h]\\n' \"${0##*/}\"\n}\n\nformat=csv\noutput=''\nverbose=0\nwhile getopts ':f:o:vh' option; do\n    case \"$option\" in\n        f) format=$OPTARG ;;\n        o) output=$OPTARG ;;\n        v) verbose=1 ;;\n        h) usage; exit 0 ;;\n        :) printf 'Error: -%s requires an argument\\n' \"$OPTARG\" >&2; usage >&2; exit 2 ;;\n        \\?) printf 'Error: unknown option -%s\\n' \"$OPTARG\" >&2; usage >&2; exit 2 ;;\n    esac\ndone\nshift \"$((OPTIND - 1))\"\nif (( $# )); then\n    printf 'Error: unexpected positional arguments\\n' >&2\n    usage >&2\n    exit 2\nfi\ncase \"$format\" in\n    csv|json) ;;\n    *) printf 'Error: format must be csv or json\\n' >&2; exit 2 ;;\nesac\n\npython3 - \"$format\" \"$output\" \"$verbose\" <<'PY'\nimport csv\nimport io\nimport json\nimport sys\nfrom pathlib import Path\n\nformat_, output, verbose = sys.argv[1:]\ntry:\n    data = Path('/data/input.csv').read_bytes()\n    rows = list(csv.DictReader(io.StringIO(data.decode('utf-8-sig'), newline='')))\n    payload = data if format_ == 'csv' else (json.dumps(rows, indent=2, ensure_ascii=False) + '\\n').encode('utf-8')\n    if verbose == '1':\n        print(f'Verbose: processing {len(rows)} rows', file=sys.stderr, flush=True)\n    if output:\n        Path(output).write_bytes(payload)\n    else:\n        sys.stdout.buffer.write(payload)\n        sys.stdout.buffer.flush()\nexcept (OSError, UnicodeError, csv.Error) as exc:\n    print(f'Error: {exc}', file=sys.stderr)\n    sys.exit(1)\nPY\nEOF\nchmod +x /scripts/report.sh\nbash /scripts/report.sh -f json -v"
+    ],
+    "usage": {
+      "input_tokens": 2332,
+      "output_tokens": 884,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 17834
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -l /data/input.csv /scripts 2>/dev/null; if [[ -f /data/input.csv ]]; then head -n 5 /data/input.csv; fi",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "name,score\nalice,95\nbob,87\ncarol,92\n"
+          },
+          {
+            "commands": "mkdir -p /scripts\ncat > /scripts/report.sh <<'EOF'\n#!/usr/bin/env bash\nset -euo pipefail\n\nusage() {\n    printf 'Usage: %s [-f csv|json] [-o file] [-v] [-h]\\n' \"${0##*/}\"\n}\n\nformat=csv\noutput=''\nverbose=0\nwhile getopts ':f:o:vh' option; do\n    case \"$option\" in\n        f) format=$OPTARG ;;\n        o) output=$OPTARG ;;\n        v) verbose=1 ;;\n        h) usage; exit 0 ;;\n        :) printf 'Error: -%s requires an argument\\n' \"$OPTARG\" >&2; usage >&2; exit 2 ;;\n        \\?) printf 'Error: unknown option -%s\\n' \"$OPTARG\" >&2; usage >&2; exit 2 ;;\n    esac\ndone\nshift \"$((OPTIND - 1))\"\nif (( $# )); then\n    printf 'Error: unexpected positional arguments\\n' >&2\n    usage >&2\n    exit 2\nfi\ncase \"$format\" in\n    csv|json) ;;\n    *) printf 'Error: format must be csv or json\\n' >&2; exit 2 ;;\nesac\n\npython3 - \"$format\" \"$output\" \"$verbose\" <<'PY'\nimport csv\nimport io\nimport json\nimport sys\nfrom pathlib import Path\n\nformat_, output, verbose = sys.argv[1:]\ntry:\n    data = Path('/data/input.csv').read_bytes()\n    rows = list(csv.DictReader(io.StringIO(data.decode('utf-8-sig'), newline='')))\n    payload = data if format_ == 'csv' else (json.dumps(rows, indent=2, ensure_ascii=False) + '\\n').encode('utf-8')\n    if verbose == '1':\n        print(f'Verbose: processing {len(rows)} rows', file=sys.stderr, flush=True)\n    if output:\n        Path(output).write_bytes(payload)\n    else:\n        sys.stdout.buffer.write(payload)\n        sys.stdout.buffer.flush()\nexcept (OSError, UnicodeError, csv.Error) as exc:\n    print(f'Error: {exc}', file=sys.stderr)\n    sys.exit(1)\nPY\nEOF\nchmod +x /scripts/report.sh\nbash /scripts/report.sh -f json -v",
+            "exit_code": 0,
+            "stderr": "Verbose: processing 3 rows\n",
+            "stdout": "[\n  {\n    \"name\": \"alice\",\n    \"score\": \"95\"\n  },\n  {\n    \"name\": \"bob\",\n    \"score\": \"87\"\n  },\n  {\n    \"name\": \"carol\",\n    \"score\": \"92\"\n  }\n]\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

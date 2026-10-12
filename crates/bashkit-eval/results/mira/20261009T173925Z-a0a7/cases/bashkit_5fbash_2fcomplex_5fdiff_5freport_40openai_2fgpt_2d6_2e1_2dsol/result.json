@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_diff_report",
+  "target": "openai/gpt-6.1-sol",
+  "input": [
+    "Compare /data/v1.conf and /data/v2.conf. Produce a human-readable summary showing: which keys were added, which were removed, and which had their values changed. Print the summary to stdout."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "```text\nConfiguration changes: /data/v1.conf → /data/v2.conf\n\nAdded keys:\n  timeout = 30\n\nRemoved keys:\n  max_connections (was 100)\n\nChanged values:\n  host: localhost → 0.0.0.0\n  log_level: info → debug\n  port: 8080 → 9090\n```",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "ls -l /data/v1.conf /data/v2.conf; cat /data/v1.conf; printf '\\n--- v2 ---\\n'; cat /data/v2.conf",
+      "python3 - <<'PY'\nfrom pathlib import Path\n\ndef read_config(path):\n    result = {}\n    for line in Path(path).read_text().splitlines():\n        line = line.strip()\n        if not line or line.startswith(('#', ';')):\n            continue\n        key, value = line.split('=', 1)\n        result[key.strip()] = value.strip()\n    return result\n\nold = read_config('/data/v1.conf')\nnew = read_config('/data/v2.conf')\nprint('Configuration changes: /data/v1.conf → /data/v2.conf')\nprint('\\nAdded keys:')\nfor key in sorted(new.keys() - old.keys()):\n    print(f'  {key} = {new[key]}')\nprint('\\nRemoved keys:')\nfor key in sorted(old.keys() - new.keys()):\n    print(f'  {key} (was {old[key]})')\nprint('\\nChanged values:')\nfor key in sorted(old.keys() & new.keys()):\n    if old[key] != new[key]:\n        print(f'  {key}: {old[key]} → {new[key]}')\nPY"
+    ],
+    "usage": {
+      "input_tokens": 1968,
+      "output_tokens": 433,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 10324
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -l /data/v1.conf /data/v2.conf; cat /data/v1.conf; printf '\\n--- v2 ---\\n'; cat /data/v2.conf",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       70 2026-10-12 18:51 /data/v1.conf\n-rw-r--r--       60 2026-10-12 18:51 /data/v2.conf\nport=8080\nhost=localhost\nlog_level=info\nworkers=4\nmax_connections=100\n\n--- v2 ---\nport=9090\nhost=0.0.0.0\nlog_level=debug\nworkers=4\ntimeout=30\n"
+          },
+          {
+            "commands": "python3 - <<'PY'\nfrom pathlib import Path\n\ndef read_config(path):\n    result = {}\n    for line in Path(path).read_text().splitlines():\n        line = line.strip()\n        if not line or line.startswith(('#', ';')):\n            continue\n        key, value = line.split('=', 1)\n        result[key.strip()] = value.strip()\n    return result\n\nold = read_config('/data/v1.conf')\nnew = read_config('/data/v2.conf')\nprint('Configuration changes: /data/v1.conf → /data/v2.conf')\nprint('\\nAdded keys:')\nfor key in sorted(new.keys() - old.keys()):\n    print(f'  {key} = {new[key]}')\nprint('\\nRemoved keys:')\nfor key in sorted(old.keys() - new.keys()):\n    print(f'  {key} (was {old[key]})')\nprint('\\nChanged values:')\nfor key in sorted(old.keys() & new.keys()):\n    if old[key] != new[key]:\n        print(f'  {key}: {old[key]} → {new[key]}')\nPY",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Configuration changes: /data/v1.conf → /data/v2.conf\n\nAdded keys:\n  timeout = 30\n\nRemoved keys:\n  max_connections (was 100)\n\nChanged values:\n  host: localhost → 0.0.0.0\n  log_level: info → debug\n  port: 8080 → 9090\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

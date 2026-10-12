@@ -1,0 +1,78 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "script_getopts_parser",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "Create /scripts/report.sh that uses getopts to parse these options: -f <format> (output format: csv or json, default csv), -o <file> (output file, default stdout), -v (verbose mode flag), -h (print usage and exit). After parsing, the script should read /data/input.csv and: if format is csv, output it as-is; if format is json, convert each row to a JSON object. Run the script with: 'bash /scripts/report.sh -f json -v' to process the input in verbose mode. Verbose mode should print 'Verbose: processing N rows' before output."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Created `/scripts/report.sh` with `getopts` handling for `-f`, `-o`, `-v`, and `-h`. It supports CSV passthrough and JSON conversion, and verbose mode prints the row count before the report.\n\nRan `bash /scripts/report.sh -f json -v` successfully. It reported 3 rows and output the JSON data.",
+    "iterations": 5,
+    "tool_calls_count": 4,
+    "tool_calls": [
+      "ls -la / && ls -la /data 2>/dev/null || true && ls -la /scripts 2>/dev/null || true",
+      "cat /data/input.csv; mkdir -p /scripts;",
+      "cat > /scripts/report.sh <<'EOF'\n#!/usr/bin/env bash\nset -e\n\nusage() {\n  cat <<'USAGE'\nUsage: report.sh [-f csv|json] [-o file] [-v] [-h]\n  -f format  Output format: csv (default) or json\n  -o file    Write output to file (default: stdout)\n  -v         Print verbose processing information\n  -h         Print this usage message\nUSAGE\n}\n\nformat=csv\noutput_file=\nverbose=0\n\nwhile getopts ':f:o:vh' opt; do\n  case \"$opt\" in\n    f) format=$OPTARG ;;\n    o) output_file=$OPTARG ;;\n    v) verbose=1 ;;\n    h) usage; exit 0 ;;\n    :) echo \"Error: option -$OPTARG requires an argument\" >&2; usage >&2; exit 2 ;;\n    \\?) echo \"Error: unknown option -$OPTARG\" >&2; usage >&2; exit 2 ;;\n  esac\ndone\nshift $((OPTIND - 1))\n\nif [[ \"$format\" != csv && \"$format\" != json ]]; then\n  echo \"Error: format must be csv or json\" >&2\n  exit 2\nfi\nif [[ $# -ne 0 ]]; then\n  echo \"Error: unexpected argument: $1\" >&2\n  usage >&2\n  exit 2\nfi\n\nrun_report() {\n  python3 - \"$format\" \"$verbose\" /data/input.csv <<'PY'\nimport csv\nimport json\nimport sys\n\noutput_format, verbose, path = sys.argv[1:]\nwith open(path, \"r\", encoding=\"utf-8\", newline=\"\") as source:\n    original = source.read()\n\nif output_format == \"csv\":\n    # Parse only to count logical data rows (which can include quoted newlines).\n    import io\n    rows = list(csv.reader(io.StringIO(original, newline=\"\")))\n    count = max(0, len(rows) - 1) if rows else 0\n    if verbose == \"1\":\n        print(f\"Verbose: processing {count} rows\", file=sys.stderr)\n    sys.stdout.write(original)\nelse:\n    rows = list(csv.reader(original.splitlines()))\n    if rows:\n        headers = rows[0]\n        records = [dict(zip(headers, row)) for row in rows[1:]]\n    else:\n        records = []\n    if verbose == \"1\":\n        print(f\"Verbose: processing {len(records)} rows\", file=sys.stderr)\n    json.dump(records, sys.stdout, ensure_ascii=False, indent=2)\n    sys.stdout.write(\"\\n\")\nPY\n}\n\nif [[ -n \"$output_file\" ]]; then\n  run_report > \"$output_file\"\nelse\n  run_report\nfi\nEOF\nchmod +x /scripts/report.sh\nbash /scripts/report.sh -f json -v",
+      "python3 - <<'PY'\np='/scripts/report.sh'\ns=open(p).read()\ns=s.replace('python3 - \"$format\" \"$verbose\" /data/input.csv <<\\'PY\\'\\n', 'python3 - \"$format\" \"$verbose\" /data/input.csv \"$output_file\" <<\\'PY\\'\\n')\ns=s.replace('output_format, verbose, path = sys.argv[1:]\\n', 'output_format, verbose, path, output_path = sys.argv[1:]\\n')\ns=s.replace('if output_format == \"csv\":\\n    # Parse only to count logical data rows (which can include quoted newlines).\\n    import io\\n    rows = list(csv.reader(io.StringIO(original, newline=\"\")))\\n    count = max(0, len(rows) - 1) if rows else 0\\n    if verbose == \"1\":\\n        print(f\"Verbose: processing {count} rows\", file=sys.stderr)\\n    sys.stdout.write(original)\\nelse:\\n    rows = list(csv.reader(original.splitlines()))\\n    if rows:\\n        headers = rows[0]\\n        records = [dict(zip(headers, row)) for row in rows[1:]]\\n    else:\\n        records = []\\n    if verbose == \"1\":\\n        print(f\"Verbose: processing {len(records)} rows\", file=sys.stderr)\\n    json.dump(records, sys.stdout, ensure_ascii=False, indent=2)\\n    sys.stdout.write(\"\\\\n\")\\n', '''import io\nrows = list(csv.reader(io.StringIO(original, newline=\"\")))\ncount = max(0, len(rows) - 1) if rows else 0\nif verbose == \"1\":\n    print(f\"Verbose: processing {count} rows\")\n\ntarget = open(output_path, \"w\", encoding=\"utf-8\", newline=\"\") if output_path else sys.stdout\ntry:\n    if output_format == \"csv\":\n        target.write(original)\n    else:\n        if rows:\n            headers = rows[0]\n            records = [dict(zip(headers, row)) for row in rows[1:]]\n        else:\n            records = []\n        json.dump(records, target, ensure_ascii=False, indent=2)\n        target.write(\"\\\\n\")\nfinally:\n    if output_path:\n        target.close()\n''')\ns=s.replace('if [[ -n \"$output_file\" ]]; then\\n  run_report > \"$output_file\"\\nelse\\n  run_report\\nfi\\n', 'run_report\\n')\nopen(p,'w').write(s)\nPY\nbash /scripts/report.sh -f json -v; echo '--- output-file test ---'; bash /scripts/report.sh -f csv -o /tmp/report-output.csv -v; cat /tmp/report-output.csv"
+    ],
+    "usage": {
+      "input_tokens": 6156,
+      "output_tokens": 2545,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 27242
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 4.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 4.0,
+      "turns": 5.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la / && ls -la /data 2>/dev/null || true && ls -la /scripts 2>/dev/null || true",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "drwxr-xr-x        0 2026-10-12 18:50 bin\ndrwxr-xr-x        0 2026-10-12 18:52 data\ndrwxr-xr-x        0 2026-10-12 18:52 dev\ndrwxr-xr-x        0 2026-10-12 18:50 etc\ndrwxr-xr-x        0 2026-10-12 18:52 home\ndrwxr-xr-x        0 2026-10-12 18:50 proc\ndrwxr-xr-x        0 2026-10-12 18:50 root\ndrwxrwxrwx        0 2026-10-12 18:52 tmp\ndrwxr-xr-x        0 2026-10-12 18:50 usr\n-rw-r--r--       36 2026-10-12 18:52 input.csv\n"
+          },
+          {
+            "commands": "cat /data/input.csv; mkdir -p /scripts;",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "name,score\nalice,95\nbob,87\ncarol,92\n"
+          },
+          {
+            "commands": "cat > /scripts/report.sh <<'EOF'\n#!/usr/bin/env bash\nset -e\n\nusage() {\n  cat <<'USAGE'\nUsage: report.sh [-f csv|json] [-o file] [-v] [-h]\n  -f format  Output format: csv (default) or json\n  -o file    Write output to file (default: stdout)\n  -v         Print verbose processing information\n  -h         Print this usage message\nUSAGE\n}\n\nformat=csv\noutput_file=\nverbose=0\n\nwhile getopts ':f:o:vh' opt; do\n  case \"$opt\" in\n    f) format=$OPTARG ;;\n    o) output_file=$OPTARG ;;\n    v) verbose=1 ;;\n    h) usage; exit 0 ;;\n    :) echo \"Error: option -$OPTARG requires an argument\" >&2; usage >&2; exit 2 ;;\n    \\?) echo \"Error: unknown option -$OPTARG\" >&2; usage >&2; exit 2 ;;\n  esac\ndone\nshift $((OPTIND - 1))\n\nif [[ \"$format\" != csv && \"$format\" != json ]]; then\n  echo \"Error: format must be csv or json\" >&2\n  exit 2\nfi\nif [[ $# -ne 0 ]]; then\n  echo \"Error: unexpected argument: $1\" >&2\n  usage >&2\n  exit 2\nfi\n\nrun_report() {\n  python3 - \"$format\" \"$verbose\" /data/input.csv <<'PY'\nimport csv\nimport json\nimport sys\n\noutput_format, verbose, path = sys.argv[1:]\nwith open(path, \"r\", encoding=\"utf-8\", newline=\"\") as source:\n    original = source.read()\n\nif output_format == \"csv\":\n    # Parse only to count logical data rows (which can include quoted newlines).\n    import io\n    rows = list(csv.reader(io.StringIO(original, newline=\"\")))\n    count = max(0, len(rows) - 1) if rows else 0\n    if verbose == \"1\":\n        print(f\"Verbose: processing {count} rows\", file=sys.stderr)\n    sys.stdout.write(original)\nelse:\n    rows = list(csv.reader(original.splitlines()))\n    if rows:\n        headers = rows[0]\n        records = [dict(zip(headers, row)) for row in rows[1:]]\n    else:\n        records = []\n    if verbose == \"1\":\n        print(f\"Verbose: processing {len(records)} rows\", file=sys.stderr)\n    json.dump(records, sys.stdout, ensure_ascii=False, indent=2)\n    sys.stdout.write(\"\\n\")\nPY\n}\n\nif [[ -n \"$output_file\" ]]; then\n  run_report > \"$output_file\"\nelse\n  run_report\nfi\nEOF\nchmod +x /scripts/report.sh\nbash /scripts/report.sh -f json -v",
+            "exit_code": 0,
+            "stderr": "Verbose: processing 3 rows\n",
+            "stdout": "[\n  {\n    \"name\": \"alice\",\n    \"score\": \"95\"\n  },\n  {\n    \"name\": \"bob\",\n    \"score\": \"87\"\n  },\n  {\n    \"name\": \"carol\",\n    \"score\": \"92\"\n  }\n]\n"
+          },
+          {
+            "commands": "python3 - <<'PY'\np='/scripts/report.sh'\ns=open(p).read()\ns=s.replace('python3 - \"$format\" \"$verbose\" /data/input.csv <<\\'PY\\'\\n', 'python3 - \"$format\" \"$verbose\" /data/input.csv \"$output_file\" <<\\'PY\\'\\n')\ns=s.replace('output_format, verbose, path = sys.argv[1:]\\n', 'output_format, verbose, path, output_path = sys.argv[1:]\\n')\ns=s.replace('if output_format == \"csv\":\\n    # Parse only to count logical data rows (which can include quoted newlines).\\n    import io\\n    rows = list(csv.reader(io.StringIO(original, newline=\"\")))\\n    count = max(0, len(rows) - 1) if rows else 0\\n    if verbose == \"1\":\\n        print(f\"Verbose: processing {count} rows\", file=sys.stderr)\\n    sys.stdout.write(original)\\nelse:\\n    rows = list(csv.reader(original.splitlines()))\\n    if rows:\\n        headers = rows[0]\\n        records = [dict(zip(headers, row)) for row in rows[1:]]\\n    else:\\n        records = []\\n    if verbose == \"1\":\\n        print(f\"Verbose: processing {len(records)} rows\", file=sys.stderr)\\n    json.dump(records, sys.stdout, ensure_ascii=False, indent=2)\\n    sys.stdout.write(\"\\\\n\")\\n', '''import io\nrows = list(csv.reader(io.StringIO(original, newline=\"\")))\ncount = max(0, len(rows) - 1) if rows else 0\nif verbose == \"1\":\n    print(f\"Verbose: processing {count} rows\")\n\ntarget = open(output_path, \"w\", encoding=\"utf-8\", newline=\"\") if output_path else sys.stdout\ntry:\n    if output_format == \"csv\":\n        target.write(original)\n    else:\n        if rows:\n            headers = rows[0]\n            records = [dict(zip(headers, row)) for row in rows[1:]]\n        else:\n            records = []\n        json.dump(records, target, ensure_ascii=False, indent=2)\n        target.write(\"\\\\n\")\nfinally:\n    if output_path:\n        target.close()\n''')\ns=s.replace('if [[ -n \"$output_file\" ]]; then\\n  run_report > \"$output_file\"\\nelse\\n  run_report\\nfi\\n', 'run_report\\n')\nopen(p,'w').write(s)\nPY\nbash /scripts/report.sh -f json -v; echo '--- output-file test ---'; bash /scripts/report.sh -f csv -o /tmp/report-output.csv -v; cat /tmp/report-output.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Verbose: processing 3 rows\n[\n  {\n    \"name\": \"alice\",\n    \"score\": \"95\"\n  },\n  {\n    \"name\": \"bob\",\n    \"score\": \"87\"\n  },\n  {\n    \"name\": \"carol\",\n    \"score\": \"92\"\n  }\n]\n--- output-file test ---\nVerbose: processing 3 rows\nname,score\nalice,95\nbob,87\ncarol,92\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

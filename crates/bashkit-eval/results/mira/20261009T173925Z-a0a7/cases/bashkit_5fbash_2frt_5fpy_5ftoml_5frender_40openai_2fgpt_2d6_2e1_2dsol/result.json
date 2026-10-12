@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "rt_py_toml_render",
+  "target": "openai/gpt-6.1-sol",
+  "input": [
+    "Render per-environment configs: for every /config/env/*.toml file, merge it over /config/base.toml and write /out/<name>.json (dev.toml -> /out/dev.json). Merge rules: tables merge recursively; any other value (scalars, arrays, arrays of tables) in the override replaces the base value; an override value equal to the string \"__unset__\" removes that key. TOML dates and datetimes become strings via Python's isoformat(). JSON: 2-space indent, keys sorted, non-ASCII characters written as-is (not \\u escapes), trailing newline. Also write /out/index.txt listing the environment names, sorted, one per line."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "3/3 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Created:\n- `/out/dev.json`\n- `/out/prod.json`\n- `/out/index.txt`\n\nApplied the specified merge rules, ISO date/datetime conversion, and JSON formatting. The index lists environment names in sorted order.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "ls -la /config /config/env /out 2>/dev/null; cat /config/base.toml; for f in /config/env/*.toml; do echo \"--- $f\"; cat \"$f\"; done",
+      "python3 - <<'PY'\nfrom pathlib import Path\nimport copy\nimport datetime\nimport json\nimport tomllib\n\ndef merge(base, override):\n    result = copy.deepcopy(base)\n    for key, value in override.items():\n        if isinstance(value, str) and value == '__unset__':\n            result.pop(key, None)\n        elif isinstance(value, dict):\n            prior = result.get(key)\n            result[key] = merge(prior if isinstance(prior, dict) else {}, value)\n        else:\n            result[key] = copy.deepcopy(value)\n    return result\n\ndef serialize(value):\n    if isinstance(value, (datetime.datetime, datetime.date, datetime.time)):\n        return value.isoformat()\n    raise TypeError(f'Unsupported value: {type(value).__name__}')\n\nwith Path('/config/base.toml').open('rb') as f:\n    base = tomllib.load(f)\nout = Path('/out')\nout.mkdir(parents=True, exist_ok=True)\nnames = []\nfor path in sorted(Path('/config/env').glob('*.toml')):\n    if not path.is_file():\n        continue\n    with path.open('rb') as f:\n        override = tomllib.load(f)\n    rendered = json.dumps(merge(base, override), indent=2, sort_keys=True,\n                          ensure_ascii=False, default=serialize) + '\\n'\n    (out / (path.stem + '.json')).write_text(rendered, encoding='utf-8')\n    names.append(path.stem)\n(out / 'index.txt').write_text(''.join(name + '\\n' for name in sorted(names)), encoding='utf-8')\nprint('Created: ' + ', '.join(str(out / (name + '.json')) for name in names) + ', /out/index.txt')\nPY"
+    ],
+    "usage": {
+      "input_tokens": 2705,
+      "output_tokens": 552,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 12958
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /config /config/env /out 2>/dev/null; cat /config/base.toml; for f in /config/env/*.toml; do echo \"--- $f\"; cat \"$f\"; done",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "name = \"shop\"\ndebug = false\nreleased = 2026-09-30\nmaintenance = 2026-10-12T02:00:00+02:00\n\n[server]\nhost = \"0.0.0.0\"\nport = 8080\nworkers = 4\ntags = [\"web\", \"api\"]\n\n[server.tls]\nenabled = false\ncert = \"/etc/ssl/shop.pem\"\n\n[db]\nurl = \"postgres://db/shop\"\npool = { min = 1, max = 10 }\n\n[[routes]]\npath = \"/\"\nbackend = \"web\"\n\n[[routes]]\npath = \"/api\"\nbackend = \"api\"\n--- /config/env/dev.toml\ndebug = true\ngreeting = \"Привіт, світ\"\n\n[server]\nport = 3000\ntags = [\"dev\"]\n\n[server.tls]\ncert = \"__unset__\"\n\n[db.pool]\nmax = 2\n--- /config/env/prod.toml\nmaintenance = \"__unset__\"\n\n[server]\nworkers = 16\n\n[server.tls]\nenabled = true\n\n[db]\nurl = \"postgres://prod-db:5432/shop\"\nreplica = { url = \"postgres://replica/shop\", lag_ms = 250 }\n\n[[routes]]\npath = \"/\"\nbackend = \"cdn\"\n"
+          },
+          {
+            "commands": "python3 - <<'PY'\nfrom pathlib import Path\nimport copy\nimport datetime\nimport json\nimport tomllib\n\ndef merge(base, override):\n    result = copy.deepcopy(base)\n    for key, value in override.items():\n        if isinstance(value, str) and value == '__unset__':\n            result.pop(key, None)\n        elif isinstance(value, dict):\n            prior = result.get(key)\n            result[key] = merge(prior if isinstance(prior, dict) else {}, value)\n        else:\n            result[key] = copy.deepcopy(value)\n    return result\n\ndef serialize(value):\n    if isinstance(value, (datetime.datetime, datetime.date, datetime.time)):\n        return value.isoformat()\n    raise TypeError(f'Unsupported value: {type(value).__name__}')\n\nwith Path('/config/base.toml').open('rb') as f:\n    base = tomllib.load(f)\nout = Path('/out')\nout.mkdir(parents=True, exist_ok=True)\nnames = []\nfor path in sorted(Path('/config/env').glob('*.toml')):\n    if not path.is_file():\n        continue\n    with path.open('rb') as f:\n        override = tomllib.load(f)\n    rendered = json.dumps(merge(base, override), indent=2, sort_keys=True,\n                          ensure_ascii=False, default=serialize) + '\\n'\n    (out / (path.stem + '.json')).write_text(rendered, encoding='utf-8')\n    names.append(path.stem)\n(out / 'index.txt').write_text(''.join(name + '\\n' for name in sorted(names)), encoding='utf-8')\nprint('Created: ' + ', '.join(str(out / (name + '.json')) for name in names) + ', /out/index.txt')\nPY",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Created: /out/dev.json, /out/prod.json, /out/index.txt\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

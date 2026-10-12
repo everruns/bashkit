@@ -1,0 +1,78 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "hard_log_p95",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "/home/eval/logs/access.log is an HTTP access log. Each well-formed line is: <timestamp> <method> <path> <status> <latency>ms, separated by single spaces. Produce /home/eval/logs/out/report.tsv with per-endpoint latency statistics.\n\nRules:\n- Skip lines that do not have exactly those 5 fields or whose latency is not a number followed by \"ms\" (e.g. truncation markers, or \"-\" for timed-out requests).\n- endpoint = path with any query string (\"?...\" onwards) removed, then a trailing \"/\" removed (unless the path is just \"/\").\n- Exclude /healthz and every path under /static/.\n- For each endpoint: count = number of requests, p50 and p95 = latency percentiles in ms using the nearest-rank method (sort latencies ascending; the p-th percentile is the value at 1-based position ceil(p/100 * count)), err_permille = floor(1000 * (requests with status >= 500) / count).\n- Output: tab-separated, a header line `endpoint\tcount\tp50\tp95\terr_permille`, then the top 5 endpoints ordered by p95 descending, then count descending, then endpoint ascending (byte order). Integers only, no padding."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Created `/home/eval/logs/out/report.tsv` with the requested per-endpoint latency statistics.",
+    "iterations": 5,
+    "tool_calls_count": 4,
+    "tool_calls": [
+      "ls -la /home/eval/logs && sed -n '1,10p' /home/eval/logs/access.log",
+      "python3 - <<'PY'\nfrom collections import Counter\np='/home/eval/logs/access.log'\nlat=Counter(); bad=[]; spaces=Counter()\nfor i,l in enumerate(open(p),1):\n s=l.rstrip('\\n')\n f=s.split(' ')\n if len(f)!=5: bad.append((i,s)); continue\n lat[f[4]]+=1\nprint('latency tokens',lat.most_common(20)); print('bad fields',len(bad),bad[:8])\nPY",
+      "python3 - <<'PY'\nfrom collections import Counter\nimport re\nc=Counter()\nfor l in open('/home/eval/logs/access.log'):\n f=l.rstrip('\\n').split(' ')\n if len(f)==5: c[f[-1]]+=1\nprint([(x,n) for x,n in c.items() if not re.fullmatch(r'\\d+ms',x)][:30])\nPY",
+      "mkdir -p /home/eval/logs/out && python3 - <<'PY'\nfrom collections import defaultdict\nimport re, math\nsrc='/home/eval/logs/access.log'\nout='/home/eval/logs/out/report.tsv'\nrows=defaultdict(lambda: [[], 0])\nlatency_re=re.compile(r'[0-9]+ms\\Z')\nwith open(src, encoding='utf-8') as f:\n    for line in f:\n        fields=line.rstrip('\\n').split(' ')\n        if len(fields)!=5:\n            continue\n        timestamp, method, path, status, latency=fields\n        if not latency_re.fullmatch(latency):\n            continue\n        endpoint=path.split('?',1)[0]\n        if endpoint != '/' and endpoint.endswith('/'):\n            endpoint=endpoint[:-1]\n        if endpoint == '/healthz' or endpoint.startswith('/static/'):\n            continue\n        ms=int(latency[:-2])\n        try:\n            code=int(status)\n        except ValueError:\n            continue\n        rows[endpoint][0].append(ms)\n        if code>=500:\n            rows[endpoint][1]+=1\nresult=[]\nfor endpoint,(values,errors) in rows.items():\n    values.sort()\n    n=len(values)\n    p50=values[math.ceil(.50*n)-1]\n    p95=values[math.ceil(.95*n)-1]\n    err=1000*errors//n\n    result.append((endpoint,p50,p95,n,err))\nresult.sort(key=lambda r:(-r[2],-r[3],r[0].encode('utf-8')))\nwith open(out,'w',encoding='utf-8',newline='') as f:\n    f.write('endpoint\\tcount\\tp50\\tp95\\terr_permille\\n')\n    for endpoint,p50,p95,n,err in result[:5]:\n        f.write(f'{endpoint}\\t{n}\\t{p50}\\t{p95}\\t{err}\\n')\nPY\ncat /home/eval/logs/out/report.tsv"
+    ],
+    "usage": {
+      "input_tokens": 6296,
+      "output_tokens": 1182,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 17929
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 4.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 4.0,
+      "turns": 5.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /home/eval/logs && sed -n '1,10p' /home/eval/logs/access.log",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--   139624 2026-10-12 18:56 access.log\n2026-10-09T10:00:00 GET /api/orders 200 150ms\n2026-10-09T10:00:01 GET /api/items 200 70ms\n2026-10-09T10:00:02 GET /healthz 200 20ms\n2026-10-09T10:00:03 DELETE /api/users 404 120ms\n2026-10-09T10:00:04 POST /api/items 200 240ms\n2026-10-09T10:00:05 DELETE /api/search 503 190ms\n2026-10-09T10:00:06 GET /api/orders 404 160ms\n2026-10-09T10:00:07 GET /api/items 200 70ms\n2026-10-09T10:00:08 DELETE /api/items 200 320ms\n2026-10-09T10:00:09 GET /api/items 200 400ms\n"
+          },
+          {
+            "commands": "python3 - <<'PY'\nfrom collections import Counter\np='/home/eval/logs/access.log'\nlat=Counter(); bad=[]; spaces=Counter()\nfor i,l in enumerate(open(p),1):\n s=l.rstrip('\\n')\n f=s.split(' ')\n if len(f)!=5: bad.append((i,s)); continue\n lat[f[4]]+=1\nprint('latency tokens',lat.most_common(20)); print('bad fields',len(bad),bad[:8])\nPY",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "latency tokens [('320ms', 84), ('330ms', 80), ('280ms', 74), ('10ms', 74), ('180ms', 74), ('90ms', 71), ('60ms', 71), ('150ms', 70), ('290ms', 70), ('110ms', 70), ('360ms', 70), ('100ms', 69), ('170ms', 68), ('400ms', 67), ('20ms', 66), ('160ms', 66), ('80ms', 66), ('130ms', 66), ('340ms', 66), ('120ms', 65)]\nbad fields 7 [(397, '-- log truncated --'), (794, '-- log truncated --'), (1191, '-- log truncated --'), (1588, '-- log truncated --'), (1985, '-- log truncated --'), (2382, '-- log truncated --'), (2779, '-- log truncated --')]\n"
+          },
+          {
+            "commands": "python3 - <<'PY'\nfrom collections import Counter\nimport re\nc=Counter()\nfor l in open('/home/eval/logs/access.log'):\n f=l.rstrip('\\n').split(' ')\n if len(f)==5: c[f[-1]]+=1\nprint([(x,n) for x,n in c.items() if not re.fullmatch(r'\\d+ms',x)][:30])\nPY",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[('-', 11)]\n"
+          },
+          {
+            "commands": "mkdir -p /home/eval/logs/out && python3 - <<'PY'\nfrom collections import defaultdict\nimport re, math\nsrc='/home/eval/logs/access.log'\nout='/home/eval/logs/out/report.tsv'\nrows=defaultdict(lambda: [[], 0])\nlatency_re=re.compile(r'[0-9]+ms\\Z')\nwith open(src, encoding='utf-8') as f:\n    for line in f:\n        fields=line.rstrip('\\n').split(' ')\n        if len(fields)!=5:\n            continue\n        timestamp, method, path, status, latency=fields\n        if not latency_re.fullmatch(latency):\n            continue\n        endpoint=path.split('?',1)[0]\n        if endpoint != '/' and endpoint.endswith('/'):\n            endpoint=endpoint[:-1]\n        if endpoint == '/healthz' or endpoint.startswith('/static/'):\n            continue\n        ms=int(latency[:-2])\n        try:\n            code=int(status)\n        except ValueError:\n            continue\n        rows[endpoint][0].append(ms)\n        if code>=500:\n            rows[endpoint][1]+=1\nresult=[]\nfor endpoint,(values,errors) in rows.items():\n    values.sort()\n    n=len(values)\n    p50=values[math.ceil(.50*n)-1]\n    p95=values[math.ceil(.95*n)-1]\n    err=1000*errors//n\n    result.append((endpoint,p50,p95,n,err))\nresult.sort(key=lambda r:(-r[2],-r[3],r[0].encode('utf-8')))\nwith open(out,'w',encoding='utf-8',newline='') as f:\n    f.write('endpoint\\tcount\\tp50\\tp95\\terr_permille\\n')\n    for endpoint,p50,p95,n,err in result[:5]:\n        f.write(f'{endpoint}\\t{n}\\t{p50}\\t{p95}\\t{err}\\n')\nPY\ncat /home/eval/logs/out/report.tsv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "endpoint\tcount\tp50\tp95\terr_permille\n/api/items\t381\t270\t640\t41\n/api/search\t381\t210\t500\t62\n/api/login\t371\t240\t480\t37\n/api/orders\t371\t290\t480\t43\n/api/users\t379\t230\t430\t47\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

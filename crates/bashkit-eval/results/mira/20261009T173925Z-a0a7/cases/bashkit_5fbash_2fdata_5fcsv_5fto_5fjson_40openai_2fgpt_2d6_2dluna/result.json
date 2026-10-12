@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "data_csv_to_json",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "Convert /data/users.csv to a JSON array where each row becomes an object with the column headers as keys. Print the resulting JSON to stdout."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "[{\"name\": \"alice\", \"age\": \"30\", \"city\": \"seattle\"}, {\"name\": \"bob\", \"age\": \"25\", \"city\": \"portland\"}, {\"name\": \"charlie\", \"age\": \"35\", \"city\": \"denver\"}]",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "python3 - <<'PY'\nimport csv,json\nwith open('/data/users.csv', newline='', encoding='utf-8') as f:\n    rows=list(csv.DictReader(f))\nprint(json.dumps(rows, ensure_ascii=False))\nPY"
+    ],
+    "usage": {
+      "input_tokens": 945,
+      "output_tokens": 140,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 3101
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "python3 - <<'PY'\nimport csv,json\nwith open('/data/users.csv', newline='', encoding='utf-8') as f:\n    rows=list(csv.DictReader(f))\nprint(json.dumps(rows, ensure_ascii=False))\nPY",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[{\"name\": \"alice\", \"age\": \"30\", \"city\": \"seattle\"}, {\"name\": \"bob\", \"age\": \"25\", \"city\": \"portland\"}, {\"name\": \"charlie\", \"age\": \"35\", \"city\": \"denver\"}]\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

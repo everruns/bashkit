@@ -99,35 +99,38 @@ First run of the merged, tagged `bashkit_bash` dataset (mode=agent|runtime,
 difficulty=basic|repo|hard) and of `bashkit_generate`. Run folders:
 `results/mira/20261009T173925Z-a0a7` (`bashkit_bash`) and
 `results/mira/20261009T171610Z-2942` (`bashkit_generate`). GPT-6.1 Sol and
-GPT-6 Luna are not in this run: the OpenAI key ran out of credit mid-run, so
-resume both run folders with `mira run ... --resume <run_id>` once it is
-topped up.
+GPT-6 Luna were added on 2026-10-12 with `mira run ... --resume <run_id>`
+(the OpenAI key ran out of credit during the first pass).
 
-| Metric | Opus 5.5 | Kimi K3 | Sonnet 5.5 | Muse Spark 1.3 | Gemini 3.8 Flash |
-|--------|----------|---------|------------|----------------|------------------|
-| bashkit_bash (88) | **87/88** | 86/88 | 85/88 | 84/88 | 74/88 |
-| basic (58) | **58/58** | 57/58 | 56/58 | **58/58** | 55/58 |
-| repo (8) | 7/8 | **8/8** | **8/8** | 5/8 | 4/8 |
-| hard (10) | **10/10** | 9/10 | 9/10 | 9/10 | 6/10 |
-| runtime (12) | **12/12** | **12/12** | **12/12** | **12/12** | 9/12 |
-| bashkit_generate (15) | 13/15 | **15/15** | **15/15** | **15/15** | 13/15 |
-| Tool-call success | 92% | 92% | 92% | **97%** | 94% |
-| Tokens (in/out) | 628K / 102K | 974K / 192K | **519K / 79K** | 2639K / 679K | 1619K / 127K |
-| Duration | 18.3 min | 40.9 min | **13.1 min** | 119.3 min | 56.1 min |
+| Metric | Opus 5.5 | Kimi K3 | Sonnet 5.5 | Muse Spark 1.3 | GPT-6.1 Sol | Gemini 3.8 Flash | GPT-6 Luna |
+|--------|----------|---------|------------|----------------|-------------|------------------|------------|
+| bashkit_bash (88) | **87/88** | 86/88 | 85/88 | 84/88 | 76/88 | 74/88 | 71/88 |
+| basic (58) | **58/58** | 57/58 | 56/58 | **58/58** | 54/58 | 55/58 | 53/58 |
+| repo (8) | 7/8 | **8/8** | **8/8** | 5/8 | 3/8 | 4/8 | 1/8 |
+| hard (10) | **10/10** | 9/10 | 9/10 | 9/10 | 8/10 | 6/10 | 5/10 |
+| runtime (12) | **12/12** | **12/12** | **12/12** | **12/12** | 11/12 | 9/12 | **12/12** |
+| bashkit_generate (15) | 13/15 | **15/15** | **15/15** | **15/15** | 14/15 | 13/15 | 14/15 |
+| Tool-call success | 92% | 92% | 92% | **97%** | 88% | 94% | 84% |
+| Tokens (in/out) | 628K / 102K | 974K / 192K | 519K / 79K | 2639K / 679K | **275K / 42K** | 1619K / 127K | 497K / 82K |
+| Duration | 18.3 min | 40.9 min | **13.1 min** | 119.3 min | 17.8 min | 56.1 min | 18.8 min |
 
 Duration is the sum of per-task wall-clock time for `bashkit_bash`.
 
 #### Highlights
 
-1. **`hard_makefile_deps` is the hardest task**: Sonnet, Kimi, Muse and Gemini
-   all miss it; only Opus 5.5 solves it.
+1. **`hard_makefile_deps` is the hardest task**: only Opus 5.5 and GPT-6.1 Sol
+   solve it.
 2. **Runtime tasks are near-saturated** for the top four (12/12). Gemini misses
    `rt_sqlite_hr_report`, `rt_state_csvq_tool` and `rt_state_ledger_ingest`.
 3. **Repo tasks still split the field**: `repo_parallel_runner_masks_failure`
-   (masked background-job failures) defeats Opus, Muse and Gemini.
+   (masked background-job failures) defeats Opus, Muse, Gemini and both GPT-6
+   models; GPT-6 Luna passes 1 of 8 repo tasks, GPT-6.1 Sol 3.
+5. **GPT-6.1 Sol is the most token-frugal** (275K in, about half of Sonnet)
+   but has the lowest tool-call success after GPT-6 Luna.
 4. **Generate**: Opus misses `gen_assoc_inventory` and `gen_retry_backoff`
    (one reply had no script fence); Gemini misses `gen_csv_to_jsonl` and
-   `gen_semver_bump`.
+   `gen_semver_bump`; GPT-6.1 Sol misses `gen_batch_rename`, GPT-6 Luna
+   `gen_config_template`.
 
 ### 2026-10-09, 7-model lineup (58 tasks + 8 repo + 10 hard)
 

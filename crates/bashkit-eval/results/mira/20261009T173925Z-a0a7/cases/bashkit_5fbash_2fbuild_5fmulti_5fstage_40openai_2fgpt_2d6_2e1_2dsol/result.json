@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "build_multi_stage",
+  "target": "openai/gpt-6.1-sol",
+  "input": [
+    "Simulate a build pipeline: 1) Check that /src/main.c and /src/utils.c exist, 2) 'Compile' each .c file by copying it to /build/ with a .o extension and prepending '// compiled', 3) 'Link' by concatenating all .o files into /build/program with a '// linked' header, 4) 'Package' by creating a tar.gz of /build/ at /dist/release.tar.gz. Print status for each stage. If any stage fails, stop and report the error."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Build pipeline completed successfully:\n\n1. **Check:** `/src/main.c` and `/src/utils.c` exist.\n2. **Compile:** Created `/build/main.o` and `/build/utils.o`, each with a `// compiled` header.\n3. **Link:** Concatenated all `.o` files into `/build/program` with a `// linked` header.\n4. **Package:** Archived `/build/` to `/dist/release.tar.gz`.\n\nNo stages failed.",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "set -e\ntrap 'rc=$?; printf \"ERROR: %s stage failed (exit %s). Pipeline stopped.\\n\" \"$stage\" \"$rc\" >&2; exit \"$rc\"' ERR\nstage=Check\nprintf '[Check] Checking source files...\\n'\nfor file in /src/main.c /src/utils.c; do\n  if [[ ! -f \"$file\" ]]; then\n    printf 'ERROR: Required source file missing or not a regular file: %s\\n' \"$file\" >&2\n    false\n  fi\ndone\nprintf '[Check] Success.\\n'\nstage=Compile\nprintf '[Compile] Compiling source files...\\n'\nmkdir -p /build\nobjects=()\nfor file in /src/*.c; do\n  object=\"/build/$(basename \"${file%.c}\").o\"\n  { printf '// compiled\\n'; cat \"$file\"; } > \"$object\"\n  objects+=(\"$object\")\n  printf '[Compile] Created %s\\n' \"$object\"\ndone\nprintf '[Compile] Success.\\n'\nstage=Link\nprintf '[Link] Linking object files...\\n'\n{ printf '// linked\\n'; cat /build/*.o; } > /build/program\nprintf '[Link] Success: /build/program\\n'\nstage=Package\nprintf '[Package] Creating release archive...\\n'\nmkdir -p /dist\ntar -czf /dist/release.tar.gz -C / build\nprintf '[Package] Success: /dist/release.tar.gz\\n'\nprintf 'Build pipeline completed successfully.\\n'"
+    ],
+    "usage": {
+      "input_tokens": 1438,
+      "output_tokens": 477,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 9790
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "set -e\ntrap 'rc=$?; printf \"ERROR: %s stage failed (exit %s). Pipeline stopped.\\n\" \"$stage\" \"$rc\" >&2; exit \"$rc\"' ERR\nstage=Check\nprintf '[Check] Checking source files...\\n'\nfor file in /src/main.c /src/utils.c; do\n  if [[ ! -f \"$file\" ]]; then\n    printf 'ERROR: Required source file missing or not a regular file: %s\\n' \"$file\" >&2\n    false\n  fi\ndone\nprintf '[Check] Success.\\n'\nstage=Compile\nprintf '[Compile] Compiling source files...\\n'\nmkdir -p /build\nobjects=()\nfor file in /src/*.c; do\n  object=\"/build/$(basename \"${file%.c}\").o\"\n  { printf '// compiled\\n'; cat \"$file\"; } > \"$object\"\n  objects+=(\"$object\")\n  printf '[Compile] Created %s\\n' \"$object\"\ndone\nprintf '[Compile] Success.\\n'\nstage=Link\nprintf '[Link] Linking object files...\\n'\n{ printf '// linked\\n'; cat /build/*.o; } > /build/program\nprintf '[Link] Success: /build/program\\n'\nstage=Package\nprintf '[Package] Creating release archive...\\n'\nmkdir -p /dist\ntar -czf /dist/release.tar.gz -C / build\nprintf '[Package] Success: /dist/release.tar.gz\\n'\nprintf 'Build pipeline completed successfully.\\n'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[Check] Checking source files...\n[Check] Success.\n[Compile] Compiling source files...\n[Compile] Created /build/main.o\n[Compile] Created /build/utils.o\n[Compile] Success.\n[Link] Linking object files...\n[Link] Success: /build/program\n[Package] Creating release archive...\n[Package] Success: /dist/release.tar.gz\nBuild pipeline completed successfully.\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

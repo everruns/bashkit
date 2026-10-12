@@ -1,0 +1,85 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "repo_release_branch_bump",
+  "target": "openai/gpt-6.1-sol",
+  "input": [
+    "Cut release 1.0.0 of the git repo /home/eval/lib: create and switch to a branch named `release-1.0.0`, set the version to 1.0.0 everywhere it appears (VERSION, package.json, and turn the `## Unreleased` heading in CHANGELOG.md into `## 1.0.0`), run `make test`, and commit with the message `release: 1.0.0`."
+  ],
+  "passed": false,
+  "aggregate": 0.875,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 0.875,
+      "pass": false,
+      "reason": "7/8 checks passed (weighted rate 88%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Created and switched to `release-1.0.0`.\n\n- Updated `VERSION` and `package.json` to `1.0.0`.\n- Changed `## Unreleased` to `## 1.0.0` in `CHANGELOG.md`.\n- Ran `make test` successfully.\n- Committed as `b460921c` with message `release: 1.0.0`.\n\nWorking tree is clean.",
+    "iterations": 6,
+    "tool_calls_count": 5,
+    "tool_calls": [
+      "cd /home/eval/lib && git status --short && git branch --show-current && ls -la && cat VERSION && cat package.json && cat CHANGELOG.md && cat Makefile",
+      "cd /home/eval/lib && ls -la && cat VERSION && cat package.json && cat CHANGELOG.md && cat Makefile && git branch",
+      "cd /home/eval/lib && git checkout -b release-1.0.0 && python3 - <<'PY'\nfrom pathlib import Path\np = Path('VERSION')\np.write_text('1.0.0\\n')\np = Path('package.json')\np.write_text(p.read_text().replace('\"version\": \"0.9.3\"', '\"version\": \"1.0.0\"'))\np = Path('CHANGELOG.md')\np.write_text(p.read_text().replace('## Unreleased', '## 1.0.0'))\nPY\nmake test",
+      "cd /home/eval/lib && git diff && git add VERSION package.json CHANGELOG.md && git commit -m \"release: 1.0.0\" && git status",
+      "cd /home/eval/lib && cat scripts/check-version.sh && cat build/version-check.txt && rm build/version-check.txt && rmdir build && git status && git log -1 --oneline"
+    ],
+    "usage": {
+      "input_tokens": 5565,
+      "output_tokens": 496,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 15367
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 5.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 4.0,
+      "turns": 6.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cd /home/eval/lib && git status --short && git branch --show-current && ls -la && cat VERSION && cat package.json && cat CHANGELOG.md && cat Makefile",
+            "exit_code": 128,
+            "stderr": "internal error: fatal: '--show-current' is not a valid branch name (starts with dash)\n",
+            "stdout": "On branch master\n\nnothing to commit, working tree clean\n"
+          },
+          {
+            "commands": "cd /home/eval/lib && ls -la && cat VERSION && cat package.json && cat CHANGELOG.md && cat Makefile && git branch",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "drwxr-xr-x        0 2026-10-12 18:54 .git\n-rw-r--r--       95 2026-10-12 18:54 CHANGELOG.md\n-rw-r--r--       38 2026-10-12 18:54 Makefile\n-rw-r--r--        6 2026-10-12 18:54 VERSION\n-rw-r--r--       67 2026-10-12 18:54 package.json\ndrwxr-xr-x        0 2026-10-12 18:54 scripts\n0.9.3\n{\n  \"name\": \"@acme/lib\",\n  \"version\": \"0.9.3\",\n  \"private\": true\n}\n# Changelog\n\n## Unreleased\n\n- Add retry helper\n- Drop Node 16\n\n## 0.9.3\n\n- Fix timeout parsing\ntest:\n\t@bash scripts/check-version.sh\n* master\n"
+          },
+          {
+            "commands": "cd /home/eval/lib && git checkout -b release-1.0.0 && python3 - <<'PY'\nfrom pathlib import Path\np = Path('VERSION')\np.write_text('1.0.0\\n')\np = Path('package.json')\np.write_text(p.read_text().replace('\"version\": \"0.9.3\"', '\"version\": \"1.0.0\"'))\np = Path('CHANGELOG.md')\np.write_text(p.read_text().replace('## Unreleased', '## 1.0.0'))\nPY\nmake test",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Switched to branch 'release-1.0.0'\nversion 1.0.0 consistent\n"
+          },
+          {
+            "commands": "cd /home/eval/lib && git diff && git add VERSION package.json CHANGELOG.md && git commit -m \"release: 1.0.0\" && git status",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Diff output (simplified in virtual mode)\n[master b460921] release: 1.0.0\nOn branch release-1.0.0\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/version-check.txt\n"
+          },
+          {
+            "commands": "cd /home/eval/lib && cat scripts/check-version.sh && cat build/version-check.txt && rm build/version-check.txt && rmdir build && git status && git log -1 --oneline",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "#!/bin/bash\n# VERSION, package.json and the newest CHANGELOG heading must agree.\nv=$(cat VERSION)\np=$(jq -r .version package.json)\nc=$(grep -m1 '^## ' CHANGELOG.md | sed 's/^## //')\nif [ \"$v\" = \"$p\" ] && [ \"$v\" = \"$c\" ]; then\n  mkdir -p build; echo \"version $v consistent\" | tee build/version-check.txt\nelse\n  echo \"mismatch: VERSION=$v package.json=$p CHANGELOG=$c\"; exit 1\nfi\nversion 1.0.0 consistent\nOn branch release-1.0.0\n\nnothing to commit, working tree clean\ncommit b460921c\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Mon Oct 12 18:54:43 2026 +0000\n\n    release: 1.0.0\n\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

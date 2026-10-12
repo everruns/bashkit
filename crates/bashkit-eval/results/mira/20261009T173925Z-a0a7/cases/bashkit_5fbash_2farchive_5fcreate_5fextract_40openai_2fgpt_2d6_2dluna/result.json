@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "archive_create_extract",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "Create a tar.gz archive of the /project directory and save it as /tmp/project.tar.gz. Then create /backup directory and extract the archive there. Verify the files exist in /backup."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Created `/tmp/project.tar.gz`, extracted it into `/backup`, and verified the files are present under `/backup/project` (`README.md` and `src/main.sh`).",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "ls -la /; ls -la /project 2>/dev/null || true; mkdir -p /tmp /backup; tar -czf /tmp/project.tar.gz -C / project; tar -xzf /tmp/project.tar.gz -C /backup; find /backup/project -type f -print 2>/dev/null | head -100; echo '---'; ls -l /tmp/project.tar.gz; test -d /backup/project && echo 'Extraction verified: /backup/project exists'"
+    ],
+    "usage": {
+      "input_tokens": 1247,
+      "output_tokens": 179,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 3114
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /; ls -la /project 2>/dev/null || true; mkdir -p /tmp /backup; tar -czf /tmp/project.tar.gz -C / project; tar -xzf /tmp/project.tar.gz -C /backup; find /backup/project -type f -print 2>/dev/null | head -100; echo '---'; ls -l /tmp/project.tar.gz; test -d /backup/project && echo 'Extraction verified: /backup/project exists'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "drwxr-xr-x        0 2026-10-12 18:50 bin\ndrwxr-xr-x        0 2026-10-12 18:51 dev\ndrwxr-xr-x        0 2026-10-12 18:50 etc\ndrwxr-xr-x        0 2026-10-12 18:51 home\ndrwxr-xr-x        0 2026-10-12 18:50 proc\ndrwxr-xr-x        0 2026-10-12 18:51 project\ndrwxr-xr-x        0 2026-10-12 18:50 root\ndrwxrwxrwx        0 2026-10-12 18:51 tmp\ndrwxr-xr-x        0 2026-10-12 18:50 usr\n-rw-r--r--       37 2026-10-12 18:51 README.md\ndrwxr-xr-x        0 2026-10-12 18:51 src\n/backup/project/README.md\n/backup/project/src/main.sh\n---\n-rw-r--r--      232 2026-10-12 18:51 /tmp/project.tar.gz\nExtraction verified: /backup/project exists\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

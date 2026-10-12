@@ -1,0 +1,148 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "hard_multi_bug_inventory",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "The git repository at /home/eval/inventory has a failing test suite. Run `make test`, then fix the library code under lib/ until every test passes. The test runner stops at the first failing test, so fixing one problem may reveal the next. Do not modify anything under tests/ or data/ (the data files are exports from another system and are correct as they are). When `make test` passes, run `make report` to regenerate build/report.txt from data/stock.csv, then commit your fix in the repo with a commit message that starts with `fix:`."
+  ],
+  "passed": false,
+  "aggregate": 0.6923076923076923,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 0.6923076923076923,
+      "pass": false,
+      "reason": "8/11 checks passed (weighted rate 69%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "All tests pass, and `make report` generated `build/report.txt` with a total of `90.81` and low-stock SKUs `A-101 C-200 D-300`. Committed the library fixes as `fix: parse stock CSV and format cents correctly`.",
+    "iterations": 15,
+    "tool_calls_count": 14,
+    "tool_calls": [
+      "cd /home/eval/inventory && make test",
+      "cd /home/eval/inventory && ls -la && find lib -type f -maxdepth 3 -print && cat Makefile && grep -R \"\" -n lib",
+      "cd /home/eval/inventory && cat > lib/format.sh <<'EOF'\n# format.sh: money formatting\n# cents N -> dollars with exactly two decimals, e.g. 1205 -> 12.05\ncents() {\n  local n=$1\n  printf '%d.%02d\\n' \"$(( n / 100 ))\" \"$(( n % 100 ))\"\n}\nEOF\nmake test",
+      "cd /home/eval/inventory && cat tests/run.sh && head -10 data/stock.csv && cat bin/report.sh && cat README.md",
+      "cd /home/eval/inventory && for f in tests/test_*.sh; do echo ===$f; cat \"$f\"; done && cat data/stock.csv",
+      "cd /home/eval/inventory && cat tests/fixtures/stock.csv && cat lib/inventory.sh && git status --short && cat .gitignore 2>/dev/null || true",
+      "cd /home/eval/inventory && python3 - <<'PY'\np='lib/inventory.sh'\ns=open(p).read()\na=s.index('each_item() {')\nb=s.index('\\n}\\n\\n# total_value',a)+2\nnew='''each_item() {\n  local line i ch in_quotes\n  local -a fields\n  {\n    IFS= read -r _header || return 0\n    while IFS= read -r line || [[ -n $line ]]; do\n      fields=()\n      field=\n      in_quotes=0\n      i=0\n      while (( i < ${#line} )); do\n        ch=${line:i:1}\n        if [[ $ch == '\"' ]]; then\n          if (( in_quotes )) && [[ ${line:i+1:1} == '\"' ]]; then\n            field+='\"'\n            ((i += 2))\n            continue\n          fi\n          if (( in_quotes )); then in_quotes=0; else in_quotes=1; fi\n        elif [[ $ch == ',' ]] && (( ! in_quotes )); then\n          fields+=(\"$field\")\n          field=\n        else\n          field+=$ch\n        fi\n        ((i += 1))\n      done\n      fields+=(\"$field\")\n      printf '%s %s %s\\\\n' \"${fields[0]}\" \"${fields[2]}\" \"${fields[3]}\"\n    done\n  } < \"$1\"\n}'''\ns=s[:a]+new+s[b:]\ns=s.replace('if [[ $qty < $2 ]]; then echo \"$sku\"; fi', 'if (( 10#$qty < 10#$2 )); then echo \"$sku\"; fi')\nopen(p,'w').write(s)\nPY\nmake test",
+      "cd /home/eval/inventory && make report && cat build/report.txt && git status --short && git diff -- lib",
+      "cd /home/eval/inventory && sed -n '1,100p' lib/format.sh && sed -n '1,100p' lib/inventory.sh && git status --short && git diff --stat && git ls-files -v lib/format.sh lib/inventory.sh && git log -1 --oneline",
+      "cd /home/eval/inventory && git check-ignore -v lib/format.sh lib/inventory.sh || true; git status --porcelain=v2; git diff --no-ext-diff -- lib/format.sh lib/inventory.sh; git show HEAD:lib/format.sh; git hash-object lib/format.sh; git rev-parse HEAD:lib/format.sh; git update-index --no-assume-unchanged lib/format.sh lib/inventory.sh 2>/dev/null || true; git add lib/format.sh lib/inventory.sh build/report.txt && git status --short && git diff --cached --stat",
+      "cd /home/eval/inventory && git commit -m \"fix: parse stock CSV and format cents correctly\" && git status --short && git log -1 --oneline",
+      "cd /home/eval/inventory && git status --short && git show --stat --oneline HEAD && git show HEAD:build/report.txt",
+      "cd /home/eval/inventory && rm -f build/test-report.txt build/test_*.log && git rm --cached build/report.txt && git commit --amend --no-edit && git status --short && git log -1 --oneline",
+      "cd /home/eval/inventory && git status --short && git log -1 --oneline && git show --format=fuller --name-only HEAD"
+    ],
+    "usage": {
+      "input_tokens": 48701,
+      "output_tokens": 3396,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 45287
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 14.0,
+      "tool_calls_err": 5.0,
+      "tool_calls_ok": 9.0,
+      "turns": 15.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 128,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cd /home/eval/inventory && make test",
+            "exit_code": 2,
+            "stderr": "make: *** [Makefile:2: test] Error 1\n",
+            "stdout": "FAIL test_1_format\n    assertion failed: cents 1205: expected '12.05', got '12.5'\n"
+          },
+          {
+            "commands": "cd /home/eval/inventory && ls -la && find lib -type f -maxdepth 3 -print && cat Makefile && grep -R \"\" -n lib",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "drwxr-xr-x        0 2026-10-12 18:55 .git\n-rw-r--r--       77 2026-10-12 18:55 Makefile\n-rw-r--r--      103 2026-10-12 18:55 README.md\ndrwxr-xr-x        0 2026-10-12 18:55 bin\ndrwxr-xr-x        0 2026-10-12 18:55 build\ndrwxr-xr-x        0 2026-10-12 18:55 data\ndrwxr-xr-x        0 2026-10-12 18:55 lib\ndrwxr-xr-x        0 2026-10-12 18:55 tests\nlib/format.sh\nlib/inventory.sh\ntest:\n\t@bash tests/run.sh\n\nreport:\n\t@bash bin/report.sh\n\n.PHONY: test report\nlib/format.sh:1:# format.sh: money formatting\nlib/format.sh:2:# cents N -> dollars with exactly two decimals, e.g. 1205 -> 12.05\nlib/format.sh:3:cents() {\nlib/format.sh:4:  local n=$1\nlib/format.sh:5:  printf '%d.%d\\n' $(( n / 100 )) $(( n % 100 ))\nlib/format.sh:6:}\nlib/inventory.sh:1:# inventory.sh: stock file helpers.\nlib/inventory.sh:2:# Stock files are CSV: sku,name,qty,price_cents with a header line. Names may\nlib/inventory.sh:3:# be quoted and contain commas. Exports from the warehouse system do not end\nlib/inventory.sh:4:# with a newline.\nlib/inventory.sh:5:. lib/format.sh\nlib/inventory.sh:6:\nlib/inventory.sh:7:# each_item FILE: print \"sku qty price_cents\" for every data row\nlib/inventory.sh:8:each_item() {\nlib/inventory.sh:9:  local sku name qty price\nlib/inventory.sh:10:  {\nlib/inventory.sh:11:    read -r _header\nlib/inventory.sh:12:    while IFS=, read -r sku name qty price; do\nlib/inventory.sh:13:      echo \"$sku $qty $price\"\nlib/inventory.sh:14:    done\nlib/inventory.sh:15:  } < \"$1\"\nlib/inventory.sh:16:}\nlib/inventory.sh:17:\nlib/inventory.sh:18:# total_value FILE: sum of qty*price_cents over all rows, formatted as dollars\nlib/inventory.sh:19:total_value() {\nlib/inventory.sh:20:  local total=0 sku qty price\nlib/inventory.sh:21:  while read -r sku qty price; do\nlib/inventory.sh:22:    total=$(( total + qty * price ))\nlib/inventory.sh:23:  done < <(each_item \"$1\")\nlib/inventory.sh:24:  cents \"$total\"\nlib/inventory.sh:25:}\nlib/inventory.sh:26:\nlib/inventory.sh:27:# low_stock FILE MIN: skus with qty strictly below MIN, sorted by sku\nlib/inventory.sh:28:low_stock() {\nlib/inventory.sh:29:  local sku qty price\nlib/inventory.sh:30:  each_item \"$1\" | while read -r sku qty price; do\nlib/inventory.sh:31:    if [[ $qty < $2 ]]; then echo \"$sku\"; fi\nlib/inventory.sh:32:  done | sort\nlib/inventory.sh:33:}\n"
+          },
+          {
+            "commands": "cd /home/eval/inventory && cat > lib/format.sh <<'EOF'\n# format.sh: money formatting\n# cents N -> dollars with exactly two decimals, e.g. 1205 -> 12.05\ncents() {\n  local n=$1\n  printf '%d.%02d\\n' \"$(( n / 100 ))\" \"$(( n % 100 ))\"\n}\nEOF\nmake test",
+            "exit_code": 2,
+            "stderr": "make: *** [Makefile:2: test] Error 1\n",
+            "stdout": "ok   test_1_format\nFAIL test_2_total\n    lib/inventory.sh: line 22: total + qty * price: syntax error: invalid arithmetic operator (error token is \"\"\")\n    total=\n    assertion failed: total value: expected '53.13', got ''\n"
+          },
+          {
+            "commands": "cd /home/eval/inventory && cat tests/run.sh && head -10 data/stock.csv && cat bin/report.sh && cat README.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "#!/bin/bash\n# Runs tests/test_*.sh in order and stops at the first failure.\ncd \"$(dirname \"$0\")/..\" || exit 2\nmkdir -p build\nn=0\ntotal=$(ls tests/test_*.sh | wc -l)\nfor t in tests/test_*.sh; do\n  name=$(basename \"$t\" .sh)\n  if bash \"$t\" > \"build/$name.log\" 2>&1; then\n    n=$((n + 1)); echo \"ok   $name\"\n  else\n    echo \"FAIL $name\"; sed 's/^/    /' \"build/$name.log\"\n    echo \"FAIL after $n/$total\" > build/test-report.txt\n    exit 1\n  fi\ndone\necho \"PASS $n/$total\" | tee build/test-report.txt\nsku,name,qty,price_cents\nA-100,Hex bolt M4,120,15\nA-101,Hex nut M4,7,4\nB-104,\"Washer, steel\",40,5\nC-200,Hinge,3,1205\nC-201,Hinge pin,12,99\nD-300,Bracket,9,250#!/bin/bash\n# Writes build/report.txt for data/stock.csv.\ncd \"$(dirname \"$0\")/..\" || exit 2\n. lib/inventory.sh\nmkdir -p build\n{\n  echo \"total: $(total_value data/stock.csv)\"\n  echo \"low:   $(low_stock data/stock.csv 10 | tr '\\n' ' ' | sed 's/ $//')\"\n} > build/report.txt\ncat build/report.txt\n# inventory\n\nStock helpers in bash. `make test` runs the suite, `make report` writes build/report.txt.\n"
+          },
+          {
+            "commands": "cd /home/eval/inventory && for f in tests/test_*.sh; do echo ===$f; cat \"$f\"; done && cat data/stock.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "===tests/test_1_format.sh\n. lib/format.sh\n. tests/assert.sh\nassert_eq 12.05 \"$(cents 1205)\" 'cents 1205'\nassert_eq 0.99 \"$(cents 99)\" 'cents 99'\nassert_eq 3.00 \"$(cents 300)\" 'cents 300'\necho \"format ok\"\n===tests/test_2_total.sh\n. lib/inventory.sh\n. tests/assert.sh\nv=$(total_value tests/fixtures/stock.csv)\necho \"total=$v\"\nassert_eq 53.13 \"$v\" 'total value'\n===tests/test_3_low.sh\n. lib/inventory.sh\n. tests/assert.sh\nv=$(low_stock tests/fixtures/stock.csv 5 | tr '\\n' ' ')\necho \"low5=$v\"\nassert_eq 'T-2 T-3 ' \"$v\" 'low stock below 5'\nv=$(low_stock tests/fixtures/stock.csv 11 | tr '\\n' ' ')\necho \"low11=$v\"\nassert_eq 'T-1 T-2 T-3 ' \"$v\" 'low stock below 11'\nsku,name,qty,price_cents\nA-100,Hex bolt M4,120,15\nA-101,Hex nut M4,7,4\nB-104,\"Washer, steel\",40,5\nC-200,Hinge,3,1205\nC-201,Hinge pin,12,99\nD-300,Bracket,9,250"
+          },
+          {
+            "commands": "cd /home/eval/inventory && cat tests/fixtures/stock.csv && cat lib/inventory.sh && git status --short && cat .gitignore 2>/dev/null || true",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "sku,name,qty,price_cents\nT-1,Widget,10,150\nT-2,\"Gadget, large\",3,1205\nT-3,Gizmo,2,99# inventory.sh: stock file helpers.\n# Stock files are CSV: sku,name,qty,price_cents with a header line. Names may\n# be quoted and contain commas. Exports from the warehouse system do not end\n# with a newline.\n. lib/format.sh\n\n# each_item FILE: print \"sku qty price_cents\" for every data row\neach_item() {\n  local sku name qty price\n  {\n    read -r _header\n    while IFS=, read -r sku name qty price; do\n      echo \"$sku $qty $price\"\n    done\n  } < \"$1\"\n}\n\n# total_value FILE: sum of qty*price_cents over all rows, formatted as dollars\ntotal_value() {\n  local total=0 sku qty price\n  while read -r sku qty price; do\n    total=$(( total + qty * price ))\n  done < <(each_item \"$1\")\n  cents \"$total\"\n}\n\n# low_stock FILE MIN: skus with qty strictly below MIN, sorted by sku\nlow_stock() {\n  local sku qty price\n  each_item \"$1\" | while read -r sku qty price; do\n    if [[ $qty < $2 ]]; then echo \"$sku\"; fi\n  done | sort\n}\nOn branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/test-report.txt\n\tbuild/test_1_format.log\n\tbuild/test_2_total.log\n"
+          },
+          {
+            "commands": "cd /home/eval/inventory && python3 - <<'PY'\np='lib/inventory.sh'\ns=open(p).read()\na=s.index('each_item() {')\nb=s.index('\\n}\\n\\n# total_value',a)+2\nnew='''each_item() {\n  local line i ch in_quotes\n  local -a fields\n  {\n    IFS= read -r _header || return 0\n    while IFS= read -r line || [[ -n $line ]]; do\n      fields=()\n      field=\n      in_quotes=0\n      i=0\n      while (( i < ${#line} )); do\n        ch=${line:i:1}\n        if [[ $ch == '\"' ]]; then\n          if (( in_quotes )) && [[ ${line:i+1:1} == '\"' ]]; then\n            field+='\"'\n            ((i += 2))\n            continue\n          fi\n          if (( in_quotes )); then in_quotes=0; else in_quotes=1; fi\n        elif [[ $ch == ',' ]] && (( ! in_quotes )); then\n          fields+=(\"$field\")\n          field=\n        else\n          field+=$ch\n        fi\n        ((i += 1))\n      done\n      fields+=(\"$field\")\n      printf '%s %s %s\\\\n' \"${fields[0]}\" \"${fields[2]}\" \"${fields[3]}\"\n    done\n  } < \"$1\"\n}'''\ns=s[:a]+new+s[b:]\ns=s.replace('if [[ $qty < $2 ]]; then echo \"$sku\"; fi', 'if (( 10#$qty < 10#$2 )); then echo \"$sku\"; fi')\nopen(p,'w').write(s)\nPY\nmake test",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "ok   test_1_format\nok   test_2_total\nok   test_3_low\nPASS 3/3\n"
+          },
+          {
+            "commands": "cd /home/eval/inventory && make report && cat build/report.txt && git status --short && git diff -- lib",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "total: 90.81\nlow:   A-101 C-200 D-300\ntotal: 90.81\nlow:   A-101 C-200 D-300\nOn branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/report.txt\n\tbuild/test-report.txt\n\tbuild/test_1_format.log\n\tbuild/test_2_total.log\n\tbuild/test_3_low.log\n# Diff output (simplified in virtual mode)\n"
+          },
+          {
+            "commands": "cd /home/eval/inventory && sed -n '1,100p' lib/format.sh && sed -n '1,100p' lib/inventory.sh && git status --short && git diff --stat && git ls-files -v lib/format.sh lib/inventory.sh && git log -1 --oneline",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# format.sh: money formatting\n# cents N -> dollars with exactly two decimals, e.g. 1205 -> 12.05\ncents() {\n  local n=$1\n  printf '%d.%02d\\n' \"$(( n / 100 ))\" \"$(( n % 100 ))\"\n}\n# inventory.sh: stock file helpers.\n# Stock files are CSV: sku,name,qty,price_cents with a header line. Names may\n# be quoted and contain commas. Exports from the warehouse system do not end\n# with a newline.\n. lib/format.sh\n\n# each_item FILE: print \"sku qty price_cents\" for every data row\neach_item() {\n  local line i ch in_quotes\n  local -a fields\n  {\n    IFS= read -r _header || return 0\n    while IFS= read -r line || [[ -n $line ]]; do\n      fields=()\n      field=\n      in_quotes=0\n      i=0\n      while (( i < ${#line} )); do\n        ch=${line:i:1}\n        if [[ $ch == '\"' ]]; then\n          if (( in_quotes )) && [[ ${line:i+1:1} == '\"' ]]; then\n            field+='\"'\n            ((i += 2))\n            continue\n          fi\n          if (( in_quotes )); then in_quotes=0; else in_quotes=1; fi\n        elif [[ $ch == ',' ]] && (( ! in_quotes )); then\n          fields+=(\"$field\")\n          field=\n        else\n          field+=$ch\n        fi\n        ((i += 1))\n      done\n      fields+=(\"$field\")\n      printf '%s %s %s\\n' \"${fields[0]}\" \"${fields[2]}\" \"${fields[3]}\"\n    done\n  } < \"$1\"\n}\n\n# total_value FILE: sum of qty*price_cents over all rows, formatted as dollars\ntotal_value() {\n  local total=0 sku qty price\n  while read -r sku qty price; do\n    total=$(( total + qty * price ))\n  done < <(each_item \"$1\")\n  cents \"$total\"\n}\n\n# low_stock FILE MIN: skus with qty strictly below MIN, sorted by sku\nlow_stock() {\n  local sku qty price\n  each_item \"$1\" | while read -r sku qty price; do\n    if (( 10#$qty < 10#$2 )); then echo \"$sku\"; fi\n  done | sort\n}\nOn branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/report.txt\n\tbuild/test-report.txt\n\tbuild/test_1_format.log\n\tbuild/test_2_total.log\n\tbuild/test_3_low.log\n# Diff output (simplified in virtual mode)\nMakefile\nREADME.md\nbin/report.sh\ndata/stock.csv\nlib/format.sh\nlib/inventory.sh\ntests/assert.sh\ntests/fixtures/stock.csv\ntests/run.sh\ntests/test_1_format.sh\ntests/test_2_total.sh\ntests/test_3_low.sh\ncommit b46093e9\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Mon Oct 12 18:55:02 2026 +0000\n\n    initial import\n\n"
+          },
+          {
+            "commands": "cd /home/eval/inventory && git check-ignore -v lib/format.sh lib/inventory.sh || true; git status --porcelain=v2; git diff --no-ext-diff -- lib/format.sh lib/inventory.sh; git show HEAD:lib/format.sh; git hash-object lib/format.sh; git rev-parse HEAD:lib/format.sh; git update-index --no-assume-unchanged lib/format.sh lib/inventory.sh 2>/dev/null || true; git add lib/format.sh lib/inventory.sh build/report.txt && git status --short && git diff --cached --stat",
+            "exit_code": 0,
+            "stderr": "git: 'check-ignore' is not a git command. See 'git --help'.\ngit: 'hash-object' is not a git command. See 'git --help'.\ninternal error: fatal: ambiguous argument 'HEAD:lib/format.sh': unknown revision\n",
+            "stdout": "On branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/report.txt\n\tbuild/test-report.txt\n\tbuild/test_1_format.log\n\tbuild/test_2_total.log\n\tbuild/test_3_low.log\n# Diff output (simplified in virtual mode)\n# format.sh: money formatting\n# cents N -> dollars with exactly two decimals, e.g. 1205 -> 12.05\ncents() {\n  local n=$1\n  printf '%d.%02d\\n' \"$(( n / 100 ))\" \"$(( n % 100 ))\"\n}\nOn branch master\n\nChanges to be committed:\n  (use \"git restore --staged <file>...\" to unstage)\n\tnew file:   build/report.txt\n\tnew file:   lib/format.sh\n\tnew file:   lib/inventory.sh\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/test-report.txt\n\tbuild/test_1_format.log\n\tbuild/test_2_total.log\n\tbuild/test_3_low.log\n# Diff output (simplified in virtual mode)\n"
+          },
+          {
+            "commands": "cd /home/eval/inventory && git commit -m \"fix: parse stock CSV and format cents correctly\" && git status --short && git log -1 --oneline",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[master b46093c] fix: parse stock CSV and format cents correctly\nOn branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/test-report.txt\n\tbuild/test_1_format.log\n\tbuild/test_2_total.log\n\tbuild/test_3_low.log\ncommit b46093c9\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Mon Oct 12 18:55:34 2026 +0000\n\n    fix: parse stock CSV and format cents correctly\n\n"
+          },
+          {
+            "commands": "cd /home/eval/inventory && git status --short && git show --stat --oneline HEAD && git show HEAD:build/report.txt",
+            "exit_code": 128,
+            "stderr": "internal error: fatal: bad object --stat\n",
+            "stdout": "On branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/test-report.txt\n\tbuild/test_1_format.log\n\tbuild/test_2_total.log\n\tbuild/test_3_low.log\n"
+          },
+          {
+            "commands": "cd /home/eval/inventory && rm -f build/test-report.txt build/test_*.log && git rm --cached build/report.txt && git commit --amend --no-edit && git status --short && git log -1 --oneline",
+            "exit_code": 1,
+            "stderr": "git: 'rm' is not a git command. See 'git --help'.\n",
+            "stdout": ""
+          },
+          {
+            "commands": "cd /home/eval/inventory && git status --short && git log -1 --oneline && git show --format=fuller --name-only HEAD",
+            "exit_code": 128,
+            "stderr": "internal error: fatal: bad object --format=fuller\n",
+            "stdout": "On branch master\n\nnothing to commit, working tree clean\ncommit b46093c9\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Mon Oct 12 18:55:34 2026 +0000\n\n    fix: parse stock CSV and format cents correctly\n\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

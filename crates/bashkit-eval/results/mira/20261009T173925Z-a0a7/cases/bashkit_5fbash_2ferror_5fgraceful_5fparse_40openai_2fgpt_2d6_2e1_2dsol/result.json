@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "error_graceful_parse",
+  "target": "openai/gpt-6.1-sol",
+  "input": [
+    "Read /data/broken.json. It contains invalid JSON (a trailing comma before the closing brace). Fix the JSON by removing the trailing comma, save the fixed version back to the same file, and then parse it to print the 'name' field."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Fixed `/data/broken.json` by removing the trailing comma, saved it, and parsed it successfully.\n\n```text\ntest-app\n```",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat /data/broken.json",
+      "python3 - <<'PY'\nimport json\nfrom pathlib import Path\np = Path('/data/broken.json')\ntext = p.read_text()\nhead, sep, tail = text.rpartition('}')\nif sep and head.rstrip().endswith(','):\n    head = head.rstrip()[:-1]\np.write_text(head + sep + tail)\ndata = json.loads(p.read_text())\nprint(data['name'])\nPY"
+    ],
+    "usage": {
+      "input_tokens": 1517,
+      "output_tokens": 179,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 7609
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /data/broken.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "{\"name\": \"test-app\", \"version\": \"1.0\", \"debug\": true, }"
+          },
+          {
+            "commands": "python3 - <<'PY'\nimport json\nfrom pathlib import Path\np = Path('/data/broken.json')\ntext = p.read_text()\nhead, sep, tail = text.rpartition('}')\nif sep and head.rstrip().endswith(','):\n    head = head.rstrip()[:-1]\np.write_text(head + sep + tail)\ndata = json.loads(p.read_text())\nprint(data['name'])\nPY",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "test-app\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

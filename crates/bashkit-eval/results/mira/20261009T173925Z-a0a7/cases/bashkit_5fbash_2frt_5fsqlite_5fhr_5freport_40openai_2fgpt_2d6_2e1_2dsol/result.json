@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "rt_sqlite_hr_report",
+  "target": "openai/gpt-6.1-sol",
+  "input": [
+    "Load /data/employees.csv and /data/departments.csv (CSV with header rows; fields may be double-quoted) into a new SQLite database /data/hr.db using the sqlite3 command, with tables:\n  departments(id INTEGER PRIMARY KEY, name TEXT NOT NULL)\n  employees(id INTEGER PRIMARY KEY, name TEXT NOT NULL, dept_id INTEGER, salary INTEGER NOT NULL, hired TEXT NOT NULL)\nEvery CSV row must be loaded with its values unchanged.\n\nThen produce /out/dept_report.csv from a query on hr.db: header department,headcount,avg_salary,top_earner; one row per department including departments with no employees (headcount 0, avg_salary and top_earner empty), plus a row named (none) for employees whose dept_id matches no department. avg_salary has exactly 2 decimals; top_earner is the highest-paid employee, ties broken by name alphabetically. Sort by headcount descending, then department name. Use standard CSV quoting (quote only fields containing a comma, quote or newline) and \\n line endings."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Created `/data/hr.db` using `sqlite3`, loading all 4 departments and 9 employees, and generated `/out/dept_report.csv`:\n\n```csv\ndepartment,headcount,avg_salary,top_earner\nEngineering,4,80000.00,Eli Stone\nSales,3,66166.67,Hana Sato\n(none),1,50000.00,Gus O'Neil\nSupport,1,58000.00,Farah Aziz\nLegal,0,,\n```",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "ls -l /data; head -n 6 /data/employees.csv; head -n 6 /data/departments.csv; sqlite3 --help",
+      "cat /data/employees.csv; ls -l /out; BASHKIT_ALLOW_INPROCESS_SQLITE=1 sqlite3 :memory: \"SELECT printf('%.2f',avg(x)) FROM (SELECT 2 x UNION ALL SELECT 3);\"",
+      "mkdir -p /out\npython3 - <<'PY'\nimport csv\nfrom pathlib import Path\n\ndef literal(s):\n    return \"'\" + s.replace(\"'\", \"''\") + \"'\"\n\nsql = ['BEGIN;', 'CREATE TABLE departments(id INTEGER PRIMARY KEY, name TEXT NOT NULL);', 'CREATE TABLE employees(id INTEGER PRIMARY KEY, name TEXT NOT NULL, dept_id INTEGER, salary INTEGER NOT NULL, hired TEXT NOT NULL);']\nfor table, columns in [('departments', ['id','name']), ('employees', ['id','name','dept_id','salary','hired'])]:\n    with open('/data/' + table + '.csv', newline='') as f:\n        for row in csv.DictReader(f):\n            sql.append('INSERT INTO ' + table + '(' + ','.join(columns) + ') VALUES (' + ','.join(literal(row[c]) for c in columns) + ');')\nsql.append('COMMIT;')\nPath('/out/load.sql').write_text('\\n'.join(sql) + '\\n')\nPY\nBASHKIT_ALLOW_INPROCESS_SQLITE=1 sqlite3 /data/hr.db < /out/load.sql\nBASHKIT_ALLOW_INPROCESS_SQLITE=1 sqlite3 -json /data/hr.db \"\nWITH mapped AS (\n  SELECT e.*, d.id AS matched_dept\n  FROM employees e LEFT JOIN departments d ON d.id = e.dept_id\n), groups AS (\n  SELECT id, name AS department FROM departments\n  UNION ALL SELECT NULL, '(none)'\n)\nSELECT g.department,\n       COUNT(m.id) AS headcount,\n       CASE WHEN COUNT(m.id) = 0 THEN '' ELSE printf('%.2f', AVG(m.salary)) END AS avg_salary,\n       COALESCE((SELECT name FROM mapped t WHERE t.matched_dept IS g.id\n                 ORDER BY salary DESC, name COLLATE BINARY ASC, id ASC LIMIT 1), '') AS top_earner\nFROM groups g LEFT JOIN mapped m ON m.matched_dept IS g.id\nGROUP BY g.id, g.department\nORDER BY headcount DESC, department COLLATE BINARY ASC;\n\" > /out/report.json\npython3 - <<'PY'\nimport csv, json\nwith open('/out/report.json') as f:\n    rows = json.load(f)\nwith open('/out/dept_report.csv', 'w', newline='') as f:\n    w = csv.DictWriter(f, fieldnames=['department','headcount','avg_salary','top_earner'], lineterminator='\\n', quoting=csv.QUOTE_MINIMAL)\n    w.writeheader()\n    w.writerows(rows)\nPY\ncat /out/dept_report.csv\nBASHKIT_ALLOW_INPROCESS_SQLITE=1 sqlite3 /data/hr.db 'SELECT COUNT(*) FROM departments; SELECT COUNT(*) FROM employees;'\nrm /out/load.sql /out/report.json"
+    ],
+    "usage": {
+      "input_tokens": 5146,
+      "output_tokens": 1060,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 22397
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -l /data; head -n 6 /data/employees.csv; head -n 6 /data/departments.csv; sqlite3 --help",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       52 2026-10-12 18:58 departments.csv\n-rw-r--r--      324 2026-10-12 18:58 employees.csv\nid,name,dept_id,salary,hired\n1,Ana Lima,10,72000,2021-04-01\n2,\"O'Brien, Pat\",10,91000,2019-11-15\n3,Chen Wei,20,64000,2022-01-10\n4,Dara Okoye,20,64000,2020-06-30\n5,Eli Stone,10,91000,2023-02-01\nid,name\n10,Engineering\n20,Sales\n30,Support\n40,Legal\nusage: sqlite [OPTIONS] DB [SQL ...]\n       sqlite [OPTIONS] :memory: [SQL ...]\nOptions:\n  -header, --header        Include column headers\n  -noheader, --noheader    Suppress column headers (default)\n  -csv, --csv              Output mode: CSV\n  -tabs, --tabs            Output mode: tabs\n  -line, --line            Output mode: name=value lines\n  -list, --list            Output mode: separator-joined (default)\n  -box, --box              Output mode: ASCII box table\n  -column, --column        Output mode: column-aligned\n  -json, --json            Output mode: JSON array of objects\n  -markdown, --markdown    Output mode: Markdown table\n  -separator SEP           Field separator (e.g. '|', ',', '\\t')\n  -nullvalue STR           Placeholder for NULL\n  -cmd SQL                 Run extra SQL before positional script\n  -backend memory|vfs      Pick the IO backend (default: memory)\n  --help                   Show this message\n  --version                Print engine version\nDot-commands: .help .quit .exit .tables .schema .indexes\n              .headers .mode .separator .nullvalue\n              .dump .read PATH\n"
+          },
+          {
+            "commands": "cat /data/employees.csv; ls -l /out; BASHKIT_ALLOW_INPROCESS_SQLITE=1 sqlite3 :memory: \"SELECT printf('%.2f',avg(x)) FROM (SELECT 2 x UNION ALL SELECT 3);\"",
+            "exit_code": 0,
+            "stderr": "ls: cannot access '/out': No such file or directory\n",
+            "stdout": "id,name,dept_id,salary,hired\n1,Ana Lima,10,72000,2021-04-01\n2,\"O'Brien, Pat\",10,91000,2019-11-15\n3,Chen Wei,20,64000,2022-01-10\n4,Dara Okoye,20,64000,2020-06-30\n5,Eli Stone,10,91000,2023-02-01\n6,Farah Aziz,30,58000,2024-07-15\n7,Gus O'Neil,99,50000,2018-03-03\n8,Hana Sato,20,70500,2021-09-09\n9,Ivo Petrov,10,66000,2020-01-20\n2.50\n"
+          },
+          {
+            "commands": "mkdir -p /out\npython3 - <<'PY'\nimport csv\nfrom pathlib import Path\n\ndef literal(s):\n    return \"'\" + s.replace(\"'\", \"''\") + \"'\"\n\nsql = ['BEGIN;', 'CREATE TABLE departments(id INTEGER PRIMARY KEY, name TEXT NOT NULL);', 'CREATE TABLE employees(id INTEGER PRIMARY KEY, name TEXT NOT NULL, dept_id INTEGER, salary INTEGER NOT NULL, hired TEXT NOT NULL);']\nfor table, columns in [('departments', ['id','name']), ('employees', ['id','name','dept_id','salary','hired'])]:\n    with open('/data/' + table + '.csv', newline='') as f:\n        for row in csv.DictReader(f):\n            sql.append('INSERT INTO ' + table + '(' + ','.join(columns) + ') VALUES (' + ','.join(literal(row[c]) for c in columns) + ');')\nsql.append('COMMIT;')\nPath('/out/load.sql').write_text('\\n'.join(sql) + '\\n')\nPY\nBASHKIT_ALLOW_INPROCESS_SQLITE=1 sqlite3 /data/hr.db < /out/load.sql\nBASHKIT_ALLOW_INPROCESS_SQLITE=1 sqlite3 -json /data/hr.db \"\nWITH mapped AS (\n  SELECT e.*, d.id AS matched_dept\n  FROM employees e LEFT JOIN departments d ON d.id = e.dept_id\n), groups AS (\n  SELECT id, name AS department FROM departments\n  UNION ALL SELECT NULL, '(none)'\n)\nSELECT g.department,\n       COUNT(m.id) AS headcount,\n       CASE WHEN COUNT(m.id) = 0 THEN '' ELSE printf('%.2f', AVG(m.salary)) END AS avg_salary,\n       COALESCE((SELECT name FROM mapped t WHERE t.matched_dept IS g.id\n                 ORDER BY salary DESC, name COLLATE BINARY ASC, id ASC LIMIT 1), '') AS top_earner\nFROM groups g LEFT JOIN mapped m ON m.matched_dept IS g.id\nGROUP BY g.id, g.department\nORDER BY headcount DESC, department COLLATE BINARY ASC;\n\" > /out/report.json\npython3 - <<'PY'\nimport csv, json\nwith open('/out/report.json') as f:\n    rows = json.load(f)\nwith open('/out/dept_report.csv', 'w', newline='') as f:\n    w = csv.DictWriter(f, fieldnames=['department','headcount','avg_salary','top_earner'], lineterminator='\\n', quoting=csv.QUOTE_MINIMAL)\n    w.writeheader()\n    w.writerows(rows)\nPY\ncat /out/dept_report.csv\nBASHKIT_ALLOW_INPROCESS_SQLITE=1 sqlite3 /data/hr.db 'SELECT COUNT(*) FROM departments; SELECT COUNT(*) FROM employees;'\nrm /out/load.sql /out/report.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "department,headcount,avg_salary,top_earner\nEngineering,4,80000.00,Eli Stone\nSales,3,66166.67,Hana Sato\n(none),1,50000.00,Gus O'Neil\nSupport,1,58000.00,Farah Aziz\nLegal,0,,\n4\n9\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

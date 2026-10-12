@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "build_multi_stage",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "Simulate a build pipeline: 1) Check that /src/main.c and /src/utils.c exist, 2) 'Compile' each .c file by copying it to /build/ with a .o extension and prepending '// compiled', 3) 'Link' by concatenating all .o files into /build/program with a '// linked' header, 4) 'Package' by creating a tar.gz of /build/ at /dist/release.tar.gz. Print status for each stage. If any stage fails, stop and report the error."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Build pipeline completed successfully:\n\n- Check: OK\n- Compile: OK\n- Link: OK\n- Package: OK — `/dist/release.tar.gz`",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "set -e\nstage=\"Check\"\nfail() { code=$?; printf 'ERROR: %s stage failed (exit %s)\\n' \"$stage\" \"$code\"; exit \"$code\"; }\ntrap fail ERR\nprintf 'Checking inputs...\\n'\ntest -f /src/main.c\ntest -f /src/utils.c\nprintf 'Check: OK\\n'\nstage=\"Compile\"\nmkdir -p /build\nfor file in /src/main.c /src/utils.c; do\n  name=$(basename \"$file\" .c)\n  { printf '// compiled\\n'; cat \"$file\"; } > \"/build/$name.o\"\ndone\nprintf 'Compile: OK\\n'\nstage=\"Link\"\n{ printf '// linked\\n'; cat /build/*.o; } > /build/program\nprintf 'Link: OK\\n'\nstage=\"Package\"\nmkdir -p /dist\ntar -czf /dist/release.tar.gz -C /build .\nprintf 'Package: OK (/dist/release.tar.gz)\\n'"
+    ],
+    "usage": {
+      "input_tokens": 1258,
+      "output_tokens": 352,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 5348
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "set -e\nstage=\"Check\"\nfail() { code=$?; printf 'ERROR: %s stage failed (exit %s)\\n' \"$stage\" \"$code\"; exit \"$code\"; }\ntrap fail ERR\nprintf 'Checking inputs...\\n'\ntest -f /src/main.c\ntest -f /src/utils.c\nprintf 'Check: OK\\n'\nstage=\"Compile\"\nmkdir -p /build\nfor file in /src/main.c /src/utils.c; do\n  name=$(basename \"$file\" .c)\n  { printf '// compiled\\n'; cat \"$file\"; } > \"/build/$name.o\"\ndone\nprintf 'Compile: OK\\n'\nstage=\"Link\"\n{ printf '// linked\\n'; cat /build/*.o; } > /build/program\nprintf 'Link: OK\\n'\nstage=\"Package\"\nmkdir -p /dist\ntar -czf /dist/release.tar.gz -C /build .\nprintf 'Package: OK (/dist/release.tar.gz)\\n'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Checking inputs...\nCheck: OK\nCompile: OK\nLink: OK\nPackage: OK (/dist/release.tar.gz)\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

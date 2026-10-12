@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_markdown_toc",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "Read /doc/README.md and generate a table of contents from its headings (lines starting with # or ##). Insert the TOC after the first heading, formatted as a markdown list with '- [Heading Text](#anchor)' where anchor is the heading text lowercased with spaces replaced by hyphens. Write the result back to the file."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Inserted the table of contents after the first heading in `/doc/README.md`.",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "cat /doc/README.md && echo '\n--- FILE END ---' && python3 - <<'PY'\nfrom pathlib import Path\np=Path('/doc/README.md')\ns=p.read_text()\nlines=s.splitlines()\nheadings=[]\nfor line in lines:\n    if line.startswith('# ') or line.startswith('## '):\n        headings.append(line.lstrip('#').strip())\nif not headings:\n    raise SystemExit('No headings')\n# Insert TOC immediately following first heading, skipping the contiguous content? directly after heading\nfirst=next(i for i,line in enumerate(lines) if line.startswith('# ') or line.startswith('## '))\ntoc=['','']\nfor h in headings:\n    anchor=h.lower().replace(' ','-')\n    toc.append(f'- [{h}](#{anchor})')\ntoc.append('')\n# Avoid adding duplicate if already appears? User says insert TOC; remove any current inserted? simple operation\nnew=lines[:first+1]+toc+lines[first+1:]\np.write_text('\\n'.join(new)+('\\n' if s.endswith('\\n') else ''))\nPY\ncat /doc/README.md"
+    ],
+    "usage": {
+      "input_tokens": 1298,
+      "output_tokens": 304,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 4704
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "cat /doc/README.md && echo '\n--- FILE END ---' && python3 - <<'PY'\nfrom pathlib import Path\np=Path('/doc/README.md')\ns=p.read_text()\nlines=s.splitlines()\nheadings=[]\nfor line in lines:\n    if line.startswith('# ') or line.startswith('## '):\n        headings.append(line.lstrip('#').strip())\nif not headings:\n    raise SystemExit('No headings')\n# Insert TOC immediately following first heading, skipping the contiguous content? directly after heading\nfirst=next(i for i,line in enumerate(lines) if line.startswith('# ') or line.startswith('## '))\ntoc=['','']\nfor h in headings:\n    anchor=h.lower().replace(' ','-')\n    toc.append(f'- [{h}](#{anchor})')\ntoc.append('')\n# Avoid adding duplicate if already appears? User says insert TOC; remove any current inserted? simple operation\nnew=lines[:first+1]+toc+lines[first+1:]\np.write_text('\\n'.join(new)+('\\n' if s.endswith('\\n') else ''))\nPY\ncat /doc/README.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Project Alpha\n\nIntroduction to the project.\n\n## Installation\n\nRun the installer.\n\n## Usage\n\nHow to use it.\n\n## API Reference\n\nEndpoint documentation.\n\n## Contributing\n\nPR guidelines.\n\n--- FILE END ---\n# Project Alpha\n\n\n- [Project Alpha](#project-alpha)\n- [Installation](#installation)\n- [Usage](#usage)\n- [API Reference](#api-reference)\n- [Contributing](#contributing)\n\n\nIntroduction to the project.\n\n## Installation\n\nRun the installer.\n\n## Usage\n\nHow to use it.\n\n## API Reference\n\nEndpoint documentation.\n\n## Contributing\n\nPR guidelines.\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

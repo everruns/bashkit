@@ -143,6 +143,132 @@
         }
       ],
       "skipped": false,
+      "target": "openai/gpt-6-luna",
+      "transcript": {
+        "final_response": "```bash\n#!/usr/bin/env bash\n\ninput=/home/eval/data/inventory.txt\ndata_dir=/home/eval/data\nsku_tmp=\"$data_dir/.sku_totals.tmp\"\nwarehouse_tmp=\"$data_dir/.warehouses.tmp\"\n\ndeclare -A totals=()\ndeclare -A warehouse_counts=()\ndeclare -A positive_pairs=()\n\nwhile read -r warehouse sku qty _; do\n    [[ -z $warehouse || $warehouse == \\#* ]] && continue\n    [[ -z $sku || -z $qty ]] && continue\n\n    qty_num=$((10#$qty))\n    totals[\"$sku\"]=$((${totals[$sku]:-0} + qty_num))\n\n    if (( qty_num > 0 )); then\n        pair=\"$warehouse|$sku\"\n        if [[ -z ${positive_pairs[$pair]+present} ]]; then\n            positive_pairs[\"$pair\"]=1\n            warehouse_counts[\"$warehouse\"]=$((${warehouse_counts[$warehouse]:-0} + 1))\n        fi\n    fi\ndone < \"$input\"\n\n: > \"$sku_tmp\"\nfor sku in \"${!totals[@]}\"; do\n    printf '%s %s\\n' \"$sku\" \"${totals[$sku]}\" >> \"$sku_tmp\"\ndone\nsort -k1,1 \"$sku_tmp\" > \"$data_dir/sku_totals.txt\"\n\n: > \"$warehouse_tmp\"\nfor warehouse in \"${!warehouse_counts[@]}\"; do\n    printf '%s %s\\n' \"$warehouse\" \"${warehouse_counts[$warehouse]}\" >> \"$warehouse_tmp\"\ndone\nsort -k1,1 \"$warehouse_tmp\" > \"$data_dir/warehouses.txt\"\n\nrm -f \"$sku_tmp\" \"$warehouse_tmp\"\nexit 0\n```",
+        "iterations": 1,
+        "metadata": {
+          "bashkit": {
+            "dirs": [],
+            "last_exit_code": 0,
+            "links": {},
+            "tool_outputs": [
+              {
+                "commands": "#!/usr/bin/env bash\n\ninput=/home/eval/data/inventory.txt\ndata_dir=/home/eval/data\nsku_tmp=\"$data_dir/.sku_totals.tmp\"\nwarehouse_tmp=\"$data_dir/.warehouses.tmp\"\n\ndeclare -A totals=()\ndeclare -A warehouse_counts=()\ndeclare -A positive_pairs=()\n\nwhile read -r warehouse sku qty _; do\n    [[ -z $warehouse || $warehouse == \\#* ]] && continue\n    [[ -z $sku || -z $qty ]] && continue\n\n    qty_num=$((10#$qty))\n    totals[\"$sku\"]=$((${totals[$sku]:-0} + qty_num))\n\n    if (( qty_num > 0 )); then\n        pair=\"$warehouse|$sku\"\n        if [[ -z ${positive_pairs[$pair]+present} ]]; then\n            positive_pairs[\"$pair\"]=1\n            warehouse_counts[\"$warehouse\"]=$((${warehouse_counts[$warehouse]:-0} + 1))\n        fi\n    fi\ndone < \"$input\"\n\n: > \"$sku_tmp\"\nfor sku in \"${!totals[@]}\"; do\n    printf '%s %s\\n' \"$sku\" \"${totals[$sku]}\" >> \"$sku_tmp\"\ndone\nsort -k1,1 \"$sku_tmp\" > \"$data_dir/sku_totals.txt\"\n\n: > \"$warehouse_tmp\"\nfor warehouse in \"${!warehouse_counts[@]}\"; do\n    printf '%s %s\\n' \"$warehouse\" \"${warehouse_counts[$warehouse]}\" >> \"$warehouse_tmp\"\ndone\nsort -k1,1 \"$warehouse_tmp\" > \"$data_dir/warehouses.txt\"\n\nrm -f \"$sku_tmp\" \"$warehouse_tmp\"\nexit 0\n",
+                "exit_code": 0,
+                "stderr": "",
+                "stdout": ""
+              }
+            ]
+          },
+          "generate": {
+            "extraction": "fenced",
+            "timed_out": false
+          }
+        },
+        "metrics": {
+          "exec_ms": 10.0,
+          "exit_code": 0.0,
+          "extracted": 1.0,
+          "generate_ms": 12278.0,
+          "script_bytes": 1163.0,
+          "script_found": 1.0,
+          "timed_out": 0.0
+        },
+        "timing": {
+          "duration_ms": 12288
+        },
+        "tool_calls": [
+          "#!/usr/bin/env bash\n\ninput=/home/eval/data/inventory.txt\ndata_dir=/home/eval/data\nsku_tmp=\"$data_dir/.sku_totals.tmp\"\nwarehouse_tmp=\"$data_dir/.warehouses.tmp\"\n\ndeclare -A totals=()\ndeclare -A warehouse_counts=()\ndeclare -A positive_pairs=()\n\nwhile read -r warehouse sku qty _; do\n    [[ -z $warehouse || $warehouse == \\#* ]] && continue\n    [[ -z $sku || -z $qty ]] && continue\n\n    qty_num=$((10#$qty))\n    totals[\"$sku\"]=$((${totals[$sku]:-0} + qty_num))\n\n    if (( qty_num > 0 )); then\n        pair=\"$warehouse|$sku\"\n        if [[ -z ${positive_pairs[$pair]+present} ]]; then\n            positive_pairs[\"$pair\"]=1\n            warehouse_counts[\"$warehouse\"]=$((${warehouse_counts[$warehouse]:-0} + 1))\n        fi\n    fi\ndone < \"$input\"\n\n: > \"$sku_tmp\"\nfor sku in \"${!totals[@]}\"; do\n    printf '%s %s\\n' \"$sku\" \"${totals[$sku]}\" >> \"$sku_tmp\"\ndone\nsort -k1,1 \"$sku_tmp\" > \"$data_dir/sku_totals.txt\"\n\n: > \"$warehouse_tmp\"\nfor warehouse in \"${!warehouse_counts[@]}\"; do\n    printf '%s %s\\n' \"$warehouse\" \"${warehouse_counts[$warehouse]}\" >> \"$warehouse_tmp\"\ndone\nsort -k1,1 \"$warehouse_tmp\" > \"$data_dir/warehouses.txt\"\n\nrm -f \"$sku_tmp\" \"$warehouse_tmp\"\nexit 0\n"
+        ],
+        "tool_calls_count": 1,
+        "usage": {
+          "cost_usd": 0.0,
+          "input_tokens": 469,
+          "output_tokens": 1125
+        }
+      }
+    },
+    {
+      "aggregate": 1.0,
+      "eval": "bashkit_generate",
+      "input": [
+        "Write a bash script (use bash associative arrays) that aggregates an inventory.\n\nStarting files:\n--- /home/eval/data/inventory.txt ---\n# warehouse sku qty\nberlin bolt 120\nparis nut 40\nberlin nut 15\nlyon bolt 30\nparis  bolt 5\nberlin washer 300\nlyon nut 0\n--- end ---\n\nLines starting with `#` are comments; fields are separated by one or more spaces.\n\n1. Write /home/eval/data/sku_totals.txt: one line `SKU TOTAL_QTY` per SKU, sorted by SKU.\n2. Write /home/eval/data/warehouses.txt: one line `WAREHOUSE N` per warehouse, sorted by warehouse, where N is the number of distinct SKUs that warehouse holds with qty > 0.\nExit 0."
+      ],
+      "passed": true,
+      "sample": "gen_assoc_inventory",
+      "scores": [
+        {
+          "pass": true,
+          "reason": "3/3 checks passed (weighted rate 100%)",
+          "scorer": "bashkit_expectations",
+          "value": 1.0
+        }
+      ],
+      "skipped": false,
+      "target": "openai/gpt-6.1-sol",
+      "transcript": {
+        "final_response": "```bash\n#!/usr/bin/env bash\n\ndeclare -A sku_totals=()\ndeclare -A warehouse_counts=()\ndeclare -A positive_pairs=()\n\nwhile read -r warehouse sku qty; do\n    [[ -z \"$warehouse\" || \"$warehouse\" == \\#* ]] && continue\n\n    sku_totals[\"$sku\"]=$(( ${sku_totals[\"$sku\"]:-0} + qty ))\n    warehouse_counts[\"$warehouse\"]=${warehouse_counts[\"$warehouse\"]:-0}\n\n    pair=\"$warehouse|$sku\"\n    if (( qty > 0 )) && [[ -z \"${positive_pairs[\"$pair\"]:-}\" ]]; then\n        positive_pairs[\"$pair\"]=1\n        warehouse_counts[\"$warehouse\"]=$(( ${warehouse_counts[\"$warehouse\"]} + 1 ))\n    fi\ndone < /home/eval/data/inventory.txt\n\nexport LC_ALL=C\n\n{\n    for sku in \"${!sku_totals[@]}\"; do\n        printf '%s %s\\n' \"$sku\" \"${sku_totals[\"$sku\"]}\"\n    done\n} | sort > /home/eval/data/sku_totals.txt\n\n{\n    for warehouse in \"${!warehouse_counts[@]}\"; do\n        printf '%s %s\\n' \"$warehouse\" \"${warehouse_counts[\"$warehouse\"]}\"\n    done\n} | sort > /home/eval/data/warehouses.txt\n\nexit 0\n```",
+        "iterations": 1,
+        "metadata": {
+          "bashkit": {
+            "dirs": [],
+            "last_exit_code": 0,
+            "links": {},
+            "tool_outputs": [
+              {
+                "commands": "#!/usr/bin/env bash\n\ndeclare -A sku_totals=()\ndeclare -A warehouse_counts=()\ndeclare -A positive_pairs=()\n\nwhile read -r warehouse sku qty; do\n    [[ -z \"$warehouse\" || \"$warehouse\" == \\#* ]] && continue\n\n    sku_totals[\"$sku\"]=$(( ${sku_totals[\"$sku\"]:-0} + qty ))\n    warehouse_counts[\"$warehouse\"]=${warehouse_counts[\"$warehouse\"]:-0}\n\n    pair=\"$warehouse|$sku\"\n    if (( qty > 0 )) && [[ -z \"${positive_pairs[\"$pair\"]:-}\" ]]; then\n        positive_pairs[\"$pair\"]=1\n        warehouse_counts[\"$warehouse\"]=$(( ${warehouse_counts[\"$warehouse\"]} + 1 ))\n    fi\ndone < /home/eval/data/inventory.txt\n\nexport LC_ALL=C\n\n{\n    for sku in \"${!sku_totals[@]}\"; do\n        printf '%s %s\\n' \"$sku\" \"${sku_totals[\"$sku\"]}\"\n    done\n} | sort > /home/eval/data/sku_totals.txt\n\n{\n    for warehouse in \"${!warehouse_counts[@]}\"; do\n        printf '%s %s\\n' \"$warehouse\" \"${warehouse_counts[\"$warehouse\"]}\"\n    done\n} | sort > /home/eval/data/warehouses.txt\n\nexit 0\n",
+                "exit_code": 0,
+                "stderr": "",
+                "stdout": ""
+              }
+            ]
+          },
+          "generate": {
+            "extraction": "fenced",
+            "timed_out": false
+          }
+        },
+        "metrics": {
+          "exec_ms": 8.0,
+          "exit_code": 0.0,
+          "extracted": 1.0,
+          "generate_ms": 8407.0,
+          "script_bytes": 951.0,
+          "script_found": 1.0,
+          "timed_out": 0.0
+        },
+        "timing": {
+          "duration_ms": 8415
+        },
+        "tool_calls": [
+          "#!/usr/bin/env bash\n\ndeclare -A sku_totals=()\ndeclare -A warehouse_counts=()\ndeclare -A positive_pairs=()\n\nwhile read -r warehouse sku qty; do\n    [[ -z \"$warehouse\" || \"$warehouse\" == \\#* ]] && continue\n\n    sku_totals[\"$sku\"]=$(( ${sku_totals[\"$sku\"]:-0} + qty ))\n    warehouse_counts[\"$warehouse\"]=${warehouse_counts[\"$warehouse\"]:-0}\n\n    pair=\"$warehouse|$sku\"\n    if (( qty > 0 )) && [[ -z \"${positive_pairs[\"$pair\"]:-}\" ]]; then\n        positive_pairs[\"$pair\"]=1\n        warehouse_counts[\"$warehouse\"]=$(( ${warehouse_counts[\"$warehouse\"]} + 1 ))\n    fi\ndone < /home/eval/data/inventory.txt\n\nexport LC_ALL=C\n\n{\n    for sku in \"${!sku_totals[@]}\"; do\n        printf '%s %s\\n' \"$sku\" \"${sku_totals[\"$sku\"]}\"\n    done\n} | sort > /home/eval/data/sku_totals.txt\n\n{\n    for warehouse in \"${!warehouse_counts[@]}\"; do\n        printf '%s %s\\n' \"$warehouse\" \"${warehouse_counts[\"$warehouse\"]}\"\n    done\n} | sort > /home/eval/data/warehouses.txt\n\nexit 0\n"
+        ],
+        "tool_calls_count": 1,
+        "usage": {
+          "cost_usd": 0.0,
+          "input_tokens": 469,
+          "output_tokens": 395
+        }
+      }
+    },
+    {
+      "aggregate": 1.0,
+      "eval": "bashkit_generate",
+      "input": [
+        "Write a bash script (use bash associative arrays) that aggregates an inventory.\n\nStarting files:\n--- /home/eval/data/inventory.txt ---\n# warehouse sku qty\nberlin bolt 120\nparis nut 40\nberlin nut 15\nlyon bolt 30\nparis  bolt 5\nberlin washer 300\nlyon nut 0\n--- end ---\n\nLines starting with `#` are comments; fields are separated by one or more spaces.\n\n1. Write /home/eval/data/sku_totals.txt: one line `SKU TOTAL_QTY` per SKU, sorted by SKU.\n2. Write /home/eval/data/warehouses.txt: one line `WAREHOUSE N` per warehouse, sorted by warehouse, where N is the number of distinct SKUs that warehouse holds with qty > 0.\nExit 0."
+      ],
+      "passed": true,
+      "sample": "gen_assoc_inventory",
+      "scores": [
+        {
+          "pass": true,
+          "reason": "3/3 checks passed (weighted rate 100%)",
+          "scorer": "bashkit_expectations",
+          "value": 1.0
+        }
+      ],
+      "skipped": false,
       "target": "openrouter/google/gemini-3.8-flash",
       "transcript": {
         "final_response": "```bash\n#!/usr/bin/env bash\nset -euo pipefail\n\ninput_file=\"/home/eval/data/inventory.txt\"\nsku_totals_file=\"/home/eval/data/sku_totals.txt\"\nwarehouses_file=\"/home/eval/data/warehouses.txt\"\n\ndeclare -A sku_totals\ndeclare -A warehouses\ndeclare -A wh_skus\ndeclare -A wh_counts\n\nwhile read -r line || [[ -n \"$line\" ]]; do\n    # Strip leading whitespace\n    line=\"${line#\"${line%%[![:space:]]*}\"}\"\n    [[ -z \"$line\" || \"$line\" == \\#* ]] && continue\n\n    read -r wh sku qty <<< \"$line\"\n\n    sku_totals[\"$sku\"]=$(( ${sku_totals[\"$sku\"]:-0} + qty ))\n    warehouses[\"$wh\"]=1\n\n    if (( qty > 0 )); then\n        wh_skus[\"$wh,$sku\"]=1\n    fi\ndone < \"$input_file\"\n\nfor pair in \"${!wh_skus[@]}\"; do\n    wh=\"${pair%,*}\"\n    wh_counts[\"$wh\"]=$(( ${wh_counts[\"$wh\"]:-0} + 1 ))\ndone\n\nfor sku in \"${!sku_totals[@]}\"; do\n    printf \"%s %d\\n\" \"$sku\" \"${sku_totals[$sku]}\"\ndone | sort > \"$sku_totals_file\"\n\nfor wh in \"${!warehouses[@]}\"; do\n    printf \"%s %d\\n\" \"$wh\" \"${wh_counts[$wh]:-0}\"\ndone | sort > \"$warehouses_file\"\n\nexit 0\n```",
@@ -438,6 +564,132 @@
           "cost_usd": 0.0,
           "input_tokens": 792,
           "output_tokens": 677
+        }
+      }
+    },
+    {
+      "aggregate": 1.0,
+      "eval": "bashkit_generate",
+      "input": [
+        "Write a bash script that normalises photo file names.\n\nStarting files (contents shown; names contain spaces where shown):\n--- /home/eval/photos/IMG_0001.JPG ---\na\n--- end ---\n--- /home/eval/photos/IMG_0002.JPG ---\nb\n--- end ---\n--- /home/eval/photos/IMG 0003.JPG ---\nc\n--- end ---\n--- /home/eval/photos/notes.txt ---\nn\n--- end ---\n--- /home/eval/photos/Raw/IMG_0004.JPG ---\nd\n--- end ---\n--- /home/eval/photos/Raw/Old Shots/DSC 9.JPG ---\ne\n--- end ---\n\nFor every file whose name ends in `.JPG`, anywhere under /home/eval/photos (recursively), rename it in place (same directory) so that its file name is lowercase and every space in the file name becomes `_`. Directory names must NOT change (`Raw` and `Old Shots` keep their names). Other files are left alone. Exit 0."
+      ],
+      "passed": true,
+      "sample": "gen_batch_rename",
+      "scores": [
+        {
+          "pass": true,
+          "reason": "7/7 checks passed (weighted rate 100%)",
+          "scorer": "bashkit_expectations",
+          "value": 1.0
+        }
+      ],
+      "skipped": false,
+      "target": "openai/gpt-6-luna",
+      "transcript": {
+        "final_response": "```bash\n#!/usr/bin/env bash\n\nfind /home/eval/photos -type f -name '*.JPG' -print |\nwhile IFS= read -r path; do\n    dir=${path%/*}\n    name=${path##*/}\n    normalized=$(printf '%s' \"$name\" | tr '[:upper:]' '[:lower:]')\n    normalized=${normalized// /_}\n    mv -- \"$path\" \"$dir/$normalized\"\ndone\n\nexit 0\n```",
+        "iterations": 1,
+        "metadata": {
+          "bashkit": {
+            "dirs": [],
+            "last_exit_code": 0,
+            "links": {},
+            "tool_outputs": [
+              {
+                "commands": "#!/usr/bin/env bash\n\nfind /home/eval/photos -type f -name '*.JPG' -print |\nwhile IFS= read -r path; do\n    dir=${path%/*}\n    name=${path##*/}\n    normalized=$(printf '%s' \"$name\" | tr '[:upper:]' '[:lower:]')\n    normalized=${normalized// /_}\n    mv -- \"$path\" \"$dir/$normalized\"\ndone\n\nexit 0\n",
+                "exit_code": 0,
+                "stderr": "",
+                "stdout": ""
+              }
+            ]
+          },
+          "generate": {
+            "extraction": "fenced",
+            "timed_out": false
+          }
+        },
+        "metrics": {
+          "exec_ms": 7.0,
+          "exit_code": 0.0,
+          "extracted": 1.0,
+          "generate_ms": 4886.0,
+          "script_bytes": 294.0,
+          "script_found": 1.0,
+          "timed_out": 0.0
+        },
+        "timing": {
+          "duration_ms": 4893
+        },
+        "tool_calls": [
+          "#!/usr/bin/env bash\n\nfind /home/eval/photos -type f -name '*.JPG' -print |\nwhile IFS= read -r path; do\n    dir=${path%/*}\n    name=${path##*/}\n    normalized=$(printf '%s' \"$name\" | tr '[:upper:]' '[:lower:]')\n    normalized=${normalized// /_}\n    mv -- \"$path\" \"$dir/$normalized\"\ndone\n\nexit 0\n"
+        ],
+        "tool_calls_count": 1,
+        "usage": {
+          "cost_usd": 0.0,
+          "input_tokens": 503,
+          "output_tokens": 431
+        }
+      }
+    },
+    {
+      "aggregate": 0.2857142857142857,
+      "eval": "bashkit_generate",
+      "input": [
+        "Write a bash script that normalises photo file names.\n\nStarting files (contents shown; names contain spaces where shown):\n--- /home/eval/photos/IMG_0001.JPG ---\na\n--- end ---\n--- /home/eval/photos/IMG_0002.JPG ---\nb\n--- end ---\n--- /home/eval/photos/IMG 0003.JPG ---\nc\n--- end ---\n--- /home/eval/photos/notes.txt ---\nn\n--- end ---\n--- /home/eval/photos/Raw/IMG_0004.JPG ---\nd\n--- end ---\n--- /home/eval/photos/Raw/Old Shots/DSC 9.JPG ---\ne\n--- end ---\n\nFor every file whose name ends in `.JPG`, anywhere under /home/eval/photos (recursively), rename it in place (same directory) so that its file name is lowercase and every space in the file name becomes `_`. Directory names must NOT change (`Raw` and `Old Shots` keep their names). Other files are left alone. Exit 0."
+      ],
+      "passed": false,
+      "sample": "gen_batch_rename",
+      "scores": [
+        {
+          "pass": false,
+          "reason": "2/7 checks passed (weighted rate 29%)",
+          "scorer": "bashkit_expectations",
+          "value": 0.2857142857142857
+        }
+      ],
+      "skipped": false,
+      "target": "openai/gpt-6.1-sol",
+      "transcript": {
+        "final_response": "```bash\n#!/bin/bash\nwhile IFS= read -r -d '' file; do\n    dir=${file%/*}\n    name=${file##*/}\n    name=${name,,}\n    name=${name// /_}\n    mv -- \"$file\" \"$dir/$name\"\ndone < <(find /home/eval/photos -type f -name '*.JPG' -print0)\nexit 0\n```",
+        "iterations": 1,
+        "metadata": {
+          "bashkit": {
+            "dirs": [],
+            "last_exit_code": 0,
+            "links": {},
+            "tool_outputs": [
+              {
+                "commands": "#!/bin/bash\nwhile IFS= read -r -d '' file; do\n    dir=${file%/*}\n    name=${file##*/}\n    name=${name,,}\n    name=${name// /_}\n    mv -- \"$file\" \"$dir/$name\"\ndone < <(find /home/eval/photos -type f -name '*.JPG' -print0)\nexit 0\n",
+                "exit_code": 0,
+                "stderr": "",
+                "stdout": ""
+              }
+            ]
+          },
+          "generate": {
+            "extraction": "fenced",
+            "timed_out": false
+          }
+        },
+        "metrics": {
+          "exec_ms": 2.0,
+          "exit_code": 0.0,
+          "extracted": 1.0,
+          "generate_ms": 2457.0,
+          "script_bytes": 228.0,
+          "script_found": 1.0,
+          "timed_out": 0.0
+        },
+        "timing": {
+          "duration_ms": 2459
+        },
+        "tool_calls": [
+          "#!/bin/bash\nwhile IFS= read -r -d '' file; do\n    dir=${file%/*}\n    name=${file##*/}\n    name=${name,,}\n    name=${name// /_}\n    mv -- \"$file\" \"$dir/$name\"\ndone < <(find /home/eval/photos -type f -name '*.JPG' -print0)\nexit 0\n"
+        ],
+        "tool_calls_count": 1,
+        "usage": {
+          "cost_usd": 0.0,
+          "input_tokens": 503,
+          "output_tokens": 91
         }
       }
     },
@@ -757,6 +1009,132 @@
       }
     },
     {
+      "aggregate": 0.6666666666666666,
+      "eval": "bashkit_generate",
+      "input": [
+        "Write a bash script that renders a config template.\n\nStarting files:\n--- /home/eval/app/app.conf.tmpl ---\n# generated for ${APP_ENV}\n[db]\nhost = ${DB_HOST}\nport = ${DB_PORT}\nurl = postgres://${DB_USER}@${DB_HOST}:${DB_PORT}/app\n[runtime]\nhome = ${RUNTIME_HOME}\ngreeting = Hello, ${USER_NAME}!\nprice = $5 per unit\n--- end ---\n--- /home/eval/app/prod.env ---\n# production settings\nAPP_ENV=prod/eu\nDB_HOST=db.internal\nDB_PORT=5432\n\nDB_USER=app_rw\nUNUSED_KEY=x\n--- end ---\n\nRender /home/eval/app/app.conf.tmpl into /home/eval/app/app.conf:\n- `prod.env` holds `KEY=VALUE` lines; blank lines and lines starting with `#` are ignored. Values are taken literally (they may contain `/`).\n- Every `${NAME}` placeholder whose NAME is defined in prod.env is replaced by its value.\n- Placeholders whose NAME is not defined in prod.env stay exactly as written, even if a variable of that name exists in the shell environment.\n- Everything else (including `$5`) is copied unchanged.\n\nThen print one line to stdout: `unresolved: ` followed by the names of the placeholders left unresolved, sorted, unique, space-separated (here: `unresolved: RUNTIME_HOME USER_NAME`). Exit 0."
+      ],
+      "passed": false,
+      "sample": "gen_config_template",
+      "scores": [
+        {
+          "pass": false,
+          "reason": "2/3 checks passed (weighted rate 67%)",
+          "scorer": "bashkit_expectations",
+          "value": 0.6666666666666666
+        }
+      ],
+      "skipped": false,
+      "target": "openai/gpt-6-luna",
+      "transcript": {
+        "final_response": "```bash\n#!/usr/bin/env bash\n\ndeclare -A values=()\ndeclare -A unresolved=()\n\nwhile IFS= read -r line || [[ -n $line ]]; do\n    [[ -z $line || $line == \\#* || $line != *=* ]] && continue\n\n    key=${line%%=*}\n    value=${line#*=}\n    if [[ $key =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then\n        values[\"$key\"]=$value\n    fi\ndone < /home/eval/app/prod.env\n\nwhile :; do\n    line=\n    if IFS= read -r line; then\n        has_newline=1\n    else\n        has_newline=0\n    fi\n\n    [[ $has_newline -eq 0 && -z $line ]] && break\n\n    rest=$line\n    rendered=\n\n    while [[ $rest == *'${'* ]]; do\n        prefix=${rest%%'${'*}\n        tail=${rest#*'${'}\n\n        if [[ $tail != *'}'* ]]; then\n            rendered+=$rest\n            rest=\n            break\n        fi\n\n        name=${tail%%'}'*}\n        after=${tail#*'}'}\n        rendered+=$prefix\n\n        if [[ $name =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then\n            if [[ ${values[$name]+defined} ]]; then\n                rendered+=\"${values[$name]}\"\n            else\n                rendered+='${'\n                rendered+=$name\n                rendered+='}'\n                unresolved[\"$name\"]=1\n            fi\n        else\n            rendered+='${'\n            rendered+=$name\n            rendered+='}'\n        fi\n\n        rest=$after\n    done\n\n    rendered+=$rest\n    printf '%s' \"$rendered\"\n    if [[ $has_newline -eq 1 ]]; then\n        printf '\\n'\n    else\n        break\n    fi\ndone < /home/eval/app/app.conf.tmpl > /home/eval/app/app.conf\n\nunresolved_names=$(printf '%s\\n' \"${!unresolved[@]}\" | sort -u)\nprintf 'unresolved: %s\\n' \"$unresolved_names\"\n```",
+        "iterations": 1,
+        "metadata": {
+          "bashkit": {
+            "dirs": [],
+            "last_exit_code": 0,
+            "links": {},
+            "tool_outputs": [
+              {
+                "commands": "#!/usr/bin/env bash\n\ndeclare -A values=()\ndeclare -A unresolved=()\n\nwhile IFS= read -r line || [[ -n $line ]]; do\n    [[ -z $line || $line == \\#* || $line != *=* ]] && continue\n\n    key=${line%%=*}\n    value=${line#*=}\n    if [[ $key =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then\n        values[\"$key\"]=$value\n    fi\ndone < /home/eval/app/prod.env\n\nwhile :; do\n    line=\n    if IFS= read -r line; then\n        has_newline=1\n    else\n        has_newline=0\n    fi\n\n    [[ $has_newline -eq 0 && -z $line ]] && break\n\n    rest=$line\n    rendered=\n\n    while [[ $rest == *'${'* ]]; do\n        prefix=${rest%%'${'*}\n        tail=${rest#*'${'}\n\n        if [[ $tail != *'}'* ]]; then\n            rendered+=$rest\n            rest=\n            break\n        fi\n\n        name=${tail%%'}'*}\n        after=${tail#*'}'}\n        rendered+=$prefix\n\n        if [[ $name =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then\n            if [[ ${values[$name]+defined} ]]; then\n                rendered+=\"${values[$name]}\"\n            else\n                rendered+='${'\n                rendered+=$name\n                rendered+='}'\n                unresolved[\"$name\"]=1\n            fi\n        else\n            rendered+='${'\n            rendered+=$name\n            rendered+='}'\n        fi\n\n        rest=$after\n    done\n\n    rendered+=$rest\n    printf '%s' \"$rendered\"\n    if [[ $has_newline -eq 1 ]]; then\n        printf '\\n'\n    else\n        break\n    fi\ndone < /home/eval/app/app.conf.tmpl > /home/eval/app/app.conf\n\nunresolved_names=$(printf '%s\\n' \"${!unresolved[@]}\" | sort -u)\nprintf 'unresolved: %s\\n' \"$unresolved_names\"\n",
+                "exit_code": 0,
+                "stderr": "",
+                "stdout": "unresolved: RUNTIME_HOME\nUSER_NAME\n"
+              }
+            ]
+          },
+          "generate": {
+            "extraction": "fenced",
+            "timed_out": false
+          }
+        },
+        "metrics": {
+          "exec_ms": 15.0,
+          "exit_code": 0.0,
+          "extracted": 1.0,
+          "generate_ms": 22844.0,
+          "script_bytes": 1586.0,
+          "script_found": 1.0,
+          "timed_out": 0.0
+        },
+        "timing": {
+          "duration_ms": 22859
+        },
+        "tool_calls": [
+          "#!/usr/bin/env bash\n\ndeclare -A values=()\ndeclare -A unresolved=()\n\nwhile IFS= read -r line || [[ -n $line ]]; do\n    [[ -z $line || $line == \\#* || $line != *=* ]] && continue\n\n    key=${line%%=*}\n    value=${line#*=}\n    if [[ $key =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then\n        values[\"$key\"]=$value\n    fi\ndone < /home/eval/app/prod.env\n\nwhile :; do\n    line=\n    if IFS= read -r line; then\n        has_newline=1\n    else\n        has_newline=0\n    fi\n\n    [[ $has_newline -eq 0 && -z $line ]] && break\n\n    rest=$line\n    rendered=\n\n    while [[ $rest == *'${'* ]]; do\n        prefix=${rest%%'${'*}\n        tail=${rest#*'${'}\n\n        if [[ $tail != *'}'* ]]; then\n            rendered+=$rest\n            rest=\n            break\n        fi\n\n        name=${tail%%'}'*}\n        after=${tail#*'}'}\n        rendered+=$prefix\n\n        if [[ $name =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then\n            if [[ ${values[$name]+defined} ]]; then\n                rendered+=\"${values[$name]}\"\n            else\n                rendered+='${'\n                rendered+=$name\n                rendered+='}'\n                unresolved[\"$name\"]=1\n            fi\n        else\n            rendered+='${'\n            rendered+=$name\n            rendered+='}'\n        fi\n\n        rest=$after\n    done\n\n    rendered+=$rest\n    printf '%s' \"$rendered\"\n    if [[ $has_newline -eq 1 ]]; then\n        printf '\\n'\n    else\n        break\n    fi\ndone < /home/eval/app/app.conf.tmpl > /home/eval/app/app.conf\n\nunresolved_names=$(printf '%s\\n' \"${!unresolved[@]}\" | sort -u)\nprintf 'unresolved: %s\\n' \"$unresolved_names\"\n"
+        ],
+        "tool_calls_count": 1,
+        "usage": {
+          "cost_usd": 0.0,
+          "input_tokens": 592,
+          "output_tokens": 2379
+        }
+      }
+    },
+    {
+      "aggregate": 1.0,
+      "eval": "bashkit_generate",
+      "input": [
+        "Write a bash script that renders a config template.\n\nStarting files:\n--- /home/eval/app/app.conf.tmpl ---\n# generated for ${APP_ENV}\n[db]\nhost = ${DB_HOST}\nport = ${DB_PORT}\nurl = postgres://${DB_USER}@${DB_HOST}:${DB_PORT}/app\n[runtime]\nhome = ${RUNTIME_HOME}\ngreeting = Hello, ${USER_NAME}!\nprice = $5 per unit\n--- end ---\n--- /home/eval/app/prod.env ---\n# production settings\nAPP_ENV=prod/eu\nDB_HOST=db.internal\nDB_PORT=5432\n\nDB_USER=app_rw\nUNUSED_KEY=x\n--- end ---\n\nRender /home/eval/app/app.conf.tmpl into /home/eval/app/app.conf:\n- `prod.env` holds `KEY=VALUE` lines; blank lines and lines starting with `#` are ignored. Values are taken literally (they may contain `/`).\n- Every `${NAME}` placeholder whose NAME is defined in prod.env is replaced by its value.\n- Placeholders whose NAME is not defined in prod.env stay exactly as written, even if a variable of that name exists in the shell environment.\n- Everything else (including `$5`) is copied unchanged.\n\nThen print one line to stdout: `unresolved: ` followed by the names of the placeholders left unresolved, sorted, unique, space-separated (here: `unresolved: RUNTIME_HOME USER_NAME`). Exit 0."
+      ],
+      "passed": true,
+      "sample": "gen_config_template",
+      "scores": [
+        {
+          "pass": true,
+          "reason": "3/3 checks passed (weighted rate 100%)",
+          "scorer": "bashkit_expectations",
+          "value": 1.0
+        }
+      ],
+      "skipped": false,
+      "target": "openai/gpt-6.1-sol",
+      "transcript": {
+        "final_response": "```bash\n#!/bin/bash\nset -euo pipefail\n\nunresolved_file=$(mktemp)\ntrap 'rm -f \"$unresolved_file\"' EXIT\n\nawk -v output=\"/home/eval/app/app.conf\" -v unresolved=\"$unresolved_file\" '\nFILENAME == ARGV[1] {\n    if ($0 == \"\" || substr($0, 1, 1) == \"#\")\n        next\n    pos = index($0, \"=\")\n    if (pos > 0)\n        values[substr($0, 1, pos - 1)] = substr($0, pos + 1)\n    next\n}\n{\n    rest = $0\n    rendered = \"\"\n    while (match(rest, /\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}/)) {\n        placeholder = substr(rest, RSTART, RLENGTH)\n        name = substr(placeholder, 3, length(placeholder) - 3)\n        rendered = rendered substr(rest, 1, RSTART - 1)\n        if (name in values)\n            rendered = rendered values[name]\n        else {\n            rendered = rendered placeholder\n            missing[name] = 1\n        }\n        rest = substr(rest, RSTART + RLENGTH)\n    }\n    print rendered rest > output\n}\nEND {\n    for (name in missing)\n        print name > unresolved\n}\n' /home/eval/app/prod.env /home/eval/app/app.conf.tmpl\n\nnames=$(LC_ALL=C sort -u \"$unresolved_file\" | paste -sd ' ' -)\nprintf 'unresolved: %s\\n' \"$names\"\nexit 0\n```",
+        "iterations": 1,
+        "metadata": {
+          "bashkit": {
+            "dirs": [],
+            "last_exit_code": 0,
+            "links": {},
+            "tool_outputs": [
+              {
+                "commands": "#!/bin/bash\nset -euo pipefail\n\nunresolved_file=$(mktemp)\ntrap 'rm -f \"$unresolved_file\"' EXIT\n\nawk -v output=\"/home/eval/app/app.conf\" -v unresolved=\"$unresolved_file\" '\nFILENAME == ARGV[1] {\n    if ($0 == \"\" || substr($0, 1, 1) == \"#\")\n        next\n    pos = index($0, \"=\")\n    if (pos > 0)\n        values[substr($0, 1, pos - 1)] = substr($0, pos + 1)\n    next\n}\n{\n    rest = $0\n    rendered = \"\"\n    while (match(rest, /\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}/)) {\n        placeholder = substr(rest, RSTART, RLENGTH)\n        name = substr(placeholder, 3, length(placeholder) - 3)\n        rendered = rendered substr(rest, 1, RSTART - 1)\n        if (name in values)\n            rendered = rendered values[name]\n        else {\n            rendered = rendered placeholder\n            missing[name] = 1\n        }\n        rest = substr(rest, RSTART + RLENGTH)\n    }\n    print rendered rest > output\n}\nEND {\n    for (name in missing)\n        print name > unresolved\n}\n' /home/eval/app/prod.env /home/eval/app/app.conf.tmpl\n\nnames=$(LC_ALL=C sort -u \"$unresolved_file\" | paste -sd ' ' -)\nprintf 'unresolved: %s\\n' \"$names\"\nexit 0\n",
+                "exit_code": 0,
+                "stderr": "",
+                "stdout": "unresolved: RUNTIME_HOME USER_NAME\n"
+              }
+            ]
+          },
+          "generate": {
+            "extraction": "fenced",
+            "timed_out": false
+          }
+        },
+        "metrics": {
+          "exec_ms": 8.0,
+          "exit_code": 0.0,
+          "extracted": 1.0,
+          "generate_ms": 10948.0,
+          "script_bytes": 1113.0,
+          "script_found": 1.0,
+          "timed_out": 0.0
+        },
+        "timing": {
+          "duration_ms": 10956
+        },
+        "tool_calls": [
+          "#!/bin/bash\nset -euo pipefail\n\nunresolved_file=$(mktemp)\ntrap 'rm -f \"$unresolved_file\"' EXIT\n\nawk -v output=\"/home/eval/app/app.conf\" -v unresolved=\"$unresolved_file\" '\nFILENAME == ARGV[1] {\n    if ($0 == \"\" || substr($0, 1, 1) == \"#\")\n        next\n    pos = index($0, \"=\")\n    if (pos > 0)\n        values[substr($0, 1, pos - 1)] = substr($0, pos + 1)\n    next\n}\n{\n    rest = $0\n    rendered = \"\"\n    while (match(rest, /\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}/)) {\n        placeholder = substr(rest, RSTART, RLENGTH)\n        name = substr(placeholder, 3, length(placeholder) - 3)\n        rendered = rendered substr(rest, 1, RSTART - 1)\n        if (name in values)\n            rendered = rendered values[name]\n        else {\n            rendered = rendered placeholder\n            missing[name] = 1\n        }\n        rest = substr(rest, RSTART + RLENGTH)\n    }\n    print rendered rest > output\n}\nEND {\n    for (name in missing)\n        print name > unresolved\n}\n' /home/eval/app/prod.env /home/eval/app/app.conf.tmpl\n\nnames=$(LC_ALL=C sort -u \"$unresolved_file\" | paste -sd ' ' -)\nprintf 'unresolved: %s\\n' \"$names\"\nexit 0\n"
+        ],
+        "tool_calls_count": 1,
+        "usage": {
+          "cost_usd": 0.0,
+          "input_tokens": 592,
+          "output_tokens": 539
+        }
+      }
+    },
+    {
       "aggregate": 1.0,
       "eval": "bashkit_generate",
       "input": [
@@ -1068,6 +1446,132 @@
           "cost_usd": 0.0,
           "input_tokens": 750,
           "output_tokens": 373
+        }
+      }
+    },
+    {
+      "aggregate": 1.0,
+      "eval": "bashkit_generate",
+      "input": [
+        "Write a bash script that converts a CSV file to JSON Lines.\n\nStarting files:\n--- /home/eval/data/users.csv (no trailing newline on the last line) ---\nid,name,email,active\n1,Alice Smith,alice@example.com,yes\n2,Bob Jones,bob@example.com,no\n3,Carol White,carol@example.com,yes\n--- end ---\n\nFields never contain commas or quotes.\n\nWrite /home/eval/data/users.jsonl with one compact JSON object per data row (no spaces), in input order, keys in this order: `id` (JSON number), `name` (string), `email` (string), `active` (JSON boolean: `yes` -> true, anything else -> false). Example line: `{\"id\":1,\"name\":\"Alice Smith\",\"email\":\"alice@example.com\",\"active\":true}`. Every row must be converted, including the last one.\n\nThen print `active=<number of active users>` to stdout and exit 0."
+      ],
+      "passed": true,
+      "sample": "gen_csv_to_jsonl",
+      "scores": [
+        {
+          "pass": true,
+          "reason": "3/3 checks passed (weighted rate 100%)",
+          "scorer": "bashkit_expectations",
+          "value": 1.0
+        }
+      ],
+      "skipped": false,
+      "target": "openai/gpt-6-luna",
+      "transcript": {
+        "final_response": "```bash\n#!/usr/bin/env bash\n\noutput=/home/eval/data/users.jsonl\nactive_count=0\nfirst_line=true\n\n: > \"$output\"\n\nwhile IFS=, read -r id name email active || [[ -n \"$id$name$email$active\" ]]; do\n  if [[ \"$first_line\" == true ]]; then\n    first_line=false\n    continue\n  fi\n\n  if [[ \"$active\" == yes ]]; then\n    json_active=true\n    ((active_count += 1))\n  else\n    json_active=false\n  fi\n\n  printf '{\"id\":%s,\"name\":\"%s\",\"email\":\"%s\",\"active\":%s}\\n' \\\n    \"$id\" \"$name\" \"$email\" \"$json_active\" >> \"$output\"\ndone < /home/eval/data/users.csv\n\nprintf 'active=%s\\n' \"$active_count\"\n```",
+        "iterations": 1,
+        "metadata": {
+          "bashkit": {
+            "dirs": [],
+            "last_exit_code": 0,
+            "links": {},
+            "tool_outputs": [
+              {
+                "commands": "#!/usr/bin/env bash\n\noutput=/home/eval/data/users.jsonl\nactive_count=0\nfirst_line=true\n\n: > \"$output\"\n\nwhile IFS=, read -r id name email active || [[ -n \"$id$name$email$active\" ]]; do\n  if [[ \"$first_line\" == true ]]; then\n    first_line=false\n    continue\n  fi\n\n  if [[ \"$active\" == yes ]]; then\n    json_active=true\n    ((active_count += 1))\n  else\n    json_active=false\n  fi\n\n  printf '{\"id\":%s,\"name\":\"%s\",\"email\":\"%s\",\"active\":%s}\\n' \\\n    \"$id\" \"$name\" \"$email\" \"$json_active\" >> \"$output\"\ndone < /home/eval/data/users.csv\n\nprintf 'active=%s\\n' \"$active_count\"\n",
+                "exit_code": 0,
+                "stderr": "",
+                "stdout": "active=2\n"
+              }
+            ]
+          },
+          "generate": {
+            "extraction": "fenced",
+            "timed_out": false
+          }
+        },
+        "metrics": {
+          "exec_ms": 3.0,
+          "exit_code": 0.0,
+          "extracted": 1.0,
+          "generate_ms": 4318.0,
+          "script_bytes": 567.0,
+          "script_found": 1.0,
+          "timed_out": 0.0
+        },
+        "timing": {
+          "duration_ms": 4321
+        },
+        "tool_calls": [
+          "#!/usr/bin/env bash\n\noutput=/home/eval/data/users.jsonl\nactive_count=0\nfirst_line=true\n\n: > \"$output\"\n\nwhile IFS=, read -r id name email active || [[ -n \"$id$name$email$active\" ]]; do\n  if [[ \"$first_line\" == true ]]; then\n    first_line=false\n    continue\n  fi\n\n  if [[ \"$active\" == yes ]]; then\n    json_active=true\n    ((active_count += 1))\n  else\n    json_active=false\n  fi\n\n  printf '{\"id\":%s,\"name\":\"%s\",\"email\":\"%s\",\"active\":%s}\\n' \\\n    \"$id\" \"$name\" \"$email\" \"$json_active\" >> \"$output\"\ndone < /home/eval/data/users.csv\n\nprintf 'active=%s\\n' \"$active_count\"\n"
+        ],
+        "tool_calls_count": 1,
+        "usage": {
+          "cost_usd": 0.0,
+          "input_tokens": 497,
+          "output_tokens": 375
+        }
+      }
+    },
+    {
+      "aggregate": 1.0,
+      "eval": "bashkit_generate",
+      "input": [
+        "Write a bash script that converts a CSV file to JSON Lines.\n\nStarting files:\n--- /home/eval/data/users.csv (no trailing newline on the last line) ---\nid,name,email,active\n1,Alice Smith,alice@example.com,yes\n2,Bob Jones,bob@example.com,no\n3,Carol White,carol@example.com,yes\n--- end ---\n\nFields never contain commas or quotes.\n\nWrite /home/eval/data/users.jsonl with one compact JSON object per data row (no spaces), in input order, keys in this order: `id` (JSON number), `name` (string), `email` (string), `active` (JSON boolean: `yes` -> true, anything else -> false). Example line: `{\"id\":1,\"name\":\"Alice Smith\",\"email\":\"alice@example.com\",\"active\":true}`. Every row must be converted, including the last one.\n\nThen print `active=<number of active users>` to stdout and exit 0."
+      ],
+      "passed": true,
+      "sample": "gen_csv_to_jsonl",
+      "scores": [
+        {
+          "pass": true,
+          "reason": "3/3 checks passed (weighted rate 100%)",
+          "scorer": "bashkit_expectations",
+          "value": 1.0
+        }
+      ],
+      "skipped": false,
+      "target": "openai/gpt-6.1-sol",
+      "transcript": {
+        "final_response": "```bash\n#!/usr/bin/env bash\nset -euo pipefail\n\nactive_count=0\n\n{\n    IFS= read -r header\n    while IFS=, read -r id name email active || [[ -n \"$id\" ]]; do\n        jq -cn \\\n            --arg id \"$id\" \\\n            --arg name \"$name\" \\\n            --arg email \"$email\" \\\n            --arg active \"$active\" \\\n            '{id:($id|tonumber),name:$name,email:$email,active:($active==\"yes\")}'\n\n        if [[ \"$active\" == \"yes\" ]]; then\n            active_count=$((active_count + 1))\n        fi\n    done\n} < /home/eval/data/users.csv > /home/eval/data/users.jsonl\n\nprintf 'active=%d\\n' \"$active_count\"\nexit 0\n```",
+        "iterations": 1,
+        "metadata": {
+          "bashkit": {
+            "dirs": [],
+            "last_exit_code": 0,
+            "links": {},
+            "tool_outputs": [
+              {
+                "commands": "#!/usr/bin/env bash\nset -euo pipefail\n\nactive_count=0\n\n{\n    IFS= read -r header\n    while IFS=, read -r id name email active || [[ -n \"$id\" ]]; do\n        jq -cn \\\n            --arg id \"$id\" \\\n            --arg name \"$name\" \\\n            --arg email \"$email\" \\\n            --arg active \"$active\" \\\n            '{id:($id|tonumber),name:$name,email:$email,active:($active==\"yes\")}'\n\n        if [[ \"$active\" == \"yes\" ]]; then\n            active_count=$((active_count + 1))\n        fi\n    done\n} < /home/eval/data/users.csv > /home/eval/data/users.jsonl\n\nprintf 'active=%d\\n' \"$active_count\"\nexit 0\n",
+                "exit_code": 0,
+                "stderr": "",
+                "stdout": "active=2\n"
+              }
+            ]
+          },
+          "generate": {
+            "extraction": "fenced",
+            "timed_out": false
+          }
+        },
+        "metrics": {
+          "exec_ms": 25.0,
+          "exit_code": 0.0,
+          "extracted": 1.0,
+          "generate_ms": 7868.0,
+          "script_bytes": 596.0,
+          "script_found": 1.0,
+          "timed_out": 0.0
+        },
+        "timing": {
+          "duration_ms": 7893
+        },
+        "tool_calls": [
+          "#!/usr/bin/env bash\nset -euo pipefail\n\nactive_count=0\n\n{\n    IFS= read -r header\n    while IFS=, read -r id name email active || [[ -n \"$id\" ]]; do\n        jq -cn \\\n            --arg id \"$id\" \\\n            --arg name \"$name\" \\\n            --arg email \"$email\" \\\n            --arg active \"$active\" \\\n            '{id:($id|tonumber),name:$name,email:$email,active:($active==\"yes\")}'\n\n        if [[ \"$active\" == \"yes\" ]]; then\n            active_count=$((active_count + 1))\n        fi\n    done\n} < /home/eval/data/users.csv > /home/eval/data/users.jsonl\n\nprintf 'active=%d\\n' \"$active_count\"\nexit 0\n"
+        ],
+        "tool_calls_count": 1,
+        "usage": {
+          "cost_usd": 0.0,
+          "input_tokens": 497,
+          "output_tokens": 347
         }
       }
     },
@@ -1403,6 +1907,132 @@
         }
       ],
       "skipped": false,
+      "target": "openai/gpt-6-luna",
+      "transcript": {
+        "final_response": "```bash\nmkdir -p /home/eval/bin\ncat > /home/eval/bin/greet <<'EOF'\n#!/bin/bash\n\nusage='usage: greet [-u] [-c COUNT] -n NAME...'\nnames=()\nuppercase=0\ncount=1\n\nusage_error() {\n    printf '%s\\n' \"$usage\" >&2\n    exit 2\n}\n\nOPTIND=1\nwhile getopts ':n:uc:h' opt; do\n    case \"$opt\" in\n        n) names+=(\"$OPTARG\") ;;\n        u) uppercase=1 ;;\n        c) count=$OPTARG ;;\n        h)\n            printf '%s\\n' \"$usage\"\n            exit 0\n            ;;\n        :)\n            usage_error\n            ;;\n        \\?)\n            usage_error\n            ;;\n    esac\ndone\n\nshift \"$((OPTIND - 1))\"\n\nif (( $# != 0 )) || (( ${#names[@]} == 0 )); then\n    usage_error\nfi\n\nif [[ ! $count =~ ^[0-9]+$ || ! $count =~ [1-9] ]]; then\n    usage_error\nfi\n\ncount_num=$((10#$count))\nif (( count_num <= 0 )); then\n    usage_error\nfi\n\nfor ((rep = 0; rep < count_num; rep++)); do\n    for name in \"${names[@]}\"; do\n        if (( uppercase )); then\n            name=${name^^}\n        fi\n        printf 'Hello, %s!\\n' \"$name\"\n    done\ndone\nEOF\nchmod +x /home/eval/bin/greet\n\nmkdir -p /home/eval/out\n/home/eval/bin/greet -u -n alice -c 2 -n bob > /home/eval/out/run1.txt\n/home/eval/bin/greet -n 'Mary Ann' > /home/eval/out/run2.txt\n/home/eval/bin/greet -x -n a 2> /home/eval/out/run3.err; echo $? > /home/eval/out/run3.code\n/home/eval/bin/greet -c zero -n a 2>/dev/null; echo $? > /home/eval/out/run4.code\n/home/eval/bin/greet -u 2>/dev/null; echo $? > /home/eval/out/run5.code\nexit 0\n```",
+        "iterations": 1,
+        "metadata": {
+          "bashkit": {
+            "dirs": [],
+            "last_exit_code": 0,
+            "links": {},
+            "tool_outputs": [
+              {
+                "commands": "mkdir -p /home/eval/bin\ncat > /home/eval/bin/greet <<'EOF'\n#!/bin/bash\n\nusage='usage: greet [-u] [-c COUNT] -n NAME...'\nnames=()\nuppercase=0\ncount=1\n\nusage_error() {\n    printf '%s\\n' \"$usage\" >&2\n    exit 2\n}\n\nOPTIND=1\nwhile getopts ':n:uc:h' opt; do\n    case \"$opt\" in\n        n) names+=(\"$OPTARG\") ;;\n        u) uppercase=1 ;;\n        c) count=$OPTARG ;;\n        h)\n            printf '%s\\n' \"$usage\"\n            exit 0\n            ;;\n        :)\n            usage_error\n            ;;\n        \\?)\n            usage_error\n            ;;\n    esac\ndone\n\nshift \"$((OPTIND - 1))\"\n\nif (( $# != 0 )) || (( ${#names[@]} == 0 )); then\n    usage_error\nfi\n\nif [[ ! $count =~ ^[0-9]+$ || ! $count =~ [1-9] ]]; then\n    usage_error\nfi\n\ncount_num=$((10#$count))\nif (( count_num <= 0 )); then\n    usage_error\nfi\n\nfor ((rep = 0; rep < count_num; rep++)); do\n    for name in \"${names[@]}\"; do\n        if (( uppercase )); then\n            name=${name^^}\n        fi\n        printf 'Hello, %s!\\n' \"$name\"\n    done\ndone\nEOF\nchmod +x /home/eval/bin/greet\n\nmkdir -p /home/eval/out\n/home/eval/bin/greet -u -n alice -c 2 -n bob > /home/eval/out/run1.txt\n/home/eval/bin/greet -n 'Mary Ann' > /home/eval/out/run2.txt\n/home/eval/bin/greet -x -n a 2> /home/eval/out/run3.err; echo $? > /home/eval/out/run3.code\n/home/eval/bin/greet -c zero -n a 2>/dev/null; echo $? > /home/eval/out/run4.code\n/home/eval/bin/greet -u 2>/dev/null; echo $? > /home/eval/out/run5.code\nexit 0\n",
+                "exit_code": 0,
+                "stderr": "",
+                "stdout": ""
+              }
+            ]
+          },
+          "generate": {
+            "extraction": "fenced",
+            "timed_out": false
+          }
+        },
+        "metrics": {
+          "exec_ms": 19.0,
+          "exit_code": 0.0,
+          "extracted": 1.0,
+          "generate_ms": 17237.0,
+          "script_bytes": 1446.0,
+          "script_found": 1.0,
+          "timed_out": 0.0
+        },
+        "timing": {
+          "duration_ms": 17256
+        },
+        "tool_calls": [
+          "mkdir -p /home/eval/bin\ncat > /home/eval/bin/greet <<'EOF'\n#!/bin/bash\n\nusage='usage: greet [-u] [-c COUNT] -n NAME...'\nnames=()\nuppercase=0\ncount=1\n\nusage_error() {\n    printf '%s\\n' \"$usage\" >&2\n    exit 2\n}\n\nOPTIND=1\nwhile getopts ':n:uc:h' opt; do\n    case \"$opt\" in\n        n) names+=(\"$OPTARG\") ;;\n        u) uppercase=1 ;;\n        c) count=$OPTARG ;;\n        h)\n            printf '%s\\n' \"$usage\"\n            exit 0\n            ;;\n        :)\n            usage_error\n            ;;\n        \\?)\n            usage_error\n            ;;\n    esac\ndone\n\nshift \"$((OPTIND - 1))\"\n\nif (( $# != 0 )) || (( ${#names[@]} == 0 )); then\n    usage_error\nfi\n\nif [[ ! $count =~ ^[0-9]+$ || ! $count =~ [1-9] ]]; then\n    usage_error\nfi\n\ncount_num=$((10#$count))\nif (( count_num <= 0 )); then\n    usage_error\nfi\n\nfor ((rep = 0; rep < count_num; rep++)); do\n    for name in \"${names[@]}\"; do\n        if (( uppercase )); then\n            name=${name^^}\n        fi\n        printf 'Hello, %s!\\n' \"$name\"\n    done\ndone\nEOF\nchmod +x /home/eval/bin/greet\n\nmkdir -p /home/eval/out\n/home/eval/bin/greet -u -n alice -c 2 -n bob > /home/eval/out/run1.txt\n/home/eval/bin/greet -n 'Mary Ann' > /home/eval/out/run2.txt\n/home/eval/bin/greet -x -n a 2> /home/eval/out/run3.err; echo $? > /home/eval/out/run3.code\n/home/eval/bin/greet -c zero -n a 2>/dev/null; echo $? > /home/eval/out/run4.code\n/home/eval/bin/greet -u 2>/dev/null; echo $? > /home/eval/out/run5.code\nexit 0\n"
+        ],
+        "tool_calls_count": 1,
+        "usage": {
+          "cost_usd": 0.0,
+          "input_tokens": 682,
+          "output_tokens": 1747
+        }
+      }
+    },
+    {
+      "aggregate": 1.0,
+      "eval": "bashkit_generate",
+      "input": [
+        "Write a bash script that creates a small command-line tool and runs it.\n\nNo relevant files exist yet; /home/eval/bin and /home/eval/out do not exist.\n\n1. Create the executable script /home/eval/bin/greet (with a `#!/bin/bash` line) that parses options with getopts:\n   - `-n NAME`: a name to greet; may be given several times; at least one is required.\n   - `-u`: print names in uppercase.\n   - `-c COUNT`: repeat the whole greeting COUNT times (default 1); COUNT must be a positive integer.\n   - `-h`: print `usage: greet [-u] [-c COUNT] -n NAME...` to stdout and exit 0.\n   - Any unknown option, missing option argument, missing `-n`, or invalid COUNT: print that same usage line to stderr and exit 2.\n   Output: for each repetition, for each name in the order given, the line `Hello, NAME!`.\n2. Then run exactly these commands:\n   ```\n   mkdir -p /home/eval/out\n   /home/eval/bin/greet -u -n alice -c 2 -n bob > /home/eval/out/run1.txt\n   /home/eval/bin/greet -n 'Mary Ann' > /home/eval/out/run2.txt\n   /home/eval/bin/greet -x -n a 2> /home/eval/out/run3.err; echo $? > /home/eval/out/run3.code\n   /home/eval/bin/greet -c zero -n a 2>/dev/null; echo $? > /home/eval/out/run4.code\n   /home/eval/bin/greet -u 2>/dev/null; echo $? > /home/eval/out/run5.code\n   ```\n3. Exit 0."
+      ],
+      "passed": true,
+      "sample": "gen_getopts_cli",
+      "scores": [
+        {
+          "pass": true,
+          "reason": "8/8 checks passed (weighted rate 100%)",
+          "scorer": "bashkit_expectations",
+          "value": 1.0
+        }
+      ],
+      "skipped": false,
+      "target": "openai/gpt-6.1-sol",
+      "transcript": {
+        "final_response": "```bash\nmkdir -p /home/eval/bin\ncat > /home/eval/bin/greet <<'EOF'\n#!/bin/bash\n\nusage() {\n    printf '%s\\n' 'usage: greet [-u] [-c COUNT] -n NAME...'\n}\n\nfail() {\n    usage >&2\n    exit 2\n}\n\nnames=()\nuppercase=0\ncount=1\n\nwhile getopts ':n:uc:h' option; do\n    case \"$option\" in\n        n) names+=(\"$OPTARG\") ;;\n        u) uppercase=1 ;;\n        c)\n            [[ \"$OPTARG\" =~ ^[0-9]+$ ]] || fail\n            [[ \"$OPTARG\" == *[1-9]* ]] || fail\n            count=\"${OPTARG#\"${OPTARG%%[!0]*}\"}\"\n            ;;\n        h) usage; exit 0 ;;\n        \\?|:) fail ;;\n    esac\ndone\n\nshift \"$((OPTIND - 1))\"\n[[ ${#names[@]} -gt 0 && $# -eq 0 ]] || fail\n\nwhile [[ \"$count\" != 0 ]]; do\n    for name in \"${names[@]}\"; do\n        if [[ \"$uppercase\" -eq 1 ]]; then\n            name=$(printf '%s' \"$name\" | tr '[:lower:]' '[:upper:]')\n        fi\n        printf 'Hello, %s!\\n' \"$name\"\n    done\n\n    # Decimal decrement avoids overflow and accepts counts with leading zeros.\n    prefix=\"$count\"\n    suffix=''\n    while [[ \"$prefix\" == *0 ]]; do\n        prefix=\"${prefix%?}\"\n        suffix=\"9$suffix\"\n    done\n    digit=\"${prefix: -1}\"\n    prefix=\"${prefix%?}\"\n    count=\"$prefix$((digit - 1))$suffix\"\n    count=\"${count#\"${count%%[!0]*}\"}\"\n    count=\"${count:-0}\"\ndone\nEOF\nchmod +x /home/eval/bin/greet\n\nmkdir -p /home/eval/out\n/home/eval/bin/greet -u -n alice -c 2 -n bob > /home/eval/out/run1.txt\n/home/eval/bin/greet -n 'Mary Ann' > /home/eval/out/run2.txt\n/home/eval/bin/greet -x -n a 2> /home/eval/out/run3.err; echo $? > /home/eval/out/run3.code\n/home/eval/bin/greet -c zero -n a 2>/dev/null; echo $? > /home/eval/out/run4.code\n/home/eval/bin/greet -u 2>/dev/null; echo $? > /home/eval/out/run5.code\n\nexit 0\n```",
+        "iterations": 1,
+        "metadata": {
+          "bashkit": {
+            "dirs": [],
+            "last_exit_code": 0,
+            "links": {},
+            "tool_outputs": [
+              {
+                "commands": "mkdir -p /home/eval/bin\ncat > /home/eval/bin/greet <<'EOF'\n#!/bin/bash\n\nusage() {\n    printf '%s\\n' 'usage: greet [-u] [-c COUNT] -n NAME...'\n}\n\nfail() {\n    usage >&2\n    exit 2\n}\n\nnames=()\nuppercase=0\ncount=1\n\nwhile getopts ':n:uc:h' option; do\n    case \"$option\" in\n        n) names+=(\"$OPTARG\") ;;\n        u) uppercase=1 ;;\n        c)\n            [[ \"$OPTARG\" =~ ^[0-9]+$ ]] || fail\n            [[ \"$OPTARG\" == *[1-9]* ]] || fail\n            count=\"${OPTARG#\"${OPTARG%%[!0]*}\"}\"\n            ;;\n        h) usage; exit 0 ;;\n        \\?|:) fail ;;\n    esac\ndone\n\nshift \"$((OPTIND - 1))\"\n[[ ${#names[@]} -gt 0 && $# -eq 0 ]] || fail\n\nwhile [[ \"$count\" != 0 ]]; do\n    for name in \"${names[@]}\"; do\n        if [[ \"$uppercase\" -eq 1 ]]; then\n            name=$(printf '%s' \"$name\" | tr '[:lower:]' '[:upper:]')\n        fi\n        printf 'Hello, %s!\\n' \"$name\"\n    done\n\n    # Decimal decrement avoids overflow and accepts counts with leading zeros.\n    prefix=\"$count\"\n    suffix=''\n    while [[ \"$prefix\" == *0 ]]; do\n        prefix=\"${prefix%?}\"\n        suffix=\"9$suffix\"\n    done\n    digit=\"${prefix: -1}\"\n    prefix=\"${prefix%?}\"\n    count=\"$prefix$((digit - 1))$suffix\"\n    count=\"${count#\"${count%%[!0]*}\"}\"\n    count=\"${count:-0}\"\ndone\nEOF\nchmod +x /home/eval/bin/greet\n\nmkdir -p /home/eval/out\n/home/eval/bin/greet -u -n alice -c 2 -n bob > /home/eval/out/run1.txt\n/home/eval/bin/greet -n 'Mary Ann' > /home/eval/out/run2.txt\n/home/eval/bin/greet -x -n a 2> /home/eval/out/run3.err; echo $? > /home/eval/out/run3.code\n/home/eval/bin/greet -c zero -n a 2>/dev/null; echo $? > /home/eval/out/run4.code\n/home/eval/bin/greet -u 2>/dev/null; echo $? > /home/eval/out/run5.code\n\nexit 0\n",
+                "exit_code": 0,
+                "stderr": "",
+                "stdout": ""
+              }
+            ]
+          },
+          "generate": {
+            "extraction": "fenced",
+            "timed_out": false
+          }
+        },
+        "metrics": {
+          "exec_ms": 22.0,
+          "exit_code": 0.0,
+          "extracted": 1.0,
+          "generate_ms": 17164.0,
+          "script_bytes": 1685.0,
+          "script_found": 1.0,
+          "timed_out": 0.0
+        },
+        "timing": {
+          "duration_ms": 17186
+        },
+        "tool_calls": [
+          "mkdir -p /home/eval/bin\ncat > /home/eval/bin/greet <<'EOF'\n#!/bin/bash\n\nusage() {\n    printf '%s\\n' 'usage: greet [-u] [-c COUNT] -n NAME...'\n}\n\nfail() {\n    usage >&2\n    exit 2\n}\n\nnames=()\nuppercase=0\ncount=1\n\nwhile getopts ':n:uc:h' option; do\n    case \"$option\" in\n        n) names+=(\"$OPTARG\") ;;\n        u) uppercase=1 ;;\n        c)\n            [[ \"$OPTARG\" =~ ^[0-9]+$ ]] || fail\n            [[ \"$OPTARG\" == *[1-9]* ]] || fail\n            count=\"${OPTARG#\"${OPTARG%%[!0]*}\"}\"\n            ;;\n        h) usage; exit 0 ;;\n        \\?|:) fail ;;\n    esac\ndone\n\nshift \"$((OPTIND - 1))\"\n[[ ${#names[@]} -gt 0 && $# -eq 0 ]] || fail\n\nwhile [[ \"$count\" != 0 ]]; do\n    for name in \"${names[@]}\"; do\n        if [[ \"$uppercase\" -eq 1 ]]; then\n            name=$(printf '%s' \"$name\" | tr '[:lower:]' '[:upper:]')\n        fi\n        printf 'Hello, %s!\\n' \"$name\"\n    done\n\n    # Decimal decrement avoids overflow and accepts counts with leading zeros.\n    prefix=\"$count\"\n    suffix=''\n    while [[ \"$prefix\" == *0 ]]; do\n        prefix=\"${prefix%?}\"\n        suffix=\"9$suffix\"\n    done\n    digit=\"${prefix: -1}\"\n    prefix=\"${prefix%?}\"\n    count=\"$prefix$((digit - 1))$suffix\"\n    count=\"${count#\"${count%%[!0]*}\"}\"\n    count=\"${count:-0}\"\ndone\nEOF\nchmod +x /home/eval/bin/greet\n\nmkdir -p /home/eval/out\n/home/eval/bin/greet -u -n alice -c 2 -n bob > /home/eval/out/run1.txt\n/home/eval/bin/greet -n 'Mary Ann' > /home/eval/out/run2.txt\n/home/eval/bin/greet -x -n a 2> /home/eval/out/run3.err; echo $? > /home/eval/out/run3.code\n/home/eval/bin/greet -c zero -n a 2>/dev/null; echo $? > /home/eval/out/run4.code\n/home/eval/bin/greet -u 2>/dev/null; echo $? > /home/eval/out/run5.code\n\nexit 0\n"
+        ],
+        "tool_calls_count": 1,
+        "usage": {
+          "cost_usd": 0.0,
+          "input_tokens": 682,
+          "output_tokens": 893
+        }
+      }
+    },
+    {
+      "aggregate": 1.0,
+      "eval": "bashkit_generate",
+      "input": [
+        "Write a bash script that creates a small command-line tool and runs it.\n\nNo relevant files exist yet; /home/eval/bin and /home/eval/out do not exist.\n\n1. Create the executable script /home/eval/bin/greet (with a `#!/bin/bash` line) that parses options with getopts:\n   - `-n NAME`: a name to greet; may be given several times; at least one is required.\n   - `-u`: print names in uppercase.\n   - `-c COUNT`: repeat the whole greeting COUNT times (default 1); COUNT must be a positive integer.\n   - `-h`: print `usage: greet [-u] [-c COUNT] -n NAME...` to stdout and exit 0.\n   - Any unknown option, missing option argument, missing `-n`, or invalid COUNT: print that same usage line to stderr and exit 2.\n   Output: for each repetition, for each name in the order given, the line `Hello, NAME!`.\n2. Then run exactly these commands:\n   ```\n   mkdir -p /home/eval/out\n   /home/eval/bin/greet -u -n alice -c 2 -n bob > /home/eval/out/run1.txt\n   /home/eval/bin/greet -n 'Mary Ann' > /home/eval/out/run2.txt\n   /home/eval/bin/greet -x -n a 2> /home/eval/out/run3.err; echo $? > /home/eval/out/run3.code\n   /home/eval/bin/greet -c zero -n a 2>/dev/null; echo $? > /home/eval/out/run4.code\n   /home/eval/bin/greet -u 2>/dev/null; echo $? > /home/eval/out/run5.code\n   ```\n3. Exit 0."
+      ],
+      "passed": true,
+      "sample": "gen_getopts_cli",
+      "scores": [
+        {
+          "pass": true,
+          "reason": "8/8 checks passed (weighted rate 100%)",
+          "scorer": "bashkit_expectations",
+          "value": 1.0
+        }
+      ],
+      "skipped": false,
       "target": "openrouter/google/gemini-3.8-flash",
       "transcript": {
         "final_response": "```bash\nmkdir -p /home/eval/bin\n\ncat << 'EOF' > /home/eval/bin/greet\n#!/bin/bash\n\nusage=\"usage: greet [-u] [-c COUNT] -n NAME...\"\n\nnames=()\nuppercase=0\ncount=1\n\nwhile getopts \":n:uc:h\" opt; do\n  case \"$opt\" in\n    n)\n      names+=(\"$OPTARG\")\n      ;;\n    u)\n      uppercase=1\n      ;;\n    c)\n      count=\"$OPTARG\"\n      ;;\n    h)\n      echo \"$usage\"\n      exit 0\n      ;;\n    \\?|:)\n      echo \"$usage\" >&2\n      exit 2\n      ;;\n  esac\ndone\nshift $((OPTIND - 1))\n\nif [ $# -gt 0 ]; then\n  echo \"$usage\" >&2\n  exit 2\nfi\n\nif [ ${#names[@]} -eq 0 ]; then\n  echo \"$usage\" >&2\n  exit 2\nfi\n\nif ! [[ \"$count\" =~ ^\\+?[1-9][0-9]*$ ]]; then\n  echo \"$usage\" >&2\n  exit 2\nfi\n\nfor ((i = 0; i < count; i++)); do\n  for name in \"${names[@]}\"; do\n    if [ \"$uppercase\" -eq 1 ]; then\n      printf \"Hello, %s!\\n\" \"${name^^}\"\n    else\n      printf \"Hello, %s!\\n\" \"$name\"\n    fi\n  done\ndone\nEOF\n\nchmod +x /home/eval/bin/greet\n\nmkdir -p /home/eval/out\n/home/eval/bin/greet -u -n alice -c 2 -n bob > /home/eval/out/run1.txt\n/home/eval/bin/greet -n 'Mary Ann' > /home/eval/out/run2.txt\n/home/eval/bin/greet -x -n a 2> /home/eval/out/run3.err; echo $? > /home/eval/out/run3.code\n/home/eval/bin/greet -c zero -n a 2>/dev/null; echo $? > /home/eval/out/run4.code\n/home/eval/bin/greet -u 2>/dev/null; echo $? > /home/eval/out/run5.code\n\nexit 0\n```",
@@ -1698,6 +2328,132 @@
           "cost_usd": 0.0,
           "input_tokens": 747,
           "output_tokens": 444
+        }
+      }
+    },
+    {
+      "aggregate": 1.0,
+      "eval": "bashkit_generate",
+      "input": [
+        "Write a bash script that generates an HTML page from settings.\n\nStarting files:\n--- /home/eval/site.env ---\nTITLE=Release Notes\nVERSION=2.4.1\n--- end ---\n\nNote the values are not shell-quoted (TITLE contains a space).\n\nCreate /home/eval/site/index.html (the directory does not exist) whose content is exactly the following, where `Release Notes` and `2.4.1` come from TITLE and VERSION in site.env, and the two lines inside `<pre>` appear literally, character for character (no expansion):\n```\n<html>\n<head><title>Release Notes 2.4.1</title></head>\n<body>\n<h1>Release Notes</h1>\n<p>Version 2.4.1</p>\n<pre>\nexport PATH=\"$HOME/bin:$PATH\"\necho \"built: $(date +%F)\"\n</pre>\n</body>\n</html>\n```\nExit 0."
+      ],
+      "passed": true,
+      "sample": "gen_heredoc_site",
+      "scores": [
+        {
+          "pass": true,
+          "reason": "2/2 checks passed (weighted rate 100%)",
+          "scorer": "bashkit_expectations",
+          "value": 1.0
+        }
+      ],
+      "skipped": false,
+      "target": "openai/gpt-6-luna",
+      "transcript": {
+        "final_response": "```bash\n#!/usr/bin/env bash\n\ntitle=\nversion=\n\nwhile IFS= read -r line; do\n  case $line in\n    TITLE=*) title=${line#TITLE=} ;;\n    VERSION=*) version=${line#VERSION=} ;;\n  esac\ndone < /home/eval/site.env\n\nmkdir -p /home/eval/site\nprintf '<html>\\n<head><title>%s %s</title></head>\\n<body>\\n<h1>%s</h1>\\n<p>Version %s</p>\\n<pre>\\nexport PATH=\"$HOME/bin:$PATH\"\\necho \"built: $(date +%%F)\"\\n</pre>\\n</body>\\n</html>\\n' \\\n  \"$title\" \"$version\" \"$title\" \"$version\" > /home/eval/site/index.html\n```",
+        "iterations": 1,
+        "metadata": {
+          "bashkit": {
+            "dirs": [],
+            "last_exit_code": 0,
+            "links": {},
+            "tool_outputs": [
+              {
+                "commands": "#!/usr/bin/env bash\n\ntitle=\nversion=\n\nwhile IFS= read -r line; do\n  case $line in\n    TITLE=*) title=${line#TITLE=} ;;\n    VERSION=*) version=${line#VERSION=} ;;\n  esac\ndone < /home/eval/site.env\n\nmkdir -p /home/eval/site\nprintf '<html>\\n<head><title>%s %s</title></head>\\n<body>\\n<h1>%s</h1>\\n<p>Version %s</p>\\n<pre>\\nexport PATH=\"$HOME/bin:$PATH\"\\necho \"built: $(date +%%F)\"\\n</pre>\\n</body>\\n</html>\\n' \\\n  \"$title\" \"$version\" \"$title\" \"$version\" > /home/eval/site/index.html\n",
+                "exit_code": 0,
+                "stderr": "",
+                "stdout": ""
+              }
+            ]
+          },
+          "generate": {
+            "extraction": "fenced",
+            "timed_out": false
+          }
+        },
+        "metrics": {
+          "exec_ms": 2.0,
+          "exit_code": 0.0,
+          "extracted": 1.0,
+          "generate_ms": 4488.0,
+          "script_bytes": 480.0,
+          "script_found": 1.0,
+          "timed_out": 0.0
+        },
+        "timing": {
+          "duration_ms": 4490
+        },
+        "tool_calls": [
+          "#!/usr/bin/env bash\n\ntitle=\nversion=\n\nwhile IFS= read -r line; do\n  case $line in\n    TITLE=*) title=${line#TITLE=} ;;\n    VERSION=*) version=${line#VERSION=} ;;\n  esac\ndone < /home/eval/site.env\n\nmkdir -p /home/eval/site\nprintf '<html>\\n<head><title>%s %s</title></head>\\n<body>\\n<h1>%s</h1>\\n<p>Version %s</p>\\n<pre>\\nexport PATH=\"$HOME/bin:$PATH\"\\necho \"built: $(date +%%F)\"\\n</pre>\\n</body>\\n</html>\\n' \\\n  \"$title\" \"$version\" \"$title\" \"$version\" > /home/eval/site/index.html\n"
+        ],
+        "tool_calls_count": 1,
+        "usage": {
+          "cost_usd": 0.0,
+          "input_tokens": 489,
+          "output_tokens": 398
+        }
+      }
+    },
+    {
+      "aggregate": 1.0,
+      "eval": "bashkit_generate",
+      "input": [
+        "Write a bash script that generates an HTML page from settings.\n\nStarting files:\n--- /home/eval/site.env ---\nTITLE=Release Notes\nVERSION=2.4.1\n--- end ---\n\nNote the values are not shell-quoted (TITLE contains a space).\n\nCreate /home/eval/site/index.html (the directory does not exist) whose content is exactly the following, where `Release Notes` and `2.4.1` come from TITLE and VERSION in site.env, and the two lines inside `<pre>` appear literally, character for character (no expansion):\n```\n<html>\n<head><title>Release Notes 2.4.1</title></head>\n<body>\n<h1>Release Notes</h1>\n<p>Version 2.4.1</p>\n<pre>\nexport PATH=\"$HOME/bin:$PATH\"\necho \"built: $(date +%F)\"\n</pre>\n</body>\n</html>\n```\nExit 0."
+      ],
+      "passed": true,
+      "sample": "gen_heredoc_site",
+      "scores": [
+        {
+          "pass": true,
+          "reason": "2/2 checks passed (weighted rate 100%)",
+          "scorer": "bashkit_expectations",
+          "value": 1.0
+        }
+      ],
+      "skipped": false,
+      "target": "openai/gpt-6.1-sol",
+      "transcript": {
+        "final_response": "```bash\n#!/usr/bin/env bash\n\nTITLE=\nVERSION=\nwhile IFS='=' read -r key value; do\n    case \"$key\" in\n        TITLE) TITLE=$value ;;\n        VERSION) VERSION=$value ;;\n    esac\ndone < /home/eval/site.env\n\nmkdir -p /home/eval/site\n\n{\n    printf '<html>\\n<head><title>%s %s</title></head>\\n<body>\\n<h1>%s</h1>\\n<p>Version %s</p>\\n' \\\n        \"$TITLE\" \"$VERSION\" \"$TITLE\" \"$VERSION\"\n    cat <<'EOF'\n<pre>\nexport PATH=\"$HOME/bin:$PATH\"\necho \"built: $(date +%F)\"\n</pre>\n</body>\n</html>\nEOF\n} > /home/eval/site/index.html\n\nexit 0\n```",
+        "iterations": 1,
+        "metadata": {
+          "bashkit": {
+            "dirs": [],
+            "last_exit_code": 0,
+            "links": {},
+            "tool_outputs": [
+              {
+                "commands": "#!/usr/bin/env bash\n\nTITLE=\nVERSION=\nwhile IFS='=' read -r key value; do\n    case \"$key\" in\n        TITLE) TITLE=$value ;;\n        VERSION) VERSION=$value ;;\n    esac\ndone < /home/eval/site.env\n\nmkdir -p /home/eval/site\n\n{\n    printf '<html>\\n<head><title>%s %s</title></head>\\n<body>\\n<h1>%s</h1>\\n<p>Version %s</p>\\n' \\\n        \"$TITLE\" \"$VERSION\" \"$TITLE\" \"$VERSION\"\n    cat <<'EOF'\n<pre>\nexport PATH=\"$HOME/bin:$PATH\"\necho \"built: $(date +%F)\"\n</pre>\n</body>\n</html>\nEOF\n} > /home/eval/site/index.html\n\nexit 0\n",
+                "exit_code": 0,
+                "stderr": "",
+                "stdout": ""
+              }
+            ]
+          },
+          "generate": {
+            "extraction": "fenced",
+            "timed_out": false
+          }
+        },
+        "metrics": {
+          "exec_ms": 3.0,
+          "exit_code": 0.0,
+          "extracted": 1.0,
+          "generate_ms": 3928.0,
+          "script_bytes": 514.0,
+          "script_found": 1.0,
+          "timed_out": 0.0
+        },
+        "timing": {
+          "duration_ms": 3931
+        },
+        "tool_calls": [
+          "#!/usr/bin/env bash\n\nTITLE=\nVERSION=\nwhile IFS='=' read -r key value; do\n    case \"$key\" in\n        TITLE) TITLE=$value ;;\n        VERSION) VERSION=$value ;;\n    esac\ndone < /home/eval/site.env\n\nmkdir -p /home/eval/site\n\n{\n    printf '<html>\\n<head><title>%s %s</title></head>\\n<body>\\n<h1>%s</h1>\\n<p>Version %s</p>\\n' \\\n        \"$TITLE\" \"$VERSION\" \"$TITLE\" \"$VERSION\"\n    cat <<'EOF'\n<pre>\nexport PATH=\"$HOME/bin:$PATH\"\necho \"built: $(date +%F)\"\n</pre>\n</body>\n</html>\nEOF\n} > /home/eval/site/index.html\n\nexit 0\n"
+        ],
+        "tool_calls_count": 1,
+        "usage": {
+          "cost_usd": 0.0,
+          "input_tokens": 489,
+          "output_tokens": 182
         }
       }
     },
@@ -2033,6 +2789,132 @@
         }
       ],
       "skipped": false,
+      "target": "openai/gpt-6-luna",
+      "transcript": {
+        "final_response": "```bash\n#!/usr/bin/env bash\n\njq -c '\n  [.[] | select(.status == \"paid\")]\n  | group_by(.customer)\n  | map({\n      customer: .[0].customer,\n      orders: length,\n      total: ([.[].items[] | .qty * .price] | add // 0)\n    })\n  | sort_by([(-.total), .customer])\n  | .[]\n' /home/eval/data/orders.json > /home/eval/data/customers.jsonl\n\njq -r '\n  [.[] | select(.status == \"paid\") | .items[]]\n  | group_by(.sku)\n  | map({sku: .[0].sku, qty: (map(.qty) | add)})\n  | sort_by([(-.qty), .sku])\n  | .[0]\n  | \"\\(.sku) \\(.qty)\"\n' /home/eval/data/orders.json > /home/eval/data/top_sku.txt\n\nexit 0\n```",
+        "iterations": 1,
+        "metadata": {
+          "bashkit": {
+            "dirs": [],
+            "last_exit_code": 0,
+            "links": {},
+            "tool_outputs": [
+              {
+                "commands": "#!/usr/bin/env bash\n\njq -c '\n  [.[] | select(.status == \"paid\")]\n  | group_by(.customer)\n  | map({\n      customer: .[0].customer,\n      orders: length,\n      total: ([.[].items[] | .qty * .price] | add // 0)\n    })\n  | sort_by([(-.total), .customer])\n  | .[]\n' /home/eval/data/orders.json > /home/eval/data/customers.jsonl\n\njq -r '\n  [.[] | select(.status == \"paid\") | .items[]]\n  | group_by(.sku)\n  | map({sku: .[0].sku, qty: (map(.qty) | add)})\n  | sort_by([(-.qty), .sku])\n  | .[0]\n  | \"\\(.sku) \\(.qty)\"\n' /home/eval/data/orders.json > /home/eval/data/top_sku.txt\n\nexit 0\n",
+                "exit_code": 0,
+                "stderr": "",
+                "stdout": ""
+              }
+            ]
+          },
+          "generate": {
+            "extraction": "fenced",
+            "timed_out": false
+          }
+        },
+        "metrics": {
+          "exec_ms": 24.0,
+          "exit_code": 0.0,
+          "extracted": 1.0,
+          "generate_ms": 9652.0,
+          "script_bytes": 575.0,
+          "script_found": 1.0,
+          "timed_out": 0.0
+        },
+        "timing": {
+          "duration_ms": 9676
+        },
+        "tool_calls": [
+          "#!/usr/bin/env bash\n\njq -c '\n  [.[] | select(.status == \"paid\")]\n  | group_by(.customer)\n  | map({\n      customer: .[0].customer,\n      orders: length,\n      total: ([.[].items[] | .qty * .price] | add // 0)\n    })\n  | sort_by([(-.total), .customer])\n  | .[]\n' /home/eval/data/orders.json > /home/eval/data/customers.jsonl\n\njq -r '\n  [.[] | select(.status == \"paid\") | .items[]]\n  | group_by(.sku)\n  | map({sku: .[0].sku, qty: (map(.qty) | add)})\n  | sort_by([(-.qty), .sku])\n  | .[0]\n  | \"\\(.sku) \\(.qty)\"\n' /home/eval/data/orders.json > /home/eval/data/top_sku.txt\n\nexit 0\n"
+        ],
+        "tool_calls_count": 1,
+        "usage": {
+          "cost_usd": 0.0,
+          "input_tokens": 748,
+          "output_tokens": 1023
+        }
+      }
+    },
+    {
+      "aggregate": 1.0,
+      "eval": "bashkit_generate",
+      "input": [
+        "Write a bash script that summarises orders with jq.\n\nStarting files:\n--- /home/eval/data/orders.json ---\n[\n  {\n    \"id\": 1,\n    \"customer\": \"bob\",\n    \"items\": [\n      {\n        \"sku\": \"A\",\n        \"qty\": 2,\n        \"price\": 3.5\n      }\n    ],\n    \"status\": \"paid\"\n  },\n  {\n    \"id\": 2,\n    \"customer\": \"alice\",\n    \"items\": [\n      {\n        \"sku\": \"B\",\n        \"qty\": 1,\n        \"price\": 10\n      },\n      {\n        \"sku\": \"A\",\n        \"qty\": 1,\n        \"price\": 3.5\n      }\n    ],\n    \"status\": \"paid\"\n  },\n  {\n    \"id\": 3,\n    \"customer\": \"bob\",\n    \"items\": [\n      {\n        \"sku\": \"C\",\n        \"qty\": 3,\n        \"price\": 1.25\n      }\n    ],\n    \"status\": \"refunded\"\n  },\n  {\n    \"id\": 4,\n    \"customer\": \"carol\",\n    \"items\": [],\n    \"status\": \"paid\"\n  },\n  {\n    \"id\": 5,\n    \"customer\": \"alice\",\n    \"items\": [\n      {\n        \"sku\": \"C\",\n        \"qty\": 4,\n        \"price\": 1.25\n      }\n    ],\n    \"status\": \"paid\"\n  }\n]\n--- end ---\n\nOnly orders with `\"status\": \"paid\"` count. An order's value is the sum of qty * price over its items (an order with no items is worth 0).\n\n1. Write /home/eval/data/customers.jsonl: one compact JSON object per customer, `{\"customer\":NAME,\"orders\":COUNT,\"total\":VALUE}`, numbers as jq prints them (e.g. `7`, `18.5`), sorted by total descending, then customer ascending.\n2. Write /home/eval/data/top_sku.txt: one line `SKU QTY` for the SKU with the largest total quantity across paid orders.\nExit 0."
+      ],
+      "passed": true,
+      "sample": "gen_jq_rollup",
+      "scores": [
+        {
+          "pass": true,
+          "reason": "3/3 checks passed (weighted rate 100%)",
+          "scorer": "bashkit_expectations",
+          "value": 1.0
+        }
+      ],
+      "skipped": false,
+      "target": "openai/gpt-6.1-sol",
+      "transcript": {
+        "final_response": "```bash\n#!/bin/bash\nset -euo pipefail\n\njq -c '\n  map(select(.status == \"paid\"))\n  | group_by(.customer)\n  | map({\n      customer: .[0].customer,\n      orders: length,\n      total: (map([.items[] | .qty * .price] | add // 0) | add // 0)\n    })\n  | sort_by([-.total, .customer])\n  | .[]\n' /home/eval/data/orders.json > /home/eval/data/customers.jsonl\n\njq -r '\n  [.[] | select(.status == \"paid\") | .items[]]\n  | group_by(.sku)\n  | map({sku: .[0].sku, qty: (map(.qty) | add)})\n  | sort_by([-.qty, .sku])\n  | .[0]\n  | \"\\(.sku) \\(.qty)\"\n' /home/eval/data/orders.json > /home/eval/data/top_sku.txt\n\nexit 0\n```",
+        "iterations": 1,
+        "metadata": {
+          "bashkit": {
+            "dirs": [],
+            "last_exit_code": 0,
+            "links": {},
+            "tool_outputs": [
+              {
+                "commands": "#!/bin/bash\nset -euo pipefail\n\njq -c '\n  map(select(.status == \"paid\"))\n  | group_by(.customer)\n  | map({\n      customer: .[0].customer,\n      orders: length,\n      total: (map([.items[] | .qty * .price] | add // 0) | add // 0)\n    })\n  | sort_by([-.total, .customer])\n  | .[]\n' /home/eval/data/orders.json > /home/eval/data/customers.jsonl\n\njq -r '\n  [.[] | select(.status == \"paid\") | .items[]]\n  | group_by(.sku)\n  | map({sku: .[0].sku, qty: (map(.qty) | add)})\n  | sort_by([-.qty, .sku])\n  | .[0]\n  | \"\\(.sku) \\(.qty)\"\n' /home/eval/data/orders.json > /home/eval/data/top_sku.txt\n\nexit 0\n",
+                "exit_code": 0,
+                "stderr": "",
+                "stdout": ""
+              }
+            ]
+          },
+          "generate": {
+            "extraction": "fenced",
+            "timed_out": false
+          }
+        },
+        "metrics": {
+          "exec_ms": 32.0,
+          "exit_code": 0.0,
+          "extracted": 1.0,
+          "generate_ms": 4746.0,
+          "script_bytes": 591.0,
+          "script_found": 1.0,
+          "timed_out": 0.0
+        },
+        "timing": {
+          "duration_ms": 4778
+        },
+        "tool_calls": [
+          "#!/bin/bash\nset -euo pipefail\n\njq -c '\n  map(select(.status == \"paid\"))\n  | group_by(.customer)\n  | map({\n      customer: .[0].customer,\n      orders: length,\n      total: (map([.items[] | .qty * .price] | add // 0) | add // 0)\n    })\n  | sort_by([-.total, .customer])\n  | .[]\n' /home/eval/data/orders.json > /home/eval/data/customers.jsonl\n\njq -r '\n  [.[] | select(.status == \"paid\") | .items[]]\n  | group_by(.sku)\n  | map({sku: .[0].sku, qty: (map(.qty) | add)})\n  | sort_by([-.qty, .sku])\n  | .[0]\n  | \"\\(.sku) \\(.qty)\"\n' /home/eval/data/orders.json > /home/eval/data/top_sku.txt\n\nexit 0\n"
+        ],
+        "tool_calls_count": 1,
+        "usage": {
+          "cost_usd": 0.0,
+          "input_tokens": 748,
+          "output_tokens": 220
+        }
+      }
+    },
+    {
+      "aggregate": 1.0,
+      "eval": "bashkit_generate",
+      "input": [
+        "Write a bash script that summarises orders with jq.\n\nStarting files:\n--- /home/eval/data/orders.json ---\n[\n  {\n    \"id\": 1,\n    \"customer\": \"bob\",\n    \"items\": [\n      {\n        \"sku\": \"A\",\n        \"qty\": 2,\n        \"price\": 3.5\n      }\n    ],\n    \"status\": \"paid\"\n  },\n  {\n    \"id\": 2,\n    \"customer\": \"alice\",\n    \"items\": [\n      {\n        \"sku\": \"B\",\n        \"qty\": 1,\n        \"price\": 10\n      },\n      {\n        \"sku\": \"A\",\n        \"qty\": 1,\n        \"price\": 3.5\n      }\n    ],\n    \"status\": \"paid\"\n  },\n  {\n    \"id\": 3,\n    \"customer\": \"bob\",\n    \"items\": [\n      {\n        \"sku\": \"C\",\n        \"qty\": 3,\n        \"price\": 1.25\n      }\n    ],\n    \"status\": \"refunded\"\n  },\n  {\n    \"id\": 4,\n    \"customer\": \"carol\",\n    \"items\": [],\n    \"status\": \"paid\"\n  },\n  {\n    \"id\": 5,\n    \"customer\": \"alice\",\n    \"items\": [\n      {\n        \"sku\": \"C\",\n        \"qty\": 4,\n        \"price\": 1.25\n      }\n    ],\n    \"status\": \"paid\"\n  }\n]\n--- end ---\n\nOnly orders with `\"status\": \"paid\"` count. An order's value is the sum of qty * price over its items (an order with no items is worth 0).\n\n1. Write /home/eval/data/customers.jsonl: one compact JSON object per customer, `{\"customer\":NAME,\"orders\":COUNT,\"total\":VALUE}`, numbers as jq prints them (e.g. `7`, `18.5`), sorted by total descending, then customer ascending.\n2. Write /home/eval/data/top_sku.txt: one line `SKU QTY` for the SKU with the largest total quantity across paid orders.\nExit 0."
+      ],
+      "passed": true,
+      "sample": "gen_jq_rollup",
+      "scores": [
+        {
+          "pass": true,
+          "reason": "3/3 checks passed (weighted rate 100%)",
+          "scorer": "bashkit_expectations",
+          "value": 1.0
+        }
+      ],
+      "skipped": false,
       "target": "openrouter/google/gemini-3.8-flash",
       "transcript": {
         "final_response": "```bash\n#!/bin/bash\nset -euo pipefail\n\nINPUT=\"/home/eval/data/orders.json\"\nCUSTOMERS_OUT=\"/home/eval/data/customers.jsonl\"\nTOP_SKU_OUT=\"/home/eval/data/top_sku.txt\"\n\n# 1. Summarise customers from paid orders\njq -c '\n  map(select(.status == \"paid\"))\n  | group_by(.customer)\n  | map({\n      customer: .[0].customer,\n      orders: length,\n      total: ([.[].items[]? | (.qty * .price)] | add // 0)\n    })\n  | sort_by([- .total, .customer])\n  | .[]\n' \"$INPUT\" > \"$CUSTOMERS_OUT\"\n\n# 2. Find SKU with largest total quantity across paid orders\njq -r '\n  map(select(.status == \"paid\"))\n  | [.[].items[]?]\n  | group_by(.sku)\n  | map({ sku: .[0].sku, qty: (map(.qty) | add // 0) })\n  | sort_by(- .qty)[0]\n  | \"\\(.sku) \\(.qty)\"\n' \"$INPUT\" > \"$TOP_SKU_OUT\"\n\nexit 0\n```",
@@ -2328,6 +3210,132 @@
           "cost_usd": 0.0,
           "input_tokens": 952,
           "output_tokens": 874
+        }
+      }
+    },
+    {
+      "aggregate": 1.0,
+      "eval": "bashkit_generate",
+      "input": [
+        "Write a bash script that rotates numbered log files.\n\nStarting files in /home/eval/logs (nothing else is in that directory):\n--- /home/eval/logs/app.log ---\nline c\n--- end ---\n--- /home/eval/logs/app.log.1 ---\nline b\n--- end ---\n--- /home/eval/logs/app.log.2 ---\nline a\n--- end ---\n--- /home/eval/logs/app.log.3 ---\nline 0\n--- end ---\n--- /home/eval/logs/app.log.old ---\nmanual backup\n--- end ---\n--- /home/eval/logs/worker.log ---\nw2\n--- end ---\n--- /home/eval/logs/worker.log.1 ---\nw1\n--- end ---\n\nDefine a shell function `rotate LOGFILE KEEP` implementing classic numbered rotation:\n- `LOGFILE.N` becomes `LOGFILE.N+1` for every existing N, highest first, so nothing is overwritten.\n- Afterwards no numbered file above KEEP may remain (delete any that would end up numbered higher than KEEP).\n- `LOGFILE` itself becomes `LOGFILE.1`, and a new empty `LOGFILE` is created.\n- Files that are not exactly `LOGFILE` or `LOGFILE.<number>` (for example `app.log.old`) must not be touched.\n\nThen call it twice: `rotate /home/eval/logs/app.log 3` and `rotate /home/eval/logs/worker.log 2`. Exit 0."
+      ],
+      "passed": true,
+      "sample": "gen_log_rotate",
+      "scores": [
+        {
+          "pass": true,
+          "reason": "9/9 checks passed (weighted rate 100%)",
+          "scorer": "bashkit_expectations",
+          "value": 1.0
+        }
+      ],
+      "skipped": false,
+      "target": "openai/gpt-6-luna",
+      "transcript": {
+        "final_response": "```bash\n#!/usr/bin/env bash\n\nrotate() {\n    local logfile=$1\n    local keep=$((10#$2))\n    local candidate suffix n i j max_index tmp_n tmp_entry\n    local -a entries=() numbers=()\n\n    for candidate in \"$logfile\".*; do\n        [[ -e \"$candidate\" || -L \"$candidate\" ]] || continue\n        suffix=${candidate:${#logfile}+1}\n        [[ $suffix =~ ^[0-9]+$ ]] || continue\n\n        n=$((10#$suffix))\n        entries+=(\"$candidate\")\n        numbers+=(\"$n\")\n    done\n\n    # Sort numbered files by number, highest first, so moves cannot overwrite.\n    for ((i = 0; i < ${#numbers[@]}; i++)); do\n        max_index=$i\n        for ((j = i + 1; j < ${#numbers[@]}; j++)); do\n            if (( numbers[j] > numbers[max_index] )); then\n                max_index=$j\n            fi\n        done\n        if (( max_index != i )); then\n            tmp_n=${numbers[i]}\n            numbers[i]=${numbers[max_index]}\n            numbers[max_index]=$tmp_n\n\n            tmp_entry=${entries[i]}\n            entries[i]=${entries[max_index]}\n            entries[max_index]=$tmp_entry\n        fi\n    done\n\n    for ((i = 0; i < ${#numbers[@]}; i++)); do\n        n=${numbers[i]}\n        if (( n >= keep )); then\n            rm -f -- \"${entries[i]}\"\n        else\n            mv -- \"${entries[i]}\" \"$logfile.$((n + 1))\"\n        fi\n    done\n\n    if [[ -e \"$logfile\" || -L \"$logfile\" ]]; then\n        mv -- \"$logfile\" \"$logfile.1\"\n    fi\n\n    if (( keep < 1 )); then\n        rm -f -- \"$logfile.1\"\n    fi\n    : > \"$logfile\"\n}\n\nrotate /home/eval/logs/app.log 3\nrotate /home/eval/logs/worker.log 2\nexit 0\n```",
+        "iterations": 1,
+        "metadata": {
+          "bashkit": {
+            "dirs": [],
+            "last_exit_code": 0,
+            "links": {},
+            "tool_outputs": [
+              {
+                "commands": "#!/usr/bin/env bash\n\nrotate() {\n    local logfile=$1\n    local keep=$((10#$2))\n    local candidate suffix n i j max_index tmp_n tmp_entry\n    local -a entries=() numbers=()\n\n    for candidate in \"$logfile\".*; do\n        [[ -e \"$candidate\" || -L \"$candidate\" ]] || continue\n        suffix=${candidate:${#logfile}+1}\n        [[ $suffix =~ ^[0-9]+$ ]] || continue\n\n        n=$((10#$suffix))\n        entries+=(\"$candidate\")\n        numbers+=(\"$n\")\n    done\n\n    # Sort numbered files by number, highest first, so moves cannot overwrite.\n    for ((i = 0; i < ${#numbers[@]}; i++)); do\n        max_index=$i\n        for ((j = i + 1; j < ${#numbers[@]}; j++)); do\n            if (( numbers[j] > numbers[max_index] )); then\n                max_index=$j\n            fi\n        done\n        if (( max_index != i )); then\n            tmp_n=${numbers[i]}\n            numbers[i]=${numbers[max_index]}\n            numbers[max_index]=$tmp_n\n\n            tmp_entry=${entries[i]}\n            entries[i]=${entries[max_index]}\n            entries[max_index]=$tmp_entry\n        fi\n    done\n\n    for ((i = 0; i < ${#numbers[@]}; i++)); do\n        n=${numbers[i]}\n        if (( n >= keep )); then\n            rm -f -- \"${entries[i]}\"\n        else\n            mv -- \"${entries[i]}\" \"$logfile.$((n + 1))\"\n        fi\n    done\n\n    if [[ -e \"$logfile\" || -L \"$logfile\" ]]; then\n        mv -- \"$logfile\" \"$logfile.1\"\n    fi\n\n    if (( keep < 1 )); then\n        rm -f -- \"$logfile.1\"\n    fi\n    : > \"$logfile\"\n}\n\nrotate /home/eval/logs/app.log 3\nrotate /home/eval/logs/worker.log 2\nexit 0\n",
+                "exit_code": 0,
+                "stderr": "",
+                "stdout": ""
+              }
+            ]
+          },
+          "generate": {
+            "extraction": "fenced",
+            "timed_out": false
+          }
+        },
+        "metrics": {
+          "exec_ms": 11.0,
+          "exit_code": 0.0,
+          "extracted": 1.0,
+          "generate_ms": 21580.0,
+          "script_bytes": 1560.0,
+          "script_found": 1.0,
+          "timed_out": 0.0
+        },
+        "timing": {
+          "duration_ms": 21591
+        },
+        "tool_calls": [
+          "#!/usr/bin/env bash\n\nrotate() {\n    local logfile=$1\n    local keep=$((10#$2))\n    local candidate suffix n i j max_index tmp_n tmp_entry\n    local -a entries=() numbers=()\n\n    for candidate in \"$logfile\".*; do\n        [[ -e \"$candidate\" || -L \"$candidate\" ]] || continue\n        suffix=${candidate:${#logfile}+1}\n        [[ $suffix =~ ^[0-9]+$ ]] || continue\n\n        n=$((10#$suffix))\n        entries+=(\"$candidate\")\n        numbers+=(\"$n\")\n    done\n\n    # Sort numbered files by number, highest first, so moves cannot overwrite.\n    for ((i = 0; i < ${#numbers[@]}; i++)); do\n        max_index=$i\n        for ((j = i + 1; j < ${#numbers[@]}; j++)); do\n            if (( numbers[j] > numbers[max_index] )); then\n                max_index=$j\n            fi\n        done\n        if (( max_index != i )); then\n            tmp_n=${numbers[i]}\n            numbers[i]=${numbers[max_index]}\n            numbers[max_index]=$tmp_n\n\n            tmp_entry=${entries[i]}\n            entries[i]=${entries[max_index]}\n            entries[max_index]=$tmp_entry\n        fi\n    done\n\n    for ((i = 0; i < ${#numbers[@]}; i++)); do\n        n=${numbers[i]}\n        if (( n >= keep )); then\n            rm -f -- \"${entries[i]}\"\n        else\n            mv -- \"${entries[i]}\" \"$logfile.$((n + 1))\"\n        fi\n    done\n\n    if [[ -e \"$logfile\" || -L \"$logfile\" ]]; then\n        mv -- \"$logfile\" \"$logfile.1\"\n    fi\n\n    if (( keep < 1 )); then\n        rm -f -- \"$logfile.1\"\n    fi\n    : > \"$logfile\"\n}\n\nrotate /home/eval/logs/app.log 3\nrotate /home/eval/logs/worker.log 2\nexit 0\n"
+        ],
+        "tool_calls_count": 1,
+        "usage": {
+          "cost_usd": 0.0,
+          "input_tokens": 599,
+          "output_tokens": 2017
+        }
+      }
+    },
+    {
+      "aggregate": 1.0,
+      "eval": "bashkit_generate",
+      "input": [
+        "Write a bash script that rotates numbered log files.\n\nStarting files in /home/eval/logs (nothing else is in that directory):\n--- /home/eval/logs/app.log ---\nline c\n--- end ---\n--- /home/eval/logs/app.log.1 ---\nline b\n--- end ---\n--- /home/eval/logs/app.log.2 ---\nline a\n--- end ---\n--- /home/eval/logs/app.log.3 ---\nline 0\n--- end ---\n--- /home/eval/logs/app.log.old ---\nmanual backup\n--- end ---\n--- /home/eval/logs/worker.log ---\nw2\n--- end ---\n--- /home/eval/logs/worker.log.1 ---\nw1\n--- end ---\n\nDefine a shell function `rotate LOGFILE KEEP` implementing classic numbered rotation:\n- `LOGFILE.N` becomes `LOGFILE.N+1` for every existing N, highest first, so nothing is overwritten.\n- Afterwards no numbered file above KEEP may remain (delete any that would end up numbered higher than KEEP).\n- `LOGFILE` itself becomes `LOGFILE.1`, and a new empty `LOGFILE` is created.\n- Files that are not exactly `LOGFILE` or `LOGFILE.<number>` (for example `app.log.old`) must not be touched.\n\nThen call it twice: `rotate /home/eval/logs/app.log 3` and `rotate /home/eval/logs/worker.log 2`. Exit 0."
+      ],
+      "passed": true,
+      "sample": "gen_log_rotate",
+      "scores": [
+        {
+          "pass": true,
+          "reason": "9/9 checks passed (weighted rate 100%)",
+          "scorer": "bashkit_expectations",
+          "value": 1.0
+        }
+      ],
+      "skipped": false,
+      "target": "openai/gpt-6.1-sol",
+      "transcript": {
+        "final_response": "```bash\n#!/bin/bash\nset -e\n\nrotate() {\n    local logfile=$1 keep=$2 file suffix n next\n    local -a numbers=()\n\n    [[ \"$keep\" =~ ^[0-9]+$ ]] || return 1\n    keep=$((10#$keep))\n\n    for file in \"$logfile\".*; do\n        [[ -e \"$file\" || -L \"$file\" ]] || continue\n        suffix=${file#\"$logfile\".}\n        [[ \"$suffix\" =~ ^[0-9]+$ ]] || continue\n        numbers+=(\"$suffix\")\n    done\n\n    if ((${#numbers[@]})); then\n        for suffix in $(printf '%s\\n' \"${numbers[@]}\" | sort -nr); do\n            n=$((10#$suffix))\n            if ((n >= keep)); then\n                rm -f -- \"$logfile.$suffix\"\n            else\n                next=$((n + 1))\n                mv -- \"$logfile.$suffix\" \"$logfile.$next\"\n            fi\n        done\n    fi\n\n    if ((keep > 0)); then\n        mv -- \"$logfile\" \"$logfile.1\"\n    else\n        rm -f -- \"$logfile\"\n    fi\n    : > \"$logfile\"\n}\n\nrotate /home/eval/logs/app.log 3\nrotate /home/eval/logs/worker.log 2\nexit 0\n```",
+        "iterations": 1,
+        "metadata": {
+          "bashkit": {
+            "dirs": [],
+            "last_exit_code": 0,
+            "links": {},
+            "tool_outputs": [
+              {
+                "commands": "#!/bin/bash\nset -e\n\nrotate() {\n    local logfile=$1 keep=$2 file suffix n next\n    local -a numbers=()\n\n    [[ \"$keep\" =~ ^[0-9]+$ ]] || return 1\n    keep=$((10#$keep))\n\n    for file in \"$logfile\".*; do\n        [[ -e \"$file\" || -L \"$file\" ]] || continue\n        suffix=${file#\"$logfile\".}\n        [[ \"$suffix\" =~ ^[0-9]+$ ]] || continue\n        numbers+=(\"$suffix\")\n    done\n\n    if ((${#numbers[@]})); then\n        for suffix in $(printf '%s\\n' \"${numbers[@]}\" | sort -nr); do\n            n=$((10#$suffix))\n            if ((n >= keep)); then\n                rm -f -- \"$logfile.$suffix\"\n            else\n                next=$((n + 1))\n                mv -- \"$logfile.$suffix\" \"$logfile.$next\"\n            fi\n        done\n    fi\n\n    if ((keep > 0)); then\n        mv -- \"$logfile\" \"$logfile.1\"\n    else\n        rm -f -- \"$logfile\"\n    fi\n    : > \"$logfile\"\n}\n\nrotate /home/eval/logs/app.log 3\nrotate /home/eval/logs/worker.log 2\nexit 0\n",
+                "exit_code": 0,
+                "stderr": "",
+                "stdout": ""
+              }
+            ]
+          },
+          "generate": {
+            "extraction": "fenced",
+            "timed_out": false
+          }
+        },
+        "metrics": {
+          "exec_ms": 15.0,
+          "exit_code": 0.0,
+          "extracted": 1.0,
+          "generate_ms": 15216.0,
+          "script_bytes": 936.0,
+          "script_found": 1.0,
+          "timed_out": 0.0
+        },
+        "timing": {
+          "duration_ms": 15231
+        },
+        "tool_calls": [
+          "#!/bin/bash\nset -e\n\nrotate() {\n    local logfile=$1 keep=$2 file suffix n next\n    local -a numbers=()\n\n    [[ \"$keep\" =~ ^[0-9]+$ ]] || return 1\n    keep=$((10#$keep))\n\n    for file in \"$logfile\".*; do\n        [[ -e \"$file\" || -L \"$file\" ]] || continue\n        suffix=${file#\"$logfile\".}\n        [[ \"$suffix\" =~ ^[0-9]+$ ]] || continue\n        numbers+=(\"$suffix\")\n    done\n\n    if ((${#numbers[@]})); then\n        for suffix in $(printf '%s\\n' \"${numbers[@]}\" | sort -nr); do\n            n=$((10#$suffix))\n            if ((n >= keep)); then\n                rm -f -- \"$logfile.$suffix\"\n            else\n                next=$((n + 1))\n                mv -- \"$logfile.$suffix\" \"$logfile.$next\"\n            fi\n        done\n    fi\n\n    if ((keep > 0)); then\n        mv -- \"$logfile\" \"$logfile.1\"\n    else\n        rm -f -- \"$logfile\"\n    fi\n    : > \"$logfile\"\n}\n\nrotate /home/eval/logs/app.log 3\nrotate /home/eval/logs/worker.log 2\nexit 0\n"
+        ],
+        "tool_calls_count": 1,
+        "usage": {
+          "cost_usd": 0.0,
+          "input_tokens": 599,
+          "output_tokens": 569
         }
       }
     },
@@ -2663,6 +3671,132 @@
         }
       ],
       "skipped": false,
+      "target": "openai/gpt-6-luna",
+      "transcript": {
+        "final_response": "```bash\n#!/usr/bin/env bash\nset -euo pipefail\n\nlog=/home/eval/logs/access.log\nreport_dir=/home/eval/reports\n\nmkdir -p \"$report_dir\"\n\nawk '{ count[$4]++ } END {\n  for (code in count) printf \"%s %d\\n\", code, count[code]\n}' \"$log\" | sort -n -k1,1 > \"$report_dir/status.txt\"\n\nawk '$4 ~ /^5[0-9][0-9]$/ { print $2, $3 }' \"$log\" > \"$report_dir/errors.txt\"\n\nstats=$(awk '{\n  total++\n  if ($4 ~ /^5[0-9][0-9]$/) errors++\n} END {\n  printf \"%d %d\\n\", total, errors\n}' \"$log\")\n\nread -r total errors <<< \"$stats\"\nprintf 'total=%s errors=%s\\n' \"$total\" \"$errors\"\nexit 0\n```",
+        "iterations": 1,
+        "metadata": {
+          "bashkit": {
+            "dirs": [],
+            "last_exit_code": 0,
+            "links": {},
+            "tool_outputs": [
+              {
+                "commands": "#!/usr/bin/env bash\nset -euo pipefail\n\nlog=/home/eval/logs/access.log\nreport_dir=/home/eval/reports\n\nmkdir -p \"$report_dir\"\n\nawk '{ count[$4]++ } END {\n  for (code in count) printf \"%s %d\\n\", code, count[code]\n}' \"$log\" | sort -n -k1,1 > \"$report_dir/status.txt\"\n\nawk '$4 ~ /^5[0-9][0-9]$/ { print $2, $3 }' \"$log\" > \"$report_dir/errors.txt\"\n\nstats=$(awk '{\n  total++\n  if ($4 ~ /^5[0-9][0-9]$/) errors++\n} END {\n  printf \"%d %d\\n\", total, errors\n}' \"$log\")\n\nread -r total errors <<< \"$stats\"\nprintf 'total=%s errors=%s\\n' \"$total\" \"$errors\"\nexit 0\n",
+                "exit_code": 0,
+                "stderr": "",
+                "stdout": "total=8 errors=2\n"
+              }
+            ]
+          },
+          "generate": {
+            "extraction": "fenced",
+            "timed_out": false
+          }
+        },
+        "metrics": {
+          "exec_ms": 6.0,
+          "exit_code": 0.0,
+          "extracted": 1.0,
+          "generate_ms": 8638.0,
+          "script_bytes": 549.0,
+          "script_found": 1.0,
+          "timed_out": 0.0
+        },
+        "timing": {
+          "duration_ms": 8644
+        },
+        "tool_calls": [
+          "#!/usr/bin/env bash\nset -euo pipefail\n\nlog=/home/eval/logs/access.log\nreport_dir=/home/eval/reports\n\nmkdir -p \"$report_dir\"\n\nawk '{ count[$4]++ } END {\n  for (code in count) printf \"%s %d\\n\", code, count[code]\n}' \"$log\" | sort -n -k1,1 > \"$report_dir/status.txt\"\n\nawk '$4 ~ /^5[0-9][0-9]$/ { print $2, $3 }' \"$log\" > \"$report_dir/errors.txt\"\n\nstats=$(awk '{\n  total++\n  if ($4 ~ /^5[0-9][0-9]$/) errors++\n} END {\n  printf \"%d %d\\n\", total, errors\n}' \"$log\")\n\nread -r total errors <<< \"$stats\"\nprintf 'total=%s errors=%s\\n' \"$total\" \"$errors\"\nexit 0\n"
+        ],
+        "tool_calls_count": 1,
+        "usage": {
+          "cost_usd": 0.0,
+          "input_tokens": 642,
+          "output_tokens": 712
+        }
+      }
+    },
+    {
+      "aggregate": 1.0,
+      "eval": "bashkit_generate",
+      "input": [
+        "Write a bash script that summarises an access log.\n\nStarting files:\n--- /home/eval/logs/access.log ---\n2026-10-01T10:00:01Z GET /api/users 200 12ms\n2026-10-01T10:00:02Z GET /api/orders 500 340ms\n2026-10-01T10:00:03Z POST /api/orders 201 45ms\n2026-10-01T10:00:04Z GET /api/users 200 8ms\n2026-10-01T10:00:05Z GET /health 200 1ms\n2026-10-01T10:00:06Z GET /api/orders/7 404 5ms\n2026-10-01T10:00:07Z DELETE /api/users/3 503 120ms\n2026-10-01T10:00:08Z GET /api/users 200 10ms\n--- end ---\n\nEach line is: ISO timestamp, HTTP method, path, status code, latency.\n\nThe script must:\n1. Create /home/eval/reports (it does not exist yet).\n2. Write /home/eval/reports/status.txt: one line per distinct status code, formatted `CODE COUNT` (single space), sorted by code ascending.\n3. Write /home/eval/reports/errors.txt: for every request with a 5xx status, the line `METHOD PATH`, in log order.\n4. Print exactly one line to stdout: `total=<number of requests> errors=<number of 5xx requests>`.\n5. Exit 0."
+      ],
+      "passed": true,
+      "sample": "gen_log_status_report",
+      "scores": [
+        {
+          "pass": true,
+          "reason": "4/4 checks passed (weighted rate 100%)",
+          "scorer": "bashkit_expectations",
+          "value": 1.0
+        }
+      ],
+      "skipped": false,
+      "target": "openai/gpt-6.1-sol",
+      "transcript": {
+        "final_response": "```bash\n#!/bin/bash\nset -e\n\nmkdir -p /home/eval/reports\n\nawk '\n{\n    total++\n    counts[$4]++\n    if ($4 ~ /^5[0-9][0-9]$/) {\n        errors++\n        print $2 \" \" $3 > \"/home/eval/reports/errors.txt\"\n    }\n}\nEND {\n    for (code in counts)\n        print code \" \" counts[code] > \"/home/eval/reports/status.unsorted\"\n    printf \"total=%d errors=%d\\n\", total, errors\n}\n' /home/eval/logs/access.log\n\nsort -n /home/eval/reports/status.unsorted > /home/eval/reports/status.txt\nrm /home/eval/reports/status.unsorted\n\nexit 0\n```",
+        "iterations": 1,
+        "metadata": {
+          "bashkit": {
+            "dirs": [],
+            "last_exit_code": 0,
+            "links": {},
+            "tool_outputs": [
+              {
+                "commands": "#!/bin/bash\nset -e\n\nmkdir -p /home/eval/reports\n\nawk '\n{\n    total++\n    counts[$4]++\n    if ($4 ~ /^5[0-9][0-9]$/) {\n        errors++\n        print $2 \" \" $3 > \"/home/eval/reports/errors.txt\"\n    }\n}\nEND {\n    for (code in counts)\n        print code \" \" counts[code] > \"/home/eval/reports/status.unsorted\"\n    printf \"total=%d errors=%d\\n\", total, errors\n}\n' /home/eval/logs/access.log\n\nsort -n /home/eval/reports/status.unsorted > /home/eval/reports/status.txt\nrm /home/eval/reports/status.unsorted\n\nexit 0\n",
+                "exit_code": 0,
+                "stderr": "",
+                "stdout": "total=8 errors=2\n"
+              }
+            ]
+          },
+          "generate": {
+            "extraction": "fenced",
+            "timed_out": false
+          }
+        },
+        "metrics": {
+          "exec_ms": 4.0,
+          "exit_code": 0.0,
+          "extracted": 1.0,
+          "generate_ms": 5261.0,
+          "script_bytes": 509.0,
+          "script_found": 1.0,
+          "timed_out": 0.0
+        },
+        "timing": {
+          "duration_ms": 5265
+        },
+        "tool_calls": [
+          "#!/bin/bash\nset -e\n\nmkdir -p /home/eval/reports\n\nawk '\n{\n    total++\n    counts[$4]++\n    if ($4 ~ /^5[0-9][0-9]$/) {\n        errors++\n        print $2 \" \" $3 > \"/home/eval/reports/errors.txt\"\n    }\n}\nEND {\n    for (code in counts)\n        print code \" \" counts[code] > \"/home/eval/reports/status.unsorted\"\n    printf \"total=%d errors=%d\\n\", total, errors\n}\n' /home/eval/logs/access.log\n\nsort -n /home/eval/reports/status.unsorted > /home/eval/reports/status.txt\nrm /home/eval/reports/status.unsorted\n\nexit 0\n"
+        ],
+        "tool_calls_count": 1,
+        "usage": {
+          "cost_usd": 0.0,
+          "input_tokens": 642,
+          "output_tokens": 173
+        }
+      }
+    },
+    {
+      "aggregate": 1.0,
+      "eval": "bashkit_generate",
+      "input": [
+        "Write a bash script that summarises an access log.\n\nStarting files:\n--- /home/eval/logs/access.log ---\n2026-10-01T10:00:01Z GET /api/users 200 12ms\n2026-10-01T10:00:02Z GET /api/orders 500 340ms\n2026-10-01T10:00:03Z POST /api/orders 201 45ms\n2026-10-01T10:00:04Z GET /api/users 200 8ms\n2026-10-01T10:00:05Z GET /health 200 1ms\n2026-10-01T10:00:06Z GET /api/orders/7 404 5ms\n2026-10-01T10:00:07Z DELETE /api/users/3 503 120ms\n2026-10-01T10:00:08Z GET /api/users 200 10ms\n--- end ---\n\nEach line is: ISO timestamp, HTTP method, path, status code, latency.\n\nThe script must:\n1. Create /home/eval/reports (it does not exist yet).\n2. Write /home/eval/reports/status.txt: one line per distinct status code, formatted `CODE COUNT` (single space), sorted by code ascending.\n3. Write /home/eval/reports/errors.txt: for every request with a 5xx status, the line `METHOD PATH`, in log order.\n4. Print exactly one line to stdout: `total=<number of requests> errors=<number of 5xx requests>`.\n5. Exit 0."
+      ],
+      "passed": true,
+      "sample": "gen_log_status_report",
+      "scores": [
+        {
+          "pass": true,
+          "reason": "4/4 checks passed (weighted rate 100%)",
+          "scorer": "bashkit_expectations",
+          "value": 1.0
+        }
+      ],
+      "skipped": false,
       "target": "openrouter/google/gemini-3.8-flash",
       "transcript": {
         "final_response": "```bash\n#!/usr/bin/env bash\nset -euo pipefail\n\nLOG_FILE=\"/home/eval/logs/access.log\"\nREPORT_DIR=\"/home/eval/reports\"\n\nmkdir -p \"$REPORT_DIR\"\n\nawk 'NF {print $4}' \"$LOG_FILE\" | sort -n | uniq -c | awk '{print $2, $1}' > \"$REPORT_DIR/status.txt\"\n\nawk 'NF && $4 >= 500 && $4 <= 599 {print $2, $3}' \"$LOG_FILE\" > \"$REPORT_DIR/errors.txt\"\n\ntotal=$(awk 'NF {c++} END {print c+0}' \"$LOG_FILE\")\nerrors=$(awk 'NF {c++} END {print c+0}' \"$REPORT_DIR/errors.txt\")\n\nprintf \"total=%s errors=%s\\n\" \"$total\" \"$errors\"\nexit 0\n```",
@@ -2958,6 +4092,132 @@
           "cost_usd": 0.0,
           "input_tokens": 885,
           "output_tokens": 358
+        }
+      }
+    },
+    {
+      "aggregate": 1.0,
+      "eval": "bashkit_generate",
+      "input": [
+        "Write a bash script that runs a set of job scripts in parallel.\n\nStarting files (all four are executable; /home/eval/jobs/logs does not exist):\n--- /home/eval/jobs/build.sh ---\n#!/bin/bash\necho \"build ok\"\n--- end ---\n--- /home/eval/jobs/lint.sh ---\n#!/bin/bash\necho \"lint: 2 warnings\"\nexit 0\n--- end ---\n--- /home/eval/jobs/test.sh ---\n#!/bin/bash\nsleep 1\necho \"test: 1 failed\"\nexit 3\n--- end ---\n--- /home/eval/jobs/docs.sh ---\n#!/bin/bash\necho \"docs ok\"\n--- end ---\n\nThe script must:\n1. Start every `*.sh` file in /home/eval/jobs in the background at the same time, sending each job's stdout to /home/eval/jobs/logs/<name>.log, where <name> is the file name without `.sh`.\n2. Wait for each job individually (by PID) and record its exit code.\n3. Write /home/eval/jobs/summary.txt: one line `<name> <exit code>` per job sorted by name, followed by a final line `failed=<number of jobs with non-zero exit>`.\n4. Exit with status 1 if any job failed, otherwise 0."
+      ],
+      "passed": true,
+      "sample": "gen_parallel_jobs",
+      "scores": [
+        {
+          "pass": true,
+          "reason": "5/5 checks passed (weighted rate 100%)",
+          "scorer": "bashkit_expectations",
+          "value": 1.0
+        }
+      ],
+      "skipped": false,
+      "target": "openai/gpt-6-luna",
+      "transcript": {
+        "final_response": "```bash\n#!/bin/bash\n\njobs_dir=/home/eval/jobs\nlogs_dir=\"$jobs_dir/logs\"\nsummary=\"$jobs_dir/summary.txt\"\n\nmkdir -p \"$logs_dir\"\n\nnames=()\npids=()\n\nfor job in \"$jobs_dir\"/*.sh; do\n    name=${job##*/}\n    name=${name%.sh}\n    names+=(\"$name\")\n    \"$job\" > \"$logs_dir/$name.log\" &\n    pids+=(\"$!\")\ndone\n\ndeclare -A exit_codes\nfailed=0\n\nfor i in \"${!pids[@]}\"; do\n    if wait \"${pids[$i]}\"; then\n        code=0\n    else\n        code=$?\n    fi\n    exit_codes[\"${names[$i]}\"]=$code\n    if (( code != 0 )); then\n        ((failed += 1))\n    fi\ndone\n\n{\n    for name in \"${names[@]}\"; do\n        printf '%s %s\\n' \"$name\" \"${exit_codes[$name]}\"\n    done\n} | sort > \"$summary\"\n\nprintf 'failed=%s\\n' \"$failed\" >> \"$summary\"\n\nif (( failed > 0 )); then\n    exit 1\nfi\nexit 0\n```",
+        "iterations": 1,
+        "metadata": {
+          "bashkit": {
+            "dirs": [],
+            "last_exit_code": 1,
+            "links": {},
+            "tool_outputs": [
+              {
+                "commands": "#!/bin/bash\n\njobs_dir=/home/eval/jobs\nlogs_dir=\"$jobs_dir/logs\"\nsummary=\"$jobs_dir/summary.txt\"\n\nmkdir -p \"$logs_dir\"\n\nnames=()\npids=()\n\nfor job in \"$jobs_dir\"/*.sh; do\n    name=${job##*/}\n    name=${name%.sh}\n    names+=(\"$name\")\n    \"$job\" > \"$logs_dir/$name.log\" &\n    pids+=(\"$!\")\ndone\n\ndeclare -A exit_codes\nfailed=0\n\nfor i in \"${!pids[@]}\"; do\n    if wait \"${pids[$i]}\"; then\n        code=0\n    else\n        code=$?\n    fi\n    exit_codes[\"${names[$i]}\"]=$code\n    if (( code != 0 )); then\n        ((failed += 1))\n    fi\ndone\n\n{\n    for name in \"${names[@]}\"; do\n        printf '%s %s\\n' \"$name\" \"${exit_codes[$name]}\"\n    done\n} | sort > \"$summary\"\n\nprintf 'failed=%s\\n' \"$failed\" >> \"$summary\"\n\nif (( failed > 0 )); then\n    exit 1\nfi\nexit 0\n",
+                "exit_code": 1,
+                "stderr": "",
+                "stdout": ""
+              }
+            ]
+          },
+          "generate": {
+            "extraction": "fenced",
+            "timed_out": false
+          }
+        },
+        "metrics": {
+          "exec_ms": 1009.0,
+          "exit_code": 1.0,
+          "extracted": 1.0,
+          "generate_ms": 8947.0,
+          "script_bytes": 749.0,
+          "script_found": 1.0,
+          "timed_out": 0.0
+        },
+        "timing": {
+          "duration_ms": 9956
+        },
+        "tool_calls": [
+          "#!/bin/bash\n\njobs_dir=/home/eval/jobs\nlogs_dir=\"$jobs_dir/logs\"\nsummary=\"$jobs_dir/summary.txt\"\n\nmkdir -p \"$logs_dir\"\n\nnames=()\npids=()\n\nfor job in \"$jobs_dir\"/*.sh; do\n    name=${job##*/}\n    name=${name%.sh}\n    names+=(\"$name\")\n    \"$job\" > \"$logs_dir/$name.log\" &\n    pids+=(\"$!\")\ndone\n\ndeclare -A exit_codes\nfailed=0\n\nfor i in \"${!pids[@]}\"; do\n    if wait \"${pids[$i]}\"; then\n        code=0\n    else\n        code=$?\n    fi\n    exit_codes[\"${names[$i]}\"]=$code\n    if (( code != 0 )); then\n        ((failed += 1))\n    fi\ndone\n\n{\n    for name in \"${names[@]}\"; do\n        printf '%s %s\\n' \"$name\" \"${exit_codes[$name]}\"\n    done\n} | sort > \"$summary\"\n\nprintf 'failed=%s\\n' \"$failed\" >> \"$summary\"\n\nif (( failed > 0 )); then\n    exit 1\nfi\nexit 0\n"
+        ],
+        "tool_calls_count": 1,
+        "usage": {
+          "cost_usd": 0.0,
+          "input_tokens": 564,
+          "output_tokens": 840
+        }
+      }
+    },
+    {
+      "aggregate": 1.0,
+      "eval": "bashkit_generate",
+      "input": [
+        "Write a bash script that runs a set of job scripts in parallel.\n\nStarting files (all four are executable; /home/eval/jobs/logs does not exist):\n--- /home/eval/jobs/build.sh ---\n#!/bin/bash\necho \"build ok\"\n--- end ---\n--- /home/eval/jobs/lint.sh ---\n#!/bin/bash\necho \"lint: 2 warnings\"\nexit 0\n--- end ---\n--- /home/eval/jobs/test.sh ---\n#!/bin/bash\nsleep 1\necho \"test: 1 failed\"\nexit 3\n--- end ---\n--- /home/eval/jobs/docs.sh ---\n#!/bin/bash\necho \"docs ok\"\n--- end ---\n\nThe script must:\n1. Start every `*.sh` file in /home/eval/jobs in the background at the same time, sending each job's stdout to /home/eval/jobs/logs/<name>.log, where <name> is the file name without `.sh`.\n2. Wait for each job individually (by PID) and record its exit code.\n3. Write /home/eval/jobs/summary.txt: one line `<name> <exit code>` per job sorted by name, followed by a final line `failed=<number of jobs with non-zero exit>`.\n4. Exit with status 1 if any job failed, otherwise 0."
+      ],
+      "passed": true,
+      "sample": "gen_parallel_jobs",
+      "scores": [
+        {
+          "pass": true,
+          "reason": "5/5 checks passed (weighted rate 100%)",
+          "scorer": "bashkit_expectations",
+          "value": 1.0
+        }
+      ],
+      "skipped": false,
+      "target": "openai/gpt-6.1-sol",
+      "transcript": {
+        "final_response": "```bash\n#!/bin/bash\nset -u\nshopt -s nullglob\n\njob_dir=/home/eval/jobs\nmkdir -p \"$job_dir/logs\" || exit 1\n\nnames=()\npids=()\n\nfor job in \"$job_dir\"/*.sh; do\n    name=${job##*/}\n    name=${name%.sh}\n    \"$job\" > \"$job_dir/logs/$name.log\" &\n    names+=(\"$name\")\n    pids+=(\"$!\")\ndone\n\nfailed=0\nrecords=()\n\nfor i in \"${!pids[@]}\"; do\n    if wait \"${pids[$i]}\"; then\n        code=0\n    else\n        code=$?\n    fi\n    records+=(\"${names[$i]} $code\")\n    if (( code != 0 )); then\n        failed=$((failed + 1))\n    fi\ndone\n\n{\n    if (( ${#records[@]} > 0 )); then\n        printf '%s\\n' \"${records[@]}\" | LC_ALL=C sort\n    fi\n    printf 'failed=%d\\n' \"$failed\"\n} > \"$job_dir/summary.txt\" || exit 1\n\nif (( failed > 0 )); then\n    exit 1\nfi\nexit 0\n```",
+        "iterations": 1,
+        "metadata": {
+          "bashkit": {
+            "dirs": [],
+            "last_exit_code": 1,
+            "links": {},
+            "tool_outputs": [
+              {
+                "commands": "#!/bin/bash\nset -u\nshopt -s nullglob\n\njob_dir=/home/eval/jobs\nmkdir -p \"$job_dir/logs\" || exit 1\n\nnames=()\npids=()\n\nfor job in \"$job_dir\"/*.sh; do\n    name=${job##*/}\n    name=${name%.sh}\n    \"$job\" > \"$job_dir/logs/$name.log\" &\n    names+=(\"$name\")\n    pids+=(\"$!\")\ndone\n\nfailed=0\nrecords=()\n\nfor i in \"${!pids[@]}\"; do\n    if wait \"${pids[$i]}\"; then\n        code=0\n    else\n        code=$?\n    fi\n    records+=(\"${names[$i]} $code\")\n    if (( code != 0 )); then\n        failed=$((failed + 1))\n    fi\ndone\n\n{\n    if (( ${#records[@]} > 0 )); then\n        printf '%s\\n' \"${records[@]}\" | LC_ALL=C sort\n    fi\n    printf 'failed=%d\\n' \"$failed\"\n} > \"$job_dir/summary.txt\" || exit 1\n\nif (( failed > 0 )); then\n    exit 1\nfi\nexit 0\n",
+                "exit_code": 1,
+                "stderr": "",
+                "stdout": ""
+              }
+            ]
+          },
+          "generate": {
+            "extraction": "fenced",
+            "timed_out": false
+          }
+        },
+        "metrics": {
+          "exec_ms": 1011.0,
+          "exit_code": 1.0,
+          "extracted": 1.0,
+          "generate_ms": 4793.0,
+          "script_bytes": 730.0,
+          "script_found": 1.0,
+          "timed_out": 0.0
+        },
+        "timing": {
+          "duration_ms": 5804
+        },
+        "tool_calls": [
+          "#!/bin/bash\nset -u\nshopt -s nullglob\n\njob_dir=/home/eval/jobs\nmkdir -p \"$job_dir/logs\" || exit 1\n\nnames=()\npids=()\n\nfor job in \"$job_dir\"/*.sh; do\n    name=${job##*/}\n    name=${name%.sh}\n    \"$job\" > \"$job_dir/logs/$name.log\" &\n    names+=(\"$name\")\n    pids+=(\"$!\")\ndone\n\nfailed=0\nrecords=()\n\nfor i in \"${!pids[@]}\"; do\n    if wait \"${pids[$i]}\"; then\n        code=0\n    else\n        code=$?\n    fi\n    records+=(\"${names[$i]} $code\")\n    if (( code != 0 )); then\n        failed=$((failed + 1))\n    fi\ndone\n\n{\n    if (( ${#records[@]} > 0 )); then\n        printf '%s\\n' \"${records[@]}\" | LC_ALL=C sort\n    fi\n    printf 'failed=%d\\n' \"$failed\"\n} > \"$job_dir/summary.txt\" || exit 1\n\nif (( failed > 0 )); then\n    exit 1\nfi\nexit 0\n"
+        ],
+        "tool_calls_count": 1,
+        "usage": {
+          "cost_usd": 0.0,
+          "input_tokens": 564,
+          "output_tokens": 269
         }
       }
     },
@@ -3293,6 +4553,132 @@
         }
       ],
       "skipped": false,
+      "target": "openai/gpt-6-luna",
+      "transcript": {
+        "final_response": "```bash\n#!/usr/bin/env bash\n\n: > /home/eval/data/parts.txt\n\nwhile IFS= read -r path; do\n  dir=${path%/*}\n  base=${path##*/}\n  stem=$base\n  ext=\n\n  if [[ \"$base\" == *.* && ! ( \"$base\" == .* && \"$base\" != *.*.* ) ]]; then\n    ext=${base##*.}\n    if [[ -n \"$ext\" ]]; then\n      stem=${base%.*}\n    fi\n  fi\n\n  printf '%s|%s|%s|%s\\n' \"$dir\" \"$base\" \"$stem\" \"$ext\" \\\n    >> /home/eval/data/parts.txt\ndone < /home/eval/data/paths.txt\n\nexit 0\n```",
+        "iterations": 1,
+        "metadata": {
+          "bashkit": {
+            "dirs": [],
+            "last_exit_code": 0,
+            "links": {},
+            "tool_outputs": [
+              {
+                "commands": "#!/usr/bin/env bash\n\n: > /home/eval/data/parts.txt\n\nwhile IFS= read -r path; do\n  dir=${path%/*}\n  base=${path##*/}\n  stem=$base\n  ext=\n\n  if [[ \"$base\" == *.* && ! ( \"$base\" == .* && \"$base\" != *.*.* ) ]]; then\n    ext=${base##*.}\n    if [[ -n \"$ext\" ]]; then\n      stem=${base%.*}\n    fi\n  fi\n\n  printf '%s|%s|%s|%s\\n' \"$dir\" \"$base\" \"$stem\" \"$ext\" \\\n    >> /home/eval/data/parts.txt\ndone < /home/eval/data/paths.txt\n\nexit 0\n",
+                "exit_code": 0,
+                "stderr": "",
+                "stdout": ""
+              }
+            ]
+          },
+          "generate": {
+            "extraction": "fenced",
+            "timed_out": false
+          }
+        },
+        "metrics": {
+          "exec_ms": 6.0,
+          "exit_code": 0.0,
+          "extracted": 1.0,
+          "generate_ms": 6506.0,
+          "script_bytes": 427.0,
+          "script_found": 1.0,
+          "timed_out": 0.0
+        },
+        "timing": {
+          "duration_ms": 6512
+        },
+        "tool_calls": [
+          "#!/usr/bin/env bash\n\n: > /home/eval/data/parts.txt\n\nwhile IFS= read -r path; do\n  dir=${path%/*}\n  base=${path##*/}\n  stem=$base\n  ext=\n\n  if [[ \"$base\" == *.* && ! ( \"$base\" == .* && \"$base\" != *.*.* ) ]]; then\n    ext=${base##*.}\n    if [[ -n \"$ext\" ]]; then\n      stem=${base%.*}\n    fi\n  fi\n\n  printf '%s|%s|%s|%s\\n' \"$dir\" \"$base\" \"$stem\" \"$ext\" \\\n    >> /home/eval/data/parts.txt\ndone < /home/eval/data/paths.txt\n\nexit 0\n"
+        ],
+        "tool_calls_count": 1,
+        "usage": {
+          "cost_usd": 0.0,
+          "input_tokens": 477,
+          "output_tokens": 559
+        }
+      }
+    },
+    {
+      "aggregate": 1.0,
+      "eval": "bashkit_generate",
+      "input": [
+        "Write a bash script that splits file paths into parts.\n\nStarting files:\n--- /home/eval/data/paths.txt ---\n/var/log/nginx/access.log\n/home/eval/archive.tar.gz\n/etc/hosts\nrelative/dir/README\n/home/eval/.bashrc\n/opt/app/v1.2/run.sh\n--- end ---\n\nFor each path, in order, write one line `DIR|BASE|STEM|EXT` to /home/eval/data/parts.txt:\n- DIR: everything before the last `/` (every path here contains a `/`);\n- BASE: everything after the last `/`;\n- EXT: the text after the last `.` in BASE, or empty when BASE has no `.` other than a leading one (e.g. `.bashrc` has no extension);\n- STEM: BASE without `.EXT` (BASE itself when EXT is empty).\nExit 0."
+      ],
+      "passed": true,
+      "sample": "gen_path_parts",
+      "scores": [
+        {
+          "pass": true,
+          "reason": "2/2 checks passed (weighted rate 100%)",
+          "scorer": "bashkit_expectations",
+          "value": 1.0
+        }
+      ],
+      "skipped": false,
+      "target": "openai/gpt-6.1-sol",
+      "transcript": {
+        "final_response": "```bash\n#!/bin/bash\n\nwhile IFS= read -r path || [[ -n \"$path\" ]]; do\n    dir=${path%/*}\n    base=${path##*/}\n    stem=$base\n    ext=\n\n    if [[ \"${base#.}\" == *.* ]]; then\n        ext=${base##*.}\n        if [[ -n \"$ext\" ]]; then\n            stem=${base%.*}\n        fi\n    fi\n\n    printf '%s|%s|%s|%s\\n' \"$dir\" \"$base\" \"$stem\" \"$ext\"\ndone < /home/eval/data/paths.txt > /home/eval/data/parts.txt\n\nexit 0\n```",
+        "iterations": 1,
+        "metadata": {
+          "bashkit": {
+            "dirs": [],
+            "last_exit_code": 0,
+            "links": {},
+            "tool_outputs": [
+              {
+                "commands": "#!/bin/bash\n\nwhile IFS= read -r path || [[ -n \"$path\" ]]; do\n    dir=${path%/*}\n    base=${path##*/}\n    stem=$base\n    ext=\n\n    if [[ \"${base#.}\" == *.* ]]; then\n        ext=${base##*.}\n        if [[ -n \"$ext\" ]]; then\n            stem=${base%.*}\n        fi\n    fi\n\n    printf '%s|%s|%s|%s\\n' \"$dir\" \"$base\" \"$stem\" \"$ext\"\ndone < /home/eval/data/paths.txt > /home/eval/data/parts.txt\n\nexit 0\n",
+                "exit_code": 0,
+                "stderr": "",
+                "stdout": ""
+              }
+            ]
+          },
+          "generate": {
+            "extraction": "fenced",
+            "timed_out": false
+          }
+        },
+        "metrics": {
+          "exec_ms": 5.0,
+          "exit_code": 0.0,
+          "extracted": 1.0,
+          "generate_ms": 4756.0,
+          "script_bytes": 394.0,
+          "script_found": 1.0,
+          "timed_out": 0.0
+        },
+        "timing": {
+          "duration_ms": 4761
+        },
+        "tool_calls": [
+          "#!/bin/bash\n\nwhile IFS= read -r path || [[ -n \"$path\" ]]; do\n    dir=${path%/*}\n    base=${path##*/}\n    stem=$base\n    ext=\n\n    if [[ \"${base#.}\" == *.* ]]; then\n        ext=${base##*.}\n        if [[ -n \"$ext\" ]]; then\n            stem=${base%.*}\n        fi\n    fi\n\n    printf '%s|%s|%s|%s\\n' \"$dir\" \"$base\" \"$stem\" \"$ext\"\ndone < /home/eval/data/paths.txt > /home/eval/data/parts.txt\n\nexit 0\n"
+        ],
+        "tool_calls_count": 1,
+        "usage": {
+          "cost_usd": 0.0,
+          "input_tokens": 477,
+          "output_tokens": 204
+        }
+      }
+    },
+    {
+      "aggregate": 1.0,
+      "eval": "bashkit_generate",
+      "input": [
+        "Write a bash script that splits file paths into parts.\n\nStarting files:\n--- /home/eval/data/paths.txt ---\n/var/log/nginx/access.log\n/home/eval/archive.tar.gz\n/etc/hosts\nrelative/dir/README\n/home/eval/.bashrc\n/opt/app/v1.2/run.sh\n--- end ---\n\nFor each path, in order, write one line `DIR|BASE|STEM|EXT` to /home/eval/data/parts.txt:\n- DIR: everything before the last `/` (every path here contains a `/`);\n- BASE: everything after the last `/`;\n- EXT: the text after the last `.` in BASE, or empty when BASE has no `.` other than a leading one (e.g. `.bashrc` has no extension);\n- STEM: BASE without `.EXT` (BASE itself when EXT is empty).\nExit 0."
+      ],
+      "passed": true,
+      "sample": "gen_path_parts",
+      "scores": [
+        {
+          "pass": true,
+          "reason": "2/2 checks passed (weighted rate 100%)",
+          "scorer": "bashkit_expectations",
+          "value": 1.0
+        }
+      ],
+      "skipped": false,
       "target": "openrouter/google/gemini-3.8-flash",
       "transcript": {
         "final_response": "```bash\n#!/usr/bin/env bash\nset -euo pipefail\n\ninput=\"/home/eval/data/paths.txt\"\noutput=\"/home/eval/data/parts.txt\"\n\nmkdir -p \"$(dirname \"$output\")\"\n\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  [[ -z \"$line\" ]] && continue\n\n  DIR=\"${line%/*}\"\n  BASE=\"${line##*/}\"\n\n  sub=\"${BASE#.}\"\n  if [[ \"$sub\" == *.* ]]; then\n    EXT=\"${BASE##*.}\"\n    STEM=\"${BASE%.*}\"\n  else\n    EXT=\"\"\n    STEM=\"$BASE\"\n  fi\n\n  printf '%s|%s|%s|%s\\n' \"$DIR\" \"$BASE\" \"$STEM\" \"$EXT\"\ndone < \"$input\" > \"$output\"\n\nexit 0\n```",
@@ -3588,6 +4974,132 @@
           "cost_usd": 0.0,
           "input_tokens": 772,
           "output_tokens": 633
+        }
+      }
+    },
+    {
+      "aggregate": 1.0,
+      "eval": "bashkit_generate",
+      "input": [
+        "Write a bash script that builds an aligned sales report.\n\nStarting files (fields are separated by a single TAB character):\n--- /home/eval/data/sales.tsv ---\nregion\tproduct\tunits\tunit_price\nnorth\twidget\t10\t2.50\nsouth\twidget\t4\t2.50\nnorth\tgadget\t3\t10.00\neast\tgizmo\t7\t1.25\nsouth\tgadget\t1\t10.00\neast\twidget\t2\t2.50\n--- end ---\n\nWrite /home/eval/data/report.txt with:\n- a header line formatted with printf `%-8s %6s %10s` and the values `REGION UNITS REVENUE`;\n- one line per region with total units and total revenue (sum of units * unit_price), formatted `%-8s %6d %10.2f`, sorted by revenue descending (ties by region name ascending);\n- a line of exactly 26 `-` characters;\n- a final line formatted `%-8s %6d %10.2f` with `TOTAL`, the total units and the total revenue.\nExit 0."
+      ],
+      "passed": true,
+      "sample": "gen_printf_report",
+      "scores": [
+        {
+          "pass": true,
+          "reason": "2/2 checks passed (weighted rate 100%)",
+          "scorer": "bashkit_expectations",
+          "value": 1.0
+        }
+      ],
+      "skipped": false,
+      "target": "openai/gpt-6-luna",
+      "transcript": {
+        "final_response": "```bash\n#!/usr/bin/env bash\nset -euo pipefail\n\ninput=/home/eval/data/sales.tsv\nreport=/home/eval/data/report.txt\ntmpdir=$(mktemp -d)\ntrap 'rm -rf \"$tmpdir\"' EXIT\n\nawk -F '\\t' '\n    NR > 1 {\n        units[$1] += $3\n        revenue[$1] += $3 * $4\n    }\n    END {\n        for (region in units)\n            printf \"%s\\t%d\\t%.2f\\n\", region, units[region], revenue[region]\n    }\n' \"$input\" > \"$tmpdir/regions\"\n\nawk -F '\\t' '\n    NR > 1 {\n        units += $3\n        revenue += $3 * $4\n    }\n    END {\n        printf \"%d\\t%.2f\\n\", units, revenue\n    }\n' \"$input\" > \"$tmpdir/total\"\n\nprintf '%-8s %6s %10s\\n' REGION UNITS REVENUE > \"$report\"\n\nLC_ALL=C sort -t $'\\t' -k3,3nr -k1,1 \"$tmpdir/regions\" |\nwhile IFS=$'\\t' read -r region units revenue; do\n    printf '%-8s %6d %10.2f\\n' \"$region\" \"$units\" \"$revenue\" >> \"$report\"\ndone\n\nprintf '%s\\n' '--------------------------' >> \"$report\"\nIFS=$'\\t' read -r total_units total_revenue < \"$tmpdir/total\"\nprintf '%-8s %6d %10.2f\\n' TOTAL \"$total_units\" \"$total_revenue\" >> \"$report\"\n```",
+        "iterations": 1,
+        "metadata": {
+          "bashkit": {
+            "dirs": [],
+            "last_exit_code": 0,
+            "links": {},
+            "tool_outputs": [
+              {
+                "commands": "#!/usr/bin/env bash\nset -euo pipefail\n\ninput=/home/eval/data/sales.tsv\nreport=/home/eval/data/report.txt\ntmpdir=$(mktemp -d)\ntrap 'rm -rf \"$tmpdir\"' EXIT\n\nawk -F '\\t' '\n    NR > 1 {\n        units[$1] += $3\n        revenue[$1] += $3 * $4\n    }\n    END {\n        for (region in units)\n            printf \"%s\\t%d\\t%.2f\\n\", region, units[region], revenue[region]\n    }\n' \"$input\" > \"$tmpdir/regions\"\n\nawk -F '\\t' '\n    NR > 1 {\n        units += $3\n        revenue += $3 * $4\n    }\n    END {\n        printf \"%d\\t%.2f\\n\", units, revenue\n    }\n' \"$input\" > \"$tmpdir/total\"\n\nprintf '%-8s %6s %10s\\n' REGION UNITS REVENUE > \"$report\"\n\nLC_ALL=C sort -t $'\\t' -k3,3nr -k1,1 \"$tmpdir/regions\" |\nwhile IFS=$'\\t' read -r region units revenue; do\n    printf '%-8s %6d %10.2f\\n' \"$region\" \"$units\" \"$revenue\" >> \"$report\"\ndone\n\nprintf '%s\\n' '--------------------------' >> \"$report\"\nIFS=$'\\t' read -r total_units total_revenue < \"$tmpdir/total\"\nprintf '%-8s %6d %10.2f\\n' TOTAL \"$total_units\" \"$total_revenue\" >> \"$report\"\n",
+                "exit_code": 0,
+                "stderr": "",
+                "stdout": ""
+              }
+            ]
+          },
+          "generate": {
+            "extraction": "fenced",
+            "timed_out": false
+          }
+        },
+        "metrics": {
+          "exec_ms": 7.0,
+          "exit_code": 0.0,
+          "extracted": 1.0,
+          "generate_ms": 16823.0,
+          "script_bytes": 1008.0,
+          "script_found": 1.0,
+          "timed_out": 0.0
+        },
+        "timing": {
+          "duration_ms": 16830
+        },
+        "tool_calls": [
+          "#!/usr/bin/env bash\nset -euo pipefail\n\ninput=/home/eval/data/sales.tsv\nreport=/home/eval/data/report.txt\ntmpdir=$(mktemp -d)\ntrap 'rm -rf \"$tmpdir\"' EXIT\n\nawk -F '\\t' '\n    NR > 1 {\n        units[$1] += $3\n        revenue[$1] += $3 * $4\n    }\n    END {\n        for (region in units)\n            printf \"%s\\t%d\\t%.2f\\n\", region, units[region], revenue[region]\n    }\n' \"$input\" > \"$tmpdir/regions\"\n\nawk -F '\\t' '\n    NR > 1 {\n        units += $3\n        revenue += $3 * $4\n    }\n    END {\n        printf \"%d\\t%.2f\\n\", units, revenue\n    }\n' \"$input\" > \"$tmpdir/total\"\n\nprintf '%-8s %6s %10s\\n' REGION UNITS REVENUE > \"$report\"\n\nLC_ALL=C sort -t $'\\t' -k3,3nr -k1,1 \"$tmpdir/regions\" |\nwhile IFS=$'\\t' read -r region units revenue; do\n    printf '%-8s %6d %10.2f\\n' \"$region\" \"$units\" \"$revenue\" >> \"$report\"\ndone\n\nprintf '%s\\n' '--------------------------' >> \"$report\"\nIFS=$'\\t' read -r total_units total_revenue < \"$tmpdir/total\"\nprintf '%-8s %6d %10.2f\\n' TOTAL \"$total_units\" \"$total_revenue\" >> \"$report\"\n"
+        ],
+        "tool_calls_count": 1,
+        "usage": {
+          "cost_usd": 0.0,
+          "input_tokens": 527,
+          "output_tokens": 1721
+        }
+      }
+    },
+    {
+      "aggregate": 1.0,
+      "eval": "bashkit_generate",
+      "input": [
+        "Write a bash script that builds an aligned sales report.\n\nStarting files (fields are separated by a single TAB character):\n--- /home/eval/data/sales.tsv ---\nregion\tproduct\tunits\tunit_price\nnorth\twidget\t10\t2.50\nsouth\twidget\t4\t2.50\nnorth\tgadget\t3\t10.00\neast\tgizmo\t7\t1.25\nsouth\tgadget\t1\t10.00\neast\twidget\t2\t2.50\n--- end ---\n\nWrite /home/eval/data/report.txt with:\n- a header line formatted with printf `%-8s %6s %10s` and the values `REGION UNITS REVENUE`;\n- one line per region with total units and total revenue (sum of units * unit_price), formatted `%-8s %6d %10.2f`, sorted by revenue descending (ties by region name ascending);\n- a line of exactly 26 `-` characters;\n- a final line formatted `%-8s %6d %10.2f` with `TOTAL`, the total units and the total revenue.\nExit 0."
+      ],
+      "passed": true,
+      "sample": "gen_printf_report",
+      "scores": [
+        {
+          "pass": true,
+          "reason": "2/2 checks passed (weighted rate 100%)",
+          "scorer": "bashkit_expectations",
+          "value": 1.0
+        }
+      ],
+      "skipped": false,
+      "target": "openai/gpt-6.1-sol",
+      "transcript": {
+        "final_response": "```bash\n#!/bin/bash\nset -euo pipefail\n\nexport LC_ALL=C\nmkdir -p /home/eval/data\n\nawk -F '\\t' '\n    NR == 1 { next }\n    {\n        units[$1] += $3\n        revenue[$1] += $3 * $4\n    }\n    END {\n        for (region in units)\n            printf \"%s\\t%d\\t%.2f\\n\", region, units[region], revenue[region]\n    }\n' /home/eval/data/sales.tsv |\nsort -t $'\\t' -k3,3nr -k1,1 |\nawk -F '\\t' '\n    BEGIN {\n        printf \"%-8s %6s %10s\\n\", \"REGION\", \"UNITS\", \"REVENUE\"\n    }\n    {\n        printf \"%-8s %6d %10.2f\\n\", $1, $2, $3\n        total_units += $2\n        total_revenue += $3\n    }\n    END {\n        print \"--------------------------\"\n        printf \"%-8s %6d %10.2f\\n\", \"TOTAL\", total_units, total_revenue\n    }\n' > /home/eval/data/report.txt\n\nexit 0\n```",
+        "iterations": 1,
+        "metadata": {
+          "bashkit": {
+            "dirs": [],
+            "last_exit_code": 0,
+            "links": {},
+            "tool_outputs": [
+              {
+                "commands": "#!/bin/bash\nset -euo pipefail\n\nexport LC_ALL=C\nmkdir -p /home/eval/data\n\nawk -F '\\t' '\n    NR == 1 { next }\n    {\n        units[$1] += $3\n        revenue[$1] += $3 * $4\n    }\n    END {\n        for (region in units)\n            printf \"%s\\t%d\\t%.2f\\n\", region, units[region], revenue[region]\n    }\n' /home/eval/data/sales.tsv |\nsort -t $'\\t' -k3,3nr -k1,1 |\nawk -F '\\t' '\n    BEGIN {\n        printf \"%-8s %6s %10s\\n\", \"REGION\", \"UNITS\", \"REVENUE\"\n    }\n    {\n        printf \"%-8s %6d %10.2f\\n\", $1, $2, $3\n        total_units += $2\n        total_revenue += $3\n    }\n    END {\n        print \"--------------------------\"\n        printf \"%-8s %6d %10.2f\\n\", \"TOTAL\", total_units, total_revenue\n    }\n' > /home/eval/data/report.txt\n\nexit 0\n",
+                "exit_code": 0,
+                "stderr": "",
+                "stdout": ""
+              }
+            ]
+          },
+          "generate": {
+            "extraction": "fenced",
+            "timed_out": false
+          }
+        },
+        "metrics": {
+          "exec_ms": 3.0,
+          "exit_code": 0.0,
+          "extracted": 1.0,
+          "generate_ms": 5166.0,
+          "script_bytes": 735.0,
+          "script_found": 1.0,
+          "timed_out": 0.0
+        },
+        "timing": {
+          "duration_ms": 5169
+        },
+        "tool_calls": [
+          "#!/bin/bash\nset -euo pipefail\n\nexport LC_ALL=C\nmkdir -p /home/eval/data\n\nawk -F '\\t' '\n    NR == 1 { next }\n    {\n        units[$1] += $3\n        revenue[$1] += $3 * $4\n    }\n    END {\n        for (region in units)\n            printf \"%s\\t%d\\t%.2f\\n\", region, units[region], revenue[region]\n    }\n' /home/eval/data/sales.tsv |\nsort -t $'\\t' -k3,3nr -k1,1 |\nawk -F '\\t' '\n    BEGIN {\n        printf \"%-8s %6s %10s\\n\", \"REGION\", \"UNITS\", \"REVENUE\"\n    }\n    {\n        printf \"%-8s %6d %10.2f\\n\", $1, $2, $3\n        total_units += $2\n        total_revenue += $3\n    }\n    END {\n        print \"--------------------------\"\n        printf \"%-8s %6d %10.2f\\n\", \"TOTAL\", total_units, total_revenue\n    }\n' > /home/eval/data/report.txt\n\nexit 0\n"
+        ],
+        "tool_calls_count": 1,
+        "usage": {
+          "cost_usd": 0.0,
+          "input_tokens": 527,
+          "output_tokens": 270
         }
       }
     },
@@ -3910,6 +5422,132 @@
         }
       ],
       "skipped": false,
+      "target": "openai/gpt-6-luna",
+      "transcript": {
+        "final_response": "```bash\n#!/bin/bash\n\nretry() {\n  local max=$1\n  shift\n  local attempt status delay\n\n  delay=1\n  for ((attempt = 1; attempt <= max; attempt++)); do\n    if \"$@\" 2>/dev/null; then\n      return 0\n    else\n      status=$?\n    fi\n\n    if ((attempt < max)); then\n      printf 'attempt %d/%d failed (exit %d), sleeping %ds\\n' \\\n        \"$attempt\" \"$max\" \"$status\" \"$delay\" >> /home/eval/state/retry.log\n      sleep \"$delay\"\n      delay=$((delay * 2))\n    else\n      printf 'attempt %d/%d failed (exit %d), giving up\\n' \\\n        \"$attempt\" \"$max\" \"$status\" >> /home/eval/state/retry.log\n      return \"$status\"\n    fi\n  done\n\n  return 1\n}\n\nretry 4 /home/eval/bin/fetch.sh alpha > /home/eval/state/alpha.out\nalpha_status=$?\n\nretry 2 /home/eval/bin/fetch.sh beta > /home/eval/state/beta.out\nbeta_status=$?\n\nprintf 'alpha=%d beta=%d\\n' \"$alpha_status\" \"$beta_status\" \\\n  > /home/eval/state/summary.txt\n\nexit 0\n```",
+        "iterations": 1,
+        "metadata": {
+          "bashkit": {
+            "dirs": [],
+            "last_exit_code": 0,
+            "links": {},
+            "tool_outputs": [
+              {
+                "commands": "#!/bin/bash\n\nretry() {\n  local max=$1\n  shift\n  local attempt status delay\n\n  delay=1\n  for ((attempt = 1; attempt <= max; attempt++)); do\n    if \"$@\" 2>/dev/null; then\n      return 0\n    else\n      status=$?\n    fi\n\n    if ((attempt < max)); then\n      printf 'attempt %d/%d failed (exit %d), sleeping %ds\\n' \\\n        \"$attempt\" \"$max\" \"$status\" \"$delay\" >> /home/eval/state/retry.log\n      sleep \"$delay\"\n      delay=$((delay * 2))\n    else\n      printf 'attempt %d/%d failed (exit %d), giving up\\n' \\\n        \"$attempt\" \"$max\" \"$status\" >> /home/eval/state/retry.log\n      return \"$status\"\n    fi\n  done\n\n  return 1\n}\n\nretry 4 /home/eval/bin/fetch.sh alpha > /home/eval/state/alpha.out\nalpha_status=$?\n\nretry 2 /home/eval/bin/fetch.sh beta > /home/eval/state/beta.out\nbeta_status=$?\n\nprintf 'alpha=%d beta=%d\\n' \"$alpha_status\" \"$beta_status\" \\\n  > /home/eval/state/summary.txt\n\nexit 0\n",
+                "exit_code": 0,
+                "stderr": "",
+                "stdout": ""
+              }
+            ]
+          },
+          "generate": {
+            "extraction": "fenced",
+            "timed_out": false
+          }
+        },
+        "metrics": {
+          "exec_ms": 4022.0,
+          "exit_code": 0.0,
+          "extracted": 1.0,
+          "generate_ms": 7956.0,
+          "script_bytes": 890.0,
+          "script_found": 1.0,
+          "timed_out": 0.0
+        },
+        "timing": {
+          "duration_ms": 11978
+        },
+        "tool_calls": [
+          "#!/bin/bash\n\nretry() {\n  local max=$1\n  shift\n  local attempt status delay\n\n  delay=1\n  for ((attempt = 1; attempt <= max; attempt++)); do\n    if \"$@\" 2>/dev/null; then\n      return 0\n    else\n      status=$?\n    fi\n\n    if ((attempt < max)); then\n      printf 'attempt %d/%d failed (exit %d), sleeping %ds\\n' \\\n        \"$attempt\" \"$max\" \"$status\" \"$delay\" >> /home/eval/state/retry.log\n      sleep \"$delay\"\n      delay=$((delay * 2))\n    else\n      printf 'attempt %d/%d failed (exit %d), giving up\\n' \\\n        \"$attempt\" \"$max\" \"$status\" >> /home/eval/state/retry.log\n      return \"$status\"\n    fi\n  done\n\n  return 1\n}\n\nretry 4 /home/eval/bin/fetch.sh alpha > /home/eval/state/alpha.out\nalpha_status=$?\n\nretry 2 /home/eval/bin/fetch.sh beta > /home/eval/state/beta.out\nbeta_status=$?\n\nprintf 'alpha=%d beta=%d\\n' \"$alpha_status\" \"$beta_status\" \\\n  > /home/eval/state/summary.txt\n\nexit 0\n"
+        ],
+        "tool_calls_count": 1,
+        "usage": {
+          "cost_usd": 0.0,
+          "input_tokens": 720,
+          "output_tokens": 750
+        }
+      }
+    },
+    {
+      "aggregate": 1.0,
+      "eval": "bashkit_generate",
+      "input": [
+        "Write a bash script with a retry helper.\n\nStarting files (/home/eval/bin/fetch.sh is executable; the directory /home/eval/state exists and is empty):\n--- /home/eval/bin/fetch.sh ---\n#!/bin/bash\n# usage: fetch.sh NAME -- fails until NAME's attempt counter reaches its threshold\nstate=/home/eval/state/$1.count\nn=$(( $(cat \"$state\" 2>/dev/null || echo 0) + 1 ))\necho \"$n\" > \"$state\"\ncase $1 in\n  alpha) need=3 ;;\n  beta) need=99 ;;\n  *) need=1 ;;\nesac\nif [ \"$n\" -lt \"$need\" ]; then\n  echo \"fetch $1: attempt $n failed\" >&2\n  exit 7\nfi\necho \"payload-$1\"\n--- end ---\n\n1. Define a function `retry MAX CMD [ARGS...]` that runs the command up to MAX times:\n   - On success, return 0 immediately (the command's stdout passes through to the function's stdout).\n   - After failed attempt N (exit code E), append one line to /home/eval/state/retry.log:\n     - if N < MAX: `attempt N/MAX failed (exit E), sleeping Ds` where D = 2^(N-1) (1, 2, 4, ...), then actually `sleep D` before retrying;\n     - if N = MAX: `attempt N/MAX failed (exit E), giving up` and return E (do not sleep).\n   - The command's stderr is discarded.\n2. Run `retry 4 /home/eval/bin/fetch.sh alpha > /home/eval/state/alpha.out` and then `retry 2 /home/eval/bin/fetch.sh beta > /home/eval/state/beta.out`, capturing each exit status (the script must keep going after a failure).\n3. Write `alpha=<status> beta=<status>` (one line) to /home/eval/state/summary.txt and exit 0."
+      ],
+      "passed": true,
+      "sample": "gen_retry_backoff",
+      "scores": [
+        {
+          "pass": true,
+          "reason": "6/6 checks passed (weighted rate 100%)",
+          "scorer": "bashkit_expectations",
+          "value": 1.0
+        }
+      ],
+      "skipped": false,
+      "target": "openai/gpt-6.1-sol",
+      "transcript": {
+        "final_response": "```bash\n#!/bin/bash\n\nretry() {\n    local max=$1\n    shift\n    local n=1 status delay=1\n\n    while (( n <= max )); do\n        if \"$@\" 2>/dev/null; then\n            return 0\n        else\n            status=$?\n        fi\n\n        if (( n < max )); then\n            printf 'attempt %s/%s failed (exit %s), sleeping %ss\\n' \\\n                \"$n\" \"$max\" \"$status\" \"$delay\" >> /home/eval/state/retry.log\n            sleep \"$delay\"\n            delay=$((delay * 2))\n        else\n            printf 'attempt %s/%s failed (exit %s), giving up\\n' \\\n                \"$n\" \"$max\" \"$status\" >> /home/eval/state/retry.log\n            return \"$status\"\n        fi\n        n=$((n + 1))\n    done\n}\n\nif retry 4 /home/eval/bin/fetch.sh alpha > /home/eval/state/alpha.out; then\n    alpha_status=0\nelse\n    alpha_status=$?\nfi\n\nif retry 2 /home/eval/bin/fetch.sh beta > /home/eval/state/beta.out; then\n    beta_status=0\nelse\n    beta_status=$?\nfi\n\nprintf 'alpha=%s beta=%s\\n' \"$alpha_status\" \"$beta_status\" \\\n    > /home/eval/state/summary.txt\nexit 0\n```",
+        "iterations": 1,
+        "metadata": {
+          "bashkit": {
+            "dirs": [],
+            "last_exit_code": 0,
+            "links": {},
+            "tool_outputs": [
+              {
+                "commands": "#!/bin/bash\n\nretry() {\n    local max=$1\n    shift\n    local n=1 status delay=1\n\n    while (( n <= max )); do\n        if \"$@\" 2>/dev/null; then\n            return 0\n        else\n            status=$?\n        fi\n\n        if (( n < max )); then\n            printf 'attempt %s/%s failed (exit %s), sleeping %ss\\n' \\\n                \"$n\" \"$max\" \"$status\" \"$delay\" >> /home/eval/state/retry.log\n            sleep \"$delay\"\n            delay=$((delay * 2))\n        else\n            printf 'attempt %s/%s failed (exit %s), giving up\\n' \\\n                \"$n\" \"$max\" \"$status\" >> /home/eval/state/retry.log\n            return \"$status\"\n        fi\n        n=$((n + 1))\n    done\n}\n\nif retry 4 /home/eval/bin/fetch.sh alpha > /home/eval/state/alpha.out; then\n    alpha_status=0\nelse\n    alpha_status=$?\nfi\n\nif retry 2 /home/eval/bin/fetch.sh beta > /home/eval/state/beta.out; then\n    beta_status=0\nelse\n    beta_status=$?\nfi\n\nprintf 'alpha=%s beta=%s\\n' \"$alpha_status\" \"$beta_status\" \\\n    > /home/eval/state/summary.txt\nexit 0\n",
+                "exit_code": 0,
+                "stderr": "",
+                "stdout": ""
+              }
+            ]
+          },
+          "generate": {
+            "extraction": "fenced",
+            "timed_out": false
+          }
+        },
+        "metrics": {
+          "exec_ms": 4020.0,
+          "exit_code": 0.0,
+          "extracted": 1.0,
+          "generate_ms": 4932.0,
+          "script_bytes": 1017.0,
+          "script_found": 1.0,
+          "timed_out": 0.0
+        },
+        "timing": {
+          "duration_ms": 8952
+        },
+        "tool_calls": [
+          "#!/bin/bash\n\nretry() {\n    local max=$1\n    shift\n    local n=1 status delay=1\n\n    while (( n <= max )); do\n        if \"$@\" 2>/dev/null; then\n            return 0\n        else\n            status=$?\n        fi\n\n        if (( n < max )); then\n            printf 'attempt %s/%s failed (exit %s), sleeping %ss\\n' \\\n                \"$n\" \"$max\" \"$status\" \"$delay\" >> /home/eval/state/retry.log\n            sleep \"$delay\"\n            delay=$((delay * 2))\n        else\n            printf 'attempt %s/%s failed (exit %s), giving up\\n' \\\n                \"$n\" \"$max\" \"$status\" >> /home/eval/state/retry.log\n            return \"$status\"\n        fi\n        n=$((n + 1))\n    done\n}\n\nif retry 4 /home/eval/bin/fetch.sh alpha > /home/eval/state/alpha.out; then\n    alpha_status=0\nelse\n    alpha_status=$?\nfi\n\nif retry 2 /home/eval/bin/fetch.sh beta > /home/eval/state/beta.out; then\n    beta_status=0\nelse\n    beta_status=$?\nfi\n\nprintf 'alpha=%s beta=%s\\n' \"$alpha_status\" \"$beta_status\" \\\n    > /home/eval/state/summary.txt\nexit 0\n"
+        ],
+        "tool_calls_count": 1,
+        "usage": {
+          "cost_usd": 0.0,
+          "input_tokens": 720,
+          "output_tokens": 315
+        }
+      }
+    },
+    {
+      "aggregate": 1.0,
+      "eval": "bashkit_generate",
+      "input": [
+        "Write a bash script with a retry helper.\n\nStarting files (/home/eval/bin/fetch.sh is executable; the directory /home/eval/state exists and is empty):\n--- /home/eval/bin/fetch.sh ---\n#!/bin/bash\n# usage: fetch.sh NAME -- fails until NAME's attempt counter reaches its threshold\nstate=/home/eval/state/$1.count\nn=$(( $(cat \"$state\" 2>/dev/null || echo 0) + 1 ))\necho \"$n\" > \"$state\"\ncase $1 in\n  alpha) need=3 ;;\n  beta) need=99 ;;\n  *) need=1 ;;\nesac\nif [ \"$n\" -lt \"$need\" ]; then\n  echo \"fetch $1: attempt $n failed\" >&2\n  exit 7\nfi\necho \"payload-$1\"\n--- end ---\n\n1. Define a function `retry MAX CMD [ARGS...]` that runs the command up to MAX times:\n   - On success, return 0 immediately (the command's stdout passes through to the function's stdout).\n   - After failed attempt N (exit code E), append one line to /home/eval/state/retry.log:\n     - if N < MAX: `attempt N/MAX failed (exit E), sleeping Ds` where D = 2^(N-1) (1, 2, 4, ...), then actually `sleep D` before retrying;\n     - if N = MAX: `attempt N/MAX failed (exit E), giving up` and return E (do not sleep).\n   - The command's stderr is discarded.\n2. Run `retry 4 /home/eval/bin/fetch.sh alpha > /home/eval/state/alpha.out` and then `retry 2 /home/eval/bin/fetch.sh beta > /home/eval/state/beta.out`, capturing each exit status (the script must keep going after a failure).\n3. Write `alpha=<status> beta=<status>` (one line) to /home/eval/state/summary.txt and exit 0."
+      ],
+      "passed": true,
+      "sample": "gen_retry_backoff",
+      "scores": [
+        {
+          "pass": true,
+          "reason": "6/6 checks passed (weighted rate 100%)",
+          "scorer": "bashkit_expectations",
+          "value": 1.0
+        }
+      ],
+      "skipped": false,
       "target": "openrouter/google/gemini-3.8-flash",
       "transcript": {
         "final_response": "```bash\n#!/bin/bash\n\nretry() {\n  local max=\"$1\"\n  shift\n  local attempt=1\n  local exit_code=0\n  local log=\"/home/eval/state/retry.log\"\n\n  while [ \"$attempt\" -le \"$max\" ]; do\n    \"$@\" 2>/dev/null\n    exit_code=$?\n    if [ \"$exit_code\" -eq 0 ]; then\n      return 0\n    fi\n\n    if [ \"$attempt\" -lt \"$max\" ]; then\n      local d=$(( 1 << (attempt - 1) ))\n      echo \"attempt $attempt/$max failed (exit $exit_code), sleeping ${d}s\" >> \"$log\"\n      sleep \"$d\"\n    else\n      echo \"attempt $attempt/$max failed (exit $exit_code), giving up\" >> \"$log\"\n      return \"$exit_code\"\n    fi\n\n    attempt=$(( attempt + 1 ))\n  done\n\n  return \"$exit_code\"\n}\n\nretry 4 /home/eval/bin/fetch.sh alpha > /home/eval/state/alpha.out\nstatus_alpha=$?\n\nretry 2 /home/eval/bin/fetch.sh beta > /home/eval/state/beta.out\nstatus_beta=$?\n\necho \"alpha=$status_alpha beta=$status_beta\" > /home/eval/state/summary.txt\n\nexit 0\n```",
@@ -4205,6 +5843,132 @@
           "cost_usd": 0.0,
           "input_tokens": 1013,
           "output_tokens": 762
+        }
+      }
+    },
+    {
+      "aggregate": 1.0,
+      "eval": "bashkit_generate",
+      "input": [
+        "Write a bash script that cuts a release.\n\nStarting files:\n--- /home/eval/app/VERSION ---\n1.9.3\n--- end ---\n--- /home/eval/app/changes.txt ---\nfix: handle empty config\nfeat: add --dry-run flag\ndocs: typo in README\nfix: retry on 503\n--- end ---\n--- /home/eval/app/CHANGELOG.md ---\n# Changelog\n\n## Unreleased\n\n## 1.9.3 (2026-09-01)\n- fix: crash on start\n--- end ---\n\n1. Decide the bump from /home/eval/app/changes.txt: if any line starts with `BREAKING` or has `!:` right after its type (e.g. `feat!: ...`), bump major; otherwise if any line starts with `feat:`, bump minor; otherwise bump patch. Lower parts reset to 0. Version parts are integers.\n2. Write the new version to /home/eval/app/VERSION (single line).\n3. In /home/eval/app/CHANGELOG.md, keep the `## Unreleased` heading and insert right after it: a blank line, the heading `## <new version> (2026-10-09)`, then one line `- <change>` for each `feat`/`fix` line of changes.txt in original order (other types are omitted). The existing blank line before `## 1.9.3` must remain, so the file reads:\n```\n# Changelog\n\n## Unreleased\n\n## 1.10.0 (2026-10-09)\n- fix: handle empty config\n- feat: add --dry-run flag\n- fix: retry on 503\n\n## 1.9.3 (2026-09-01)\n- fix: crash on start\n```\n4. Print `1.9.3 -> <new version>` to stdout and exit 0."
+      ],
+      "passed": true,
+      "sample": "gen_semver_bump",
+      "scores": [
+        {
+          "pass": true,
+          "reason": "4/4 checks passed (weighted rate 100%)",
+          "scorer": "bashkit_expectations",
+          "value": 1.0
+        }
+      ],
+      "skipped": false,
+      "target": "openai/gpt-6-luna",
+      "transcript": {
+        "final_response": "```bash\n#!/usr/bin/env bash\n\napp=/home/eval/app\nold_version=$(<\"$app/VERSION\")\nIFS=. read -r major minor patch <<< \"$old_version\"\n\nchanges=()\nbreaking=0\nfeature=0\n\nwhile IFS= read -r line || [[ -n $line ]]; do\n  [[ $line == BREAKING* ]] && breaking=1\n  [[ $line =~ ^[[:alnum:]_-]+!: ]] && breaking=1\n  [[ $line == feat:* ]] && feature=1\n\n  if [[ $line =~ ^(feat|fix)(!)?: ]]; then\n    changes+=(\"$line\")\n  fi\ndone < \"$app/changes.txt\"\n\nif (( breaking )); then\n  major=$((major + 1))\n  minor=0\n  patch=0\nelif (( feature )); then\n  minor=$((minor + 1))\n  patch=0\nelse\n  patch=$((patch + 1))\nfi\n\nnew_version=\"$major.$minor.$patch\"\nchangelog_tmp=$(mktemp \"$app/.CHANGELOG.XXXXXX\")\nversion_tmp=$(mktemp \"$app/.VERSION.XXXXXX\")\ntrap 'rm -f \"$changelog_tmp\" \"$version_tmp\"' EXIT\n\ninserted=0\nwhile IFS= read -r line || [[ -n $line ]]; do\n  printf '%s\\n' \"$line\" >> \"$changelog_tmp\"\n  if [[ $line == '## Unreleased' && $inserted -eq 0 ]]; then\n    printf '\\n## %s (2026-10-09)\\n' \"$new_version\" >> \"$changelog_tmp\"\n    for change in \"${changes[@]}\"; do\n      printf -- '- %s\\n' \"$change\" >> \"$changelog_tmp\"\n    done\n    inserted=1\n  fi\ndone < \"$app/CHANGELOG.md\"\n\nprintf '%s\\n' \"$new_version\" > \"$version_tmp\"\nmv \"$changelog_tmp\" \"$app/CHANGELOG.md\"\nmv \"$version_tmp\" \"$app/VERSION\"\n\nprintf '%s -> %s\\n' \"$old_version\" \"$new_version\"\n```",
+        "iterations": 1,
+        "metadata": {
+          "bashkit": {
+            "dirs": [],
+            "last_exit_code": 0,
+            "links": {},
+            "tool_outputs": [
+              {
+                "commands": "#!/usr/bin/env bash\n\napp=/home/eval/app\nold_version=$(<\"$app/VERSION\")\nIFS=. read -r major minor patch <<< \"$old_version\"\n\nchanges=()\nbreaking=0\nfeature=0\n\nwhile IFS= read -r line || [[ -n $line ]]; do\n  [[ $line == BREAKING* ]] && breaking=1\n  [[ $line =~ ^[[:alnum:]_-]+!: ]] && breaking=1\n  [[ $line == feat:* ]] && feature=1\n\n  if [[ $line =~ ^(feat|fix)(!)?: ]]; then\n    changes+=(\"$line\")\n  fi\ndone < \"$app/changes.txt\"\n\nif (( breaking )); then\n  major=$((major + 1))\n  minor=0\n  patch=0\nelif (( feature )); then\n  minor=$((minor + 1))\n  patch=0\nelse\n  patch=$((patch + 1))\nfi\n\nnew_version=\"$major.$minor.$patch\"\nchangelog_tmp=$(mktemp \"$app/.CHANGELOG.XXXXXX\")\nversion_tmp=$(mktemp \"$app/.VERSION.XXXXXX\")\ntrap 'rm -f \"$changelog_tmp\" \"$version_tmp\"' EXIT\n\ninserted=0\nwhile IFS= read -r line || [[ -n $line ]]; do\n  printf '%s\\n' \"$line\" >> \"$changelog_tmp\"\n  if [[ $line == '## Unreleased' && $inserted -eq 0 ]]; then\n    printf '\\n## %s (2026-10-09)\\n' \"$new_version\" >> \"$changelog_tmp\"\n    for change in \"${changes[@]}\"; do\n      printf -- '- %s\\n' \"$change\" >> \"$changelog_tmp\"\n    done\n    inserted=1\n  fi\ndone < \"$app/CHANGELOG.md\"\n\nprintf '%s\\n' \"$new_version\" > \"$version_tmp\"\nmv \"$changelog_tmp\" \"$app/CHANGELOG.md\"\nmv \"$version_tmp\" \"$app/VERSION\"\n\nprintf '%s -> %s\\n' \"$old_version\" \"$new_version\"\n",
+                "exit_code": 0,
+                "stderr": "",
+                "stdout": "1.9.3 -> 1.10.0\n"
+              }
+            ]
+          },
+          "generate": {
+            "extraction": "fenced",
+            "timed_out": false
+          }
+        },
+        "metrics": {
+          "exec_ms": 12.0,
+          "exit_code": 0.0,
+          "extracted": 1.0,
+          "generate_ms": 17233.0,
+          "script_bytes": 1318.0,
+          "script_found": 1.0,
+          "timed_out": 0.0
+        },
+        "timing": {
+          "duration_ms": 17245
+        },
+        "tool_calls": [
+          "#!/usr/bin/env bash\n\napp=/home/eval/app\nold_version=$(<\"$app/VERSION\")\nIFS=. read -r major minor patch <<< \"$old_version\"\n\nchanges=()\nbreaking=0\nfeature=0\n\nwhile IFS= read -r line || [[ -n $line ]]; do\n  [[ $line == BREAKING* ]] && breaking=1\n  [[ $line =~ ^[[:alnum:]_-]+!: ]] && breaking=1\n  [[ $line == feat:* ]] && feature=1\n\n  if [[ $line =~ ^(feat|fix)(!)?: ]]; then\n    changes+=(\"$line\")\n  fi\ndone < \"$app/changes.txt\"\n\nif (( breaking )); then\n  major=$((major + 1))\n  minor=0\n  patch=0\nelif (( feature )); then\n  minor=$((minor + 1))\n  patch=0\nelse\n  patch=$((patch + 1))\nfi\n\nnew_version=\"$major.$minor.$patch\"\nchangelog_tmp=$(mktemp \"$app/.CHANGELOG.XXXXXX\")\nversion_tmp=$(mktemp \"$app/.VERSION.XXXXXX\")\ntrap 'rm -f \"$changelog_tmp\" \"$version_tmp\"' EXIT\n\ninserted=0\nwhile IFS= read -r line || [[ -n $line ]]; do\n  printf '%s\\n' \"$line\" >> \"$changelog_tmp\"\n  if [[ $line == '## Unreleased' && $inserted -eq 0 ]]; then\n    printf '\\n## %s (2026-10-09)\\n' \"$new_version\" >> \"$changelog_tmp\"\n    for change in \"${changes[@]}\"; do\n      printf -- '- %s\\n' \"$change\" >> \"$changelog_tmp\"\n    done\n    inserted=1\n  fi\ndone < \"$app/CHANGELOG.md\"\n\nprintf '%s\\n' \"$new_version\" > \"$version_tmp\"\nmv \"$changelog_tmp\" \"$app/CHANGELOG.md\"\nmv \"$version_tmp\" \"$app/VERSION\"\n\nprintf '%s -> %s\\n' \"$old_version\" \"$new_version\"\n"
+        ],
+        "tool_calls_count": 1,
+        "usage": {
+          "cost_usd": 0.0,
+          "input_tokens": 695,
+          "output_tokens": 1701
+        }
+      }
+    },
+    {
+      "aggregate": 1.0,
+      "eval": "bashkit_generate",
+      "input": [
+        "Write a bash script that cuts a release.\n\nStarting files:\n--- /home/eval/app/VERSION ---\n1.9.3\n--- end ---\n--- /home/eval/app/changes.txt ---\nfix: handle empty config\nfeat: add --dry-run flag\ndocs: typo in README\nfix: retry on 503\n--- end ---\n--- /home/eval/app/CHANGELOG.md ---\n# Changelog\n\n## Unreleased\n\n## 1.9.3 (2026-09-01)\n- fix: crash on start\n--- end ---\n\n1. Decide the bump from /home/eval/app/changes.txt: if any line starts with `BREAKING` or has `!:` right after its type (e.g. `feat!: ...`), bump major; otherwise if any line starts with `feat:`, bump minor; otherwise bump patch. Lower parts reset to 0. Version parts are integers.\n2. Write the new version to /home/eval/app/VERSION (single line).\n3. In /home/eval/app/CHANGELOG.md, keep the `## Unreleased` heading and insert right after it: a blank line, the heading `## <new version> (2026-10-09)`, then one line `- <change>` for each `feat`/`fix` line of changes.txt in original order (other types are omitted). The existing blank line before `## 1.9.3` must remain, so the file reads:\n```\n# Changelog\n\n## Unreleased\n\n## 1.10.0 (2026-10-09)\n- fix: handle empty config\n- feat: add --dry-run flag\n- fix: retry on 503\n\n## 1.9.3 (2026-09-01)\n- fix: crash on start\n```\n4. Print `1.9.3 -> <new version>` to stdout and exit 0."
+      ],
+      "passed": true,
+      "sample": "gen_semver_bump",
+      "scores": [
+        {
+          "pass": true,
+          "reason": "4/4 checks passed (weighted rate 100%)",
+          "scorer": "bashkit_expectations",
+          "value": 1.0
+        }
+      ],
+      "skipped": false,
+      "target": "openai/gpt-6.1-sol",
+      "transcript": {
+        "final_response": "```bash\n#!/usr/bin/env bash\nset -euo pipefail\n\napp=/home/eval/app\nold_version=$(cat \"$app/VERSION\")\nIFS=. read -r major minor patch <<< \"$old_version\"\n\nbump=$(awk '\n    /^BREAKING/ || /^[[:alnum:]_-]+!:/ { breaking = 1 }\n    /^feat:/ { feature = 1 }\n    END {\n        if (breaking) print \"major\"\n        else if (feature) print \"minor\"\n        else print \"patch\"\n    }\n' \"$app/changes.txt\")\n\nmajor=$((10#$major))\nminor=$((10#$minor))\npatch=$((10#$patch))\n\ncase \"$bump\" in\n    major) major=$((major + 1)); minor=0; patch=0 ;;\n    minor) minor=$((minor + 1)); patch=0 ;;\n    patch) patch=$((patch + 1)) ;;\nesac\nnew_version=\"$major.$minor.$patch\"\n\ntmp=$(mktemp \"$app/.changelog.XXXXXX\")\ntrap 'rm -f \"$tmp\"' EXIT\n\nawk -v version=\"$new_version\" -v changes=\"$app/changes.txt\" '\n    {\n        print\n        if ($0 == \"## Unreleased\" && !inserted) {\n            inserted = 1\n            print \"\"\n            print \"## \" version \" (2026-10-09)\"\n            while ((getline change < changes) > 0) {\n                if (change ~ /^(feat|fix)!?:/)\n                    print \"- \" change\n            }\n            close(changes)\n        }\n    }\n' \"$app/CHANGELOG.md\" > \"$tmp\"\n\nmv \"$tmp\" \"$app/CHANGELOG.md\"\nprintf '%s\\n' \"$new_version\" > \"$app/VERSION\"\nprintf '%s -> %s\\n' \"$old_version\" \"$new_version\"\nexit 0\n```",
+        "iterations": 1,
+        "metadata": {
+          "bashkit": {
+            "dirs": [],
+            "last_exit_code": 0,
+            "links": {},
+            "tool_outputs": [
+              {
+                "commands": "#!/usr/bin/env bash\nset -euo pipefail\n\napp=/home/eval/app\nold_version=$(cat \"$app/VERSION\")\nIFS=. read -r major minor patch <<< \"$old_version\"\n\nbump=$(awk '\n    /^BREAKING/ || /^[[:alnum:]_-]+!:/ { breaking = 1 }\n    /^feat:/ { feature = 1 }\n    END {\n        if (breaking) print \"major\"\n        else if (feature) print \"minor\"\n        else print \"patch\"\n    }\n' \"$app/changes.txt\")\n\nmajor=$((10#$major))\nminor=$((10#$minor))\npatch=$((10#$patch))\n\ncase \"$bump\" in\n    major) major=$((major + 1)); minor=0; patch=0 ;;\n    minor) minor=$((minor + 1)); patch=0 ;;\n    patch) patch=$((patch + 1)) ;;\nesac\nnew_version=\"$major.$minor.$patch\"\n\ntmp=$(mktemp \"$app/.changelog.XXXXXX\")\ntrap 'rm -f \"$tmp\"' EXIT\n\nawk -v version=\"$new_version\" -v changes=\"$app/changes.txt\" '\n    {\n        print\n        if ($0 == \"## Unreleased\" && !inserted) {\n            inserted = 1\n            print \"\"\n            print \"## \" version \" (2026-10-09)\"\n            while ((getline change < changes) > 0) {\n                if (change ~ /^(feat|fix)!?:/)\n                    print \"- \" change\n            }\n            close(changes)\n        }\n    }\n' \"$app/CHANGELOG.md\" > \"$tmp\"\n\nmv \"$tmp\" \"$app/CHANGELOG.md\"\nprintf '%s\\n' \"$new_version\" > \"$app/VERSION\"\nprintf '%s -> %s\\n' \"$old_version\" \"$new_version\"\nexit 0\n",
+                "exit_code": 0,
+                "stderr": "",
+                "stdout": "1.9.3 -> 1.10.0\n"
+              }
+            ]
+          },
+          "generate": {
+            "extraction": "fenced",
+            "timed_out": false
+          }
+        },
+        "metrics": {
+          "exec_ms": 13.0,
+          "exit_code": 0.0,
+          "extracted": 1.0,
+          "generate_ms": 11703.0,
+          "script_bytes": 1288.0,
+          "script_found": 1.0,
+          "timed_out": 0.0
+        },
+        "timing": {
+          "duration_ms": 11716
+        },
+        "tool_calls": [
+          "#!/usr/bin/env bash\nset -euo pipefail\n\napp=/home/eval/app\nold_version=$(cat \"$app/VERSION\")\nIFS=. read -r major minor patch <<< \"$old_version\"\n\nbump=$(awk '\n    /^BREAKING/ || /^[[:alnum:]_-]+!:/ { breaking = 1 }\n    /^feat:/ { feature = 1 }\n    END {\n        if (breaking) print \"major\"\n        else if (feature) print \"minor\"\n        else print \"patch\"\n    }\n' \"$app/changes.txt\")\n\nmajor=$((10#$major))\nminor=$((10#$minor))\npatch=$((10#$patch))\n\ncase \"$bump\" in\n    major) major=$((major + 1)); minor=0; patch=0 ;;\n    minor) minor=$((minor + 1)); patch=0 ;;\n    patch) patch=$((patch + 1)) ;;\nesac\nnew_version=\"$major.$minor.$patch\"\n\ntmp=$(mktemp \"$app/.changelog.XXXXXX\")\ntrap 'rm -f \"$tmp\"' EXIT\n\nawk -v version=\"$new_version\" -v changes=\"$app/changes.txt\" '\n    {\n        print\n        if ($0 == \"## Unreleased\" && !inserted) {\n            inserted = 1\n            print \"\"\n            print \"## \" version \" (2026-10-09)\"\n            while ((getline change < changes) > 0) {\n                if (change ~ /^(feat|fix)!?:/)\n                    print \"- \" change\n            }\n            close(changes)\n        }\n    }\n' \"$app/CHANGELOG.md\" > \"$tmp\"\n\nmv \"$tmp\" \"$app/CHANGELOG.md\"\nprintf '%s\\n' \"$new_version\" > \"$app/VERSION\"\nprintf '%s -> %s\\n' \"$old_version\" \"$new_version\"\nexit 0\n"
+        ],
+        "tool_calls_count": 1,
+        "usage": {
+          "cost_usd": 0.0,
+          "input_tokens": 695,
+          "output_tokens": 600
         }
       }
     },
@@ -4540,6 +6304,132 @@
         }
       ],
       "skipped": false,
+      "target": "openai/gpt-6-luna",
+      "transcript": {
+        "final_response": "```bash\n#!/bin/bash\n\nmkdir -p /home/eval/bin /home/eval/build\n\ncat > /home/eval/bin/upper.sh <<'UPPER_SCRIPT'\n#!/bin/bash\n\nsrc=$1\ndest=$2\ntmpdir=$(mktemp -d) || exit 1\n\ncleanup() {\n    local exit_status=$?\n    rm -rf -- \"$tmpdir\"\n    printf 'cleanup %s\\n' \"$exit_status\" >> /home/eval/build/cleanup.log\n}\ntrap cleanup EXIT\n\nif ! tr '[:lower:]' '[:upper:]' < \"$src\" > \"$tmpdir/converted\"; then\n    exit 1\nfi\n\nif grep -Fxq -- 'STOP' \"$src\"; then\n    exit 4\nelse\n    grep_status=$?\n    if [[ $grep_status -ne 1 ]]; then\n        exit 1\n    fi\nfi\n\nmv -f -- \"$tmpdir/converted\" \"$dest\" || exit 1\nexit 0\nUPPER_SCRIPT\n\nchmod +x /home/eval/bin/upper.sh\n\n/home/eval/bin/upper.sh /home/eval/in/good.txt /home/eval/build/good.out\ngood_status=$?\n\n/home/eval/bin/upper.sh /home/eval/in/bad.txt /home/eval/build/bad.out\nbad_status=$?\n\nprintf 'good %s\\nbad %s\\n' \"$good_status\" \"$bad_status\" > /home/eval/build/status.txt\nexit 0\n```",
+        "iterations": 1,
+        "metadata": {
+          "bashkit": {
+            "dirs": [],
+            "last_exit_code": 0,
+            "links": {},
+            "tool_outputs": [
+              {
+                "commands": "#!/bin/bash\n\nmkdir -p /home/eval/bin /home/eval/build\n\ncat > /home/eval/bin/upper.sh <<'UPPER_SCRIPT'\n#!/bin/bash\n\nsrc=$1\ndest=$2\ntmpdir=$(mktemp -d) || exit 1\n\ncleanup() {\n    local exit_status=$?\n    rm -rf -- \"$tmpdir\"\n    printf 'cleanup %s\\n' \"$exit_status\" >> /home/eval/build/cleanup.log\n}\ntrap cleanup EXIT\n\nif ! tr '[:lower:]' '[:upper:]' < \"$src\" > \"$tmpdir/converted\"; then\n    exit 1\nfi\n\nif grep -Fxq -- 'STOP' \"$src\"; then\n    exit 4\nelse\n    grep_status=$?\n    if [[ $grep_status -ne 1 ]]; then\n        exit 1\n    fi\nfi\n\nmv -f -- \"$tmpdir/converted\" \"$dest\" || exit 1\nexit 0\nUPPER_SCRIPT\n\nchmod +x /home/eval/bin/upper.sh\n\n/home/eval/bin/upper.sh /home/eval/in/good.txt /home/eval/build/good.out\ngood_status=$?\n\n/home/eval/bin/upper.sh /home/eval/in/bad.txt /home/eval/build/bad.out\nbad_status=$?\n\nprintf 'good %s\\nbad %s\\n' \"$good_status\" \"$bad_status\" > /home/eval/build/status.txt\nexit 0\n",
+                "exit_code": 0,
+                "stderr": "",
+                "stdout": ""
+              }
+            ]
+          },
+          "generate": {
+            "extraction": "fenced",
+            "timed_out": false
+          }
+        },
+        "metrics": {
+          "exec_ms": 10.0,
+          "exit_code": 0.0,
+          "extracted": 1.0,
+          "generate_ms": 14378.0,
+          "script_bytes": 905.0,
+          "script_found": 1.0,
+          "timed_out": 0.0
+        },
+        "timing": {
+          "duration_ms": 14388
+        },
+        "tool_calls": [
+          "#!/bin/bash\n\nmkdir -p /home/eval/bin /home/eval/build\n\ncat > /home/eval/bin/upper.sh <<'UPPER_SCRIPT'\n#!/bin/bash\n\nsrc=$1\ndest=$2\ntmpdir=$(mktemp -d) || exit 1\n\ncleanup() {\n    local exit_status=$?\n    rm -rf -- \"$tmpdir\"\n    printf 'cleanup %s\\n' \"$exit_status\" >> /home/eval/build/cleanup.log\n}\ntrap cleanup EXIT\n\nif ! tr '[:lower:]' '[:upper:]' < \"$src\" > \"$tmpdir/converted\"; then\n    exit 1\nfi\n\nif grep -Fxq -- 'STOP' \"$src\"; then\n    exit 4\nelse\n    grep_status=$?\n    if [[ $grep_status -ne 1 ]]; then\n        exit 1\n    fi\nfi\n\nmv -f -- \"$tmpdir/converted\" \"$dest\" || exit 1\nexit 0\nUPPER_SCRIPT\n\nchmod +x /home/eval/bin/upper.sh\n\n/home/eval/bin/upper.sh /home/eval/in/good.txt /home/eval/build/good.out\ngood_status=$?\n\n/home/eval/bin/upper.sh /home/eval/in/bad.txt /home/eval/build/bad.out\nbad_status=$?\n\nprintf 'good %s\\nbad %s\\n' \"$good_status\" \"$bad_status\" > /home/eval/build/status.txt\nexit 0\n"
+        ],
+        "tool_calls_count": 1,
+        "usage": {
+          "cost_usd": 0.0,
+          "input_tokens": 588,
+          "output_tokens": 1487
+        }
+      }
+    },
+    {
+      "aggregate": 1.0,
+      "eval": "bashkit_generate",
+      "input": [
+        "Write a bash script that creates and runs a safe file converter.\n\nStarting files:\n--- /home/eval/in/good.txt ---\nhello\nworld\n--- end ---\n--- /home/eval/in/bad.txt ---\none\nSTOP\nthree\n--- end ---\n--- /home/eval/build/bad.out ---\nprevious\n--- end ---\n\n1. Create the executable script /home/eval/bin/upper.sh (`#!/bin/bash`; /home/eval/bin does not exist) taking `SRC DEST`:\n   - It creates a private temporary directory with `mktemp -d` and installs an EXIT trap that removes that directory and appends `cleanup <exit status of upper.sh>` to /home/eval/build/cleanup.log.\n   - It converts SRC to uppercase into a file inside the temporary directory.\n   - If any line of SRC is exactly `STOP`, it exits with status 4 and DEST is left untouched.\n   - Otherwise it moves the converted file onto DEST (atomic replace) and exits 0.\n2. Run `/home/eval/bin/upper.sh /home/eval/in/good.txt /home/eval/build/good.out`, then `/home/eval/bin/upper.sh /home/eval/in/bad.txt /home/eval/build/bad.out`, and write their exit statuses to /home/eval/build/status.txt as two lines: `good <status>` and `bad <status>`.\n3. Exit 0."
+      ],
+      "passed": true,
+      "sample": "gen_trap_atomic",
+      "scores": [
+        {
+          "pass": true,
+          "reason": "6/6 checks passed (weighted rate 100%)",
+          "scorer": "bashkit_expectations",
+          "value": 1.0
+        }
+      ],
+      "skipped": false,
+      "target": "openai/gpt-6.1-sol",
+      "transcript": {
+        "final_response": "```bash\n#!/bin/bash\n\nmkdir -p /home/eval/bin /home/eval/build\n\ncat > /home/eval/bin/upper.sh <<'EOF'\n#!/bin/bash\nset -e\n\nif [[ $# -ne 2 ]]; then\n    printf 'Usage: %s SRC DEST\\n' \"$0\" >&2\n    exit 2\nfi\n\nsrc=$1\ndest=$2\n\n# Place temporary output beside DEST so the final rename is atomic.\ntmpdir=$(mktemp -d \"$(dirname -- \"$dest\")/.upper.XXXXXX\")\n\ncleanup() {\n    local status=$?\n    trap - EXIT\n    rm -rf -- \"$tmpdir\"\n    printf 'cleanup %s\\n' \"$status\" >> /home/eval/build/cleanup.log\n    exit \"$status\"\n}\ntrap cleanup EXIT\n\nLC_ALL=C tr '[:lower:]' '[:upper:]' < \"$src\" > \"$tmpdir/converted\"\n\nif grep -qx 'STOP' -- \"$src\"; then\n    exit 4\nelse\n    check_status=$?\n    if [[ $check_status -ne 1 ]]; then\n        exit \"$check_status\"\n    fi\nfi\n\nmv -f -- \"$tmpdir/converted\" \"$dest\"\nexit 0\nEOF\n\nchmod +x /home/eval/bin/upper.sh\n\n/home/eval/bin/upper.sh /home/eval/in/good.txt /home/eval/build/good.out\ngood_status=$?\n\n/home/eval/bin/upper.sh /home/eval/in/bad.txt /home/eval/build/bad.out\nbad_status=$?\n\nprintf 'good %s\\nbad %s\\n' \"$good_status\" \"$bad_status\" \\\n    > /home/eval/build/status.txt\n\nexit 0\n```",
+        "iterations": 1,
+        "metadata": {
+          "bashkit": {
+            "dirs": [],
+            "last_exit_code": 0,
+            "links": {},
+            "tool_outputs": [
+              {
+                "commands": "#!/bin/bash\n\nmkdir -p /home/eval/bin /home/eval/build\n\ncat > /home/eval/bin/upper.sh <<'EOF'\n#!/bin/bash\nset -e\n\nif [[ $# -ne 2 ]]; then\n    printf 'Usage: %s SRC DEST\\n' \"$0\" >&2\n    exit 2\nfi\n\nsrc=$1\ndest=$2\n\n# Place temporary output beside DEST so the final rename is atomic.\ntmpdir=$(mktemp -d \"$(dirname -- \"$dest\")/.upper.XXXXXX\")\n\ncleanup() {\n    local status=$?\n    trap - EXIT\n    rm -rf -- \"$tmpdir\"\n    printf 'cleanup %s\\n' \"$status\" >> /home/eval/build/cleanup.log\n    exit \"$status\"\n}\ntrap cleanup EXIT\n\nLC_ALL=C tr '[:lower:]' '[:upper:]' < \"$src\" > \"$tmpdir/converted\"\n\nif grep -qx 'STOP' -- \"$src\"; then\n    exit 4\nelse\n    check_status=$?\n    if [[ $check_status -ne 1 ]]; then\n        exit \"$check_status\"\n    fi\nfi\n\nmv -f -- \"$tmpdir/converted\" \"$dest\"\nexit 0\nEOF\n\nchmod +x /home/eval/bin/upper.sh\n\n/home/eval/bin/upper.sh /home/eval/in/good.txt /home/eval/build/good.out\ngood_status=$?\n\n/home/eval/bin/upper.sh /home/eval/in/bad.txt /home/eval/build/bad.out\nbad_status=$?\n\nprintf 'good %s\\nbad %s\\n' \"$good_status\" \"$bad_status\" \\\n    > /home/eval/build/status.txt\n\nexit 0\n",
+                "exit_code": 0,
+                "stderr": "",
+                "stdout": ""
+              }
+            ]
+          },
+          "generate": {
+            "extraction": "fenced",
+            "timed_out": false
+          }
+        },
+        "metrics": {
+          "exec_ms": 11.0,
+          "exit_code": 0.0,
+          "extracted": 1.0,
+          "generate_ms": 10849.0,
+          "script_bytes": 1094.0,
+          "script_found": 1.0,
+          "timed_out": 0.0
+        },
+        "timing": {
+          "duration_ms": 10860
+        },
+        "tool_calls": [
+          "#!/bin/bash\n\nmkdir -p /home/eval/bin /home/eval/build\n\ncat > /home/eval/bin/upper.sh <<'EOF'\n#!/bin/bash\nset -e\n\nif [[ $# -ne 2 ]]; then\n    printf 'Usage: %s SRC DEST\\n' \"$0\" >&2\n    exit 2\nfi\n\nsrc=$1\ndest=$2\n\n# Place temporary output beside DEST so the final rename is atomic.\ntmpdir=$(mktemp -d \"$(dirname -- \"$dest\")/.upper.XXXXXX\")\n\ncleanup() {\n    local status=$?\n    trap - EXIT\n    rm -rf -- \"$tmpdir\"\n    printf 'cleanup %s\\n' \"$status\" >> /home/eval/build/cleanup.log\n    exit \"$status\"\n}\ntrap cleanup EXIT\n\nLC_ALL=C tr '[:lower:]' '[:upper:]' < \"$src\" > \"$tmpdir/converted\"\n\nif grep -qx 'STOP' -- \"$src\"; then\n    exit 4\nelse\n    check_status=$?\n    if [[ $check_status -ne 1 ]]; then\n        exit \"$check_status\"\n    fi\nfi\n\nmv -f -- \"$tmpdir/converted\" \"$dest\"\nexit 0\nEOF\n\nchmod +x /home/eval/bin/upper.sh\n\n/home/eval/bin/upper.sh /home/eval/in/good.txt /home/eval/build/good.out\ngood_status=$?\n\n/home/eval/bin/upper.sh /home/eval/in/bad.txt /home/eval/build/bad.out\nbad_status=$?\n\nprintf 'good %s\\nbad %s\\n' \"$good_status\" \"$bad_status\" \\\n    > /home/eval/build/status.txt\n\nexit 0\n"
+        ],
+        "tool_calls_count": 1,
+        "usage": {
+          "cost_usd": 0.0,
+          "input_tokens": 588,
+          "output_tokens": 590
+        }
+      }
+    },
+    {
+      "aggregate": 1.0,
+      "eval": "bashkit_generate",
+      "input": [
+        "Write a bash script that creates and runs a safe file converter.\n\nStarting files:\n--- /home/eval/in/good.txt ---\nhello\nworld\n--- end ---\n--- /home/eval/in/bad.txt ---\none\nSTOP\nthree\n--- end ---\n--- /home/eval/build/bad.out ---\nprevious\n--- end ---\n\n1. Create the executable script /home/eval/bin/upper.sh (`#!/bin/bash`; /home/eval/bin does not exist) taking `SRC DEST`:\n   - It creates a private temporary directory with `mktemp -d` and installs an EXIT trap that removes that directory and appends `cleanup <exit status of upper.sh>` to /home/eval/build/cleanup.log.\n   - It converts SRC to uppercase into a file inside the temporary directory.\n   - If any line of SRC is exactly `STOP`, it exits with status 4 and DEST is left untouched.\n   - Otherwise it moves the converted file onto DEST (atomic replace) and exits 0.\n2. Run `/home/eval/bin/upper.sh /home/eval/in/good.txt /home/eval/build/good.out`, then `/home/eval/bin/upper.sh /home/eval/in/bad.txt /home/eval/build/bad.out`, and write their exit statuses to /home/eval/build/status.txt as two lines: `good <status>` and `bad <status>`.\n3. Exit 0."
+      ],
+      "passed": true,
+      "sample": "gen_trap_atomic",
+      "scores": [
+        {
+          "pass": true,
+          "reason": "6/6 checks passed (weighted rate 100%)",
+          "scorer": "bashkit_expectations",
+          "value": 1.0
+        }
+      ],
+      "skipped": false,
       "target": "openrouter/google/gemini-3.8-flash",
       "transcript": {
         "final_response": "```bash\n#!/bin/bash\nset -u\n\n# Ensure starting directories and files exist if not already present\nmkdir -p /home/eval/in /home/eval/build\n\nif [ ! -f /home/eval/in/good.txt ]; then\n    cat << 'EOF' > /home/eval/in/good.txt\nhello\nworld\nEOF\nfi\n\nif [ ! -f /home/eval/in/bad.txt ]; then\n    cat << 'EOF' > /home/eval/in/bad.txt\none\nSTOP\nthree\nEOF\nfi\n\nif [ ! -f /home/eval/build/bad.out ]; then\n    echo \"previous\" > /home/eval/build/bad.out\nfi\n\n# 1. Create executable script /home/eval/bin/upper.sh\nmkdir -p /home/eval/bin\n\ncat << 'EOF' > /home/eval/bin/upper.sh\n#!/bin/bash\nSRC=\"$1\"\nDEST=\"$2\"\n\nTMPDIR=$(mktemp -d)\ntrap 'status=$?; rm -rf \"$TMPDIR\"; echo \"cleanup $status\" >> /home/eval/build/cleanup.log; exit \"$status\"' EXIT\n\ntr '[:lower:]' '[:upper:]' < \"$SRC\" > \"$TMPDIR/converted\"\n\nif grep -Fxq 'STOP' \"$SRC\"; then\n    exit 4\nfi\n\nmv \"$TMPDIR/converted\" \"$DEST\"\nexit 0\nEOF\n\nchmod +x /home/eval/bin/upper.sh\n\n# 2. Run upper.sh on good.txt and bad.txt, recording exit statuses\n/home/eval/bin/upper.sh /home/eval/in/good.txt /home/eval/build/good.out\ngood_status=$?\n\n/home/eval/bin/upper.sh /home/eval/in/bad.txt /home/eval/build/bad.out\nbad_status=$?\n\ncat << EOF > /home/eval/build/status.txt\ngood $good_status\nbad $bad_status\nEOF\n\n# 3. Exit 0\nexit 0\n```",
@@ -4714,14 +6604,14 @@
     }
   ],
   "summary": {
-    "failed": 4,
+    "failed": 6,
     "na": 0,
-    "passed": 71,
-    "scored": 75,
+    "passed": 99,
+    "scored": 105,
     "skipped": 0,
     "total_cost_usd": 0.0,
-    "total_duration_ms": 1650573,
-    "total_tokens": 225928,
-    "total_tool_calls": 74
+    "total_duration_ms": 1956876,
+    "total_tokens": 266434,
+    "total_tool_calls": 104
   }
 }

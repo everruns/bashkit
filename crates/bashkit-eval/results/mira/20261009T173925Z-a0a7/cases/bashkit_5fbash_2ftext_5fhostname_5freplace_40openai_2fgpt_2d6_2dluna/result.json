@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "text_hostname_replace",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "In the file /etc/app.conf, replace all occurrences of 'localhost' with 'db.prod.internal'. Write the result back to the same file and verify the change."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Replaced all 2 occurrences of `localhost` in `/etc/app.conf` with `db.prod.internal`. Verified that no `localhost` occurrences remain and the new value appears twice.",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "python3 - <<'PY'\nfrom pathlib import Path\np = Path('/etc/app.conf')\ntext = p.read_text()\nupdated = text.replace('localhost', 'db.prod.internal')\np.write_text(updated)\nverified = p.read_text()\nprint('Replacements made:', text.count('localhost'))\nprint('Remaining occurrences of localhost:', verified.count('localhost'))\nprint('Occurrences of db.prod.internal:', verified.count('db.prod.internal'))\nPY"
+    ],
+    "usage": {
+      "input_tokens": 967,
+      "output_tokens": 165,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 3135
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "python3 - <<'PY'\nfrom pathlib import Path\np = Path('/etc/app.conf')\ntext = p.read_text()\nupdated = text.replace('localhost', 'db.prod.internal')\np.write_text(updated)\nverified = p.read_text()\nprint('Replacements made:', text.count('localhost'))\nprint('Remaining occurrences of localhost:', verified.count('localhost'))\nprint('Occurrences of db.prod.internal:', verified.count('db.prod.internal'))\nPY",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Replacements made: 2\nRemaining occurrences of localhost: 0\nOccurrences of db.prod.internal: 2\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

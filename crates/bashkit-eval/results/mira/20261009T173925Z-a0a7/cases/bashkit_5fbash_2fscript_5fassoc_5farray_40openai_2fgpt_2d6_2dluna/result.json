@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "script_assoc_array",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "Use a bash associative array (declare -A) to build a country-code lookup. Map: US='United States', GB='United Kingdom', DE='Germany', JP='Japan', FR='France'. Then read /data/visitors.csv (columns: name,country_code) and for each row, look up the full country name and print 'name visited from FULL_COUNTRY_NAME'. At the end, print a count per country sorted by count descending as 'FULL_NAME: N visitors'."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "```text\nAlice visited from United States\nBob visited from United Kingdom\nCarol visited from United States\nDave visited from Japan\nEve visited from Germany\nFrank visited from United States\nGrace visited from United Kingdom\n\nUnited States: 3 visitors\nUnited Kingdom: 2 visitors\nGermany: 1 visitors\nJapan: 1 visitors\n```",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "ls -la /data && cat /data/visitors.csv",
+      "declare -A countries=( [US]='United States' [GB]='United Kingdom' [DE]='Germany' [JP]='Japan' [FR]='France' )\ndeclare -A counts=()\n\nwhile IFS=, read -r name code; do\n  [[ $name == name && $code == country_code ]] && continue\n  full_name=${countries[$code]}\n  if [[ -z $full_name ]]; then\n    full_name=$code\n  fi\n  printf '%s visited from %s\\n' \"$name\" \"$full_name\"\n  ((counts[\"$full_name\"]++))\ndone < /data/visitors.csv\n\nprintf '\\n'\nfor country in \"${!counts[@]}\"; do\n  printf '%s\\t%s\\n' \"${counts[$country]}\" \"$country\"\ndone | sort -k1,1nr -k2,2 | while IFS=$'\\t' read -r count country; do\n  printf '%s: %s visitors\\n' \"$country\" \"$count\"\ndone"
+    ],
+    "usage": {
+      "input_tokens": 1952,
+      "output_tokens": 600,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 8347
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /data && cat /data/visitors.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       76 2026-10-12 18:52 visitors.csv\nname,country_code\nAlice,US\nBob,GB\nCarol,US\nDave,JP\nEve,DE\nFrank,US\nGrace,GB\n"
+          },
+          {
+            "commands": "declare -A countries=( [US]='United States' [GB]='United Kingdom' [DE]='Germany' [JP]='Japan' [FR]='France' )\ndeclare -A counts=()\n\nwhile IFS=, read -r name code; do\n  [[ $name == name && $code == country_code ]] && continue\n  full_name=${countries[$code]}\n  if [[ -z $full_name ]]; then\n    full_name=$code\n  fi\n  printf '%s visited from %s\\n' \"$name\" \"$full_name\"\n  ((counts[\"$full_name\"]++))\ndone < /data/visitors.csv\n\nprintf '\\n'\nfor country in \"${!counts[@]}\"; do\n  printf '%s\\t%s\\n' \"${counts[$country]}\" \"$country\"\ndone | sort -k1,1nr -k2,2 | while IFS=$'\\t' read -r count country; do\n  printf '%s: %s visitors\\n' \"$country\" \"$count\"\ndone",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Alice visited from United States\nBob visited from United Kingdom\nCarol visited from United States\nDave visited from Japan\nEve visited from Germany\nFrank visited from United States\nGrace visited from United Kingdom\n\nUnited States: 3 visitors\nUnited Kingdom: 2 visitors\nGermany: 1 visitors\nJapan: 1 visitors\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

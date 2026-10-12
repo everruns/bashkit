@@ -1,5 +1,9 @@
 # Bashkit Knowledge Update Log
 
+## 2026-10-12
+
+* **Test**: GPT-6.1 Sol (76/88, generate 14/15) and GPT-6 Luna (71/88, 14/15) added to the 2026-10-09 tagged `bashkit_bash` and `bashkit_generate` runs via `mira run --resume`; all seven models now on the homepage table. A resume writes `report.json` for the resumed targets only, so re-render with `mira report <run_id>` before publishing.
+
 ## 2026-10-11
 
 * **Fix**: arithmetic dollar expansion and associative-key scanning reserve intermediate capacity before allocation, cap generated expression/key bytes at 64 KiB before append, and charge shared work with synchronous cancellation/deadline checks. Scalar storage is borrowed before budgeted copying; temporary value buffers keep their leases until consumed. Poisoned request budgets propagate through command boundaries as resource-limit errors. Small-budget regressions cover arithmetic entry points, read/write operations, key scanning, namerefs, size boundaries, recovery, and finite Bash parity. See [threat model](security/threat-model.md) TM-DOS-026 and [security testing](security/security-testing.md).

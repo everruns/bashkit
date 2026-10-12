@@ -1,0 +1,78 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "repo_clone_fix_failing_test",
+  "target": "openai/gpt-6.1-sol",
+  "input": [
+    "A git repository lives at /srv/git/calc. Clone it into /home/eval/work/calc, run its test suite with `make test`, find and fix the bug in the library code that makes a test fail (do not edit the tests), re-run `make test` until it passes, and commit the fix in the clone with a commit message that starts with `fix:`. Leave /srv/git/calc unchanged."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Cloned into `/home/eval/work/calc` and fixed `mul` in `lib/calc.sh` to multiply rather than add.\n\n- `make test`: **PASS 2/2**\n- Tests were not edited.\n- Commit: `b460922c` — `fix: multiply operands in mul helper`\n- `/srv/git/calc` was left unchanged.\n\nGenerated test reports remain untracked in the clone.",
+    "iterations": 5,
+    "tool_calls_count": 4,
+    "tool_calls": [
+      "git clone /srv/git/calc /home/eval/work/calc && cd /home/eval/work/calc && make test",
+      "cd /home/eval/work/calc && ls -la && find . -maxdepth 3 -type f -not -path './.git/*' -print && git status --short && cat Makefile",
+      "cd /home/eval/work/calc && cat lib/calc.sh tests/test_mul_div.sh tests/test_add_sub.sh tests/run.sh && git log -1 --oneline",
+      "cd /home/eval/work/calc && python3 - <<'PY'\nfrom pathlib import Path\np = Path('lib/calc.sh')\ns = p.read_text()\nold = 'mul() { echo $(( $1 + $2 )); }'\nassert old in s\np.write_text(s.replace(old, 'mul() { echo $(( $1 * $2 )); }'))\nPY\nmake test && git diff -- lib/calc.sh && git add lib/calc.sh && git commit -m \"fix: multiply operands in mul helper\" && git status --short && git log -1 --oneline"
+    ],
+    "usage": {
+      "input_tokens": 5230,
+      "output_tokens": 462,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 15659
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 4.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 3.0,
+      "turns": 5.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "git clone /srv/git/calc /home/eval/work/calc && cd /home/eval/work/calc && make test",
+            "exit_code": 2,
+            "stderr": "Cloning into '/home/eval/work/calc'...\ndone.\nmake: *** [Makefile:2: test] Error 1\n",
+            "stdout": "ok   test_add_sub\nFAIL test_mul_div\n    assertion failed: mul 4 5: expected '20', got '9'\nFAIL 1/2\n"
+          },
+          {
+            "commands": "cd /home/eval/work/calc && ls -la && find . -maxdepth 3 -type f -not -path './.git/*' -print && git status --short && cat Makefile",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "drwxr-xr-x        0 2026-10-12 18:53 .git\n-rw-r--r--       26 2026-10-12 18:53 Makefile\n-rw-r--r--       55 2026-10-12 18:53 README.md\ndrwxr-xr-x        0 2026-10-12 18:53 build\ndrwxr-xr-x        0 2026-10-12 18:53 lib\ndrwxr-xr-x        0 2026-10-12 18:53 tests\n./Makefile\n./README.md\n./build/test-report.txt\n./build/test_add_sub.log\n./build/test_mul_div.log\n./lib/calc.sh\n./tests/assert.sh\n./tests/run.sh\n./tests/test_add_sub.sh\n./tests/test_mul_div.sh\nOn branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/test-report.txt\n\tbuild/test_add_sub.log\n\tbuild/test_mul_div.log\ntest:\n\t@bash tests/run.sh\n"
+          },
+          {
+            "commands": "cd /home/eval/work/calc && cat lib/calc.sh tests/test_mul_div.sh tests/test_add_sub.sh tests/run.sh && git log -1 --oneline",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# calc: integer helpers\nadd() { echo $(( $1 + $2 )); }\nsub() { echo $(( $1 - $2 )); }\nmul() { echo $(( $1 + $2 )); }\ndiv() {\n  if [ \"$2\" -eq 0 ]; then echo 'calc: division by zero' >&2; return 1; fi\n  echo $(( $1 / $2 ))\n}\n. lib/calc.sh\n. tests/assert.sh\nassert_eq 20 \"$(mul 4 5)\" 'mul 4 5'\nassert_eq 0 \"$(mul 7 0)\" 'mul 7 0'\nassert_eq 3 \"$(div 9 3)\" 'div 9 3'\ndiv 1 0 2>/dev/null && { echo 'div by zero must fail'; exit 1; }\nexit 0\n. lib/calc.sh\n. tests/assert.sh\nassert_eq 5 \"$(add 2 3)\" 'add 2 3'\nassert_eq -4 \"$(sub 3 7)\" 'sub 3 7'\n#!/bin/bash\n# Test runner: runs every tests/test_*.sh, writes build/test-report.txt.\ncd \"$(dirname \"$0\")/..\" || exit 2\nmkdir -p build\npass=0; fail=0; total=0\nfor t in tests/test_*.sh; do\n  name=$(basename \"$t\" .sh)\n  total=$((total + 1))\n  if bash \"$t\" > \"build/$name.log\" 2>&1; then\n    pass=$((pass + 1)); echo \"ok   $name\"\n  else\n    fail=$((fail + 1)); echo \"FAIL $name\"; sed 's/^/    /' \"build/$name.log\"\n  fi\ndone\nif [ \"$fail\" -eq 0 ]; then\n  echo \"PASS $pass/$total\" | tee build/test-report.txt\nelse\n  echo \"FAIL $fail/$total\" | tee build/test-report.txt\n  exit 1\nfi\ncommit b4609259\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Mon Oct 12 18:53:42 2026 +0000\n\n    initial import\n\n"
+          },
+          {
+            "commands": "cd /home/eval/work/calc && python3 - <<'PY'\nfrom pathlib import Path\np = Path('lib/calc.sh')\ns = p.read_text()\nold = 'mul() { echo $(( $1 + $2 )); }'\nassert old in s\np.write_text(s.replace(old, 'mul() { echo $(( $1 * $2 )); }'))\nPY\nmake test && git diff -- lib/calc.sh && git add lib/calc.sh && git commit -m \"fix: multiply operands in mul helper\" && git status --short && git log -1 --oneline",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "ok   test_add_sub\nok   test_mul_div\nPASS 2/2\n# Diff output (simplified in virtual mode)\n[master b460922] fix: multiply operands in mul helper\nOn branch master\n\nUntracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n\tbuild/test-report.txt\n\tbuild/test_add_sub.log\n\tbuild/test_mul_div.log\ncommit b460922c\nAuthor: Eval Agent <eval@bashkit-eval.invalid>\nDate:   Mon Oct 12 18:53:55 2026 +0000\n\n    fix: multiply operands in mul helper\n\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

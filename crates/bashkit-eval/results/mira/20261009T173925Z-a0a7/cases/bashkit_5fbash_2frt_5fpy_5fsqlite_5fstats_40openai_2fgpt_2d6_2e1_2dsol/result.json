@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "rt_py_sqlite_stats",
+  "target": "openai/gpt-6.1-sol",
+  "input": [
+    "/data/shop.db is a SQLite database with a table orders(id, customer, category, amount_cents). Write /out/category_stats.json: a JSON object keyed by category whose values are objects with orders (count), total_cents, median_cents and top_customer. median_cents is the median amount; for an even count it is the mean of the two middle amounts rounded half up to an integer. top_customer is the customer with the largest total amount in that category (ties: alphabetically first). Format: 2-space indentation, keys sorted at every level, trailing newline (what Python's json.dumps(obj, indent=2, sort_keys=True) prints)."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "1/1 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Created `/out/category_stats.json` with the requested statistics and formatting.",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "python3 - <<'PY'\nimport sqlite3, json\nfrom collections import defaultdict\nfrom decimal import Decimal, ROUND_HALF_UP\nfrom pathlib import Path\nconn = sqlite3.connect('/data/shop.db')\ngroups = defaultdict(list)\nfor customer, category, amount in conn.execute('SELECT customer, category, amount_cents FROM orders'):\n    groups[category].append((customer, amount))\nresult = {}\nfor category, rows in groups.items():\n    amounts = sorted(amount for _, amount in rows)\n    n = len(amounts)\n    if n % 2:\n        median = amounts[n // 2]\n    else:\n        median = int((Decimal(amounts[n // 2 - 1] + amounts[n // 2]) / 2).quantize(Decimal('1'), rounding=ROUND_HALF_UP))\n    totals = defaultdict(int)\n    for customer, amount in rows:\n        totals[customer] += amount\n    top = min(totals, key=lambda customer: (-totals[customer], customer))\n    result[category] = {'orders': n, 'total_cents': sum(amounts), 'median_cents': median, 'top_customer': top}\nPath('/out').mkdir(parents=True, exist_ok=True)\nPath('/out/category_stats.json').write_text(json.dumps(result, indent=2, sort_keys=True) + '\\n')\nconn.close()\nPY"
+    ],
+    "usage": {
+      "input_tokens": 1357,
+      "output_tokens": 351,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 8234
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "python3 - <<'PY'\nimport sqlite3, json\nfrom collections import defaultdict\nfrom decimal import Decimal, ROUND_HALF_UP\nfrom pathlib import Path\nconn = sqlite3.connect('/data/shop.db')\ngroups = defaultdict(list)\nfor customer, category, amount in conn.execute('SELECT customer, category, amount_cents FROM orders'):\n    groups[category].append((customer, amount))\nresult = {}\nfor category, rows in groups.items():\n    amounts = sorted(amount for _, amount in rows)\n    n = len(amounts)\n    if n % 2:\n        median = amounts[n // 2]\n    else:\n        median = int((Decimal(amounts[n // 2 - 1] + amounts[n // 2]) / 2).quantize(Decimal('1'), rounding=ROUND_HALF_UP))\n    totals = defaultdict(int)\n    for customer, amount in rows:\n        totals[customer] += amount\n    top = min(totals, key=lambda customer: (-totals[customer], customer))\n    result[category] = {'orders': n, 'total_cents': sum(amounts), 'median_cents': median, 'top_customer': top}\nPath('/out').mkdir(parents=True, exist_ok=True)\nPath('/out/category_stats.json').write_text(json.dumps(result, indent=2, sort_keys=True) + '\\n')\nconn.close()\nPY",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

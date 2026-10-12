@@ -1,0 +1,57 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "pipe_word_frequency",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "Read /data/poem.txt and find the 3 most frequently used words. Print each word with its count, one per line, sorted by frequency descending."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "the 8\non 3\ncat 2",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "python3 - <<'PY'\nfrom collections import Counter\nfrom pathlib import Path\nimport re\ntext = Path('/data/poem.txt').read_text()\nwords = re.findall(r\"[A-Za-z]+(?:'[A-Za-z]+)?\", text.lower())\nfor word, count in Counter(words).most_common(3):\n    print(word, count)\nPY"
+    ],
+    "usage": {
+      "input_tokens": 934,
+      "output_tokens": 120,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 3217
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "python3 - <<'PY'\nfrom collections import Counter\nfrom pathlib import Path\nimport re\ntext = Path('/data/poem.txt').read_text()\nwords = re.findall(r\"[A-Za-z]+(?:'[A-Za-z]+)?\", text.lower())\nfor word, count in Counter(words).most_common(3):\n    print(word, count)\nPY",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "the 8\non 3\ncat 2\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

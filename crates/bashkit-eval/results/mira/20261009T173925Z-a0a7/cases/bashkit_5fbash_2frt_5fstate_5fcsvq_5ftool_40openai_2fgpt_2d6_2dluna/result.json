@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "rt_state_csvq_tool",
+  "target": "openai/gpt-6-luna",
+  "input": [
+    "Build a reusable command-line tool `csvq` in Python at /home/eval/bin/csvq. It must be executable and runnable as plain `csvq ...` once /home/eval/bin is on PATH (it will be used again later on other files).\n\nUsage: csvq [--where COL=VALUE]... [--select COL,COL,...] [--sort COL [--numeric] [--desc]] FILE\n- FILE is CSV with a header row; fields may be quoted (including embedded commas, quotes and newlines).\n- --where may repeat; keep rows where every COL equals VALUE exactly (split at the first '=').\n- --select picks and orders the output columns (default: all columns in file order).\n- --sort orders rows by COL as text; with --numeric, by numeric value, and rows whose value is not a number (including empty) go last in their original order. --desc sorts descending (non-numeric rows still go last). The sort is stable: equal keys keep their input order, also with --desc.\n- Output: CSV on stdout with the header row, '\\n' line endings, fields quoted only when they contain a comma, quote or newline.\n- If any option names a column not in the header, print `csvq: unknown column: NAME` to stderr, print nothing on stdout and exit 2.\n\nThen use csvq on /data/staff.csv to write /out/eng_top.csv (dept eng; columns name,salary; sorted by salary numerically, highest first) and /out/by_city.csv (columns city,name sorted by city)."
+  ],
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "3/3 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Created executable `/home/eval/bin/csvq` and generated both requested files:\n\n- `/out/eng_top.csv` — engineering staff, with `name,salary` sorted by salary numerically, highest first.\n- `/out/by_city.csv` — `city,name` sorted by city.\n\nAdd `/home/eval/bin` to `PATH` to run `csvq` by name.",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "ls -la /home/eval && ls -la /home/eval/bin 2>/dev/null || true; ls -la /data 2>/dev/null; ls -la /out 2>/dev/null || true",
+      "pwd; find / -maxdepth 3 -type f 2>/dev/null | head -60; cat /data/staff.csv",
+      "mkdir -p /home/eval/bin /out\ncat > /home/eval/bin/csvq <<'PY'\n#!/usr/bin/env python3\n\"\"\"Query a CSV file by exact-match filters, column selection, and sorting.\"\"\"\nimport argparse\nimport csv\nimport decimal\nimport sys\n\n\ndef parse_args():\n    parser = argparse.ArgumentParser(prog=\"csvq\")\n    parser.add_argument(\"--where\", action=\"append\", default=[], metavar=\"COL=VALUE\")\n    parser.add_argument(\"--select\", metavar=\"COL,COL,...\")\n    parser.add_argument(\"--sort\", metavar=\"COL\")\n    parser.add_argument(\"--numeric\", action=\"store_true\")\n    parser.add_argument(\"--desc\", action=\"store_true\")\n    parser.add_argument(\"FILE\")\n    return parser.parse_args()\n\n\ndef csv_line(fields):\n    \"\"\"Encode one row, quoting exactly the characters required by this format.\"\"\"\n    encoded = []\n    for value in fields:\n        value = str(value)\n        if any(char in value for char in ',\"\\n'):\n            value = '\"' + value.replace('\"', '\"\"') + '\"'\n        encoded.append(value)\n    return \",\".join(encoded) + \"\\n\"\n\n\ndef main():\n    args = parse_args()\n    filters = []\n    for clause in args.where:\n        col, sep, value = clause.partition(\"=\")\n        if not sep:\n            # A missing equals sign cannot name a usable filter column; let it\n            # report as an unknown column consistently with other bad names.\n            col = clause\n            value = \"\"\n        filters.append((col, value))\n\n    try:\n        with open(args.FILE, \"r\", encoding=\"utf-8-sig\", newline=\"\") as source:\n            reader = csv.reader(source)\n            try:\n                header = next(reader)\n            except StopIteration:\n                header = []\n            rows = list(reader)\n    except (OSError, UnicodeError, csv.Error) as exc:\n        print(f\"csvq: {exc}\", file=sys.stderr)\n        return 2\n\n    names = set(header)\n    selected = header if args.select is None else args.select.split(\",\")\n    referenced = [col for col, _ in filters] + selected\n    if args.sort is not None:\n        referenced.append(args.sort)\n    for col in referenced:\n        if col not in names:\n            print(f\"csvq: unknown column: {col}\", file=sys.stderr)\n            return 2\n\n    indexes = {name: header.index(name) for name in names}\n    filtered = [row for row in rows if all(\n        (row[indexes[col]] if indexes[col] < len(row) else \"\") == value\n        for col, value in filters\n    )]\n\n    if args.sort is not None:\n        sort_index = indexes[args.sort]\n        if args.numeric:\n            valid = []\n            invalid = []\n            for original_index, row in enumerate(filtered):\n                value = row[sort_index] if sort_index < len(row) else \"\"\n                try:\n                    number = decimal.Decimal(value)\n                    if not number.is_finite():\n                        raise decimal.InvalidOperation\n                except (decimal.InvalidOperation, ValueError):\n                    invalid.append((original_index, row))\n                else:\n                    valid.append((number, original_index, row))\n            valid.sort(key=lambda item: item[0], reverse=args.desc)\n            filtered = [item[2] for item in valid] + [item[1] for item in invalid]\n        else:\n            # Python's sort is stable even when reverse=True.\n            filtered.sort(key=lambda row: row[sort_index] if sort_index < len(row) else \"\", reverse=args.desc)\n\n    output_indices = [indexes[col] for col in selected]\n    out = sys.stdout\n    out.write(csv_line(selected))\n    for row in filtered:\n        out.write(csv_line([row[i] if i < len(row) else \"\" for i in output_indices]))\n    return 0\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\nPY\nchmod +x /home/eval/bin/csvq\nPATH=/home/eval/bin:$PATH csvq --where dept=eng --select name,salary --sort salary --numeric --desc /data/staff.csv > /out/eng_top.csv\nPATH=/home/eval/bin:$PATH csvq --select city,name --sort city /data/staff.csv > /out/by_city.csv\nprintf 'eng_top:\\n'; cat /out/eng_top.csv; printf 'by_city:\\n'; cat /out/by_city.csv\nls -l /home/eval/bin/csvq /out"
+    ],
+    "usage": {
+      "input_tokens": 5155,
+      "output_tokens": 2244,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 23095
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [],
+        "last_exit_code": 0,
+        "links": {},
+        "tool_outputs": [
+          {
+            "commands": "ls -la /home/eval && ls -la /home/eval/bin 2>/dev/null || true; ls -la /data 2>/dev/null; ls -la /out 2>/dev/null || true",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--      171 2026-10-12 18:58 staff.csv\n"
+          },
+          {
+            "commands": "pwd; find / -maxdepth 3 -type f 2>/dev/null | head -60; cat /data/staff.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/home/user\n/bin/:\n/bin/[\n/bin/arch\n/bin/assert\n/bin/awk\n/bin/b2sum\n/bin/base32\n/bin/base64\n/bin/basename\n/bin/basenc\n/bin/bash\n/bin/bc\n/bin/bind\n/bin/bunzip2\n/bin/busybox\n/bin/bzcat\n/bin/bzip2\n/bin/cat\n/bin/chgrp\n/bin/chmod\n/bin/chown\n/bin/cksum\n/bin/clear\n/bin/cmp\n/bin/column\n/bin/comm\n/bin/complete\n/bin/compopt\n/bin/cp\n/bin/csv\n/bin/curl\n/bin/cut\n/bin/date\n/bin/dd\n/bin/df\n/bin/diff\n/bin/dirname\n/bin/dotenv\n/bin/du\n/bin/echo\n/bin/egrep\n/bin/env\n/bin/envsubst\n/bin/expand\n/bin/expr\n/bin/factor\n/bin/false\n/bin/fgrep\n/bin/file\n/bin/find\n/bin/flock\n/bin/fmt\n/bin/fold\n/bin/free\n/bin/gawk\n/bin/getconf\n/bin/git\n/bin/glob\n/bin/grep\n/bin/groups\nname,dept,city,salary\nAva,eng,Berlin,120000\nBen,ops,Lisbon,70000\nCara,eng,Austin,135000\nDev,eng,Berlin,99000\nEve,sales,Austin,80000\nFinn,eng,Lisbon,135000\nGia,ops,Berlin,\n"
+          },
+          {
+            "commands": "mkdir -p /home/eval/bin /out\ncat > /home/eval/bin/csvq <<'PY'\n#!/usr/bin/env python3\n\"\"\"Query a CSV file by exact-match filters, column selection, and sorting.\"\"\"\nimport argparse\nimport csv\nimport decimal\nimport sys\n\n\ndef parse_args():\n    parser = argparse.ArgumentParser(prog=\"csvq\")\n    parser.add_argument(\"--where\", action=\"append\", default=[], metavar=\"COL=VALUE\")\n    parser.add_argument(\"--select\", metavar=\"COL,COL,...\")\n    parser.add_argument(\"--sort\", metavar=\"COL\")\n    parser.add_argument(\"--numeric\", action=\"store_true\")\n    parser.add_argument(\"--desc\", action=\"store_true\")\n    parser.add_argument(\"FILE\")\n    return parser.parse_args()\n\n\ndef csv_line(fields):\n    \"\"\"Encode one row, quoting exactly the characters required by this format.\"\"\"\n    encoded = []\n    for value in fields:\n        value = str(value)\n        if any(char in value for char in ',\"\\n'):\n            value = '\"' + value.replace('\"', '\"\"') + '\"'\n        encoded.append(value)\n    return \",\".join(encoded) + \"\\n\"\n\n\ndef main():\n    args = parse_args()\n    filters = []\n    for clause in args.where:\n        col, sep, value = clause.partition(\"=\")\n        if not sep:\n            # A missing equals sign cannot name a usable filter column; let it\n            # report as an unknown column consistently with other bad names.\n            col = clause\n            value = \"\"\n        filters.append((col, value))\n\n    try:\n        with open(args.FILE, \"r\", encoding=\"utf-8-sig\", newline=\"\") as source:\n            reader = csv.reader(source)\n            try:\n                header = next(reader)\n            except StopIteration:\n                header = []\n            rows = list(reader)\n    except (OSError, UnicodeError, csv.Error) as exc:\n        print(f\"csvq: {exc}\", file=sys.stderr)\n        return 2\n\n    names = set(header)\n    selected = header if args.select is None else args.select.split(\",\")\n    referenced = [col for col, _ in filters] + selected\n    if args.sort is not None:\n        referenced.append(args.sort)\n    for col in referenced:\n        if col not in names:\n            print(f\"csvq: unknown column: {col}\", file=sys.stderr)\n            return 2\n\n    indexes = {name: header.index(name) for name in names}\n    filtered = [row for row in rows if all(\n        (row[indexes[col]] if indexes[col] < len(row) else \"\") == value\n        for col, value in filters\n    )]\n\n    if args.sort is not None:\n        sort_index = indexes[args.sort]\n        if args.numeric:\n            valid = []\n            invalid = []\n            for original_index, row in enumerate(filtered):\n                value = row[sort_index] if sort_index < len(row) else \"\"\n                try:\n                    number = decimal.Decimal(value)\n                    if not number.is_finite():\n                        raise decimal.InvalidOperation\n                except (decimal.InvalidOperation, ValueError):\n                    invalid.append((original_index, row))\n                else:\n                    valid.append((number, original_index, row))\n            valid.sort(key=lambda item: item[0], reverse=args.desc)\n            filtered = [item[2] for item in valid] + [item[1] for item in invalid]\n        else:\n            # Python's sort is stable even when reverse=True.\n            filtered.sort(key=lambda row: row[sort_index] if sort_index < len(row) else \"\", reverse=args.desc)\n\n    output_indices = [indexes[col] for col in selected]\n    out = sys.stdout\n    out.write(csv_line(selected))\n    for row in filtered:\n        out.write(csv_line([row[i] if i < len(row) else \"\" for i in output_indices]))\n    return 0\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\nPY\nchmod +x /home/eval/bin/csvq\nPATH=/home/eval/bin:$PATH csvq --where dept=eng --select name,salary --sort salary --numeric --desc /data/staff.csv > /out/eng_top.csv\nPATH=/home/eval/bin:$PATH csvq --select city,name --sort city /data/staff.csv > /out/by_city.csv\nprintf 'eng_top:\\n'; cat /out/eng_top.csv; printf 'by_city:\\n'; cat /out/by_city.csv\nls -l /home/eval/bin/csvq /out",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "eng_top:\nname,salary\nCara,135000\nFinn,135000\nAva,120000\nDev,99000\nby_city:\ncity,name\nAustin,Cara\nAustin,Eve\nBerlin,Ava\nBerlin,Dev\nBerlin,Gia\nLisbon,Ben\nLisbon,Finn\n-rwxr-xr-x     3604 2026-10-12 18:59 /home/eval/bin/csvq\n\n/out:\n-rw-r--r--       89 2026-10-12 18:59 by_city.csv\n-rw-r--r--       57 2026-10-12 18:59 eng_top.csv\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

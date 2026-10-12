@@ -4,10 +4,10 @@
   "study": "mira-eval",
   "study_version": "0.5.0",
   "started_unix": 1791567565,
-  "finished_unix": 1791584311,
+  "finished_unix": 1791831592,
   "environment": {
     "git": {
-      "commit": "f043e1293c1b977ff09dd71208cb571e9227c862",
+      "commit": "46e7d8fbe1945d685632ce7ccc53aff89efa4a7a",
       "branch": "claude/project-thread-hndwnc",
       "dirty": true
     },
@@ -15,18 +15,18 @@
     "arch": "x86_64",
     "hostname": "vm",
     "cpus": 4,
-    "mem_total_mib": 16094,
+    "mem_total_mib": 16093,
     "mira_version": "0.5.0"
   },
   "summary": {
-    "scored": 440,
-    "passed": 416,
-    "failed": 24,
+    "scored": 616,
+    "passed": 563,
+    "failed": 53,
     "na": 0,
     "skipped": 0,
-    "total_tokens": 7559518,
+    "total_tokens": 8456644,
     "total_cost_usd": 0.0,
-    "total_tool_calls": 2173,
-    "total_duration_ms": 14868832
+    "total_tool_calls": 2609,
+    "total_duration_ms": 17067779
   }
 }
