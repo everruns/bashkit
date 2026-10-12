@@ -346,19 +346,28 @@ async fn stdin_clone_trip_recovers() {
 }
 
 // ---------- opt-in bounded runner extension for the input-redirect job ----------
-// Reuses the reviewed lifecycle (`run_command_bounded_with`) with a
+// Reuses reviewed primitives (`drain_capped`, `reap_with_grace`) with a
 // job-specific launcher. Shared defaults for other products are untouched.
 
 use crate::threat_model_tests::resource_exhaustion::{
-    BoundedRun, LifecycleFaults, bashkit_cli_path, run_command_bounded_with,
+    bashkit_cli_path, drain_capped, reap_with_grace,
 };
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
 /// Address-space cap in KiB for the bash `ulimit -v` knob (Linux only).
 const IR_AS_KIB: u64 = 1_572_864; // 1.5GiB
-/// File-size backstop in POSIX 512B blocks for the bash `ulimit -f` knob.
-const IR_FILE_BLOCKS: u64 = 131_072; // 131072 * 512B = 64MiB nominal
+/// File-size backstop for the bash `ulimit -f` knob, in the shell's blocks.
+/// MEASURED (not assumed): both /bin/bash and /opt/homebrew/bin/bash report
+/// 1024-byte increments (`ulimit -f 1` reads back 1024 bytes via
+/// resource.getrlimit), so 131072 blocks = 128MiB actual on measured builds.
+/// The assertion below accepts exactly the historically attested unit set
+/// {512B POSIX, 1024B measured bash} and fails closed on anything else.
+const IR_FILE_BLOCKS: u64 = 131_072;
+/// Active RSS cutoff in KiB (`ps -o rss=` reports KiB on Linux and macOS):
+/// catches runaway growth far below RAM/disk exhaustion while legit runs
+/// peak at O(MB). Policed by polling, not assumed from any cap.
+const IR_RSS_CAP_KIB: u64 = 1_048_576; // 1GiB
 /// Explicit allowance for one short instrumented run's coverage artifact.
 const IR_ARTIFACT_BOUND: u64 = 64 * 1024 * 1024; // 64MiB
 
@@ -459,8 +468,12 @@ fn check_artifact_bytes(profile: &std::path::Path, bound: u64) -> std::io::Resul
     }
 }
 
-/// Owned temp working dir: created and guarded before use, removed exactly
-/// once via `cleanup`; the Drop backstop only covers unwind paths.
+/// Owned temp working dir. Ownership is established FIRST (the guard object
+/// exists before any fallible use); every operation runs through the guard.
+/// `cleanup` disarms only after removal succeeds, so a failed cleanup keeps
+/// the guard armed and fails loudly instead of leaking silently. `Drop` is a
+/// backstop for unwind paths only and documents its silent best-effort.
+#[derive(Debug)]
 struct TempWorkdir {
     path: Option<std::path::PathBuf>,
 }
@@ -468,32 +481,62 @@ struct TempWorkdir {
 impl TempWorkdir {
     fn create(tag: &str) -> std::io::Result<Self> {
         let path = std::env::temp_dir().join(format!("bashkit-{tag}-{}", std::process::id()));
-        std::fs::create_dir_all(&path)?;
-        if std::fs::read_dir(&path)?.next().is_some() {
-            return Err(std::io::Error::new(
+        // Exclusive creation: existence is NOT proof this invocation created
+        // the directory. A collision rejects WITHOUT deleting so preexisting
+        // contents (possibly another owner's) are always preserved.
+        match std::fs::create_dir(&path) {
+            Ok(()) => Ok(Self { path: Some(path) }),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Err(std::io::Error::new(
                 std::io::ErrorKind::AlreadyExists,
-                format!("stale work dir (pid reuse?): {}", path.display()),
-            ));
+                format!("work dir collision, refusing to adopt: {}", path.display()),
+            )),
+            Err(e) => Err(e),
         }
-        Ok(Self { path: Some(path) })
     }
-
     fn path(&self) -> &std::path::Path {
         self.path.as_ref().expect("workdir already cleaned")
     }
 
     fn cleanup(mut self) -> std::io::Result<()> {
-        let path = self.path.take().expect("workdir already cleaned");
-        std::fs::remove_dir_all(path)
+        let path = self.path.as_ref().expect("workdir already cleaned");
+        std::fs::remove_dir_all(path)?;
+        self.path = None;
+        Ok(())
     }
 }
 
 impl Drop for TempWorkdir {
+    // Backstop only: the explicit `cleanup` path above is the truthful
+    // receipt. A Drop-time failure has nowhere to report, hence best-effort;
+    // normal paths never reach here armed.
     fn drop(&mut self) {
         if let Some(path) = self.path.take() {
             let _ = std::fs::remove_dir_all(path);
         }
     }
+}
+
+/// Parse `ps -o rss=` output (KiB on Linux and macOS) to a byte-exact...
+/// KiB count. Anything else fails loudly: a policing loop must never parse
+/// garbage as a small number.
+fn parse_ps_rss(out: &str) -> Result<u64, String> {
+    out.trim()
+        .parse::<u64>()
+        .map_err(|_| format!("unparseable ps rss output: {out:?}"))
+}
+
+/// Attested file-size unit factor: the byteproof must equal blocks times one
+/// of the historically attested shell units (512B POSIX, 1024B measured
+/// bash). Anything else fails closed instead of converting silently.
+fn file_size_unit_factor(blocks: u64, bytes: u64) -> Result<u64, String> {
+    for unit in [512u64, 1024u64] {
+        if blocks.saturating_mul(unit) == bytes {
+            return Ok(unit);
+        }
+    }
+    Err(format!(
+        "file byteproof {bytes} matches neither 512B nor 1024B units for {blocks} blocks"
+    ))
 }
 
 /// Outcome of one opt-in bounded input-shape run: the reviewed verdict plus
@@ -511,6 +554,77 @@ struct InputShapeRun {
     limits: IrLimitsNote,
     artifact: ArtifactCheck,
     leftovers: Vec<String>,
+    file_unit: Option<u64>,
+    rss_pid: u32,
+    rss_samples: u32,
+    peak_rss_kb: u64,
+    rss_exceeded: bool,
+    exited_fast: bool,
+}
+
+/// Sample resident-set size (KiB) of `pid` via `ps` (`rss` is KiB on
+/// Linux and macOS). Any failure is loud: blind policing is worse than none,
+/// and the caller kills first on doubt.
+fn sample_child_rss(pid: u32) -> Result<u64, String> {
+    // The sampler itself is bounded (5s): `ps` must never block past the
+    // wall deadline. Kill and reap on expiry, loud error either way.
+    let mut ps = std::process::Command::new("ps")
+        .arg("-o")
+        .arg("rss=")
+        .arg("-p")
+        .arg(pid.to_string())
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("spawn ps for rss of {pid}: {e:?}"))?;
+    let ps_deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        match ps.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) => {
+                if std::time::Instant::now() >= ps_deadline {
+                    ps.kill()
+                        .map_err(|e| format!("kill stuck ps for rss of {pid}: {e:?}"))?;
+                    let _ = ps.wait();
+                    return Err(format!("ps rss of {pid} timed out"));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err(e) => return Err(format!("poll ps for rss of {pid}: {e:?}")),
+        }
+    }
+    let out = ps
+        .wait_with_output()
+        .map_err(|e| format!("reap ps for rss of {pid}: {e:?}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "ps rss of {pid} failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    parse_ps_rss(&String::from_utf8_lossy(&out.stdout))
+}
+
+/// Join a pipe-reader thread before `deadline`. On time, returns its
+/// receipts with `true`. Past the deadline, one final blocking join
+/// completes the original reader: pipes hit EOF once the reaped child is
+/// gone and our shapes spawn no grandchildren, so this cannot hang on a live
+/// pipe; it is still flagged `false` so the verdict fails closed. The
+/// handle is never forgotten or dropped unfinished.
+fn ir_join_capped(
+    handle: std::thread::JoinHandle<(Vec<u8>, bool, bool)>,
+    deadline: std::time::Instant,
+) -> (Vec<u8>, bool, bool, bool) {
+    while !handle.is_finished() {
+        if std::time::Instant::now() >= deadline {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let finished = handle.is_finished();
+    let (kept, oversized, read_error) = handle.join().expect("reader thread join");
+    (kept, oversized, read_error, finished)
 }
 
 fn run_input_shape_bounded(script: &str, wall_secs: u64, tag: &str) -> InputShapeRun {
@@ -530,19 +644,114 @@ fn run_input_shape_bounded(script: &str, wall_secs: u64, tag: &str) -> InputShap
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let run: BoundedRun = run_command_bounded_with(
-        cmd,
-        Duration::from_secs(wall_secs),
-        LifecycleFaults::default(),
-    );
+    let mut child = OwnedChild::new(cmd.spawn().expect("spawn bounded child"));
+    let rss_pid = child.id();
+    // Pipes are taken before the first poll so the concurrent readers below
+    // own them outright; the child handle keeps only pid and lifecycle.
+    let (out_pipe, err_pipe) = child.take_pipes();
+    let mut out_pipe = out_pipe.expect("take child stdout");
+    let mut err_pipe = err_pipe.expect("take child stderr");
+    let out_reader = std::thread::Builder::new()
+        .name("ir-child-stdout".into())
+        .spawn(move || drain_capped(&mut out_pipe))
+        .expect("spawn stdout reader");
+    let err_reader = std::thread::Builder::new()
+        .name("ir-child-stderr".into())
+        .spawn(move || drain_capped(&mut err_pipe))
+        .expect("spawn stderr reader");
+    let start = std::time::Instant::now();
+    let deadline = start + Duration::from_secs(wall_secs);
+    let mut ticks = 0u64;
+    let mut rss_samples = 0u32;
+    let mut peak_rss_kb = 0u64;
+    let mut rss_exceeded = false;
+    let mut exited_fast = false;
+    let mut overran = false;
+    // try_wait reaps the zombie it reports, so the exited branch needs no
+    // further wait; killed branches go through the reviewed grace reap,
+    // never an open wait.
+    let mut final_status: Option<std::process::ExitStatus> = None;
+    let mut reaped = false;
+    loop {
+        if let Some(status) = child.try_wait().expect("poll child") {
+            if rss_samples == 0 {
+                exited_fast = true;
+            }
+            final_status = Some(status);
+            reaped = true;
+            break;
+        }
+        ticks += 1;
+        if ticks == 1 || ticks.is_multiple_of(10) {
+            match sample_child_rss(rss_pid) {
+                Ok(rss) => {
+                    rss_samples += 1;
+                    peak_rss_kb = peak_rss_kb.max(rss);
+                    if rss > IR_RSS_CAP_KIB {
+                        child.kill().expect("kill RSS overrun child");
+                        rss_exceeded = true;
+                        break;
+                    }
+                }
+                Err(e) => {
+                    // The pid may have vanished between try_wait and ps;
+                    // re-check before treating this as a policing fault.
+                    if let Some(status) = child.try_wait().expect("re-poll child") {
+                        if rss_samples == 0 {
+                            exited_fast = true;
+                        }
+                        final_status = Some(status);
+                        reaped = true;
+                        break;
+                    }
+                    panic!("RSS policing failed on live child {rss_pid}: {e}");
+                }
+            }
+        }
+        if std::time::Instant::now() >= deadline {
+            child.kill().expect("kill overrun child");
+            overran = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    if final_status.is_none() {
+        let mut poll = || child.try_wait();
+        match reap_with_grace(&mut poll, Duration::from_secs(5)) {
+            Some(status) => {
+                final_status = Some(status);
+                reaped = true;
+            }
+            None => {
+                reaped = false;
+            }
+        }
+    }
+    // Finite reader completion shares the absolute budget: pipes hit EOF
+    // once the reaped child is gone. See ir_join_capped on unfinished.
+    let join_deadline = start + Duration::from_secs(wall_secs + 15);
+    let (out_kept, out_over, out_err, out_done) = ir_join_capped(out_reader, join_deadline);
+    let (err_kept, err_over, err_err, err_done) = ir_join_capped(err_reader, join_deadline);
+    let incomplete_readers = !(out_done && err_done);
     // Receipt first: the launcher note proves the caps ran; without it the
     // run is untrusted regardless of exit code.
-    let (note, rest) = run
-        .stderr
+    let stderr_full = String::from_utf8_lossy(&err_kept).into_owned();
+    let (note, rest) = stderr_full
         .split_once('\n')
         .expect("launcher receipt missing: empty stderr");
     let limits = parse_ir_limits_note(note).unwrap_or_else(|e| panic!("bad launcher receipt: {e}"));
     let stderr = rest.to_string();
+    #[cfg(target_os = "linux")]
+    let file_unit = {
+        let blocks: u64 = limits
+            .fileblk_raw
+            .parse()
+            .expect("fileblk receipt must be numeric");
+        let bytes = limits.file_bytes.expect("file byteproof required on Linux");
+        Some(file_size_unit_factor(blocks, bytes).unwrap_or_else(|e| panic!("file unit cap: {e}")))
+    };
+    #[cfg(not(target_os = "linux"))]
+    let file_unit = None;
     let artifact = check_artifact_bytes(&profile, IR_ARTIFACT_BOUND)
         .unwrap_or_else(|e| panic!("cannot stat artifact sink: {e:?}"));
     // Inventory before cleanup: any producer file fails closed by naming it;
@@ -559,24 +768,37 @@ fn run_input_shape_bounded(script: &str, wall_secs: u64, tag: &str) -> InputShap
     sink.cleanup().expect("artifact sink cleanup");
     work.cleanup().expect("work dir cleanup");
     InputShapeRun {
-        exit_code: run.exit_code,
-        stdout: run.stdout,
+        exit_code: final_status.and_then(|s| s.code()),
+        stdout: String::from_utf8_lossy(&out_kept).into_owned(),
         stderr,
-        timed_out: run.timed_out,
-        oversized: run.oversized,
-        incomplete_readers: run.incomplete_readers,
-        read_error: run.read_error,
-        reaped: run.reaped,
+        timed_out: overran,
+        oversized: out_over || err_over,
+        incomplete_readers,
+        read_error: out_err || err_err,
+        reaped,
         limits,
         artifact,
         leftovers,
+        file_unit,
+        rss_pid,
+        rss_samples,
+        peak_rss_kb,
+        rss_exceeded,
+        exited_fast,
     }
 }
 
 /// Effective-limits assertions shared by bounded input-shape runs: exact raw
 /// round-trips everywhere; kernel byte proofs on Linux, explicit unsupported
 /// markers elsewhere (fail-closed on any unit surprise).
-fn assert_effective_limits(limits: &IrLimitsNote) {
+/// Effective-bounds assertions shared by bounded input-shape runs: exact raw
+/// round-trips everywhere; kernel byte proofs on Linux (including the
+/// shell-unit factor for `-f`); explicit unsupported markers elsewhere
+/// (fail-closed on any unit surprise); RSS policing receipts (a real pid,
+/// no exceedance, peak under the cutoff, samples taken unless the child
+/// exited before the first poll).
+fn assert_effective_bounds(r: &InputShapeRun) {
+    let limits = &r.limits;
     assert_eq!(limits.stack_raw, "4096", "stack cap round-trip");
     assert_eq!(limits.cpu_raw, "10", "cpu cap round-trip");
     assert_eq!(
@@ -592,10 +814,9 @@ fn assert_effective_limits(limits: &IrLimitsNote) {
             "AS cap round-trip"
         );
         assert_eq!(limits.mem_bytes, Some(IR_AS_KIB * 1024), "AS bytes proof");
-        assert_eq!(
-            limits.file_bytes,
-            Some(IR_FILE_BLOCKS * 512),
-            "file bytes proof"
+        assert!(
+            r.file_unit.is_some(),
+            "file unit factor must be attested on Linux"
         );
     }
     #[cfg(not(target_os = "linux"))]
@@ -603,7 +824,23 @@ fn assert_effective_limits(limits: &IrLimitsNote) {
         assert_eq!(limits.mem_kb_raw, "unsupported", "no AS enforcement here");
         assert_eq!(limits.mem_bytes, None, "no AS byteproof here");
         assert_eq!(limits.file_bytes, None, "no file byteproof here");
+        assert_eq!(r.file_unit, None, "no file unit attested here");
     }
+    assert_ne!(r.rss_pid, 0, "RSS policing must attach to a real pid");
+    assert!(
+        !r.rss_exceeded,
+        "RSS cutoff tripped at {} KiB",
+        r.peak_rss_kb
+    );
+    assert!(
+        r.peak_rss_kb < IR_RSS_CAP_KIB,
+        "peak RSS {} KiB over cutoff",
+        r.peak_rss_kb
+    );
+    assert!(
+        r.rss_samples >= 1 || r.exited_fast,
+        "RSS policing never sampled a live child"
+    );
 }
 
 /// Original shape under default limits in the opt-in bounded runner: `:`
@@ -628,7 +865,7 @@ fn original_shape_bounded_child_default_limits() {
     );
     assert!(!r.read_error, "bounded child pipe read failed");
     assert!(r.reaped, "bounded child was not reaped");
-    assert_effective_limits(&r.limits);
+    assert_effective_bounds(&r);
     assert!(
         matches!(r.artifact, ArtifactCheck::Absent | ArtifactCheck::Within(_)),
         "artifact outside explicit allowance: {:?}",
@@ -672,13 +909,13 @@ fn ir_helper_launcher_fragments() {
 
 #[test]
 fn ir_helper_parse_receipt() {
-    let full = parse_ir_limits_note("ir-limits: stack=4096 cpu=10 mem_kb=1572864 mem_bytes=1610612736 fileblk=131072 file_bytes=67108864").unwrap();
+    let full = parse_ir_limits_note("ir-limits: stack=4096 cpu=10 mem_kb=1572864 mem_bytes=1610612736 fileblk=131072 file_bytes=134217728").unwrap();
     assert_eq!(full.stack_raw, "4096");
     assert_eq!(full.cpu_raw, "10");
     assert_eq!(full.mem_kb_raw, "1572864");
     assert_eq!(full.mem_bytes, Some(1610612736));
     assert_eq!(full.fileblk_raw, "131072");
-    assert_eq!(full.file_bytes, Some(67108864));
+    assert_eq!(full.file_bytes, Some(134217728));
     let unsupported = parse_ir_limits_note("ir-limits: stack=4096 cpu=10 mem_kb=unsupported mem_bytes=unsupported fileblk=131072 file_bytes=unsupported").unwrap();
     assert_eq!(unsupported.mem_bytes, None);
     assert_eq!(unsupported.file_bytes, None);
@@ -742,7 +979,7 @@ fn ir_helper_normal_child_completes() {
         !r.timed_out && !r.oversized && !r.incomplete_readers && !r.read_error && r.reaped,
         "harness lifecycle must complete cleanly"
     );
-    assert_effective_limits(&r.limits);
+    assert_effective_bounds(&r);
     assert_eq!(r.exit_code, Some(0));
     assert!(r.stdout.is_empty() && r.stderr.is_empty());
     assert!(r.leftovers.is_empty());
@@ -750,4 +987,90 @@ fn ir_helper_normal_child_completes() {
         r.artifact,
         ArtifactCheck::Absent | ArtifactCheck::Within(_)
     ));
+}
+
+#[test]
+fn ir_helper_file_unit_cases() {
+    // Measured shell units: 1024B increments on tested bash builds, 512B POSIX.
+    assert_eq!(file_size_unit_factor(131072, 131072 * 1024), Ok(1024));
+    assert_eq!(file_size_unit_factor(131072, 131072 * 512), Ok(512));
+    assert!(file_size_unit_factor(131072, 131072 * 1000).is_err());
+    assert!(file_size_unit_factor(131072, 0).is_err());
+}
+/// A preexisting dir must fail creation AND keep every byte: existence is
+/// not proof this invocation created it, so a collision rejects without
+/// deleting (possibly another owner's contents).
+#[test]
+fn ir_helper_workdir_collision_preserves() {
+    let tag = "ir-collision-probe";
+    let path = std::env::temp_dir().join(format!("bashkit-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&path);
+    std::fs::create_dir_all(&path).expect("plant collision dir");
+    std::fs::write(path.join("precious"), b"precious").expect("plant collision file");
+    let err = TempWorkdir::create(tag).expect_err("collision must fail");
+    assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+    assert_eq!(
+        std::fs::read(path.join("precious")).expect("preexisting contents preserved"),
+        b"precious"
+    );
+    std::fs::remove_dir_all(&path).expect("remove planted dir");
+    assert!(!path.exists());
+}
+
+#[test]
+fn ir_helper_ps_parse_cases() {
+    assert_eq!(parse_ps_rss("  1234\n"), Ok(1234));
+    assert_eq!(parse_ps_rss("0"), Ok(0));
+    assert!(parse_ps_rss("").is_err());
+    assert!(parse_ps_rss("abc").is_err());
+    assert!(parse_ps_rss("12 34").is_err());
+}
+
+/// Owned child handle: established immediately after spawn, before any
+/// fallible pipe/thread/poll operation. Every later expect runs with this
+/// owner alive, so unwind paths always have a defined backstop. Normal
+/// paths reap explicitly (see `reap_with_grace` callers) and then drop the
+/// guard; Drop kills best-effort (documented backstop, never the primary
+/// path) but never waits, so Drop cannot block.
+struct OwnedChild {
+    inner: Option<std::process::Child>,
+}
+
+impl OwnedChild {
+    fn new(child: std::process::Child) -> Self {
+        Self { inner: Some(child) }
+    }
+
+    fn id(&self) -> u32 {
+        self.inner.as_ref().expect("child already released").id()
+    }
+
+    fn take_pipes(
+        &mut self,
+    ) -> (
+        Option<std::process::ChildStdout>,
+        Option<std::process::ChildStderr>,
+    ) {
+        let inner = self.inner.as_mut().expect("child already released");
+        (inner.stdout.take(), inner.stderr.take())
+    }
+
+    fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
+        self.inner
+            .as_mut()
+            .expect("child already released")
+            .try_wait()
+    }
+
+    fn kill(&mut self) -> std::io::Result<()> {
+        self.inner.as_mut().expect("child already released").kill()
+    }
+}
+
+impl Drop for OwnedChild {
+    fn drop(&mut self) {
+        if let Some(child) = self.inner.as_mut() {
+            let _ = child.kill();
+        }
+    }
 }

@@ -186,7 +186,7 @@ pub(crate) mod resource_exhaustion {
     /// the capture with the bytes kept so far and `read_error` set, never
     /// relabeled as a clean EOF. Reaching exactly the cap followed by EOF
     /// is not oversize; only real excess is flagged.
-    fn drain_capped<R: Read>(reader: &mut R) -> (Vec<u8>, bool, bool) {
+    pub(crate) fn drain_capped<R: Read>(reader: &mut R) -> (Vec<u8>, bool, bool) {
         let mut buf = Vec::new();
         let mut chunk = [0u8; 4096];
         loop {
@@ -935,7 +935,7 @@ pub(crate) mod resource_exhaustion {
     /// Returns the observed status, or `None` when the victim cannot be
     /// reaped inside the grace (or polling itself errors): the safe seam
     /// for the unavailable-reap verdict.
-    fn reap_with_grace(
+    pub(crate) fn reap_with_grace(
         poll: &mut dyn FnMut() -> std::io::Result<Option<std::process::ExitStatus>>,
         grace: Duration,
     ) -> Option<std::process::ExitStatus> {
