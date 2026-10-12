@@ -58,6 +58,12 @@ impl StreamData {
     pub fn len(&self) -> usize {
         self.bytes.len()
     }
+
+    /// Live bytes retained by this buffer: the raw bytes plus the decoded
+    /// text kept alongside them.
+    pub(crate) fn retained_len(&self) -> usize {
+        self.bytes.len().saturating_add(self.text.len())
+    }
     pub fn is_empty(&self) -> bool {
         self.bytes.is_empty()
     }
