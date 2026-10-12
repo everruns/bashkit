@@ -297,6 +297,9 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dev-dependencies]
+# TEST-ONLY: process feature for the opt-in bounded child-test runner.
+# Production builds never see this feature; versions and lock unchanged.
+tokio = { workspace = true, features = ["process"] }
 tokio-test = { workspace = true }
 pretty_assertions = { workspace = true }
 insta = { workspace = true }

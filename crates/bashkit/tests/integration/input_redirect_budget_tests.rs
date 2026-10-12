@@ -349,11 +349,10 @@ async fn stdin_clone_trip_recovers() {
 // Reuses reviewed primitives (`drain_capped`, `reap_with_grace`) with a
 // job-specific launcher. Shared defaults for other products are untouched.
 
-use crate::threat_model_tests::resource_exhaustion::{
-    bashkit_cli_path, drain_capped, reap_with_grace,
-};
-use std::process::{Command, Stdio};
+use crate::threat_model_tests::resource_exhaustion::bashkit_cli_path;
+use std::process::Stdio;
 use std::time::Duration;
+use tokio::process::Command;
 
 /// Address-space cap in KiB for the bash `ulimit -v` knob (Linux only).
 const IR_AS_KIB: u64 = 1_572_864; // 1.5GiB
@@ -370,6 +369,8 @@ const IR_FILE_BLOCKS: u64 = 131_072;
 const IR_RSS_CAP_KIB: u64 = 1_048_576; // 1GiB
 /// Explicit allowance for one short instrumented run's coverage artifact.
 const IR_ARTIFACT_BOUND: u64 = 64 * 1024 * 1024; // 64MiB
+/// Per-stream kept bytes for concurrent diagnostic drains.
+const PIPE_CAP: usize = 256 * 1024;
 
 /// Opt-in launcher for the input-redirect job: shared CPU/stack caps plus an
 /// address-space cap and a file-size backstop, every `ulimit` fail-closed
@@ -565,10 +566,45 @@ struct InputShapeRun {
 /// Sample resident-set size (KiB) of `pid` via `ps` (`rss` is KiB on
 /// Linux and macOS). Any failure is loud: blind policing is worse than none,
 /// and the caller kills first on doubt.
-fn sample_child_rss(pid: u32) -> Result<u64, String> {
-    // The sampler itself is bounded (5s): `ps` must never block past the
-    // wall deadline. Kill and reap on expiry, loud error either way.
-    let mut ps = std::process::Command::new("ps")
+/// Bounded async drain: keeps at most `cap` bytes, counts the rest without
+/// storing. Cancellation-safe per `AsyncReadExt::read` (locked tokio
+/// 1.53.2): dropping the future abandons only unread bytes, so a deadline
+/// timeout followed by kill+reap stays finite. Never collects unbounded
+/// `read_to_end`.
+async fn ir_drain_capped_async<R>(pipe: &mut R, cap: usize) -> (Vec<u8>, usize, bool)
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    use tokio::io::AsyncReadExt;
+    let mut kept = Vec::new();
+    let mut total = 0usize;
+    let mut had_error = false;
+    let mut chunk = [0u8; 8192];
+    loop {
+        match pipe.read(&mut chunk).await {
+            Ok(0) => break,
+            Ok(n) => {
+                let room = cap.saturating_sub(total).min(n);
+                kept.extend_from_slice(&chunk[..room]);
+                total += n;
+            }
+            Err(_) => {
+                had_error = true;
+                break;
+            }
+        }
+    }
+    let kept_len = kept.len();
+    (kept, total.saturating_sub(kept_len), had_error)
+}
+
+/// Bounded RSS sampler on the same async machinery (no std `output()` or
+/// `wait` escape): timeout, kill with finite reap, loud errors. Preserves
+/// the effective pid receipt and distinguishes sampling failure from a
+/// child that simply exited fast.
+async fn sample_child_rss(pid: u32) -> Result<u64, String> {
+    use std::time::Duration;
+    let mut ps = tokio::process::Command::new("ps")
         .arg("-o")
         .arg("rss=")
         .arg("-p")
@@ -576,58 +612,58 @@ fn sample_child_rss(pid: u32) -> Result<u64, String> {
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true)
         .spawn()
         .map_err(|e| format!("spawn ps for rss of {pid}: {e:?}"))?;
-    let ps_deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    // Take the pipe upfront so the bounded drain below owns capture; the
+    // one-line output then cannot block or grow past its cap.
+    let mut out_pipe = ps
+        .stdout
+        .take()
+        .ok_or_else(|| format!("ps {pid} has no stdout"))?;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     loop {
         match ps.try_wait() {
             Ok(Some(_)) => break,
             Ok(None) => {
-                if std::time::Instant::now() >= ps_deadline {
-                    ps.kill()
+                if tokio::time::Instant::now() >= deadline {
+                    ps.start_kill()
                         .map_err(|e| format!("kill stuck ps for rss of {pid}: {e:?}"))?;
-                    let _ = ps.wait();
-                    return Err(format!("ps rss of {pid} timed out"));
+                    // Finite reap with explicit receipt (not `let _`): either
+                    // the kill is confirmed or the timeout is recorded.
+                    let reaped =
+                        tokio::time::timeout_at(deadline + Duration::from_secs(2), ps.wait())
+                            .await
+                            .is_ok();
+                    return Err(format!("ps rss of {pid} timed out (reaped: {reaped})"));
                 }
-                std::thread::sleep(std::time::Duration::from_millis(50));
+                tokio::time::sleep(Duration::from_millis(50)).await;
             }
             Err(e) => return Err(format!("poll ps for rss of {pid}: {e:?}")),
         }
     }
-    let out = ps
-        .wait_with_output()
-        .map_err(|e| format!("reap ps for rss of {pid}: {e:?}"))?;
-    if !out.status.success() {
-        return Err(format!(
-            "ps rss of {pid} failed: {}",
-            String::from_utf8_lossy(&out.stderr).trim()
-        ));
+    // Reap explicitly (already exited: prompt), then bounded-drain the
+    // one-line output. Never wait_with_output without bounds.
+    match tokio::time::timeout_at(
+        tokio::time::Instant::now() + Duration::from_secs(2),
+        ps.wait(),
+    )
+    .await
+    {
+        Ok(Ok(_)) => {}
+        Ok(Err(e)) => return Err(format!("reap ps for rss of {pid}: {e:?}")),
+        Err(_) => return Err(format!("reap ps for rss of {pid} timed out")),
     }
-    parse_ps_rss(&String::from_utf8_lossy(&out.stdout))
-}
-
-/// Join a pipe-reader thread before `deadline`. On time, returns its
-/// receipts with `true`. Past the deadline, one final blocking join
-/// completes the original reader: pipes hit EOF once the reaped child is
-/// gone and our shapes spawn no grandchildren, so this cannot hang on a live
-/// pipe; it is still flagged `false` so the verdict fails closed. The
-/// handle is never forgotten or dropped unfinished.
-fn ir_join_capped(
-    handle: std::thread::JoinHandle<(Vec<u8>, bool, bool)>,
-    deadline: std::time::Instant,
-) -> (Vec<u8>, bool, bool, bool) {
-    while !handle.is_finished() {
-        if std::time::Instant::now() >= deadline {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(20));
+    let (kept, trunc, had_error) = ir_drain_capped_async(&mut out_pipe, 4096).await;
+    if had_error {
+        return Err(format!("ps rss of {pid} output unreadable"));
     }
-    let finished = handle.is_finished();
-    let (kept, oversized, read_error) = handle.join().expect("reader thread join");
-    (kept, oversized, read_error, finished)
+    if trunc > 0 {
+        return Err(format!("ps rss of {pid} output oversize"));
+    }
+    parse_ps_rss(&String::from_utf8_lossy(&kept))
 }
-
-fn run_input_shape_bounded(script: &str, wall_secs: u64, tag: &str) -> InputShapeRun {
+async fn run_input_shape_bounded(script: &str, wall_secs: u64, tag: &str) -> InputShapeRun {
     let sink = TempWorkdir::create(&format!("{tag}-sink")).expect("artifact sink setup");
     let work = TempWorkdir::create(&format!("{tag}-work")).expect("producer workdir setup");
     let profile = sink.path().join("child.profraw");
@@ -643,96 +679,139 @@ fn run_input_shape_bounded(script: &str, wall_secs: u64, tag: &str) -> InputShap
         .current_dir(work.path())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        .stderr(Stdio::piped())
+        // Backstop only: SIGKILL on drop if the explicit kill+reap below
+        // never runs. Not proof of anything; receipts are.
+        .kill_on_drop(true);
     let mut child = OwnedChild::new(cmd.spawn().expect("spawn bounded child"));
     let rss_pid = child.id();
-    // Pipes are taken before the first poll so the concurrent readers below
-    // own them outright; the child handle keeps only pid and lifecycle.
+    // Pipes are taken before the first poll so the concurrent drains below
+    // own them outright; the owner guard keeps pid and lifecycle.
     let (out_pipe, err_pipe) = child.take_pipes();
     let mut out_pipe = out_pipe.expect("take child stdout");
     let mut err_pipe = err_pipe.expect("take child stderr");
-    let out_reader = std::thread::Builder::new()
-        .name("ir-child-stdout".into())
-        .spawn(move || drain_capped(&mut out_pipe))
-        .expect("spawn stdout reader");
-    let err_reader = std::thread::Builder::new()
-        .name("ir-child-stderr".into())
-        .spawn(move || drain_capped(&mut err_pipe))
-        .expect("spawn stderr reader");
-    let start = std::time::Instant::now();
+    let start = tokio::time::Instant::now();
     let deadline = start + Duration::from_secs(wall_secs);
+    let join_deadline = start + Duration::from_secs(wall_secs + 15);
     let mut ticks = 0u64;
     let mut rss_samples = 0u32;
     let mut peak_rss_kb = 0u64;
     let mut rss_exceeded = false;
     let mut exited_fast = false;
     let mut overran = false;
-    // try_wait reaps the zombie it reports, so the exited branch needs no
-    // further wait; killed branches go through the reviewed grace reap,
-    // never an open wait.
     let mut final_status: Option<std::process::ExitStatus> = None;
     let mut reaped = false;
+    let mut out_done = false;
+    let mut err_done = false;
+    let mut out_kept = Vec::new();
+    let mut out_trunc = 0usize;
+    let mut out_err = false;
+    let mut err_kept = Vec::new();
+    let mut err_trunc = 0usize;
+    let mut err_err = false;
+    let mut incomplete_readers = false;
+    // Drain futures live for the whole supervision scope and are polled
+    // alongside exit, RSS, and deadline from the first iteration: output can
+    // never block the producer. No spawned tasks; dropping the futures on
+    // timeout is cancel-safe, and the pipes die with the reaped child.
+    // Admission stays capped: each drain keeps PIPE_CAP bytes and counts the
+    // rest without storing.
+    let mut out_fut = std::pin::pin!(ir_drain_capped_async(&mut out_pipe, PIPE_CAP));
+    let mut err_fut = std::pin::pin!(ir_drain_capped_async(&mut err_pipe, PIPE_CAP));
     loop {
-        if let Some(status) = child.try_wait().expect("poll child") {
-            if rss_samples == 0 {
-                exited_fast = true;
-            }
-            final_status = Some(status);
-            reaped = true;
+        let running_done = final_status.is_some() || overran || rss_exceeded;
+        if running_done && out_done && err_done {
             break;
         }
-        ticks += 1;
-        if ticks == 1 || ticks.is_multiple_of(10) {
-            match sample_child_rss(rss_pid) {
-                Ok(rss) => {
-                    rss_samples += 1;
-                    peak_rss_kb = peak_rss_kb.max(rss);
-                    if rss > IR_RSS_CAP_KIB {
-                        child.kill().expect("kill RSS overrun child");
-                        rss_exceeded = true;
-                        break;
-                    }
-                }
-                Err(e) => {
-                    // The pid may have vanished between try_wait and ps;
-                    // re-check before treating this as a policing fault.
-                    if let Some(status) = child.try_wait().expect("re-poll child") {
+        if running_done && tokio::time::Instant::now() >= join_deadline {
+            incomplete_readers = true;
+            break;
+        }
+        tokio::select! {
+            biased;
+            status = child.wait(), if !running_done => {
+                match status {
+                    Ok(s) => {
                         if rss_samples == 0 {
                             exited_fast = true;
                         }
-                        final_status = Some(status);
+                        final_status = Some(s);
                         reaped = true;
-                        break;
                     }
-                    panic!("RSS policing failed on live child {rss_pid}: {e}");
+                    Err(e) => panic!("wait child {rss_pid} failed: {e:?}"),
                 }
             }
+            _ = tokio::time::sleep(Duration::from_millis(50)) => {
+                if running_done {
+                    continue;
+                }
+                ticks += 1;
+                if ticks == 1 || ticks.is_multiple_of(10) {
+                    match sample_child_rss(rss_pid).await {
+                        Ok(rss) => {
+                            rss_samples += 1;
+                            peak_rss_kb = peak_rss_kb.max(rss);
+                            if rss > IR_RSS_CAP_KIB {
+                                child.start_kill().expect("kill RSS overrun child");
+                                rss_exceeded = true;
+                            }
+                        }
+                        Err(e) => {
+                            if let Some(status) = child.try_wait().expect("re-poll child") {
+                                if rss_samples == 0 {
+                                    exited_fast = true;
+                                }
+                                final_status = Some(status);
+                                reaped = true;
+                            } else {
+                                panic!("RSS policing failed on live child {rss_pid}: {e}");
+                            }
+                        }
+                    }
+                }
+                if !rss_exceeded && final_status.is_none() && tokio::time::Instant::now() >= deadline {
+                    child.start_kill().expect("kill overrun child");
+                    overran = true;
+                }
+            }
+            out = &mut out_fut, if !out_done => {
+                let (kept, trunc, err) = out;
+                out_kept = kept;
+                out_trunc = trunc;
+                out_err = err;
+                out_done = true;
+            }
+            err = &mut err_fut, if !err_done => {
+                let (kept, trunc, err) = err;
+                err_kept = kept;
+                err_trunc = trunc;
+                err_err = err;
+                err_done = true;
+            }
         }
-        if std::time::Instant::now() >= deadline {
-            child.kill().expect("kill overrun child");
-            overran = true;
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(50));
     }
+    // Finite reap for killed paths (exited paths already reaped via wait):
+    // Child::wait is cancel-safe; the timeout bounds it. start_kill was
+    // already sent on every non-exit path above.
     if final_status.is_none() {
-        let mut poll = || child.try_wait();
-        match reap_with_grace(&mut poll, Duration::from_secs(5)) {
-            Some(status) => {
+        match tokio::time::timeout_at(
+            tokio::time::Instant::now() + Duration::from_secs(5),
+            child.wait(),
+        )
+        .await
+        {
+            Ok(Ok(status)) => {
                 final_status = Some(status);
                 reaped = true;
             }
-            None => {
+            Ok(Err(e)) => panic!("reap child {rss_pid} failed: {e:?}"),
+            Err(_) => {
                 reaped = false;
             }
         }
     }
-    // Finite reader completion shares the absolute budget: pipes hit EOF
-    // once the reaped child is gone. See ir_join_capped on unfinished.
-    let join_deadline = start + Duration::from_secs(wall_secs + 15);
-    let (out_kept, out_over, out_err, out_done) = ir_join_capped(out_reader, join_deadline);
-    let (err_kept, err_over, err_err, err_done) = ir_join_capped(err_reader, join_deadline);
-    let incomplete_readers = !(out_done && err_done);
+    let elapsed = start.elapsed();
+    let _ = elapsed;
     // Receipt first: the launcher note proves the caps ran; without it the
     // run is untrusted regardless of exit code.
     let stderr_full = String::from_utf8_lossy(&err_kept).into_owned();
@@ -772,7 +851,7 @@ fn run_input_shape_bounded(script: &str, wall_secs: u64, tag: &str) -> InputShap
         stdout: String::from_utf8_lossy(&out_kept).into_owned(),
         stderr,
         timed_out: overran,
-        oversized: out_over || err_over,
+        oversized: out_trunc > 0 || err_trunc > 0,
         incomplete_readers,
         read_error: out_err || err_err,
         reaped,
@@ -854,9 +933,10 @@ fn assert_effective_bounds(r: &InputShapeRun) {
 /// NOT EXECUTED in this environment (hostile-fixture ban); kept as the
 /// blocked-verification target with full harness assertions intact.
 #[cfg(unix)]
-#[test]
-fn original_shape_bounded_child_default_limits() {
-    let r = run_input_shape_bounded(&format!(":{}", " 3</dev/zero".repeat(1024)), 90, "ir-1024");
+#[tokio::test]
+async fn original_shape_bounded_child_default_limits() {
+    let r =
+        run_input_shape_bounded(&format!(":{}", " 3</dev/zero".repeat(1024)), 90, "ir-1024").await;
     assert!(!r.timed_out, "bounded child overran its deadline");
     assert!(!r.oversized, "bounded child output exceeded pipe caps");
     assert!(
@@ -972,9 +1052,9 @@ fn ir_helper_workdir_drop_cleans() {
 /// ordinary harmless script: proves the harness itself works end to end.
 /// NOT vulnerability proof: `true` exercises no budget path.
 #[cfg(unix)]
-#[test]
-fn ir_helper_normal_child_completes() {
-    let r = run_input_shape_bounded("true", 30, "ir-true");
+#[tokio::test]
+async fn ir_helper_normal_child_completes() {
+    let r = run_input_shape_bounded("true", 30, "ir-true").await;
     assert!(
         !r.timed_out && !r.oversized && !r.incomplete_readers && !r.read_error && r.reaped,
         "harness lifecycle must complete cleanly"
@@ -999,13 +1079,17 @@ fn ir_helper_file_unit_cases() {
 }
 /// A preexisting dir must fail creation AND keep every byte: existence is
 /// not proof this invocation created it, so a collision rejects without
-/// deleting (possibly another owner's contents).
+/// deleting (possibly another owner's contents). The fixture first
+/// exclusively creates its own root; a foreign preexisting path would fail
+/// loudly at plant time instead of being adopted or removed.
 #[test]
 fn ir_helper_workdir_collision_preserves() {
     let tag = "ir-collision-probe";
     let path = std::env::temp_dir().join(format!("bashkit-{tag}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&path);
-    std::fs::create_dir_all(&path).expect("plant collision dir");
+    match std::fs::create_dir(&path) {
+        Ok(()) => {}
+        Err(e) => panic!("fixture root busy, clean {path:?} manually: {e:?}"),
+    }
     std::fs::write(path.join("precious"), b"precious").expect("plant collision file");
     let err = TempWorkdir::create(tag).expect_err("collision must fail");
     assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
@@ -1013,7 +1097,7 @@ fn ir_helper_workdir_collision_preserves() {
         std::fs::read(path.join("precious")).expect("preexisting contents preserved"),
         b"precious"
     );
-    std::fs::remove_dir_all(&path).expect("remove planted dir");
+    std::fs::remove_dir_all(&path).expect("remove owned planted dir");
     assert!(!path.exists());
 }
 
@@ -1032,24 +1116,34 @@ fn ir_helper_ps_parse_cases() {
 /// paths reap explicitly (see `reap_with_grace` callers) and then drop the
 /// guard; Drop kills best-effort (documented backstop, never the primary
 /// path) but never waits, so Drop cannot block.
+/// Owned child handle: established immediately after spawn, before any
+/// fallible pipe/poll operation. Every later expect runs with this owner
+/// alive, so unwind paths always have a defined backstop. Normal paths reap
+/// explicitly with a finite deadline and then drop the guard; Drop sends
+/// SIGKILL best-effort via sync `start_kill` (documented backstop, never the
+/// primary path) but never waits, so Drop cannot block.
 struct OwnedChild {
-    inner: Option<std::process::Child>,
+    inner: Option<tokio::process::Child>,
 }
 
 impl OwnedChild {
-    fn new(child: std::process::Child) -> Self {
+    fn new(child: tokio::process::Child) -> Self {
         Self { inner: Some(child) }
     }
 
     fn id(&self) -> u32 {
-        self.inner.as_ref().expect("child already released").id()
+        self.inner
+            .as_ref()
+            .expect("child already released")
+            .id()
+            .expect("child has pid")
     }
 
     fn take_pipes(
         &mut self,
     ) -> (
-        Option<std::process::ChildStdout>,
-        Option<std::process::ChildStderr>,
+        Option<tokio::process::ChildStdout>,
+        Option<tokio::process::ChildStderr>,
     ) {
         let inner = self.inner.as_mut().expect("child already released");
         (inner.stdout.take(), inner.stderr.take())
@@ -1062,15 +1156,93 @@ impl OwnedChild {
             .try_wait()
     }
 
-    fn kill(&mut self) -> std::io::Result<()> {
-        self.inner.as_mut().expect("child already released").kill()
+    fn start_kill(&mut self) -> std::io::Result<()> {
+        self.inner
+            .as_mut()
+            .expect("child already released")
+            .start_kill()
+    }
+
+    async fn wait(&mut self) -> std::io::Result<std::process::ExitStatus> {
+        self.inner
+            .as_mut()
+            .expect("child already released")
+            .wait()
+            .await
     }
 }
 
 impl Drop for OwnedChild {
     fn drop(&mut self) {
         if let Some(child) = self.inner.as_mut() {
-            let _ = child.kill();
+            let _ = child.start_kill();
         }
     }
+}
+
+/// In-memory async drain contract: 100B through a duplex pair with a 16B
+/// cap keeps 16, counts 84 truncated, no error. Harmless synthetic fixture:
+/// proves the bounded-drain primitive admits before growth without any
+/// child, pipe, or resource pressure.
+#[tokio::test]
+async fn ir_helper_async_drain_bounded() {
+    let (mut writer, mut reader) = tokio::io::duplex(256);
+    tokio::io::AsyncWriteExt::write_all(&mut writer, &[9u8; 100])
+        .await
+        .expect("fill duplex");
+    drop(writer);
+    let (kept, trunc, err) = ir_drain_capped_async(&mut reader, 16).await;
+    assert_eq!(kept.len(), 16);
+    assert_eq!(trunc, 84);
+    assert!(!err);
+}
+
+/// Injected I/O error contract: a reader failing on first poll reports
+/// had_error instead of hanging or misattributing bytes.
+struct FailOnce {
+    failed: bool,
+}
+
+impl tokio::io::AsyncRead for FailOnce {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+        _buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        if self.failed {
+            std::task::Poll::Ready(Ok(()))
+        } else {
+            self.get_mut().failed = true;
+            std::task::Poll::Ready(Err(std::io::Error::other("injected")))
+        }
+    }
+}
+
+#[tokio::test]
+async fn ir_helper_async_drain_error() {
+    let mut reader = FailOnce { failed: false };
+    let (kept, trunc, err) = ir_drain_capped_async(&mut reader, 16).await;
+    assert!(kept.is_empty());
+    assert_eq!(trunc, 0);
+    assert!(err);
+}
+
+/// Deterministic timer contract: a ready timer completes under deadline; a
+/// pending future does not. Proves timeout_at behaves before trusting it
+/// for kill/reap/drain bounds. No wall-clock flakiness: margins are 500x.
+#[tokio::test]
+async fn ir_helper_timeout_contract() {
+    use std::time::Duration;
+    let ok = tokio::time::timeout_at(
+        tokio::time::Instant::now() + Duration::from_secs(5),
+        tokio::time::sleep(Duration::from_millis(10)),
+    )
+    .await;
+    assert!(ok.is_ok());
+    let timed_out = tokio::time::timeout_at(
+        tokio::time::Instant::now() + Duration::from_millis(10),
+        std::future::pending::<()>(),
+    )
+    .await;
+    assert!(timed_out.is_err());
 }
