@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-09T17:39:25.000Z",
+  "generatedAt": "2026-10-13T02:14:50.000Z",
   "sources": {
     "bench": "crates/bashkit-bench/results/*.json",
     "criterion": "crates/bashkit/benches/results/*.md",
@@ -8,21 +8,21 @@
     "oilsSpec": "scripts/oils-spec/results/oils-spec-*.json"
   },
   "summary": {
-    "benchRuns": 10,
+    "benchRuns": 11,
     "criterionRuns": 18,
     "evalRuns": 57,
     "latestBench": {
-      "id": "bench-mykhailosmac-macos-aarch64-1788629833",
+      "id": "bench-mykhailosmin-macos-aarch64-1791857690",
       "kind": "bashkit-bench",
-      "label": "mykhailosmac-macos-aarch64",
-      "date": "2026-09-05",
-      "timestamp": "2026-09-05T17:37:13.000Z",
-      "source": "crates/bashkit-bench/results/bench-mykhailosmac-macos-aarch64-1788629833.json",
-      "reportSource": "crates/bashkit-bench/results/bench-mykhailosmac-macos-aarch64-1788629833.md",
+      "label": "mykhailosmin-macos-aarch64",
+      "date": "2026-10-13",
+      "timestamp": "2026-10-13T02:14:50.000Z",
+      "source": "crates/bashkit-bench/results/bench-mykhailosmin-macos-aarch64-1791857690.json",
+      "reportSource": "crates/bashkit-bench/results/bench-mykhailosmin-macos-aarch64-1791857690.md",
       "cases": 96,
-      "speedup": 49.9,
-      "bashkitMs": 20.16,
-      "bashMs": 1004.86,
+      "speedup": 58.1,
+      "bashkitMs": 27.91,
+      "bashMs": 1622.93,
       "errorRate": 0,
       "matchRate": 100,
       "categories": [
@@ -30,97 +30,97 @@
           "category": "startup",
           "description": "Small commands where interpreter startup dominates runtime.",
           "cases": 4,
-          "bashkitMedianMs": 0.016,
-          "bashMedianMs": 4.769,
-          "speedup": 293.2
+          "bashkitMedianMs": 0.031,
+          "bashMedianMs": 7.72,
+          "speedup": 241.3
         },
         {
           "category": "arithmetic",
           "description": "Integer math, substitutions, and expression-heavy shell snippets.",
           "cases": 6,
-          "bashkitMedianMs": 0.018,
-          "bashMedianMs": 4.313,
-          "speedup": 215.7
-        },
-        {
-          "category": "strings",
-          "description": "String expansion, pattern handling, and text manipulation.",
-          "cases": 8,
-          "bashkitMedianMs": 0.018,
-          "bashMedianMs": 4.378,
-          "speedup": 223.6
+          "bashkitMedianMs": 0.034,
+          "bashMedianMs": 6.172,
+          "speedup": 184
         },
         {
           "category": "variables",
           "description": "Variable assignment, lookup, expansion, and environment handling.",
           "cases": 8,
-          "bashkitMedianMs": 0.019,
-          "bashMedianMs": 4.096,
-          "speedup": 213.5
+          "bashkitMedianMs": 0.035,
+          "bashMedianMs": 5.948,
+          "speedup": 169
         },
         {
-          "category": "arrays",
-          "description": "Indexed array reads, writes, expansion, and iteration.",
-          "cases": 6,
-          "bashkitMedianMs": 0.019,
-          "bashMedianMs": 4.064,
-          "speedup": 209.2
+          "category": "strings",
+          "description": "String expansion, pattern handling, and text manipulation.",
+          "cases": 8,
+          "bashkitMedianMs": 0.039,
+          "bashMedianMs": 8.12,
+          "speedup": 186.4
         },
         {
           "category": "pipes",
           "description": "Pipeline construction, streaming, and command chaining.",
           "cases": 6,
-          "bashkitMedianMs": 0.021,
-          "bashMedianMs": 5.898,
-          "speedup": 264.2
-        },
-        {
-          "category": "subshell",
-          "description": "Command substitution and nested shell execution paths.",
-          "cases": 6,
-          "bashkitMedianMs": 0.024,
-          "bashMedianMs": 5.484,
-          "speedup": 233.3
+          "bashkitMedianMs": 0.041,
+          "bashMedianMs": 7.873,
+          "speedup": 175
         },
         {
           "category": "control",
           "description": "Conditionals, loops, case statements, and branching scripts.",
           "cases": 9,
-          "bashkitMedianMs": 0.025,
-          "bashMedianMs": 3.812,
-          "speedup": 171.4
+          "bashkitMedianMs": 0.047,
+          "bashMedianMs": 9.903,
+          "speedup": 169.5
+        },
+        {
+          "category": "subshell",
+          "description": "Command substitution and nested shell execution paths.",
+          "cases": 6,
+          "bashkitMedianMs": 0.048,
+          "bashMedianMs": 8.437,
+          "speedup": 180.4
         },
         {
           "category": "io",
           "description": "File reads, writes, redirects, and filesystem-facing commands.",
           "cases": 6,
-          "bashkitMedianMs": 0.027,
-          "bashMedianMs": 5.995,
-          "speedup": 247.3
+          "bashkitMedianMs": 0.052,
+          "bashMedianMs": 6.803,
+          "speedup": 155.8
         },
         {
           "category": "tools",
           "description": "Builtin and external-tool style command workloads.",
           "cases": 21,
-          "bashkitMedianMs": 0.031,
-          "bashMedianMs": 7.186,
-          "speedup": 216.7
+          "bashkitMedianMs": 0.055,
+          "bashMedianMs": 8.689,
+          "speedup": 176.4
+        },
+        {
+          "category": "arrays",
+          "description": "Indexed array reads, writes, expansion, and iteration.",
+          "cases": 6,
+          "bashkitMedianMs": 0.057,
+          "bashMedianMs": 7.128,
+          "speedup": 142.6
         },
         {
           "category": "complex",
           "description": "Mixed shell workflows that combine multiple language features.",
           "cases": 7,
-          "bashkitMedianMs": 0.065,
-          "bashMedianMs": 5.276,
-          "speedup": 78.3
+          "bashkitMedianMs": 0.09,
+          "bashMedianMs": 8.652,
+          "speedup": 66.5
         },
         {
           "category": "large",
           "description": "Bigger scripts and higher-volume data paths.",
           "cases": 9,
-          "bashkitMedianMs": 0.741,
-          "bashMedianMs": 4.593,
-          "speedup": 20.1
+          "bashkitMedianMs": 1.091,
+          "bashMedianMs": 7.415,
+          "speedup": 23.2
         }
       ]
     },
@@ -1601,6 +1601,119 @@
           "bashkitMedianMs": 0.741,
           "bashMedianMs": 4.593,
           "speedup": 20.1
+        }
+      ]
+    },
+    {
+      "id": "bench-mykhailosmin-macos-aarch64-1791857690",
+      "kind": "bashkit-bench",
+      "label": "mykhailosmin-macos-aarch64",
+      "date": "2026-10-13",
+      "timestamp": "2026-10-13T02:14:50.000Z",
+      "source": "crates/bashkit-bench/results/bench-mykhailosmin-macos-aarch64-1791857690.json",
+      "reportSource": "crates/bashkit-bench/results/bench-mykhailosmin-macos-aarch64-1791857690.md",
+      "cases": 96,
+      "speedup": 58.1,
+      "bashkitMs": 27.91,
+      "bashMs": 1622.93,
+      "errorRate": 0,
+      "matchRate": 100,
+      "categories": [
+        {
+          "category": "startup",
+          "description": "Small commands where interpreter startup dominates runtime.",
+          "cases": 4,
+          "bashkitMedianMs": 0.031,
+          "bashMedianMs": 7.72,
+          "speedup": 241.3
+        },
+        {
+          "category": "arithmetic",
+          "description": "Integer math, substitutions, and expression-heavy shell snippets.",
+          "cases": 6,
+          "bashkitMedianMs": 0.034,
+          "bashMedianMs": 6.172,
+          "speedup": 184
+        },
+        {
+          "category": "variables",
+          "description": "Variable assignment, lookup, expansion, and environment handling.",
+          "cases": 8,
+          "bashkitMedianMs": 0.035,
+          "bashMedianMs": 5.948,
+          "speedup": 169
+        },
+        {
+          "category": "strings",
+          "description": "String expansion, pattern handling, and text manipulation.",
+          "cases": 8,
+          "bashkitMedianMs": 0.039,
+          "bashMedianMs": 8.12,
+          "speedup": 186.4
+        },
+        {
+          "category": "pipes",
+          "description": "Pipeline construction, streaming, and command chaining.",
+          "cases": 6,
+          "bashkitMedianMs": 0.041,
+          "bashMedianMs": 7.873,
+          "speedup": 175
+        },
+        {
+          "category": "control",
+          "description": "Conditionals, loops, case statements, and branching scripts.",
+          "cases": 9,
+          "bashkitMedianMs": 0.047,
+          "bashMedianMs": 9.903,
+          "speedup": 169.5
+        },
+        {
+          "category": "subshell",
+          "description": "Command substitution and nested shell execution paths.",
+          "cases": 6,
+          "bashkitMedianMs": 0.048,
+          "bashMedianMs": 8.437,
+          "speedup": 180.4
+        },
+        {
+          "category": "io",
+          "description": "File reads, writes, redirects, and filesystem-facing commands.",
+          "cases": 6,
+          "bashkitMedianMs": 0.052,
+          "bashMedianMs": 6.803,
+          "speedup": 155.8
+        },
+        {
+          "category": "tools",
+          "description": "Builtin and external-tool style command workloads.",
+          "cases": 21,
+          "bashkitMedianMs": 0.055,
+          "bashMedianMs": 8.689,
+          "speedup": 176.4
+        },
+        {
+          "category": "arrays",
+          "description": "Indexed array reads, writes, expansion, and iteration.",
+          "cases": 6,
+          "bashkitMedianMs": 0.057,
+          "bashMedianMs": 7.128,
+          "speedup": 142.6
+        },
+        {
+          "category": "complex",
+          "description": "Mixed shell workflows that combine multiple language features.",
+          "cases": 7,
+          "bashkitMedianMs": 0.09,
+          "bashMedianMs": 8.652,
+          "speedup": 66.5
+        },
+        {
+          "category": "large",
+          "description": "Bigger scripts and higher-volume data paths.",
+          "cases": 9,
+          "bashkitMedianMs": 1.091,
+          "bashMedianMs": 7.415,
+          "speedup": 23.2
         }
       ]
     }
@@ -9474,6 +9587,15 @@
       "detail": "86/88 tasks passed. Weakest category: build_system (0%).",
       "metric": 97.7,
       "source": "crates/bashkit-eval/results/mira/20261009T173925Z-a0a7/report.json"
+    },
+    {
+      "date": "2026-10-13",
+      "timestamp": "2026-10-13T02:14:50.000Z",
+      "kind": "Benchmark",
+      "title": "58.1x faster than bash",
+      "detail": "96 parity/perf cases on mykhailosmin-macos-aarch64; output match 100%.",
+      "metric": 58.1,
+      "source": "crates/bashkit-bench/results/bench-mykhailosmin-macos-aarch64-1791857690.json"
     }
   ]
 }
