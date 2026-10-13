@@ -42,7 +42,8 @@ anyhow = "1"
 # Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-serde_yaml_ng = "0.10"
+# Maintained serde/libyaml fork; avoid the archived unsafe-libyaml dependency.
+serde_norway = "0.9.42"
 
 # JSON processing (jq) - verified embeddable
 jaq-core = "3.1.1"

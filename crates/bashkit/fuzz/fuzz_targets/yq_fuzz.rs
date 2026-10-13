@@ -68,7 +68,7 @@ fuzz_target!(|data: &[u8]| {
             &mut bash,
             &script,
             "yq_fuzz",
-            &["serde_yaml_ng::", "Mapping {", "TaggedValue {"],
+            &["serde_norway::", "Mapping {", "TaggedValue {"],
         )
         .await;
     });

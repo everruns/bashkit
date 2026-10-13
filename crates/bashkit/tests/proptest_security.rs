@@ -404,7 +404,7 @@ proptest! {
             assert_fuzz_invariants(
                 &result,
                 "yq_arbitrary_yaml_and_filter",
-                &["serde_yaml_ng::", "Mapping {", "TaggedValue {"],
+                &["serde_norway::", "Mapping {", "TaggedValue {"],
             );
         }));
     }

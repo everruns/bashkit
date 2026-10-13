@@ -1739,9 +1739,10 @@ criteria = "safe-to-deploy"
 version = "1.0.151"
 criteria = "safe-to-deploy"
 
-[[exemptions.serde_yaml_ng]]
-version = "0.10.0"
+[[exemptions.serde_norway]]
+version = "0.9.42"
 criteria = "safe-to-deploy"
+notes = "Replaces serde_yaml_ng at the same exemption criteria; Serde API and 128-level recursion contract reviewed."
 
 [[exemptions.serdect]]
 version = "0.4.3"
@@ -2075,9 +2076,10 @@ criteria = "safe-to-deploy"
 version = "0.6.1"
 criteria = "safe-to-deploy"
 
-[[exemptions.unsafe-libyaml]]
-version = "0.2.11"
+[[exemptions.unsafe-libyaml-norway]]
+version = "0.2.15"
 criteria = "safe-to-deploy"
+notes = "Replaces archived unsafe-libyaml 0.2.11 at the same exemption criteria; published library implementation delta is one lint allowance."
 
 [[exemptions.untrusted]]
 version = "0.7.1"

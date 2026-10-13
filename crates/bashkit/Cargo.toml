@@ -30,7 +30,7 @@ anyhow = { workspace = true }
 # Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }
-serde_yaml_ng = { workspace = true, optional = true }
+serde_norway = { workspace = true, optional = true }
 
 # Regex
 regex = { workspace = true }
@@ -226,7 +226,7 @@ jq = [
     "dep:num-bigint",
     "dep:ryu",
     "dep:self_cell",
-    "dep:serde_yaml_ng",
+    "dep:serde_norway",
 ]
 # HTTP client (curl/wget) over rustls. Does NOT imply a crypto backend: pick
 # `ring` (on by default) or `aws-lc-rs`. Enabling neither is a compile error.
