@@ -21,7 +21,8 @@ individual threat IDs and mitigation status, see the
 `dd conv=sync` checks its padded block length against the 64 MiB copy cap
 before allocating or zero-filling. Copied payload capacity also counts against
 `max_live_intermediate_bytes` until output handling completes, including when
-output is discarded. Exceeding either limit returns a resource-limit error.
+output is discarded. Stdout cached text is admitted under the same budget.
+Exceeding either limit returns a resource-limit error.
 
 `pr` checks its 16 MiB output cap before appending headers, rows, margins,
 newlines or form feeds. Repeated long headers cannot grow the output buffer past that cap.

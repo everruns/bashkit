@@ -620,7 +620,8 @@ copying. `conv=sync` computes the rounded block length with checked arithmetic
 and rejects lengths above `DD_MAX_BYTES` before allocation. The entire copied
 payload capacity is admitted through `BudgetedBytes` against the shared live
 memory budget; its lease remains through conversion and output handling,
-including discarded output. Budget failures propagate as resource-limit errors.
+including discarded output. Stdout conversion also admits cached text while
+retaining both storage guards. Budget failures propagate as resource-limit errors.
 Ordinary count/skip, padding, conversion, record reports, seek, and file-error
 behavior is preserved. Unit tests use tiny admission budgets and allocation-free
 overflow arithmetic; `dd_tests` compares small copies with GNU dd and checks VFS
