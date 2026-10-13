@@ -17,6 +17,21 @@ pub struct StreamData {
 }
 
 impl StreamData {
+    /// Convert admitted text to the byte/text stream without an uncharged copy.
+    pub(crate) fn from_budgeted_string(
+        text: crate::limits::BudgetedString,
+        budget: Option<&crate::limits::ExecutionBudget>,
+    ) -> Result<(Self, StreamStorage), crate::limits::LimitExceeded> {
+        let mut bytes = crate::limits::BudgetedBytes::new(budget)?;
+        if let Some(budget) = budget {
+            budget.consume_work(1 + text.len() as u64)?;
+        }
+        bytes.try_extend_from_slice(text.as_bytes())?;
+        let (bytes, byte_storage) = bytes.into_parts();
+        let (text, text_storage) = text.into_parts();
+        Ok((Self { bytes, text }, [byte_storage, text_storage]))
+    }
+
     /// Materialize cached text without releasing the byte buffer's lease or
     /// allocating a temporary lossy string outside the request budget.
     // THREAT[TM-DOS-103]: both representations must be admitted before growth.
@@ -204,6 +219,33 @@ impl serde::Serialize for StreamData {
 #[cfg(test)]
 mod tests {
     use super::StreamData;
+
+    #[test]
+    fn budgeted_string_stream_admits_both_representations() {
+        for limit in [7, 8] {
+            let budget = crate::limits::ExecutionBudget::new(
+                &crate::ExecutionLimits::new().max_live_intermediate_bytes(limit),
+                std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            );
+            let mut text = crate::limits::BudgetedString::new(Some(&budget)).unwrap();
+            text.try_push_str("text").unwrap();
+            let result = StreamData::from_budgeted_string(text, Some(&budget));
+            if limit == 7 {
+                assert!(
+                    result
+                        .unwrap_err()
+                        .to_string()
+                        .contains("live intermediate")
+                );
+            } else {
+                let (stream, storage) = result.unwrap();
+                assert_eq!(stream.as_bytes(), b"text");
+                assert_eq!(stream.text_lossy(), "text");
+                assert!(budget.lease_bytes(1).is_err());
+                drop(storage);
+            }
+        }
+    }
 
     #[test]
     fn budgeted_text_preserves_bytes_and_lossy_decoding() {

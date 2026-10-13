@@ -110,6 +110,7 @@ pub mod issue_853_test;
 pub mod issue_872_test;
 pub mod issue_873_test;
 pub mod issue_875_test;
+pub mod join_resource_tests;
 pub mod jq_fuzz_scaffold_tests;
 pub mod limitations_doc_tests;
 pub mod limitations_evidence_tests;
