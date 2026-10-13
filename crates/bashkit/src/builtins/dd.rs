@@ -15,7 +15,7 @@ use super::limits::DD_MAX_BYTES;
 use super::{Builtin, Context};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
-use crate::limits::{BudgetedBytes, ExecutionBudget, ExecutionBudgetLease};
+use crate::limits::{BudgetedBytes, ExecutionBudget};
 
 /// `dd` builtin.
 pub struct Dd;
@@ -158,7 +158,7 @@ fn copy_data(
     ibs: usize,
     sync: bool,
     budget: Option<&ExecutionBudget>,
-) -> Result<(Vec<u8>, Option<ExecutionBudgetLease>)> {
+) -> Result<BudgetedBytes> {
     let len = if sync {
         padded_len(input.len(), ibs, DD_MAX_BYTES).ok_or_else(|| {
             crate::LimitExceeded::Memory("dd padded data exceeds byte limit".into())
@@ -168,10 +168,13 @@ fn copy_data(
     };
     let mut buffer = BudgetedBytes::try_with_capacity(budget, len)?;
     buffer.try_extend_from_slice(input)?;
-    let (mut data, lease) = buffer.into_parts();
-    // Capacity for the entire padded copy is already admitted and allocated.
-    data.resize(len, 0);
-    Ok((data, lease))
+    // Every append stays within the already admitted full padded capacity.
+    const ZEROS: [u8; 1024] = [0; 1024];
+    while buffer.len() < len {
+        let padding = (len - buffer.len()).min(ZEROS.len());
+        buffer.try_extend_from_slice(&ZEROS[..padding])?;
+    }
+    Ok(buffer)
 }
 
 fn device_bytes(path: &str, len: usize) -> Option<std::result::Result<Vec<u8>, String>> {
@@ -255,8 +258,7 @@ impl Builtin for Dd {
             })
             .transpose()?;
         let (full_in, partial_in) = (len / o.ibs, usize::from(!len.is_multiple_of(o.ibs)));
-        let (mut data, _data_lease) =
-            copy_data(&input[start..start + len], o.ibs, o.sync, budget.as_ref())?;
+        let mut data = copy_data(&input[start..start + len], o.ibs, o.sync, budget.as_ref())?;
         if o.ucase {
             data.make_ascii_uppercase();
         } else if o.lcase {
@@ -269,8 +271,18 @@ impl Builtin for Dd {
         let copied = data.len();
 
         let mut result = ExecResult::ok(String::new());
+        let mut _output_storage = [None, None];
         match o.output.as_deref() {
-            None | Some("-") | Some("/dev/stdout") => result = ExecResult::ok_bytes(data),
+            None | Some("-") | Some("/dev/stdout") => {
+                let stdout = if let Some(budget) = &budget {
+                    let (stdout, storage) = crate::StreamData::from_budgeted_bytes(data, budget)?;
+                    _output_storage = storage;
+                    stdout
+                } else {
+                    crate::StreamData::from(data.into_parts().0)
+                };
+                result = ExecResult::ok(stdout);
+            }
             Some("/dev/null") => {}
             Some(path) => {
                 let p = super::resolve_path(ctx.cwd, path);
@@ -390,7 +402,9 @@ mod tests {
     #[test]
     fn copy_capacity_lease_survives_until_owner_drops() {
         let budget = tiny_budget(8);
-        let (data, lease) = copy_data(b"ab", 4, true, Some(&budget)).unwrap();
+        let (data, lease) = copy_data(b"ab", 4, true, Some(&budget))
+            .unwrap()
+            .into_parts();
         assert_eq!(data, b"ab\0\0");
         assert!(lease.is_some());
         let remaining = budget.lease_bytes(8 - data.capacity()).unwrap();
@@ -400,7 +414,9 @@ mod tests {
         assert!(budget.lease_bytes(8).is_ok());
 
         let budget = tiny_budget(4);
-        let (_data, _lease) = copy_data(b"ab", 4, true, Some(&budget)).unwrap();
+        let (_data, _lease) = copy_data(b"ab", 4, true, Some(&budget))
+            .unwrap()
+            .into_parts();
         assert!(matches!(
             budget.lease_bytes(1),
             Err(crate::LimitExceeded::ExecutionBudget(
@@ -418,8 +434,30 @@ mod tests {
             (&b"abcde"[..], 4, true, &b"abcde\0\0\0"[..]),
         ] {
             let budget = tiny_budget(8);
-            let (data, _lease) = copy_data(input, ibs, sync, Some(&budget)).unwrap();
-            assert_eq!(data, expected);
+            let data = copy_data(input, ibs, sync, Some(&budget)).unwrap();
+            assert_eq!(&*data, expected);
+        }
+    }
+
+    #[test]
+    fn stdout_padding_admits_cached_text() {
+        for limit in [7, 8] {
+            let budget = tiny_budget(limit);
+            let data = copy_data(b"ab", 4, true, Some(&budget)).unwrap();
+            let result = crate::StreamData::from_budgeted_bytes(data, &budget);
+            if limit == 7 {
+                assert!(matches!(
+                    result,
+                    Err(crate::LimitExceeded::ExecutionBudget(
+                        crate::ExecutionBudgetExceeded::LiveBytes { .. }
+                    ))
+                ));
+            } else {
+                let (stream, _storage) = result.unwrap();
+                assert_eq!(stream.as_bytes(), b"ab\0\0");
+                assert_eq!(stream.text_lossy(), "ab\0\0");
+                assert!(budget.lease_bytes(1).is_err());
+            }
         }
     }
 
