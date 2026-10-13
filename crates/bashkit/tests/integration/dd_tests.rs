@@ -2,6 +2,22 @@
 
 use bashkit::{Bash, ExecOptions};
 
+fn is_gnu_dd_version(stdout: &[u8]) -> bool {
+    // GNU dd prints PACKAGE (`coreutils`), not PACKAGE_NAME (`GNU coreutils`).
+    stdout.starts_with(b"dd (coreutils) ") || stdout.starts_with(b"dd (GNU coreutils) ")
+}
+
+#[test]
+fn dd_oracle_recognizes_gnu_package_banner() {
+    assert!(is_gnu_dd_version(
+        b"dd (coreutils) 9.4\nCopyright (C) 2023 Free Software Foundation, Inc.\n"
+    ));
+    assert!(is_gnu_dd_version(b"dd (GNU coreutils) 9.12\n"));
+    assert!(!is_gnu_dd_version(b"dd (uutils coreutils) 0.12.0\n"));
+    assert!(!is_gnu_dd_version(b"dd (BSD)\n"));
+    assert!(!is_gnu_dd_version(b"other program GNU coreutils\n"));
+}
+
 #[tokio::test]
 async fn dd_normal_copies_match_gnu() {
     use std::io::Write;
@@ -11,10 +27,7 @@ async fn dd_normal_copies_match_gnu() {
         Command::new(program)
             .arg("--version")
             .output()
-            .is_ok_and(|out| {
-                out.status.success()
-                    && String::from_utf8_lossy(&out.stdout).contains("GNU coreutils")
-            })
+            .is_ok_and(|out| out.status.success() && is_gnu_dd_version(&out.stdout))
     }) else {
         assert!(
             !(cfg!(target_os = "linux") && std::env::var_os("CI").is_some()),
