@@ -58,11 +58,17 @@ async fn dd_normal_copies_match_gnu() {
             .stderr(Stdio::piped())
             .spawn()
             .unwrap();
-        host.stdin
-            .take()
-            .unwrap()
-            .write_all(input.as_bytes())
-            .unwrap();
+        // GNU dd with count=0 exits without reading a byte, so this write
+        // races the child's exit and fails with EPIPE whenever the child
+        // wins. That is the case being exercised, not an error: the
+        // assertions below still compare stdout, stderr and exit code.
+        let mut stdin = host.stdin.take().unwrap();
+        match stdin.write_all(input.as_bytes()) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => {}
+            Err(error) => panic!("writing dd stdin for {args}: {error}"),
+        }
+        drop(stdin); // close before wait_with_output, as the temporary did
         let expected = host.wait_with_output().unwrap();
         let actual = Bash::new()
             .exec_with_options(&format!("dd {args}"), ExecOptions::new().stdin(input))
