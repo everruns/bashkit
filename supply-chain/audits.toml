@@ -329,6 +329,12 @@ criteria = "safe-to-deploy"
 delta = "3.13.0 -> 3.14.0"
 notes = "Reviewed registry delta including new WASI heap-break arithmetic and allocator wrappers: serialized allocator access, checked page growth below 2 GiB, target-gated shared-memory refresh and crash reporting. Native handoff is a no-op; allocator tests cover overflow and growth failures."
 
+[[audits.napi]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "3.14.0 -> 3.14.2"
+notes = "Reviewed complete published package diff across 3.14.1 and 3.14.2: no new dependencies, no build scripts, no new host filesystem, network or process access. Four upstream fixes, all hardening. NativeBorrowScope now owns its storage through NonNull instead of aliasing a reference, removing an aliasing violation. serde_json::Value conversion is bounded at 128 levels of nesting, so deeply nested JSON from a caller can no longer recurse without limit - the change that matters most for this tree, where the binding converts untrusted input. The wasm cleanup is registered through the env cleanup hook rather than ad hoc. Object creation uses napi_define_properties on every Node version. Existing unsafe in the js_values conversions is refactored in place; no new unsafe blocks."
+
 [[audits.napi-build]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
@@ -508,6 +514,12 @@ criteria = "safe-to-deploy"
 delta = "0.63.1 -> 0.63.2"
 notes = "Reviewed credentials redaction/zeroization; negotiated RSA certificate hashes; rekey staging and peer non-transport flood rejection/bounds. Compression drains progress with existing maximum packet limit; PTY lengths count actual entries. No new unsafe or ambient destinations."
 
+[[audits.russh]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.63.3 -> 0.64.1"
+notes = "Reviewed complete published package diff: no new dependencies, no build scripts, no new host filesystem, network or process access, and no new unsafe blocks anywhere in src. The substantive change is a server-side authentication fix: a publickey request's signature must now use the algorithm the request announced (RFC 4252 section 7, RFC 8332 section 3). Before, a client could announce rsa-sha2-512 and sign with ssh-rsa (SHA-1) and the server accepted it; the delta adds the comparison and a regression test asserting both the rejection and that a matching signature is still accepted. One dependency is removed, not added: the legacy-ed25519-pkcs8-parser feature and its yasna ASN.1 dependency are gone, so the PKCS8 path no longer falls back to a second parser on error. This tree uses russh as a client with default features, so it never enabled that feature and is not exposed to the server-side bug; both changes are a reduction in attack surface for it. Partial-success auth now carries proceed_with_methods as an Option, removing password from the offered set when none is given, and resets partial_success per request. The remainder is mechanical: let-chain rewrites in keys/known_hosts.rs and kex/dh/mod.rs with identical semantics, saturating arithmetic for the cipher byte counter, and new integration tests. Source safety review, not a cryptographic audit."
+
 [[audits.rustls-webpki]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
@@ -519,6 +531,12 @@ who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 delta = "0.103.14 -> 0.103.15"
 notes = "Reviewed complete runtime delta: FIPS status reports underlying AWS-LC signature implementation status. Certificate parsing, verification algorithms and input bounds unchanged."
+
+[[audits.signal-hook]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.4.4 -> 0.4.5"
+notes = "Reviewed complete published package diff: no new dependencies, no build scripts, no new host access beyond the libc signal and pipe calls the crate already made. low_level/pipe.rs hoists the raw file descriptor out of the borrowed pipe before the unsafe libc::send wake, so the descriptor is read once rather than through a borrow held across the call, and the unsafe block is narrowed to the call itself. signal_details.rs and the iterator test follow. No new unsafe blocks and no change to which signals are handled."
 
 [[audits.smallvec]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
@@ -537,6 +555,12 @@ who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 delta = "3.0.5 -> 3.0.6"
 notes = "Reviewed lifetime-group parse guard in expr.rs (Lifetime+End lookahead) plus version bump; token consumption stays bounded. No new unsafe, deps, build scripts, or ambient access."
+
+[[audits.syn]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "3.0.6 -> 3.0.7"
+notes = "Reviewed complete published package diff: one production change in src/expr.rs, the rest tests and a version stamp. Parsing a labelled construct now also checks that the token after the label is not '::', so 'label: ...' is no longer matched when the source actually continues with a path separator. No unsafe code, no new dependencies, no build scripts, no host access."
 
 [[audits.thin-vec]]
 who = "Mykhailo Chalyi <mykhailo.chalyi-contractor@procore.com>"
@@ -758,6 +782,12 @@ who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 delta = "0.14.0 -> 0.14.1"
 notes = "Reviewed replacement of unconditional representation reversal by PrimeFieldExt to_le_repr with correct bounds. No unsafe or algorithm-loop changes, no new ambient access."
+
+[[audits.zeroize]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "1.9.0 -> 1.9.1"
+notes = "Reviewed complete published package diff: no new dependencies, no build scripts, no host filesystem, network or process access. Three fixes, all narrowing rather than widening behaviour. Zeroizing's derived Debug is replaced with an opaque impl, so a wrapped secret no longer renders its contents through '{:?}'. The Vec impl no longer zeroizes initialized elements twice. The optimization_barrier fallback read volatile memory as u8 that could be uninitialized; it now reads MaybeUninit<u8> through a cast, removing the UB, and the internal use of that barrier is dropped. Remaining changes are the aarch64/x86 barrier modules following the same cast, a lint allowance, and the version stamp. Existing unsafe is refactored in place; no new unsafe blocks."
 
 [[audits.zerovec]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"

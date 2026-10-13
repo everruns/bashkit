@@ -105,8 +105,8 @@ user-login = "cfallin"
 user-name = "Chris Fallin"
 
 [[publisher.serde_spanned]]
-version = "1.1.1"
-when = "2026-03-31"
+version = "1.1.2"
+when = "2026-10-08"
 user-id = 6743
 user-login = "epage"
 user-name = "Ed Page"
@@ -119,29 +119,29 @@ user-login = "Darksonn"
 user-name = "Alice Ryhl"
 
 [[publisher.toml]]
-version = "1.1.6+spec-1.1.0"
-when = "2026-09-10"
+version = "1.1.8+spec-1.1.0"
+when = "2026-10-09"
 user-id = 6743
 user-login = "epage"
 user-name = "Ed Page"
 
 [[publisher.toml_datetime]]
-version = "1.1.1+spec-1.1.0"
-when = "2026-03-31"
+version = "1.1.2+spec-1.1.0"
+when = "2026-10-08"
 user-id = 6743
 user-login = "epage"
 user-name = "Ed Page"
 
 [[publisher.toml_parser]]
-version = "1.1.3+spec-1.1.0"
-when = "2026-07-27"
+version = "1.1.5+spec-1.1.0"
+when = "2026-10-09"
 user-id = 6743
 user-login = "epage"
 user-name = "Ed Page"
 
 [[publisher.toml_writer]]
-version = "1.1.2+spec-1.1.0"
-when = "2026-07-14"
+version = "1.1.3+spec-1.1.0"
+when = "2026-10-08"
 user-id = 6743
 user-login = "epage"
 user-name = "Ed Page"
