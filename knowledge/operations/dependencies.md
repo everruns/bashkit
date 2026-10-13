@@ -93,6 +93,23 @@ the existing Python graph. Remove it when Monty's AST upgrades its string
 type. The Python binding's `num-bigint` dependency must still match Monty's
 0.4 line.
 
+## YAML maintenance boundary
+
+The `jq` feature's `yq` builtin uses `serde_norway` and
+`unsafe-libyaml-norway`, replacing `serde_yaml_ng` and the archived
+`unsafe-libyaml` (RUSTSEC-2024-0449). This changes maintenance ownership rather
+than the YAML contract: Serde values, multi-document iteration and YAML
+serialization remain, as does the parser's recursion ceiling of 128.
+Bashkit still rejects alias tokens before deserialization, limits conversion
+depth to 100, and shares the jq evaluator's existing limits (TM-DOS-101).
+
+The initial fork review compared the published `unsafe-libyaml` 0.2.11 library
+with `unsafe-libyaml-norway` 0.2.15: implementation files are identical; the
+library delta adds one lint allowance, while test executables also rename
+imports and simplify one loop. Dependency vet exemptions retain the prior
+criteria at exact replacement versions; no audit advisory was suppressed.
+Future version bumps still require source and contract review.
+
 ## Feature-unification edges
 
 `branches` is a direct dependency of `bashkit` under the `sqlite` feature and is
