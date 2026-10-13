@@ -613,6 +613,19 @@ probe of the 879 BRE/ERE regex cases except two whose pattern holds a raw
 Gaps are L-GREP-001..003 in [Known Limitations](../operations/limitations.md);
 regex caps are TM-DOS-023/025 in the [Threat Model](../security/threat-model.md).
 
+### dd
+
+`dd` keeps its whole-buffer copy model. The selected input slice is capped before
+copying. `conv=sync` computes the rounded block length with checked arithmetic
+and rejects lengths above `DD_MAX_BYTES` before allocation. The entire copied
+payload capacity is admitted through `BudgetedBytes` against the shared live
+memory budget; its lease remains through conversion and output handling,
+including discarded output. Budget failures propagate as resource-limit errors.
+Ordinary count/skip, padding, conversion, record reports, seek, and file-error
+behavior is preserved. Unit tests use tiny admission budgets and allocation-free
+overflow arithmetic; `dd_tests` compares small copies with GNU dd and checks VFS
+seek/error behavior (TM-DOS-003, TM-DOS-103).
+
 ### fmt
 
 `fmt` vendors the uutils/coreutils `fmt` engine (MIT): `builtins/fmt/

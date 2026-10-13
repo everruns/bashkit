@@ -178,6 +178,11 @@ let bash = Bash::builder()
 # }
 ```
 
+`dd conv=sync` uses checked padding arithmetic and rejects padded lengths above
+its 64 MiB copy cap before allocation. Copied payload capacity is reserved through
+`BudgetedBytes` against the shared live-memory budget and retained through output
+handling, including discarded output (TM-DOS-003, TM-DOS-103).
+
 **Additional DoS hardening:**
 
 | Threat | Attack Example | Mitigation | Status |

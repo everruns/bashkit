@@ -18,6 +18,11 @@ individual threat IDs and mitigation status, see the
 | **Resource limits** | Configurable caps on commands, loop iterations, recursion depth, AST depth, timeouts, and parser operations prevent denial-of-service from malicious scripts. |
 | **Filesystem limits** | Total bytes, per-file size, file count, path depth, and filename length are all capped to prevent storage exhaustion (zip bombs, tar bombs, recursive copies). |
 
+`dd conv=sync` checks its padded block length against the 64 MiB copy cap
+before allocating or zero-filling. Copied payload capacity also counts against
+`max_live_intermediate_bytes` until output handling completes, including when
+output is discarded. Exceeding either limit returns a resource-limit error.
+
 `pr` checks its 16 MiB output cap before appending headers, rows, margins,
 newlines or form feeds. Repeated long headers cannot grow the output buffer past that cap.
 Input dates are retained as timestamps, so long date formats are not copied
