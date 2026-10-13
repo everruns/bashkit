@@ -635,6 +635,22 @@ failures, never successful partial output. The stdout capture ceiling does not
 limit a formatter sink used by a pipeline or VFS redirect. Regression coverage:
 `fmt_resource_tests` and the formatter's capacity/cancellation/deadline unit tests.
 
+### join
+
+`join` preserves GNU matching-row Cartesian products, field selection,
+unpaired rows, headers and contextual Unicode case folding. Parsed row/field
+vectors, keys, input decoding and output use shared-budget storage; generated
+fields append directly without a temporary per-row vector. Input metadata
+admits VFS reads, actual capacity growth is charged, and repeated file reads
+share aggregate-input accounting. Parsing, grouping (including `-v` suppressed
+groups), comparisons and emissions charge work and check cancellation/deadlines.
+Output text and its byte-stream copy both require admission before allocation.
+Failures propagate through the Bash API as resource-limit errors. Capture caps
+remain downstream so pipelines and redirects preserve complete admitted output.
+Regression fixtures use at most two rows per input and small configured budgets:
+`join_resource_tests`, `builtins::join::tests::ordinary_join_*`, and
+`stream::tests::budgeted_string_stream_admits_both_representations` (TM-DOS-138).
+
 ### Network Builtins
 
 `curl`, `wget`, `http` require the `http_client` feature + URL allowlist.

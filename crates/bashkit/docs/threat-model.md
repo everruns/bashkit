@@ -99,6 +99,13 @@ through configurable limits.
 | find traversal amplification (TM-DOS-121) | `find -L` over a symlink cycle, unbounded `-exec ... {} +` batches, or `*`-heavy `-name` patterns | Canonical-path loop detection with a 40-hop symlink cap, budget-charged directory listings, capped output, batches flushed every 4096 paths, linear-time glob matching | MITIGATED |
 | Background job flooding (TM-DOS-122) | `while :; do sleep 99 & done` holds unbounded concurrent interpreters | `max_background_jobs` (64 default, 16 hardened) caps live jobs; extra `&` fails like bash's fork EAGAIN; jobs share the session budget, timeout and cancellation; every job is reaped when `exec()` returns | MITIGATED |
 
+`join` matching-row products (TM-DOS-138) use shared-budget storage for
+input decoding, parsed rows/fields/keys and generated output. Output growth and
+its byte-stream copy are admitted before allocation. Parsing, key grouping and
+each emitted field charge work and poll cancellation/deadlines, including
+suppressed groups. Budget failures propagate as resource-limit errors. The
+stdout capture limit remains downstream of pipelines and redirects.
+
 **Parser and Arithmetic:**
 
 | Threat | Attack Example | Mitigation | Status |

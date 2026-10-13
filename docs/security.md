@@ -50,6 +50,14 @@ deadlines. Exceeding a budget returns a resource-limit error. Output within the
 budget preserves its formatting through pipelines and file redirects, even
 when it exceeds the stdout capture limit.
 
+`join` preserves matching-row Cartesian products within the execution budget.
+Input rows, keys and generated output reserve live-memory capacity before
+allocation. Parsing, key grouping and every emitted field consume shared work
+and check cancellation and deadlines. Budget failures abort the request with a
+resource-limit error; a later host execution starts with a fresh budget. Stdout
+capture limits remain downstream, so pipelines and redirects receive complete
+join output when it fits the execution budget.
+
 `cd` searches `CDPATH` one candidate at a time. Temporary path and
 normalization storage is reserved against `max_live_intermediate_bytes`
 before allocation. Searches also consume the shared work budget and check
