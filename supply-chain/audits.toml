@@ -609,6 +609,12 @@ criteria = "safe-to-deploy"
 delta = "0.8.1 -> 0.8.2"
 notes = "Reviewed complete published package diff. Only Rust change fixes CDC UPDATE register indexing for virtual generated columns: skip virtual columns, use ColumnLayout.to_reg_offset, and consistently allocate and serialize twice num_non_virtual_cols registers. Both changed and unchanged column branches use the same mapping. No new unsafe code, host access, build scripts, or dependencies. Other changes are release metadata and matching Turso dependency versions."
 
+[[audits.turso_core]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.8.2 -> 0.8.3"
+notes = "Reviewed complete published package diff: nine Rust files changed, no new dependencies, no new unsafe code, no new build scripts, and no new host filesystem, network or process access. AUTOINCREMENT explicit-rowid advance now also reads the backing table's is_called column, so a fresh sequence row (1, is_called = 0) no longer leaves the next generated id at a rowid an explicit INSERT already used; the single Le comparison becomes Lt/Gt plus an is_called test, with the descending case mirrored. An abandoned MVCC commit now releases the connection's read transaction and, for the main database only, resets transaction state - state the dropped CommitStateMachine does not own and previously leaked. MVCC tombstone insertion for B-tree-resident rows moves into its own helper with the visibility and write-write conflict rules unchanged. Cursor seek reuse narrows from 'position matches the seek key' to 'position is the only row for that key', which requires a rowid, a whole index entry, or every column of a UNIQUE index with no NULL. The logical-log header upgrade returns the CRC-filled header for the caller to adopt instead of publishing it before the write lands, so a failed header write keeps the previous on-disk header and retries; a new fault-injecting file covers that path. Source safety review, not formal transactional proof."
+
 [[audits.turso_ext]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
@@ -632,6 +638,12 @@ who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 delta = "0.8.1 -> 0.8.2"
 notes = "Reviewed complete published package diff. Source files are byte-identical; only Cargo.toml, Cargo.lock, and .cargo_vcs_info.json release metadata changes. No runtime, unsafe, host access, or build-script changes."
+
+[[audits.turso_ext]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.8.2 -> 0.8.3"
+notes = "Reviewed complete published package diff: zero differing .rs files across the two published trees. Only the crate version and its matching turso_macros dependency version, plus Cargo.lock and .cargo_vcs_info.json release metadata. No runtime, unsafe, host access, or build-script changes; nothing to review beyond the version stamp."
 
 [[audits.turso_macros]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
@@ -657,6 +669,12 @@ criteria = "safe-to-deploy"
 delta = "0.8.1 -> 0.8.2"
 notes = "Reviewed complete published package diff. Source files are byte-identical; only Cargo.toml, Cargo.lock, and .cargo_vcs_info.json release metadata changes. No runtime, unsafe, host access, or build-script changes."
 
+[[audits.turso_macros]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.8.2 -> 0.8.3"
+notes = "Reviewed complete published package diff: zero differing .rs files across the two published trees. Only the crate version, plus Cargo.lock and .cargo_vcs_info.json release metadata. No runtime, unsafe, host access, or build-script changes; nothing to review beyond the version stamp."
+
 [[audits.turso_parser]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
@@ -680,6 +698,12 @@ who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 delta = "0.8.1 -> 0.8.2"
 notes = "Reviewed complete published package diff. Source files are byte-identical; only Cargo.toml, Cargo.lock, and .cargo_vcs_info.json release metadata changes. No runtime, unsafe, host access, or build-script changes."
+
+[[audits.turso_parser]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.8.2 -> 0.8.3"
+notes = "Reviewed complete published package diff: zero differing .rs files across the two published trees. Only the crate version and its matching turso_macros dependency version, plus Cargo.lock and .cargo_vcs_info.json release metadata. No runtime, unsafe, host access, or build-script changes; nothing to review beyond the version stamp."
 
 [[audits.twox-hash]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
