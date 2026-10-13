@@ -73,6 +73,17 @@ probability `10%`, count `5*`): see [fail crate docs](https://docs.rs/fail).
 2. **Filesystem failure**: I/O errors, permission denied, disk full, partial writes, data corruption
 3. **Interpreter failure**: execution errors, panic recovery, unexpected exit codes
 
+## dd GNU Regression Oracle
+
+`dd_tests` compares only tiny ordinary copies against a GNU dd binary. Discovery
+requires a successful `--version` and recognizes the `dd (coreutils)` package
+banner as well as `dd (GNU coreutils)`. GNU dd's
+[version-option code](https://github.com/coreutils/coreutils/blob/v9.4/src/dd.c#L2288)
+uses the package name; requiring the longer phrase anywhere in the output rejects
+GNU versions without a matching footer. The inert banner fixture also rejects
+uutils, BSD, and unrelated programs. Linux CI must find GNU dd; all byte, stderr,
+and exit-status assertions remain mandatory. See [Builtins](../foundations/builtins.md).
+
 ## od Width Regression Oracle
 
 `od_resource_tests` compares valid-width layouts with GNU `od` when available
