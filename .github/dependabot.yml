@@ -122,6 +122,14 @@ updates:
       fuzz-dependencies:
         patterns:
           - "*"
+    ignore:
+      # The fuzz lockfile resolves the root workspace, so a bump here rewrites
+      # the root `wasmtime = "=48.0.5"` pin — and `ignore` is per-entry, so the
+      # "/" entry's wasmtime block above does not cover this one. That gap
+      # opened #2708, where every rust job failed at resolution with
+      # "wasmtime@49.0.2 requires rustc 1.96.0" against the pinned 1.95.0.
+      # Keep in step with the "/" entry; see the rationale there.
+      - dependency-name: "wasmtime"
 
   # The remaining cargo workspaces. Each has its own lockfile, so neither the
   # "/" entry nor the fuzz entry above reaches them.
@@ -158,6 +166,12 @@ updates:
       example-cargo:
         patterns:
           - "*"
+    ignore:
+      # `examples/hyperlight/host` pins wasmtime "48" and is built by required
+      # CI (the "WASM component (no JS, no WASI)" job) on the same pinned
+      # 1.95.0 toolchain, so a 49.x bump here fails resolution exactly as it
+      # did in #2708. Keep in step with the "/" entry; see the rationale there.
+      - dependency-name: "wasmtime"
 
   # npm / pnpm.
   #

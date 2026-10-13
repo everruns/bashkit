@@ -111,6 +111,47 @@ class DependabotCoverageTests(unittest.TestCase):
             with self.subTest(fixture=fixture):
                 self.assertIn(fixture, covered)
 
+    def test_no_cargo_entry_can_propose_a_wasmtime_bump(self):
+        # wasmtime is held at =48.0.5 for two independent reasons: the
+        # `cpython` feature loads a module precompiled by build.rs, which only
+        # loads into the identical wasmtime version, and 48.x is the newest
+        # line whose MSRV the pinned rustc satisfies. 49.x needs 1.96.
+        #
+        # The "/" entry carried that ignore; the fuzz and example entries did
+        # not, and the ignore is per-entry. The fuzz lockfile resolves the root
+        # workspace, so dependabot edited the root `=48.0.5` pin straight
+        # through the gap and opened #2708, where every rust job died at
+        # resolution with "wasmtime@49.0.2 requires rustc 1.96.0". The
+        # hyperlight host pins its own wasmtime "48" and is built by required
+        # CI on the same pinned toolchain, so it had the same exposure.
+        #
+        # Which entry happens to reach which manifest is not a useful thing to
+        # re-derive each time one is added, so the invariant is the blunt one:
+        # no cargo entry proposes a wasmtime bump. Lift it everywhere at once
+        # when the toolchain moves.
+        config = yaml.safe_load(CONFIG.read_text())
+        cargo_entries = [
+            u for u in config['updates'] if u['package-ecosystem'] == 'cargo'
+        ]
+        self.assertGreaterEqual(len(cargo_entries), 3, cargo_entries)
+        for entry in cargo_entries:
+            scope = entry.get('directory') or entry.get('directories')
+            with self.subTest(scope=scope):
+                ignored = {
+                    i.get('dependency-name')
+                    for i in entry.get('ignore') or []
+                    # An ignore narrowed to update-types still lets other
+                    # bump kinds through, so it does not count here.
+                    if not i.get('update-types')
+                }
+                self.assertIn(
+                    'wasmtime',
+                    ignored,
+                    f'cargo entry {scope} can propose a wasmtime bump; '
+                    'it is pinned to =48.0.5 by MSRV and by precompiled-module '
+                    'compatibility, so every cargo entry must ignore it',
+                )
+
     def test_config_is_a_well_formed_dependabot_v2_file(self):
         config = yaml.safe_load(CONFIG.read_text())
         self.assertEqual(config['version'], 2)
