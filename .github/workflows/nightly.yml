@@ -94,10 +94,16 @@ jobs:
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
 
+      # Built from source against the pinned toolchain, so the tool version is
+      # pinned too: an unpinned `tool:` resolves to the newest release, and
+      # cargo-geiger 0.14.0 raised its MSRV to 1.97 on the day it shipped,
+      # which broke this job on a tree that had not changed. Bump deliberately
+      # alongside rust-toolchain.toml; 0.13.0 builds on 1.85+.
       - name: Install cargo-geiger
         uses: taiki-e/cache-cargo-install-action@9ee83daaa7b96a6fab930949ecf1122bba04a389 # v3
         with:
           tool: cargo-geiger
+          version: 0.13.0
           locked: true
 
       - name: Run cargo-geiger (unsafe code audit)

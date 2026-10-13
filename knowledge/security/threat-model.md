@@ -1645,7 +1645,7 @@ This section documents the security tools used to detect and prevent vulnerabili
 | **OSV** | CVE scanning for PyPI dependencies | ✅ Required | Every PR + nightly |
 | **cargo-deny** | License + advisory checks | ✅ Required | Every PR |
 | **cargo-clippy** | Lint with security-focused warnings | ✅ Required | Every PR |
-| **cargo-geiger** | Count unsafe code blocks | ✅ Informational | Every PR |
+| **cargo-geiger** | Count unsafe code blocks | ✅ Informational | Nightly |
 
 **cargo-audit** scans every `Cargo.lock` in the tree against the RustSec Advisory
 Database, **pnpm audit** every `pnpm-lock.yaml` against the GitHub Advisory
