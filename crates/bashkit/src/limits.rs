@@ -164,7 +164,8 @@ pub struct ExecutionLimits {
 
     // THREAT[TM-DOS-122]: each `&` job holds a forked shell state and a
     // pending future until it finishes or is killed.
-    /// Maximum background jobs running at once; past it `&` fails.
+    /// Maximum concurrent background jobs and retained pipeline producers.
+    /// Past it `&` fails or a streaming pipeline returns a resource-limit error.
     /// Default: 64
     pub max_background_jobs: usize,
 
@@ -249,7 +250,7 @@ impl ExecutionLimits {
         }
     }
 
-    /// Set the maximum number of background jobs running at once.
+    /// Set the maximum concurrent background jobs and retained pipeline producers.
     pub fn max_background_jobs(mut self, count: usize) -> Self {
         self.max_background_jobs = count;
         self
@@ -743,6 +744,9 @@ pub enum LimitExceeded {
     #[error("maximum trap nesting depth exceeded ({0})")]
     MaxTrapDepth(usize),
 
+    #[error("maximum concurrent jobs exceeded ({0})")]
+    MaxConcurrentJobs(usize),
+
     #[error("maximum file descriptors exceeded ({0})")]
     MaxFileDescriptors(usize),
 
@@ -987,7 +991,7 @@ impl ExecutionBudget {
     }
 
     #[cfg(test)]
-    fn live_bytes_for_test(&self) -> u64 {
+    pub(crate) fn live_bytes_for_test(&self) -> u64 {
         self.inner.live_bytes.load(Ordering::Relaxed)
     }
 }

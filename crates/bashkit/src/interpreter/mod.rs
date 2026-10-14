@@ -47,6 +47,7 @@ mod glob;
 mod history;
 mod jobs;
 pub(crate) mod pipe;
+mod pipeline_admission;
 mod prompt;
 mod readline_bind;
 mod readline_defaults;
@@ -1794,7 +1795,7 @@ pub struct Interpreter {
     http_client: Option<Arc<crate::network::HttpClient>>,
     /// Git client for git builtins
     #[cfg(feature = "git")]
-    git_client: Option<crate::builtins::git::GitClient>,
+    git_client: Option<Arc<crate::builtins::git::GitClient>>,
     /// SSH client for ssh/scp/sftp builtins
     #[cfg(feature = "ssh")]
     ssh_client: Option<Arc<crate::builtins::ssh::SshClient>>,
@@ -3148,6 +3149,7 @@ impl Interpreter {
         }
         self.getopts_char_idx = 0;
         self.pipeline_stdin = None;
+        self.clear_pipeline_streams();
         self.regex_cache = RuntimeRegexCache::default();
         self.bash_source_stack.clear();
         self.arrays_mut().remove("BASH_SOURCE");
@@ -3156,6 +3158,15 @@ impl Interpreter {
     // Called after a host-backed deadline drops the in-flight execution future.
     pub(crate) fn clear_cancelled_execution_state(&mut self) {
         self.reconcile_cancelled_execution_state(0, 0, 0, None);
+        self.clear_pipeline_streams();
+    }
+
+    fn clear_pipeline_streams(&mut self) {
+        self.pipe_in = None;
+        self.pipe_out = None;
+        self.builtin_stdin_pipe = None;
+        self.builtin_stdout_pipe = None;
+        self.stream_stdout_command = None;
     }
 
     fn clear_pending_fd_redirect_state(&mut self) {
@@ -3915,7 +3926,7 @@ impl Interpreter {
     /// This is only available when the `git` feature is enabled.
     #[cfg(feature = "git")]
     pub fn set_git_client(&mut self, client: crate::builtins::git::GitClient) {
-        self.git_client = Some(client);
+        self.git_client = Some(Arc::new(client));
     }
 
     /// Set the SSH client for ssh/scp/sftp builtins.
@@ -7870,14 +7881,34 @@ impl Interpreter {
         stdin: Option<crate::StreamData>,
         lastpipe: bool,
     ) -> Result<Vec<ExecResult>> {
-        type StageFuture = std::pin::Pin<
-            Box<dyn std::future::Future<Output = Result<ExecResult>> + Send + 'static>,
-        >;
+        type StageFuture<'a> =
+            std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecResult>> + Send + 'a>>;
         let (last, producers) = commands.split_last().expect("pipeline tail");
+        // THREAT[TM-DOS-124]: width, fork storage and construction work are
+        // admitted before allocation. Every retained producer counts against
+        // the same cap as background jobs, including descendants.
+        self.execution_budget.check()?;
+        let _slots = self
+            .jobs
+            .try_claim_many(self.limits.max_background_jobs, producers.len())
+            .ok_or(LimitExceeded::MaxConcurrentJobs(
+                self.limits.max_background_jobs,
+            ))?;
         let mut input: Option<Arc<pipe::Pipe>> = None;
-        let mut stages: Vec<StageFuture> = Vec::with_capacity(producers.len());
+        let mut stages =
+            crate::limits::BudgetedVec::<(
+                StageFuture<'_>,
+                crate::limits::ExecutionBudgetLease,
+                crate::limits::ExecutionBudgetLease,
+            )>::try_with_capacity(Some(&self.execution_budget), producers.len())?;
         for (k, command) in producers.iter().enumerate() {
-            let pipe = pipe::Pipe::new();
+            let inherited_stdin = if k == 0 {
+                stdin.as_ref().or(self.pipeline_stdin.as_ref())
+            } else {
+                None
+            };
+            let fork_storage = self.pipeline_fork_storage(inherited_stdin)?;
+            let pipe = pipe::Pipe::new_admitted(&self.execution_budget)?;
             let mut child = self.fork_for_job();
             if k == 0 {
                 // First stage reads what this shell would read.
@@ -7898,7 +7929,6 @@ impl Interpreter {
             Arc::make_mut(&mut child.nofork).subshell_env = SUBSHELL_PIPE;
             let write_end = pipe::WriteEnd(Arc::clone(&pipe));
             let read_end = input.take().map(pipe::ReadEnd);
-            let command = command.clone();
             if matches!(
                 command,
                 Command::Simple(_) | Command::Compound(CompoundCommand::Subshell(_), _)
@@ -7907,15 +7937,15 @@ impl Interpreter {
                 // `( )` stage counts itself once.
                 child.bash_subshell = self.bash_subshell;
             }
-            stages.push(Box::pin(async move {
+            let future = async move {
                 let _read_end = read_end;
-                if let Command::Simple(simple) = &command
+                if let Command::Simple(simple) = command
                     && Self::streams_stdout(simple)
                 {
                     child.stream_stdout_command = Some(simple as *const SimpleCommand as usize);
                 }
                 let jobs = Arc::clone(&child.jobs);
-                let result = jobs::with_jobs(&jobs, child.execute_command(&command)).await;
+                let result = jobs::with_jobs(&jobs, child.execute_command(command)).await;
                 jobs.finish_all().await;
                 let (out, err) = jobs.lock().take_finished_output();
                 let mut r = result?;
@@ -7934,16 +7964,26 @@ impl Interpreter {
                 r.control_flow = ControlFlow::None;
                 r.stdout = crate::StreamData::new();
                 Ok(r)
-            }));
+            };
+            let future_storage = self
+                .execution_budget
+                .lease_bytes(std::mem::size_of_val(&future))?;
+            stages.try_push((Box::pin(future), fork_storage, future_storage))?;
             input = Some(pipe);
         }
 
+        let mut done = crate::limits::BudgetedVec::try_with_capacity(
+            Some(&self.execution_budget),
+            stages.len(),
+        )?;
+        for _ in 0..stages.len() {
+            done.try_push(None)?;
+        }
         // The last stage reads the last pipe through `pipe_in`.
         let last_pipe = input.expect("at least one producer");
         let saved_pipe_in = self.pipe_in.replace(Arc::clone(&last_pipe));
         let saved_stdin = self.pipeline_stdin.take();
         let mut read_end = Some(pipe::ReadEnd(last_pipe));
-        let mut done: Vec<Option<Result<ExecResult>>> = (0..stages.len()).map(|_| None).collect();
         let mut last_done: Option<Result<ExecResult>> = None;
         {
             let mut last_fut = Box::pin(async {
@@ -7968,7 +8008,9 @@ impl Interpreter {
                     last_done = Some(r);
                     cx.waker().wake_by_ref();
                 }
-                for (stage, slot) in stages.iter_mut().zip(done.iter_mut()).rev() {
+                for ((stage, _fork_storage, _future_storage), slot) in
+                    stages.iter_mut().zip(done.iter_mut()).rev()
+                {
                     if slot.is_none()
                         && let std::task::Poll::Ready(r) = stage.as_mut().poll(cx)
                     {
@@ -7986,11 +8028,12 @@ impl Interpreter {
             .await;
         }
         drop(read_end);
-        drop(stages);
         self.pipe_in = saved_pipe_in;
         self.pipeline_stdin = saved_stdin;
+        drop(stages);
 
         let mut results = Vec::with_capacity(done.len() + 1);
+        let (done, _done_storage) = done.into_parts();
         for d in done {
             results.push(d.unwrap_or_else(|| Ok(ExecResult::ok(String::new())))?);
         }
@@ -9876,7 +9919,7 @@ impl Interpreter {
                     #[cfg(feature = "http_client")]
                     http_client: self.http_client.as_ref(),
                     #[cfg(feature = "git")]
-                    git_client: self.git_client.as_ref(),
+                    git_client: self.git_client.as_deref(),
                     #[cfg(feature = "ssh")]
                     ssh_client: self.ssh_client.as_deref(),
                     shell: Some(shell_ref),
@@ -9951,7 +9994,7 @@ impl Interpreter {
                 #[cfg(feature = "http_client")]
                 http_client: self.http_client.as_ref(),
                 #[cfg(feature = "git")]
-                git_client: self.git_client.as_ref(),
+                git_client: self.git_client.as_deref(),
                 #[cfg(feature = "ssh")]
                 ssh_client: self.ssh_client.as_deref(),
                 shell: Some(shell_ref),
@@ -14962,6 +15005,131 @@ mod tests {
     use crate::Bash;
     use crate::fs::InMemoryFs;
     use crate::parser::Parser;
+
+    fn ordinary_pipeline_commands() -> Vec<Command> {
+        let parser = Parser::new("{ :; } | :");
+        let script = parser.parse().unwrap();
+        let Command::Pipeline(pipeline) = script.commands.into_iter().next().unwrap() else {
+            panic!("expected pipeline");
+        };
+        pipeline.commands
+    }
+
+    #[tokio::test]
+    async fn pipeline_admission_respects_occupied_shared_job_slot() {
+        let mut bash = Bash::new();
+        bash.interpreter.begin_execution_budget();
+        bash.interpreter.limits.max_background_jobs = 1;
+        let slot = bash.interpreter.jobs.try_claim(1).unwrap();
+        let result = bash
+            .interpreter
+            .execute_streaming_stages(&ordinary_pipeline_commands(), None, false)
+            .await;
+        assert!(matches!(
+            result,
+            Err(crate::Error::ResourceLimit(
+                LimitExceeded::MaxConcurrentJobs(1)
+            ))
+        ));
+        drop(slot);
+        assert!(bash.interpreter.jobs.try_claim(1).is_some());
+    }
+
+    #[tokio::test]
+    async fn pipeline_admission_reserves_storage_for_no_output_stage() {
+        let mut bash = Bash::new();
+        bash.interpreter.begin_execution_budget();
+        bash.interpreter.limits.max_live_intermediate_bytes = 0;
+        bash.interpreter.begin_execution_budget();
+        let result = bash
+            .interpreter
+            .execute_streaming_stages(&ordinary_pipeline_commands(), None, false)
+            .await;
+        assert!(matches!(
+            result,
+            Err(crate::Error::ResourceLimit(LimitExceeded::ExecutionBudget(
+                crate::limits::ExecutionBudgetExceeded::LiveBytes { .. }
+            )))
+        ));
+        assert_eq!(bash.interpreter.execution_budget.live_bytes_for_test(), 0);
+        assert!(bash.interpreter.jobs.try_claim(1).is_some());
+    }
+
+    #[tokio::test]
+    async fn pipeline_admission_releases_storage_and_slots_after_completion() {
+        let mut bash = Bash::new();
+        bash.interpreter.begin_execution_budget();
+        bash.interpreter.limits.max_background_jobs = 1;
+        let result = bash
+            .interpreter
+            .execute_streaming_stages(&ordinary_pipeline_commands(), None, false)
+            .await
+            .unwrap();
+        assert_eq!(result.len(), 2);
+        assert!(result.iter().all(|r| r.exit_code == 0));
+        assert!(bash.interpreter.jobs.try_claim(1).is_some());
+        assert_eq!(bash.interpreter.execution_budget.live_bytes_for_test(), 0);
+    }
+
+    #[tokio::test]
+    async fn pipeline_admission_checks_cancellation_before_construction() {
+        let mut bash = Bash::new();
+        bash.interpreter.begin_execution_budget();
+        bash.interpreter.cancelled.store(true, Ordering::Relaxed);
+        let result = bash
+            .interpreter
+            .execute_streaming_stages(&ordinary_pipeline_commands(), None, false)
+            .await;
+        assert!(matches!(result, Err(crate::Error::Cancelled)));
+        assert!(bash.interpreter.jobs.try_claim(1).is_some());
+        assert_eq!(bash.interpreter.execution_budget.live_bytes_for_test(), 0);
+    }
+
+    #[tokio::test]
+    async fn pipeline_admission_drop_pending_and_reconcile_releases_owners() {
+        use std::future::Future;
+        let mut bash = Bash::new();
+        bash.interpreter.limits.max_background_jobs = 1;
+        bash.interpreter.begin_execution_budget();
+        let script = Parser::new("{ sleep 1; } | cat").parse().unwrap();
+        let Command::Pipeline(commands) = &script.commands[0] else {
+            panic!("expected pipeline");
+        };
+        let budget = bash.interpreter.execution_budget.clone();
+        let jobs = Arc::clone(&bash.interpreter.jobs);
+        let mut future = Box::pin(bash.interpreter.execute_streaming_stages(
+            &commands.commands,
+            None,
+            false,
+        ));
+        let waker = futures_util::task::noop_waker();
+        let mut context = std::task::Context::from_waker(&waker);
+        assert!(future.as_mut().poll(&mut context).is_pending());
+        assert!(jobs.try_claim(1).is_none());
+        assert!(budget.live_bytes_for_test() > 0);
+        drop(future);
+        assert!(jobs.try_claim(1).is_some());
+        // The caller still owns the final pipe until the ordinary cancelled
+        // request reconciliation releases its transient streaming state.
+        assert!(budget.live_bytes_for_test() > 0);
+        bash.interpreter.clear_cancelled_execution_state();
+        assert!(bash.interpreter.pipe_in.is_none());
+        assert_eq!(budget.live_bytes_for_test(), 0);
+    }
+
+    #[test]
+    fn pipeline_admission_environment_is_shared_and_isolated() {
+        let mut bash = Bash::new();
+        bash.interpreter.begin_execution_budget();
+        bash.interpreter
+            .env_mut()
+            .insert("DEMO".into(), "parent".into());
+        let mut child = bash.interpreter.fork_for_job();
+        assert!(Arc::ptr_eq(&bash.interpreter.env, &child.env));
+        child.env_mut().insert("DEMO".into(), "child".into());
+        assert_eq!(bash.interpreter.env["DEMO"], "parent");
+        assert_eq!(child.env["DEMO"], "child");
+    }
 
     #[tokio::test]
     async fn function_metadata_shares_storage_and_drops_with_functions() {

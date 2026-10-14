@@ -13,10 +13,20 @@ individual threat IDs and mitigation status, see the
 | Boundary | What it does |
 |----------|-------------|
 | **Virtual filesystem** | Scripts run against an in-memory VFS. No real filesystem access by default. Path traversal (`../../../etc/passwd`) is normalised away. Symlinks are followed inside the VFS only: a target is always a VFS path, so a link can never reach the host. |
-| **No process execution** | `exec` is excluded entirely. `bash -c` re-invokes the virtual interpreter instead of spawning a real process. Background jobs (`&`) parse but run synchronously. |
+| **No process execution** | `bash -c` and virtual `exec` execute inside the interpreter. Background jobs (`&`) run concurrently under the shared job cap. |
 | **Network allowlist** | HTTP/HTTPS only, pre-validated against an explicit host allowlist. No DNS resolution, no auto-redirect, no auto-decompression. |
 | **Resource limits** | Configurable caps on commands, loop iterations, recursion depth, AST depth, timeouts, and parser operations prevent denial-of-service from malicious scripts. |
 | **Filesystem limits** | Total bytes, per-file size, file count, path depth, and filename length are all capped to prevent storage exhaustion (zip bombs, tar bombs, recursive copies). |
+
+Concurrent pipeline producers share `ExecutionLimits::max_background_jobs`
+with background jobs, including nested work. All producer slots are admitted
+before constructing the pipeline, and remain reserved until its producers
+are released. Owned fork storage and producer futures count against
+`max_live_intermediate_bytes` before allocation; construction also checks the
+shared work budget, cancellation and deadline. The final stage needs no extra
+job slot. Exceeding a limit returns a resource-limit error. Pipelines within
+these budgets keep their streaming, isolation and `PIPESTATUS` behavior;
+`concurrent_jobs(false)` uses sequential stages without producer slots.
 
 `dd conv=sync` checks its padded block length against the 64 MiB copy cap
 before allocating or zero-filling. Copied payload capacity also counts against

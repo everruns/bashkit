@@ -90,6 +90,17 @@ impl ProcSubFs {
         })
     }
 
+    /// Fork metadata only: substitution byte payloads remain Arc-shared.
+    pub(crate) fn fork_storage_bytes(&self) -> usize {
+        std::mem::size_of::<Self>()
+            .saturating_add(2 * std::mem::size_of::<usize>())
+            .saturating_add(
+                self.table()
+                    .len()
+                    .saturating_mul(std::mem::size_of::<(i32, ProcSubData)>()),
+            )
+    }
+
     /// Same filesystem, a copy of the open fds (a forked job).
     pub(crate) fn fork(&self) -> Arc<Self> {
         Arc::new(Self {

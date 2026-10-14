@@ -250,6 +250,20 @@ pub(crate) struct CompletionState {
     pub(crate) bindings: super::readline_bind::Bindings,
 }
 
+impl CompletionState {
+    pub(super) fn fork_storage(
+        &self,
+        storage: &mut super::pipeline_admission::ForkStorage<'_>,
+    ) -> Result<()> {
+        storage.slice::<(String, CompSpec)>(self.specs.len())?;
+        for (name, spec) in &self.specs {
+            storage.add(name.len())?;
+            storage.add(spec.text_bytes())?;
+        }
+        self.bindings.fork_storage(storage)
+    }
+}
+
 /// Parsed `complete`/`compgen` options.
 #[derive(Default)]
 struct CompArgs {

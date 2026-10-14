@@ -72,11 +72,25 @@ impl State {
 #[derive(Default)]
 pub(crate) struct Pipe {
     state: Mutex<State>,
+    _metadata_storage: Option<crate::limits::ExecutionBudgetLease>,
 }
 
 impl Pipe {
     pub(crate) fn new() -> Arc<Self> {
         Arc::new(Self::default())
+    }
+
+    /// Construction storage follows the pipe itself, including a final-stage
+    /// reference that survives until cancelled-request state is reconciled.
+    pub(crate) fn new_admitted(
+        budget: &crate::limits::ExecutionBudget,
+    ) -> crate::error::Result<Arc<Self>> {
+        let storage =
+            budget.lease_bytes(std::mem::size_of::<Self>() + 2 * std::mem::size_of::<usize>())?;
+        Ok(Arc::new(Self {
+            state: Mutex::new(State::default()),
+            _metadata_storage: Some(storage),
+        }))
     }
 
     fn lock(&self) -> MutexGuard<'_, State> {

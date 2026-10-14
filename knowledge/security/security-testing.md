@@ -121,6 +121,15 @@ cancellation checkpoint without growing a buffer after rejection. Resource
 probes run in externally supervised subprocesses; full memory-exhaustion
 payloads are unnecessary.
 
+## Pipeline admission fixtures
+
+`pipeline_admission_*` unit fixtures use ordinary two-stage no-output commands,
+one occupied job slot, zero storage admission, and an inert environment value.
+They assert typed errors, cancellation before construction, atomic shared job
+admission, and lease/slot refunds. `pipeline_admission_tests` compares a tiny
+export-isolation pipeline with real Bash and covers sequential zero-slot and
+lastpipe behavior. These fixtures need no large exported values or fan-out.
+
 ## Adding New Fail Points
 
 Add `fail_point!("module::function", |action| ...)` under

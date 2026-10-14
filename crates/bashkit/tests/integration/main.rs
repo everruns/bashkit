@@ -124,6 +124,7 @@ pub mod od_resource_tests;
 pub mod output_truncation_tests;
 pub mod parallel_sessions_tests;
 pub mod partial_parse_tests;
+pub mod pipeline_admission_tests;
 pub mod pipeline_tests;
 pub mod pr_resource_tests;
 pub mod process_substitution_fd_tests;
