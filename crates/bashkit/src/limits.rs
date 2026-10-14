@@ -1191,12 +1191,26 @@ impl<T> BudgetedVec<T> {
 
 impl<T: Clone> BudgetedVec<T> {
     pub(crate) fn try_extend_from_slice(&mut self, values: &[T]) -> Result<(), LimitExceeded> {
+        self.try_extend_from_slice_with_limit(values, usize::MAX)
+    }
+
+    /// Bound logical length and geometric capacity before allocation.
+    pub(crate) fn try_extend_from_slice_with_limit(
+        &mut self,
+        values: &[T],
+        limit: usize,
+    ) -> Result<(), LimitExceeded> {
         let required = self
             .inner
             .len()
             .checked_add(values.len())
             .ok_or_else(|| LimitExceeded::Memory("intermediate buffer size overflow".into()))?;
-        let capacity = self.growth_capacity(required)?;
+        if required > limit {
+            return Err(LimitExceeded::Memory(
+                "intermediate buffer size limit exceeded".into(),
+            ));
+        }
+        let capacity = self.growth_capacity(required)?.min(limit);
         self.try_reserve_capacity(capacity)?;
         self.inner.extend_from_slice(values);
         Ok(())
@@ -2152,6 +2166,21 @@ mod tests {
             ))
         ));
         assert_eq!(&*bytes, b"1234", "failed growth must not mutate");
+    }
+
+    #[test]
+    fn budgeted_vec_length_cap_also_bounds_geometric_capacity() {
+        let limits = ExecutionLimits::new().max_live_intermediate_bytes(5);
+        let budget = ExecutionBudget::new(&limits, Arc::new(AtomicBool::new(false)));
+        let mut bytes = BudgetedBytes::new(Some(&budget)).unwrap();
+        bytes.try_extend_from_slice_with_limit(b"abc", 5).unwrap();
+        bytes.try_extend_from_slice_with_limit(b"d", 5).unwrap();
+        assert_eq!(budget.live_bytes_for_test(), 5);
+        assert!(bytes.try_extend_from_slice_with_limit(b"ef", 5).is_err());
+        assert_eq!(&*bytes, b"abcd");
+        assert_eq!(budget.live_bytes_for_test(), 5);
+        drop(bytes);
+        assert_eq!(budget.live_bytes_for_test(), 0);
     }
 
     #[test]

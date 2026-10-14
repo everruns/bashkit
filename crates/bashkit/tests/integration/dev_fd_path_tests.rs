@@ -154,3 +154,40 @@ async fn literal_dev_stdin_argument_is_untouched() {
     let (_, r) = run("echo /dev/stdin").await;
     assert_eq!(r.stdout, "/dev/stdin\n");
 }
+
+// Zero admission is a configuration fixture: only a two-byte ordinary input.
+#[tokio::test]
+async fn stream_operand_checks_admission_before_redirect() {
+    let mut bash = Bash::builder()
+        .concurrent_jobs(false)
+        .limits(bashkit::ExecutionLimits::new().max_stderr_bytes(0))
+        .build();
+    let result = bash.exec("printf hi | tee /dev/fd/2 2>/dev/null").await;
+    assert!(matches!(result, Err(bashkit::Error::ResourceLimit(_))));
+    assert!(bash.exec(":").await.unwrap().is_success());
+}
+
+#[tokio::test]
+async fn stream_collection_checks_combined_admission() {
+    let mut bash = Bash::builder()
+        .concurrent_jobs(false)
+        .limits(bashkit::ExecutionLimits::new().max_stdout_bytes(3))
+        .build();
+    let result = bash.exec("printf hi | tee /dev/stdout >/dev/null").await;
+    assert!(matches!(result, Err(bashkit::Error::ResourceLimit(_))));
+}
+
+#[tokio::test]
+async fn stream_aliases_and_append_match_bash() {
+    let script = "printf hi | tee -a /dev/stdout /dev/fd/1 /dev/stderr /dev/fd/2";
+    let (_, result) = run(script).await;
+    assert_eq!(result.stdout, "hihihi");
+    assert_eq!(result.stderr, "hihi");
+    let oracle = std::process::Command::new("bash")
+        .args(["-c", script])
+        .output()
+        .unwrap();
+    assert_eq!(result.stdout.as_bytes(), oracle.stdout);
+    assert_eq!(result.stderr.as_bytes(), oracle.stderr);
+    assert_eq!(Some(result.exit_code), oracle.status.code());
+}

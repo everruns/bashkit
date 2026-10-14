@@ -55,7 +55,8 @@ use super::vfs_join;
 use fail::fail_point;
 
 /// Bytes returned by one read of `/dev/zero` (TM-DOS-003: never unbounded).
-const DEV_ZERO_READ_BYTES: usize = 1 << 20;
+pub(crate) const DEV_ZERO_READ_BYTES: usize = 1 << 20;
+pub(crate) const DEV_RANDOM_READ_BYTES: usize = 8192;
 
 /// In-memory filesystem implementation.
 ///
@@ -534,8 +535,7 @@ impl InMemoryFs {
     /// Returns exactly 8192 bytes to prevent unbounded reads while
     /// supporting common patterns like `od -N8 -tx1 /dev/urandom`.
     fn generate_random_bytes() -> Result<Vec<u8>> {
-        const SIZE: usize = 8192;
-        let mut buf = vec![0; SIZE];
+        let mut buf = vec![0; DEV_RANDOM_READ_BYTES];
         // Important decision: use the OS CSPRNG backing getrandom, not
         // non-CSPRNG hasher seeds, because scripts commonly use these paths
         // for tokens, salts, nonces, and keys.

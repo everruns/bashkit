@@ -9954,7 +9954,9 @@ impl Interpreter {
                 let (fs, capture) = crate::fs::StdStreamsFs::wrap(
                     fs,
                     stdin.map_or(&[][..], crate::StreamData::as_bytes),
-                );
+                    &self.execution_budget,
+                    &self.limits,
+                )?;
                 (fs, Some(capture))
             } else {
                 (fs, None)
@@ -10038,20 +10040,17 @@ impl Interpreter {
                 result.stderr = stderr;
                 diagnostic_storage = Some(storage);
             }
-            if let Some(capture) = std_capture {
-                let capture =
-                    std::mem::take(&mut *capture.lock().unwrap_or_else(|e| e.into_inner()));
-                if !capture.stdout.is_empty() {
-                    result
-                        .stdout
-                        .append(&crate::StreamData::from(capture.stdout));
-                }
-                if !capture.stderr.is_empty() {
-                    result
-                        .stderr
-                        .append(&crate::StreamData::from(capture.stderr));
-                }
-            }
+            // Retain both materialized representations through redirects and
+            // hooks. Collection must not replace admission with a late charge.
+            let std_storage = if let Some(capture) = std_capture {
+                Some(capture.lock().unwrap_or_else(|e| e.into_inner()).collect(
+                    &mut result,
+                    &self.execution_budget,
+                    &self.limits,
+                )?)
+            } else {
+                None
+            };
             self.execution_budget.consume_work(
                 u64::try_from(
                     result
@@ -10068,6 +10067,7 @@ impl Interpreter {
             let result = self.apply_redirections(result, redirects).await?;
             let result = self.apply_after_tool(name, result);
             drop(diagnostic_storage);
+            drop(std_storage);
             result
         })
     }
