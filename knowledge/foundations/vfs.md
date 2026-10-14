@@ -224,6 +224,25 @@ same stream (`tee /dev/stdout` prints its copies back to back, as through a
 pipe). Only fds 0-2: `/dev/fd/63` stays a real file for process
 substitution.
 
+`StdStreamsFs` receives the shared `ExecutionBudget` and stream ceilings.
+Both write and append paths use `BudgetedBytes`: logical size and planned
+capacity are admitted before growth; every write, including empty writes,
+charges work and checks cancellation/deadlines. Combined builtin/capture
+bytes are admitted before collection, and lossy cached text is built directly
+into `BudgetedString`; byte/text leases remain held through redirects and
+result hooks. A refused stream admission returns a resource-limit error even
+when an outer redirect would discard the stream.
+
+The wrapper's stdin snapshot and returned fd-0 copies reserve retained capacity.
+Because `FileSystem::read_file` returns a plain `Vec`, the wrapper retains each
+copy's lease (and the lease-vector capacity) conservatively until it drops.
+Copy from fd 0 borrows admitted stdin. Copies involving another stream admit
+temporary source storage from backend metadata before reading and retain it
+through the destination write. Canonical system-device read ceilings apply even
+when metadata reports zero; source aliases resolve before that admission.
+Ordinary copies still delegate to the backend.
+Backend metadata/read-size correctness remains the filesystem contract.
+
 #### /dev/zero
 Handled in `InMemoryFs`: every read returns `DEV_ZERO_READ_BYTES` (1 MiB)
 of zeros, writes and appends are discarded like `/dev/null`. The directory

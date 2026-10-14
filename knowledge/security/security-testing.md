@@ -144,6 +144,20 @@ amplification reproducer is needed for these admission contracts.
 See [Builtins](../foundations/builtins.md) and TM-DOS-126 in the
 [Threat Model](threat-model.md).
 
+## Standard-stream capture admission
+
+`fs::std_streams::tests` uses at most a few bytes per buffer. It checks
+shared capacity admission before growth, alias/write/append atomicity,
+empty-write work and cancellation, retained collection byte/text leases,
+lossy UTF-8 boundaries, stdin copy/container ownership, and temporary-copy
+admission with ordinary filesystem pass-through. Zero device-copy admission
+checks only a numeric read ceiling and never loads device bytes. The numeric
+`budgeted_vec_length_cap_also_bounds_geometric_capacity` fixture checks a
+five-byte ceiling without a large allocation. `dev_fd_path_tests` adds
+zero/three-byte admission configurations, session recovery, discarded
+redirects, and a two-byte alias/append comparison with real Bash.
+No amplified-output or host-exhaustion workload is required.
+
 ## Adding New Fail Points
 
 Add `fail_point!("module::function", |action| ...)` under

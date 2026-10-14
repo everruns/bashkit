@@ -28,6 +28,16 @@ job slot. Exceeding a limit returns a resource-limit error. Pipelines within
 these budgets keep their streaming, isolation and `PIPESTATUS` behavior;
 `concurrent_jobs(false)` uses sequential stages without producer slots.
 
+Builtin file operands for `/dev/stdout`, `/dev/stderr`, `/dev/fd/1` and
+`/dev/fd/2` share the request's `max_live_intermediate_bytes` budget.
+Capture reserves capacity before each write or append and obeys
+`max_stdout_bytes` / `max_stderr_bytes` before growth and combined collection.
+Cached text and stdin copies are also admitted; collection retains its storage
+charges through redirects and hooks. Every write checks work, cancellation
+and deadlines. Refused admission returns a resource-limit error even when
+output would be discarded by a redirect. Ordinary aliases and append/copy
+semantics remain unchanged within the configured budgets.
+
 `dd conv=sync` checks its padded block length against the 64 MiB copy cap
 before allocating or zero-filling. Copied payload capacity also counts against
 `max_live_intermediate_bytes` until output handling completes, including when
