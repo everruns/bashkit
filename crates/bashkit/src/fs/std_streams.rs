@@ -558,19 +558,29 @@ mod tests {
         assert!(cap.lock().unwrap().stderr.is_empty());
     }
     #[tokio::test]
-    async fn zero_admission_rejects_device_copy_before_read() {
+    async fn windows_containment_stream_copy_admits_device_before_read() {
         let limits = ExecutionLimits::new().max_stdout_bytes(0);
         let budget = test_budget(&limits);
-        let (fs, cap) =
-            StdStreamsFs::wrap(Arc::new(InMemoryFs::new()), b"", &budget, &limits).unwrap();
+        let inner: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
+        inner
+            .symlink(Path::new("/dev/urandom"), Path::new("/tmp/device-alias"))
+            .await
+            .unwrap();
+        let (fs, cap) = StdStreamsFs::wrap(inner, b"", &budget, &limits).unwrap();
         // Metadata is zero; only numeric device capacity is inspected. No
         // random bytes are read or allocated under zero destination admission.
-        let error = fs
-            .copy(Path::new("/dev/urandom"), Path::new("/dev/stdout"))
-            .await
-            .unwrap_err();
-        assert!(matches!(error, crate::Error::ResourceLimit(_)));
-        assert_eq!(budget.live_bytes_for_test(), 0);
-        assert!(cap.lock().unwrap().stdout.is_empty());
+        for source in ["/dev/urandom", "/tmp/device-alias"] {
+            let error = fs
+                .copy(Path::new(source), Path::new("/dev/stdout"))
+                .await
+                .unwrap_err();
+            assert!(matches!(
+                error,
+                crate::Error::ResourceLimit(LimitExceeded::Memory(message))
+                    if message == "stream copy size limit exceeded"
+            ));
+            assert_eq!(budget.live_bytes_for_test(), 0);
+            assert!(cap.lock().unwrap().stdout.is_empty());
+        }
     }
 }
