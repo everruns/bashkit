@@ -151,7 +151,10 @@ shared capacity admission before growth, alias/write/append atomicity,
 empty-write work and cancellation, retained collection byte/text leases,
 lossy UTF-8 boundaries, stdin copy/container ownership, and temporary-copy
 admission with ordinary filesystem pass-through. Zero device-copy admission
-checks only a numeric read ceiling and never loads device bytes. The numeric
+checks only a numeric read ceiling and never loads device bytes. Its
+`windows_containment_` name also includes it in the existing Windows job; the
+assertion requires the pre-read admission error for direct and absolute-symlink
+sources. The numeric
 `budgeted_vec_length_cap_also_bounds_geometric_capacity` fixture checks a
 five-byte ceiling without a large allocation. `dev_fd_path_tests` adds
 zero/three-byte admission configurations, session recovery, discarded

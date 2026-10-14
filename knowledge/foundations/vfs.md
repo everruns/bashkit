@@ -239,7 +239,8 @@ copy's lease (and the lease-vector capacity) conservatively until it drops.
 Copy from fd 0 borrows admitted stdin. Copies involving another stream admit
 temporary source storage from backend metadata before reading and retain it
 through the destination write. Canonical system-device read ceilings apply even
-when metadata reports zero; source aliases resolve before that admission.
+when metadata reports zero; source aliases resolve and normalize back to POSIX
+VFS spelling before that admission, including on Windows.
 Ordinary copies still delegate to the backend.
 Backend metadata/read-size correctness remains the filesystem contract.
 
@@ -389,7 +390,8 @@ their `stat` is an `lstat`, and they refuse to read or write through a link.
   directory, `..` clamped at `/` (TM-ESC-002). Writes through a dangling link
   create the target.
 - Recursive `find` and `grep` share `fs::canonicalize`, resolving links through
-  `lstat`/`read_link` with the same 40-hop cap. Walkers compare resolved ancestor
+  `lstat`/`read_link` with the same 40-hop cap. It uses VFS joins and root-aware
+  symlink targets on every host. Walkers compare resolved ancestor
   paths to reject directory cycles; the per-lookup cap alone cannot bound fan-out.
 - At most 40 links per lookup, then "Too many levels of symbolic links"
   (TM-DOS-011). `exists` is false for dangling and looping links.
