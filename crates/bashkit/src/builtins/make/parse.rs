@@ -2,11 +2,12 @@
 //! assignments and rules. Targets and prerequisites are expanded while
 //! parsing (like GNU make); recipes are kept raw and expanded when run.
 
+use crate::limits::{BudgetedString, ExecutionBudget};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use super::expand::{
-    Expander, Message, Need, Oracle, Origin, R, Stop, Var, Vars, fatal, top_level_find, words,
+    Expander, Message, Need, Oracle, Origin, R, Stop, Text, Var, Vars, fatal, top_level_find, words,
 };
 
 /// `include` nesting cap (an include cycle would otherwise never end).
@@ -81,6 +82,7 @@ struct Cond {
 struct Parser<'a> {
     mk: Makefile,
     oracle: &'a Oracle,
+    budget: Option<&'a ExecutionBudget>,
     curdir: &'a str,
     env_override: bool,
     current: Current,
@@ -96,6 +98,7 @@ pub(super) struct ParseInput<'a> {
     pub vars: Vars,
     pub curdir: &'a str,
     pub env_override: bool,
+    pub budget: Option<&'a ExecutionBudget>,
 }
 
 /// `partial` receives `$(info)`/`$(warning)` output printed before a fatal
@@ -111,6 +114,7 @@ pub(super) fn parse(
             ..Default::default()
         },
         oracle,
+        budget: input.budget,
         curdir: input.curdir,
         env_override: input.env_override,
         current: Current::None,
@@ -171,9 +175,10 @@ impl Parser<'_> {
             self.curdir,
             Some((file.to_string(), line)),
         )
+        .with_budget(self.budget)
     }
 
-    fn expand(&mut self, s: &str, file: &str, line: usize) -> R<String> {
+    fn expand(&mut self, s: &str, file: &str, line: usize) -> R<Text> {
         let mut e = self.expander(file, line);
         let r = e.expand(s);
         let msgs = std::mem::take(&mut e.messages);
@@ -505,7 +510,7 @@ impl Parser<'_> {
         };
         let var = match op {
             "=" => Var {
-                value: value.to_string(),
+                value: value.to_string().into(),
                 recursive: true,
                 origin,
             },
@@ -519,7 +524,7 @@ impl Parser<'_> {
                     return Ok(());
                 }
                 Var {
-                    value: value.to_string(),
+                    value: value.to_string().into(),
                     recursive: true,
                     origin,
                 }
@@ -527,14 +532,25 @@ impl Parser<'_> {
             "+=" => match existing {
                 Some(e) => {
                     let add = if e.recursive {
-                        value.to_string()
+                        value.to_string().into()
                     } else {
                         self.expand(value, file, lineno)?
                     };
                     let joined = if e.value.is_empty() {
                         add
                     } else {
-                        format!("{} {add}", e.value)
+                        let mut joined =
+                            BudgetedString::new(self.budget).map_err(|error| Stop::Fatal {
+                                loc: Some((file.to_string(), lineno)),
+                                msg: error.to_string(),
+                            })?;
+                        for part in [&*e.value, " ", &*add] {
+                            joined.try_push_str(part).map_err(|error| Stop::Fatal {
+                                loc: Some((file.to_string(), lineno)),
+                                msg: error.to_string(),
+                            })?;
+                        }
+                        Text::from_buffer(joined)
                     };
                     Var {
                         value: joined,
@@ -547,7 +563,7 @@ impl Parser<'_> {
                     }
                 }
                 None => Var {
-                    value: value.to_string(),
+                    value: value.to_string().into(),
                     recursive: true,
                     origin,
                 },
@@ -555,12 +571,12 @@ impl Parser<'_> {
             // `!=`: run the value as a shell command now.
             _ => {
                 let cmd = self.expand(value, file, lineno)?;
-                let out = match self.oracle.shell.get(&cmd) {
+                let out = match self.oracle.shell.get(&*cmd) {
                     Some(o) => o.clone(),
-                    None => return Err(Stop::Need(Need::Shell(cmd))),
+                    None => return Err(Stop::Need(Need::Shell(cmd.to_string()))),
                 };
                 Var {
-                    value: out,
+                    value: out.into(),
                     recursive: false,
                     origin,
                 }
@@ -574,7 +590,7 @@ impl Parser<'_> {
         self.mk.vars.insert(
             name.to_string(),
             Var {
-                value,
+                value: value.into(),
                 recursive: false,
                 origin,
             },
@@ -640,7 +656,7 @@ impl Parser<'_> {
         // Static pattern rule: `targets: target-pattern: prereq-patterns`.
         let (static_pat, prereq_text) = match expanded.split_once(':') {
             Some((tp, pp)) => (Some(tp.trim().to_string()), pp.to_string()),
-            None => (None, expanded),
+            None => (None, expanded.to_string()),
         };
         let (normal, order): (Vec<String>, Vec<String>) = {
             let mut normal = Vec::new();
@@ -887,6 +903,7 @@ mod tests {
                 vars: Vars::new(),
                 curdir: "/w",
                 env_override: false,
+                budget: None,
             },
             &oracle,
             &mut Vec::new(),
@@ -905,8 +922,8 @@ mod tests {
              %.o: %.c\n\t$(CC) -c $<\nclean: ; rm -f prog\n",
         );
         assert_eq!(mk.default_goal.as_deref(), Some("all"));
-        assert_eq!(mk.vars["OBJ"].value, "a.o b.o");
-        assert_eq!(mk.vars["MODE"].value, "yes");
+        assert_eq!(&*mk.vars["OBJ"].value, "a.o b.o");
+        assert_eq!(&*mk.vars["MODE"].value, "yes");
         let prog = &mk.rules["prog"];
         assert_eq!(prog.prereqs, vec!["a.o", "b.o"]);
         assert_eq!(prog.order_only, vec!["outdir"]);
@@ -930,7 +947,7 @@ mod tests {
         let mk = parse_str(
             "define GREET\necho hi\necho there\nendef\nobjs = x.o y.o\n$(objs): %.o: %.c\n\tcc $<\n.c.o:\n\tcc -c $<\n",
         );
-        assert_eq!(mk.vars["GREET"].value, "echo hi\necho there");
+        assert_eq!(&*mk.vars["GREET"].value, "echo hi\necho there");
         assert_eq!(mk.rules["x.o"].prereqs, vec!["x.c"]);
         assert_eq!(mk.rules["y.o"].stem.as_deref(), Some("y"));
         assert_eq!(mk.patterns[0].targets, vec!["%.o"]);
@@ -947,6 +964,7 @@ mod tests {
                 vars: Vars::new(),
                 curdir: "/w",
                 env_override: false,
+                budget: None,
             },
             &oracle,
             &mut Vec::new(),
@@ -954,6 +972,39 @@ mod tests {
         assert!(
             matches!(r, Err(Stop::Fatal { ref msg, loc: Some((_, 2)) }) if msg == "missing separator")
         );
+    }
+
+    #[test]
+    fn substitution_assignment_values_keep_and_release_leases() {
+        use std::sync::atomic::AtomicBool;
+        let budget = ExecutionBudget::new(
+            &crate::ExecutionLimits::new().max_live_intermediate_bytes(16),
+            Arc::new(AtomicBool::new(false)),
+        );
+        let oracle = Oracle::default();
+        let mut mk = parse(
+            ParseInput {
+                name: "Makefile",
+                text: "A := $(subst x,ab,xx)\nB := $(subst y,cd,yy)\n",
+                vars: Vars::new(),
+                curdir: "/w",
+                env_override: false,
+                budget: Some(&budget),
+            },
+            &oracle,
+            &mut Vec::new(),
+        )
+        .unwrap();
+        assert_eq!(&*mk.vars["A"].value, "abab");
+        assert_eq!(&*mk.vars["B"].value, "cdcd");
+        let shared = mk.vars.clone();
+        let spare = budget.lease_bytes(8).unwrap();
+        mk.vars.remove("A");
+        drop(mk);
+        drop(shared);
+        let released = budget.lease_bytes(8).unwrap();
+        drop((spare, released));
+        assert!(budget.lease_bytes(16).is_ok());
     }
 
     #[test]

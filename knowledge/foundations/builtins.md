@@ -530,6 +530,19 @@ interleave with recipe output in order. Expansion is synchronous: a `$(shell)`,
 and parsing restarts with the answer cached. Messages and exit codes follow GNU
 (`*** No rule to make target`, `Error N`, `-k`, `-q` exit 1, `-n`).
 
+`$(subst)` counts non-overlapping UTF-8 matches and computes the exact result
+length with checked arithmetic before construction, admitting it against the
+remaining 4 MiB expansion allowance. `BudgetedString` reserves each capacity
+growth before allocation; arguments, result and parent expansion copies share
+the request's live-memory budget. Expanded variable values are immutable,
+reference-counted owners of that storage and its lease, so parser scratch views
+share them and replacement releases the old value after its last owner drops.
+Prepared recipes and expanded exports retain their generated storage too.
+Both substitution passes charge work and check cancellation/deadlines. Empty
+patterns still return the input unchanged. Other Make function algorithms and
+raw makefile storage retain their existing behavior; this contract concerns
+substitution and the generated expansion buffers that carry its results.
+
 Deliberate gaps are L-MAKE-001..003 in
 [Known Limitations](../operations/limitations.md); amplification caps are
 TM-DOS-126 in the [Threat Model](../security/threat-model.md).
