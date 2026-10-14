@@ -121,6 +121,20 @@ cancellation checkpoint without growing a buffer after rejection. Resource
 probes run in externally supervised subprocesses; full memory-exhaustion
 payloads are unnecessary.
 
+## Make Substitution Admission
+
+`builtins::make::expand::tests::subst_*` covers checked result-size arithmetic,
+remaining allowance, non-overlapping Unicode/empty-pattern semantics, and tiny
+shared live-memory/work/cancellation budgets. Near-cap tests modify only a
+numeric counter; the rejected result would contain four bytes. Overflow tests
+operate on lengths without allocating them. Parser ownership tests retain two
+four-byte results and verify shared clones and final lease release.
+`make_substitution_tests` exercises ordinary immediate/recursive/append
+assignments and recipes through `Bash::exec`. No allocation or recursive
+amplification reproducer is needed for these admission contracts.
+See [Builtins](../foundations/builtins.md) and TM-DOS-126 in the
+[Threat Model](threat-model.md).
+
 ## Adding New Fail Points
 
 Add `fail_point!("module::function", |action| ...)` under

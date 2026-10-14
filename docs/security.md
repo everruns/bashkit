@@ -64,6 +64,15 @@ resource-limit error; a later host execution starts with a fresh budget. Stdout
 capture limits remain downstream, so pipelines and redirects receive complete
 join output when it fits the execution budget.
 
+Make's `$(subst)` checks its exact replacement length against the remaining
+4 MiB expansion allowance before constructing the result. Its generated
+arguments, output and parent expansion buffers reserve capacity against
+`max_live_intermediate_bytes` before growth. Expanded variable values retain
+their storage leases until replacement or the end of the Make run; shared
+parser views share the same storage. Matching and copying consume the request's
+work budget and check cancellation and deadlines. Empty patterns and ordinary
+Unicode substitution keep their existing behavior.
+
 `cd` searches `CDPATH` one candidate at a time. Temporary path and
 normalization storage is reserved against `max_live_intermediate_bytes`
 before allocation. Searches also consume the shared work budget and check
