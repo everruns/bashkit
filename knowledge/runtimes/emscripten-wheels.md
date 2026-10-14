@@ -20,7 +20,7 @@ Implemented (reduced feature set). CI build + smoke test green; PyPI publish wir
 Bashkit ships an additional Python wheel targeting `wasm32-unknown-emscripten`
 (the Pyodide ABI), so `bashkit` runs **in the browser, JupyterLite, and other
 WASM hosts** with no native toolchain. Reduced-feature variant of the native
-package: in-VFS shell plus embedded `jq` and Monty `python`, driven through
+package: in-VFS shell plus embedded `jq`, Monty `python`, and ZapCode TypeScript, driven through
 blocking `execute_sync()`. Approach mirrors Pydantic's Emscripten-wheel
 recipe (<https://pydantic.dev/articles/emscripten-wheels-pydantic>).
 
@@ -43,7 +43,7 @@ is confined to `crates/bashkit-python`.
 ## Feature surface: native vs wasm
 
 Present on both: `Bash`/`BashTool`/`ScriptedTool`, `execute_sync()` /
-`execute_sync_or_throw()`, Monty `python=True`, `jq`, sync custom-builtin
+`execute_sync_or_throw()`, Monty `python=True`, `BashTool(typescript=True)`, `jq`, sync custom-builtin
 callbacks, async custom-builtin callbacks (wasm: private-loop fallback only,
 no caller-loop).
 
@@ -64,13 +64,13 @@ Per-target dependency split:
 
 ```toml
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-bashkit = { path = "../bashkit", features = ["python","realfs","jq","interop","http_client","sqlite"] }
+bashkit = { path = "../bashkit", features = ["python","typescript","realfs","jq","interop","http_client","sqlite"] }
 bashkit-scripted-tool = { path = "../bashkit-scripted-tool", features = ["python","jq"] }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 pyo3-async-runtimes = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-bashkit = { path = "../bashkit", features = ["python","jq"] }
+bashkit = { path = "../bashkit", features = ["python","typescript","jq"] }
 bashkit-scripted-tool = { path = "../bashkit-scripted-tool", features = ["python","jq"] }
 tokio = { workspace = true }   # wasm-safe base features only
 ```

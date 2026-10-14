@@ -1114,6 +1114,8 @@ class BashTool:
         custom_builtins: Mapping[str, BuiltinCallback] | None = None,
         network: NetworkConfig | None = None,
         profile: ExecutionProfile = ExecutionProfile.Standard,
+        python: bool = False,
+        typescript: bool = False,
     ) -> None:
         """Create a new BashTool.
 
@@ -1145,6 +1147,14 @@ class BashTool:
             network: Optional outbound HTTP / network configuration. See
                 ``Bash.__init__`` for accepted keys. Preserved across
                 ``reset()`` and ``from_snapshot()``.
+            profile: Execution profile (Standard or Compatibility).
+            python: Register sandboxed Monty Python (default ``False``).
+            typescript: Register sandboxed ZapCode TypeScript (default ``False``).
+
+        Embedded runtimes share the shell's virtual filesystem and stay enabled
+        after ``reset()``. Python additionally requires the host to provide
+        ``env={"BASHKIT_ALLOW_INPROCESS_PYTHON": "1"}`` at construction.
+        An agent script cannot grant this permission with ``export``.
 
         Example::
 
@@ -1155,6 +1165,13 @@ class BashTool:
             ... )
             >>> print(tool.name)
             bash
+            >>> tool = BashTool(
+            ...     python=True,
+            ...     typescript=True,
+            ...     env={"BASHKIT_ALLOW_INPROCESS_PYTHON": "1"},
+            ... )
+            >>> tool.execute_sync("python -c 'print(21)' && ts -c '21'").stdout
+            '21\\n21\\n'
         """
         ...
 
@@ -1412,6 +1429,8 @@ class BashTool:
         custom_builtins: Mapping[str, BuiltinCallback] | None = None,
         network: NetworkConfig | None = None,
         profile: ExecutionProfile = ExecutionProfile.Standard,
+        python: bool = False,
+        typescript: bool = False,
     ) -> BashTool:
         """Create a new ``BashTool`` from snapshot bytes and optional constructor kwargs."""
         ...
@@ -1435,6 +1454,8 @@ class BashTool:
         custom_builtins: Mapping[str, BuiltinCallback] | None = None,
         network: NetworkConfig | None = None,
         profile: ExecutionProfile = ExecutionProfile.Standard,
+        python: bool = False,
+        typescript: bool = False,
     ) -> BashTool:
         """Create a new ``BashTool`` from HMAC-protected snapshot bytes."""
         ...

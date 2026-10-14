@@ -38,7 +38,7 @@ A dash means the feature is intentionally unsupported and has a recorded reason 
 | Filesystem mounts beyond seeded virtual files | ✅ | ✅ | — | ✅ | ✅ | ✅ | — | — |
 | Snapshot and restore of interpreter state | ✅ | — | — | — | ✅ | ✅ | ✅ | — |
 | Explicit embedded Python opt-in | ✅ | ✅ | — | ✅ | ✅ | ✅ | — | — |
-| Explicit embedded TypeScript opt-in | ✅ | ✅ | — | — | — | — | — | — |
+| Explicit embedded TypeScript opt-in | ✅ | ✅ | — | — | ✅ | — | — | — |
 | Explicit embedded SQLite opt-in | ✅ | ✅ | — | ✅ | ✅ | ✅ | — | — |
 | In-process interactive terminal session (keystrokes in, screen text and per-command transcript out; vi, less) | ✅ | — | — | — | ✅ | ✅ | — | — |
 
@@ -94,7 +94,6 @@ A dash means the feature is intentionally unsupported and has a recorded reason 
 - `stdin`: execute() accepts a command string and optional output callback, not top-level host stdin.
 - `host_call_suspension`: Python custom builtins await callbacks directly; no request and resume handle is exposed.
 - `transport_hooks`: Python exposes network policy and credentials but no custom HttpTransport implementation hook.
-- `runtime_typescript`: The Python package does not compile or expose the TypeScript runtime.
 
 ### NAPI JavaScript
 

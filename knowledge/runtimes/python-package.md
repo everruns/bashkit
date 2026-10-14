@@ -85,6 +85,37 @@ text-oriented VFS helpers (`read_file`, `write_file`, `append_file`, `mkdir`,
 `ls`, `glob`); LLM metadata (`name`, `short_description`, `description()`,
 `help()`, `system_prompt()`, `input_schema()`, `output_schema()`, `version`).
 
+### Embedded tool runtimes
+
+`BashTool(python=True, typescript=True)` registers Monty Python (`python`/`python3`)
+and ZapCode TypeScript (`ts`/`node`) in the same VFS as Bash. Both flags default
+to `False`. They configure the live interpreter and LLM metadata together, and
+are replayed on `reset()`. The Python crate enables the existing TypeScript
+core feature in native and Emscripten builds; command registration stays opt-in.
+`Bash` keeps its existing Python configuration.
+
+Python's existing host permission remains separate from registration:
+construct with `env={"BASHKIT_ALLOW_INPROCESS_PYTHON": "1"}`. The builtin
+captures this grant at construction, so an agent's `export` cannot enable it.
+Do not infer permission from untrusted script contents. See
+[Python Builtin](python-builtin.md) and [ZapCode Runtime](zapcode-runtime.md).
+
+LangChain's `BashkitTool` / `create_bash_tool`, deepagents' `BashkitMiddleware` /
+`create_bash_middleware`, and `BashkitBackend` forward `python`, `typescript`,
+and `env` to their native tool. Backend-created middleware shares the configured
+tool and VFS. Initial env forwarding lets the host grant Python explicitly
+without weakening the runtime gate.
+
+Snapshot factories (`from_snapshot` / `from_snapshot_keyed`) accept the same
+runtime flags and host env. Hosts supply them when reconstructing a tool;
+snapshot bytes do not grant permission to enable Python. In-place restore and
+reset retain the host's runtime selection.
+
+Regression evidence: `crates/bashkit-python/tests/test_tool_runtimes.py` covers
+defaults, independent runtime selection, metadata, sync/async execution, shared
+VFS, reset, keyed/unkeyed snapshot factories, framework forwarding, invalid
+programs, and rejection of script-only Python opt-in.
+
 ### Runtime host mutations
 
 `set_env()` and runtime `mount()` are recorded and replayed on every rebuild,

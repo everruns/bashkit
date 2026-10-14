@@ -137,7 +137,7 @@
     },
     "python": {
       "label": "Python",
-      "supported": ["execution_limits", "cancellation", "deadlines", "output_caps", "cwd", "env", "runtime_env", "custom_builtins", "tool_callbacks", "network_policy", "virtual_filesystem", "mounts", "snapshots", "runtime_python", "runtime_sqlite", "interactive_terminal"],
+      "supported": ["execution_limits", "cancellation", "deadlines", "output_caps", "cwd", "env", "runtime_env", "custom_builtins", "tool_callbacks", "network_policy", "virtual_filesystem", "mounts", "snapshots", "runtime_python", "runtime_typescript", "runtime_sqlite", "interactive_terminal"],
       "evidence": {
         "execution_limits": ["crates/bashkit-python/tests/_bashkit_categories.py#test_max_commands_limits_execution"],
         "cancellation": ["crates/bashkit-python/tests/_bashkit_categories.py#test_bash_cancel_after_reset_still_works"],
@@ -153,14 +153,14 @@
         "mounts": ["crates/bashkit-python/tests/_bashkit_categories.py#test_bash_live_mount_preserves_state_and_unmounts"],
         "snapshots": ["crates/bashkit-python/tests/_bashkit_categories.py#test_bash_snapshot_roundtrip_from_snapshot_preserves_state_and_kwargs"],
         "runtime_python": ["crates/bashkit-python/tests/_bashkit_categories.py#test_bash_python_enabled"],
+        "runtime_typescript": ["crates/bashkit-python/tests/test_tool_runtimes.py#test_runtimes_share_virtual_filesystem"],
         "runtime_sqlite": ["crates/bashkit-python/tests/test_sqlite.py#test_sqlite"],
         "interactive_terminal": ["crates/bashkit-python/tests/test_terminal.py#test_call_edits_file_in_vi"]
       },
       "unsupported": {
         "stdin": "execute() accepts a command string and optional output callback, not top-level host stdin.",
         "host_call_suspension": "Python custom builtins await callbacks directly; no request and resume handle is exposed.",
-        "transport_hooks": "Python exposes network policy and credentials but no custom HttpTransport implementation hook.",
-        "runtime_typescript": "The Python package does not compile or expose the TypeScript runtime."
+        "transport_hooks": "Python exposes network policy and credentials but no custom HttpTransport implementation hook."
       }
     },
     "napi": {

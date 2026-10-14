@@ -41,11 +41,32 @@ request), use the awaitable `execute()` instead:
 result = await bash.execute("echo hi | my_async_tool")
 ```
 
-## Embedded Python
+## Embedded Python and TypeScript
 
-Bashkit can also run Python *inside* the shell via the embedded Monty runtime,
-enable it with `Bash(python=True)`. That is a different feature from embedding
-Bashkit in your Python app; see the [Python builtin](../crates/bashkit/docs/python.md) guide.
+Native wheels can run Python and TypeScript *inside* the shell. Both runtimes
+are disabled by default; opt in with `python=True` and `typescript=True`.
+Python also requires a host-supplied environment gate:
+
+```python
+from bashkit import BashTool
+
+bash = BashTool(
+    python=True,
+    typescript=True,
+    env={"BASHKIT_ALLOW_INPROCESS_PYTHON": "1"},
+)
+assert bash.execute_sync("python -c 'print(42)'").stdout == "42\n"
+assert bash.execute_sync("ts -c '42'").stdout == "42\n"
+```
+
+Scripts cannot grant Python permission by exporting the gate variable. Runtime
+flags survive `reset()`; supply them again when constructing from a snapshot.
+LangChain's `BashkitTool` and deepagents' middleware/backend accept the same
+flags.
+
+This differs from embedding Bashkit in your Python application; see the
+[Python builtin](../crates/bashkit/docs/python.md) and
+[TypeScript builtin](../crates/bashkit/docs/typescript.md) guides.
 
 ## Examples
 

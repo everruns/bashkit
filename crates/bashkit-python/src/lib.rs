@@ -5564,6 +5564,9 @@ pub struct BashTool {
     cwd: Option<String>,
     /// Initial environment variables (mirrors `Bash::builder().env()`).
     env: Option<HashMap<String, String>>,
+    /// Opt-in runtimes, replayed for resets, snapshots, and tool metadata.
+    python: bool,
+    typescript: bool,
     /// Tracking list for `is_async` flag detection (used by session capture).
     /// Kept in sync with `host_registry` by `add_builtin` / `remove_builtin`.
     /// Wrapped in `Arc<StdMutex<_>>` so post-construction registration works
@@ -5607,6 +5610,12 @@ impl BashTool {
     fn build_live_builder(&self, py: Python<'_>) -> PyResult<bashkit::BashBuilder> {
         let profile = self.profile.core();
         let mut builder = Bash::builder().profile(profile.clone());
+        if self.python {
+            builder = builder.python();
+        }
+        if self.typescript {
+            builder = builder.typescript();
+        }
 
         if let Some(ref username) = self.username {
             builder = builder.username(username);
@@ -5661,6 +5670,12 @@ impl BashTool {
     fn build_rust_tool(&self) -> PyResult<RustBashTool> {
         let profile = self.profile.core();
         let mut builder = RustBashTool::builder().profile(profile.clone());
+        if self.python {
+            builder = builder.python();
+        }
+        if self.typescript {
+            builder = builder.typescript();
+        }
 
         if let Some(ref username) = self.username {
             builder = builder.username(username);
@@ -5728,6 +5743,8 @@ impl BashTool {
         custom_builtins=None,
         network=None,
         profile=PyExecutionProfile::Standard,
+        python=false,
+        typescript=false,
     ))]
     fn new(
         py: Python<'_>,
@@ -5746,9 +5763,17 @@ impl BashTool {
         custom_builtins: Option<&Bound<'_, PyDict>>,
         network: Option<&Bound<'_, PyDict>>,
         profile: PyExecutionProfile,
+        python: bool,
+        typescript: bool,
     ) -> PyResult<Self> {
         let core_profile = profile.core();
         let mut builder = Bash::builder().profile(core_profile.clone());
+        if python {
+            builder = builder.python();
+        }
+        if typescript {
+            builder = builder.typescript();
+        }
 
         if let Some(ref u) = username {
             builder = builder.username(u);
@@ -5817,6 +5842,8 @@ impl BashTool {
             hostname,
             cwd,
             env,
+            python,
+            typescript,
             custom_builtins: Arc::new(StdMutex::new(custom_builtins)),
             runtime_env: Arc::new(StdMutex::new(Vec::new())),
             runtime_mounts: Arc::new(StdMutex::new(Vec::new())),
@@ -6113,6 +6140,8 @@ impl BashTool {
         custom_builtins=None,
         network=None,
         profile=PyExecutionProfile::Standard,
+        python=false,
+        typescript=false,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn from_snapshot(
@@ -6133,6 +6162,8 @@ impl BashTool {
         custom_builtins: Option<&Bound<'_, PyDict>>,
         network: Option<&Bound<'_, PyDict>>,
         profile: PyExecutionProfile,
+        python: bool,
+        typescript: bool,
     ) -> PyResult<Self> {
         let tool = Self::new(
             py,
@@ -6151,6 +6182,8 @@ impl BashTool {
             custom_builtins,
             network,
             profile,
+            python,
+            typescript,
         )?;
         tool.restore_snapshot(py, data)?;
         Ok(tool)
@@ -6176,6 +6209,8 @@ impl BashTool {
         custom_builtins=None,
         network=None,
         profile=PyExecutionProfile::Standard,
+        python=false,
+        typescript=false,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn from_snapshot_keyed(
@@ -6197,6 +6232,8 @@ impl BashTool {
         custom_builtins: Option<&Bound<'_, PyDict>>,
         network: Option<&Bound<'_, PyDict>>,
         profile: PyExecutionProfile,
+        python: bool,
+        typescript: bool,
     ) -> PyResult<Self> {
         let tool = Self::new(
             py,
@@ -6215,6 +6252,8 @@ impl BashTool {
             custom_builtins,
             network,
             profile,
+            python,
+            typescript,
         )?;
         tool.restore_snapshot_keyed(py, data, key)?;
         Ok(tool)

@@ -84,6 +84,28 @@ bash = Bash(
 )
 ```
 
+### Embedded Python and TypeScript
+
+Native wheels include both runtimes, disabled by default. Enable only those
+your application needs:
+
+```python
+from bashkit import BashTool
+
+# Python also requires host opt-in; scripts cannot set this permission.
+tool = BashTool(
+    python=True,
+    typescript=True,
+    env={"BASHKIT_ALLOW_INPROCESS_PYTHON": "1"},
+)
+assert tool.execute_sync("python -c 'print(42)'").stdout == "42\n"
+assert tool.execute_sync("ts -c '42'").stdout == "42\n"
+```
+
+LangChain's `BashkitTool` and deepagents' middleware/backend accept the same
+flags. Runtime flags survive `reset()`; supply them explicitly when restoring
+with `BashTool.from_snapshot()` or `BashTool.from_snapshot_keyed()`.
+
 ### Live Output
 
 ```python

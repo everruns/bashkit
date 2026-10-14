@@ -590,7 +590,7 @@ Adds LLM-facing contract metadata (``description``, ``system_prompt``,
 ### Constructor
 
 ```python
-BashTool(username: str | None = None, hostname: str | None = None, cwd: str | None = None, env: Mapping[str, str] | None = None, max_commands: int | None = None, max_loop_iterations: int | None = None, max_memory: int | None = None, timeout_seconds: float | None = None, files: dict[str, str | Callable[[], str]] | None = None, mounts: list[dict[str, Any]] | None = None, allowed_mount_paths: list[str] | None = None, readonly_filesystem: bool = False, custom_builtins: Mapping[str, BuiltinCallback] | None = None, network: NetworkConfig | None = None, profile: ExecutionProfile = ExecutionProfile.Standard) -> None
+BashTool(username: str | None = None, hostname: str | None = None, cwd: str | None = None, env: Mapping[str, str] | None = None, max_commands: int | None = None, max_loop_iterations: int | None = None, max_memory: int | None = None, timeout_seconds: float | None = None, files: dict[str, str | Callable[[], str]] | None = None, mounts: list[dict[str, Any]] | None = None, allowed_mount_paths: list[str] | None = None, readonly_filesystem: bool = False, custom_builtins: Mapping[str, BuiltinCallback] | None = None, network: NetworkConfig | None = None, profile: ExecutionProfile = ExecutionProfile.Standard, python: bool = False, typescript: bool = False) -> None
 ```
 
 Create a new BashTool.
@@ -611,6 +611,14 @@ Create a new BashTool.
 - **`readonly_filesystem`** — Deny all filesystem mutations after configured files and mounts are applied.
 - **`custom_builtins`** — Constructor-time Python callbacks exposed as bash builtins. Each callback receives a ``BuiltinContext`` (including a live ``fs`` handle to the virtual filesystem) and must return a stdout string, a ``BuiltinResult``, or await either. Async callbacks run on the caller's active asyncio loop for ``await execute()`` and on a private loop for ``execute_sync()``.
 - **`network`** — Optional outbound HTTP / network configuration. See ``Bash.__init__`` for accepted keys. Preserved across ``reset()`` and ``from_snapshot()``.
+- **`profile`** — Execution profile (Standard or Compatibility).
+- **`python`** — Register sandboxed Monty Python (default ``False``).
+- **`typescript`** — Register sandboxed ZapCode TypeScript (default ``False``).
+
+Embedded runtimes share the shell's virtual filesystem and stay enabled
+after ``reset()``. Python additionally requires the host to provide
+``env={"BASHKIT_ALLOW_INPROCESS_PYTHON": "1"}`` at construction.
+An agent script cannot grant this permission with ``export``.
 
 Example:
 
@@ -622,6 +630,13 @@ Example:
 ... )
 >>> print(tool.name)
 bash
+>>> tool = BashTool(
+...     python=True,
+...     typescript=True,
+...     env={"BASHKIT_ALLOW_INPROCESS_PYTHON": "1"},
+... )
+>>> tool.execute_sync("python -c 'print(21)' && ts -c '21'").stdout
+'21\n21\n'
 ```
 
 ### `execute`
@@ -939,7 +954,7 @@ Restore interpreter state from bytes produced by ``snapshot_keyed()``.
 ### `from_snapshot`
 
 ```python
-BashTool.from_snapshot(data: bytes, username: str | None = None, hostname: str | None = None, cwd: str | None = None, env: Mapping[str, str] | None = None, max_commands: int | None = None, max_loop_iterations: int | None = None, max_memory: int | None = None, timeout_seconds: float | None = None, files: dict[str, str] | None = None, mounts: list[dict[str, Any]] | None = None, allowed_mount_paths: list[str] | None = None, readonly_filesystem: bool = False, custom_builtins: Mapping[str, BuiltinCallback] | None = None, network: NetworkConfig | None = None, profile: ExecutionProfile = ExecutionProfile.Standard) -> BashTool
+BashTool.from_snapshot(data: bytes, username: str | None = None, hostname: str | None = None, cwd: str | None = None, env: Mapping[str, str] | None = None, max_commands: int | None = None, max_loop_iterations: int | None = None, max_memory: int | None = None, timeout_seconds: float | None = None, files: dict[str, str] | None = None, mounts: list[dict[str, Any]] | None = None, allowed_mount_paths: list[str] | None = None, readonly_filesystem: bool = False, custom_builtins: Mapping[str, BuiltinCallback] | None = None, network: NetworkConfig | None = None, profile: ExecutionProfile = ExecutionProfile.Standard, python: bool = False, typescript: bool = False) -> BashTool
 ```
 
 Create a new ``BashTool`` from snapshot bytes and optional constructor kwargs.
@@ -947,7 +962,7 @@ Create a new ``BashTool`` from snapshot bytes and optional constructor kwargs.
 ### `from_snapshot_keyed`
 
 ```python
-BashTool.from_snapshot_keyed(data: bytes, key: bytes, username: str | None = None, hostname: str | None = None, cwd: str | None = None, env: Mapping[str, str] | None = None, max_commands: int | None = None, max_loop_iterations: int | None = None, max_memory: int | None = None, timeout_seconds: float | None = None, files: dict[str, str] | None = None, mounts: list[dict[str, Any]] | None = None, allowed_mount_paths: list[str] | None = None, readonly_filesystem: bool = False, custom_builtins: Mapping[str, BuiltinCallback] | None = None, network: NetworkConfig | None = None, profile: ExecutionProfile = ExecutionProfile.Standard) -> BashTool
+BashTool.from_snapshot_keyed(data: bytes, key: bytes, username: str | None = None, hostname: str | None = None, cwd: str | None = None, env: Mapping[str, str] | None = None, max_commands: int | None = None, max_loop_iterations: int | None = None, max_memory: int | None = None, timeout_seconds: float | None = None, files: dict[str, str] | None = None, mounts: list[dict[str, Any]] | None = None, allowed_mount_paths: list[str] | None = None, readonly_filesystem: bool = False, custom_builtins: Mapping[str, BuiltinCallback] | None = None, network: NetworkConfig | None = None, profile: ExecutionProfile = ExecutionProfile.Standard, python: bool = False, typescript: bool = False) -> BashTool
 ```
 
 Create a new ``BashTool`` from HMAC-protected snapshot bytes.
@@ -1908,7 +1923,7 @@ bashkit.langchain.PrivateAttr(*args, **kwargs)
 ### `create_bash_tool`
 
 ```python
-bashkit.langchain.create_bash_tool(username: str | None = None, hostname: str | None = None, max_commands: int | None = None, max_loop_iterations: int | None = None, timeout_seconds: float | None = None, files: dict[str, str | Callable[[], str]] | None = None, mounts: list[dict[str, Any]] | None = None, allowed_mount_paths: list[str] | None = None, readonly_filesystem: bool = False, max_output_length: int = 100000) -> BashkitTool
+bashkit.langchain.create_bash_tool(username: str | None = None, hostname: str | None = None, max_commands: int | None = None, max_loop_iterations: int | None = None, timeout_seconds: float | None = None, python: bool = False, typescript: bool = False, env: dict[str, str] | None = None, files: dict[str, str | Callable[[], str]] | None = None, mounts: list[dict[str, Any]] | None = None, allowed_mount_paths: list[str] | None = None, readonly_filesystem: bool = False, max_output_length: int = 100000) -> BashkitTool
 ```
 
 Create a LangChain-compatible Bashkit tool.

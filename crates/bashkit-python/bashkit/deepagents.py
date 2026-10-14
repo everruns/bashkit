@@ -159,6 +159,9 @@ if DEEPAGENTS_AVAILABLE:
             max_commands: int | None = None,
             max_loop_iterations: int | None = None,
             timeout_seconds: float | None = None,
+            python: bool = False,
+            typescript: bool = False,
+            env: dict[str, str] | None = None,
         ):
             """Initialize middleware.
 
@@ -169,6 +172,10 @@ if DEEPAGENTS_AVAILABLE:
                 max_commands: Max commands (ignored if bash_tool provided)
                 max_loop_iterations: Max iterations (ignored if bash_tool provided)
                 timeout_seconds: Execution timeout in seconds (ignored if bash_tool provided)
+                python: Enable Monty Python (ignored if bash_tool provided)
+                typescript: Enable ZapCode TypeScript (ignored if bash_tool provided)
+                env: Initial environment for a new tool (ignored if bash_tool provided).
+                    Python requires BASHKIT_ALLOW_INPROCESS_PYTHON=1 at construction.
             """
             if bash_tool is not None:
                 self._bash = bash_tool
@@ -180,6 +187,9 @@ if DEEPAGENTS_AVAILABLE:
                     max_commands=max_commands,
                     max_loop_iterations=max_loop_iterations,
                     timeout_seconds=timeout_seconds,
+                    python=python,
+                    typescript=typescript,
+                    env=env,
                 )
                 self._owns_bash = True
 
@@ -226,6 +236,9 @@ if DEEPAGENTS_AVAILABLE:
             max_commands: int | None = None,
             max_loop_iterations: int | None = None,
             timeout_seconds: float | None = None,
+            python: bool = False,
+            typescript: bool = False,
+            env: dict[str, str] | None = None,
         ):
             self._bash = NativeBashTool(
                 username=username,
@@ -233,6 +246,9 @@ if DEEPAGENTS_AVAILABLE:
                 max_commands=max_commands,
                 max_loop_iterations=max_loop_iterations,
                 timeout_seconds=timeout_seconds,
+                python=python,
+                typescript=typescript,
+                env=env,
             )
             self._id = f"bashkit-{uuid.uuid4().hex[:8]}"
             self._operation_timeout = (
