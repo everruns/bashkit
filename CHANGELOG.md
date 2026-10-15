@@ -292,6 +292,8 @@
 * fix(parser): unify indirect subscript consumption ([#2734](https://github.com/everruns/bashkit/pull/2734)) by @chaliy
 * fix(interpreter): charge input budget for numbered input redirects ([#2696](https://github.com/everruns/bashkit/pull/2696)) by @chaliy
 
+* fix(python): synchronize public package version with native and distribution metadata ([#2735](https://github.com/everruns/bashkit/pull/2735)) by @chaliy
+
 **Full Changelog**: https://github.com/everruns/bashkit/compare/v0.18.2...v0.19.0
 
 ## [0.18.2] - 2026-09-22

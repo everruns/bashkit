@@ -39,6 +39,10 @@ re-exports, `_bashkit.pyi` PEP 561 type stubs + `py.typed`, `langchain.py` /
 Python package version is read dynamically from workspace `Cargo.toml` via maturin
 (`dynamic = ["version"]` in pyproject.toml), no manual sync. Chain:
 workspace `Cargo.toml` → `bashkit-python` `Cargo.toml` (inherits) → maturin → wheel metadata.
+`bashkit.__version__` delegates to the extension's `get_version()` so imported
+package, native API, and distribution metadata identify the same release.
+`tests/test_integration.py::test_package_version_matches_native_and_distribution`
+checks all three against an installed wheel.
 
 ## Supported Platforms
 

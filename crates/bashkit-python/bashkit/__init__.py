@@ -65,7 +65,7 @@ from bashkit._bashkit import (
     get_version,
 )
 
-__version__ = "0.1.2"
+__version__ = get_version()
 __all__ = [
     "AnalyzedCommand",
     "AnalyzedRedirect",
