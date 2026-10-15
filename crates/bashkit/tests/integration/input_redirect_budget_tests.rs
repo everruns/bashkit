@@ -1202,6 +1202,40 @@ async fn run_input_shape_bounded(script: &str, wall_secs: u64, tag: &str) -> Inp
 /// exited before the first poll).
 #[cfg(not(target_arch = "wasm32"))]
 fn assert_effective_bounds(r: &InputShapeRun) {
+    use std::io::Write as _;
+
+    let (artifact_class, artifact_bytes) = match &r.artifact {
+        ArtifactCheck::Absent => ("absent", None),
+        ArtifactCheck::Within(bytes) => ("within", Some(*bytes)),
+        ArtifactCheck::Over(bytes) => ("over", Some(*bytes)),
+    };
+    let receipt = serde_json::json!({
+        "producer_exit_code": r.exit_code,
+        "stack_kib": r.limits.stack_raw,
+        "cpu_seconds": r.limits.cpu_raw,
+        "address_space_kib": r.limits.mem_kb_raw,
+        "address_space_bytes": r.limits.mem_bytes,
+        "file_blocks": r.limits.fileblk_raw,
+        "file_bytes": r.limits.file_bytes,
+        "file_unit_bytes": r.file_unit,
+        "artifact_class": artifact_class,
+        "artifact_bytes": artifact_bytes,
+        "artifact_limit_bytes": IR_ARTIFACT_BOUND,
+        "reaped": r.reaped,
+        "readers_complete": !r.incomplete_readers,
+        "sampler_complete": r.sampler_complete,
+        "lifecycle_error": r.lifecycle_error,
+        "read_error": r.read_error,
+        "timed_out": r.timed_out,
+        "oversized": r.oversized,
+        "leftover_count": r.leftovers.len(),
+        "rss_samples": r.rss_samples,
+        "peak_rss_kib": r.peak_rss_kb,
+        "rss_exceeded": r.rss_exceeded,
+    });
+    // Direct stderr preserves the measured receipt in successful CI logs too.
+    writeln!(std::io::stderr().lock(), "input-shape-receipt: {receipt}")
+        .expect("write bounded input receipt");
     assert!(r.sampler_complete, "owned sampler completion unknown");
     assert!(
         r.lifecycle_error.is_none(),
