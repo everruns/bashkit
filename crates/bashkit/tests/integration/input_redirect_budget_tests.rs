@@ -446,8 +446,6 @@ use std::time::Duration;
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::process::Command;
 
-/// Address-space cap in KiB for the bash `ulimit -v` knob (Linux only).
-const IR_AS_KIB: u64 = 1_572_864; // 1.5GiB
 /// File-size backstop for the bash `ulimit -f` knob, in the shell's blocks.
 /// MEASURED (not assumed): both /bin/bash and /opt/homebrew/bin/bash report
 /// 1024-byte increments (`ulimit -f 1` reads back 1024 bytes via
@@ -456,8 +454,8 @@ const IR_AS_KIB: u64 = 1_572_864; // 1.5GiB
 /// {512B POSIX, 1024B measured bash} and fails closed on anything else.
 const IR_FILE_BLOCKS: u64 = 131_072;
 /// Active RSS cutoff in KiB (`ps -o rss=` reports KiB on Linux and macOS):
-/// catches runaway growth far below RAM/disk exhaustion while legit runs
-/// peak at O(MB). Policed by polling, not assumed from any cap.
+/// Sampled observations trigger termination on exceedance. This is not a
+/// hard OS memory cap or proof that no between-sample peak occurred.
 #[cfg(not(target_arch = "wasm32"))]
 const IR_RSS_CAP_KIB: u64 = 1_048_576; // 1GiB
 /// Explicit allowance for one short instrumented run's coverage artifact.
@@ -467,15 +465,16 @@ const IR_ARTIFACT_BOUND: u64 = 64 * 1024 * 1024; // 64MiB
 #[cfg(not(target_arch = "wasm32"))]
 const PIPE_CAP: usize = 256 * 1024;
 
-/// Opt-in launcher for the input-redirect job: shared CPU/stack caps plus an
-/// address-space cap and a file-size backstop, every `ulimit` fail-closed
+/// Opt-in launcher for the input-redirect job: shared CPU/stack caps plus a
+/// file-size backstop, every `ulimit` fail-closed
 /// (`|| exit 99`), with an extended readback receipt on stderr.
 ///
-/// The AS cap is Linux-only (`ulimit -v` is refused elsewhere); other
-/// platforms record `mem=unsupported` truthfully instead of pretending.
+/// Virtual address space is deliberately not capped, matching the shared
+/// sanitizer-compatible launcher contract. Memory fields record unsupported;
+/// resident memory is sampled by the owned parent-side watchdog instead.
 /// Raw values use the shell's own units (POSIX 512B blocks for `-f`; bash
-/// KiB for `-s`/`-v`; seconds for `-t`); `mem_bytes`/`file_bytes` come from
-/// /proc byte-exact on Linux and are `unsupported` elsewhere, so unit
+/// KiB for `-s`; seconds for `-t`); `file_bytes` comes from
+/// /proc byte-exact on Linux and is `unsupported` elsewhere, so unit
 /// surprises fail closed at parse/assert time instead of converting
 /// silently.
 fn input_shape_launcher() -> String {
@@ -485,9 +484,6 @@ fn input_shape_launcher() -> String {
          ulimit -f {fileblk} || exit 99; \
          mem_kb=unsupported; mem_bytes=unsupported; file_bytes=unsupported; \
          if [ \"$(uname)\" = Linux ] && [ -r /proc/self/limits ]; then \
-         ulimit -v {askib} || exit 99; \
-         mem_kb=$(ulimit -Sv); \
-         mem_bytes=$(awk '/Max address space/ {{print $4}}' /proc/self/limits); \
          file_bytes=$(awk '/Max file size/ {{print $4}}' /proc/self/limits); \
          fi; \
          echo \"ir-limits: stack=$(ulimit -s) cpu=$(ulimit -t) \
@@ -495,7 +491,6 @@ fn input_shape_launcher() -> String {
          fileblk=$(ulimit -Sf) file_bytes=$file_bytes\" >&2; \
          exec \"$@\"",
         fileblk = IR_FILE_BLOCKS,
-        askib = IR_AS_KIB,
     )
 }
 
@@ -641,6 +636,7 @@ fn file_size_unit_factor(blocks: u64, bytes: u64) -> Result<u64, String> {
 #[cfg(not(target_arch = "wasm32"))]
 struct InputShapeRun {
     exit_code: Option<i32>,
+    wall_limit_seconds: u64,
     stdout: String,
     stderr: String,
     timed_out: bool,
@@ -1204,6 +1200,7 @@ async fn run_input_shape_bounded(script: &str, wall_secs: u64, tag: &str) -> Inp
     work.cleanup().expect("work dir cleanup");
     InputShapeRun {
         exit_code: completion.status.and_then(|s| s.code()),
+        wall_limit_seconds: wall_secs,
         stdout: String::from_utf8_lossy(&out_kept).into_owned(),
         stderr,
         timed_out: completion.timed_out,
@@ -1232,7 +1229,7 @@ async fn run_input_shape_bounded(script: &str, wall_secs: u64, tag: &str) -> Inp
 /// round-trips everywhere; kernel byte proofs on Linux (including the
 /// shell-unit factor for `-f`); explicit unsupported markers elsewhere
 /// (fail-closed on any unit surprise); RSS policing receipts (a real pid,
-/// no exceedance, peak under the cutoff, samples taken unless the child
+/// no observed exceedance, sampled maximum under the cutoff, samples taken unless the child
 /// exited before the first poll).
 #[cfg(not(target_arch = "wasm32"))]
 fn assert_effective_bounds(r: &InputShapeRun) {
@@ -1245,10 +1242,15 @@ fn assert_effective_bounds(r: &InputShapeRun) {
     };
     let receipt = serde_json::json!({
         "producer_exit_code": r.exit_code,
+        "wall_limit_seconds": r.wall_limit_seconds,
+        "per_stream_capture_limit_bytes": PIPE_CAP,
         "stack_kib": r.limits.stack_raw,
         "cpu_seconds": r.limits.cpu_raw,
         "address_space_kib": r.limits.mem_kb_raw,
         "address_space_bytes": r.limits.mem_bytes,
+        "address_space_enforced_by_helper": false,
+        "memory_guard": "sampled-rss",
+        "rss_limit_kib": IR_RSS_CAP_KIB,
         "file_blocks": r.limits.fileblk_raw,
         "file_bytes": r.limits.file_bytes,
         "file_unit_bytes": r.file_unit,
@@ -1264,7 +1266,7 @@ fn assert_effective_bounds(r: &InputShapeRun) {
         "oversized": r.oversized,
         "leftover_count": r.leftovers.len(),
         "rss_samples": r.rss_samples,
-        "peak_rss_kib": r.peak_rss_kb,
+        "sampled_peak_rss_kib": r.peak_rss_kb,
         "rss_exceeded": r.rss_exceeded,
     });
     // Direct stderr preserves the measured receipt in successful CI logs too.
@@ -1280,18 +1282,17 @@ fn assert_effective_bounds(r: &InputShapeRun) {
     assert_eq!(limits.stack_raw, "4096", "stack cap round-trip");
     assert_eq!(limits.cpu_raw, "10", "cpu cap round-trip");
     assert_eq!(
+        limits.mem_kb_raw, "unsupported",
+        "no AS enforcement by helper"
+    );
+    assert_eq!(limits.mem_bytes, None, "no AS byteproof claimed");
+    assert_eq!(
         limits.fileblk_raw,
         IR_FILE_BLOCKS.to_string(),
         "file cap round-trip"
     );
     #[cfg(target_os = "linux")]
     {
-        assert_eq!(
-            limits.mem_kb_raw,
-            IR_AS_KIB.to_string(),
-            "AS cap round-trip"
-        );
-        assert_eq!(limits.mem_bytes, Some(IR_AS_KIB * 1024), "AS bytes proof");
         assert!(
             r.file_unit.is_some(),
             "file unit factor must be attested on Linux"
@@ -1299,8 +1300,6 @@ fn assert_effective_bounds(r: &InputShapeRun) {
     }
     #[cfg(not(target_os = "linux"))]
     {
-        assert_eq!(limits.mem_kb_raw, "unsupported", "no AS enforcement here");
-        assert_eq!(limits.mem_bytes, None, "no AS byteproof here");
         assert_eq!(limits.file_bytes, None, "no file byteproof here");
         assert_eq!(r.file_unit, None, "no file unit attested here");
     }
@@ -1312,7 +1311,7 @@ fn assert_effective_bounds(r: &InputShapeRun) {
     );
     assert!(
         r.peak_rss_kb < IR_RSS_CAP_KIB,
-        "peak RSS {} KiB over cutoff",
+        "sampled peak RSS {} KiB over cutoff",
         r.peak_rss_kb
     );
     assert!(
@@ -1373,7 +1372,7 @@ fn ir_helper_launcher_fragments() {
         "ulimit -s 4096 || exit 99",
         "ulimit -t 10 || exit 99",
         "ulimit -f 131072 || exit 99",
-        "ulimit -v 1572864 || exit 99",
+        "mem_kb=unsupported; mem_bytes=unsupported",
         "ir-limits:",
         "mem_bytes=$mem_bytes",
         "file_bytes=$file_bytes",
@@ -1388,11 +1387,11 @@ fn ir_helper_launcher_fragments() {
 
 #[test]
 fn ir_helper_parse_receipt() {
-    let full = parse_ir_limits_note("ir-limits: stack=4096 cpu=10 mem_kb=1572864 mem_bytes=1610612736 fileblk=131072 file_bytes=134217728").unwrap();
+    let full = parse_ir_limits_note("ir-limits: stack=4096 cpu=10 mem_kb=unsupported mem_bytes=unsupported fileblk=131072 file_bytes=134217728").unwrap();
     assert_eq!(full.stack_raw, "4096");
     assert_eq!(full.cpu_raw, "10");
-    assert_eq!(full.mem_kb_raw, "1572864");
-    assert_eq!(full.mem_bytes, Some(1610612736));
+    assert_eq!(full.mem_kb_raw, "unsupported");
+    assert_eq!(full.mem_bytes, None);
     assert_eq!(full.fileblk_raw, "131072");
     assert_eq!(full.file_bytes, Some(134217728));
     let unsupported = parse_ir_limits_note("ir-limits: stack=4096 cpu=10 mem_kb=unsupported mem_bytes=unsupported fileblk=131072 file_bytes=unsupported").unwrap();
@@ -1400,7 +1399,7 @@ fn ir_helper_parse_receipt() {
     assert_eq!(unsupported.file_bytes, None);
     assert!(parse_ir_limits_note("bogus line").is_err());
     assert!(parse_ir_limits_note("ir-limits: stack=4096 cpu=10").is_err());
-    assert!(parse_ir_limits_note("ir-limits: stack=4096 cpu=10 mem_kb=1572864 mem_bytes=1610612736 fileblk=131072 file_bytes=nope").is_err());
+    assert!(parse_ir_limits_note("ir-limits: stack=4096 cpu=10 mem_kb=unsupported mem_bytes=unsupported fileblk=131072 file_bytes=nope").is_err());
 }
 
 #[test]

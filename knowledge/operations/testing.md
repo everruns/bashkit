@@ -286,6 +286,16 @@ reap or capture completion on panic or external cancellation. Tiny in-memory
 fixtures verify notice delivery before EOF, nested reap failures and pending-sample
 ownership. They do not establish subprocess, Linux or full security shipping proof.
 
+The input helper follows the shared sanitizer-compatible launcher
+policy: no virtual-AS cap; its receipt explicitly marks AS unsupported and
+labels resident-memory observations as sampled RSS with an unchanged 1 GiB
+cutoff, not hard OS enforcement or a between-sample peak guarantee. CPU 10s,
+stack 4096 KiB, file backstop 128 MiB on measured Bash units, separate artifact
+acceptance below 64 MiB, wall deadlines and capped drains remain unchanged.
+Backend-admission futures are boxed at the recursive redirect boundary to
+avoid embedding their state in each command frame; layout-only observations
+do not establish a depth-execution result.
+
 Controlled retained-pipe fixtures keep a caller-owned reader-handoff vector
 outside their cleanup guard. A bounded `Drop` returns any unfinished ORIGINAL
 handle to that owner rather than recording a count and detaching it. The owner

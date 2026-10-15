@@ -384,7 +384,8 @@ impl Interpreter {
                             self.diag(format!("{}: filesystem redirection disabled", target_path)),
                         ));
                     } else {
-                        let opened = self.read_input_stream(&path, true).await;
+                        // Keep backend-admission state off recursive command frames.
+                        let opened = Box::pin(self.read_input_stream(&path, true)).await;
                         match opened {
                             Ok(content) => content,
                             Err(e @ (crate::Error::ResourceLimit(_) | crate::Error::Cancelled)) => {
@@ -429,7 +430,7 @@ impl Interpreter {
                             self.diag(format!("{}: filesystem redirection disabled", target_path)),
                         ));
                     } else {
-                        match self.read_input_stream(&path, false).await {
+                        match Box::pin(self.read_input_stream(&path, false)).await {
                             Ok((content, storage)) => {
                                 // WTF: on a compound `3<file` also feeds
                                 // stdin; loops like `while read -u 3 ...;
