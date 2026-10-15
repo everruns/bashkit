@@ -43,6 +43,9 @@ opening or reading, and admit cached text and descriptor copies before growth.
 Both representations count toward `max_live_intermediate_bytes` and aggregate
 input consumption. Storage charges survive with stdin; replacing a numbered
 descriptor releases its old storage without resetting aggregate consumption.
+Admission uses the original backend path for stat/open/read, preserving mounted
+namespaces, symlink policy, and read-only diagnostics; auxiliary device-path
+canonicalization does not require synthetic mount-parent entries.
 Budget and cancellation errors abort the request, while ordinary missing-file
 errors remain shell command failures. Custom filesystems must report reliable
 read sizes; backend-internal allocations are still the backend's responsibility.

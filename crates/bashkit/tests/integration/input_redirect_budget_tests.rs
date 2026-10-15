@@ -54,6 +54,106 @@ async fn input_redirection_missing_file_remains_shell_failure() {
 }
 
 #[tokio::test]
+async fn input_redirection_tiny_mount_without_parent_entries() {
+    let mounted = std::sync::Arc::new(bashkit::InMemoryFs::new());
+    let fs = bashkit::MountableFs::new(std::sync::Arc::new(bashkit::InMemoryFs::new()));
+    fs.mount("/mnt/input", mounted).unwrap();
+    let mut bash = Bash::builder().fs(std::sync::Arc::new(fs)).build();
+    bash.fs()
+        .write_file(Path::new("/mnt/input/a"), b"ab")
+        .await
+        .unwrap();
+    for (script, expected) in [
+        ("cat </mnt/input/a", "ab"),
+        ("cat <>/mnt/input/a", "ab"),
+        (": <>/mnt/input/new", ""),
+        ("cat </mnt/input/new", ""),
+    ] {
+        let result = bash.exec(script).await.unwrap();
+        assert_eq!(result.exit_code, 0, "{}", result.stderr);
+        assert_eq!(result.stdout.as_bytes(), expected.as_bytes());
+    }
+}
+
+#[tokio::test]
+async fn input_redirection_tiny_layered_mount() {
+    for readonly in [false, true] {
+        let lower = std::sync::Arc::new(bashkit::InMemoryFs::new());
+        bashkit::FileSystem::write_file(&*lower, Path::new("/a"), b"ab")
+            .await
+            .unwrap();
+        let overlay: std::sync::Arc<dyn bashkit::FileSystem> =
+            std::sync::Arc::new(bashkit::OverlayFs::new(lower.clone()));
+        let backend = if readonly {
+            std::sync::Arc::new(bashkit::ReadOnlyFs::new(overlay))
+                as std::sync::Arc<dyn bashkit::FileSystem>
+        } else {
+            overlay
+        };
+        let fs = bashkit::MountableFs::new(std::sync::Arc::new(bashkit::InMemoryFs::new()));
+        fs.mount("/nested/data", backend).unwrap();
+        let mut bash = Bash::builder().fs(std::sync::Arc::new(fs)).build();
+        let read = bash.exec("cat </nested/data/a").await.unwrap();
+        assert_eq!(read.exit_code, 0, "{}", read.stderr);
+        assert_eq!(read.stdout, "ab");
+        let opened = bash.exec("cat <>/nested/data/a").await.unwrap();
+        assert_eq!(opened.exit_code, if readonly { 1 } else { 0 });
+        if readonly {
+            assert!(opened.stderr.contains("filesystem is read-only"));
+            assert!(opened.stdout.is_empty());
+        } else {
+            assert_eq!(opened.stdout, "ab");
+        }
+        assert_eq!(
+            bashkit::FileSystem::read_file(&*lower, Path::new("/a"))
+                .await
+                .unwrap(),
+            b"ab"
+        );
+        let missing = bash
+            .exec("cat </nested/data/missing; echo survived")
+            .await
+            .unwrap();
+        assert_eq!(missing.stdout, "survived\n");
+        assert!(missing.stderr.contains("No such file or directory"));
+    }
+}
+
+#[tokio::test]
+async fn input_redirection_tiny_rebased_namespace() {
+    let source = std::sync::Arc::new(bashkit::InMemoryFs::new());
+    bashkit::FileSystem::mkdir(&*source, Path::new("/project"), true)
+        .await
+        .unwrap();
+    bashkit::FileSystem::write_file(&*source, Path::new("/project/a"), b"ab")
+        .await
+        .unwrap();
+    let namespace = bashkit::NamespaceFs::builder()
+        .mount_from(
+            "/nested/data",
+            source,
+            "/project",
+            bashkit::NamespaceAccess::ReadOnly,
+        )
+        .unwrap()
+        .build();
+    let mut bash = Bash::builder().fs(std::sync::Arc::new(namespace)).build();
+    let read = bash.exec("cat </nested/data/a").await.unwrap();
+    assert_eq!(read.exit_code, 0, "{}", read.stderr);
+    assert_eq!(read.stdout, "ab");
+    let opened = bash.exec("cat <>/nested/data/a").await.unwrap();
+    assert_eq!(opened.exit_code, 1);
+    assert!(!opened.stderr.is_empty());
+    assert_eq!(
+        bash.fs()
+            .read_file(Path::new("/nested/data/a"))
+            .await
+            .unwrap(),
+        b"ab"
+    );
+}
+
+#[tokio::test]
 async fn input_redirection_respects_symlink_configuration() {
     for follows in [false, true] {
         let mut bash = Bash::builder().follow_symlinks(follows).build();

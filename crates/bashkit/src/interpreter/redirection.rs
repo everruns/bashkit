@@ -281,9 +281,9 @@ impl Interpreter {
         } else {
             match budget.run(crate::fs::canonicalize(&*self.fs, path)).await? {
                 Ok(source) => source,
-                Err(crate::Error::Io(error))
-                    if create && error.kind() == std::io::ErrorKind::NotFound =>
-                {
+                Err(crate::Error::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
+                    // Mounted backends can serve a path without synthetic
+                    // parent entries. Its stat/read below decide existence.
                     path.to_path_buf()
                 }
                 Err(error) => return Err(error),
@@ -1732,6 +1732,36 @@ mod input_admission_tests {
             target: Word::quoted_literal("/a"),
             heredoc_delim: None,
         }
+    }
+
+    #[tokio::test]
+    async fn input_admission_mount_refuses_lazy_before_loading() {
+        let loads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let observed = Arc::clone(&loads);
+        let mounted = Arc::new(crate::InMemoryFs::new());
+        mounted.add_lazy_file(
+            "/a",
+            2,
+            0o644,
+            Arc::new(move || {
+                observed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                b"ab".to_vec()
+            }),
+        );
+        let fs = crate::MountableFs::new(Arc::new(crate::InMemoryFs::new()));
+        fs.mount("/mnt/input", mounted).unwrap();
+        let mut bash = crate::Bash::builder()
+            .fs(Arc::new(fs))
+            .limits(crate::ExecutionLimits::new().max_live_intermediate_bytes(1))
+            .build();
+        bash.interpreter.begin_execution_budget();
+        let result = bash
+            .interpreter
+            .read_input_stream(Path::new("/mnt/input/a"), false)
+            .await;
+        assert!(matches!(result, Err(crate::Error::ResourceLimit(_))));
+        assert_eq!(loads.load(std::sync::atomic::Ordering::Relaxed), 0);
+        assert_eq!(bash.interpreter.execution_budget.live_bytes_for_test(), 0);
     }
 
     #[tokio::test]

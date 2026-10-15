@@ -187,6 +187,12 @@ and the existing substitution owner remains open. The owner exposes buffered
 length without copying; admission must precede its `read_file` copy.
 The cases also cover nonfatal missing-file diagnostics and enabled/disabled
 symlink-following for ordinary read/read-write input. These fixtures require no
+host mount: a two-byte in-memory mounted file without synthetic parent entries
+covers direct read, read-write/create and refusal before lazy loading. A missing
+canonical parent is not proof the backend cannot stat/read the original path.
+Two-byte overlay/read-only and rebased-namespace fixtures also check successful
+read, rejected read-write open with backend diagnostics, and unchanged content.
+These fixtures require no
 subprocess, device read, large allocation, or original resource-exhaustion shape. Selecting
 them is scoped proof, not a claim that the unchanged full/coverage suites ran.
 
