@@ -17,6 +17,41 @@ pub struct StreamData {
 }
 
 impl StreamData {
+    /// Decode a VFS buffer whose byte capacity is already leased by its caller.
+    pub(crate) fn from_admitted_bytes(
+        bytes: Vec<u8>,
+        budget: &crate::limits::ExecutionBudget,
+    ) -> Result<(Self, Option<crate::limits::ExecutionBudgetLease>), crate::limits::LimitExceeded>
+    {
+        let mut text = crate::limits::BudgetedString::new(Some(budget))?;
+        for chunk in bytes.utf8_chunks() {
+            budget.consume_work(1 + chunk.valid().len().div_ceil(1024) as u64)?;
+            budget.consume_input(chunk.valid().len())?;
+            text.try_push_str(chunk.valid())?;
+            if !chunk.invalid().is_empty() {
+                budget.consume_input('\u{fffd}'.len_utf8())?;
+                text.try_push('\u{fffd}')?;
+            }
+        }
+        let (text, storage) = text.into_parts();
+        Ok((Self { bytes, text }, storage))
+    }
+
+    /// Copy both representations through the existing capacity-owning builders.
+    pub(crate) fn try_clone_budgeted(
+        &self,
+        budget: &crate::limits::ExecutionBudget,
+    ) -> Result<(Self, StreamStorage), crate::limits::LimitExceeded> {
+        budget.consume_work(1 + self.retained_len().div_ceil(1024) as u64)?;
+        let mut bytes = crate::limits::BudgetedBytes::new(Some(budget))?;
+        let mut text = crate::limits::BudgetedString::new(Some(budget))?;
+        bytes.try_extend_from_slice(&self.bytes)?;
+        text.try_push_str(&self.text)?;
+        let (bytes, byte_storage) = bytes.into_parts();
+        let (text, text_storage) = text.into_parts();
+        Ok((Self { bytes, text }, [byte_storage, text_storage]))
+    }
+
     /// Convert admitted text to the byte/text stream without an uncharged copy.
     pub(crate) fn from_budgeted_string(
         text: crate::limits::BudgetedString,
@@ -225,6 +260,43 @@ impl serde::Serialize for StreamData {
 #[cfg(test)]
 mod tests {
     use super::StreamData;
+
+    #[test]
+    fn admitted_bytes_preserve_lossy_text_and_lease() {
+        let budget = crate::limits::ExecutionBudget::new(
+            &crate::ExecutionLimits::new(),
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        );
+        let bytes = b"a\xff\0".to_vec();
+        let raw = budget.lease_bytes(bytes.capacity()).unwrap();
+        let (stream, text) = StreamData::from_admitted_bytes(bytes, &budget).unwrap();
+        assert_eq!(stream.as_bytes(), b"a\xff\0");
+        assert_eq!(stream.text_lossy(), "a\u{fffd}\0");
+        assert!(budget.live_bytes_for_test() >= 8);
+        drop((stream, raw, text));
+        assert_eq!(budget.live_bytes_for_test(), 0);
+    }
+
+    #[test]
+    fn budgeted_clone_exact_boundary_and_refund() {
+        for (limit, succeeds) in [(3, false), (4, true)] {
+            let budget = crate::limits::ExecutionBudget::new(
+                &crate::ExecutionLimits::new().max_live_intermediate_bytes(limit),
+                std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            );
+            let source = StreamData::from("ab");
+            let result = source.try_clone_budgeted(&budget);
+            if succeeds {
+                let (copy, storage) = result.unwrap();
+                assert_eq!(copy, source);
+                assert_eq!(budget.live_bytes_for_test(), 4);
+                drop((copy, storage));
+            } else {
+                assert!(result.is_err());
+            }
+            assert_eq!(budget.live_bytes_for_test(), 0);
+        }
+    }
 
     #[test]
     fn budgeted_string_stream_admits_both_representations() {

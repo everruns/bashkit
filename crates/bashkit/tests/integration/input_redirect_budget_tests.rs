@@ -10,6 +10,61 @@ use bashkit::{Bash, Error, ExecutionBudgetExceeded, ExecutionLimits, LimitExceed
 use std::path::Path;
 
 #[tokio::test]
+async fn input_redirection_small_file_byte_parity() {
+    let mut bash = Bash::new();
+    bash.fs()
+        .write_file(Path::new("/a"), b"a\xff\0z")
+        .await
+        .unwrap();
+    for script in ["cat </a", "cat 3</a <&3", "cat 3</a 4<&3 <&4"] {
+        let result = bash.exec(script).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.as_bytes(), b"a\xff\0z");
+        assert!(result.stderr.is_empty());
+    }
+}
+
+#[tokio::test]
+async fn input_redirection_readwrite_create_and_existing_file() {
+    let mut bash = Bash::new();
+    let result = bash.exec(": <>/new").await.unwrap();
+    assert_eq!(result.exit_code, 0);
+    assert!(
+        bash.fs()
+            .read_file(Path::new("/new"))
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    bash.fs().write_file(Path::new("/a"), b"ab").await.unwrap();
+    let result = bash.exec("cat <>/a").await.unwrap();
+    assert_eq!(result.exit_code, 0);
+    assert_eq!(result.stdout.as_bytes(), b"ab");
+    assert_eq!(bash.fs().read_file(Path::new("/a")).await.unwrap(), b"ab");
+}
+
+#[tokio::test]
+async fn input_redirection_missing_file_remains_shell_failure() {
+    let mut bash = Bash::new();
+    let result = bash.exec("cat </missing; echo survived").await.unwrap();
+    assert_eq!(result.exit_code, 0);
+    assert_eq!(result.stdout, "survived\n");
+    assert!(result.stderr.contains("No such file or directory"));
+    assert!(!result.stderr.contains("io error:"));
+}
+
+#[tokio::test]
+async fn input_redirection_tiny_here_inputs() {
+    let mut bash = Bash::new();
+    for script in ["cat <<<a", "cat <<EOF\na\nEOF"] {
+        let result = bash.exec(script).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.as_bytes(), b"a\n");
+        assert!(result.stderr.is_empty());
+    }
+}
+
+#[tokio::test]
 /// Repeated numbered input redirects exceed the aggregate input budget.
 async fn numbered_input_redirects_charge_aggregate_input_budget() {
     let payload = vec![b'x'; 32];

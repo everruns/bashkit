@@ -1429,6 +1429,16 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | TM-DOS-106 | Zip creation allocation-before-check | `zip` recursively collected complete file contents and encoded its output before acquiring live-byte leases, allowing transient allocations above the configured intermediate-memory ceiling | Zip traversal collects paths only; each VFS file size is leased before `read_file`, leases remain live with the entries, and archive encoding uses `BudgetedBytes` to charge capacity before growth — **MITIGATED** |
 | TM-DOS-108 | CLI host-stdin read can stall before execution | A producer keeps the one-shot CLI's stdin pipe open while idle or trickles fewer than 10 MiB, so the pre-execution read never reaches EOF or the byte cap | Read stdin on a dedicated thread and bound the wait with the selected execution timeout; timeout exits with a diagnostic suggesting `--no-stdin`, while the existing byte cap remains enforced — **MITIGATED** |
 | TM-DOS-112 | `sed r` output amplification | A script can read the complete stdin after every input line, synchronously growing output quadratically inside the sed engine before any interpreter-level truncation applies | Every sed sink (stdout, `w`/`W` files, in-place edits) is a `BudgetedString` that leases capacity from the shared live-intermediate budget (`max_live_intermediate_bytes`) *before* growing, and a refused lease becomes `sed: <error>` with exit 1. The stdout *capture* cap is deliberately not a sink limit: sed output is routinely piped onward or redirected to a file, neither of which is captured stdout, so bounding sinks by it truncated ordinary transformations (#2455). Regression tests: `sed_resource_tests` — **MITIGATED** |
+
+Command-local input redirection storage also follows TM-DOS-103: canonical
+file metadata and bounded device sizes are admitted before opening/reading;
+cached text and fd copies use capacity-owning builders. Leases remain attached
+to fd slots and surviving stdin, including failure and replacement paths.
+Tiny `input_admission_tests` and `input_redirection_*` fixtures cover the
+read/open ordering, byte fidelity, error typing and lifetime contracts.
+This does not certify backend-internal allocation or persistent/coprocess fd
+storage; a custom backend's reported read size remains a trusted contract.
+
 ### Accepted (Low Priority)
 
 | Threat ID | Vulnerability | Impact | Rationale |

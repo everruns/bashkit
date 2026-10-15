@@ -38,6 +38,15 @@ and deadlines. Refused admission returns a resource-limit error even when
 output would be discarded by a redirect. Ordinary aliases and append/copy
 semantics remain unchanged within the configured budgets.
 
+Command-local file-input redirections reserve reported file sizes before
+opening or reading, and admit cached text and descriptor copies before growth.
+Both representations count toward `max_live_intermediate_bytes` and aggregate
+input consumption. Storage charges survive with stdin; replacing a numbered
+descriptor releases its old storage without resetting aggregate consumption.
+Budget and cancellation errors abort the request, while ordinary missing-file
+errors remain shell command failures. Custom filesystems must report reliable
+read sizes; backend-internal allocations are still the backend's responsibility.
+
 `dd conv=sync` checks its padded block length against the 64 MiB copy cap
 before allocating or zero-filling. Copied payload capacity also counts against
 `max_live_intermediate_bytes` until output handling completes, including when

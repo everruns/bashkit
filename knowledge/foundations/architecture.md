@@ -152,6 +152,19 @@ compression paths use these builders because their expansion ratios and nested
 buffers make post-hoc leasing unsafe. Atomic compare/exchange admission keeps
 concurrent descendants from wrapping or temporarily exceeding the shared cap.
 
+Command-local input redirections admit canonical VFS metadata/device read
+ceilings before loading bytes, including before the empty open for `<>`.
+Backend capacity beyond its reported size is charged before decoding. Cached
+lossy text and fd copies use the existing owning builders; byte/text leases
+travel with both the numbered-fd slot and surviving stdin. Reopening a numbered
+fd replaces its old storage, without refunding aggregate input consumption.
+An input not needed for stdin moves into the fd table instead of being copied.
+Budget and cancellation errors abort the request; ordinary backend I/O errors
+remain shell command failures. A custom VFS must report reliable read sizes;
+the legacy `read_file` trait cannot prevent allocations inside a backend that
+underreports or concurrently changes those sizes. Persistent/coprocess fd
+storage remains a separate ownership boundary.
+
 Shell diagnostic names are truncated to 1,024 UTF-8 bytes before copying,
 without changing positional `$0`. Builtin diagnostic prefix rewriting uses
 `BudgetedBytes` and fallible `StreamData` text construction under the same

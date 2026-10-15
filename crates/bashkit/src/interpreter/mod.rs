@@ -9437,8 +9437,8 @@ impl Interpreter {
                 }
                 Err(e) => return Err(e),
             };
-            // Hold the stdin clone's live lease (if stdin is a budgeted
-            // clone minted above) for as long as `stdin` is retained below.
+            // Keep the materialized stdin's byte/text storage admitted
+            // for as long as the command retains it.
             let _stdin_storage = stdin_setup.stdin_lease;
             let stdin = stdin_setup.stdin;
 
@@ -12925,8 +12925,7 @@ impl Interpreter {
                 }
                 Err(e) => return Err(e),
             };
-            // Hold the stdin clone's live lease (if stdin is a budgeted
-            // clone minted above) for as long as `stdin` is retained below.
+            // Keep stdin's byte/text storage admitted through the body.
             let _stdin_storage = stdin_setup.stdin_lease;
             let stdin = stdin_setup.stdin;
             let prev_pipeline_stdin = if stdin.is_some() {
@@ -13026,12 +13025,11 @@ impl Interpreter {
                 };
                 match read {
                     Ok(setup) => {
-                        // Hold the stdin clone's live lease while the
-                        // substitution output derived from it is live.
+                        // Retain admitted input storage through substitution.
                         let _stdin_storage = setup.stdin_lease;
                         if let Some(content) = setup.stdin {
-                            // Account for the VFS-owned input while it and the
-                            // decoded substitution text are simultaneously live.
+                            // Cover the temporary byte copy made by the
+                            // command-substitution text boundary.
                             let _content_lease =
                                 self.execution_budget.lease_bytes(content.len())?;
                             stdout.try_push_str(&content.command_substitution_text())?;

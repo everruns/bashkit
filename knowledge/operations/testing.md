@@ -172,6 +172,19 @@ plus the package-named `build/bashkit` *directory* not being mistaken for
 the binary and a decoy above the target directory being refused.
 `bashkit_cli_path()` fails closed naming every path it ruled out.
 
+## Command-local input admission
+
+`interpreter::redirection::input_admission_tests` uses two-byte ordinary and
+lazy files to check admission before loading, including the empty open for
+`<>`, exact byte/text storage boundaries, failed-admission refunds, surviving
+stdin storage, and injected cancellation during a read. `stream::tests` covers
+lossy decoding without changing bytes and capacity-owned copy boundaries.
+The ordinary `input_redirection_*` integration cases cover binary stdin/fd
+copies, empty read-write creation, existing-file preservation, here inputs,
+and nonfatal missing-file diagnostics. These fixtures require no subprocess,
+device read, large allocation, or original resource-exhaustion shape. Selecting
+them is scoped proof, not a claim that the unchanged full/coverage suites ran.
+
 ## Coverage
 
 Uploaded to Codecov from three sources: Rust unit/integration coverage via
