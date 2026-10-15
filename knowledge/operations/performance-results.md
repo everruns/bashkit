@@ -100,3 +100,14 @@ most misses). `/benches` renders both after the gap telemetry panels. See
 
 When changing result schemas, update the transformer and this spec in the same
 PR. Do not hand-edit `performance-timeline.json` except by running the script.
+
+## Browser package experiments
+
+Browser transfer/startup reports use
+`crates/bashkit-wasm/bench/results/wasm-*.{json,md}`. The scripts emit JSON to
+stdout for explicit capture; browser measurements are exploratory and do not
+refresh `/benches` or use the native/ Criterion schemas. They record exact
+artifact hashes and compressed transfer bytes alongside cold Chromium timings.
+CI gates deterministic size budgets and a bounded compatibility sample, not
+noisy startup time. See [Browser Package](../runtimes/browser-package.md) and the
+[methodology](../../crates/bashkit-wasm/bench/README.md).

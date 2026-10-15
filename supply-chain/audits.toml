@@ -520,6 +520,12 @@ criteria = "safe-to-deploy"
 delta = "0.63.3 -> 0.64.1"
 notes = "Reviewed complete published package diff: no new dependencies, no build scripts, no new host filesystem, network or process access, and no new unsafe blocks anywhere in src. The substantive change is a server-side authentication fix: a publickey request's signature must now use the algorithm the request announced (RFC 4252 section 7, RFC 8332 section 3). Before, a client could announce rsa-sha2-512 and sign with ssh-rsa (SHA-1) and the server accepted it; the delta adds the comparison and a regression test asserting both the rejection and that a matching signature is still accepted. One dependency is removed, not added: the legacy-ed25519-pkcs8-parser feature and its yasna ASN.1 dependency are gone, so the PKCS8 path no longer falls back to a second parser on error. This tree uses russh as a client with default features, so it never enabled that feature and is not exposed to the server-side bug; both changes are a reduction in attack surface for it. Partial-success auth now carries proceed_with_methods as an Option, removing password from the offered set when none is given, and resets partial_success per request. The remainder is mechanical: let-chain rewrites in keys/known_hosts.rs and kex/dh/mod.rs with identical semantics, saturating arithmetic for the cipher byte counter, and new integration tests. Source safety review, not a cryptographic audit."
 
+[[audits.rustls]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.23.45 -> 0.23.46"
+notes = "Reviewed the 2026-10-14 advisory delta (RUSTSEC-2026-0346 through -0349); every change narrows. The TLS 1.3 key-exchange hint moves out of handle_server_hello into ExpectFinished, so it is recorded only after cert_verified and sig_verified, not from an unauthenticated ServerHello. start_traffic now runs after the ECH-rejection check, and the std writer/flush paths return the connection's stored fatal error instead of buffering plaintext, so application data cannot reach the outer server after ECH rejection. Brotli certificate decompression switches to BrotliDecompressStream over a caller-supplied output slice with BrotliState::new_strict, rejecting large windows and trailing input instead of letting brotli::BrotliDecompress allocate; zlib switches to Inflate so total_in/total_out are checked against both slice lengths. Secret-bearing Debug derives on Tls13ClientSessionValue, ClientSessionCommon and ServerSessionValue become hand impls that destructure and skip the secret/master_secret fields, with finish_non_exhaustive and tests asserting the key bytes are absent. Supporting changes: LimitedCache evicts on an explicit max rather than VecDeque::capacity (eviction only, no bound raised), pre_encrypt_action uses >= so the hard limit is checked first, protected change_cipher_spec is rejected per RFC 9846 section 5, ECH hello-retry acceptance is recorded and enforced as final per RFC 9849, and the aws-lc-rs HPKE sealer/opener move from NonceSequence to LessSafeKey with an explicit compute_nonce plus increment_seq_num. No unsafe blocks added or changed, no new filesystem, network, process or environment access, no new dependencies, build.rs unchanged. Source safety review of the delta, not a cryptographic proof or a full crate review."
+
 [[audits.rustls-webpki]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
@@ -531,6 +537,12 @@ who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 delta = "0.103.14 -> 0.103.15"
 notes = "Reviewed complete runtime delta: FIPS status reports underlying AWS-LC signature implementation status. Certificate parsing, verification algorithms and input bounds unchanged."
+
+[[audits.serde_json]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "1.0.151 -> 1.0.154"
+notes = "Reviewed the published delta across 1.0.152-1.0.154. Behavior changes are narrowing or diagnostic: '-0' no longer parses to I64(0) so the sign survives in arbitrary_precision mode; Number::as_f32 filters non-finite results, fixing comparison of large non-integer values against f32::INFINITY; invalid UTF-8 is reported at the first bad byte instead of the end of the token; lexical/math.rs changes are max_value() to MAX renames in code and comments only. Under preserve_order the IndexMap hasher becomes explicit, std::hash::RandomState with the std feature and foldhash::fast::RandomState without it, which upstream documents as minimal HashDoS resistance; that path needs preserve_order, which this tree does not enable. The new UTF-8 position arithmetic is the only part worth re-checking by a future user: as_str, which is not feature-gated and is what this tree compiles, uses saturating_sub and cannot underflow, while begin_raw_buffering subtracts from position.column without saturation and is reachable only under the raw_value feature, also not enabled here. Worst case in either is a wrong column in an error message. No unsafe anywhere in the diff, no new filesystem, network, process or environment access, no build script, and the only dependency addition is the foldhash hasher behind no-std preserve_order. Source safety review of the delta, not a full crate review."
 
 [[audits.signal-hook]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
@@ -561,6 +573,12 @@ who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 delta = "3.0.6 -> 3.0.7"
 notes = "Reviewed complete published package diff: one production change in src/expr.rs, the rest tests and a version stamp. Parsing a labelled construct now also checks that the token after the label is not '::', so 'label: ...' is no longer matched when the source actually continues with a path separator. No unsafe code, no new dependencies, no build scripts, no host access."
+
+[[audits.syn]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "3.0.7 -> 3.0.8"
+notes = "Reviewed the complete published delta: two production files plus a version stamp and tests. Operator parsing is narrowed, not widened. BinOp parsing no longer treats a leading '-' as subtraction when the token is actually '->', nor '<' as less-than when the token is '<-', and the two cast/comparison loops in expr.rs now return a parse error naming '<-' instead of silently breaking out. Token consumption stays bounded and the syntax tree construction is unchanged. No unsafe, no new dependencies, no build script, no host access."
 
 [[audits.thin-vec]]
 who = "Mykhailo Chalyi <mykhailo.chalyi-contractor@procore.com>"

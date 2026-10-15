@@ -309,6 +309,14 @@ integration suite, and publishes `@everruns/bashkit-wasm` to npm with
 provenance. Uses the same `NPM_TOKEN` as `publish-js.yml`; the package version
 is synced manually from the workspace version during release preparation.
 
+CI and publication both use the `wasm-release` profile and run the package's
+GNU Bash compatibility sample, compressed-size budgets, and npm archive tests.
+The archive includes `build-info.json` with source commit and the shipped WASM
+hash; inspect those fields after publication as well as npm version/dist-tags.
+A current source checkout can still say `0.18.2` while containing hundreds of
+commits absent from the published `0.18.2`, so version equality does not prove
+artifact parity. See [Browser Package](../runtimes/browser-package.md).
+
 ### c-api-binaries.yml
 
 Dispatched by `release.yml` from the verified release tag. Builds and attaches

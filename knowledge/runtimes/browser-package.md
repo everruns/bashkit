@@ -186,7 +186,7 @@ core already gates off under `cfg(target_family = "wasm")` (see
   loads from a CDN, a bundler, or a plain `<script type="module">`.
 - `package.json`, the published `@everruns/bashkit-wasm` manifest (copied into
   `pkg/` at build time).
-- `scripts/build.sh`, `cargo build` → `wasm-bindgen --target web` → optional
+- `scripts/build.sh`, `cargo build --profile wasm-release` → `wasm-bindgen --target web` → optional
   `wasm-opt -Oz`, emitting `pkg/`.
 - `src/hostfs.rs`, the `FsBackend` bridge behind the `fs` option.
 - `__test__/host-fs.test.mjs`, host-filesystem suite (async fake host).
@@ -220,6 +220,33 @@ Pinning the version also keeps the `-Oz` output reproducible rather than
 tracking whatever binaryen the runner image's Ubuntu carries, which matters
 because that artifact is what ships to npm. Bump the version and checksum
 together in `scripts/install-binaryen.sh`.
+
+### Transfer-size profile and release identity
+
+The build script maps `release` to Cargo's `wasm-release` profile: `opt-level =
+"s"`, fat LTO, inheriting the native release panic/safety policy. This changes
+code generation only; no builtin, `jq`, `Terminal`, or runtime limit is removed.
+The native `release` profile remains throughput-oriented. `-Oz` alone did not
+solve transfer size; size-oriented LLVM code generation is the larger lever.
+The more aggressive `opt-level = "z"` was rejected because representative
+arithmetic slowed about 50%, despite a larger download saving.
+
+CI and publication run the same bounded GNU Bash regression sample and raw /
+gzip / Brotli size budgets under `crates/bashkit-wasm/bench/`, in addition to
+all package integration tests. Browser wall-clock results are recorded, not
+gated, because host load, browser caches, and network emulation make them noisy.
+See the [benchmark methodology](../../crates/bashkit-wasm/bench/README.md) and
+[measured report](../../crates/bashkit-wasm/bench/results/wasm-startup-2026-10-15.md).
+
+`build-info.json` is included in the npm archive and records source revision,
+dirty state, compiler/bindgen/Binaryen versions, profile/features, and the final
+WASM SHA-256. Source archives without Git identity record null fields. Release
+checkouts must have verifiable Git identity; the package tests check it and the
+archive's required runtime files. Version equality alone is not source parity:
+0.18.2's npm `gitHead` is the September 22 release commit, while brush-web's
+source comparison uses `491c3281`, 269 commits newer. Both distributions use the
+same build path; the reported compatibility gap is unreleased interpreter work,
+not evidence of a divergent published feature selection.
 
 `--target web` output is a bundler-agnostic ES module; the consumer calls
 `initBashkit()` once before constructing `Bash`.

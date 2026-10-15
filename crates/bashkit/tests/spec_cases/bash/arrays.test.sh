@@ -404,3 +404,23 @@ echo "${m[k]} ${m[g]}"
 ### expect
 v{1,2} *.txt
 ### end
+
+### mapfile_rejects_debug_stack_destinations
+for name in FUNCNAME BASH_SOURCE BASH_LINENO; do
+    mapfile -t "$name" </dev/null
+    echo "$name=$?"
+done
+### expect
+FUNCNAME=1
+BASH_SOURCE=1
+BASH_LINENO=1
+### end
+
+### mapfile_funcname_stays_reserved_after_unset
+### bash_diff: L-MAPFILE-002: FUNCNAME remains interpreter-owned after unset
+unset FUNCNAME
+mapfile -t FUNCNAME </dev/null
+echo "status=$?"
+### expect
+status=1
+### end

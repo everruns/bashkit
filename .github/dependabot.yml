@@ -51,7 +51,7 @@ updates:
       - dependency-name: "monty"
       - dependency-name: "monty-types"
 
-      # wasmtime is pinned exactly (=48.0.5): the `cpython` feature embeds a
+      # wasmtime is pinned exactly (=48.0.6): the `cpython` feature embeds a
       # module precompiled by build.rs, and a precompiled module loads only
       # into the same wasmtime version. 49.x also needs a newer rustc than
       # rust-toolchain.toml pins. Bump deliberately together with the
@@ -124,7 +124,7 @@ updates:
           - "*"
     ignore:
       # The fuzz lockfile resolves the root workspace, so a bump here rewrites
-      # the root `wasmtime = "=48.0.5"` pin — and `ignore` is per-entry, so the
+      # the root `wasmtime = "=48.0.6"` pin — and `ignore` is per-entry, so the
       # "/" entry's wasmtime block above does not cover this one. That gap
       # opened #2708, where every rust job failed at resolution with
       # "wasmtime@49.0.2 requires rustc 1.96.0" against the pinned 1.95.0.

@@ -6771,9 +6771,9 @@ f
 extra[0]=x
 printf "%s %s\n" "${#arr[@]}" "${#extra[@]}"
 "#;
-        let result = bash.exec(script).await.unwrap();
-
-        assert_eq!(result.exit_code, 0);
+        let error = bash.exec(script).await.unwrap_err();
+        assert!(error.to_string().contains("array entry limit (3)"));
+        let result = bash.exec("echo ${#arr[@]} ${#extra[@]}").await.unwrap();
         assert_eq!(result.stdout.trim(), "3 0");
     }
 
@@ -6813,9 +6813,9 @@ for ((i = 0; i < 10; i++)); do ((c[k$i]+=1)); done
 for ((i = 0; i < 10; i++)); do ((a[i]++)); done
 printf "%s %s\n" "${#c[@]}" "${#a[@]}"
 "#;
-        let result = bash.exec(script).await.unwrap();
-
-        assert_eq!(result.exit_code, 0);
+        let error = bash.exec(script).await.unwrap_err();
+        assert!(error.to_string().contains("array entry limit (3)"));
+        let result = bash.exec("echo ${#c[@]} ${#a[@]}").await.unwrap();
         assert_eq!(result.stdout.trim(), "3 0");
     }
 
@@ -7002,9 +7002,10 @@ for i in $(seq 1 100); do
 done
 echo "done"
 "#;
-        let result = bash.exec(script).await.unwrap();
-        // Script completes; insertions beyond limit are silently dropped
-        assert_eq!(result.exit_code, 0);
+        let error = bash.exec(script).await.unwrap_err();
+        assert!(error.to_string().contains("array entry limit (50)"));
+        let result = bash.exec("echo ${#arr[@]}").await.unwrap();
+        assert_eq!(result.stdout, "50\n");
     }
 
     /// TM-DOS-060: Function count bomb — defining many functions.
@@ -7727,15 +7728,10 @@ while [ $i -lt 200 ]; do
 done
 echo ${#arr[@]}
 "#;
-        let result = bash.exec(script).await.unwrap();
-        assert_eq!(result.exit_code, 0);
-        let count: usize = result.stdout.trim().parse().unwrap_or(0);
-        // max_array_entries=100 means at most 100 entries created
-        assert!(
-            count <= 100,
-            "Array entries should be capped at max_array_entries, got {}",
-            count
-        );
+        let error = bash.exec(script).await.unwrap_err();
+        assert!(error.to_string().contains("array entry limit (100)"));
+        let result = bash.exec("echo ${#arr[@]}").await.unwrap();
+        assert_eq!(result.stdout, "100\n");
     }
 
     /// TM-DOS-060: Unquoted expansion in array assignment must still respect

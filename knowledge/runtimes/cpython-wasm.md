@@ -307,7 +307,7 @@ snapshots, smoke-tests with the reference runtime and rewrites `artifacts/`
 three together. Changing `engine_config()` or the wasmtime version requires
 no guest rebuild; `build.rs` recompiles the `.cwasm`.
 
-wasmtime is pinned (`=48.0.5`): a `.cwasm` loads only into the version and
+wasmtime is pinned (`=48.0.6`): a `.cwasm` loads only into the version and
 compile-affecting configuration that produced it. 49.x needs rustc 1.96.
 
 ## Known gaps
