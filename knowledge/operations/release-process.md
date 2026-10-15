@@ -85,24 +85,18 @@ silently failed.
      snapshot as xz; ~7.8 MiB with requests/httpx and urllib.request preloaded). `bashkit` depends on the same version
      of it, so `publish.yml` publishes it first and the `bashkit` dry-run only
      resolves once that version is live.
-   - `cargo publish --dry-run -p bashkit` must succeed. Package
-     `bashkit-cli` and `bashkit-scripted-tool` in a disposable copy against the latest published
-     registry core version (remove the local path in the copy) as a structural
-     proxy; Cargo cannot resolve the CLI's new
-     registry dependency until the core crate is live. The proxy may only ask
-     the published core for features it already exposes, so
-     `scripts/cli_publish_proxy.py` reads that crate's feature set from
-     crates.io and drops the ones added in the current cycle (plus `python`,
-     which predates Monty's crates.io publication) from the disposable copy
-     only. Direct CLI-to-core feature aliases are checked independently of the
-     features requested on the core dependency, because default CLI features
-     need not appear in that dependency list. A failure there is real packaging
-     drift, not a missing feature. Normal workspace checks still compile the CLI
-     against the new local core, and `publish.yml` waits for the core registry
-     version before publishing the CLI. Packaging caught
-     the v0.4.0 → v0.4.1 incident: the rustdoc guide lived outside the crate
-     dir, so `cargo publish` couldn't find it; local `cargo build` did not catch
-     it.
+   - Verify all four exact release packages together with the pinned Cargo:
+     `cargo publish --dry-run -p bashkit-cpython-wasm -p bashkit -p bashkit-cli -p bashkit-scripted-tool`
+     (`--allow-dirty` during preparation). Cargo stages selected workspace
+     packages in a temporary registry and builds the packaged dependency graph,
+     including new internal crates that do not exist on crates.io yet. A lone
+     core dry-run cannot resolve the unpublished CPython dependency; a proxy
+     against an older published core would miss the new package graph. No
+     manifest rewriting or `--no-verify` is needed. `just release-check` runs
+     this exact preflight. Individual dry-runs in `publish.yml` still follow
+     dependency order after each prerequisite reaches crates.io. Packaging
+     caught the v0.4.0 → v0.4.1 incident: a rustdoc guide outside the crate
+     directory built locally but was absent from the archive.
    - PyPI / npm: confirm the feeding pipelines still build (`maturin build
      --release`, `napi build`, browser WASM build smokes) when changes touch
      packaging.

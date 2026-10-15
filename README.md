@@ -442,7 +442,7 @@ Enable the `sqlite` feature to embed [Turso](https://github.com/tursodatabase/tu
 
 ```toml
 [dependencies]
-bashkit = { version = "0.18.2", features = ["sqlite"] }
+bashkit = { version = "0.19.0", features = ["sqlite"] }
 ```
 
 ```rust

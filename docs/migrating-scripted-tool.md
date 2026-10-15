@@ -15,14 +15,16 @@ types, same builders, same logic-only shell, same security defaults.
 Before:
 
 ```toml
-bashkit = { version = "0.18.2", features = ["scripted_tool", "python", "typescript", "jq"] }
+[dependencies.bashkit]
+version = "0.18.2"
+features = ["scripted_tool", "python", "typescript", "jq"]
 ```
 
 After:
 
 ```toml
-bashkit = { version = "0.18.2", features = ["python", "typescript", "jq"] }
-bashkit-scripted-tool = { version = "0.18.2", features = ["python", "typescript", "jq"] }
+bashkit = { version = "0.19.0", features = ["python", "typescript", "jq"] }
+bashkit-scripted-tool = { version = "0.19.0", features = ["python", "typescript", "jq"] }
 ```
 
 Keep `bashkit` only if you use it directly (`Bash`, `BashTool`, the `Tool`

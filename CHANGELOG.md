@@ -1,5 +1,299 @@
 # Changelog
 
+## [0.19.0] - 2026-10-15
+
+### Highlights
+
+- **Interactive terminals for applications and agents.** In-process terminals provide screen text, scrollback, input, interrupts, and editor/pager commands; Rust, Python, and JavaScript bindings expose the terminal alongside `TerminalTool` ([#2509](https://github.com/everruns/bashkit/pull/2509), [#2518](https://github.com/everruns/bashkit/pull/2518), [#2521](https://github.com/everruns/bashkit/pull/2521), [#2523](https://github.com/everruns/bashkit/pull/2523)).
+- **Real CPython in the sandbox.** The opt-in `cpython` feature runs CPython 3.14 as `python3` through WebAssembly, with VFS access and HTTP routed through Bashkit's egress boundary. The existing lightweight Python runtime remains available ([#2515](https://github.com/everruns/bashkit/pull/2515), [#2568](https://github.com/everruns/bashkit/pull/2568)).
+- **Broader shell and utility compatibility.** Concurrent pipelines and background jobs, a default root filesystem, symlink traversal, additional everyday commands, and GNU-oriented awk/coreutils behavior expand the scripts Bashkit can run ([#2524](https://github.com/everruns/bashkit/pull/2524), [#2525](https://github.com/everruns/bashkit/pull/2525), [#2526](https://github.com/everruns/bashkit/pull/2526), [#2527](https://github.com/everruns/bashkit/pull/2527), [#2541](https://github.com/everruns/bashkit/pull/2541), [#2583](https://github.com/everruns/bashkit/pull/2583)).
+- **Resource and dependency hardening.** Expanded allocation, recursion, input, and output accounting makes resource refusals explicit across the interpreter and builtins; dependency updates address published advisories ([#2452](https://github.com/everruns/bashkit/pull/2452), [#2468](https://github.com/everruns/bashkit/pull/2468), [#2725](https://github.com/everruns/bashkit/pull/2725), [#2733](https://github.com/everruns/bashkit/pull/2733), [#2734](https://github.com/everruns/bashkit/pull/2734), [#2696](https://github.com/everruns/bashkit/pull/2696)).
+- **Breaking change: ScriptedTool moves to its own package.** Rust callers replace `bashkit`'s `scripted_tool` feature and imports with `bashkit-scripted-tool = "0.19"` / `bashkit_scripted_tool`; replace `builder.tool_registry(registry)` with `registry.install(builder)`. Python imports move from `bashkit` to `bashkit.scripted`; JavaScript imports move from `@everruns/bashkit` to `@everruns/bashkit/scripted`. See the [migration guide](https://github.com/everruns/bashkit/blob/v0.19.0/docs/migrating-scripted-tool.md) ([#2519](https://github.com/everruns/bashkit/pull/2519), [#2520](https://github.com/everruns/bashkit/pull/2520)).
+
+### What's Changed
+
+* fix(hextools): report a missing operand the way real od does ([#2438](https://github.com/everruns/bashkit/pull/2438)) by @chaliy
+* fix(parser): keep `}` inside a word unless it stands alone ([#2439](https://github.com/everruns/bashkit/pull/2439)) by @chaliy
+* fix(builtins): report unreadable operands with the real errno text ([#2440](https://github.com/everruns/bashkit/pull/2440)) by @chaliy
+* fix(grep): send read diagnostics to stderr and exit 2 ([#2441](https://github.com/everruns/bashkit/pull/2441)) by @chaliy
+* fix(grep): align with GNU grep and gate the spec suite against it ([#2442](https://github.com/everruns/bashkit/pull/2442)) by @chaliy
+* fix(interpreter): terminate command-resolution diagnostics with a newline ([#2443](https://github.com/everruns/bashkit/pull/2443)) by @chaliy
+* fix(head,tail): support GNU count forms (negative, suffixes, tail -c) ([#2449](https://github.com/everruns/bashkit/pull/2449)) by @chaliy
+* fix(interpreter): read file for $(<file) and run redirect-only commands ([#2450](https://github.com/everruns/bashkit/pull/2450)) by @chaliy
+* fix(awk): treat multi-char FS and split() separators as regexes ([#2451](https://github.com/everruns/bashkit/pull/2451)) by @chaliy
+* fix(builtins): report resource caps instead of truncating silently ([#2452](https://github.com/everruns/bashkit/pull/2452)) by @chaliy
+* fix(awk): cap string, field and variable memory growth ([#2453](https://github.com/everruns/bashkit/pull/2453)) by @chaliy
+* fix(jq): meter live values so growth stops at a limit ([#2454](https://github.com/everruns/bashkit/pull/2454)) by @chaliy
+* fix(awk): make expression format errors fatal ([#2458](https://github.com/everruns/bashkit/pull/2458)) by @chaliy
+* fix(limits): bound shell recursion by host stack safety ([#2464](https://github.com/everruns/bashkit/pull/2464)) by @chaliy
+* fix(limits): fail execution on rejected scalar assignment ([#2466](https://github.com/everruns/bashkit/pull/2466)) by @chaliy
+* fix(release): drop unsupported forwarded CLI features ([#2461](https://github.com/everruns/bashkit/pull/2461)) by @chaliy
+* fix(wasm): bound blocking sleep by execution timeout ([#2460](https://github.com/everruns/bashkit/pull/2460)) by @chaliy
+* fix(python): bound Deep Agents VFS searches ([#2457](https://github.com/everruns/bashkit/pull/2457)) by @chaliy
+* fix(sed): bound output growth during execution ([#2455](https://github.com/everruns/bashkit/pull/2455)) by @chaliy
+* fix(limits): meter array contents against the variable byte budget ([#2468](https://github.com/everruns/bashkit/pull/2468)) by @chaliy
+* fix(jq): bound recursive filter execution ([#2467](https://github.com/everruns/bashkit/pull/2467)) by @chaliy
+* fix(interpreter): meter resource usage for `$(<file)` command substitutions ([#2469](https://github.com/everruns/bashkit/pull/2469)) by @chaliy
+* test(jq): pin cap-test timeouts so sanitizer builds cannot race the deadline ([#2470](https://github.com/everruns/bashkit/pull/2470)) by @chaliy
+* chore(deps): resync auxiliary workspace lockfiles with the workspace ([#2471](https://github.com/everruns/bashkit/pull/2471)) by @chaliy
+* chore(deps): bump the site-npm group in /site with 3 updates ([#2472](https://github.com/everruns/bashkit/pull/2472)) by @app/dependabot
+* chore(deps): bump the js-npm group in /crates/bashkit-js with 6 updates ([#2473](https://github.com/everruns/bashkit/pull/2473)) by @app/dependabot
+* chore(deps): bump the docs-grep-agent-uv group in /examples/docs-grep-agent with 4 updates ([#2474](https://github.com/everruns/bashkit/pull/2474)) by @app/dependabot
+* chore(deps): bump the examples-npm group across 2 directories with 6 updates ([#2475](https://github.com/everruns/bashkit/pull/2475)) by @app/dependabot
+* chore(ci): bump the github-actions group with 2 updates ([#2478](https://github.com/everruns/bashkit/pull/2478)) by @app/dependabot
+* fix(deps): patch wasmtime for RUSTSEC-2026-0315 and RUSTSEC-2026-0316 ([#2486](https://github.com/everruns/bashkit/pull/2486)) by @chaliy
+* fix(awk): meter reopened getline inputs ([#2479](https://github.com/everruns/bashkit/pull/2479)) by @chaliy
+* fix(headtail): avoid line offset allocation ([#2480](https://github.com/everruns/bashkit/pull/2480)) by @chaliy
+* fix(scripted-tool): sanitize custom builtin errors ([#2481](https://github.com/everruns/bashkit/pull/2481)) by @chaliy
+* fix(changelog): parse asterisk bullets for stale PRs ([#2482](https://github.com/everruns/bashkit/pull/2482)) by @chaliy
+* fix(realfs): protect Windows home mounts ([#2484](https://github.com/everruns/bashkit/pull/2484)) by @chaliy
+* fix(python): reject read-only self mounts ([#2483](https://github.com/everruns/bashkit/pull/2483)) by @chaliy
+* fix(grep): skip operands for quiet zero match limit ([#2485](https://github.com/everruns/bashkit/pull/2485)) by @chaliy
+* chore(deps): bump turso_core from 0.8.0-pre.11 to 0.8.0-pre.13 ([#2477](https://github.com/everruns/bashkit/pull/2477)) by @app/dependabot
+* chore(deps): bump the rust-dependencies group with 7 updates ([#2476](https://github.com/everruns/bashkit/pull/2476)) by @app/dependabot
+* fix(grep): apply -m per file, as GNU does ([#2487](https://github.com/everruns/bashkit/pull/2487)) by @chaliy
+* fix(deps): clear seven dependency advisories across npm and PyPI lockfiles ([#2488](https://github.com/everruns/bashkit/pull/2488)) by @chaliy
+* fix(ci): scan npm and PyPI advisories beside cargo ([#2489](https://github.com/everruns/bashkit/pull/2489)) by @chaliy
+* fix(deps): cover the python random-fs workspace in dependabot ([#2490](https://github.com/everruns/bashkit/pull/2490)) by @chaliy
+* fix(deps): clear the three advisory clusters that turned nightly red ([#2498](https://github.com/everruns/bashkit/pull/2498)) by @chaliy
+* chore(ci): bump taiki-e/install-action from 2.87.20 to 2.87.22 in the github-actions group ([#2497](https://github.com/everruns/bashkit/pull/2497)) by @app/dependabot
+* chore(deps): bump the site-npm group in /site with 2 updates ([#2491](https://github.com/everruns/bashkit/pull/2491)) by @app/dependabot
+* chore(deps): bump the examples-npm group across 1 directory with 4 updates ([#2494](https://github.com/everruns/bashkit/pull/2494)) by @app/dependabot
+* chore(deps): bump the js-npm group in /crates/bashkit-js with 3 updates ([#2492](https://github.com/everruns/bashkit/pull/2492)) by @app/dependabot
+* chore(deps): bump langchain from 1.4.2 to 1.4.3 in /examples/docs-grep-agent in the docs-grep-agent-uv group ([#2493](https://github.com/everruns/bashkit/pull/2493)) by @app/dependabot
+* chore(deps): bump bigdecimal from 0.4.10 to 0.4.11 in the rust-dependencies group ([#2495](https://github.com/everruns/bashkit/pull/2495)) by @app/dependabot
+* chore(deps): bump turso_core from 0.8.0-pre.14 to 0.8.0 ([#2496](https://github.com/everruns/bashkit/pull/2496)) by @app/dependabot
+* fix(deps): unbreak nightly ASan, and clear the http-cache-semantics advisory ([#2499](https://github.com/everruns/bashkit/pull/2499)) by @chaliy
+* chore(deps): bump @langchain/core from 1.2.13 to 1.2.14 in /crates/bashkit-js in the js-npm group ([#2500](https://github.com/everruns/bashkit/pull/2500)) by @app/dependabot
+* chore(deps): bump wrangler from 4.143.0 to 4.145.0 in /site in the site-npm group ([#2501](https://github.com/everruns/bashkit/pull/2501)) by @app/dependabot
+* chore(deps): bump the docs-grep-agent-uv group in /examples/docs-grep-agent with 2 updates ([#2502](https://github.com/everruns/bashkit/pull/2502)) by @app/dependabot
+* chore(deps): bump the examples-npm group across 1 directory with 5 updates ([#2503](https://github.com/everruns/bashkit/pull/2503)) by @app/dependabot
+* fix(deps): clear the two advisories that turned the nightly scan red ([#2508](https://github.com/everruns/bashkit/pull/2508)) by @chaliy
+* chore(deps): bump the js-npm group in /crates/bashkit-js with 2 updates ([#2506](https://github.com/everruns/bashkit/pull/2506)) by @app/dependabot
+* chore(deps): bump the site-npm group in /site with 2 updates ([#2507](https://github.com/everruns/bashkit/pull/2507)) by @app/dependabot
+* chore(deps): bump the examples-npm group across 2 directories with 4 updates ([#2505](https://github.com/everruns/bashkit/pull/2505)) by @app/dependabot
+* fix(interpreter): field-split the command word so "$@" runs as a command ([#2510](https://github.com/everruns/bashkit/pull/2510)) by @chaliy
+* fix(redirect): route /dev/stdout, /dev/stderr, /dev/fd/N to descriptors ([#2512](https://github.com/everruns/bashkit/pull/2512)) by @chaliy
+* fix(parser): run commands before a later syntax error; quote/heredoc-aware $( ) end ([#2513](https://github.com/everruns/bashkit/pull/2513)) by @chaliy
+* feat(terminal): in-process terminal with vi, less and more ([#2509](https://github.com/everruns/bashkit/pull/2509)) by @chaliy
+* refactor(core): add public extension points for out-of-core tool layers ([#2511](https://github.com/everruns/bashkit/pull/2511)) by @chaliy
+* feat(terminal): scrollback, command transcript and activity status ([#2517](https://github.com/everruns/bashkit/pull/2517)) by @chaliy
+* feat(terminal): TerminalTool for LLM agents ([#2518](https://github.com/everruns/bashkit/pull/2518)) by @chaliy
+* refactor(scripted-tool)!: move ToolDef layer into bashkit-scripted-tool crate ([#2519](https://github.com/everruns/bashkit/pull/2519)) by @chaliy
+* refactor(bindings)!: move ScriptedTool to bashkit.scripted and @everruns/bashkit/scripted ([#2520](https://github.com/everruns/bashkit/pull/2520)) by @chaliy
+* feat(python): bashkit.Terminal interactive terminal binding ([#2521](https://github.com/everruns/bashkit/pull/2521)) by @chaliy
+* feat(js): expose in-process Terminal in the NAPI package ([#2523](https://github.com/everruns/bashkit/pull/2523)) by @chaliy
+* fix: shell fidelity gaps ($arr, PATH, git init -q, extglob globs, printf %()T, /dev/stdin operands) ([#2514](https://github.com/everruns/bashkit/pull/2514)) by @chaliy
+* feat(cpython): real CPython 3.14 as python3 in a WebAssembly sandbox ([#2515](https://github.com/everruns/bashkit/pull/2515)) by @chaliy
+* feat(site): bashkit.sh /playground with an xterm.js terminal ([#2516](https://github.com/everruns/bashkit/pull/2516)) by @chaliy
+* feat(builtins): GNU coreutils gaps (sha*sum, dd, env, find engine, ...) ([#2524](https://github.com/everruns/bashkit/pull/2524)) by @chaliy
+* perf(cpython): immortal snapshot objects and C-side environ refresh ([#2534](https://github.com/everruns/bashkit/pull/2534)) by @chaliy
+* feat(fs): default root filesystem (/etc, /proc, /usr/bin) ([#2525](https://github.com/everruns/bashkit/pull/2525)) by @chaliy
+* perf(cpython): ship stdlib as bytecode, drop modules unusable in the guest ([#2535](https://github.com/everruns/bashkit/pull/2535)) by @chaliy
+* feat(fs): follow symlinks inside the VFS ([#2526](https://github.com/everruns/bashkit/pull/2526)) by @chaliy
+* feat(interpreter): run background jobs concurrently ([#2527](https://github.com/everruns/bashkit/pull/2527)) by @chaliy
+* chore(ci): bump taiki-e/install-action from 2.87.22 to 2.87.24 in the github-actions group ([#2532](https://github.com/everruns/bashkit/pull/2532)) by @app/dependabot
+* chore(deps): bump the site-npm group across 1 directory with 2 updates ([#2530](https://github.com/everruns/bashkit/pull/2530)) by @app/dependabot
+* chore(deps): bump @langchain/langgraph from 1.4.18 to 1.4.19 in /examples in the examples-npm group across 1 directory ([#2529](https://github.com/everruns/bashkit/pull/2529)) by @app/dependabot
+* feat(builtins): $SRANDOM, uuidgen, openssl rand ([#2533](https://github.com/everruns/bashkit/pull/2533)) by @chaliy
+* chore(deps): bump the fuzz-dependencies group in /crates/bashkit/fuzz with 6 updates ([#2531](https://github.com/everruns/bashkit/pull/2531)) by @app/dependabot
+* chore(deps): bump the rust-dependencies group across 1 directory with 6 updates ([#2522](https://github.com/everruns/bashkit/pull/2522)) by @app/dependabot
+* feat(terminal): real Ctrl-C, wait_for regex, screen diff ([#2537](https://github.com/everruns/bashkit/pull/2537)) by @chaliy
+* feat(site): Python startup on /benches, record CPython benches ([#2536](https://github.com/everruns/bashkit/pull/2536)) by @chaliy
+* chore(deps): bump turso_core from 0.8.1 to 0.8.2-pre.2 ([#2528](https://github.com/everruns/bashkit/pull/2528)) by @app/dependabot
+* feat(terminal): git commit without -m opens $EDITOR ([#2539](https://github.com/everruns/bashkit/pull/2539)) by @chaliy
+* perf(cpython): lazy random seeding ([#2540](https://github.com/everruns/bashkit/pull/2540)) by @chaliy
+* feat(terminal): read and select wait for typed input ([#2542](https://github.com/everruns/bashkit/pull/2542)) by @chaliy
+* feat(cpython): opt-in native code (cpython-native) ([#2544](https://github.com/everruns/bashkit/pull/2544)) by @chaliy
+* fix(interpreter): run pipeline stages as subshells ([#2538](https://github.com/everruns/bashkit/pull/2538)) by @chaliy
+* feat(terminal): man builtin and live watch ([#2545](https://github.com/everruns/bashkit/pull/2545)) by @chaliy
+* feat(interpreter): stream pipeline stages concurrently with SIGPIPE ([#2541](https://github.com/everruns/bashkit/pull/2541)) by @chaliy
+* feat(terminal): nano editor builtin ([#2547](https://github.com/everruns/bashkit/pull/2547)) by @chaliy
+* feat(terminal): multiple terminal sessions in TerminalTool ([#2548](https://github.com/everruns/bashkit/pull/2548)) by @chaliy
+* feat(interpreter): real $SECONDS and /proc/sys/kernel/random/uuid ([#2543](https://github.com/everruns/bashkit/pull/2543)) by @chaliy
+* fix(parser): backslash escapes after a quoted segment ([#2550](https://github.com/everruns/bashkit/pull/2550)) by @chaliy
+* feat(builtins): add 21 missing everyday commands, fix N>file redirects ([#2546](https://github.com/everruns/bashkit/pull/2546)) by @chaliy
+* fix(awk): newline continuation after control headers, regex operands ([#2554](https://github.com/everruns/bashkit/pull/2554)) by @chaliy
+* fix(interpreter): bound nested bash/sh child shells ([#2549](https://github.com/everruns/bashkit/pull/2549)) by @chaliy
+* feat(builtins): make, a GNU make subset run in the sandbox shell ([#2551](https://github.com/everruns/bashkit/pull/2551)) by @chaliy
+* fix(builtins): option gaps from gap telemetry (tar, gzip -c, grep -I/-r paths, join -o, xargs -r) ([#2555](https://github.com/everruns/bashkit/pull/2555)) by @chaliy
+* fix(parser): literal # mid-word and bash-style [[ =~ ]] regex operand ([#2553](https://github.com/everruns/bashkit/pull/2553)) by @chaliy
+* feat(eval): gap telemetry from replayed agent sessions ([#2552](https://github.com/everruns/bashkit/pull/2552)) by @chaliy
+* fix(parser): quotes and patterns inside ${...} operands ([#2556](https://github.com/everruns/bashkit/pull/2556)) by @chaliy
+* fix(builtins): set -n stops execution, find -ls, tar strips leading / ([#2557](https://github.com/everruns/bashkit/pull/2557)) by @chaliy
+* fix(arith): assign to array elements in ((...)), let and $((...)) ([#2558](https://github.com/everruns/bashkit/pull/2558)) by @chaliy
+* fix(tar,ls): tar -P/-T/--, ls quoting styles (-b, -N, -Q, --quoting-style) ([#2559](https://github.com/everruns/bashkit/pull/2559)) by @chaliy
+* feat(awk): run gawk, mawk and nawk as the awk builtin ([#2561](https://github.com/everruns/bashkit/pull/2561)) by @chaliy
+* fix(builtins): usage errors fail the command, not the script ([#2560](https://github.com/everruns/bashkit/pull/2560)) by @chaliy
+* fix(lexer): keep $'\x1e' and $'\x1f' bytes as data ([#2562](https://github.com/everruns/bashkit/pull/2562)) by @chaliy
+* fix(parser): keep backslash-escaped $ literal in unquoted words ([#2563](https://github.com/everruns/bashkit/pull/2563)) by @chaliy
+* fix(parser): keep quoted and escaped glob characters literal ([#2564](https://github.com/everruns/bashkit/pull/2564)) by @chaliy
+* feat(cpython): HTTP from Python through bashkit egress ([#2568](https://github.com/everruns/bashkit/pull/2568)) by @chaliy
+* fix(expansion): match ?, multi-star and lone * in ${x#pat} and ${x%pat} ([#2565](https://github.com/everruns/bashkit/pull/2565)) by @chaliy
+* feat(cpython): own requests and httpx modules over the HTTP bridge ([#2572](https://github.com/everruns/bashkit/pull/2572)) by @chaliy
+* feat(builtins): sudo and busybox run their command ([#2567](https://github.com/everruns/bashkit/pull/2567)) by @chaliy
+* feat(cpython): xz snapshot, preload urllib.request and parsers, fix doctest ([#2573](https://github.com/everruns/bashkit/pull/2573)) by @chaliy
+* feat(builtins): add pr ([#2571](https://github.com/everruns/bashkit/pull/2571)) by @chaliy
+* fix(jq): keep object keys in input order ([#2577](https://github.com/everruns/bashkit/pull/2577)) by @chaliy
+* fix(parser): case inside $( ) and [[ == [[:class:]] ]] patterns ([#2578](https://github.com/everruns/bashkit/pull/2578)) by @chaliy
+* fix(interpreter): brace expansion before other expansions ([#2579](https://github.com/everruns/bashkit/pull/2579)) by @chaliy
+* fix(expansion): pattern, case and transform operators on array elements ([#2576](https://github.com/everruns/bashkit/pull/2576)) by @chaliy
+* feat(builtins): add fmt on the vendored uutils engine ([#2569](https://github.com/everruns/bashkit/pull/2569)) by @chaliy
+* feat(interpreter): stream yes and seq into pipelines with SIGPIPE ([#2566](https://github.com/everruns/bashkit/pull/2566)) by @chaliy
+* feat(rootfs): add /proc/self, /proc/1, /proc/uptime and /proc/mounts ([#2570](https://github.com/everruns/bashkit/pull/2570)) by @chaliy
+* fix(builtins): shift status, ~+/~- tilde prefixes, shopt -o ([#2580](https://github.com/everruns/bashkit/pull/2580)) by @chaliy
+* fix(parser): heredoc backslash escapes; read without -r ([#2581](https://github.com/everruns/bashkit/pull/2581)) by @chaliy
+* feat(interpreter): stream cat through pipelines ([#2584](https://github.com/everruns/bashkit/pull/2584)) by @chaliy
+* feat(cpython): drop low-use stdlib modules for agent scripts ([#2582](https://github.com/everruns/bashkit/pull/2582)) by @chaliy
+* fix(network): classify NAT64/6to4 by embedded IPv4 and block reserved ranges ([#2574](https://github.com/everruns/bashkit/pull/2574)) by @chaliy
+* test(spec): import 1,044 bash-verified cases from the BashBox test suite ([#2575](https://github.com/everruns/bashkit/pull/2575)) by @chaliy
+* fix(interpreter): special params $0, $-, BASH_SUBSHELL, positional slices ([#2586](https://github.com/everruns/bashkit/pull/2586)) by @chaliy
+* feat(awk): rewrite awk to match gawk 5.2 ([#2583](https://github.com/everruns/bashkit/pull/2583)) by @chaliy
+* feat(builtins): stream grep and tr through pipelines ([#2587](https://github.com/everruns/bashkit/pull/2587)) by @chaliy
+* fix(interpreter): set -e ignored contexts reach functions, subshells, $( ) ([#2590](https://github.com/everruns/bashkit/pull/2590)) by @chaliy
+* fix(awk): visit for-in keys in gawk's storage order ([#2588](https://github.com/everruns/bashkit/pull/2588)) by @chaliy
+* fix(parser): redirect and heredoc combos; function redirects stop streaming ([#2589](https://github.com/everruns/bashkit/pull/2589)) by @chaliy
+* fix(builtins): getopts honors local OPTIND/OPTARG ([#2591](https://github.com/everruns/bashkit/pull/2591)) by @chaliy
+* fix(jq): follow jq's input stream, per-file names and per-input errors ([#2592](https://github.com/everruns/bashkit/pull/2592)) by @chaliy
+* fix(interpreter): exec >file redirects the shell's own output ([#2593](https://github.com/everruns/bashkit/pull/2593)) by @chaliy
+* fix(jq): print numbers and value errors like jq ([#2595](https://github.com/everruns/bashkit/pull/2595)) by @chaliy
+* fix(interpreter): expand array literals like command words ([#2594](https://github.com/everruns/bashkit/pull/2594)) by @chaliy
+* fix(sed): GNU character escapes, -z joins, unreadable inputs and per-line loop budget ([#2600](https://github.com/everruns/bashkit/pull/2600)) by @chaliy
+* fix(cli): exit 2 on syntax errors like bash ([#2598](https://github.com/everruns/bashkit/pull/2598)) by @chaliy
+* fix(interpreter): eval syntax errors exit 2 with bash's line prefix ([#2596](https://github.com/everruns/bashkit/pull/2596)) by @chaliy
+* fix(jq): null-path assignment, array growth, join, scan groups, from_entries and tostream like jq ([#2602](https://github.com/everruns/bashkit/pull/2602)) by @chaliy
+* fix(interpreter): toggle case, prefix-name splitting, mapfile options ([#2601](https://github.com/everruns/bashkit/pull/2601)) by @chaliy
+* feat(jq): halt/debug inside the command, -a/--raw-output0/--seq/--stream, $__loc__, ?// and date/base64 fixes ([#2606](https://github.com/everruns/bashkit/pull/2606)) by @chaliy
+* fix(parser): [[ a < b ]] compares strings, not a redirection ([#2603](https://github.com/everruns/bashkit/pull/2603)) by @chaliy
+* fix(builtins): GNU parity for sort, xargs, nl, fold, od, du and 20 more coreutils (166 BashBox cases) ([#2585](https://github.com/everruns/bashkit/pull/2585)) by @chaliy
+* feat(parser): print function bodies like bash and close BashBox parser gaps (45 cases) ([#2599](https://github.com/everruns/bashkit/pull/2599)) by @chaliy
+* fix(grep): match GNU grep 3.11 output, options and POSIX regex dialects ([#2609](https://github.com/everruns/bashkit/pull/2609)) by @chaliy
+* fix(interpreter): arithmetic errors report and fail instead of giving 0 ([#2604](https://github.com/everruns/bashkit/pull/2604)) by @chaliy
+* fix(parser): accept {arr[i]} as an fd-variable redirect ([#2605](https://github.com/everruns/bashkit/pull/2605)) by @chaliy
+* test: Debian-oracle scoreboard in CI with per-tool floors (+ sed -f regression it caught) ([#2614](https://github.com/everruns/bashkit/pull/2614)) by @chaliy
+* fix(declare): bash declaration engine, locals, attributes and set options (105 BashBox cases) ([#2597](https://github.com/everruns/bashkit/pull/2597)) by @chaliy
+* test(spec): unset scope cases from the bash oracle ([#2607](https://github.com/everruns/bashkit/pull/2607)) by @chaliy
+* test: bash-parity oracle scoreboard with recorded real-bash output ([#2618](https://github.com/everruns/bashkit/pull/2618)) by @chaliy
+* fix(parser): {arr[i]} is an fd variable in every redirect position ([#2617](https://github.com/everruns/bashkit/pull/2617)) by @chaliy
+* fix(builtins): return, unset -v and read reject bad arguments ([#2613](https://github.com/everruns/bashkit/pull/2613)) by @chaliy
+* fix(interpreter): exec N>&- closes the descriptor for real ([#2610](https://github.com/everruns/bashkit/pull/2610)) by @chaliy
+* fix(grep): bound recursive searches and skip directory cycles ([#2619](https://github.com/everruns/bashkit/pull/2619)) by @chaliy
+* fix(jq): bound stream event traversal and allocation ([#2621](https://github.com/everruns/bashkit/pull/2621)) by @chaliy
+* feat(interpreter): deliver signals the shell sends itself ([#2608](https://github.com/everruns/bashkit/pull/2608)) by @chaliy
+* test(cpython): bashkit snapshot round-trips python3 output ([#2623](https://github.com/everruns/bashkit/pull/2623)) by @chaliy
+* fix(interpreter): named file descriptors ({var}>file) and <> like bash ([#2624](https://github.com/everruns/bashkit/pull/2624)) by @chaliy
+* fix(interpreter): redirection errors read like bash ([#2611](https://github.com/everruns/bashkit/pull/2611)) by @chaliy
+* fix(od): bound row widths and budget output growth ([#2620](https://github.com/everruns/bashkit/pull/2620)) by @chaliy
+* fix(builtins): xargs and empty pipes give stdin at EOF; printf %q keeps UTF-8 text ([#2628](https://github.com/everruns/bashkit/pull/2628)) by @chaliy
+* fix(builtins): test and [ reject the operands bash rejects ([#2612](https://github.com/everruns/bashkit/pull/2612)) by @chaliy
+* test(bash-oracle): drop cases that measure the host, not bash ([#2625](https://github.com/everruns/bashkit/pull/2625)) by @chaliy
+* fix(interpreter): ${v@a} prints every attribute letter ([#2626](https://github.com/everruns/bashkit/pull/2626)) by @chaliy
+* fix(interpreter): loop/return scoping, trap listings, [[ ]] operands and builtin parity from the BashBox corpus ([#2629](https://github.com/everruns/bashkit/pull/2629)) by @chaliy
+* fix(interpreter): ${#v} counts bytes under the C locale ([#2627](https://github.com/everruns/bashkit/pull/2627)) by @chaliy
+* fix(interpreter): exec inside a subshell redirects the subshell ([#2615](https://github.com/everruns/bashkit/pull/2615)) by @chaliy
+* feat(interpreter): child shells count SHLVL like bash ([#2622](https://github.com/everruns/bashkit/pull/2622)) by @chaliy
+* fix(interpreter): ERR/RETURN trap scoping and N>&word redirects like bash ([#2631](https://github.com/everruns/bashkit/pull/2631)) by @chaliy
+* fix(interpreter): extglob, nocasematch, globstar, substrings and $'...' quoting like bash ([#2632](https://github.com/everruns/bashkit/pull/2632)) by @chaliy
+* fix(interpreter): diagnostics carry bash's "$0: line N:" prefix ([#2630](https://github.com/everruns/bashkit/pull/2630)) by @chaliy
+* fix(builtins): printf -v, readonly assignment, quoted $@ fields and */ globs like bash ([#2633](https://github.com/everruns/bashkit/pull/2633)) by @chaliy
+* fix(interpreter): route builtin, command-not-found and $(...) stderr like bash ([#2634](https://github.com/everruns/bashkit/pull/2634)) by @chaliy
+* fix(interpreter): match bash stderr for set -x, syntax errors and TIMEFORMAT ([#2635](https://github.com/everruns/bashkit/pull/2635)) by @chaliy
+* fix(interpreter): model bash fork suppression for $SHLVL ([#2636](https://github.com/everruns/bashkit/pull/2636)) by @chaliy
+* fix(jq): make join linear in the number of elements ([#2637](https://github.com/everruns/bashkit/pull/2637)) by @chaliy
+* fix(interpreter): run coprocesses concurrently over in-process pipes ([#2638](https://github.com/everruns/bashkit/pull/2638)) by @chaliy
+* fix(interpreter): process substitution expands to /dev/fd/63 ([#2639](https://github.com/everruns/bashkit/pull/2639)) by @chaliy
+* test(oils-spec): measure upstream Oils spec pass rate against real bash ([#2640](https://github.com/everruns/bashkit/pull/2640)) by @chaliy
+* fix(interpreter): close Oils word-split, globignore, dbracket, cd and alias gaps ([#2641](https://github.com/everruns/bashkit/pull/2641)) by @chaliy
+* feat(eval): repo-shaped workflow tasks with CI-checked reference solutions ([#2642](https://github.com/everruns/bashkit/pull/2642)) by @chaliy
+* fix(interpreter): close Oils tilde, patsub, brace, loop and paren-ambiguity gaps ([#2643](https://github.com/everruns/bashkit/pull/2643)) by @chaliy
+* fix(interpreter): close Oils type/hash, redirect, here-doc, shell-option and special-variable gaps ([#2644](https://github.com/everruns/bashkit/pull/2644)) by @chaliy
+* fix(interpreter): close Oils debug-stack, temp-env, NUL, regex and builtin gaps ([#2645](https://github.com/everruns/bashkit/pull/2645)) by @chaliy
+* fix(interpreter): fatal expansion errors, quoted empty words, line shifts and ENOTDIR like bash ([#2646](https://github.com/everruns/bashkit/pull/2646)) by @chaliy
+* fix(interpreter): arrays, indirect expansion and DEBUG traps like bash ([#2647](https://github.com/everruns/bashkit/pull/2647)) by @chaliy
+* feat(interpreter): history, fc, completion, bind, prompts and bash -i like bash ([#2648](https://github.com/everruns/bashkit/pull/2648)) by @chaliy
+* test(interpreter): streaming regression for exec 2>&1 routing per list element ([#2649](https://github.com/everruns/bashkit/pull/2649)) by @chaliy
+* fix(interpreter): close Oils long-tail spec gaps ([#2650](https://github.com/everruns/bashkit/pull/2650)) by @chaliy
+* fix(parser): expand aliases per line and close final Oils spec gaps ([#2652](https://github.com/everruns/bashkit/pull/2652)) by @chaliy
+* fix(hash): budget retained command paths ([#2651](https://github.com/everruns/bashkit/pull/2651)) by @chaliy
+* fix(cd): bound CDPATH memory and traversal work ([#2654](https://github.com/everruns/bashkit/pull/2654)) by @chaliy
+* fix: close remaining BashBox corpus gaps ([#2657](https://github.com/everruns/bashkit/pull/2657)) by @chaliy
+* fix(interpreter): budget function definition metadata ([#2655](https://github.com/everruns/bashkit/pull/2655)) by @chaliy
+* feat(eval): refresh LLM evals on 2026-10 lineup, add bashkit_hard eval, wire results into site ([#2658](https://github.com/everruns/bashkit/pull/2658)) by @chaliy
+* fix(sed): fall back to direct write when hidden temp file is refused ([#2659](https://github.com/everruns/bashkit/pull/2659)) by @chaliy
+* fix(jq): ignore unread invalid stdin under -n ([#2660](https://github.com/everruns/bashkit/pull/2660)) by @chaliy
+* feat(eval): one tagged 88-task dataset with runtime tasks, plus bashkit_generate eval ([#2664](https://github.com/everruns/bashkit/pull/2664)) by @chaliy
+* fix(interpreter): bound script text echoed into arithmetic diagnostics ([#2665](https://github.com/everruns/bashkit/pull/2665)) by @chaliy
+* test(cpython): budget the crash-containment case for its real cost ([#2666](https://github.com/everruns/bashkit/pull/2666)) by @chaliy
+* test(fuzz): skip arithmetic inputs the diagnostic would echo back ([#2667](https://github.com/everruns/bashkit/pull/2667)) by @chaliy
+* fix(date): accept HH:MM date-times and zone suffixes in -d ([#2662](https://github.com/everruns/bashkit/pull/2662)) by @xmakro
+* fix(date): read weekday names in -d instead of returning now ([#2663](https://github.com/everruns/bashkit/pull/2663)) by @xmakro
+* fix(arithmetic): bound nested dollar expansion ([#2668](https://github.com/everruns/bashkit/pull/2668)) by @chaliy
+* test(security): lock in bounded rejection of bare-negation conditional print ([#2669](https://github.com/everruns/bashkit/pull/2669)) by @chaliy
+* fix(interpreter): budget pending array expansions ([#2670](https://github.com/everruns/bashkit/pull/2670)) by @chaliy
+* fix(interpreter): bound recursive prompt expansion ([#2671](https://github.com/everruns/bashkit/pull/2671)) by @chaliy
+* fix(parser): read a backquoted substitution after a quoted segment ([#2661](https://github.com/everruns/bashkit/pull/2661)) by @xmakro
+* fix(indirect): truncate array target at first ] to stop operand recursion ([#2673](https://github.com/everruns/bashkit/pull/2673)) by @chaliy
+* fix(indirect): preserve nested subscripts with a complete-reference boundary ([#2674](https://github.com/everruns/bashkit/pull/2674)) by @chaliy
+* test(indirect): enforce real bounds in the hostile-cycle harness ([#2676](https://github.com/everruns/bashkit/pull/2676)) by @chaliy
+* fix(parser): bound syntax diagnostic construction ([#2675](https://github.com/everruns/bashkit/pull/2675)) by @chaliy
+* fix(tests): route argv regression through bounded CLI harness ([#2677](https://github.com/everruns/bashkit/pull/2677)) by @chaliy
+* fix(interp): charge tilde expansion to the execution budget ([#2672](https://github.com/everruns/bashkit/pull/2672)) by @chaliy
+* test(parser): assert full bounds contract in multiline-ARG0 regression ([#2680](https://github.com/everruns/bashkit/pull/2680)) by @chaliy
+* fix(interpreter): bound re-entrant signal-trap delivery depth ([#2679](https://github.com/everruns/bashkit/pull/2679)) by @chaliy
+* fix(tests): fail-closed bounded probe launcher with honest lifecycle ([#2681](https://github.com/everruns/bashkit/pull/2681)) by @chaliy
+* test(harness): fail-closed lifecycle for bounded probe runner ([#2682](https://github.com/everruns/bashkit/pull/2682)) by @chaliy
+* fix(interpreter): bound diagnostic prefix amplification ([#2653](https://github.com/everruns/bashkit/pull/2653)) by @chaliy
+* test(harness): bounded join gate, reap seam, launcher-bound selftests ([#2683](https://github.com/everruns/bashkit/pull/2683)) by @chaliy
+* test(harness): join completion gate, fault seams, launcher-bound selftests ([#2684](https://github.com/everruns/bashkit/pull/2684)) by @chaliy
+* test(harness): parent cleanup, join gate, fault seams ([#2685](https://github.com/everruns/bashkit/pull/2685)) by @chaliy
+* test(harness): same-handle gate proof, live fault fixtures, launcher receipts ([#2686](https://github.com/everruns/bashkit/pull/2686)) by @chaliy
+* test(harness): single descendant cleanup, strict absence proof ([#2687](https://github.com/everruns/bashkit/pull/2687)) by @chaliy
+* fix(security): bound tar lists and nested substitution parsing ([#2678](https://github.com/everruns/bashkit/pull/2678)) by @chaliy
+* docs: state dedicated trap-nesting cap alongside shared ceiling ([#2690](https://github.com/everruns/bashkit/pull/2690)) by @chaliy
+* fix(tests): resolve the spawned CLI binary without guessing cargo layout ([#2691](https://github.com/everruns/bashkit/pull/2691)) by @chaliy
+* fix(arithmetic): budget expanded array keys before allocation ([#2689](https://github.com/everruns/bashkit/pull/2689)) by @chaliy
+* fix(awk): bound field operand recursion ([#2693](https://github.com/everruns/bashkit/pull/2693)) by @chaliy
+* fix(fmt): budget amplified output before allocation ([#2692](https://github.com/everruns/bashkit/pull/2692)) by @chaliy
+* fix(pr): bound pagination allocations before growth ([#2694](https://github.com/everruns/bashkit/pull/2694)) by @chaliy
+* test: add test for parameter expansion with command substitution ${VAR:-$(cmd)} ([#2695](https://github.com/everruns/bashkit/pull/2695)) by @chaliy
+* test(harness): reaped receipt, readiness-gated faults, ownership proofs ([#2688](https://github.com/everruns/bashkit/pull/2688)) by @chaliy
+* fix(jq): bound object-key/index error previews with capped rendering ([#2697](https://github.com/everruns/bashkit/pull/2697)) by @chaliy
+* fix(sed): budget pattern/hold growth against live-intermediate limit ([#2698](https://github.com/everruns/bashkit/pull/2698)) by @chaliy
+* fix(jq): abort error-preview traversal at budget instead of walking hostile values ([#2699](https://github.com/everruns/bashkit/pull/2699)) by @chaliy
+* test(jq): fail-closed bounded fixture for error-preview regressions ([#2700](https://github.com/everruns/bashkit/pull/2700)) by @chaliy
+* fix(tests): cap bounded-child RSS instead of address space ([#2701](https://github.com/everruns/bashkit/pull/2701)) by @chaliy
+* chore(eval): add GPT-6.1 Sol and GPT-6 Luna to the 88-task and generate results ([#2703](https://github.com/everruns/bashkit/pull/2703)) by @chaliy
+* fix(deps): replace archived YAML parser with maintained fork ([#2704](https://github.com/everruns/bashkit/pull/2704)) by @chaliy
+* fix(join): budget generated output and synchronous work ([#2713](https://github.com/everruns/bashkit/pull/2713)) by @chaliy
+* fix(dd): admit padded buffers before allocation ([#2714](https://github.com/everruns/bashkit/pull/2714)) by @chaliy
+* chore(deps): bump the docs-grep-agent-uv group in /examples/docs-grep-agent with 4 updates ([#2712](https://github.com/everruns/bashkit/pull/2712)) by @app/dependabot
+* chore(deps): bump the js-npm group in /crates/bashkit-js with 5 updates ([#2709](https://github.com/everruns/bashkit/pull/2709)) by @app/dependabot
+* chore(deps): bump the examples-npm group across 2 directories with 6 updates ([#2710](https://github.com/everruns/bashkit/pull/2710)) by @app/dependabot
+* chore(deps): bump the site-npm group in /site with 4 updates ([#2711](https://github.com/everruns/bashkit/pull/2711)) by @app/dependabot
+* chore(ci): bump the github-actions group with 5 updates ([#2705](https://github.com/everruns/bashkit/pull/2705)) by @app/dependabot
+* fix(ci): unbreak main and nightly, and close the dependabot wasmtime gap ([#2715](https://github.com/everruns/bashkit/pull/2715)) by @chaliy
+* chore(deps): bump turso_core from 0.8.2 to 0.8.3 ([#2717](https://github.com/everruns/bashkit/pull/2717)) by @chaliy
+* fix(ci): pin cargo-geiger where the action actually reads the version ([#2719](https://github.com/everruns/bashkit/pull/2719)) by @chaliy
+* chore(deps): bump the rust-dependencies group with 6 updates ([#2720](https://github.com/everruns/bashkit/pull/2720)) by @chaliy
+* chore(deps): bump prettier from 3.9.9 to 3.9.10 in /crates/bashkit-js in the js-npm group ([#2716](https://github.com/everruns/bashkit/pull/2716)) by @app/dependabot
+* chore(deps): bump zeroize from 1.9.0 to 1.9.1 in /crates/bashkit/fuzz in the fuzz-dependencies group ([#2718](https://github.com/everruns/bashkit/pull/2718)) by @app/dependabot
+* fix(make): admit substitution before allocation ([#2721](https://github.com/everruns/bashkit/pull/2721)) by @chaliy
+* fix(interpreter): admit concurrent pipeline forks ([#2722](https://github.com/everruns/bashkit/pull/2722)) by @chaliy
+* fix(fs): admit standard-stream capture before growth ([#2723](https://github.com/everruns/bashkit/pull/2723)) by @chaliy
+* feat(python): enable Python and TypeScript in BashTool ([#2724](https://github.com/everruns/bashkit/pull/2724)) by @chaliy
+* fix(deps): clear the 2026-10-14 wasmtime and rustls advisories ([#2725](https://github.com/everruns/bashkit/pull/2725)) by @chaliy
+* chore(deps): bump zod from 4.6.5 to 4.6.6 in /crates/bashkit-js in the js-npm group ([#2726](https://github.com/everruns/bashkit/pull/2726)) by @app/dependabot
+* chore(deps): bump zod from 4.6.5 to 4.6.6 in /examples in the examples-npm group across 1 directory ([#2728](https://github.com/everruns/bashkit/pull/2728)) by @app/dependabot
+* chore(deps): bump serde_json from 1.0.151 to 1.0.154 in /crates/bashkit/fuzz in the fuzz-dependencies group ([#2727](https://github.com/everruns/bashkit/pull/2727)) by @app/dependabot
+* chore(ci): bump taiki-e/install-action from 2.87.27 to 2.87.28 in the github-actions group ([#2730](https://github.com/everruns/bashkit/pull/2730)) by @app/dependabot
+* chore(deps): bump the rust-dependencies group, with the audits it needs ([#2731](https://github.com/everruns/bashkit/pull/2731)) by @chaliy
+* perf(wasm): reduce browser transfer size and verify package identity ([#2732](https://github.com/everruns/bashkit/pull/2732)) by @chaliy
+* fix(arrays): release mapfile budgets and surface refusals ([#2733](https://github.com/everruns/bashkit/pull/2733)) by @chaliy
+* fix(parser): unify indirect subscript consumption ([#2734](https://github.com/everruns/bashkit/pull/2734)) by @chaliy
+* fix(interpreter): charge input budget for numbered input redirects ([#2696](https://github.com/everruns/bashkit/pull/2696)) by @chaliy
+
+**Full Changelog**: https://github.com/everruns/bashkit/compare/v0.18.2...v0.19.0
+
 ## [0.18.2] - 2026-09-22
 
 ### Highlights
