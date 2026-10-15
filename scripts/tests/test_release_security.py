@@ -24,7 +24,7 @@ class ReleaseSecurityTests(unittest.TestCase):
                 source = next(s for s in validator['steps'] if s.get('name') == 'Verify tag source')
                 self.assertEqual(validator['outputs']['sha'], '${{ steps.source.outputs.sha }}')
                 self.assertEqual(source['id'], 'source')
-                builds = [job for key, job in workflow.items() if key != 'validate-tag'] if name == 'publish.yml' else [workflow['build']]
+                builds = [job for key, job in workflow.items() if key not in ('validate-tag', 'verify-publish')] if name == 'publish.yml' else [workflow['build']]
                 for build in builds:
                     checkout = next(s for s in build['steps'] if s.get('uses', '').startswith('actions/checkout@'))
                     self.assertEqual(checkout['with']['ref'], '${{ needs.validate-tag.outputs.sha }}')
@@ -113,6 +113,15 @@ class ReleaseSecurityTests(unittest.TestCase):
                 result = subprocess.run(['bash', '-e', '-c', script], cwd=checkout, env=env, capture_output=True, text=True)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertFalse(output.exists())
+
+    def test_registry_verification_uses_workflow_code_and_validated_version(self):
+        job = jobs('publish.yml')['verify-publish']
+        checkout = next(s for s in job['steps'] if s.get('uses', '').startswith('actions/checkout@'))
+        self.assertEqual(checkout['with']['ref'], '${{ github.sha }}')
+        verify = next(s for s in job['steps'] if s.get('name') == 'Verify crates.io versions')
+        self.assertEqual(verify['env']['RELEASE_TAG'], '${{ needs.validate-tag.outputs.tag }}')
+        self.assertIn('EXPECTED="${RELEASE_TAG#v}"', verify['run'])
+        self.assertNotIn('Cargo.toml', verify['run'])
 
     def test_crates_release_tag_input_resolution(self):
         script = next(s['run'] for s in jobs('publish.yml')['validate-tag']['steps']

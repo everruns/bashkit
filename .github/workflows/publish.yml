@@ -238,14 +238,17 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.validate-tag.outputs.sha }}
+          # Verification code belongs to the trusted workflow revision.
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - name: Wait for crates.io propagation
         run: sleep 60
 
       - name: Verify crates.io versions
+        env:
+          RELEASE_TAG: ${{ needs.validate-tag.outputs.tag }}
         run: |
-          EXPECTED=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          EXPECTED="${RELEASE_TAG#v}"
           echo "Expected version: $EXPECTED"
           python3 scripts/verify_crates_publish.py --expected "$EXPECTED" bashkit-cpython-wasm bashkit bashkit-cli bashkit-scripted-tool

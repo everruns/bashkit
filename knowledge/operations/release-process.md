@@ -281,7 +281,9 @@ remains the release upload destination, never the build source after validation.
 For Rust workflow-only recovery, merge the repair, then dispatch
 `gh workflow run publish.yml --ref main -f tag=vMAJOR.MINOR.PATCH`.
 The workflow ref must be the matching tag or current main; every crate is built
-from the validated tag SHA, even when main has advanced. Never move an existing
+from the validated tag SHA, even when main has advanced. Registry verification
+runs code from the trusted workflow revision and reads its expected version from
+the validated tag rather than main's manifest. Never move an existing
 release tag or rebuild already published registry versions. The CPython size gate
 runs verified `cargo package` before measuring its finalized archive because
 Cargo 1.95 publish dry-runs retain only a temporary archive.
