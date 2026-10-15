@@ -15,7 +15,7 @@
     "@langchain/openai": "^1.6.2",
     "ai": "^7.0.137",
     "openai": "^7.32.0",
-    "zod": "^4.6.5"
+    "zod": "^4.6.6"
   },
   "pnpm": {
     "overrides": {

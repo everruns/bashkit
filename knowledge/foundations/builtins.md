@@ -56,6 +56,26 @@ the same reservation. `execution_budget_tests::cdpath_*` cover script and
 environment inputs, memory/work exhaustion, lease release, early success, and
 cancellation; `cd-builtin.test.sh` covers Bash semantics.
 
+### Array side effects and retained memory
+
+`RemoveArray` releases indexed-array entry and byte charges when dropping the
+binding. `mapfile` rejects the interpreter-owned debug-stack arrays
+(`FUNCNAME`, `BASH_SOURCE`, `BASH_LINENO`) with status 1, as Bash does; their
+uncharged metadata must never be refunded as user-array capacity. `FUNCNAME`
+remains reserved after unset; this narrower lifecycle is L-MAPFILE-002 in
+[Known Limitations](../operations/limitations.md).
+`SetIndexedArray` applies checked element writes against the live array;
+`mapfile -O` overwrites therefore refund replaced values and preserve entries
+whose writes are refused. Ordinary `mapfile` clears first, including for empty
+input. Updates are sequential; a limit failure can retain earlier admitted
+records. Entry and byte refusals record the first memory-limit error and fail
+the host execution, with recovery available on a later execution after freeing
+state. They never silently report a rejected array write as success.
+
+`array_budget_security_tests` covers repeated replacements, empty input, `-O`,
+byte/entry exhaustion, session recovery, and the independent brush-web
+three-read 50,000-line reproduction (TM-DOS-060, TM-DOS-114).
+
 ### Command Dispatch Order
 
 functions → special commands → builtins → path execution → $PATH search →

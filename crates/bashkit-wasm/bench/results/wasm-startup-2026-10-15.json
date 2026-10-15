@@ -1,0 +1,2064 @@
+{
+ "date": "2026-10-15",
+ "sourceBase": "8a817bf0",
+ "toolchain": {
+  "rust": "1.95.0",
+  "wasmBindgen": "0.2.128",
+  "binaryen": "125"
+ },
+ "published": {
+  "version": "0.18.2",
+  "gitHead": "567511386572d4c4b9f649ab1da97aad53b9f341",
+  "integrity": "sha512-WW8cdRvODapGKCtqh3h8foufAgUXjaL/fsd8Wt/qERqgubG024I/HLl5rQJnTQ8Nfj+UJdYBdj0EaTsv5s/vig=="
+ },
+ "compat": {
+  "oracle": "GNU bash, version 5.3.20(1)-release (aarch64-apple-darwin27.0.0)",
+  "reports": [
+   {
+    "package": "/private/tmp/bashkit-published/package",
+    "passed": 19,
+    "total": 24,
+    "results": [
+     {
+      "name": "quoted array",
+      "pass": true
+     },
+     {
+      "name": "sparse array",
+      "pass": false,
+      "expected": {
+       "stdout": "Mgo3CjIK",
+       "status": 0
+      },
+      "actual": {
+       "name": "sparse array",
+       "stdout": "MAoxCjIK",
+       "status": 0
+      }
+     },
+     {
+      "name": "array slice",
+      "pass": false,
+      "expected": {
+       "stdout": "ZAplCg==",
+       "status": 0
+      },
+      "actual": {
+       "name": "array slice",
+       "stdout": "ZCBlCg==",
+       "status": 0
+      }
+     },
+     {
+      "name": "associative array",
+      "pass": false,
+      "expected": {
+       "stdout": "dHdvIHdvcmRzCg==",
+       "status": 0
+      },
+      "actual": {
+       "name": "associative array",
+       "stdout": "J3R3bwo=",
+       "status": 0
+      }
+     },
+     {
+      "name": "nameref assignment",
+      "pass": true
+     },
+     {
+      "name": "nameref array",
+      "pass": true
+     },
+     {
+      "name": "case conversion",
+      "pass": true
+     },
+     {
+      "name": "pattern replacement",
+      "pass": true
+     },
+     {
+      "name": "indirect expansion",
+      "pass": true
+     },
+     {
+      "name": "dynamic scope",
+      "pass": true
+     },
+     {
+      "name": "arithmetic array",
+      "pass": false,
+      "expected": {
+       "stdout": "OAo=",
+       "status": 0
+      },
+      "actual": {
+       "name": "arithmetic array",
+       "stdout": "NQo=",
+       "status": 0
+      }
+     },
+     {
+      "name": "brace sequence",
+      "pass": false,
+      "expected": {
+       "stdout": "MDMKMDYKMDkK",
+       "status": 0
+      },
+      "actual": {
+       "name": "brace sequence",
+       "stdout": "Mwo2CjkK",
+       "status": 0
+      }
+     },
+     {
+      "name": "command substitution",
+      "pass": true
+     },
+     {
+      "name": "subshell isolation",
+      "pass": true
+     },
+     {
+      "name": "process substitution",
+      "pass": true
+     },
+     {
+      "name": "here string",
+      "pass": true
+     },
+     {
+      "name": "pipefail",
+      "pass": true
+     },
+     {
+      "name": "errexit exception",
+      "pass": true
+     },
+     {
+      "name": "case fallthrough",
+      "pass": true
+     },
+     {
+      "name": "regex capture",
+      "pass": true
+     },
+     {
+      "name": "mapfile",
+      "pass": true
+     },
+     {
+      "name": "child shell",
+      "pass": true
+     },
+     {
+      "name": "read delimiter",
+      "pass": true
+     },
+     {
+      "name": "negative status",
+      "pass": true
+     }
+    ]
+   },
+   {
+    "package": "/private/tmp/bashkit-tag-package",
+    "passed": 19,
+    "total": 24,
+    "results": [
+     {
+      "name": "quoted array",
+      "pass": true
+     },
+     {
+      "name": "sparse array",
+      "pass": false,
+      "expected": {
+       "stdout": "Mgo3CjIK",
+       "status": 0
+      },
+      "actual": {
+       "name": "sparse array",
+       "stdout": "MAoxCjIK",
+       "status": 0
+      }
+     },
+     {
+      "name": "array slice",
+      "pass": false,
+      "expected": {
+       "stdout": "ZAplCg==",
+       "status": 0
+      },
+      "actual": {
+       "name": "array slice",
+       "stdout": "ZCBlCg==",
+       "status": 0
+      }
+     },
+     {
+      "name": "associative array",
+      "pass": false,
+      "expected": {
+       "stdout": "dHdvIHdvcmRzCg==",
+       "status": 0
+      },
+      "actual": {
+       "name": "associative array",
+       "stdout": "J3R3bwo=",
+       "status": 0
+      }
+     },
+     {
+      "name": "nameref assignment",
+      "pass": true
+     },
+     {
+      "name": "nameref array",
+      "pass": true
+     },
+     {
+      "name": "case conversion",
+      "pass": true
+     },
+     {
+      "name": "pattern replacement",
+      "pass": true
+     },
+     {
+      "name": "indirect expansion",
+      "pass": true
+     },
+     {
+      "name": "dynamic scope",
+      "pass": true
+     },
+     {
+      "name": "arithmetic array",
+      "pass": false,
+      "expected": {
+       "stdout": "OAo=",
+       "status": 0
+      },
+      "actual": {
+       "name": "arithmetic array",
+       "stdout": "NQo=",
+       "status": 0
+      }
+     },
+     {
+      "name": "brace sequence",
+      "pass": false,
+      "expected": {
+       "stdout": "MDMKMDYKMDkK",
+       "status": 0
+      },
+      "actual": {
+       "name": "brace sequence",
+       "stdout": "Mwo2CjkK",
+       "status": 0
+      }
+     },
+     {
+      "name": "command substitution",
+      "pass": true
+     },
+     {
+      "name": "subshell isolation",
+      "pass": true
+     },
+     {
+      "name": "process substitution",
+      "pass": true
+     },
+     {
+      "name": "here string",
+      "pass": true
+     },
+     {
+      "name": "pipefail",
+      "pass": true
+     },
+     {
+      "name": "errexit exception",
+      "pass": true
+     },
+     {
+      "name": "case fallthrough",
+      "pass": true
+     },
+     {
+      "name": "regex capture",
+      "pass": true
+     },
+     {
+      "name": "mapfile",
+      "pass": true
+     },
+     {
+      "name": "child shell",
+      "pass": true
+     },
+     {
+      "name": "read delimiter",
+      "pass": true
+     },
+     {
+      "name": "negative status",
+      "pass": true
+     }
+    ]
+   },
+   {
+    "package": "/private/tmp/bashkit-wasm-startup/crates/bashkit-wasm/pkg",
+    "passed": 24,
+    "total": 24,
+    "results": [
+     {
+      "name": "quoted array",
+      "pass": true
+     },
+     {
+      "name": "sparse array",
+      "pass": true
+     },
+     {
+      "name": "array slice",
+      "pass": true
+     },
+     {
+      "name": "associative array",
+      "pass": true
+     },
+     {
+      "name": "nameref assignment",
+      "pass": true
+     },
+     {
+      "name": "nameref array",
+      "pass": true
+     },
+     {
+      "name": "case conversion",
+      "pass": true
+     },
+     {
+      "name": "pattern replacement",
+      "pass": true
+     },
+     {
+      "name": "indirect expansion",
+      "pass": true
+     },
+     {
+      "name": "dynamic scope",
+      "pass": true
+     },
+     {
+      "name": "arithmetic array",
+      "pass": true
+     },
+     {
+      "name": "brace sequence",
+      "pass": true
+     },
+     {
+      "name": "command substitution",
+      "pass": true
+     },
+     {
+      "name": "subshell isolation",
+      "pass": true
+     },
+     {
+      "name": "process substitution",
+      "pass": true
+     },
+     {
+      "name": "here string",
+      "pass": true
+     },
+     {
+      "name": "pipefail",
+      "pass": true
+     },
+     {
+      "name": "errexit exception",
+      "pass": true
+     },
+     {
+      "name": "case fallthrough",
+      "pass": true
+     },
+     {
+      "name": "regex capture",
+      "pass": true
+     },
+     {
+      "name": "mapfile",
+      "pass": true
+     },
+     {
+      "name": "child shell",
+      "pass": true
+     },
+     {
+      "name": "read delimiter",
+      "pass": true
+     },
+     {
+      "name": "negative status",
+      "pass": true
+     }
+    ]
+   }
+  ]
+ },
+ "profiles": {
+  "baseline": {
+   "files": [
+    {
+     "name": "index.js",
+     "sha256": "1583d806464a708b29a27fa4f9cd2c3299df6e142fe301043a94c30b4b813cae",
+     "raw": 1503,
+     "gzip": 828,
+     "brotli": 673
+    },
+    {
+     "name": "bashkit_wasm.js",
+     "sha256": "3b03202632bfae9333b32b2eebbb69519962ef3e5d0f6ae35546ee67fa1b9fa9",
+     "raw": 65159,
+     "gzip": 8704,
+     "brotli": 7481
+    },
+    {
+     "name": "bashkit_wasm_bg.wasm",
+     "sha256": "f59d5c508f7405c03400a1c46ab1bc7e06fc352c540abfbff6ba197548d9b1b2",
+     "raw": 9452877,
+     "gzip": 3560745,
+     "brotli": 2460299
+    }
+   ],
+   "total": {
+    "raw": 9519539,
+    "gzip": 3570277,
+    "brotli": 2468453
+   },
+   "sections": [
+    {
+     "name": "section-1",
+     "raw": 1008
+    },
+    {
+     "name": "section-2",
+     "raw": 3841
+    },
+    {
+     "name": "section-3",
+     "raw": 8439
+    },
+    {
+     "name": "section-4",
+     "raw": 7
+    },
+    {
+     "name": "section-5",
+     "raw": 3
+    },
+    {
+     "name": "section-6",
+     "raw": 25
+    },
+    {
+     "name": "section-7",
+     "raw": 1819
+    },
+    {
+     "name": "section-9",
+     "raw": 8164
+    },
+    {
+     "name": "section-12",
+     "raw": 2
+    },
+    {
+     "name": "code",
+     "raw": 8279718
+    },
+    {
+     "name": "data",
+     "raw": 1149749
+    },
+    {
+     "name": "custom:producers",
+     "raw": 60
+    }
+   ]
+  },
+  "selected": {
+   "files": [
+    {
+     "name": "index.js",
+     "sha256": "1583d806464a708b29a27fa4f9cd2c3299df6e142fe301043a94c30b4b813cae",
+     "raw": 1503,
+     "gzip": 828,
+     "brotli": 673
+    },
+    {
+     "name": "bashkit_wasm.js",
+     "sha256": "15ab168775e5a4623bfb4d0164f34dcdc78f8b73aaa1e0a0063cfc1aafed207d",
+     "raw": 65168,
+     "gzip": 8705,
+     "brotli": 7499
+    },
+    {
+     "name": "bashkit_wasm_bg.wasm",
+     "sha256": "d65414678c9122205486686cd3c1f0296a92129c046229b2bcef9e2d59ff2ea7",
+     "raw": 7602233,
+     "gzip": 2963968,
+     "brotli": 2117510
+    }
+   ],
+   "total": {
+    "raw": 7668904,
+    "gzip": 2973501,
+    "brotli": 2125682
+   },
+   "sections": [
+    {
+     "name": "section-1",
+     "raw": 913
+    },
+    {
+     "name": "section-2",
+     "raw": 3841
+    },
+    {
+     "name": "section-3",
+     "raw": 10594
+    },
+    {
+     "name": "section-4",
+     "raw": 7
+    },
+    {
+     "name": "section-5",
+     "raw": 3
+    },
+    {
+     "name": "section-6",
+     "raw": 25
+    },
+    {
+     "name": "section-7",
+     "raw": 1822
+    },
+    {
+     "name": "section-9",
+     "raw": 8076
+    },
+    {
+     "name": "section-12",
+     "raw": 2
+    },
+    {
+     "name": "code",
+     "raw": 6433520
+    },
+    {
+     "name": "data",
+     "raw": 1143328
+    },
+    {
+     "name": "custom:producers",
+     "raw": 60
+    }
+   ]
+  },
+  "rejectedZ": {
+   "files": [
+    {
+     "name": "index.js",
+     "sha256": "1583d806464a708b29a27fa4f9cd2c3299df6e142fe301043a94c30b4b813cae",
+     "raw": 1503,
+     "gzip": 828,
+     "brotli": 673
+    },
+    {
+     "name": "bashkit_wasm.js",
+     "sha256": "91c7a36d8fe29a8bb99b4f0dad6113664aedb95e6f58cf30f40ef6c298f1beb1",
+     "raw": 65168,
+     "gzip": 8707,
+     "brotli": 7479
+    },
+    {
+     "name": "bashkit_wasm_bg.wasm",
+     "sha256": "e532fe6b404c546e50e553947672ed56715cf5b5b854872517a1cb29a693881c",
+     "raw": 6353397,
+     "gzip": 2496856,
+     "brotli": 1843216
+    }
+   ],
+   "total": {
+    "raw": 6420068,
+    "gzip": 2506391,
+    "brotli": 1851368
+   },
+   "sections": [
+    {
+     "name": "section-1",
+     "raw": 1031
+    },
+    {
+     "name": "section-2",
+     "raw": 3841
+    },
+    {
+     "name": "section-3",
+     "raw": 13682
+    },
+    {
+     "name": "section-4",
+     "raw": 7
+    },
+    {
+     "name": "section-5",
+     "raw": 3
+    },
+    {
+     "name": "section-6",
+     "raw": 25
+    },
+    {
+     "name": "section-7",
+     "raw": 1822
+    },
+    {
+     "name": "section-9",
+     "raw": 8335
+    },
+    {
+     "name": "section-12",
+     "raw": 2
+    },
+    {
+     "name": "code",
+     "raw": 5149690
+    },
+    {
+     "name": "data",
+     "raw": 1174857
+    },
+    {
+     "name": "custom:producers",
+     "raw": 60
+    }
+   ]
+  }
+ },
+ "cold": {
+  "method": "Cold context, Brotli 11, CDP Fast/Slow 4G, page CPU 4x; main-thread JS-host WASM, no terminal renderer dependency; prompt after first echo and two animation frames",
+  "browser": "155.0.8059.79",
+  "node": "v26.5.0",
+  "packages": [
+   {
+    "path": "/private/tmp/bashkit-baseline-oz",
+    "files": [
+     {
+      "name": "index.js",
+      "sha256": "1583d806464a708b29a27fa4f9cd2c3299df6e142fe301043a94c30b4b813cae",
+      "raw": 1503,
+      "gzip": 828,
+      "brotli": 673
+     },
+     {
+      "name": "bashkit_wasm.js",
+      "sha256": "3b03202632bfae9333b32b2eebbb69519962ef3e5d0f6ae35546ee67fa1b9fa9",
+      "raw": 65159,
+      "gzip": 8704,
+      "brotli": 7481
+     },
+     {
+      "name": "bashkit_wasm_bg.wasm",
+      "sha256": "f59d5c508f7405c03400a1c46ab1bc7e06fc352c540abfbff6ba197548d9b1b2",
+      "raw": 9452877,
+      "gzip": 3560745,
+      "brotli": 2460299
+     }
+    ],
+    "total": {
+     "raw": 9519539,
+     "gzip": 3570277,
+     "brotli": 2468453
+    },
+    "sections": [
+     {
+      "name": "section-1",
+      "raw": 1008
+     },
+     {
+      "name": "section-2",
+      "raw": 3841
+     },
+     {
+      "name": "section-3",
+      "raw": 8439
+     },
+     {
+      "name": "section-4",
+      "raw": 7
+     },
+     {
+      "name": "section-5",
+      "raw": 3
+     },
+     {
+      "name": "section-6",
+      "raw": 25
+     },
+     {
+      "name": "section-7",
+      "raw": 1819
+     },
+     {
+      "name": "section-9",
+      "raw": 8164
+     },
+     {
+      "name": "section-12",
+      "raw": 2
+     },
+     {
+      "name": "code",
+      "raw": 8279718
+     },
+     {
+      "name": "data",
+      "raw": 1149749
+     },
+     {
+      "name": "custom:producers",
+      "raw": 60
+     }
+    ]
+   },
+   {
+    "path": "/private/tmp/bashkit-balanced-profile-oz",
+    "files": [
+     {
+      "name": "index.js",
+      "sha256": "1583d806464a708b29a27fa4f9cd2c3299df6e142fe301043a94c30b4b813cae",
+      "raw": 1503,
+      "gzip": 828,
+      "brotli": 673
+     },
+     {
+      "name": "bashkit_wasm.js",
+      "sha256": "15ab168775e5a4623bfb4d0164f34dcdc78f8b73aaa1e0a0063cfc1aafed207d",
+      "raw": 65168,
+      "gzip": 8705,
+      "brotli": 7499
+     },
+     {
+      "name": "bashkit_wasm_bg.wasm",
+      "sha256": "d65414678c9122205486686cd3c1f0296a92129c046229b2bcef9e2d59ff2ea7",
+      "raw": 7602233,
+      "gzip": 2963968,
+      "brotli": 2117510
+     }
+    ],
+    "total": {
+     "raw": 7668904,
+     "gzip": 2973501,
+     "brotli": 2125682
+    },
+    "sections": [
+     {
+      "name": "section-1",
+      "raw": 913
+     },
+     {
+      "name": "section-2",
+      "raw": 3841
+     },
+     {
+      "name": "section-3",
+      "raw": 10594
+     },
+     {
+      "name": "section-4",
+      "raw": 7
+     },
+     {
+      "name": "section-5",
+      "raw": 3
+     },
+     {
+      "name": "section-6",
+      "raw": 25
+     },
+     {
+      "name": "section-7",
+      "raw": 1822
+     },
+     {
+      "name": "section-9",
+      "raw": 8076
+     },
+     {
+      "name": "section-12",
+      "raw": 2
+     },
+     {
+      "name": "code",
+      "raw": 6433520
+     },
+     {
+      "name": "data",
+      "raw": 1143328
+     },
+     {
+      "name": "custom:producers",
+      "raw": 60
+     }
+    ]
+   }
+  ],
+  "samples": [
+   {
+    "package": 0,
+    "condition": "local",
+    "trial": 0,
+    "marks": {
+     "start": 21.100000023841858,
+     "imported": 55.39999997615814,
+     "initialized": 135,
+     "command": 191.69999992847443,
+     "prompt": 222.79999995231628
+    },
+    "resources": [
+     {
+      "name": "index.js",
+      "start": 22.100000023841858,
+      "end": 25.100000023841858,
+      "transfer": 973,
+      "encoded": 673
+     },
+     {
+      "name": "bashkit_wasm.js",
+      "start": 40.60000002384186,
+      "end": 43.5,
+      "transfer": 7781,
+      "encoded": 7481
+     },
+     {
+      "name": "bashkit_wasm_bg.wasm",
+      "start": 57.10000002384186,
+      "end": 96.89999997615814,
+      "transfer": 2460599,
+      "encoded": 2460299
+     },
+     {
+      "name": "favicon.ico",
+      "start": 73.19999992847443,
+      "end": 74,
+      "transfer": 300,
+      "encoded": 0
+     }
+    ]
+   },
+   {
+    "package": 1,
+    "condition": "local",
+    "trial": 0,
+    "marks": {
+     "start": 12.899999976158142,
+     "imported": 37.39999997615814,
+     "initialized": 100,
+     "command": 147.29999995231628,
+     "prompt": 172.20000004768372
+    },
+    "resources": [
+     {
+      "name": "index.js",
+      "start": 13.899999976158142,
+      "end": 17.299999952316284,
+      "transfer": 973,
+      "encoded": 673
+     },
+     {
+      "name": "bashkit_wasm.js",
+      "start": 18.399999976158142,
+      "end": 19.100000023841858,
+      "transfer": 7799,
+      "encoded": 7499
+     },
+     {
+      "name": "bashkit_wasm_bg.wasm",
+      "start": 39.299999952316284,
+      "end": 63.700000047683716,
+      "transfer": 2117810,
+      "encoded": 2117510
+     }
+    ]
+   },
+   {
+    "package": 0,
+    "condition": "local",
+    "trial": 1,
+    "marks": {
+     "start": 17.399999976158142,
+     "imported": 41.89999997615814,
+     "initialized": 116.29999995231628,
+     "command": 173.5,
+     "prompt": 200.5
+    },
+    "resources": [
+     {
+      "name": "index.js",
+      "start": 18.899999976158142,
+      "end": 21.199999928474426,
+      "transfer": 973,
+      "encoded": 673
+     },
+     {
+      "name": "bashkit_wasm.js",
+      "start": 22.399999976158142,
+      "end": 22.899999976158142,
+      "transfer": 7781,
+      "encoded": 7481
+     },
+     {
+      "name": "bashkit_wasm_bg.wasm",
+      "start": 43.299999952316284,
+      "end": 74.5,
+      "transfer": 2460599,
+      "encoded": 2460299
+     }
+    ]
+   },
+   {
+    "package": 1,
+    "condition": "local",
+    "trial": 1,
+    "marks": {
+     "start": 18.199999928474426,
+     "imported": 40.199999928474426,
+     "initialized": 100.19999992847443,
+     "command": 148.10000002384186,
+     "prompt": 173.89999997615814
+    },
+    "resources": [
+     {
+      "name": "index.js",
+      "start": 19.199999928474426,
+      "end": 21.899999976158142,
+      "transfer": 973,
+      "encoded": 673
+     },
+     {
+      "name": "bashkit_wasm.js",
+      "start": 22.899999976158142,
+      "end": 24,
+      "transfer": 7799,
+      "encoded": 7499
+     },
+     {
+      "name": "bashkit_wasm_bg.wasm",
+      "start": 41.5,
+      "end": 65.10000002384186,
+      "transfer": 2117810,
+      "encoded": 2117510
+     }
+    ]
+   },
+   {
+    "package": 0,
+    "condition": "local",
+    "trial": 2,
+    "marks": {
+     "start": 20.899999976158142,
+     "imported": 45.39999997615814,
+     "initialized": 113.39999997615814,
+     "command": 168.69999992847443,
+     "prompt": 196.59999990463257
+    },
+    "resources": [
+     {
+      "name": "index.js",
+      "start": 21.899999976158142,
+      "end": 24.5,
+      "transfer": 973,
+      "encoded": 673
+     },
+     {
+      "name": "bashkit_wasm.js",
+      "start": 25.299999952316284,
+      "end": 25.799999952316284,
+      "transfer": 7781,
+      "encoded": 7481
+     },
+     {
+      "name": "bashkit_wasm_bg.wasm",
+      "start": 47.39999997615814,
+      "end": 74.39999997615814,
+      "transfer": 2460599,
+      "encoded": 2460299
+     }
+    ]
+   },
+   {
+    "package": 1,
+    "condition": "local",
+    "trial": 2,
+    "marks": {
+     "start": 17.300000071525574,
+     "imported": 24,
+     "initialized": 95.40000009536743,
+     "command": 141.90000009536743,
+     "prompt": 168
+    },
+    "resources": [
+     {
+      "name": "index.js",
+      "start": 18.200000047683716,
+      "end": 20.800000071525574,
+      "transfer": 973,
+      "encoded": 673
+     },
+     {
+      "name": "bashkit_wasm.js",
+      "start": 21.800000071525574,
+      "end": 22.600000023841858,
+      "transfer": 7799,
+      "encoded": 7499
+     },
+     {
+      "name": "bashkit_wasm_bg.wasm",
+      "start": 25.90000009536743,
+      "end": 61.40000009536743,
+      "transfer": 2117810,
+      "encoded": 2117510
+     }
+    ]
+   },
+   {
+    "package": 0,
+    "condition": "local",
+    "trial": 3,
+    "marks": {
+     "start": 16.100000023841858,
+     "imported": 39.699999928474426,
+     "initialized": 106.29999995231628,
+     "command": 162.19999992847443,
+     "prompt": 189.89999997615814
+    },
+    "resources": [
+     {
+      "name": "index.js",
+      "start": 16.699999928474426,
+      "end": 19.699999928474426,
+      "transfer": 973,
+      "encoded": 673
+     },
+     {
+      "name": "bashkit_wasm.js",
+      "start": 20.899999976158142,
+      "end": 22.199999928474426,
+      "transfer": 7781,
+      "encoded": 7481
+     },
+     {
+      "name": "bashkit_wasm_bg.wasm",
+      "start": 41.799999952316284,
+      "end": 68.5,
+      "transfer": 2460599,
+      "encoded": 2460299
+     }
+    ]
+   },
+   {
+    "package": 1,
+    "condition": "local",
+    "trial": 3,
+    "marks": {
+     "start": 17.09999990463257,
+     "imported": 39.59999990463257,
+     "initialized": 94,
+     "command": 140,
+     "prompt": 163.89999997615814
+    },
+    "resources": [
+     {
+      "name": "index.js",
+      "start": 17.899999976158142,
+      "end": 20.299999952316284,
+      "transfer": 973,
+      "encoded": 673
+     },
+     {
+      "name": "bashkit_wasm.js",
+      "start": 21.5,
+      "end": 21.899999976158142,
+      "transfer": 7799,
+      "encoded": 7499
+     },
+     {
+      "name": "bashkit_wasm_bg.wasm",
+      "start": 41,
+      "end": 62.59999990463257,
+      "transfer": 2117810,
+      "encoded": 2117510
+     }
+    ]
+   },
+   {
+    "package": 0,
+    "condition": "local",
+    "trial": 4,
+    "marks": {
+     "start": 16.700000047683716,
+     "imported": 40.89999997615814,
+     "initialized": 105.10000002384186,
+     "command": 160.39999997615814,
+     "prompt": 186.39999997615814
+    },
+    "resources": [
+     {
+      "name": "index.js",
+      "start": 17.399999976158142,
+      "end": 20.800000071525574,
+      "transfer": 973,
+      "encoded": 673
+     },
+     {
+      "name": "bashkit_wasm.js",
+      "start": 22.300000071525574,
+      "end": 23,
+      "transfer": 7781,
+      "encoded": 7481
+     },
+     {
+      "name": "bashkit_wasm_bg.wasm",
+      "start": 42,
+      "end": 66.5,
+      "transfer": 2460599,
+      "encoded": 2460299
+     }
+    ]
+   },
+   {
+    "package": 1,
+    "condition": "local",
+    "trial": 4,
+    "marks": {
+     "start": 14.899999976158142,
+     "imported": 37.199999928474426,
+     "initialized": 94.79999995231628,
+     "command": 140.19999992847443,
+     "prompt": 163.29999995231628
+    },
+    "resources": [
+     {
+      "name": "index.js",
+      "start": 15.899999976158142,
+      "end": 18.699999928474426,
+      "transfer": 973,
+      "encoded": 673
+     },
+     {
+      "name": "bashkit_wasm.js",
+      "start": 19.899999976158142,
+      "end": 20.699999928474426,
+      "transfer": 7799,
+      "encoded": 7499
+     },
+     {
+      "name": "bashkit_wasm_bg.wasm",
+      "start": 38.799999952316284,
+      "end": 59.199999928474426,
+      "transfer": 2117810,
+      "encoded": 2117510
+     }
+    ]
+   },
+   {
+    "package": 0,
+    "condition": "fast4g",
+    "trial": 0,
+    "marks": {
+     "start": 188.39999997615814,
+     "imported": 545.8999999761581,
+     "initialized": 3229.100000023842,
+     "command": 3284,
+     "prompt": 3309.5
+    },
+    "resources": [
+     {
+      "name": "index.js",
+      "start": 189.10000002384186,
+      "end": 361.6999999284744,
+      "transfer": 973,
+      "encoded": 673
+     },
+     {
+      "name": "bashkit_wasm.js",
+      "start": 362.6999999284744,
+      "end": 544.3999999761581,
+      "transfer": 7781,
+      "encoded": 7481
+     },
+     {
+      "name": "bashkit_wasm_bg.wasm",
+      "start": 547.3999999761581,
+      "end": 3189.399999976158,
+      "transfer": 2460599,
+      "encoded": 2460299
+     }
+    ]
+   },
+   {
+    "package": 1,
+    "condition": "fast4g",
+    "trial": 0,
+    "marks": {
+     "start": 190.5,
+     "imported": 544.8999999761581,
+     "initialized": 2842.3000000715256,
+     "command": 2888.5,
+     "prompt": 2913.8000000715256
+    },
+    "resources": [
+     {
+      "name": "index.js",
+      "start": 190.80000007152557,
+      "end": 365.8000000715256,
+      "transfer": 973,
+      "encoded": 673
+     },
+     {
+      "name": "bashkit_wasm.js",
+      "start": 366.8000000715256,
+      "end": 543.8999999761581,
+      "transfer": 7799,
+      "encoded": 7499
+     },
+     {
+      "name": "bashkit_wasm_bg.wasm",
+      "start": 546.8999999761581,
+      "end": 2809.899999976158,
+      "transfer": 2117810,
+      "encoded": 2117510
+     }
+    ]
+   },
+   {
+    "package": 0,
+    "condition": "fast4g",
+    "trial": 1,
+    "marks": {
+     "start": 189.79999995231628,
+     "imported": 552.1000000238419,
+     "initialized": 3196.5,
+     "command": 3251.899999976158,
+     "prompt": 3278.600000023842
+    },
+    "resources": [
+     {
+      "name": "index.js",
+      "start": 190.69999992847443,
+      "end": 367.2999999523163,
+      "transfer": 973,
+      "encoded": 673
+     },
+     {
+      "name": "bashkit_wasm.js",
+      "start": 368.6999999284744,
+      "end": 550.5,
+      "transfer": 7781,
+      "encoded": 7481
+     },
+     {
+      "name": "bashkit_wasm_bg.wasm",
+      "start": 553.1999999284744,
+      "end": 3154.399999976158,
+      "transfer": 2460599,
+      "encoded": 2460299
+     }
+    ]
+   },
+   {
+    "package": 1,
+    "condition": "fast4g",
+    "trial": 1,
+    "marks": {
+     "start": 187.90000009536743,
+     "imported": 544.5,
+     "initialized": 2847.3000000715256,
+     "command": 2893.3000000715256,
+     "prompt": 2917.8000000715256
+    },
+    "resources": [
+     {
+      "name": "index.js",
+      "start": 188.80000007152557,
+      "end": 358.5,
+      "transfer": 973,
+      "encoded": 673
+     },
+     {
+      "name": "bashkit_wasm.js",
+      "start": 359.7000000476837,
+      "end": 542.5,
+      "transfer": 7799,
+      "encoded": 7499
+     },
+     {
+      "name": "bashkit_wasm_bg.wasm",
+      "start": 545.6000000238419,
+      "end": 2809.8000000715256,
+      "transfer": 2117810,
+      "encoded": 2117510
+     }
+    ]
+   },
+   {
+    "package": 0,
+    "condition": "fast4g",
+    "trial": 2,
+    "marks": {
+     "start": 189.70000004768372,
+     "imported": 546,
+     "initialized": 3199.899999976158,
+     "command": 3255.100000023842,
+     "prompt": 3282.2000000476837
+    },
+    "resources": [
+     {
+      "name": "index.js",
+      "start": 190.70000004768372,
+      "end": 365.5,
+      "transfer": 973,
+      "encoded": 673
+     },
+     {
+      "name": "bashkit_wasm.js",
+      "start": 365.89999997615814,
+      "end": 544.7000000476837,
+      "transfer": 7781,
+      "encoded": 7481
+     },
+     {
+      "name": "bashkit_wasm_bg.wasm",
+      "start": 547.6000000238419,
+      "end": 3152.2000000476837,
+      "transfer": 2460599,
+      "encoded": 2460299
+     }
+    ]
+   },
+   {
+    "package": 1,
+    "condition": "fast4g",
+    "trial": 2,
+    "marks": {
+     "start": 188.89999997615814,
+     "imported": 543.8999999761581,
+     "initialized": 2847.7000000476837,
+     "command": 2893.7000000476837,
+     "prompt": 2919.5
+    },
+    "resources": [
+     {
+      "name": "index.js",
+      "start": 189.89999997615814,
+      "end": 361.5,
+      "transfer": 973,
+      "encoded": 673
+     },
+     {
+      "name": "bashkit_wasm.js",
+      "start": 362.10000002384186,
+      "end": 542.5,
+      "transfer": 7799,
+      "encoded": 7499
+     },
+     {
+      "name": "bashkit_wasm_bg.wasm",
+      "start": 546,
+      "end": 2811,
+      "transfer": 2117810,
+      "encoded": 2117510
+     }
+    ]
+   },
+   {
+    "package": 0,
+    "condition": "fast4g",
+    "trial": 3,
+    "marks": {
+     "start": 189.10000002384186,
+     "imported": 549.6000000238419,
+     "initialized": 3203,
+     "command": 3258.600000023842,
+     "prompt": 3285.100000023842
+    },
+    "resources": [
+     {
+      "name": "index.js",
+      "start": 190.5,
+      "end": 364.39999997615814,
+      "transfer": 973,
+      "encoded": 673
+     },
+     {
+      "name": "bashkit_wasm.js",
+      "start": 365.8000000715256,
+      "end": 548,
+      "transfer": 7781,
+      "encoded": 7481
+     },
+     {
+      "name": "bashkit_wasm_bg.wasm",
+      "start": 551.1000000238419,
+      "end": 3154.5,
+      "transfer": 2460599,
+      "encoded": 2460299
+     }
+    ]
+   },
+   {
+    "package": 1,
+    "condition": "fast4g",
+    "trial": 3,
+    "marks": {
+     "start": 189,
+     "imported": 544.6999999284744,
+     "initialized": 2852.6999999284744,
+     "command": 2898.600000023842,
+     "prompt": 2921.600000023842
+    },
+    "resources": [
+     {
+      "name": "index.js",
+      "start": 189.89999997615814,
+      "end": 364.7999999523163,
+      "transfer": 973,
+      "encoded": 673
+     },
+     {
+      "name": "bashkit_wasm.js",
+      "start": 365.39999997615814,
+      "end": 542.6999999284744,
+      "transfer": 7799,
+      "encoded": 7499
+     },
+     {
+      "name": "bashkit_wasm_bg.wasm",
+      "start": 546.1999999284744,
+      "end": 2813.100000023842,
+      "transfer": 2117810,
+      "encoded": 2117510
+     }
+    ]
+   },
+   {
+    "package": 0,
+    "condition": "fast4g",
+    "trial": 4,
+    "marks": {
+     "start": 190.30000007152557,
+     "imported": 546.5,
+     "initialized": 3236.100000023842,
+     "command": 3294.3000000715256,
+     "prompt": 3326.5
+    },
+    "resources": [
+     {
+      "name": "index.js",
+      "start": 190.60000002384186,
+      "end": 366.60000002384186,
+      "transfer": 973,
+      "encoded": 673
+     },
+     {
+      "name": "bashkit_wasm.js",
+      "start": 367.10000002384186,
+      "end": 545.1000000238419,
+      "transfer": 7781,
+      "encoded": 7481
+     },
+     {
+      "name": "bashkit_wasm_bg.wasm",
+      "start": 548.8000000715256,
+      "end": 3192.100000023842,
+      "transfer": 2460599,
+      "encoded": 2460299
+     }
+    ]
+   },
+   {
+    "package": 1,
+    "condition": "fast4g",
+    "trial": 4,
+    "marks": {
+     "start": 190.5,
+     "imported": 546.8999999761581,
+     "initialized": 2876.600000023842,
+     "command": 2921.7000000476837,
+     "prompt": 2945.600000023842
+    },
+    "resources": [
+     {
+      "name": "index.js",
+      "start": 190.70000004768372,
+      "end": 363.2000000476837,
+      "transfer": 973,
+      "encoded": 673
+     },
+     {
+      "name": "bashkit_wasm.js",
+      "start": 365,
+      "end": 545.5,
+      "transfer": 7799,
+      "encoded": 7499
+     },
+     {
+      "name": "bashkit_wasm_bg.wasm",
+      "start": 548.2000000476837,
+      "end": 2842.399999976158,
+      "transfer": 2117810,
+      "encoded": 2117510
+     }
+    ]
+   },
+   {
+    "package": 0,
+    "condition": "slow4g",
+    "trial": 0,
+    "marks": {
+     "start": 599.3999999761581,
+     "imported": 1792.8999999761581,
+     "initialized": 16080.699999928474,
+     "command": 16137.599999904633,
+     "prompt": 16166.399999976158
+    },
+    "resources": [
+     {
+      "name": "index.js",
+      "start": 600.5,
+      "end": 1172.5,
+      "transfer": 973,
+      "encoded": 673
+     },
+     {
+      "name": "bashkit_wasm.js",
+      "start": 1174.1999999284744,
+      "end": 1791.6999999284744,
+      "transfer": 7781,
+      "encoded": 7481
+     },
+     {
+      "name": "bashkit_wasm_bg.wasm",
+      "start": 1794.6999999284744,
+      "end": 16040.099999904633,
+      "transfer": 2460599,
+      "encoded": 2460299
+     }
+    ]
+   },
+   {
+    "package": 1,
+    "condition": "slow4g",
+    "trial": 0,
+    "marks": {
+     "start": 595.5,
+     "imported": 1799.2000000476837,
+     "initialized": 14169.300000071526,
+     "command": 14216.600000023842,
+     "prompt": 14244.200000047684
+    },
+    "resources": [
+     {
+      "name": "index.js",
+      "start": 596.5,
+      "end": 1177.9000000953674,
+      "transfer": 973,
+      "encoded": 673
+     },
+     {
+      "name": "bashkit_wasm.js",
+      "start": 1179.5,
+      "end": 1797.8000000715256,
+      "transfer": 7799,
+      "encoded": 7499
+     },
+     {
+      "name": "bashkit_wasm_bg.wasm",
+      "start": 1801.4000000953674,
+      "end": 14135.400000095367,
+      "transfer": 2117810,
+      "encoded": 2117510
+     }
+    ]
+   },
+   {
+    "package": 0,
+    "condition": "slow4g",
+    "trial": 1,
+    "marks": {
+     "start": 589.6999999284744,
+     "imported": 1792.5,
+     "initialized": 16091.099999904633,
+     "command": 16148.099999904633,
+     "prompt": 16177.199999928474
+    },
+    "resources": [
+     {
+      "name": "index.js",
+      "start": 591.3999999761581,
+      "end": 1174.3999999761581,
+      "transfer": 973,
+      "encoded": 673
+     },
+     {
+      "name": "bashkit_wasm.js",
+      "start": 1175.5999999046326,
+      "end": 1791,
+      "transfer": 7781,
+      "encoded": 7481
+     },
+     {
+      "name": "bashkit_wasm_bg.wasm",
+      "start": 1794,
+      "end": 16048.399999976158,
+      "transfer": 2460599,
+      "encoded": 2460299
+     }
+    ]
+   },
+   {
+    "package": 1,
+    "condition": "slow4g",
+    "trial": 1,
+    "marks": {
+     "start": 590.6000000238419,
+     "imported": 1801.7000000476837,
+     "initialized": 14179,
+     "command": 14225.5,
+     "prompt": 14250.800000071526
+    },
+    "resources": [
+     {
+      "name": "index.js",
+      "start": 591.6000000238419,
+      "end": 1174,
+      "transfer": 973,
+      "encoded": 673
+     },
+     {
+      "name": "bashkit_wasm.js",
+      "start": 1175.2000000476837,
+      "end": 1799.6000000238419,
+      "transfer": 7799,
+      "encoded": 7499
+     },
+     {
+      "name": "bashkit_wasm_bg.wasm",
+      "start": 1803.5,
+      "end": 14141.5,
+      "transfer": 2117810,
+      "encoded": 2117510
+     }
+    ]
+   },
+   {
+    "package": 0,
+    "condition": "slow4g",
+    "trial": 2,
+    "marks": {
+     "start": 589.5,
+     "imported": 1784.6000000238419,
+     "initialized": 16065,
+     "command": 16121.300000071526,
+     "prompt": 16148.600000023842
+    },
+    "resources": [
+     {
+      "name": "index.js",
+      "start": 590.3999999761581,
+      "end": 1164.7000000476837,
+      "transfer": 973,
+      "encoded": 673
+     },
+     {
+      "name": "bashkit_wasm.js",
+      "start": 1165.5,
+      "end": 1783,
+      "transfer": 7781,
+      "encoded": 7481
+     },
+     {
+      "name": "bashkit_wasm_bg.wasm",
+      "start": 1786.8000000715256,
+      "end": 16022.300000071526,
+      "transfer": 2460599,
+      "encoded": 2460299
+     }
+    ]
+   },
+   {
+    "package": 1,
+    "condition": "slow4g",
+    "trial": 2,
+    "marks": {
+     "start": 587.8000000715256,
+     "imported": 1784.8000000715256,
+     "initialized": 14156.600000023842,
+     "command": 14202.700000047684,
+     "prompt": 14227.300000071526
+    },
+    "resources": [
+     {
+      "name": "index.js",
+      "start": 588.7000000476837,
+      "end": 1165.6000000238419,
+      "transfer": 973,
+      "encoded": 673
+     },
+     {
+      "name": "bashkit_wasm.js",
+      "start": 1167,
+      "end": 1783.2000000476837,
+      "transfer": 7799,
+      "encoded": 7499
+     },
+     {
+      "name": "bashkit_wasm_bg.wasm",
+      "start": 1786.8000000715256,
+      "end": 14117.300000071526,
+      "transfer": 2117810,
+      "encoded": 2117510
+     }
+    ]
+   },
+   {
+    "package": 0,
+    "condition": "slow4g",
+    "trial": 3,
+    "marks": {
+     "start": 597.7000000476837,
+     "imported": 1799.6000000238419,
+     "initialized": 16093.5,
+     "command": 16150.299999952316,
+     "prompt": 16177.600000023842
+    },
+    "resources": [
+     {
+      "name": "index.js",
+      "start": 598.8999999761581,
+      "end": 1181.2000000476837,
+      "transfer": 973,
+      "encoded": 673
+     },
+     {
+      "name": "bashkit_wasm.js",
+      "start": 1182.2999999523163,
+      "end": 1797.7999999523163,
+      "transfer": 7781,
+      "encoded": 7481
+     },
+     {
+      "name": "bashkit_wasm_bg.wasm",
+      "start": 1800.7000000476837,
+      "end": 16047.899999976158,
+      "transfer": 2460599,
+      "encoded": 2460299
+     }
+    ]
+   },
+   {
+    "package": 1,
+    "condition": "slow4g",
+    "trial": 3,
+    "marks": {
+     "start": 601.3999999761581,
+     "imported": 1792.6000000238419,
+     "initialized": 14169,
+     "command": 14221.699999928474,
+     "prompt": 14253.5
+    },
+    "resources": [
+     {
+      "name": "index.js",
+      "start": 602,
+      "end": 1172.5,
+      "transfer": 973,
+      "encoded": 673
+     },
+     {
+      "name": "bashkit_wasm.js",
+      "start": 1173.7999999523163,
+      "end": 1791.1999999284744,
+      "transfer": 7799,
+      "encoded": 7499
+     },
+     {
+      "name": "bashkit_wasm_bg.wasm",
+      "start": 1794.8999999761581,
+      "end": 14130.100000023842,
+      "transfer": 2117810,
+      "encoded": 2117510
+     }
+    ]
+   },
+   {
+    "package": 0,
+    "condition": "slow4g",
+    "trial": 4,
+    "marks": {
+     "start": 595.1000000238419,
+     "imported": 1799.1000000238419,
+     "initialized": 16091.600000023842,
+     "command": 16149.400000095367,
+     "prompt": 16177.100000023842
+    },
+    "resources": [
+     {
+      "name": "index.js",
+      "start": 596.4000000953674,
+      "end": 1180.5,
+      "transfer": 973,
+      "encoded": 673
+     },
+     {
+      "name": "bashkit_wasm.js",
+      "start": 1183.8000000715256,
+      "end": 1797.2000000476837,
+      "transfer": 7781,
+      "encoded": 7481
+     },
+     {
+      "name": "bashkit_wasm_bg.wasm",
+      "start": 1801.5,
+      "end": 16043.400000095367,
+      "transfer": 2460599,
+      "encoded": 2460299
+     }
+    ]
+   },
+   {
+    "package": 1,
+    "condition": "slow4g",
+    "trial": 4,
+    "marks": {
+     "start": 597.5,
+     "imported": 1811.3000000715256,
+     "initialized": 14179.800000071526,
+     "command": 14225.900000095367,
+     "prompt": 14250.700000047684
+    },
+    "resources": [
+     {
+      "name": "index.js",
+      "start": 598.6000000238419,
+      "end": 1184.3000000715256,
+      "transfer": 973,
+      "encoded": 673
+     },
+     {
+      "name": "bashkit_wasm.js",
+      "start": 1185.5,
+      "end": 1809.1000000238419,
+      "transfer": 7799,
+      "encoded": 7499
+     },
+     {
+      "name": "bashkit_wasm_bg.wasm",
+      "start": 1812.8000000715256,
+      "end": 14139.600000023842,
+      "transfer": 2117810,
+      "encoded": 2117510
+     }
+    ]
+   }
+  ]
+ },
+ "runtime": {
+  "baseline": {
+   "node": "v26.5.0",
+   "package": "/private/tmp/bashkit-baseline-oz",
+   "results": {
+    "arithmetic": {
+     "stdout": "199990000\n",
+     "samples": [
+      44.23554200000001,
+      44.316374999999994,
+      43.21366599999999,
+      44.59429100000003,
+      44.638458000000014,
+      43.765625,
+      43.305542
+     ],
+     "median": 44.23554200000001
+    },
+    "substitutions": {
+     "stdout": "hi\n",
+     "samples": [
+      6.691499999999962,
+      6.413416999999981,
+      9.098292000000015,
+      6.096458999999982,
+      5.677875000000029,
+      6.283957999999984,
+      5.434708999999998
+     ],
+     "median": 6.283957999999984
+    },
+    "jq": {
+     "stdout": "1001000\n",
+     "samples": [
+      2.5480830000000196,
+      2.786707999999976,
+      2.460124999999948,
+      2.3708750000000123,
+      2.6324579999999855,
+      2.233041000000071,
+      2.3139159999999492
+     ],
+     "median": 2.460124999999948
+    },
+    "text": {
+     "stdout": "10000\n",
+     "samples": [
+      10.493916000000013,
+      10.508416000000011,
+      9.975500000000011,
+      9.83141599999999,
+      9.62195799999995,
+      9.435292000000004,
+      9.550375000000031
+     ],
+     "median": 9.83141599999999
+    }
+   }
+  },
+  "selected": {
+   "node": "v26.5.0",
+   "package": "/private/tmp/bashkit-balanced-profile-oz",
+   "results": {
+    "arithmetic": {
+     "stdout": "199990000\n",
+     "samples": [
+      50.007542000000015,
+      48.53175000000002,
+      48.67329200000003,
+      50.149541,
+      49.739832999999976,
+      49.493041000000005,
+      48.65091699999999
+     ],
+     "median": 49.493041000000005
+    },
+    "substitutions": {
+     "stdout": "hi\n",
+     "samples": [
+      7.53895799999998,
+      6.6450419999999895,
+      6.147041999999999,
+      6.18829199999999,
+      6.094959000000017,
+      5.852458000000013,
+      5.859375
+     ],
+     "median": 6.147041999999999
+    },
+    "jq": {
+     "stdout": "1001000\n",
+     "samples": [
+      2.4794160000000147,
+      2.3771659999999883,
+      2.6838749999999436,
+      2.2523749999999154,
+      2.1724590000000035,
+      2.162667000000056,
+      2.2771249999999554
+     ],
+     "median": 2.2771249999999554
+    },
+    "text": {
+     "stdout": "10000\n",
+     "samples": [
+      11.623333000000002,
+      11.464875000000006,
+      10.260125000000016,
+      10.209958000000029,
+      10.119290999999976,
+      9.871250000000032,
+      10.29849999999999
+     ],
+     "median": 10.260125000000016
+    }
+   }
+  },
+  "rejectedZ": {
+   "node": "v26.5.0",
+   "package": "/private/tmp/bashkit-size-profile-oz",
+   "results": {
+    "arithmetic": {
+     "stdout": "199990000\n",
+     "samples": [
+      66.689583,
+      66.24974999999998,
+      66.00487499999997,
+      66.73350000000005,
+      66.180791,
+      66.12816700000002,
+      65.74704099999997
+     ],
+     "median": 66.180791
+    },
+    "substitutions": {
+     "stdout": "hi\n",
+     "samples": [
+      8.666624999999954,
+      7.969583000000057,
+      7.808374999999955,
+      7.881167000000005,
+      7.785916000000043,
+      7.719707999999969,
+      7.606457999999975
+     ],
+     "median": 7.808374999999955
+    },
+    "jq": {
+     "stdout": "1001000\n",
+     "samples": [
+      3.4603329999999914,
+      3.604332999999997,
+      3.381917000000044,
+      3.0702499999999873,
+      2.683917000000065,
+      2.3656250000000227,
+      2.283625000000029
+     ],
+     "median": 3.0702499999999873
+    },
+    "text": {
+     "stdout": "10000\n",
+     "samples": [
+      13.437832999999955,
+      13.11283299999991,
+      12.069624999999974,
+      11.965250000000083,
+      11.758916999999997,
+      11.905624999999986,
+      11.672791999999959
+     ],
+     "median": 11.965250000000083
+    }
+   }
+  }
+ }
+}

@@ -491,3 +491,34 @@ test("multiple independent instances do not share state", () => {
   assert.equal(b.executeSync("echo [${SHARED-none}]").stdout, "[none]\n");
   assert.equal(b.exists("/marker.txt"), false);
 });
+
+// Independent brush-web reproduction: cumulative reads must not exhaust the
+// retained array-entry budget or corrupt later arrays in the same instance.
+test("mapfile: repeated large reads preserve session arrays", async () => {
+  const bash = new Bash();
+  const r = await bash.execute(`
+    seq 50000 > /tmp/s
+    for i in 1 2 3; do
+      mapfile -t a < /tmp/s
+      echo "mapfile=$? n=\${#a[@]}"
+    done
+    b=(x y z); echo "b=\${#b[@]}"
+  `);
+  assert.equal(r.exitCode, 0);
+  assert.equal(r.stderr, "");
+  assert.equal(r.stdout, "mapfile=0 n=50000\n".repeat(3) + "b=3\n");
+  const next = await bash.execute("c=(still works); echo \"${c[*]}\"");
+  assert.equal(next.exitCode, 0);
+  assert.equal(next.stdout, "still works\n");
+});
+
+test("mapfile: entry exhaustion fails visibly and the session recovers", async () => {
+  const bash = new Bash();
+  await assert.rejects(
+    bash.execute("seq 50001 > /tmp/rows; seq 50000 >> /tmp/rows; mapfile -t a < /tmp/rows"),
+    /array entry limit \(100000\) exceeded/,
+  );
+  const next = await bash.execute("unset a; b=(x y z); echo ${#b[@]}");
+  assert.equal(next.exitCode, 0);
+  assert.equal(next.stdout, "3\n");
+});
