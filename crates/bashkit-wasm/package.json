@@ -11,7 +11,8 @@
       "types": "./index.d.ts",
       "default": "./index.js"
     },
-    "./bashkit_wasm_bg.wasm": "./bashkit_wasm_bg.wasm"
+    "./bashkit_wasm_bg.wasm": "./bashkit_wasm_bg.wasm",
+    "./build-info.json": "./build-info.json"
   },
   "sideEffects": [
     "./index.js",
@@ -24,6 +25,7 @@
     "bashkit_wasm.d.ts",
     "bashkit_wasm_bg.wasm",
     "bashkit_wasm_bg.wasm.d.ts",
+    "build-info.json",
     "README.md"
   ],
   "license": "MIT",

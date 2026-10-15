@@ -294,3 +294,29 @@ just build-wasm
 ## License
 
 MIT, part of the [Bashkit](https://github.com/everruns/bashkit) project.
+
+## Deployment and cold start
+
+Serve `bashkit_wasm_bg.wasm` as `application/wasm` with Brotli or gzip HTTP
+compression. Raw npm file size is not transfer size. Use content-hashed asset
+URLs with long-lived immutable caching; keep the JS glue and WASM from the same
+build together. `initBashkit()` uses wasm-bindgen's streaming loader when the
+server sends the correct MIME type. A slow mobile connection can take more than
+15 seconds to download a multi-megabyte bundle, so choose startup deadlines from
+your application's measured network conditions.
+
+The package includes `build-info.json`: source commit, dirty-checkout status,
+compiler/tools, Cargo profile/features, and the SHA-256 of the shipped WASM.
+Source archives without Git metadata record a null source identity. A source
+checkout between releases can have the same package version as an older npm
+release; compare the source commit as well as the version.
+
+Maintainers can run the bounded compatibility and compressed-size gates:
+
+```sh
+node crates/bashkit-wasm/bench/compat.mjs
+node crates/bashkit-wasm/bench/artifact.mjs crates/bashkit-wasm/pkg --check
+```
+
+The [browser benchmark methodology](https://github.com/everruns/bashkit/blob/main/crates/bashkit-wasm/bench/README.md) describes reproducible
+cold-start and execution experiments and the measured profile tradeoff.

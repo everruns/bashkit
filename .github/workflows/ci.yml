@@ -167,6 +167,11 @@ jobs:
       - name: Integration tests (headless Node)
         run: node --test "crates/bashkit-wasm/__test__/*.test.mjs"
 
+      - name: Browser compatibility and transfer-size gates
+        run: |
+          node crates/bashkit-wasm/bench/compat.mjs
+          node crates/bashkit-wasm/bench/artifact.mjs crates/bashkit-wasm/pkg --check
+
   audit:
     name: Audit
     runs-on: ubuntu-latest
