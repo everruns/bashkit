@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 // 1. RESOURCE EXHAUSTION TESTS
 // =============================================================================
 
-mod resource_exhaustion {
+pub(crate) mod resource_exhaustion {
     use super::*;
 
     /// Ancestor levels searched for the CLI binary. Five are needed for the
@@ -80,7 +80,7 @@ mod resource_exhaustion {
     /// unexplained exit 127 with the bound assertions failing — both read
     /// like product failures. Fail on the precondition instead, naming every
     /// path ruled out.
-    fn bashkit_cli_path() -> std::path::PathBuf {
+    pub(crate) fn bashkit_cli_path() -> std::path::PathBuf {
         let exe = std::env::current_exe().expect("current test executable");
         match cli_in_ancestors(&exe) {
             Ok(cli) => cli,
@@ -99,30 +99,30 @@ mod resource_exhaustion {
         }
     }
 
-    struct BoundedRun {
-        timed_out: bool,
-        oversized: bool,
+    pub(crate) struct BoundedRun {
+        pub(crate) timed_out: bool,
+        pub(crate) oversized: bool,
         /// True when the deadline passed with readers unfinished: a foreign
         /// descendant retains the pipes. Detection, not reaping: without
         /// platform process-group APIs (no new dependencies) a foreign
         /// descendant cannot be reaped portably, so the run fails visibly.
-        incomplete_readers: bool,
+        pub(crate) incomplete_readers: bool,
         /// A pipe reader hit a real I/O error (anything but `Interrupted`,
         /// which is retried). Capture is then partial by definition, so the
         /// run fails closed instead of relabeling the error as a clean EOF.
-        read_error: bool,
+        pub(crate) read_error: bool,
         /// OS termination accounted for: the loop observed an exit or
         /// the bounded reap recovered one. Orthogonal to `exit_code`
         /// (signaled victims have no code) and to injected observation
         /// faults (which discard the observation, never the cleanup).
-        reaped: bool,
+        pub(crate) reaped: bool,
         /// First stderr line from the launcher (`harness-limits: ...`),
         /// proving the CPU/stack caps were applied to this run. Empty when
         /// the launcher itself refused (fail-closed exit 99).
-        limits_note: String,
-        exit_code: Option<i32>,
-        stdout: String,
-        stderr: String,
+        pub(crate) limits_note: String,
+        pub(crate) exit_code: Option<i32>,
+        pub(crate) stdout: String,
+        pub(crate) stderr: String,
     }
 
     /// Fail-closed launcher limits: 10 CPU seconds, 4 MiB main-thread
@@ -186,7 +186,7 @@ mod resource_exhaustion {
     /// the capture with the bytes kept so far and `read_error` set, never
     /// relabeled as a clean EOF. Reaching exactly the cap followed by EOF
     /// is not oversize; only real excess is flagged.
-    fn drain_capped<R: Read>(reader: &mut R) -> (Vec<u8>, bool, bool) {
+    pub(crate) fn drain_capped<R: Read>(reader: &mut R) -> (Vec<u8>, bool, bool) {
         let mut buf = Vec::new();
         let mut chunk = [0u8; 4096];
         loop {
@@ -935,7 +935,7 @@ mod resource_exhaustion {
     /// Returns the observed status, or `None` when the victim cannot be
     /// reaped inside the grace (or polling itself errors): the safe seam
     /// for the unavailable-reap verdict.
-    fn reap_with_grace(
+    pub(crate) fn reap_with_grace(
         poll: &mut dyn FnMut() -> std::io::Result<Option<std::process::ExitStatus>>,
         grace: Duration,
     ) -> Option<std::process::ExitStatus> {
@@ -981,7 +981,7 @@ mod resource_exhaustion {
     // drives the real lifecycle path with exactly one hostile condition.
     // All flags stay off outside these tests.
     #[derive(Clone, Default)]
-    struct LifecycleFaults {
+    pub(crate) struct LifecycleFaults {
         /// Child poll fails: the parent must fail closed, never panic.
         fail_poll: bool,
         /// Stdout pipe reads fail: the parent verdict must carry
@@ -1011,7 +1011,7 @@ mod resource_exhaustion {
 
     /// Standard runner: core lifecycle plus the bounded join gate. Reader
     /// threads that never reported stay detached by contract.
-    fn run_command_bounded_with(
+    pub(crate) fn run_command_bounded_with(
         cmd: Command,
         limit: Duration,
         faults: LifecycleFaults,

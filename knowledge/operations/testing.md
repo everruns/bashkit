@@ -249,6 +249,25 @@ surfaces as a 404 in an already-green job.
 
 ## Resource-cap tests must not race the deadline
 
+The opt-in input-redirect helper polls its one in-flight RSS sampling future by
+mutable reference across `select!` rounds. A losing branch must leave that future
+in its owned slot; only observing its result clears the slot. The ordinary
+`ir_helper_concurrent_schedule` fixture uses the wrapper's same
+`poll_owned_sample` helper with 64 bytes of in-memory pipe data and a release-gated
+future. This verifies scheduling ownership, not subprocess cleanup, effective
+resource caps, platform coverage or merged security proof.
+
+The native input-redirect runner shares one owned lifecycle for the main child
+and RSS sampler: wait, both capped captures and live first-failure notices are
+polled together. Ordinary errors request kill before finite reap/capture completion;
+completion waits for an owned pending sample and records incomplete cleanup as a
+negative verdict. Reap timeout, I/O failure and success are separate outcomes.
+The process feature is a native-only Tokio dev-dependency; WASM builds keep the
+workspace feature set. Drop remains a best-effort backstop, not evidence of
+reap or capture completion on panic or external cancellation. Tiny in-memory
+fixtures verify notice delivery before EOF, nested reap failures and pending-sample
+ownership. They do not establish subprocess, Linux or full security shipping proof.
+
 Controlled retained-pipe fixtures keep a caller-owned reader-handoff vector
 outside their cleanup guard. A bounded `Drop` returns any unfinished ORIGINAL
 handle to that owner rather than recording a count and detaching it. The owner

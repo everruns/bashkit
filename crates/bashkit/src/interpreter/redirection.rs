@@ -56,6 +56,51 @@ fn redirect_target_may_split(redirect: &Redirect) -> bool {
     })
 }
 
+/// Stdin slot: the buffer plus the live-bytes lease when the buffer is a
+/// budgeted clone minted here. Assigning the slot drops any previous
+/// buffer and its clone lease together.
+type StdinSlot = Option<(
+    crate::StreamData,
+    Option<crate::limits::ExecutionBudgetLease>,
+)>;
+
+/// Assign the stdin slot, dropping any previous buffer and its clone lease
+/// together. Fresh reads pass `lease: None`; budgeted clones pass the lease
+/// from `charge_input_retention` so it lives as long as stdin does.
+fn set_stdin_slot(
+    slot: &mut StdinSlot,
+    value: Option<crate::StreamData>,
+    lease: Option<crate::limits::ExecutionBudgetLease>,
+) {
+    *slot = value.map(|data| (data, lease));
+}
+
+/// Result of input-redirection processing: the stdin buffer plus the
+/// live-bytes lease for it when stdin is a budgeted clone minted here.
+/// Callers hold `stdin_lease` for as long as they retain `stdin`.
+pub(crate) struct StdinSetup {
+    pub stdin: Option<crate::StreamData>,
+    pub stdin_lease: Option<crate::limits::ExecutionBudgetLease>,
+}
+
+/// Numbered-fd table with replace semantics: re-redirecting an fd drops the
+/// superseded buffer — and its live-bytes lease — instead of piling clones.
+/// Aggregate input consumption stays cumulative.
+type OwnFdEntry = (i32, crate::StreamData, crate::limits::ExecutionBudgetLease);
+
+fn replace_own_fd(
+    own_fds: &mut Vec<OwnFdEntry>,
+    fd: i32,
+    data: crate::StreamData,
+    lease: crate::limits::ExecutionBudgetLease,
+) {
+    if let Some(slot) = own_fds.iter_mut().find(|(existing, _, _)| *existing == fd) {
+        *slot = (fd, data, lease);
+    } else {
+        own_fds.push((fd, data, lease));
+    }
+}
+
 /// `N<<EOF` / `N<<<word` with N >= 3: a readable fd for the command's body.
 fn high_fd_here(redirect: &Redirect) -> bool {
     matches!(
@@ -229,6 +274,19 @@ impl Interpreter {
         self.diag(format!("{path}: {reason}\n"))
     }
 
+    /// Charging helper for numbered input redirects (input-redirect budget fix). Every
+    /// retained buffer counts against the aggregate input budget and holds
+    /// a live-bytes lease while the redirect list is processed. Charges run
+    /// before the clone/allocation they cover; re-redirecting the same fd
+    /// replaces the superseded entry instead of piling clones.
+    fn charge_input_retention(
+        &self,
+        len: usize,
+    ) -> crate::error::Result<crate::limits::ExecutionBudgetLease> {
+        self.execution_budget.consume_input(len)?;
+        Ok(self.execution_budget.lease_bytes(len)?)
+    }
+
     /// Process input redirections (< file, <<< string). `demand` is how
     /// much the command reads, for stdin taken from a coproc's pipe.
     pub(super) async fn process_input_redirections(
@@ -237,10 +295,13 @@ impl Interpreter {
         redirects: &[Redirect],
         demand: StdinDemand,
         high_fd_stdin: HighFdStdin,
-    ) -> Result<Option<crate::StreamData>> {
-        let mut stdin = existing_stdin;
+    ) -> crate::error::Result<StdinSetup> {
+        // Stdin slot: a budgeted clone's live lease travels with the buffer
+        // so replacing stdin drops both together; the surviving lease is
+        // handed to the caller with stdin.
+        let mut stdin: StdinSlot = existing_stdin.map(|data| (data, None));
         // Readable fds this command's own redirects open (`4<<E <&4`).
-        let mut own_fds: Vec<(i32, crate::StreamData)> = Vec::new();
+        let mut own_fds: Vec<OwnFdEntry> = Vec::new();
 
         for redirect in redirects {
             // Fd N >= 1 for an input-side redirect (`3<f`, `4<<<w`, `5<>f`).
@@ -271,8 +332,11 @@ impl Interpreter {
                         }
                     };
                     match high_fd {
-                        Some(fd) => own_fds.push((fd, content)),
-                        None => stdin = Some(content),
+                        Some(fd) => {
+                            let lease = self.charge_input_retention(content.retained_len())?;
+                            replace_own_fd(&mut own_fds, fd, content, lease);
+                        }
+                        None => set_stdin_slot(&mut stdin, Some(content), None),
                     }
                 }
                 RedirectKind::Input => {
@@ -290,7 +354,7 @@ impl Interpreter {
                     if self.fd_alias(&path) == Some(0) {
                         // `< /dev/stdin` re-reads the current stdin: no-op.
                     } else if is_dev_null(&path) {
-                        stdin = Some(crate::StreamData::new()); // EOF
+                        set_stdin_slot(&mut stdin, Some(crate::StreamData::new()), None); // EOF
                     } else if !self.shell_features.has_file_redirects() {
                         return Err(crate::error::Error::Execution(
                             self.diag(format!("{}: filesystem redirection disabled", target_path)),
@@ -300,7 +364,9 @@ impl Interpreter {
                             Ok(content) => {
                                 let content: crate::StreamData = content.into();
                                 if let Some(fd) = high_fd {
-                                    own_fds.push((fd, content.clone()));
+                                    let lease =
+                                        self.charge_input_retention(content.retained_len())?;
+                                    replace_own_fd(&mut own_fds, fd, content.clone(), lease);
                                 }
                                 // WTF: on a compound `3<file` also feeds
                                 // stdin; loops like `while read -u 3 ...;
@@ -314,7 +380,7 @@ impl Interpreter {
                                     (Some(_), HighFdStdin::Never) => false,
                                 };
                                 if feeds {
-                                    stdin = Some(content);
+                                    set_stdin_slot(&mut stdin, Some(content), None);
                                 }
                             }
                             Err(e) => {
@@ -330,8 +396,11 @@ impl Interpreter {
                     let content = self.expand_word(&redirect.target).await?;
                     let content: crate::StreamData = format!("{}\n", content).into();
                     match high_fd {
-                        Some(fd) => own_fds.push((fd, content)),
-                        None => stdin = Some(content),
+                        Some(fd) => {
+                            let lease = self.charge_input_retention(content.retained_len())?;
+                            replace_own_fd(&mut own_fds, fd, content, lease);
+                        }
+                        None => set_stdin_slot(&mut stdin, Some(content), None),
                     }
                 }
                 RedirectKind::HereDoc | RedirectKind::HereDocStrip => {
@@ -340,8 +409,11 @@ impl Interpreter {
                     let content: crate::StreamData =
                         self.expand_word(&redirect.target).await?.into();
                     match high_fd {
-                        Some(fd) => own_fds.push((fd, content)),
-                        None => stdin = Some(content),
+                        Some(fd) => {
+                            let lease = self.charge_input_retention(content.retained_len())?;
+                            replace_own_fd(&mut own_fds, fd, content, lease);
+                        }
+                        None => set_stdin_slot(&mut stdin, Some(content), None),
                     }
                 }
                 RedirectKind::DupInput => {
@@ -360,12 +432,16 @@ impl Interpreter {
                     let Ok(src) = target.parse::<i32>() else {
                         continue;
                     };
-                    // `<&4` after this command's own `4<<E`.
-                    if let Some((_, content)) = own_fds.iter().rev().find(|(fd, _)| *fd == src) {
+                    // `<&4` after this command's own `4<<E`: the clone below is
+                    // charged before allocation.
+                    if let Some((_, content, _)) =
+                        own_fds.iter().rev().find(|(fd, _, _)| *fd == src)
+                    {
+                        let lease = self.charge_input_retention(content.retained_len())?;
                         let content = content.clone();
                         match high_fd {
-                            Some(fd) => own_fds.push((fd, content)),
-                            None => stdin = Some(content),
+                            Some(fd) => replace_own_fd(&mut own_fds, fd, content, lease),
+                            None => set_stdin_slot(&mut stdin, Some(content), Some(lease)),
                         }
                         continue;
                     }
@@ -391,11 +467,15 @@ impl Interpreter {
                                     text.push('\n');
                                 }
                             }
-                            stdin = Some(text.into());
+                            set_stdin_slot(&mut stdin, Some(text.into()), None);
                         }
                         Some(coproc::InputFd::Pipe(end)) => {
                             let pipe = Arc::clone(&end.0);
-                            stdin = Some(Box::pin(coproc::read_coproc_input(pipe, demand)).await);
+                            set_stdin_slot(
+                                &mut stdin,
+                                Some(Box::pin(coproc::read_coproc_input(pipe, demand)).await),
+                                None,
+                            );
                         }
                         // `<&5` with fd 5 never opened (or closed): bash
                         // reports it and does not run the command.
@@ -416,7 +496,12 @@ impl Interpreter {
             }
         }
 
-        Ok(stdin)
+        let mut stdin_lease = None;
+        let stdin = stdin.map(|(data, lease)| {
+            stdin_lease = lease;
+            data
+        });
+        Ok(StdinSetup { stdin, stdin_lease })
     }
 
     /// Apply output redirections to command output
