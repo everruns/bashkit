@@ -25,7 +25,9 @@ export function artifact(pkg) {
   return { files, total: Object.fromEntries(["raw", "gzip", "brotli"].map(k => [k, files.reduce((n, f) => n + f[k], 0)])), sections };
 }
 if (process.argv[1] === new URL(import.meta.url).pathname) {
-  const pkg = resolve(process.argv[2] ?? new URL("../pkg/", import.meta.url).pathname);
+  const paths = process.argv.slice(2).filter(arg => arg !== "--check");
+  if (paths.length > 1) throw new Error("expected one package directory");
+  const pkg = resolve(paths[0] ?? new URL("../pkg/", import.meta.url).pathname);
   const report = artifact(pkg);
   console.log(JSON.stringify(report, null, 2));
   if (process.argv.includes("--check")) {

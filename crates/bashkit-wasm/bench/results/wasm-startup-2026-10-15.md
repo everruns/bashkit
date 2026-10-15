@@ -45,7 +45,7 @@ status; stderr not scored. Results are in the matching JSON report.
 
 Published failures: sparse array indices, negative array slices, associative
 array literals, arithmetic array updates, zero-padded brace sequences. The
-existing source fixes remain intact under the new profile. All 69 browser
+existing source fixes remain intact under the new profile. All 70 browser
 package integration/packaging tests pass, including async host filesystem,
 timers, cancellation/resource limits, jq, binary output, and interactive terminal.
 
