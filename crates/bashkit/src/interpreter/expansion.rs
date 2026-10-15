@@ -2749,40 +2749,6 @@ impl Interpreter {
         })
     }
 
-    // End index (exclusive) of the first complete subscript reference that
-    // opens at `open`: nested brackets nest, quoted or escaped text is
-    // skipped. `None` when the brackets never balance. All boundary bytes
-    // are ASCII, so the index is always a char boundary.
-    fn indirect_array_end(value: &str, open: usize) -> Option<usize> {
-        let bytes = value.as_bytes();
-        let mut depth = 0usize;
-        let mut quote: Option<u8> = None;
-        let mut escaped = false;
-        let mut i = open;
-        while i < bytes.len() {
-            let b = bytes[i];
-            // 0x27 is a single quote, 0x22 a double quote, 0x5c a backslash.
-            if escaped {
-                escaped = false;
-            } else if quote.is_some_and(|q| b == q) {
-                quote = None;
-            } else if quote.is_none() && (b == 0x27 || b == 0x22) {
-                quote = Some(b);
-            } else if quote.is_none() && b == 0x5c {
-                escaped = true;
-            } else if quote.is_none() && b == b'[' {
-                depth += 1;
-            } else if quote.is_none() && b == b']' && depth > 0 {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(i + 1);
-                }
-            }
-            i += 1;
-        }
-        None
-    }
-
     /// The parameter `${!name...}` refers to: the value of `name` (an
     /// element when it carries a subscript). bash rejects an unset `name`
     /// ("invalid indirect expansion") and a value that is not a parameter
@@ -2831,9 +2797,8 @@ impl Interpreter {
         // unbalanced shapes are refused. Plain names, `a[$i]`, and `a[@]`
         // have no trailing text and pass through unchanged.
         let valid_boundary = match value.find('[') {
-            Some(open) => {
-                Self::indirect_array_end(&value, open).is_some_and(|end| end == value.len())
-            }
+            Some(open) => crate::parser::parameter_subscript_end(&value, open)
+                .is_some_and(|end| end == value.len()),
             None => true,
         };
         let valid = valid_boundary
@@ -2914,11 +2879,13 @@ impl Interpreter {
                 suffix
             };
             let text = format!("${{{target}{suffix}}}");
-            let parsed = Parser::parse_word_string_with_limits(
+            let parsed = Parser::parse_indirect_word(
                 &text,
                 self.limits.max_ast_depth,
                 self.limits.max_parser_operations,
-            );
+                self.counters.subst_depth,
+                self.execution_budget.clone(),
+            )?;
             let [new_part] = <[WordPart; 1]>::try_from(parsed.parts).map_err(|_| {
                 crate::error::Error::LineAbort(self.diag(format!("{text}: bad substitution\n")))
             })?;
