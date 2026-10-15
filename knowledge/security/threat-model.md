@@ -1437,6 +1437,8 @@ to fd slots and surviving stdin, including failure and replacement paths.
 Open process-substitution input uses its owner's buffered length before the
 read copy, not POSIX pipe stat's zero size; its descriptive `pipe:[N]` link is
 not canonicalized as a VFS target. The original buffered owner is unchanged.
+Canonical resolution only identifies device ceilings; actual stat/open/read
+use the original path through the configured VFS, preserving its symlink policy.
 Tiny `input_admission_tests` and `input_redirection_*` fixtures cover the
 read/open ordering, byte fidelity, error typing and lifetime contracts.
 This does not certify backend-internal allocation or persistent/coprocess fd

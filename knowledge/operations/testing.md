@@ -185,8 +185,9 @@ and tiny process-substitution input (including mapfile). A two-byte buffered
 pipe fixture checks admission and lease release while pipe stat stays zero
 and the existing substitution owner remains open. The owner exposes buffered
 length without copying; admission must precede its `read_file` copy.
-The cases also cover nonfatal missing-file diagnostics. These fixtures require no subprocess,
-device read, large allocation, or original resource-exhaustion shape. Selecting
+The cases also cover nonfatal missing-file diagnostics and enabled/disabled
+symlink-following for ordinary read/read-write input. These fixtures require no
+subprocess, device read, large allocation, or original resource-exhaustion shape. Selecting
 them is scoped proof, not a claim that the unchanged full/coverage suites ran.
 
 ## Coverage

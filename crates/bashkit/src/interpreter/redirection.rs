@@ -289,7 +289,9 @@ impl Interpreter {
                 Err(error) => return Err(error),
             }
         };
-        let size = match budget.run(self.fs.stat(&source)).await? {
+        // Preserve the configured VFS's following policy for actual I/O;
+        // canonical resolution above only identifies bounded device reads.
+        let size = match budget.run(self.fs.stat(path)).await? {
             Ok(metadata) => metadata.size,
             Err(crate::Error::Io(error))
                 if create && error.kind() == std::io::ErrorKind::NotFound =>
@@ -313,9 +315,9 @@ impl Interpreter {
         if create {
             // An empty append may load an existing lazy file, so admission
             // must precede opening as well as the subsequent read.
-            budget.run(self.fs.append_file(&source, b"")).await??;
+            budget.run(self.fs.append_file(path, b"")).await??;
         }
-        let bytes = budget.run(self.fs.read_file(&source)).await??;
+        let bytes = budget.run(self.fs.read_file(path)).await??;
         budget.consume_input(bytes.len().saturating_sub(size))?;
         let extra = budget.lease_bytes(bytes.capacity().saturating_sub(size))?;
         let (stream, text) = crate::StreamData::from_admitted_bytes(bytes, budget)?;

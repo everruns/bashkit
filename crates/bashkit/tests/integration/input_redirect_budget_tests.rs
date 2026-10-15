@@ -54,6 +54,26 @@ async fn input_redirection_missing_file_remains_shell_failure() {
 }
 
 #[tokio::test]
+async fn input_redirection_respects_symlink_configuration() {
+    for follows in [false, true] {
+        let mut bash = Bash::builder().follow_symlinks(follows).build();
+        bash.fs().write_file(Path::new("/a"), b"ab").await.unwrap();
+        bash.fs()
+            .symlink(Path::new("/a"), Path::new("/link"))
+            .await
+            .unwrap();
+        for script in ["cat </link", "cat <>/link"] {
+            let result = bash.exec(script).await.unwrap();
+            assert_eq!(result.exit_code, if follows { 0 } else { 1 });
+            assert_eq!(
+                result.stdout.as_bytes(),
+                if follows { &b"ab"[..] } else { &[] }
+            );
+        }
+    }
+}
+
+#[tokio::test]
 async fn input_redirection_tiny_process_substitution() {
     let mut bash = Bash::new();
     for script in [
