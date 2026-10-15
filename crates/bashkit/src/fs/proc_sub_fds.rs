@@ -121,6 +121,15 @@ impl ProcSubFs {
         self.table().iter().any(|(n, _)| *n == fd)
     }
 
+    /// Buffered read size for admission; pipe stat keeps its POSIX zero size.
+    pub(crate) fn input_len(&self, path: &Path) -> Option<usize> {
+        match self.slot(path) {
+            Slot::Open(_, ProcSubData::Input(data)) => Some(data.len()),
+            Slot::Open(_, ProcSubData::Output(_)) => Some(0),
+            Slot::Vfs | Slot::Closed => None,
+        }
+    }
+
     pub(crate) fn open(&self, fd: i32, data: ProcSubData) {
         self.table().push((fd, data));
     }

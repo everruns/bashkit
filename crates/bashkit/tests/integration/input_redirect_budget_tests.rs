@@ -54,6 +54,20 @@ async fn input_redirection_missing_file_remains_shell_failure() {
 }
 
 #[tokio::test]
+async fn input_redirection_tiny_process_substitution() {
+    let mut bash = Bash::new();
+    for script in [
+        "cat < <(printf 'x\\ny\\n')",
+        "mapfile -t a < <(printf 'x\\ny\\n'); printf '%s\\n' \"${a[@]}\"",
+    ] {
+        let result = bash.exec(script).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.as_bytes(), b"x\ny\n");
+        assert!(result.stderr.is_empty(), "{}", result.stderr);
+    }
+}
+
+#[tokio::test]
 async fn input_redirection_tiny_here_inputs() {
     let mut bash = Bash::new();
     for script in ["cat <<<a", "cat <<EOF\na\nEOF"] {

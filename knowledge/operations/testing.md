@@ -181,7 +181,11 @@ stdin storage, and injected cancellation during a read. `stream::tests` covers
 lossy decoding without changing bytes and capacity-owned copy boundaries.
 The ordinary `input_redirection_*` integration cases cover binary stdin/fd
 copies, empty read-write creation, existing-file preservation, here inputs,
-and nonfatal missing-file diagnostics. These fixtures require no subprocess,
+and tiny process-substitution input (including mapfile). A two-byte buffered
+pipe fixture checks admission and lease release while pipe stat stays zero
+and the existing substitution owner remains open. The owner exposes buffered
+length without copying; admission must precede its `read_file` copy.
+The cases also cover nonfatal missing-file diagnostics. These fixtures require no subprocess,
 device read, large allocation, or original resource-exhaustion shape. Selecting
 them is scoped proof, not a claim that the unchanged full/coverage suites ran.
 

@@ -273,14 +273,21 @@ impl Interpreter {
         create: bool,
     ) -> Result<(crate::StreamData, InputStorage)> {
         let budget = &self.execution_budget;
-        let source = match budget.run(crate::fs::canonicalize(&*self.fs, path)).await? {
-            Ok(source) => source,
-            Err(crate::Error::Io(error))
-                if create && error.kind() == std::io::ErrorKind::NotFound =>
-            {
-                path.to_path_buf()
+        // Open substitution links describe a pipe, not a VFS symlink target.
+        // Its owner supplies the buffered size before read_file copies it.
+        let buffered = self.proc_subs.input_len(path);
+        let source = if buffered.is_some() {
+            path.to_path_buf()
+        } else {
+            match budget.run(crate::fs::canonicalize(&*self.fs, path)).await? {
+                Ok(source) => source,
+                Err(crate::Error::Io(error))
+                    if create && error.kind() == std::io::ErrorKind::NotFound =>
+                {
+                    path.to_path_buf()
+                }
+                Err(error) => return Err(error),
             }
-            Err(error) => return Err(error),
         };
         let size = match budget.run(self.fs.stat(&source)).await? {
             Ok(metadata) => metadata.size,
@@ -299,7 +306,7 @@ impl Interpreter {
             Some("/dev/random" | "/dev/urandom") => 8192,
             _ => 0,
         };
-        let size = reported.max(device);
+        let size = reported.max(device).max(buffered.unwrap_or(0));
         budget.consume_input(size)?;
         budget.consume_work(1 + size.div_ceil(1024) as u64)?;
         let raw = budget.lease_bytes(size)?;
@@ -1721,6 +1728,32 @@ mod input_admission_tests {
             fd_var: None,
             target: Word::quoted_literal("/a"),
             heredoc_delim: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn input_admission_tiny_buffered_pipe() {
+        for (cap, succeeds) in [(1, false), (4, true)] {
+            let mut bash = crate::Bash::builder()
+                .limits(crate::ExecutionLimits::new().max_live_intermediate_bytes(cap))
+                .build();
+            bash.interpreter.begin_execution_budget();
+            bash.interpreter
+                .proc_subs
+                .open(63, crate::fs::ProcSubData::Input(Arc::from(&b"ab"[..])));
+            let path = Path::new("/dev/fd/63");
+            assert_eq!(bash.interpreter.fs.stat(path).await.unwrap().size, 0);
+            let result = bash.interpreter.read_input_stream(path, false).await;
+            if succeeds {
+                let (stream, storage) = result.unwrap();
+                assert_eq!(stream.as_bytes(), b"ab");
+                assert_eq!(bash.interpreter.execution_budget.live_bytes_for_test(), 4);
+                drop((stream, storage));
+            } else {
+                assert!(matches!(result, Err(crate::Error::ResourceLimit(_))));
+            }
+            assert!(bash.interpreter.proc_subs.is_open(63));
+            assert_eq!(bash.interpreter.execution_budget.live_bytes_for_test(), 0);
         }
     }
 
