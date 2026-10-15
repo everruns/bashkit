@@ -180,7 +180,7 @@ jobs:
           class Bashkit < Formula
             desc "Virtual bash interpreter with sandboxed execution"
             homepage "${{ github.server_url }}/${{ github.repository }}"
-            license "Apache-2.0"
+            license "MIT"
 
             on_macos do
               if Hardware::CPU.arm?
@@ -254,8 +254,8 @@ jobs:
           cp bashkit.rb tap/Formula/bashkit.rb
 
           cd tap
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "Mykhailo Chalyi"
+          git config user.email "mike@chaliy.name"
           git add Formula/bashkit.rb
           git diff --cached --quiet && echo "No changes to commit" && exit 0
           git commit -m "bashkit ${VERSION}"

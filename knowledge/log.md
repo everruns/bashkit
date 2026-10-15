@@ -2,6 +2,8 @@
 
 ## 2026-10-15
 
+* **Release metadata**: Homebrew's generated formula uses the workspace MIT license and the required human commit identity. Regression coverage checks both before the automated tap push. See [Release Process](operations/release-process.md).
+
 * **Python packaging**: `bashkit.__version__` now reads the native `get_version()` instead of a stale literal. An installed-package regression verifies equality with both the native version and distribution metadata. See [Python Package](runtimes/python-package.md).
 
 * **Release operations**: Preparing 0.19.0 introduces the first published `bashkit-cpython-wasm` and `bashkit-scripted-tool` packages. A standalone core publish dry-run fails because its CPython dependency is not yet on crates.io. The pinned Cargo supports a multi-package dry-run that stages all four exact archives in a temporary registry and verifies their builds together. `just release-check` now uses that graph instead of rewriting disposable manifests against an older core; its regression checks require all four packages and compilation verification. See [Release Process](operations/release-process.md).

@@ -143,6 +143,16 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertNotIn("LATEST_CORE", recipe)
         self.assertNotIn("cli_publish_proxy", recipe)
 
+    def test_homebrew_release_metadata_matches_repository_policy(self) -> None:
+        workflow = (ROOT / ".github/workflows/cli-binaries.yml").read_text()
+
+        self.assertIn('git config user.name "Mykhailo Chalyi"', workflow)
+        self.assertIn('git config user.email "mike@chaliy.name"', workflow)
+        self.assertNotIn("github-actions[bot]", workflow)
+        license_match = re.search(r'^license = "([^"]+)"', (ROOT / "Cargo.toml").read_text(), re.MULTILINE)
+        self.assertIsNotNone(license_match)
+        self.assertIn(f'license "{license_match.group(1)}"', workflow)
+
     def test_web_ci_exercises_release_wasm_optimization(self) -> None:
         build_script = (ROOT / "crates/bashkit-wasm/scripts/build.sh").read_text()
         ci_workflow = (ROOT / ".github/workflows/ci.yml").read_text()
