@@ -290,6 +290,26 @@ impl<'a> Parser<'a> {
         parser.parse_word(input.to_string())
     }
 
+    /// Indirect reparses share request work/cancellation and enclosing depth.
+    pub(crate) fn parse_indirect_word(
+        input: &str,
+        max_depth: usize,
+        max_fuel: usize,
+        current_depth: usize,
+        budget: crate::limits::ExecutionBudget,
+    ) -> Result<Word> {
+        budget.consume_work(input.len() as u64)?;
+        let mut parser =
+            Parser::with_limits(input, max_depth, max_fuel).with_execution_budget(budget.clone());
+        parser.current_depth = current_depth;
+        let word = parser.parse_word(input.to_string());
+        budget.check()?;
+        if let Some(error) = parser.deferred_error.take() {
+            return Err(error);
+        }
+        Ok(word)
+    }
+
     /// Parse `input` as an unquoted here-document body: expansions apply,
     /// `"` is literal, and only `\$`, `` \` `` and `\\` are escapes. Used for
     /// prompt strings (`${x@P}`, PS1), which bash expands the same way.
@@ -4270,35 +4290,7 @@ impl<'a> Parser<'a> {
             if chars.peek() == Some(&'[') {
                 chars.next(); // consume '['
                 let mut index = String::new();
-                // Track nesting so nested ${...} containing
-                // brackets (e.g. ${#arr[@]}) don't prematurely
-                // close the subscript.
-                let mut bracket_depth: i32 = 0;
-                let mut brace_depth: i32 = 0;
-                while let Some(&c) = chars.peek() {
-                    if c == ']' && bracket_depth == 0 && brace_depth == 0 {
-                        chars.next();
-                        break;
-                    }
-                    match c {
-                        '[' => bracket_depth += 1,
-                        ']' => bracket_depth -= 1,
-                        '$' => {
-                            index.push(chars.next().unwrap());
-                            if chars.peek() == Some(&'{') {
-                                brace_depth += 1;
-                                index.push(chars.next().unwrap());
-                                continue;
-                            }
-                            continue;
-                        }
-                        '{' => brace_depth += 1,
-                        '}' if brace_depth > 0 => brace_depth -= 1,
-                        '}' => {}
-                        _ => {}
-                    }
-                    index.push(chars.next().unwrap());
-                }
+                scan_parameter_subscript(chars, |c| index.push(c));
                 // Strip surrounding quotes from index (e.g. "foo" -> foo)
                 if index.len() >= 2
                     && ((index.starts_with('"') && index.ends_with('"'))
@@ -5135,6 +5127,47 @@ fn empty_background(span: Span) -> (ListOperator, Command) {
     )
 }
 
+/// Consume a subscript after `[`, preserving its source text in `emit`.
+/// THREAT[TM-DOS-135]: admission and parameter parsing must agree on its end.
+fn scan_parameter_subscript(
+    chars: &mut impl Iterator<Item = char>,
+    mut emit: impl FnMut(char),
+) -> Option<usize> {
+    let mut brackets = 0usize;
+    let mut braces = 0usize;
+    let mut quote = None;
+    let mut escaped = false;
+    let mut consumed = 0usize;
+    for c in chars.by_ref() {
+        consumed += c.len_utf8();
+        if escaped {
+            escaped = false;
+        } else {
+            match (quote, c) {
+                (Some('\''), '\'') => quote = None,
+                (Some('\''), _) => {}
+                (_, '\\' | '\x00') => escaped = true,
+                (Some('"'), '"') => quote = None,
+                (Some(_), _) => {}
+                (None, '\'' | '"') => quote = Some(c),
+                (None, '{') => braces += 1,
+                (None, '}') => braces = braces.saturating_sub(1),
+                (None, '[') => brackets += 1,
+                (None, ']') if brackets == 0 && braces == 0 => return Some(consumed),
+                (None, ']') => brackets = brackets.saturating_sub(1),
+                _ => {}
+            }
+        }
+        emit(c);
+    }
+    None
+}
+
+pub(crate) fn parameter_subscript_end(value: &str, open: usize) -> Option<usize> {
+    let rest = value.get(open..)?.strip_prefix('[')?;
+    scan_parameter_subscript(&mut rest.chars(), |_| {}).map(|used| open + 1 + used)
+}
+
 /// Whether a raw `=~` operand holds an expansion. A `$` that cannot start
 /// one (`^a$`, `(x$|y$)`) is the regex end anchor; single quotes hide both.
 /// Text inside `${...}` when bash would reject it with "bad substitution"
@@ -5171,26 +5204,8 @@ fn bad_brace_parameter(chars: &std::iter::Peekable<std::str::Chars<'_>>) -> Opti
                 it.next();
             }
             if it.peek() == Some(&'[') {
-                // Subscript: balanced brackets; unterminated ones are bad.
-                let mut depth = 0usize;
-                let mut closed = false;
-                for c in it.by_ref() {
-                    match c {
-                        _ if MARKERS.contains(&c) => return None,
-                        '[' => depth += 1,
-                        ']' => {
-                            depth -= 1;
-                            if depth == 0 {
-                                closed = true;
-                                break;
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-                if !closed {
-                    return None;
-                }
+                it.next();
+                scan_parameter_subscript(&mut it, |_| {})?;
             }
             next_is_bad(it.peek().copied(), length_prefix)
         }
@@ -5726,6 +5741,116 @@ fn cond_term(t: &[CondTok], pos: &mut usize, depth: usize) -> std::result::Resul
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn parameter_subscript_consumption_preserves_escaped_and_quoted_brackets() {
+        for (source, expected) in [
+            (r"${items[left\]right]}", r"left\]right"),
+            (r#"${items["left]right"]}"#, "left]right"),
+            (r"${items['left]right']}", "left]right"),
+            (r"${items[nested[0]]}", "nested[0]"),
+            (r"${items[${key}]}", "${key}"),
+        ] {
+            let parsed = Parser::parse_word_string(source);
+            assert!(
+                matches!(
+                    parsed.parts.as_slice(),
+                    [WordPart::ArrayAccess { name, index }]
+                        if name == "items" && index == expected
+                ),
+                "unexpected parts for {source}: {:?}",
+                parsed.parts
+            );
+        }
+    }
+
+    #[test]
+    fn parameter_subscript_consumption_keeps_explicit_operator_after_reference() {
+        let parsed = Parser::parse_word_string(r"${items[left\]right]:-fallback}");
+        assert!(matches!(
+            parsed.parts.as_slice(),
+            [WordPart::ParameterExpansion {
+                name,
+                operator: ParameterOp::UseDefault,
+                operand,
+                colon_variant: true,
+            }] if name == r"items[left\]right]" && operand == "fallback"
+        ));
+    }
+
+    #[test]
+    fn parameter_subscript_consumption_admits_exact_reference_only() {
+        for value in [
+            r"items[left\]right]",
+            r#"items["left]right"]"#,
+            r#"items["left\"]right"]"#,
+            "items[nested[0]]",
+            "items[${key}]",
+            "items[caf\u{e9}]",
+        ] {
+            assert_eq!(
+                parameter_subscript_end(value, 5),
+                Some(value.len()),
+                "{value}"
+            );
+        }
+        for value in ["items[0]:-fallback", "items[0][1]"] {
+            assert_ne!(
+                parameter_subscript_end(value, 5),
+                Some(value.len()),
+                "{value}"
+            );
+        }
+        for value in [r"items[left\]", "items['left]", "items[${key]"] {
+            assert_eq!(parameter_subscript_end(value, 5), None, "{value}");
+        }
+    }
+
+    #[test]
+    fn indirect_reparse_admission_inherits_depth_and_request_failures() {
+        use crate::limits::{ExecutionBudget, ExecutionLimits};
+        use std::sync::atomic::AtomicBool;
+
+        let budget = || {
+            ExecutionBudget::new(
+                &ExecutionLimits::default(),
+                Arc::new(AtomicBool::new(false)),
+            )
+        };
+        let input = "$(printf ok)";
+        assert!(Parser::parse_indirect_word(input, 1, 100, 0, budget()).is_ok());
+        let error = Parser::parse_indirect_word(input, 1, 100, 1, budget()).unwrap_err();
+        assert!(
+            error.to_string().contains("AST nesting too deep"),
+            "{error}"
+        );
+
+        let empty_work = ExecutionBudget::new(
+            &ExecutionLimits::default().max_work_units(0),
+            Arc::new(AtomicBool::new(false)),
+        );
+        assert!(matches!(
+            Parser::parse_indirect_word("${items[0]}", 1, 100, 0, empty_work),
+            Err(Error::ResourceLimit(_))
+        ));
+        let cancelled =
+            ExecutionBudget::new(&ExecutionLimits::default(), Arc::new(AtomicBool::new(true)));
+        assert!(matches!(
+            Parser::parse_indirect_word("${items[0]}", 1, 100, 0, cancelled),
+            Err(Error::Cancelled)
+        ));
+
+        let text = "${items[0]}";
+        let shared = ExecutionBudget::new(
+            &ExecutionLimits::default().max_work_units(text.len() as u64),
+            Arc::new(AtomicBool::new(false)),
+        );
+        assert!(Parser::parse_indirect_word(text, 1, 100, 0, shared.clone()).is_ok());
+        assert!(matches!(
+            Parser::parse_indirect_word(text, 1, 100, 0, shared),
+            Err(Error::ResourceLimit(_))
+        ));
+    }
 
     #[test]
     fn test_parse_simple_command() {

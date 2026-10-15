@@ -66,6 +66,16 @@ Bash/POSIX `-p` plus `--` and the practical GNU report flags `-f/--format`,
 
 ### Context-Aware Lexing
 
+**Parameter subscript boundaries.** Parameter parsing, preliminary braced-name
+validation, and indirect-target admission use one subscript scanner. Quotes,
+ordinary and lexer-sentinel escapes, nested brackets, and braced expansions
+cannot expose an internal closing bracket as an operator boundary. An indirect
+target must consume exactly one complete reference before the caller's explicit
+suffix is appended. Indirect reparses share request work/cancellation and inherit
+the caller's command-substitution depth; deferred child-parser errors propagate.
+Tiny parser consumption/configuration fixtures and `indirect_reference_tests`
+cover these contracts without recursive scripts or exhaustion probes (TM-DOS-135).
+
 Handles bash's context-sensitivity:
 - `$var` in double quotes: expand; in single quotes: literal
 - Word splitting after expansion
