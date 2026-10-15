@@ -2,6 +2,10 @@
 
 ## 2026-10-15
 
+* **npm publication**: The 0.19.0 browser upload returned a staged-version E409, but public registry read-back showed the version and `latest` tag. Both npm lanes now publish one retained archive and require its SHA-512 integrity plus the intended public dist-tag. Only the specific staged conflict enters bounded verification; authentication errors and private or mismatched artifacts still fail. See [Release Process](operations/release-process.md).
+
+* **Release recovery**: 0.19.0's crates.io workflow verified CPython successfully, then failed its size check because Cargo 1.95 retains publish dry-run archives in temporary staging. No Rust crate uploaded. Recovery runs from current main with an explicit existing tag, validates its original immutable source, and checks out that SHA in every publishing job; published 0.19.0 artifacts and its tag remain unchanged. The repaired workflow runs verified `cargo package` before measuring the finalized archive; a shell-level fixture models the staging distinction and enforces both sides of the 10 MiB limit with no registry token. See [Release Process](operations/release-process.md).
+
 * **Release metadata**: Homebrew's generated formula uses the workspace MIT license and the required human commit identity. Regression coverage checks both before the automated tap push. See [Release Process](operations/release-process.md).
 
 * **Python packaging**: `bashkit.__version__` now reads the native `get_version()` instead of a stale literal. An installed-package regression verifies equality with both the native version and distribution metadata. See [Python Package](runtimes/python-package.md).

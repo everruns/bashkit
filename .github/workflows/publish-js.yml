@@ -554,11 +554,7 @@ jobs:
         run: |
           TAG="${{ steps.dist-tag.outputs.tag }}"
           echo "Publishing with dist-tag: $TAG"
-          if [ "$TAG" = "latest" ]; then
-            npm publish --provenance --access public
-          else
-            npm publish --provenance --tag "$TAG" --access public
-          fi
+          python3 "$GITHUB_WORKSPACE/scripts/publish_npm.py" --tag "$TAG"
         working-directory: crates/bashkit-js
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

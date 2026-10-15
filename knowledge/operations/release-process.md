@@ -84,7 +84,12 @@ silently failed.
      `.crate` must stay under crates.io's 10 MiB limit (it embeds the CPython
      snapshot as xz; ~7.8 MiB with requests/httpx and urllib.request preloaded). `bashkit` depends on the same version
      of it, so `publish.yml` publishes it first and the `bashkit` dry-run only
-     resolves once that version is live.
+     resolves once that version is live. Cargo 1.95 leaves publish dry-run
+     archives under temporary staging directories. Run `cargo package -p
+     bashkit-cpython-wasm` to finalize the verified `.crate` under
+     `target/package/` before the size check; measuring the old publish output
+     path stopped 0.19.0 before any Rust crate upload. Regression coverage
+     exercises both sides of the 10 MiB boundary without registry credentials.
    - Verify all four exact release packages together with the pinned Cargo:
      `cargo publish --dry-run -p bashkit-cpython-wasm -p bashkit -p bashkit-cli -p bashkit-scripted-tool`
      (`--allow-dirty` during preparation). Cargo stages selected workspace
@@ -201,6 +206,16 @@ verification poll failed at 00:47:32; the `latest` tag moved at 00:48:10. The
 poll window now clears the 300s cache (`ATTEMPTS`/`SLEEP_SECONDS` in
 `publish-js.yml`, guarded by `scripts/tests/test_release_workflow.py`).
 
+Both npm lanes use `scripts/publish_npm.py`: pack once with lifecycle scripts
+disabled, retain and hash those bytes, then publish that archive with provenance.
+A staged-version E409 is recoverable only when the public registry reports the
+same SHA-512 integrity and intended dist-tag within the bounded verification
+window. Other upload failures remain errors. The helper never approves private
+stages or changes credentials. The 0.19.0 browser upload returned E409 while the
+exact version was already public as `latest`; treating that response alone as
+failure made the workflow disagree with the registry. Unit coverage rejects
+wrong bytes, wrong tags, authentication failures, and versions that stay private.
+
 ## Changelog Format
 
 Use the latest entries in `CHANGELOG.md` as the template. Rules:
@@ -260,9 +275,16 @@ without registry credentials. The following `cargo publish --no-verify` upload
 receives the step-scoped `CARGO_REGISTRY_TOKEN`, so dependency compilation never
 inherits that credential. The CLI and `bashkit-scripted-tool` dry-runs run after the core is published.
 
-CLI and C ABI release validation resolve the fetched tag once, validate the
+Rust, CLI, and C ABI release validation resolve the fetched tag once, validate the
 manifest at that immutable commit, and pass its SHA to build checkouts. The tag
 remains the release upload destination, never the build source after validation.
+For Rust workflow-only recovery, merge the repair, then dispatch
+`gh workflow run publish.yml --ref main -f tag=vMAJOR.MINOR.PATCH`.
+The workflow ref must be the matching tag or current main; every crate is built
+from the validated tag SHA, even when main has advanced. Never move an existing
+release tag or rebuild already published registry versions. The CPython size gate
+runs verified `cargo package` before measuring its finalized archive because
+Cargo 1.95 publish dry-runs retain only a temporary archive.
 Regression coverage: `scripts/tests/test_release_security.py`.
 
 ### publish-python.yml

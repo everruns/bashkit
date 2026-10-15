@@ -153,6 +153,12 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIsNotNone(license_match)
         self.assertIn(f'license "{license_match.group(1)}"', workflow)
 
+    def test_npm_publish_lanes_share_exact_archive_verification(self) -> None:
+        for name in ("publish-js.yml", "publish-wasm.yml"):
+            workflow = (ROOT / ".github/workflows" / name).read_text()
+            with self.subTest(workflow=name):
+                self.assertIn('python3 "$GITHUB_WORKSPACE/scripts/publish_npm.py" --tag "$TAG"', workflow)
+
     def test_web_ci_exercises_release_wasm_optimization(self) -> None:
         build_script = (ROOT / "crates/bashkit-wasm/scripts/build.sh").read_text()
         ci_workflow = (ROOT / ".github/workflows/ci.yml").read_text()
