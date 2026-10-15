@@ -15,13 +15,17 @@
 //! visible error instead of dropping the write.
 
 use bashkit::{Bash, ExecutionLimits, MemoryLimits};
+use std::time::Duration;
+
+// Resource ceilings must trip before deadlines under instrumented builds.
+const CAP_TEST_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// 64 KiB of headroom: enough for a handful of small entries, far below the
 /// megabyte-scale values these tests park in arrays.
 fn bounded() -> Bash {
     Bash::builder()
         .memory_limits(MemoryLimits::new().max_total_variable_bytes(64 * 1024))
-        .limits(ExecutionLimits::new())
+        .limits(ExecutionLimits::new().timeout(CAP_TEST_TIMEOUT))
         .build()
 }
 
@@ -197,6 +201,7 @@ async fn mapfile_replacement_releases_entries_and_bytes() {
 async fn mapfile_empty_replacement_releases_budget() {
     let mut bash = Bash::builder()
         .memory_limits(MemoryLimits::new().max_array_entries(3))
+        .limits(ExecutionLimits::new().timeout(CAP_TEST_TIMEOUT))
         .build();
     let result = bash
         .exec("a=(one two three); mapfile -t a </dev/null; b=(x y z); echo ${#a[@]} ${#b[@]}")
@@ -216,6 +221,7 @@ async fn mapfile_entry_refusal_is_visible_and_recoverable() {
     ] {
         let mut bash = Bash::builder()
             .memory_limits(MemoryLimits::new().max_array_entries(3))
+            .limits(ExecutionLimits::new().timeout(CAP_TEST_TIMEOUT))
             .build();
         let error = bash
             .exec(script)
@@ -237,6 +243,7 @@ async fn mapfile_entry_refusal_is_visible_and_recoverable() {
 async fn mapfile_origin_merges_without_losing_old_entries_on_refusal() {
     let mut bash = Bash::builder()
         .memory_limits(MemoryLimits::new().max_array_entries(3))
+        .limits(ExecutionLimits::new().timeout(CAP_TEST_TIMEOUT))
         .build();
     bash.exec("a=(one two three)").await.unwrap();
     let result = bash
@@ -299,6 +306,7 @@ async fn mapfile_cannot_refund_interpreter_metadata() {
         for options in ["-t", "-t -O 0"] {
             let mut bash = Bash::builder()
                 .memory_limits(MemoryLimits::new().max_array_entries(3))
+                .limits(ExecutionLimits::new().timeout(CAP_TEST_TIMEOUT))
                 .build();
             let script =
                 format!("a=(one two three); f() {{ mapfile {options} {name} </dev/null; }}; f");
