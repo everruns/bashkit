@@ -2,6 +2,10 @@
 //!
 //! Mutates arrays via [`BuiltinSideEffect::SetIndexedArray`](super::BuiltinSideEffect).
 //!
+//! Decision: debug-stack arrays are interpreter-owned, uncharged metadata.
+//! Like bash, reject them as destinations rather than refunding their entries
+//! as user-array capacity when clearing the destination.
+//!
 //! Decision: `-u FD` other than 0 and the `-C`/`-c` callback are rejected with
 //! status 2 instead of being ignored; reading the wrong input silently would
 //! be worse than a clear error (see L-MAPFILE-001 in operations/limitations).
@@ -101,6 +105,9 @@ impl Builtin for Mapfile {
             Ok(o) => o,
             Err(msg) => return Ok(ExecResult::err(format!("mapfile: {msg}\n"), 2)),
         };
+        if matches!(o.name.as_str(), "FUNCNAME" | "BASH_SOURCE" | "BASH_LINENO") {
+            return Ok(ExecResult::err(String::new(), 1));
+        }
         let input = ctx.stdin.map(|stdin| &**stdin).unwrap_or("");
 
         let mut result = ExecResult::ok(String::new());

@@ -10,6 +10,10 @@
 // validating string contents. This is safe because we check for non-empty strings.
 #![allow(clippy::unwrap_used)]
 
+// Decision: builtin array mutations use the same retained entry/byte accounting
+// as assignments. Clearing refunds both charges; indexed merges check each live
+// element in place. Refused entry/byte writes fail the host execution visibly.
+
 // Decision: function definition filenames share Arc<str> storage and live in
 // ScopedState beside functions. Charge filename/key bytes per function before
 // admission; replace/refund them with the definition so forks, rollback and
@@ -11593,18 +11597,13 @@ impl Interpreter {
         // THREAT[TM-DOS-114]: `unset arr` must return the array's entry
         // slots and bytes to the budget. Without this a set/unset cycle
         // drifts until a healthy script is refused.
-        let released = self
-            .arrays_mut()
-            .remove(name)
-            .map_or((0, 0), |arr| (arr.len(), Self::indexed_array_bytes(&arr)));
+        self.remove_indexed_array(name);
         let released_assoc = self
             .assoc_arrays_mut()
             .remove(name)
             .map_or((0, 0), |arr| (arr.len(), Self::assoc_array_bytes(&arr)));
-        self.memory_budget
-            .record_array_remove(released.0 + released_assoc.0);
-        self.memory_budget
-            .release_array_bytes(released.1 + released_assoc.1);
+        self.memory_budget.record_array_remove(released_assoc.0);
+        self.memory_budget.release_array_bytes(released_assoc.1);
         self.clear_var_attrs(name);
         self.remove_nameref(name);
     }
@@ -12469,10 +12468,14 @@ impl Interpreter {
                 builtins::BuiltinSideEffect::SetIndexedArray { name, entries } => {
                     // Merges into the existing array; mapfile sends RemoveArray
                     // first unless `-O` asked to keep the other elements.
-                    let mut arr = self.arrays_mut().remove(name).unwrap_or_default();
-                    arr.extend(entries.iter().cloned());
-                    if !arr.is_empty() {
-                        self.insert_array_checked(name.clone(), arr);
+                    // Keep retained storage visible to admission so overwrites
+                    // refund their old values and refused writes preserve them.
+                    if !entries.is_empty() && self.env.contains_key(name) {
+                        self.env_mut().remove(name);
+                    }
+                    for (idx, value) in entries {
+                        self.set_indexed_element_checked(name, *idx, value.clone());
+                        self.check_cancelled()?;
                     }
                 }
                 builtins::BuiltinSideEffect::SignalSelf(signal) => {
@@ -12482,7 +12485,7 @@ impl Interpreter {
                     self.builtin_discard = true;
                 }
                 builtins::BuiltinSideEffect::RemoveArray(name) => {
-                    self.arrays_mut().remove(name);
+                    self.remove_indexed_array(name);
                 }
                 builtins::BuiltinSideEffect::ShiftPositional(n) => {
                     // bash: a count above `$#` shifts nothing and fails.
@@ -14017,6 +14020,16 @@ impl Interpreter {
         }
     }
 
+    /// Removing retained storage must release both session budget charges.
+    /// Shared by unset and builtin replacement, including empty mapfile input.
+    fn remove_indexed_array(&mut self, name: &str) {
+        if let Some(arr) = self.arrays_mut().remove(name) {
+            self.memory_budget.record_array_remove(arr.len());
+            self.memory_budget
+                .release_array_bytes(Self::indexed_array_bytes(&arr));
+        }
+    }
+
     /// Bytes charged for an indexed array's contents. Indexed keys are machine
     /// integers already covered by the entry count, so only values are charged.
     fn indexed_array_bytes(arr: &HashMap<usize, String>) -> usize {
@@ -14032,22 +14045,20 @@ impl Interpreter {
     /// Charge an array write against the entry count and the shared
     /// retained-byte budget. Returns `false` when the write must be skipped.
     ///
-    /// THREAT[TM-DOS-114]: an over-budget *byte* write records the first
-    /// rejection so execution fails visibly rather than dropping the value.
-    /// Hitting `max_array_entries` keeps its established silent-skip behaviour —
-    /// that counter is a separate contract (TM-DOS-060) with its own tests, and
-    /// widening it here would change unrelated semantics.
+    /// THREAT[TM-DOS-060] THREAT[TM-DOS-114]: entry and byte refusals
+    /// record the first rejection so execution fails visibly rather than
+    /// silently dropping values and reporting success.
     fn admit_array_write(
         &mut self,
         new_entries: usize,
         added_bytes: usize,
         removed_bytes: usize,
     ) -> bool {
-        if self
+        if let Err(error) = self
             .memory_budget
             .check_array_entries(new_entries, &self.memory_limits)
-            .is_err()
         {
+            self.memory_limit_error.get_or_insert(error);
             return false;
         }
         if let Err(error) =
@@ -14079,12 +14090,11 @@ impl Interpreter {
             .map_or((0, 0), |a| (a.len(), Self::indexed_array_bytes(a)));
         let net = new_entries.saturating_sub(old_entries);
         let new_bytes = Self::indexed_array_bytes(&arr);
-        if net > 0
-            && self
-                .memory_budget
-                .check_array_entries(net, &self.memory_limits)
-                .is_err()
+        if let Err(error) = self
+            .memory_budget
+            .check_array_entries(net, &self.memory_limits)
         {
+            self.memory_limit_error.get_or_insert(error);
             return false;
         }
         if let Err(error) =
@@ -14113,12 +14123,11 @@ impl Interpreter {
             .map_or((0, 0), |a| (a.len(), Self::assoc_array_bytes(a)));
         let net = new_entries.saturating_sub(old_entries);
         let new_bytes = Self::assoc_array_bytes(&arr);
-        if net > 0
-            && self
-                .memory_budget
-                .check_array_entries(net, &self.memory_limits)
-                .is_err()
+        if let Err(error) = self
+            .memory_budget
+            .check_array_entries(net, &self.memory_limits)
         {
+            self.memory_limit_error.get_or_insert(error);
             return false;
         }
         if let Err(error) =

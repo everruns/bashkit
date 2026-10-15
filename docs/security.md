@@ -98,6 +98,14 @@ normalization storage is reserved against `max_live_intermediate_bytes`
 before allocation. Searches also consume the shared work budget and check
 cancellation and deadlines, including when every candidate is missing.
 
+Arrays share the retained-variable byte budget and the session array-entry
+limit. Replacing or clearing `mapfile` arrays releases their old charges, so
+repeated reads do not consume capacity cumulatively. Entry or byte exhaustion
+returns a resource-limit error; earlier admitted records may remain. A later
+execution can recover by unsetting arrays to free capacity. `mapfile` rejects
+interpreter-owned debug-stack arrays as destinations. `FUNCNAME` remains reserved
+even after unset; Bash allows it to become an ordinary array in that case.
+
 Indexed compound-array assignments expand values before evaluating subscripts.
 Pending keys, values, fields and container capacity count against
 `max_live_intermediate_bytes`, including repeated writes to the same index.
