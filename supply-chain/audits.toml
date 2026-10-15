@@ -538,6 +538,12 @@ criteria = "safe-to-deploy"
 delta = "0.103.14 -> 0.103.15"
 notes = "Reviewed complete runtime delta: FIPS status reports underlying AWS-LC signature implementation status. Certificate parsing, verification algorithms and input bounds unchanged."
 
+[[audits.serde_json]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "1.0.151 -> 1.0.154"
+notes = "Reviewed the published delta across 1.0.152-1.0.154. Behavior changes are narrowing or diagnostic: '-0' no longer parses to I64(0) so the sign survives in arbitrary_precision mode; Number::as_f32 filters non-finite results, fixing comparison of large non-integer values against f32::INFINITY; invalid UTF-8 is reported at the first bad byte instead of the end of the token; lexical/math.rs changes are max_value() to MAX renames in code and comments only. Under preserve_order the IndexMap hasher becomes explicit, std::hash::RandomState with the std feature and foldhash::fast::RandomState without it, which upstream documents as minimal HashDoS resistance; that path needs preserve_order, which this tree does not enable. The new UTF-8 position arithmetic is the only part worth re-checking by a future user: as_str, which is not feature-gated and is what this tree compiles, uses saturating_sub and cannot underflow, while begin_raw_buffering subtracts from position.column without saturation and is reachable only under the raw_value feature, also not enabled here. Worst case in either is a wrong column in an error message. No unsafe anywhere in the diff, no new filesystem, network, process or environment access, no build script, and the only dependency addition is the foldhash hasher behind no-std preserve_order. Source safety review of the delta, not a full crate review."
+
 [[audits.signal-hook]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
@@ -567,6 +573,12 @@ who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 delta = "3.0.6 -> 3.0.7"
 notes = "Reviewed complete published package diff: one production change in src/expr.rs, the rest tests and a version stamp. Parsing a labelled construct now also checks that the token after the label is not '::', so 'label: ...' is no longer matched when the source actually continues with a path separator. No unsafe code, no new dependencies, no build scripts, no host access."
+
+[[audits.syn]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "3.0.7 -> 3.0.8"
+notes = "Reviewed the complete published delta: two production files plus a version stamp and tests. Operator parsing is narrowed, not widened. BinOp parsing no longer treats a leading '-' as subtraction when the token is actually '->', nor '<' as less-than when the token is '<-', and the two cast/comparison loops in expr.rs now return a parse error naming '<-' instead of silently breaking out. Token consumption stays bounded and the syntax tree construction is unchanged. No unsafe, no new dependencies, no build script, no host access."
 
 [[audits.thin-vec]]
 who = "Mykhailo Chalyi <mykhailo.chalyi-contractor@procore.com>"
