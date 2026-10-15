@@ -209,6 +209,14 @@ codegen-units = 1
 panic = "unwind"
 strip = "symbols"
 
+# Browser cold start is transfer-bound. Keep native release throughput settings;
+# use size-oriented LLVM optimization and whole-program LTO only for the JS-host
+# WASM package. Retain release's panic policy and all interpreter safety checks.
+[profile.wasm-release]
+inherits = "release"
+opt-level = "s"
+lto = "fat"
+
 # Important decision: separate `bench` profile uses fat LTO for the most
 # aggressive cross-crate inlining. Criterion benches run rarely and we'd
 # rather spend extra compile time once than miss inlining opportunities
