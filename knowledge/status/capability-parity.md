@@ -22,7 +22,7 @@ A dash means the feature is intentionally unsupported and has a recorded reason 
 | Capability | Rust BashBuilder | Rust BashTool | Rust ScriptedTool | CLI | Python | NAPI JavaScript | Browser WASM | C ABI |
 |---|---|---|---|---|---|---|---|---|
 | Host-configurable execution resource limits | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Host-triggered cancellation of in-flight execution | ✅ | — | — | — | ✅ | ✅ | ✅ | — |
+| Host-triggered cancellation of in-flight execution | ✅ | — | — | — | ✅ | ✅ | ✅ | ✅ |
 | Execution deadlines or timeouts | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Bounded stdout and stderr with truncation reporting | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Initial virtual working directory | ✅ | ✅ | — | — | ✅ | ✅ | ✅ | ✅ |
@@ -35,14 +35,14 @@ A dash means the feature is intentionally unsupported and has a recorded reason 
 | Explicit outbound-network policy | ✅ | ✅ | — | ✅ | ✅ | ✅ | — | — |
 | Host-provided HTTP transport or egress hook | ✅ | ✅ | — | — | — | — | — | — |
 | Host-visible virtual filesystem state | ✅ | ✅ | — | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Filesystem mounts beyond seeded virtual files | ✅ | ✅ | — | ✅ | ✅ | ✅ | — | — |
+| Filesystem mounts beyond seeded virtual files | ✅ | ✅ | — | ✅ | ✅ | ✅ | — | ✅ |
 | Snapshot and restore of interpreter state | ✅ | — | — | — | ✅ | ✅ | ✅ | — |
-| Explicit embedded Python opt-in | ✅ | ✅ | — | ✅ | ✅ | ✅ | — | — |
-| Explicit embedded TypeScript opt-in | ✅ | ✅ | — | — | ✅ | ✅ | — | — |
+| Explicit embedded Python opt-in | ✅ | ✅ | — | ✅ | ✅ | ✅ | — | ✅ |
+| Explicit embedded TypeScript opt-in | ✅ | ✅ | — | — | ✅ | ✅ | — | ✅ |
 | Explicit embedded SQLite opt-in | ✅ | ✅ | — | ✅ | ✅ | ✅ | — | — |
 | In-process interactive terminal session (keystrokes in, screen text and per-command transcript out; vi, less) | ✅ | — | — | — | ✅ | ✅ | — | — |
-| Named host callbacks invoked from embedded Python | ✅ | ✅ | — | — | ✅ | ✅ | — | — |
-| Named host callbacks invoked from embedded TypeScript | ✅ | ✅ | — | — | ✅ | ✅ | — | — |
+| Named host callbacks invoked from embedded Python | ✅ | ✅ | — | — | ✅ | ✅ | — | ✅ |
+| Named host callbacks invoked from embedded TypeScript | ✅ | ✅ | — | — | ✅ | ✅ | — | ✅ |
 
 ## Intentional exclusions
 
@@ -126,21 +126,15 @@ A dash means the feature is intentionally unsupported and has a recorded reason 
 ### C ABI
 
 - `runtime_env`: The C ABI exposes no post-construction configuration surface.
-- `cancellation`: ABI v1 exposes synchronous execute with no cancellation handle.
 - `stdin`: ABI v1 execute accepts script bytes only.
 - `custom_builtins`: ABI v1 has no callback registration table.
 - `host_call_suspension`: ABI v1 has no asynchronous event and resume API.
 - `tool_callbacks`: ABI v1 has no tool-callback registration table.
 - `network_policy`: ABI v1 deliberately ships only git, jq, and VFS capabilities.
 - `transport_hooks`: ABI v1 has no host HTTP transport vtable.
-- `mounts`: ABI v1 supports seeded and mutable VFS files, not filesystem mounts.
 - `snapshots`: ABI v1 has no snapshot functions.
-- `runtime_python`: ABI v1 omits embedded language runtimes.
-- `runtime_typescript`: ABI v1 omits embedded language runtimes.
 - `runtime_sqlite`: ABI v1 omits embedded language runtimes.
 - `interactive_terminal`: Not exposed in the C ABI.
-- `host_functions_python`: ABI v1 currently omits embedded language runtimes and runtime callback registration.
-- `host_functions_typescript`: ABI v1 currently omits embedded language runtimes and runtime callback registration.
 
 ## Enforcement
 

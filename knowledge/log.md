@@ -2,6 +2,8 @@
 
 ## 2026-10-16
 
+* **C runtime parity**: Added optional Python/TypeScript runtime flags and an additive ABI v1 host dispatcher. Owned, revocable runtime calls accept immediate or cross-thread replies; blocking callback reentry fails with BUSY. Added parallel-instance, caller-thread, cancellation/deadline/reuse and real C header/library tests. Corrected parity evidence for existing C cancellation and mounts. See [C API](runtimes/c-api.md).
+
 * **Node runtime parity**: Added Python and TypeScript named host callbacks to Bash/BashTool and JS agent adapters, with per-execution caller context, cooperative abort, reentry guards and worker/platform tests. Private runtime ownership also handles forced worker teardown without dropping a Tokio runtime inside an async task. Added explicit runtime host-function capability rows and a shared bounded JSON codec for foreign bindings. See [Node Package](runtimes/node-package.md).
 
 * **Python / agent integrations**: Added Python and TypeScript host function callbacks to `BashTool`, LangChain and deepagents. Reuse per-execution callback sessions for caller-loop affinity, ContextVars and cancellation; sync execution uses the dedicated private worker loop. Reentry is callback-context-specific so independent requests queue safely. Private-loop timeout cancellation now targets its own work item; native result deliveries drain before interpreter finalization to prevent a shutdown race. Added FastAPI, real Jupyter, alternate-loop and cross-thread regression coverage plus macOS/Windows callback CI. See [Python Package](runtimes/python-package.md).
