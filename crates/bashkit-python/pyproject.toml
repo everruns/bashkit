@@ -37,7 +37,7 @@ Changelog = "https://github.com/everruns/bashkit/releases"
 langchain = ["langchain-core>=0.3", "langchain-anthropic>=0.3"]
 deepagents = ["deepagents>=0.7.13", "langchain-anthropic>=0.3"]
 pydantic-ai = ["pydantic-ai>=1.0"]
-dev = ["pytest>=7.0", "pytest-asyncio>=0.23"]
+dev = ["pytest>=7.0", "pytest-asyncio>=0.23", "pytest-timeout>=2.2"]
 
 [tool.maturin]
 manifest-path = "Cargo.toml"

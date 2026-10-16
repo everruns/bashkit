@@ -101,7 +101,8 @@ jobs:
       - name: Install wheel and test dependencies
         run: |
           pip install bashkit --no-index --find-links crates/bashkit-python/dist --force-reinstall
-          pip install pytest pytest-asyncio langchain-core langgraph fastapi httpx maturin
+          pip install pytest pytest-asyncio pytest-timeout langchain-core langgraph fastapi httpx maturin
+          pip install uvloop
 
       - name: Install Deep Agents integration dependencies
         if: matrix.python-version != '3.9' && matrix.python-version != '3.10'
@@ -118,7 +119,45 @@ jobs:
 
       - name: Run tests
         working-directory: crates/bashkit-python
-        run: pytest tests/ -v
+        run: pytest tests/ -v --timeout=30 --timeout-method=thread
+
+  # Loop ownership differs on Windows (Proactor) and Unix (Selector/uvloop).
+  # Test the native callback bridge on each platform instead of relying only
+  # on the Linux abi3 wheel matrix above. No random-FS fixture is needed here.
+  callback-platforms:
+    name: Callback loops (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - name: Build and install native wheel
+        run: |
+          python -m pip install "maturin${{ env.MATURIN_VERSION }}"
+          python -m maturin build -m crates/bashkit-python/Cargo.toml --out dist
+          python -m pip install bashkit --no-index --find-links dist
+          python -m pip install pytest pytest-asyncio pytest-timeout langchain-core deepagents fastapi httpx
+      - name: Install uvloop on Unix
+        if: runner.os != 'Windows'
+        run: python -m pip install uvloop
+      - name: Test callback execution models
+        run: >-
+          python -m pytest --timeout=30 --timeout-method=thread
+          crates/bashkit-python/tests/test_external_functions.py
+          crates/bashkit-python/tests/test_typescript_external_functions.py
+          crates/bashkit-python/tests/test_registered_tools.py
+          crates/bashkit-python/tests/test_async_callbacks.py
+          crates/bashkit-python/tests/test_jupyter_compat.py
+          crates/bashkit-python/tests/test_teardown_determinism.py
 
   examples:
     name: Examples
@@ -172,6 +211,8 @@ jobs:
         run: |
           jupyter nbconvert --to notebook --execute --ExecutePreprocessor.timeout=120 \
             examples/jupyter_basics.ipynb --output /tmp/jupyter_basics_out.ipynb
+          jupyter nbconvert --to notebook --execute --ExecutePreprocessor.timeout=120 \
+            examples/runtime_external_functions.ipynb --output /tmp/runtime_external_functions_out.ipynb
 
   # Verify wheel builds and passes twine check
   build-wheel:

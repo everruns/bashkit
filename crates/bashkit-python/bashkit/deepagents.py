@@ -38,6 +38,9 @@ from typing import TYPE_CHECKING
 
 from bashkit import BashTool as NativeBashTool
 
+if TYPE_CHECKING:
+    from bashkit._bashkit import ExternalHandler, TypeScriptExternalHandler
+
 # THREAT[TM-DOS-113]: Agent-facing VFS helpers bypass shell execution limits.
 # Keep every direct walk and retained grep result independently bounded.
 #
@@ -102,7 +105,7 @@ try:
     )
     from deepagents.backends.utils import compile_grep_include_glob
     from langchain.agents.middleware.types import AgentMiddleware
-    from langchain_core.tools import tool as langchain_tool
+    from langchain_core.tools import StructuredTool
 
     DEEPAGENTS_AVAILABLE = True
 except ImportError:
@@ -118,9 +121,7 @@ def _make_bash_tool(bash_instance: NativeBashTool, max_output_length: int = 100_
     tool_name = bash_instance.name
     tool_description = bash_instance.description()
 
-    @langchain_tool(tool_name, description=tool_description)
-    def bashkit(command: str) -> str:
-        result = bash_instance.execute_sync(command)
+    def format_result(result) -> str:
         output = result.stdout
         if result.error:
             output += f"\nError: {result.error}"
@@ -133,7 +134,15 @@ def _make_bash_tool(bash_instance: NativeBashTool, max_output_length: int = 100_
             output = output[:max_output_length] + "\n[truncated]"
         return output
 
-    return bashkit
+    def bashkit(command: str) -> str:
+        return format_result(bash_instance.execute_sync(command))
+
+    async def abashkit(command: str) -> str:
+        return format_result(await bash_instance.execute(command))
+
+    # Decision: provide a native coroutine. LangChain's default async wrapper
+    # runs the sync function in a worker, losing caller-loop callback affinity.
+    return StructuredTool.from_function(func=bashkit, coroutine=abashkit, name=tool_name, description=tool_description)
 
 
 if DEEPAGENTS_AVAILABLE:
@@ -162,6 +171,10 @@ if DEEPAGENTS_AVAILABLE:
             python: bool = False,
             typescript: bool = False,
             env: dict[str, str] | None = None,
+            external_functions: list[str] | None = None,
+            external_handler: ExternalHandler | None = None,
+            typescript_external_functions: list[str] | None = None,
+            typescript_external_handler: TypeScriptExternalHandler | None = None,
         ):
             """Initialize middleware.
 
@@ -176,6 +189,14 @@ if DEEPAGENTS_AVAILABLE:
                 typescript: Enable ZapCode TypeScript (ignored if bash_tool provided)
                 env: Initial environment for a new tool (ignored if bash_tool provided).
                     Python requires BASHKIT_ALLOW_INPROCESS_PYTHON=1 at construction.
+                external_functions: Python host function names (ignored if bash_tool provided).
+                external_handler: Async ``(name, args, kwargs)`` dispatcher
+                    (ignored if bash_tool provided). Async tool calls use the
+                    caller loop; sync calls use a private worker loop.
+                typescript_external_functions: TypeScript host function names
+                    (ignored if bash_tool provided).
+                typescript_external_handler: Async ``(name, args)`` dispatcher
+                    with JSON values (ignored if bash_tool provided).
             """
             if bash_tool is not None:
                 self._bash = bash_tool
@@ -190,6 +211,10 @@ if DEEPAGENTS_AVAILABLE:
                     python=python,
                     typescript=typescript,
                     env=env,
+                    external_functions=external_functions,
+                    external_handler=external_handler,
+                    typescript_external_functions=typescript_external_functions,
+                    typescript_external_handler=typescript_external_handler,
                 )
                 self._owns_bash = True
 
@@ -239,6 +264,10 @@ if DEEPAGENTS_AVAILABLE:
             python: bool = False,
             typescript: bool = False,
             env: dict[str, str] | None = None,
+            external_functions: list[str] | None = None,
+            external_handler: ExternalHandler | None = None,
+            typescript_external_functions: list[str] | None = None,
+            typescript_external_handler: TypeScriptExternalHandler | None = None,
         ):
             self._bash = NativeBashTool(
                 username=username,
@@ -249,6 +278,10 @@ if DEEPAGENTS_AVAILABLE:
                 python=python,
                 typescript=typescript,
                 env=env,
+                external_functions=external_functions,
+                external_handler=external_handler,
+                typescript_external_functions=typescript_external_functions,
+                typescript_external_handler=typescript_external_handler,
             )
             self._id = f"bashkit-{uuid.uuid4().hex[:8]}"
             self._operation_timeout = (
@@ -275,6 +308,15 @@ if DEEPAGENTS_AVAILABLE:
         # Keep the keyword absent so the framework uses our constructor timeout.
         def execute(self, command: str) -> ExecuteResponse:  # type: ignore[override]
             result = self._bash.execute_sync(command)
+            return self._execute_response(result)
+
+        async def aexecute(self, command: str) -> ExecuteResponse:  # type: ignore[override]
+            # Preserve caller-loop clients and ContextVars in runtime callbacks.
+            result = await self._bash.execute(command)
+            return self._execute_response(result)
+
+        @staticmethod
+        def _execute_response(result) -> ExecuteResponse:
             output = result.stdout + (result.stderr or "")
             if result.error and result.error not in output:
                 output += f"\nError: {result.error}"

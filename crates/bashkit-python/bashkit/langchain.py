@@ -38,6 +38,9 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+if TYPE_CHECKING:
+    from bashkit._bashkit import ExternalHandler, TypeScriptExternalHandler
+
 try:
     from langchain_core.tools import BaseTool, ToolException
     from pydantic import BaseModel, Field, PrivateAttr
@@ -101,6 +104,10 @@ if LANGCHAIN_AVAILABLE:
             allowed_mount_paths: list[str] | None = None,
             readonly_filesystem: bool = False,
             max_output_length: int = 100_000,
+            external_functions: list[str] | None = None,
+            external_handler: ExternalHandler | None = None,
+            typescript_external_functions: list[str] | None = None,
+            typescript_external_handler: TypeScriptExternalHandler | None = None,
             **kwargs,
         ):
             bash_tool = NativeBashTool(
@@ -116,6 +123,10 @@ if LANGCHAIN_AVAILABLE:
                 mounts=mounts,
                 allowed_mount_paths=allowed_mount_paths,
                 readonly_filesystem=readonly_filesystem,
+                external_functions=external_functions,
+                external_handler=external_handler,
+                typescript_external_functions=typescript_external_functions,
+                typescript_external_handler=typescript_external_handler,
             )
             kwargs["name"] = bash_tool.name
             kwargs["description"] = bash_tool.description()
@@ -224,6 +235,10 @@ def create_bash_tool(
     allowed_mount_paths: list[str] | None = None,
     readonly_filesystem: bool = False,
     max_output_length: int = 100_000,
+    external_functions: list[str] | None = None,
+    external_handler: ExternalHandler | None = None,
+    typescript_external_functions: list[str] | None = None,
+    typescript_external_handler: TypeScriptExternalHandler | None = None,
 ) -> BashkitTool:
     """Create a LangChain-compatible Bashkit tool.
 
@@ -245,6 +260,13 @@ def create_bash_tool(
             files and mounts are applied.
         max_output_length: Maximum number of characters returned to the
             LangChain agent from one bash tool call before truncation.
+        external_functions: Host function names callable from embedded Python.
+        external_handler: Async dispatcher receiving ``(name, args, kwargs)``.
+            With ``ainvoke`` it runs on the caller's loop; ``invoke`` uses a
+            private worker loop. Requires ``python=True`` and the host env grant.
+        typescript_external_functions: Host function names callable from TypeScript.
+        typescript_external_handler: Async ``(name, args)`` dispatcher with JSON
+            values and the same loop ownership rules. Requires ``typescript=True``.
 
     Returns:
         BashkitTool instance for use with LangChain agents
@@ -276,6 +298,10 @@ def create_bash_tool(
         allowed_mount_paths=allowed_mount_paths,
         readonly_filesystem=readonly_filesystem,
         max_output_length=max_output_length,
+        external_functions=external_functions,
+        external_handler=external_handler,
+        typescript_external_functions=typescript_external_functions,
+        typescript_external_handler=typescript_external_handler,
     )
 
 

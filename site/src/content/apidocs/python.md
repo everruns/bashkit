@@ -119,8 +119,8 @@ Bash.execute_sync(commands: str, on_output: OutputHandler | None = None) -> Exec
 
 Execute bash commands synchronously (blocking).
 
-Not supported when ``external_handler`` is configured — use
-``execute()`` (async) instead. ``on_output`` must be synchronous.
+Async external handlers use the instance's private worker loop.
+Use ``await execute()`` for clients bound to the caller's running loop. ``on_output`` must be synchronous.
 Async ``custom_builtins`` callbacks run on a private loop here.
 When called from inside a running event loop (e.g. Jupyter / IPython),
 callbacks are dispatched to a background thread with their own loop so
@@ -590,7 +590,7 @@ Adds LLM-facing contract metadata (``description``, ``system_prompt``,
 ### Constructor
 
 ```python
-BashTool(username: str | None = None, hostname: str | None = None, cwd: str | None = None, env: Mapping[str, str] | None = None, max_commands: int | None = None, max_loop_iterations: int | None = None, max_memory: int | None = None, timeout_seconds: float | None = None, files: dict[str, str | Callable[[], str]] | None = None, mounts: list[dict[str, Any]] | None = None, allowed_mount_paths: list[str] | None = None, readonly_filesystem: bool = False, custom_builtins: Mapping[str, BuiltinCallback] | None = None, network: NetworkConfig | None = None, profile: ExecutionProfile = ExecutionProfile.Standard, python: bool = False, typescript: bool = False) -> None
+BashTool(username: str | None = None, hostname: str | None = None, cwd: str | None = None, env: Mapping[str, str] | None = None, max_commands: int | None = None, max_loop_iterations: int | None = None, max_memory: int | None = None, timeout_seconds: float | None = None, files: dict[str, str | Callable[[], str]] | None = None, mounts: list[dict[str, Any]] | None = None, allowed_mount_paths: list[str] | None = None, readonly_filesystem: bool = False, custom_builtins: Mapping[str, BuiltinCallback] | None = None, network: NetworkConfig | None = None, profile: ExecutionProfile = ExecutionProfile.Standard, python: bool = False, typescript: bool = False, external_functions: list[str] | None = None, external_handler: ExternalHandler | None = None, typescript_external_functions: list[str] | None = None, typescript_external_handler: TypeScriptExternalHandler | None = None) -> None
 ```
 
 Create a new BashTool.
@@ -614,6 +614,16 @@ Create a new BashTool.
 - **`profile`** — Execution profile (Standard or Compatibility).
 - **`python`** — Register sandboxed Monty Python (default ``False``).
 - **`typescript`** — Register sandboxed ZapCode TypeScript (default ``False``).
+- **`external_functions`** — Host function names callable from embedded Python.
+- **`external_handler`** — Async ``(name, args, kwargs)`` Python dispatcher.
+- **`typescript_external_functions`** — Host function names callable from TypeScript.
+- **`typescript_external_handler`** — Async ``(name, args)`` TypeScript dispatcher.
+
+External handlers run on the caller's loop with ``await execute()`` and
+on a dedicated private worker loop with ``execute_sync()``, including
+inside notebooks. ContextVars are captured per execution. Handlers must
+not re-enter this interpreter or its live filesystem handles. Reset
+retains callbacks; snapshot factories require callbacks supplied again.
 
 Embedded runtimes share the shell's virtual filesystem and stay enabled
 after ``reset()``. Python additionally requires the host to provide
@@ -954,7 +964,7 @@ Restore interpreter state from bytes produced by ``snapshot_keyed()``.
 ### `from_snapshot`
 
 ```python
-BashTool.from_snapshot(data: bytes, username: str | None = None, hostname: str | None = None, cwd: str | None = None, env: Mapping[str, str] | None = None, max_commands: int | None = None, max_loop_iterations: int | None = None, max_memory: int | None = None, timeout_seconds: float | None = None, files: dict[str, str] | None = None, mounts: list[dict[str, Any]] | None = None, allowed_mount_paths: list[str] | None = None, readonly_filesystem: bool = False, custom_builtins: Mapping[str, BuiltinCallback] | None = None, network: NetworkConfig | None = None, profile: ExecutionProfile = ExecutionProfile.Standard, python: bool = False, typescript: bool = False) -> BashTool
+BashTool.from_snapshot(data: bytes, username: str | None = None, hostname: str | None = None, cwd: str | None = None, env: Mapping[str, str] | None = None, max_commands: int | None = None, max_loop_iterations: int | None = None, max_memory: int | None = None, timeout_seconds: float | None = None, files: dict[str, str] | None = None, mounts: list[dict[str, Any]] | None = None, allowed_mount_paths: list[str] | None = None, readonly_filesystem: bool = False, custom_builtins: Mapping[str, BuiltinCallback] | None = None, network: NetworkConfig | None = None, profile: ExecutionProfile = ExecutionProfile.Standard, python: bool = False, typescript: bool = False, external_functions: list[str] | None = None, external_handler: ExternalHandler | None = None, typescript_external_functions: list[str] | None = None, typescript_external_handler: TypeScriptExternalHandler | None = None) -> BashTool
 ```
 
 Create a new ``BashTool`` from snapshot bytes and optional constructor kwargs.
@@ -962,7 +972,7 @@ Create a new ``BashTool`` from snapshot bytes and optional constructor kwargs.
 ### `from_snapshot_keyed`
 
 ```python
-BashTool.from_snapshot_keyed(data: bytes, key: bytes, username: str | None = None, hostname: str | None = None, cwd: str | None = None, env: Mapping[str, str] | None = None, max_commands: int | None = None, max_loop_iterations: int | None = None, max_memory: int | None = None, timeout_seconds: float | None = None, files: dict[str, str] | None = None, mounts: list[dict[str, Any]] | None = None, allowed_mount_paths: list[str] | None = None, readonly_filesystem: bool = False, custom_builtins: Mapping[str, BuiltinCallback] | None = None, network: NetworkConfig | None = None, profile: ExecutionProfile = ExecutionProfile.Standard, python: bool = False, typescript: bool = False) -> BashTool
+BashTool.from_snapshot_keyed(data: bytes, key: bytes, username: str | None = None, hostname: str | None = None, cwd: str | None = None, env: Mapping[str, str] | None = None, max_commands: int | None = None, max_loop_iterations: int | None = None, max_memory: int | None = None, timeout_seconds: float | None = None, files: dict[str, str] | None = None, mounts: list[dict[str, Any]] | None = None, allowed_mount_paths: list[str] | None = None, readonly_filesystem: bool = False, custom_builtins: Mapping[str, BuiltinCallback] | None = None, network: NetworkConfig | None = None, profile: ExecutionProfile = ExecutionProfile.Standard, python: bool = False, typescript: bool = False, external_functions: list[str] | None = None, external_handler: ExternalHandler | None = None, typescript_external_functions: list[str] | None = None, typescript_external_handler: TypeScriptExternalHandler | None = None) -> BashTool
 ```
 
 Create a new ``BashTool`` from HMAC-protected snapshot bytes.
@@ -1923,7 +1933,7 @@ bashkit.langchain.PrivateAttr(*args, **kwargs)
 ### `create_bash_tool`
 
 ```python
-bashkit.langchain.create_bash_tool(username: str | None = None, hostname: str | None = None, max_commands: int | None = None, max_loop_iterations: int | None = None, timeout_seconds: float | None = None, python: bool = False, typescript: bool = False, env: dict[str, str] | None = None, files: dict[str, str | Callable[[], str]] | None = None, mounts: list[dict[str, Any]] | None = None, allowed_mount_paths: list[str] | None = None, readonly_filesystem: bool = False, max_output_length: int = 100000) -> BashkitTool
+bashkit.langchain.create_bash_tool(username: str | None = None, hostname: str | None = None, max_commands: int | None = None, max_loop_iterations: int | None = None, timeout_seconds: float | None = None, python: bool = False, typescript: bool = False, env: dict[str, str] | None = None, files: dict[str, str | Callable[[], str]] | None = None, mounts: list[dict[str, Any]] | None = None, allowed_mount_paths: list[str] | None = None, readonly_filesystem: bool = False, max_output_length: int = 100000, external_functions: list[str] | None = None, external_handler: ExternalHandler | None = None, typescript_external_functions: list[str] | None = None, typescript_external_handler: TypeScriptExternalHandler | None = None) -> BashkitTool
 ```
 
 Create a LangChain-compatible Bashkit tool.
@@ -1940,6 +1950,10 @@ Create a LangChain-compatible Bashkit tool.
 - **`allowed_mount_paths`** — Host path prefixes allowed for real filesystem mounts. Required when mounting sensitive host locations such as paths under a user home directory.
 - **`readonly_filesystem`** — Deny all filesystem mutations after configured files and mounts are applied.
 - **`max_output_length`** — Maximum number of characters returned to the LangChain agent from one bash tool call before truncation.
+- **`external_functions`** — Host function names callable from embedded Python.
+- **`external_handler`** — Async dispatcher receiving ``(name, args, kwargs)``. With ``ainvoke`` it runs on the caller's loop; ``invoke`` uses a private worker loop. Requires ``python=True`` and the host env grant.
+- **`typescript_external_functions`** — Host function names callable from TypeScript.
+- **`typescript_external_handler`** — Async ``(name, args)`` dispatcher with JSON values and the same loop ownership rules. Requires ``typescript=True``.
 
 **Returns:** BashkitTool instance for use with LangChain agents
 

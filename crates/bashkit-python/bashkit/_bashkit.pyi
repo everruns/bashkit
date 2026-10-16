@@ -395,7 +395,7 @@ class FileSystem:
         ...
 
 class ExternalHandler(Protocol):
-    """Protocol for the external function handler passed to Bash.
+    """Protocol for the external function handler passed to Bash or BashTool.
 
     Called when Monty Python code invokes a registered external function.
     Must be an async callable with this exact signature.
@@ -414,6 +414,11 @@ class ExternalHandler(Protocol):
     """
 
     async def __call__(self, fn_name: str, args: list[Any], kwargs: dict[str, Any]) -> Any: ...
+
+class TypeScriptExternalHandler(Protocol):
+    """Async host handler for TypeScript calls; arguments and results are JSON values."""
+
+    async def __call__(self, fn_name: str, args: list[Any]) -> Any: ...
 
 class ShellState:
     """Read-only snapshot of shell state.
@@ -591,8 +596,8 @@ class Bash:
     def execute_sync(self, commands: str, on_output: OutputHandler | None = None) -> ExecResult:
         """Execute bash commands synchronously (blocking).
 
-        Not supported when ``external_handler`` is configured — use
-        ``execute()`` (async) instead. ``on_output`` must be synchronous.
+        Async external handlers use the instance's private worker loop.
+        Use ``await execute()`` for clients bound to the caller's running loop. ``on_output`` must be synchronous.
         Async ``custom_builtins`` callbacks run on a private loop here.
         When called from inside a running event loop (e.g. Jupyter / IPython),
         callbacks are dispatched to a background thread with their own loop so
@@ -1116,6 +1121,10 @@ class BashTool:
         profile: ExecutionProfile = ExecutionProfile.Standard,
         python: bool = False,
         typescript: bool = False,
+        external_functions: list[str] | None = None,
+        external_handler: ExternalHandler | None = None,
+        typescript_external_functions: list[str] | None = None,
+        typescript_external_handler: TypeScriptExternalHandler | None = None,
     ) -> None:
         """Create a new BashTool.
 
@@ -1150,6 +1159,16 @@ class BashTool:
             profile: Execution profile (Standard or Compatibility).
             python: Register sandboxed Monty Python (default ``False``).
             typescript: Register sandboxed ZapCode TypeScript (default ``False``).
+            external_functions: Host function names callable from embedded Python.
+            external_handler: Async ``(name, args, kwargs)`` Python dispatcher.
+            typescript_external_functions: Host function names callable from TypeScript.
+            typescript_external_handler: Async ``(name, args)`` TypeScript dispatcher.
+
+        External handlers run on the caller's loop with ``await execute()`` and
+        on a dedicated private worker loop with ``execute_sync()``, including
+        inside notebooks. ContextVars are captured per execution. Handlers must
+        not re-enter this interpreter or its live filesystem handles. Reset
+        retains callbacks; snapshot factories require callbacks supplied again.
 
         Embedded runtimes share the shell's virtual filesystem and stay enabled
         after ``reset()``. Python additionally requires the host to provide
@@ -1431,6 +1450,10 @@ class BashTool:
         profile: ExecutionProfile = ExecutionProfile.Standard,
         python: bool = False,
         typescript: bool = False,
+        external_functions: list[str] | None = None,
+        external_handler: ExternalHandler | None = None,
+        typescript_external_functions: list[str] | None = None,
+        typescript_external_handler: TypeScriptExternalHandler | None = None,
     ) -> BashTool:
         """Create a new ``BashTool`` from snapshot bytes and optional constructor kwargs."""
         ...
@@ -1456,6 +1479,10 @@ class BashTool:
         profile: ExecutionProfile = ExecutionProfile.Standard,
         python: bool = False,
         typescript: bool = False,
+        external_functions: list[str] | None = None,
+        external_handler: ExternalHandler | None = None,
+        typescript_external_functions: list[str] | None = None,
+        typescript_external_handler: TypeScriptExternalHandler | None = None,
     ) -> BashTool:
         """Create a new ``BashTool`` from HMAC-protected snapshot bytes."""
         ...
