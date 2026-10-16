@@ -31,7 +31,7 @@ const bash = new Bash({
   python: true,
   externalFunctions: ["lookup"],
   externalHandler: async (name, args, kwargs, { signal }) => {
-    const response = await fetch(`https://api.example.com/items/${args[0]}`, { signal });
+    const response = await fetch(`https://api.example.com/items/${encodeURIComponent(String(args[0]))}`, { signal });
     return response.json();
   },
   typescript: true,
@@ -58,7 +58,8 @@ Its handler signal aborts on cancellation, timeout or completion; pass it to hos
 I/O. A callback cannot reenter its own interpreter or live filesystem. Use another
 instance for nested execution. Independent asynchronous requests can share an
 instance and queue safely. Synchronous access during asynchronous execution fails
-promptly. Callbacks survive reset; supply the options again when restoring a
+promptly. Independent workers may own instances, including workers stopped with
+a pending host function. Callbacks survive reset; supply the options again when restoring a
 snapshot, since host code and request context are never serialized.
 
 Host functions run trusted application code. Enforce service authorization and

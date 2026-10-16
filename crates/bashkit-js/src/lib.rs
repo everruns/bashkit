@@ -94,6 +94,34 @@ const SYNC_BUILTIN_DEADLOCK_ERROR: &str = "custom builtins require execute() (as
 // callback so untrusted scripts cannot hang the process indefinitely.
 const SYNC_SCRIPTED_TOOL_DEADLOCK_ERROR: &str = "registered tools require execute() (async). executeSync() would deadlock because the JS event loop is blocked while the synchronous call is in flight";
 
+// A worker may disappear while the last native owner is held by an async
+// task. Tokio forbids blocking Runtime::drop in that context; shut it down
+// without waiting there, while preserving graceful drop on ordinary threads.
+struct OwnedRuntime(Option<tokio::runtime::Runtime>);
+
+impl OwnedRuntime {
+    fn new(runtime: tokio::runtime::Runtime) -> Self {
+        Self(Some(runtime))
+    }
+
+    fn block_on<F: std::future::Future>(&self, future: F) -> F::Output {
+        self.0
+            .as_ref()
+            .expect("runtime is live until drop")
+            .block_on(future)
+    }
+}
+
+impl Drop for OwnedRuntime {
+    fn drop(&mut self) {
+        if tokio::runtime::Handle::try_current().is_ok()
+            && let Some(runtime) = self.0.take()
+        {
+            runtime.shutdown_background();
+        }
+    }
+}
+
 struct OnOutputReentryScope {
     depth: Arc<AtomicUsize>,
 }
@@ -1463,7 +1491,7 @@ fn require_snapshot_hmac_key(options: Option<&SnapshotOptions>) -> napi::Result<
 
 struct SharedState {
     inner: Mutex<RustBash>,
-    rt: Mutex<tokio::runtime::Runtime>,
+    rt: Mutex<OwnedRuntime>,
     cancelled: std::sync::Mutex<Arc<AtomicBool>>,
     on_output_reentry_depth: Arc<AtomicUsize>,
     /// Tracks whether the JS event loop is currently blocked inside an
@@ -3398,7 +3426,7 @@ pub struct ScriptedTool {
     short_desc: Option<String>,
     tools: Vec<JsToolEntry>,
     env_vars: Vec<(String, String)>,
-    rt: Mutex<tokio::runtime::Runtime>,
+    rt: Mutex<OwnedRuntime>,
     max_commands: Option<u32>,
     max_loop_iterations: Option<u32>,
     in_sync_execute_depth: Arc<AtomicUsize>,
@@ -3418,7 +3446,7 @@ impl ScriptedTool {
             short_desc: options.short_description,
             tools: Vec::new(),
             env_vars: Vec::new(),
-            rt: Mutex::new(rt),
+            rt: Mutex::new(OwnedRuntime::new(rt)),
             max_commands: options.max_commands,
             max_loop_iterations: options.max_loop_iterations,
             in_sync_execute_depth: Arc::new(AtomicUsize::new(0)),
@@ -3922,12 +3950,12 @@ fn shared_state_from_opts(opts: BashOptions) -> napi::Result<SharedState> {
     // Build a temporary SharedState to pass to build_bash_from_state
     let tmp = SharedState {
         inner: Mutex::new(RustBash::new()),
-        rt: Mutex::new(
+        rt: Mutex::new(OwnedRuntime::new(
             tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
                 .map_err(|e| napi::Error::from_reason(format!("Failed to create runtime: {e}")))?,
-        ),
+        )),
         cancelled: std::sync::Mutex::new(Arc::new(AtomicBool::new(false))),
         on_output_reentry_depth: Arc::new(AtomicUsize::new(0)),
         in_sync_execute_depth: Arc::new(AtomicUsize::new(0)),
@@ -3986,7 +4014,7 @@ fn shared_state_from_opts(opts: BashOptions) -> napi::Result<SharedState> {
 
     Ok(SharedState {
         inner: Mutex::new(bash),
-        rt: Mutex::new(rt),
+        rt: Mutex::new(OwnedRuntime::new(rt)),
         cancelled: std::sync::Mutex::new(cancelled),
         on_output_reentry_depth: tmp.on_output_reentry_depth,
         in_sync_execute_depth: tmp.in_sync_execute_depth,

@@ -4,6 +4,9 @@ import test from "ava";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { Worker } from "node:worker_threads";
 import { createServer } from "node:http";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { fileURLToPath } from "node:url";
 import { Bash, BashTool } from "../wrapper.js";
 import { createBashTool } from "../langchain.js";
 import { bashTool as aiBashTool } from "../ai.js";
@@ -525,4 +528,17 @@ test("both runtimes dispatch independently and advertise host functions", async 
     t.regex(metadata, /Python host functions: lookup/);
     t.regex(metadata, /TypeScript host functions: lookup/);
   }
+});
+
+test("pending worker shutdown releases native runtimes without panics", async (t) => {
+  const fixture = fileURLToPath(
+    new URL("./fixtures/runtime-functions-shutdown.mjs", import.meta.url),
+  );
+  const { stdout, stderr } = await promisify(execFile)(
+    process.execPath,
+    [fixture],
+    { timeout: 30000 },
+  );
+  t.is(stdout.trim(), "pending worker shutdown passed");
+  t.is(stderr, "");
 });
