@@ -165,24 +165,36 @@ for (const language of ["python", "typescript"] as const) {
       t.is(fs.readFile("/tmp/state"), "data");
     });
 
-    test(`${Factory.name}: ${language} sync access racing a new handler cannot deadlock`, async (t) => {
-      const bash = new Factory(options(() => 42));
-      bash.writeFile("/tmp/state", "ready");
-      let started!: () => void;
+    test(`${Factory.name}: ${language} sync access before a host call cannot deadlock`, async (t) => {
+      let started!: () => void, release!: () => void;
       const ready = new Promise<void>((resolve) => {
         started = resolve;
       });
-      const executing = bash.execute(`echo started; sleep 0.2; ${call}`, {
-        onOutput: () => {
-          started();
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const bash = new Factory({
+        ...options(() => 42),
+        customBuiltins: {
+          wait_host: async () => {
+            started();
+            await gate;
+            return "";
+          },
         },
       });
+      bash.writeFile("/tmp/state", "ready");
+      const executing = bash.execute(`wait_host; ${call}`, {
+        onOutput: () => {},
+      });
       await ready;
-      await delay(0);
+      // Hold the shell before its runtime call. A blocking read would wait on
+      // the interpreter while the JS event loop is needed to release this gate.
       t.throws(() => bash.readFile("/tmp/state"), { message: /would block/ });
+      release();
       const result = await executing;
       t.is(result.exitCode, 0, result.stderr);
-      t.is(result.stdout, "started\n42\n");
+      t.is(result.stdout, "42\n");
     });
 
     test(`${Factory.name}: ${language} sync invocation rejects host calls`, (t) => {
@@ -275,7 +287,10 @@ for (const language of ["python", "typescript"] as const) {
   }
 
   test(`${language} host functions preserve HTTP request contexts and async I/O`, async (t) => {
-    const upstream = createServer((req, res) => res.end(req.url!.slice(1)));
+    const upstream = createServer((req, res) => {
+      res.setHeader("Content-Type", "text/plain; charset=utf-8");
+      res.end(req.url!.slice(1));
+    });
     await new Promise<void>((resolve) =>
       upstream.listen(0, "127.0.0.1", resolve),
     );
@@ -291,6 +306,7 @@ for (const language of ["python", "typescript"] as const) {
       }),
     );
     const server = createServer((req, res) => {
+      res.setHeader("Content-Type", "text/plain; charset=utf-8");
       void request.run(req.url!.slice(1), async () => {
         try {
           res.end((await bash.execute(call)).stdout.trim());
