@@ -7738,85 +7738,100 @@ impl Interpreter {
     /// handing over complete output. From the first stage that runs shell
     /// code (a loop, group, function), the rest run concurrently over
     /// bounded pipes (`execute_streaming_stages`), unless concurrency is off.
-    async fn execute_pipeline(&mut self, pipeline: &Pipeline) -> Result<ExecResult> {
-        // Kept small: recursive pipelines (`f() { f | f; }`) nest this poll
-        // frame once per level, so bookkeeping lives in sync helpers.
-        let (stream_from, lastpipe) = self.plan_pipeline(pipeline);
-        let mut acc = PipelineAcc::default();
-        let mut stdin_data: Option<crate::StreamData> = None;
-        let count = pipeline.commands.len();
-        // bash runs DEBUG for each simple-command stage from the shell
-        // itself, ahead of the stages' output; never inside a stage.
-        let mut debug = if count > 1 && self.has_debug_trap() {
-            self.pipeline_debug_traps(pipeline).await
-        } else {
-            None
-        };
-        if let Some(r) = DebugTrapOutput::exit_result(&mut debug) {
-            return Ok(r);
-        }
-        let saved_dormant = self.debug_trap_dormant;
-        self.debug_trap_dormant |= count > 1;
-        acc.merge = self.merge_stderr;
-        self.merge_stderr &= count == 1;
+    // THREAT[TM-DOS-089]: keep pipeline state out of execute_command's poll
+    // frame, which repeats even for simple commands inside nested $(...).
+    // Cancellation guards make that state large enough to overflow instrumented
+    // test stacks when it is embedded in every command future.
+    fn execute_pipeline<'a>(
+        &'a mut self,
+        pipeline: &'a Pipeline,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecResult>> + Send + 'a>> {
+        Box::pin(async move {
+            // Kept small: recursive pipelines (`f() { f | f; }`) nest this poll
+            // frame once per level, so bookkeeping lives in sync helpers.
+            let (stream_from, lastpipe) = self.plan_pipeline(pipeline);
+            let mut acc = PipelineAcc::default();
+            let mut stdin_data: Option<crate::StreamData> = None;
+            let count = pipeline.commands.len();
+            // bash runs DEBUG for each simple-command stage from the shell
+            // itself, ahead of the stages' output; never inside a stage.
+            let mut debug = if count > 1 && self.has_debug_trap() {
+                self.pipeline_debug_traps(pipeline).await
+            } else {
+                None
+            };
+            if let Some(r) = DebugTrapOutput::exit_result(&mut debug) {
+                return Ok(r);
+            }
+            let saved_dormant = self.debug_trap_dormant;
+            self.debug_trap_dormant |= count > 1;
+            acc.merge = self.merge_stderr;
+            self.merge_stderr &= count == 1;
 
-        for (i, command) in pipeline.commands.iter().enumerate() {
-            if stream_from == Some(i) {
-                let stages = self
-                    .execute_streaming_group(&pipeline.commands[i..], stdin_data.take(), lastpipe)
-                    .await;
-                let stages = match stages {
-                    Ok(s) => s,
+            for (i, command) in pipeline.commands.iter().enumerate() {
+                if stream_from == Some(i) {
+                    let stages = self
+                        .execute_streaming_group(
+                            &pipeline.commands[i..],
+                            stdin_data.take(),
+                            lastpipe,
+                        )
+                        .await;
+                    let stages = match stages {
+                        Ok(s) => s,
+                        Err(e) => {
+                            self.debug_trap_dormant = saved_dormant;
+                            return Err(e);
+                        }
+                    };
+                    for result in stages {
+                        self.absorb_stage(&mut acc, result, true);
+                    }
+                    break;
+                }
+                let is_last = i == count - 1;
+                // Every stage of a multi-command pipeline runs in a subshell,
+                // except the last one under `shopt -s lastpipe` (bash, job
+                // control off).
+                let subshell = count > 1 && !(is_last && lastpipe);
+                // A non-last stage's stdout feeds the next stage, never the
+                // streaming observer.
+                let saved_callback = if is_last {
+                    None
+                } else {
+                    self.output_callback.take()
+                };
+                let result = match self.enter_pipeline_stage(command, stdin_data.take(), subshell) {
+                    Ok((scope, stdin)) => {
+                        let guard = PipelineStageGuard::new(self, scope);
+                        let result = match command {
+                            Command::Simple(simple) => {
+                                self.execute_simple_command(simple, stdin).await
+                            }
+                            _ => {
+                                self.err_trap_skip_stage = count > 1;
+                                self.execute_command(command).await
+                            }
+                        };
+                        guard.complete(self, result)
+                    }
+                    Err(e) => Err(e),
+                };
+                if let Some(cb) = saved_callback {
+                    self.output_callback = Some(cb);
+                }
+                let result = match result {
+                    Ok(r) => r,
                     Err(e) => {
                         self.debug_trap_dormant = saved_dormant;
                         return Err(e);
                     }
                 };
-                for result in stages {
-                    self.absorb_stage(&mut acc, result, true);
-                }
-                break;
+                stdin_data = self.absorb_stage(&mut acc, result, is_last);
             }
-            let is_last = i == count - 1;
-            // Every stage of a multi-command pipeline runs in a subshell,
-            // except the last one under `shopt -s lastpipe` (bash, job
-            // control off).
-            let subshell = count > 1 && !(is_last && lastpipe);
-            // A non-last stage's stdout feeds the next stage, never the
-            // streaming observer.
-            let saved_callback = if is_last {
-                None
-            } else {
-                self.output_callback.take()
-            };
-            let result = match self.enter_pipeline_stage(command, stdin_data.take(), subshell) {
-                Ok((scope, stdin)) => {
-                    let guard = PipelineStageGuard::new(self, scope);
-                    let result = match command {
-                        Command::Simple(simple) => self.execute_simple_command(simple, stdin).await,
-                        _ => {
-                            self.err_trap_skip_stage = count > 1;
-                            self.execute_command(command).await
-                        }
-                    };
-                    guard.complete(self, result)
-                }
-                Err(e) => Err(e),
-            };
-            if let Some(cb) = saved_callback {
-                self.output_callback = Some(cb);
-            }
-            let result = match result {
-                Ok(r) => r,
-                Err(e) => {
-                    self.debug_trap_dormant = saved_dormant;
-                    return Err(e);
-                }
-            };
-            stdin_data = self.absorb_stage(&mut acc, result, is_last);
-        }
-        self.debug_trap_dormant = saved_dormant;
-        DebugTrapOutput::prepend_opt(debug, Ok(self.finish_pipeline(pipeline, acc)))
+            self.debug_trap_dormant = saved_dormant;
+            DebugTrapOutput::prepend_opt(debug, Ok(self.finish_pipeline(pipeline, acc)))
+        })
     }
 
     /// DEBUG before each simple-command stage of a pipeline, at its line.
