@@ -4,6 +4,8 @@
 
 * **C runtime parity**: Added optional Python/TypeScript runtime flags and an additive ABI v1 host dispatcher. Owned, revocable runtime calls accept immediate or cross-thread replies; blocking callback reentry fails with BUSY. Added parallel-instance, caller-thread, cancellation/deadline/reuse and real C header/library tests. Corrected parity evidence for existing C cancellation and mounts. See [C API](runtimes/c-api.md).
 
+* **Live runtime callbacks**: Integrated JavaScript Python/TypeScript host functions with byte sinks and explicit capture after the runtime-function API landed. Buffered and live execution share the request-local dispatcher lease and async/sync admission guard. Regression suites cover queued caller contexts, output delivery and signal revocation across Node, Bun and Deno. See [Node Package](runtimes/node-package.md).
+
 * **Node runtime parity**: Added Python and TypeScript named host callbacks to Bash/BashTool and JS agent adapters, with per-execution caller context, cooperative abort, reentry guards and worker/platform tests. Private runtime ownership also handles forced worker teardown without dropping a Tokio runtime inside an async task. Added explicit runtime host-function capability rows and a shared bounded JSON codec for foreign bindings. See [Node Package](runtimes/node-package.md).
 
 * **Node command I/O**: Replaced generated command-I/O classes with type-checked opaque handles and cloned Rust capabilities before async work. This removes CodeQL's flagged class pointer-conversion paths; invalid and cross-type handles reject at the binding boundary while the public streaming API stays unchanged. See [Streaming Handler Roadmap](foundations/streaming-roadmap.md).
