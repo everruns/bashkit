@@ -90,7 +90,7 @@ matches awaiting it, and `send`/`takeOutput`/`resize` stay callable while a
 command such as `sleep` is in flight.
 
 Absent (need sockets, threads, or a host FS the browser sandbox lacks):
-`http_client` (`curl`/`wget`), `ssh`, `sqlite`, embedded `python`, `realfs`
+`http_client` (`curl`/`wget`), `ssh`, `sqlite`, `realfs`
 mounts, and native `interop`. Reach the network from a custom builtin that calls
 the app's own `fetch` instead.
 
@@ -102,6 +102,45 @@ UTC and handing back a wrong time that looks right. `TZ=UTC`, unset, and empty
 are unaffected. Embedders who need named zones should build their own wasm
 target with the `tzdata` feature on. See
 [Dependency Policy](../operations/dependencies.md).
+
+## Optional embedded runtimes
+
+The default import stays slim. `@everruns/bashkit-wasm/runtimes` loads a separate
+single-threaded binary with Python/Monty and TypeScript/ZapCode. Both runtimes
+remain explicit constructor opt-ins. Cargo features `python` and `typescript`
+can also be selected independently. Build the slim bundle first, then use
+`BASHKIT_WASM_VARIANT=runtimes BASHKIT_WASM_FEATURES=terminal,python,typescript`
+with `scripts/build.sh`; CI and publication include both in one npm archive.
+
+Bash accepts the native JS SDK's function-name/dispatcher options. Dispatchers
+receive JSON-subset values (depth 64, finite/safe JS numbers, string-key objects),
+Python kwargs, and an execution-local AbortSignal. Host code grants service
+access explicitly and owns its authorization and I/O limits. Per-execution
+capabilities revoke pending dispatch on completion, timeout or cancellation;
+JS sessions abort host I/O and never serialize callbacks into persisted state.
+A per-execution promise mailbox receives calls in the original caller's async
+context before launching them concurrently. This avoids context leakage through
+wasm-bindgen's shared task wakeup queue, without importing Node APIs. A real WASM
+regression verifies independent AsyncLocalStorage contexts when hosted in Node.
+
+One execution runs per browser instance. Concurrent/reentrant execution rejects
+promptly; reset rejects active work without replacing its cancellation token.
+Calls needing host functions use `execute`; synchronous host calls fail clearly.
+Live filesystem handles access the VFS directly without the interpreter lock.
+The interactive Terminal accepts pure runtimes but rejects external function
+names: it does not expose Bash's execution-local callback session.
+
+Python external waits use the portable core timer, not Tokio's native timer.
+Monty-types already uses web-time; its getrandom 0.3 backend needs an explicit
+wasm_js selection. ZapCode 1.5.1 has unsupported std clocks, so browser-only
+source is vendored with clock reads redirected through Bashkit's platform shim.
+Native builds retain the registry crate and its public value types. See
+[ZapCode Runtime](zapcode-runtime.md) for the recorded-source drift check.
+
+Verification includes real wasm under Node, CPU and pending-I/O deadlines,
+cancellation/reuse, JSON failures, VFS/reset/checkout, independent worker
+instances, npm archive contents and actual Chromium fetch/module workers served
+without COOP/COEP. The existing slim package semantics and size gates still run.
 
 ## Host-backed filesystem (`new Bash({ fs })`)
 
@@ -309,7 +348,7 @@ Decisions and constraints:
   native `getrandom` backend, so `--cfg getrandom_backend="wasm_js"` must not be
   set there.
 - **Feature surface matches the browser package**, and for the same reasons:
-  no sockets (`http_client`, `ssh`), no host FS (`realfs`), no `python`.
+  no sockets (`http_client`, `ssh`) and no host FS (`realfs`).
   `sqlite` additionally fails to build on WASI (tokio feature selection), so it
   stays out until that is resolved.
 - **Single-threaded**, same inline-execution consequences as the browser build.

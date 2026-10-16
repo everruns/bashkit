@@ -2,6 +2,8 @@
 
 ## 2026-10-16
 
+* **Browser runtime parity**: Added the optional `/runtimes` import with embedded Python/TypeScript and named host callbacks. Slim default imports keep their VM-free binary. Browser callbacks use revocable execution sessions and AbortSignal; Python host waits now use the portable timer, and a hash-checked browser-only ZapCode copy preserves deadlines with platform clocks. Added worker, Chromium/no-isolation, cancellation, VFS/persistence and npm-archive coverage. See [Browser Package](runtimes/browser-package.md) and [ZapCode Runtime](runtimes/zapcode-runtime.md).
+
 * **Node runtime parity**: Added Python and TypeScript named host callbacks to Bash/BashTool and JS agent adapters, with per-execution caller context, cooperative abort, reentry guards and worker/platform tests. Private runtime ownership also handles forced worker teardown without dropping a Tokio runtime inside an async task. Added explicit runtime host-function capability rows and a shared bounded JSON codec for foreign bindings. See [Node Package](runtimes/node-package.md).
 
 * **Python / agent integrations**: Added Python and TypeScript host function callbacks to `BashTool`, LangChain and deepagents. Reuse per-execution callback sessions for caller-loop affinity, ContextVars and cancellation; sync execution uses the dedicated private worker loop. Reentry is callback-context-specific so independent requests queue safely. Private-loop timeout cancellation now targets its own work item; native result deliveries drain before interpreter finalization to prevent a shutdown race. Added FastAPI, real Jupyter, alternate-loop and cross-thread regression coverage plus macOS/Windows callback CI. See [Python Package](runtimes/python-package.md).

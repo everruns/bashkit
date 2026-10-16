@@ -37,12 +37,12 @@ A dash means the feature is intentionally unsupported and has a recorded reason 
 | Host-visible virtual filesystem state | ✅ | ✅ | — | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Filesystem mounts beyond seeded virtual files | ✅ | ✅ | — | ✅ | ✅ | ✅ | — | — |
 | Snapshot and restore of interpreter state | ✅ | — | — | — | ✅ | ✅ | ✅ | — |
-| Explicit embedded Python opt-in | ✅ | ✅ | — | ✅ | ✅ | ✅ | — | — |
-| Explicit embedded TypeScript opt-in | ✅ | ✅ | — | — | ✅ | ✅ | — | — |
+| Explicit embedded Python opt-in | ✅ | ✅ | — | ✅ | ✅ | ✅ | ✅ | — |
+| Explicit embedded TypeScript opt-in | ✅ | ✅ | — | — | ✅ | ✅ | ✅ | — |
 | Explicit embedded SQLite opt-in | ✅ | ✅ | — | ✅ | ✅ | ✅ | — | — |
-| In-process interactive terminal session (keystrokes in, screen text and per-command transcript out; vi, less) | ✅ | — | — | — | ✅ | ✅ | — | — |
-| Named host callbacks invoked from embedded Python | ✅ | ✅ | — | — | ✅ | ✅ | — | — |
-| Named host callbacks invoked from embedded TypeScript | ✅ | ✅ | — | — | ✅ | ✅ | — | — |
+| In-process interactive terminal session (keystrokes in, screen text and per-command transcript out; vi, less) | ✅ | — | — | — | ✅ | ✅ | ✅ | — |
+| Named host callbacks invoked from embedded Python | ✅ | ✅ | — | — | ✅ | ✅ | ✅ | — |
+| Named host callbacks invoked from embedded TypeScript | ✅ | ✅ | — | — | ✅ | ✅ | ✅ | — |
 
 ## Intentional exclusions
 
@@ -116,12 +116,7 @@ A dash means the feature is intentionally unsupported and has a recorded reason 
 - `network_policy`: The slim browser build has no network builtin or host socket access.
 - `transport_hooks`: The slim browser build has no HTTP transport.
 - `mounts`: Browser WASM exposes one in-memory VFS and no host filesystem mounts.
-- `runtime_python`: The slim browser build omits embedded language runtimes.
-- `runtime_typescript`: The slim browser build omits embedded language runtimes.
 - `runtime_sqlite`: The slim browser build omits embedded language runtimes.
-- `interactive_terminal`: Not exposed in the slim browser package yet.
-- `host_functions_python`: The slim browser build currently omits embedded language runtimes.
-- `host_functions_typescript`: The slim browser build currently omits embedded language runtimes.
 
 ### C ABI
 
