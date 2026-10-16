@@ -13,7 +13,9 @@ use bashkit::{
     RealFsMode,
 };
 use serde::Deserialize;
+use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
+use std::ffi::c_void;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::ptr;
@@ -31,7 +33,7 @@ pub const BASHKIT_RESULT_STDERR_TRUNCATED: u32 = 1 << 1;
 
 const MAX_ERROR_BYTES: usize = 1024;
 const CAPABILITIES_JSON: &[u8] =
-    br#"{"abi":1,"features":["git","jq","vfs","realfs-mounts","cancellation","python","typescript","runtime-host-functions"]}"#;
+    br#"{"abi":1,"features":["git","jq","vfs","realfs-mounts","cancellation","python","typescript","runtime-host-functions","streaming-output"]}"#;
 const VERSION: &[u8] = env!("CARGO_PKG_VERSION").as_bytes();
 
 #[repr(u32)]
@@ -484,9 +486,36 @@ unsafe fn input_str<'a>(value: BashkitBytes, name: &str) -> Result<&'a str, ApiF
     })
 }
 
+thread_local! {
+    static OUTPUT_CALLBACK_HANDLES: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
+}
+
+struct OutputCallbackGuard(usize);
+impl OutputCallbackGuard {
+    fn enter(handle: usize) -> Self {
+        OUTPUT_CALLBACK_HANDLES.with(|handles| handles.borrow_mut().push(handle));
+        Self(handle)
+    }
+}
+impl Drop for OutputCallbackGuard {
+    fn drop(&mut self) {
+        OUTPUT_CALLBACK_HANDLES.with(|handles| handles.borrow_mut().retain(|h| *h != self.0));
+    }
+}
+
+/// A synchronous byte sink, invoked on the thread driving execution. Return
+/// zero after consuming the whole borrowed chunk, nonzero to abort delivery.
+/// The context pointer and callback must remain valid until execute returns.
+pub type BashkitOutputCallback = unsafe extern "C" fn(*mut c_void, u32, BashkitBytes) -> u32;
+
 unsafe fn handle<'a>(bash: *mut Bashkit) -> Result<&'a Bashkit, ApiFailure> {
     if bash.is_null() {
         return Err(ApiFailure::invalid_argument("bash must not be NULL"));
+    }
+    if OUTPUT_CALLBACK_HANDLES.with(|handles| handles.borrow().contains(&(bash as usize))) {
+        return Err(ApiFailure::invalid_argument(
+            "output callback cannot re-enter its bash instance",
+        ));
     }
     Ok(unsafe { &*bash })
 }
@@ -689,6 +718,86 @@ pub unsafe extern "C" fn bashkit_execute(
     }
 }
 
+/// Execute with live byte delivery and optional bounded final capture.
+/// `capture_limit == 0` disables capture. A NULL callback discards live output.
+///
+/// # Safety
+/// Handles and borrowed views follow `bashkit_execute`. `callback` and `context`
+/// remain valid for this entire call. The callback must not free or re-enter
+/// the executing instance; `bashkit_cancel` is the sole allowed handle operation.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn bashkit_execute_streaming(
+    bash: *mut Bashkit,
+    script: BashkitBytes,
+    capture_limit: usize,
+    callback: Option<BashkitOutputCallback>,
+    context: *mut c_void,
+    out_result: *mut *mut BashkitResult,
+    out_error: *mut *mut BashkitError,
+) -> BashkitStatus {
+    unsafe {
+        ffi_boundary(out_error, || {
+            let out_result = output_slot(out_result, "out_result")?;
+            let handle_id = bash as usize;
+            let instance = handle(bash)?;
+            let mut state = lock_state(instance)?;
+            if script.len > state.max_input_bytes {
+                return Err(ApiFailure::from_bash(BashError::ResourceLimit(
+                    LimitExceeded::InputTooLarge(script.len, state.max_input_bytes),
+                )));
+            }
+            let script = input_str(script, "script")?;
+            let context = context as usize;
+            let State { runtime, bash, .. } = &mut *state;
+            let mut execution = bash.execute(script);
+            if capture_limit > 0 {
+                execution = execution.capture(capture_limit);
+            }
+            if let Some(callback) = callback {
+                let emit = move |stream, bytes: Vec<u8>| async move {
+                    let _guard = OutputCallbackGuard::enter(handle_id);
+                    // Output callbacks obey the same no-nested-runtime rule
+                    // as embedded host functions, including other handles.
+                    let _callback = runtime_functions::enter_callback();
+                    let status = callback(
+                        context as *mut c_void,
+                        stream,
+                        BashkitBytes::borrowed(&bytes),
+                    );
+                    if status == 0 {
+                        Ok(())
+                    } else {
+                        Err(BashError::Io(std::io::Error::other(
+                            "output callback failed",
+                        )))
+                    }
+                };
+                execution = execution
+                    .stdout_fn(move |bytes| emit(1, bytes))
+                    .stderr_fn(move |bytes| emit(2, bytes));
+            }
+            let result = runtime
+                .block_on(async move { execution.await })
+                .map_err(ApiFailure::from_bash)?;
+            let mut flags = 0;
+            if result.stdout_truncated {
+                flags |= BASHKIT_RESULT_STDOUT_TRUNCATED;
+            }
+            if result.stderr_truncated {
+                flags |= BASHKIT_RESULT_STDERR_TRUNCATED;
+            }
+            *out_result = Box::into_raw(Box::new(BashkitResult {
+                stdout: result.stdout.into_bytes(),
+                stderr: result.stderr.into_bytes(),
+                exit_code: result.exit_code,
+                flags,
+                final_env_json: final_env_json(result.final_env)?,
+            }));
+            Ok(())
+        })
+    }
+}
+
 /// Requests cancellation of the execution currently running on `bash`.
 /// Requires the `cancellation` capability. Lock-free — never touches the state
 /// mutex — so it is safe to call from any thread while `bashkit_execute` is
@@ -704,7 +813,10 @@ pub unsafe extern "C" fn bashkit_execute(
 pub unsafe extern "C" fn bashkit_cancel(bash: *mut Bashkit) -> BashkitStatus {
     unsafe {
         ffi_boundary(ptr::null_mut(), || {
-            let bash = handle(bash)?;
+            if bash.is_null() {
+                return Err(ApiFailure::invalid_argument("bash must not be NULL"));
+            }
+            let bash = &*bash;
             bash.cancelled.store(true, Ordering::SeqCst);
             Ok(())
         })
@@ -792,7 +904,7 @@ fn lock_state(bash: &Bashkit) -> Result<std::sync::MutexGuard<'_, State>, ApiFai
     if runtime_functions::in_callback() {
         return Err(ApiFailure::new(
             BashkitStatus::Busy,
-            "blocking APIs cannot be called from a runtime handler",
+            "blocking APIs cannot be called from a callback",
         ));
     }
     if bash.runtime_callbacks {

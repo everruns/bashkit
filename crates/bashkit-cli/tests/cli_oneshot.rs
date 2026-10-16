@@ -1502,3 +1502,45 @@ fn streamed_output_is_not_printed_twice() {
     assert_eq!(stdout(&out), "once\n");
     assert_eq!(stderr(&out), "twice\n");
 }
+
+#[cfg(feature = "realfs")]
+#[test]
+fn output_without_a_newline_arrives_before_the_script_is_released() {
+    let dir = tempfile::tempdir().unwrap();
+    let mount = format!("{}:/gate", dir.path().display());
+    let mut child = Command::new(BIN)
+        .args([
+            "--no-stdin",
+            "--timeout",
+            "5",
+            "--mount-ro",
+            &mount,
+            "-c",
+            "printf first; while [ ! -e /gate/release ]; do sleep 0.01; done; printf last",
+        ])
+        .env_remove("RUST_BACKTRACE")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut stdout = child.stdout.take().unwrap();
+    let (tx, rx) = mpsc::channel();
+    let reader = thread::spawn(move || {
+        let mut first = [0; 5];
+        let read = stdout.read_exact(&mut first);
+        let _ = tx.send(read.map(|()| first));
+        let mut rest = Vec::new();
+        stdout.read_to_end(&mut rest).unwrap();
+        rest
+    });
+    let first = rx.recv_timeout(Duration::from_secs(2));
+    let still_running = child.try_wait().unwrap().is_none();
+    // Always release the producer, including a failed first-output check.
+    std::fs::write(dir.path().join("release"), b"").unwrap();
+    let status = child.wait().unwrap();
+    let rest = reader.join().unwrap();
+    assert_eq!(first.unwrap().unwrap(), *b"first");
+    assert!(still_running);
+    assert!(status.success());
+    assert_eq!(rest, b"last");
+}

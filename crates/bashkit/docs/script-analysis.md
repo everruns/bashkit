@@ -242,14 +242,14 @@ assert_eq!(command.literal_args(), None);              // not all args are liter
 Partial reconstruction is deliberately not offered: `"/tmp/$name.txt"` reports
 `None`, not `"/tmp/"`. A half-expanded path reads like a path but is not one.
 
-## Contexts
+## Command placement
 
 Commands inside substitutions and function bodies are walked, not skipped,
 `echo $(rm -rf /)` must never look like a bare `echo`. Each command carries a
-[`CommandContext`](crate::CommandContext) so you can tell them apart:
+[`CommandPlacement`](crate::CommandPlacement) so you can tell them apart:
 
 ```rust
-use bashkit::{Bash, CommandContext};
+use bashkit::{Bash, CommandPlacement};
 
 # fn main() -> bashkit::Result<()> {
 let bash = Bash::new();
@@ -257,9 +257,9 @@ let analysis = bash.analyze("cleanup() { rm -rf /data; }\necho $(date)")?;
 
 assert_eq!(analysis.functions, ["cleanup"]);
 assert_eq!(analysis.commands[0].name.as_deref(), Some("rm"));
-assert_eq!(analysis.commands[0].context, CommandContext::FunctionBody);
-assert_eq!(analysis.commands[1].context, CommandContext::Substitution); // date
-assert_eq!(analysis.commands[2].context, CommandContext::Direct);       // echo
+assert_eq!(analysis.commands[0].context, CommandPlacement::FunctionBody);
+assert_eq!(analysis.commands[1].context, CommandPlacement::Substitution); // date
+assert_eq!(analysis.commands[2].context, CommandPlacement::Direct);       // echo
 # Ok(())
 # }
 ```

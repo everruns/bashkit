@@ -186,11 +186,8 @@ jobs:
 
       - name: Run runtime-compat tests (Deno)
         if: matrix.runtime == 'deno'
-        run: |
-          for f in __test__/runtime-compat/*.test.mjs; do
-            echo "--- $f ---"
-            deno run -A "$f"
-          done
+        # node:test registers with Deno.test; deno run does not execute it.
+        run: deno test -A __test__/runtime-compat/*.test.mjs
         working-directory: crates/bashkit-js
 
       - name: Install example dependencies and link local build

@@ -11,7 +11,7 @@
 //! unknown; enforcement stays with the builtin registry, the network
 //! allowlist, the mount policy, and the `before_tool` hook.
 //! Decision: substitutions and function bodies are walked (and tagged via
-//! [`CommandContext`]) rather than skipped, so `echo $(rm -rf /)` never looks
+//! [`CommandPlacement`]) rather than skipped, so `echo $(rm -rf /)` never looks
 //! like a bare `echo`.
 
 use crate::error::Result;
@@ -63,7 +63,7 @@ pub fn is_command_wrapper(name: &str) -> bool {
 /// Where a command sits in the script.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum CommandContext {
+pub enum CommandPlacement {
     /// Runs when the script runs (possibly conditionally, e.g. an `if` branch).
     Direct,
     /// Inside `$(…)`, backticks, or a process substitution.
@@ -72,13 +72,13 @@ pub enum CommandContext {
     FunctionBody,
 }
 
-impl CommandContext {
+impl CommandPlacement {
     /// Stable lowercase name, used by the language bindings.
     pub fn as_str(self) -> &'static str {
         match self {
-            CommandContext::Direct => "direct",
-            CommandContext::Substitution => "substitution",
-            CommandContext::FunctionBody => "function_body",
+            CommandPlacement::Direct => "direct",
+            CommandPlacement::Substitution => "substitution",
+            CommandPlacement::FunctionBody => "function_body",
         }
     }
 }
@@ -120,7 +120,7 @@ pub struct AnalyzedCommand {
     /// One entry per argument; `None` when the argument is not fully literal.
     pub args: Vec<Option<String>>,
     /// Where the command sits.
-    pub context: CommandContext,
+    pub context: CommandPlacement,
     /// Names of prefix assignments (`FOO=1 cmd` → `["FOO"]`).
     pub assignments: Vec<String>,
 }
@@ -318,7 +318,7 @@ impl SourceCharacterIndex {
 /// Analyze an already-parsed script.
 pub(crate) fn analyze_ast(script: &Script) -> ScriptAnalysis {
     let mut walker = Walker::default();
-    walker.walk_commands(&script.commands, CommandContext::Direct);
+    walker.walk_commands(&script.commands, CommandPlacement::Direct);
     walker.out
 }
 
@@ -375,13 +375,13 @@ impl Walker {
         true
     }
 
-    fn walk_commands(&mut self, commands: &[Command], ctx: CommandContext) {
+    fn walk_commands(&mut self, commands: &[Command], ctx: CommandPlacement) {
         for command in commands {
             self.walk_command(command, ctx);
         }
     }
 
-    fn walk_command(&mut self, command: &Command, ctx: CommandContext) {
+    fn walk_command(&mut self, command: &Command, ctx: CommandPlacement) {
         match command {
             Command::Simple(simple) => self.walk_simple(simple, ctx),
             Command::Pipeline(pipeline) => self.walk_commands(&pipeline.commands, ctx),
@@ -394,19 +394,19 @@ impl Walker {
                 if !self.out.functions.iter().any(|f| f == &def.name) {
                     self.out.functions.push(def.name.clone());
                 }
-                self.walk_command(&def.body, CommandContext::FunctionBody);
+                self.walk_command(&def.body, CommandPlacement::FunctionBody);
             }
         }
     }
 
-    fn walk_list(&mut self, list: &CommandList, ctx: CommandContext) {
+    fn walk_list(&mut self, list: &CommandList, ctx: CommandPlacement) {
         self.walk_command(&list.first, ctx);
         for (_, command) in &list.rest {
             self.walk_command(command, ctx);
         }
     }
 
-    fn walk_compound(&mut self, compound: &CompoundCommand, ctx: CommandContext) {
+    fn walk_compound(&mut self, compound: &CompoundCommand, ctx: CommandPlacement) {
         match compound {
             CompoundCommand::If(cmd) => {
                 self.walk_commands(&cmd.condition, ctx);
@@ -465,7 +465,7 @@ impl Walker {
         }
     }
 
-    fn walk_simple(&mut self, simple: &SimpleCommand, ctx: CommandContext) {
+    fn walk_simple(&mut self, simple: &SimpleCommand, ctx: CommandPlacement) {
         // Nested commands inside the name, arguments, and assignment values
         // (`$(…)`, `<(…)`) are recorded before the command itself, so the list
         // stays in source order.
@@ -509,7 +509,7 @@ impl Walker {
         self.walk_redirects(&simple.redirects, ctx);
     }
 
-    fn walk_redirects(&mut self, redirects: &[Redirect], ctx: CommandContext) {
+    fn walk_redirects(&mut self, redirects: &[Redirect], ctx: CommandPlacement) {
         for redirect in redirects {
             let mode = match redirect.kind {
                 // `<>` may create and overwrite the file: gate it as a write.
@@ -542,7 +542,7 @@ impl Walker {
         }
     }
 
-    fn walk_words(&mut self, words: &[Word], ctx: CommandContext) {
+    fn walk_words(&mut self, words: &[Word], ctx: CommandPlacement) {
         for word in words {
             self.walk_word_parts(word, ctx);
         }
@@ -552,11 +552,11 @@ impl Walker {
     ///
     /// A substitution inside a function body stays `FunctionBody`: it is still
     /// only reachable by calling the function.
-    fn walk_word_parts(&mut self, word: &Word, ctx: CommandContext) {
-        let nested = if ctx == CommandContext::FunctionBody {
-            CommandContext::FunctionBody
+    fn walk_word_parts(&mut self, word: &Word, ctx: CommandPlacement) {
+        let nested = if ctx == CommandPlacement::FunctionBody {
+            CommandPlacement::FunctionBody
         } else {
-            CommandContext::Substitution
+            CommandPlacement::Substitution
         };
         for part in &word.parts {
             match part {
@@ -614,7 +614,7 @@ mod tests {
             analysis.commands[0].literal_args(),
             Some(vec!["hello", "world"])
         );
-        assert_eq!(analysis.commands[0].context, CommandContext::Direct);
+        assert_eq!(analysis.commands[0].context, CommandPlacement::Direct);
         assert!(!analysis.is_opaque());
     }
 
@@ -657,12 +657,12 @@ mod tests {
         let analysis = a("echo $(rm -rf /data)");
         assert_eq!(names("echo $(rm -rf /data)"), ["rm", "echo"]);
         assert!(analysis.has_command_substitution);
-        assert_eq!(analysis.commands[0].context, CommandContext::Substitution);
+        assert_eq!(analysis.commands[0].context, CommandPlacement::Substitution);
         assert_eq!(
             analysis.commands[0].literal_args(),
             Some(vec!["-rf", "/data"])
         );
-        assert_eq!(analysis.commands[1].context, CommandContext::Direct);
+        assert_eq!(analysis.commands[1].context, CommandPlacement::Direct);
     }
 
     #[test]
@@ -845,8 +845,8 @@ mod tests {
         let analysis = a("cleanup() { rm -rf /data; }\necho done");
         assert_eq!(analysis.functions, ["cleanup"]);
         assert_eq!(analysis.commands[0].name.as_deref(), Some("rm"));
-        assert_eq!(analysis.commands[0].context, CommandContext::FunctionBody);
-        assert_eq!(analysis.commands[1].context, CommandContext::Direct);
+        assert_eq!(analysis.commands[0].context, CommandPlacement::FunctionBody);
+        assert_eq!(analysis.commands[1].context, CommandPlacement::Direct);
     }
 
     #[test]
@@ -856,7 +856,7 @@ mod tests {
             analysis
                 .commands
                 .iter()
-                .all(|c| c.context == CommandContext::FunctionBody),
+                .all(|c| c.context == CommandPlacement::FunctionBody),
             "{:?}",
             analysis.commands
         );
@@ -1013,9 +1013,9 @@ mod tests {
 
     #[test]
     fn context_and_mode_names_are_stable() {
-        assert_eq!(CommandContext::Direct.as_str(), "direct");
-        assert_eq!(CommandContext::Substitution.as_str(), "substitution");
-        assert_eq!(CommandContext::FunctionBody.as_str(), "function_body");
+        assert_eq!(CommandPlacement::Direct.as_str(), "direct");
+        assert_eq!(CommandPlacement::Substitution.as_str(), "substitution");
+        assert_eq!(CommandPlacement::FunctionBody.as_str(), "function_body");
         assert_eq!(RedirectMode::Read.as_str(), "read");
         assert_eq!(RedirectMode::Write.as_str(), "write");
         assert_eq!(RedirectMode::Append.as_str(), "append");

@@ -1003,8 +1003,10 @@ impl Interpreter {
                         continue;
                     }
 
-                    if redirect.kind == RedirectKind::Output
-                        && self.scoped.variables.get("SHOPT_C").map(|v| v.as_str()) == Some("1")
+                    if matches!(
+                        redirect.kind,
+                        RedirectKind::Output | RedirectKind::OutputBoth
+                    ) && self.scoped.variables.get("SHOPT_C").map(|v| v.as_str()) == Some("1")
                         && !is_dev_null(&path)
                         && self.fs.stat(&path).await.is_ok_and(clobber_protected)
                     {
@@ -1718,6 +1720,113 @@ fn redirect_reads(kind: RedirectKind) -> bool {
             | RedirectKind::DupOutput
             | RedirectKind::OutputBoth
     )
+}
+
+impl Interpreter {
+    /// Resolve and open a live command's output fds before invoking host code.
+    /// Duplication copies the current destination, preserving redirect order.
+    pub(super) async fn live_command_routes(
+        &mut self,
+        redirects: &[Redirect],
+        fs: Arc<dyn FileSystem>,
+    ) -> Result<[crate::command::CommandRoute; 2]> {
+        use crate::command::CommandRoute as Route;
+        let mut fds = HashMap::from([(1, Route::Stdout), (2, Route::Stderr)]);
+        for (fd, target) in &self.exec_fd_table {
+            let route = match target {
+                FdTarget::Stdout => Route::Stdout,
+                FdTarget::Stderr => Route::Stderr,
+                FdTarget::WriteFile(path, _) | FdTarget::AppendFile(path, _) => {
+                    Route::file(fs.clone(), path.clone(), &self.execution_budget)?
+                }
+                FdTarget::DevNull => Route::Discard,
+                FdTarget::Closed => Route::Closed,
+                FdTarget::Coproc(writer) => Route::Pipe(writer.pipe().clone()),
+            };
+            fds.insert(*fd, route);
+        }
+        for redirect in redirects {
+            if !matches!(
+                redirect.kind,
+                RedirectKind::Output
+                    | RedirectKind::Clobber
+                    | RedirectKind::Append
+                    | RedirectKind::OutputBoth
+                    | RedirectKind::DupOutput
+            ) {
+                continue;
+            }
+            let source = redirect.fd.unwrap_or(1);
+            let target = self.expand_word(&redirect.target).await?;
+            let route = if redirect.kind == RedirectKind::DupOutput {
+                if target == "-" {
+                    Route::Closed
+                } else {
+                    let fd = target.parse::<i32>().map_err(|_| {
+                        crate::Error::CommandFailure(
+                            self.redirect_error(&target, "Bad file descriptor"),
+                        )
+                    })?;
+                    fds.get(&fd).cloned().ok_or_else(|| {
+                        crate::Error::CommandFailure(
+                            self.redirect_error(&target, "Bad file descriptor"),
+                        )
+                    })?
+                }
+            } else {
+                let path = self.resolve_path(&target);
+                if let Some(fd) = self.fd_alias(&path) {
+                    fds.get(&fd).cloned().ok_or_else(|| {
+                        crate::Error::CommandFailure(
+                            self.redirect_error(&target, "Bad file descriptor"),
+                        )
+                    })?
+                } else if is_dev_null(&path) {
+                    Route::Discard
+                } else {
+                    if matches!(
+                        redirect.kind,
+                        RedirectKind::Output | RedirectKind::OutputBoth
+                    ) && self
+                        .scoped
+                        .variables
+                        .get("SHOPT_C")
+                        .is_some_and(|v| v == "1")
+                        && fs.stat(&path).await.is_ok_and(clobber_protected)
+                    {
+                        return Err(crate::Error::CommandFailure(
+                            self.redirect_error(&target, "cannot overwrite existing file"),
+                        ));
+                    }
+                    let open = if redirect.kind == RedirectKind::Append {
+                        fs.append_file(&path, b"").await
+                    } else {
+                        fs.write_file(&path, b"").await
+                    };
+                    match open {
+                        Ok(()) => {}
+                        Err(error @ crate::Error::Io(_)) => {
+                            return Err(crate::Error::CommandFailure(
+                                self.redirect_error(&target, &io_error_reason(&error)),
+                            ));
+                        }
+                        Err(error) => return Err(error),
+                    }
+                    Route::file(fs.clone(), path, &self.execution_budget)?
+                }
+            };
+            if redirect.kind == RedirectKind::OutputBoth {
+                fds.insert(1, route.clone());
+                fds.insert(2, route);
+            } else {
+                fds.insert(source, route);
+            }
+        }
+        Ok([
+            fds.remove(&1).unwrap_or(Route::Closed),
+            fds.remove(&2).unwrap_or(Route::Closed),
+        ])
+    }
 }
 
 #[cfg(test)]

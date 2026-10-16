@@ -9,6 +9,15 @@ tags:
 
 # Builtin Commands
 
+## Live host commands
+
+Use the public `Command` / `CommandContext` boundary for host handlers needing
+incremental input or awaited output. Completion is `CommandStatus`, independent
+of bytes. `BashBuilder::command` and `BuiltinRegistry::insert_command` install an
+internal adapter; `Builtin` remains the buffered utility contract. See the
+[streaming design](streaming-roadmap.md) for routing, budget lifetime, whole-output
+hook restrictions, bindings, tests and explicitly buffered roadmap boundaries.
+
 ## Status
 Implemented
 

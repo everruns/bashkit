@@ -671,7 +671,7 @@ impl Interpreter {
             let out = r.stdout.suffix_from(out_len);
             let err = r.stderr.suffix_from(err_len);
             let count = self.output_emit_count;
-            self.maybe_emit_output(&out, &err, count);
+            self.maybe_emit_output(&out, &err, count).await?;
         }
         self.leave_output_region(region);
         let result = result?;
@@ -719,7 +719,8 @@ impl Interpreter {
             stderr.push_str(&self.diag("compgen: warning: -F option may not work as you expect\n"));
             let warn = crate::StreamData::from(std::mem::take(&mut stderr));
             let count = self.output_emit_count;
-            self.maybe_emit_output(&crate::StreamData::new(), &warn, count);
+            self.maybe_emit_output(&crate::StreamData::new(), &warn, count)
+                .await?;
             let mut warn_kept = warn;
             match self.completion_function_matches(func, &word).await? {
                 Ok((out, err, list)) => {

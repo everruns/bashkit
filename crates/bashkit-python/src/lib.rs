@@ -14,6 +14,8 @@
 // wasm rather than scattering per-item cfgs through shared conversion helpers.
 #![cfg_attr(target_arch = "wasm32", allow(dead_code, unused_imports))]
 
+#[cfg(not(target_arch = "wasm32"))]
+mod streaming;
 mod terminal;
 
 // interop (capsule FS handoff), realfs (host mounts) and the credential-injection
@@ -3450,6 +3452,7 @@ impl PyCallbackEngine {
 
 struct PyCallbackSession {
     state: StdMutex<PyCallbackSessionState>,
+    cancel_requested: AtomicBool,
     active_caller_tasks: Arc<StdMutex<Vec<Py<PyAny>>>>,
     private_async_loop: Arc<PyPrivateAsyncLoop>,
     engine: Arc<PyCallbackEngine>,
@@ -3479,6 +3482,7 @@ impl PyCallbackSession {
                 needs_async_callbacks,
                 use_caller_loop,
             )?),
+            cancel_requested: AtomicBool::new(false),
             active_caller_tasks: Arc::new(StdMutex::new(Vec::new())),
             private_async_loop,
             engine,
@@ -3515,6 +3519,9 @@ impl PyCallbackSession {
     }
 
     fn cancel_active_caller_tasks(&self, py: Python<'_>) -> PyResult<()> {
+        // Python cancellation must be visible before the native bridge handles
+        // its wakeup: a queued request may acquire the shell mutex first.
+        self.cancel_requested.store(true, Ordering::Release);
         let Some(locals) = self.current_caller_loop_locals() else {
             return Ok(());
         };
@@ -3548,6 +3555,13 @@ impl PyCallbackSession {
     ) -> PyResult<Py<PyAny>> {
         let context = self.current_context(py);
         self.engine.invoke(py, &context, callback, args)
+    }
+
+    fn check_cancelled(&self) -> PyResult<()> {
+        if self.cancel_requested.load(Ordering::Acquire) {
+            return Err(Python::attach(asyncio_cancelled_error)?);
+        }
+        Ok(())
     }
 
     fn run_awaitable_on_private_loop(
@@ -4345,6 +4359,7 @@ async fn exec_bash_with_optional_output(
 ) -> PyResult<ExecResult> {
     let mut execution_extensions = ExecutionExtensions::new();
     if let Some(session) = builtin_session {
+        session.check_cancelled()?;
         let _ = execution_extensions.insert(session);
     }
 
@@ -4375,7 +4390,8 @@ async fn exec_bash_with_optional_output(
             .await
     };
 
-    Ok(py_exec_result_from_bash_result(result))
+    let converted = py_exec_result_from_bash_result(result);
+    Ok(converted)
 }
 
 // Decision: external functions share the custom-builtin callback session. The
@@ -5108,27 +5124,61 @@ impl PyBash {
     /// pyo3-async-runtimes, which the WebAssembly (Pyodide) build omits. On wasm,
     /// use `execute_sync()`. See knowledge/runtimes/emscripten-wheels.md.
     #[cfg(not(target_arch = "wasm32"))]
-    #[pyo3(signature = (commands, on_output=None))]
+    #[pyo3(signature = (commands, on_output=None, *, capture=None, stdout=None, stderr=None))]
     fn execute<'py>(
         &self,
         py: Python<'py>,
         commands: String,
         on_output: Option<Py<PyAny>>,
+        capture: Option<usize>,
+        stdout: Option<Py<PyAny>>,
+        stderr: Option<Py<PyAny>>,
     ) -> PyResult<Bound<'py, PyAny>> {
         self.reject_external_handler_reentry()?;
-        let builtin_session = capture_custom_builtin_session(
-            py,
-            &self.custom_builtins,
-            &self.builtin_engine,
-            true,
-            self.external_handler.is_some(),
-        )?;
+        let live_output = capture.is_some() || stdout.is_some() || stderr.is_some();
+        if live_output && on_output.is_some() {
+            return Err(PyTypeError::new_err(
+                "use stdout/stderr byte sinks instead of on_output with streaming options",
+            ));
+        }
+        streaming::validate_sink(py, stdout.as_ref())?;
+        streaming::validate_sink(py, stderr.as_ref())?;
+        let builtin_session = if live_output {
+            Some(PyCallbackSession::capture(
+                py,
+                self.builtin_engine.clone(),
+                true,
+                true,
+                PySyncLoopMode::SharedAcrossSessions,
+            )?)
+        } else {
+            capture_custom_builtin_session(
+                py,
+                &self.custom_builtins,
+                &self.builtin_engine,
+                true,
+                self.external_handler.is_some(),
+            )?
+        };
         let on_output = prepare_output_handler(py, on_output)?;
         let inner = self.inner.clone();
         let cancel_session = builtin_session.clone();
         let future = future_into_py(py, async move {
             let mut bash = inner.lock().await;
-            exec_bash_with_optional_output(&mut bash, &commands, on_output, builtin_session).await
+            if live_output {
+                streaming::execute(
+                    &mut bash,
+                    &commands,
+                    capture,
+                    stdout,
+                    stderr,
+                    builtin_session.expect("live output session"),
+                )
+                .await
+            } else {
+                exec_bash_with_optional_output(&mut bash, &commands, on_output, builtin_session)
+                    .await
+            }
         })?;
         if let Some(cancel_session) = cancel_session {
             attach_future_cancellation_callback(py, &future, cancel_session.clone())?;
@@ -5257,6 +5307,18 @@ impl PyBash {
     /// Override precedence matches `custom_builtins` at construction time:
     /// shell function > POSIX special builtin > custom builtin > baked-in
     /// builtin > `PATH`.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn add_command(&self, py: Python<'_>, name: String, callback: Py<PyAny>) -> PyResult<()> {
+        streaming::register(
+            py,
+            name,
+            callback,
+            &self.rt,
+            &self.custom_builtins,
+            &self.host_registry,
+        )
+    }
+
     fn add_builtin(&self, py: Python<'_>, name: String, callback: Py<PyAny>) -> PyResult<()> {
         let entry = build_py_custom_builtin_entry(py, name.clone(), callback)?;
         let adapter = PyCustomBuiltinAdapter::from_entry(py, &entry, &self.rt);
@@ -6274,27 +6336,61 @@ impl BashTool {
 
     /// Native-only (see `Bash.execute`). Use `execute_sync()` on wasm.
     #[cfg(not(target_arch = "wasm32"))]
-    #[pyo3(signature = (commands, on_output=None))]
+    #[pyo3(signature = (commands, on_output=None, *, capture=None, stdout=None, stderr=None))]
     fn execute<'py>(
         &self,
         py: Python<'py>,
         commands: String,
         on_output: Option<Py<PyAny>>,
+        capture: Option<usize>,
+        stdout: Option<Py<PyAny>>,
+        stderr: Option<Py<PyAny>>,
     ) -> PyResult<Bound<'py, PyAny>> {
         self.reject_external_handler_reentry()?;
-        let builtin_session = capture_custom_builtin_session(
-            py,
-            &self.custom_builtins,
-            &self.builtin_engine,
-            true,
-            self.external_handler.is_some() || self.typescript_external_handler.is_some(),
-        )?;
+        let live_output = capture.is_some() || stdout.is_some() || stderr.is_some();
+        if live_output && on_output.is_some() {
+            return Err(PyTypeError::new_err(
+                "use stdout/stderr byte sinks instead of on_output with streaming options",
+            ));
+        }
+        streaming::validate_sink(py, stdout.as_ref())?;
+        streaming::validate_sink(py, stderr.as_ref())?;
+        let builtin_session = if live_output {
+            Some(PyCallbackSession::capture(
+                py,
+                self.builtin_engine.clone(),
+                true,
+                true,
+                PySyncLoopMode::SharedAcrossSessions,
+            )?)
+        } else {
+            capture_custom_builtin_session(
+                py,
+                &self.custom_builtins,
+                &self.builtin_engine,
+                true,
+                self.external_handler.is_some() || self.typescript_external_handler.is_some(),
+            )?
+        };
         let on_output = prepare_output_handler(py, on_output)?;
         let inner = self.inner.clone();
         let cancel_session = builtin_session.clone();
         let future = future_into_py(py, async move {
             let mut bash = inner.lock().await;
-            exec_bash_with_optional_output(&mut bash, &commands, on_output, builtin_session).await
+            if live_output {
+                streaming::execute(
+                    &mut bash,
+                    &commands,
+                    capture,
+                    stdout,
+                    stderr,
+                    builtin_session.expect("live output session"),
+                )
+                .await
+            } else {
+                exec_bash_with_optional_output(&mut bash, &commands, on_output, builtin_session)
+                    .await
+            }
         })?;
         if let Some(cancel_session) = cancel_session {
             attach_future_cancellation_callback(py, &future, cancel_session.clone())?;
@@ -6405,6 +6501,18 @@ impl BashTool {
 
     /// Register a Python callback as a custom bash builtin.
     /// See [`PyBash::add_builtin`] for semantics.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn add_command(&self, py: Python<'_>, name: String, callback: Py<PyAny>) -> PyResult<()> {
+        streaming::register(
+            py,
+            name,
+            callback,
+            &self.rt,
+            &self.custom_builtins,
+            &self.host_registry,
+        )
+    }
+
     fn add_builtin(&self, py: Python<'_>, name: String, callback: Py<PyAny>) -> PyResult<()> {
         let entry = build_py_custom_builtin_entry(py, name.clone(), callback)?;
         let adapter = PyCustomBuiltinAdapter::from_entry(py, &entry, &self.rt);
@@ -7415,6 +7523,8 @@ fn _bashkit(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<AnalyzedCommand>()?;
     m.add_class::<AnalyzedRedirect>()?;
     m.add_class::<PyBuiltinContext>()?;
+    #[cfg(not(target_arch = "wasm32"))]
+    streaming::add_classes(m)?;
     m.add_class::<PyFileSystem>()?;
     m.add_class::<PyPackedCommit>()?;
     m.add_class::<PySnapshotDiff>()?;

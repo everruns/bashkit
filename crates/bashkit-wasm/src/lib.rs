@@ -39,6 +39,7 @@ use wasm_bindgen_futures::{JsFuture, future_to_promise};
 mod runtime_functions;
 
 mod hostfs;
+mod streaming;
 use hostfs::HostFs;
 
 #[cfg(feature = "terminal")]
@@ -365,6 +366,7 @@ fn sanitize_js_error(value: &JsValue) -> String {
 /// Parsed, `Send`-free construction config. Kept so `reset()` can rebuild an
 /// equivalent interpreter.
 struct Config {
+    registry: bashkit::BuiltinRegistry,
     profile: bashkit::ExecutionProfileName,
     #[cfg_attr(not(feature = "python"), allow(dead_code))]
     python: bool,
@@ -424,6 +426,19 @@ impl Bash {
         })
     }
 
+    /// Register a live command. Cloned I/O handles expire with the execution.
+    #[wasm_bindgen(js_name = addCommand)]
+    pub fn add_command(&self, name: String, callback: js_sys::Function) {
+        self.config.registry.insert_command(
+            name.clone(),
+            streaming::JsCommand {
+                name,
+                callback: SendWrapper::new(callback),
+                in_sync: self.sync_flag.clone(),
+            },
+        );
+    }
+
     /// Execute `commands` synchronously and return the result.
     ///
     /// Only valid for scripts that complete without yielding — i.e. plain bash
@@ -457,15 +472,17 @@ impl Bash {
     // (e.g. execute() invoked from inside a builtin callback) into a clean error
     // instead of a panic, so holding it across the await point is sound here.
     #[allow(clippy::await_holding_refcell_ref)]
-    pub fn execute(&self, commands: String) -> js_sys::Promise {
+    pub fn execute(&self, commands: String, options: JsValue) -> js_sys::Promise {
         let inner = self.inner.clone();
         future_to_promise(async move {
             let mut guard = inner.try_borrow_mut().map_err(|_| {
                 JsError::new("bash instance is busy (reentrant execution is not supported)")
             })?;
-            match guard.exec(&commands).await {
+            match streaming::execute(&mut guard, &commands, options, bashkit::ExecOptions::new())
+                .await
+            {
                 Ok(r) => Ok(JsValue::from(ExecResult::from(r))),
-                Err(e) => Err(JsValue::from(JsError::new(&e.to_string()))),
+                Err(e) => Err(e),
             }
         })
     }
@@ -526,6 +543,7 @@ impl Bash {
         commands: String,
         dispatcher: js_sys::Function,
         on_output: Option<js_sys::Function>,
+        options: JsValue,
     ) -> js_sys::Promise {
         let inner = self.inner.clone();
         let session = runtime_functions::Session(SendWrapper::new(dispatcher));
@@ -533,13 +551,13 @@ impl Bash {
             let mut guard = inner.try_borrow_mut().map_err(|_| {
                 JsError::new("bash instance is busy (reentrant execution is not supported)")
             })?;
-            let options = bashkit::ExecOptions::new()
+            let exec_options = bashkit::ExecOptions::new()
                 .extensions(bashkit::ExecutionExtensions::new().with(session));
             let error = Arc::new(Mutex::new(None));
-            let options = if let Some(output) = on_output {
+            let exec_options = if let Some(output) = on_output {
                 let output = SendWrapper::new(output);
                 let error = error.clone();
-                options.streaming(Box::new(move |stdout, stderr| {
+                exec_options.streaming(Box::new(move |stdout, stderr| {
                     if error.lock().is_ok_and(|slot| slot.is_some()) {
                         return;
                     }
@@ -552,15 +570,13 @@ impl Bash {
                     }
                 }))
             } else {
-                options
+                exec_options
             };
-            let result = guard.exec_with_options(&commands, options).await;
+            let result = streaming::execute(&mut guard, &commands, options, exec_options).await;
             if let Some(error) = error.lock().expect("output error lock").take() {
                 return Err(JsError::new(&error).into());
             }
-            result
-                .map(|r| JsValue::from(ExecResult::from(r)))
-                .map_err(|e| JsError::new(&e.to_string()).into())
+            result.map(|r| JsValue::from(ExecResult::from(r)))
         })
     }
 
@@ -959,7 +975,7 @@ fn core_builder(config: &Config, sync_flag: &Arc<AtomicBool>) -> bashkit::BashBu
             )
         };
     }
-    builder
+    builder.builtin_registry(config.registry.clone())
 }
 
 fn read_function_names(options: &JsValue, key: &str) -> Result<Vec<String>, JsError> {
@@ -997,6 +1013,7 @@ fn seed_files(fs: &Arc<dyn FileSystemTrait>, files: &[(String, String)]) -> Resu
 fn parse_options(options: &JsValue) -> Result<Config, JsError> {
     if options.is_undefined() || options.is_null() {
         return Ok(Config {
+            registry: bashkit::BuiltinRegistry::new(),
             profile: bashkit::ExecutionProfileName::Standard,
             python: false,
             typescript: false,
@@ -1114,6 +1131,7 @@ fn parse_options(options: &JsValue) -> Result<Config, JsError> {
     }
 
     Ok(Config {
+        registry: bashkit::BuiltinRegistry::new(),
         profile,
         python,
         typescript,

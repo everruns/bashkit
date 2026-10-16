@@ -67,6 +67,8 @@ with a busy error. Reset preserves handlers; persisted state contains no host co
 Terminal supports pure runtimes but rejects runtime callback names; use Bash for
 host functions. Host code owns service authorization and I/O limits.
 
+Runtime host callbacks also work with live commands and the `stdout`/`stderr` byte sinks, explicit `capture` limits, and `AbortSignal` options described in [Streaming I/O](streaming.md). Text `onOutput` observers remain a separate execution mode; use byte sinks when combining output delivery with live execution options.
+
 ## Try it live
 
 This is the exact package above, running in your browser, no server, nothing

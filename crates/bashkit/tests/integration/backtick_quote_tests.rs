@@ -1,7 +1,7 @@
 //! Quote-adjacent backticks: Bash parity and permission/budget invariants.
 
 use bashkit::hooks::{HookAction, ToolEvent};
-use bashkit::{Bash, CommandContext, ExecutionLimits};
+use bashkit::{Bash, CommandPlacement, ExecutionLimits};
 use std::sync::{Arc, Mutex};
 
 #[tokio::test]
@@ -83,7 +83,7 @@ fn backticks_after_quotes_are_visible_to_analysis() {
             .iter()
             .find(|c| c.name.as_deref() == Some("rm"))
             .expect("substitution must be reported");
-        assert_eq!(rm.context, CommandContext::Substitution);
+        assert_eq!(rm.context, CommandPlacement::Substitution);
         let echo = a
             .commands
             .iter()

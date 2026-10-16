@@ -5,6 +5,26 @@
 
 use bashkit::{Bash, ExecutionLimits};
 
+/// Live output routing must preserve the same substitution depth guarantee.
+#[tokio::test]
+async fn depth_32_live_execution_no_stack_overflow() {
+    let mut script = "echo hello".to_string();
+    for _ in 0..32 {
+        script = format!("echo $({script})");
+    }
+    let mut bash = Bash::builder()
+        .limits(
+            ExecutionLimits::new()
+                .max_commands(500)
+                .max_subst_depth(32)
+                .timeout(std::time::Duration::from_secs(5)),
+        )
+        .build();
+    if let Ok(result) = bash.execute(&script).capture(64).await {
+        assert!(!result.stdout.is_empty() || result.exit_code != 0);
+    }
+}
+
 /// Default max_subst_depth (32) must not cause stack overflow.
 /// Before the Box::pin fix, this would SIGABRT at ~20-30 levels.
 /// Regression test for issue #1089.

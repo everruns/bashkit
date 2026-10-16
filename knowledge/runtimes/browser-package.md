@@ -142,6 +142,10 @@ cancellation/reuse, JSON failures, VFS/reset/checkout, independent worker
 instances, npm archive contents and actual Chromium fetch/module workers served
 without COOP/COEP. The existing slim package semantics and size gates still run.
 
+### Runtime callbacks with live I/O
+
+Buffered and live executions install the same runtime session through `ExecOptions`. Live byte sinks, bounded capture and commands retain the execution-local host dispatcher. AbortSignal cancellation revokes host work and clears its cancellation token for reuse; manual cancellation remains sticky. Combined runtime tests cover sink completion/deadlines, cancellation/reuse, reset-preserved commands and caller context. Legacy text observers reject mixed live options before execution.
+
 ## Host-backed filesystem (`new Bash({ fs })`)
 
 Embedders can replace the in-memory VFS with their own store by passing `fs`.

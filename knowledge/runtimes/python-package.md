@@ -145,7 +145,12 @@ Same-instance calls serialize on the existing interpreter mutex. Reentry
 protection uses a per-instance ContextVar set inside the handler task, not an
 instance-wide activity counter: recursive interpreter/live-FS access fails
 immediately, while unrelated requests can queue during callback I/O. Other
-interpreter instances are usable from a handler. Private-loop work items carry
+interpreter instances are usable from a handler. Cancelling a callback session
+marks it synchronously before forwarding cancellation through the native bridge.
+Both buffered and streaming execution check that flag after acquiring the shell
+mutex, so a cancelled queued request cannot begin script side effects while its
+native cancellation wakeup is pending. Other sessions remain independent.
+Private-loop work items carry
 their own cancellation state/task handle so timeout/revocation cancels that
 item even if it has not started; cancelling an old item cannot cancel the next
 request on the shared loop. Worker teardown retains the interpreter-exit guard.

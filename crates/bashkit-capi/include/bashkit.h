@@ -70,7 +70,8 @@ BASHKIT_API BashkitStatus bashkit_execute(
    typescript_external_functions arrays. Names require an enabled runtime and
    this constructor's non-NULL handler. One dispatcher receives both languages.
 
-   handler runs on bashkit_execute's caller thread and must return promptly.
+   handler runs on the execution caller thread (buffered or streaming) and must
+   return promptly.
    It receives OWNERSHIP of call: respond/fail and free it once, or transfer it
    to another thread and return. Request JSON contains language, name, args,
    and kwargs for Python. JSON values are bounded to 64 nesting levels, finite
@@ -100,6 +101,21 @@ BASHKIT_API BashkitStatus bashkit_runtime_call_respond_json(
     BashkitRuntimeCall *call, BashkitBytes value);
 BASHKIT_API BashkitStatus bashkit_runtime_call_fail(BashkitRuntimeCall *call);
 BASHKIT_API void bashkit_runtime_call_free(BashkitRuntimeCall *call);
+
+/* Live byte delivery. The callback borrows bytes only for its duration and
+   returns 0 after consuming the whole chunk, nonzero to fail execution.
+   It runs on the thread calling bashkit_execute_streaming. It may call
+   bashkit_cancel, but must not free the instance or call blocking APIs on any
+   handle from the callback.
+   context and callback must remain valid until this function returns.
+   capture_limit is per stream; 0 disables capture. NULL callback discards output. */
+#define BASHKIT_STREAM_STDOUT 1u
+#define BASHKIT_STREAM_STDERR 2u
+typedef uint32_t (*BashkitOutputCallback)(void *context, uint32_t stream, BashkitBytes bytes);
+BASHKIT_API BashkitStatus bashkit_execute_streaming(
+    Bashkit *bash, BashkitBytes script, size_t capture_limit,
+    BashkitOutputCallback callback, void *context,
+    BashkitResult **out_result, BashkitError **out_error);
 
 /* Cancellation requires the `cancellation` capability. Both are lock-free and
    safe to call from any thread while bashkit_execute is blocked on the same

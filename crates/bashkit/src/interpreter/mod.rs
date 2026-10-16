@@ -419,6 +419,8 @@ pub(crate) struct ShellRef<'a> {
     pub(crate) stdout_pipe: Option<Arc<pipe::Pipe>>,
     /// Stdin of a streaming filter stage (see `Context::stdin_stream`).
     pub(crate) stdin_pipe: Option<Arc<pipe::Pipe>>,
+    pub(crate) stderr_pipe: Option<Arc<pipe::Pipe>>,
+    pub(crate) command_routes: Option<[crate::command::CommandRoute; 2]>,
     /// Enclosing loops in the current function (`break`/`continue`).
     pub(crate) loop_depth: usize,
     /// Active function calls and `source`s (`return` is valid when > 0).
@@ -1599,6 +1601,46 @@ type StageSnapshot = (
 struct PipelineStageScope {
     saved: Option<StageSnapshot>,
     prev_pipeline_stdin: Option<Option<crate::StreamData>>,
+}
+
+// A suspended final stage can be cancelled before exit_pipeline_stage runs.
+// Its subshell snapshot must still roll back, including session-owned leases.
+struct PipelineStageGuard {
+    interpreter: *mut Interpreter,
+    scope: Option<PipelineStageScope>,
+}
+
+// SAFETY: the guard never leaves the future borrowing this interpreter. The
+// interpreter is Send, and its borrowed address stays stable until guard drop.
+unsafe impl Send for PipelineStageGuard {}
+
+impl PipelineStageGuard {
+    fn new(interpreter: &mut Interpreter, scope: PipelineStageScope) -> Self {
+        Self {
+            interpreter,
+            scope: Some(scope),
+        }
+    }
+
+    fn complete(
+        mut self,
+        interpreter: &mut Interpreter,
+        result: Result<ExecResult>,
+    ) -> Result<ExecResult> {
+        debug_assert_eq!(self.interpreter, interpreter as *mut Interpreter);
+        interpreter.exit_pipeline_stage(self.scope.take().expect("active pipeline scope"), result)
+    }
+}
+
+impl Drop for PipelineStageGuard {
+    fn drop(&mut self) {
+        if let Some(scope) = self.scope.take() {
+            // SAFETY: awaited command futures (which borrow the interpreter)
+            // drop before this guard. No borrow remains during restoration.
+            let _ = unsafe { &mut *self.interpreter }
+                .exit_pipeline_stage(scope, Ok(ExecResult::default()));
+        }
+    }
 }
 
 struct SubshellSnapshot {
@@ -3848,67 +3890,100 @@ impl Interpreter {
     /// `emit_count_before` is the value of `output_emit_count` before the sub-call
     /// that produced this output. If the count advanced, sub-calls already emitted
     /// and we skip to avoid duplicates.
-    fn maybe_emit_output(
-        &mut self,
-        stdout: &crate::StreamData,
-        stderr: &crate::StreamData,
+    fn maybe_emit_output<'a>(
+        &'a mut self,
+        stdout: &'a crate::StreamData,
+        stderr: &'a crate::StreamData,
         emit_count_before: u64,
-    ) -> bool {
-        if self.output_callback.is_none() {
-            return false;
-        }
-        // Sub-calls already emitted — skip to avoid duplicates
-        if self.output_emit_count != emit_count_before {
-            return false;
-        }
-        // `exec >log` / `exec 2>/dev/null`: the shell's own output is routed
-        // at the top-level command (`route_exec_output`), not streamed. A
-        // pipeline stage's sink is a pipe, never the caller.
-        let (stdout, stderr) = if self.pipe_out.is_none() {
-            let empty = crate::StreamData::new();
-            (
-                if self.exec_fd_table.contains_key(&1) {
-                    empty.clone()
-                } else {
-                    stdout.clone()
-                },
-                if self.exec_fd_table.contains_key(&2) {
-                    empty
-                } else {
-                    stderr.clone()
-                },
-            )
-        } else {
-            (stdout.clone(), stderr.clone())
-        };
-        let (stdout, stderr) = (&stdout, &stderr);
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<bool>> + Send + 'a>> {
+        Box::pin(async move {
+            if self.output_callback.is_none() {
+                return Ok(false);
+            }
+            // Sub-calls already emitted — skip to avoid duplicates
+            if self.output_emit_count != emit_count_before {
+                return Ok(false);
+            }
+            // `exec >log` / `exec 2>/dev/null`: the shell's own output is routed
+            // at the top-level command (`route_exec_output`), not streamed. A
+            // pipeline stage's sink is a pipe, never the caller.
+            let (stdout, stderr) = if self.pipe_out.is_none() {
+                let empty = crate::StreamData::new();
+                (
+                    if self.exec_fd_table.contains_key(&1) {
+                        empty.clone()
+                    } else {
+                        stdout.clone()
+                    },
+                    if self.exec_fd_table.contains_key(&2) {
+                        empty
+                    } else {
+                        stderr.clone()
+                    },
+                )
+            } else {
+                (stdout.clone(), stderr.clone())
+            };
+            let (stdout, stderr) = (&stdout, &stderr);
 
-        let stdout_remaining = self
-            .limits
-            .max_stdout_bytes
-            .saturating_sub(self.output_stream_stdout_bytes);
-        let stderr_remaining = self
-            .limits
-            .max_stderr_bytes
-            .saturating_sub(self.output_stream_stderr_bytes);
-        // A stage's pipe is not caller-visible output: no stdout cap.
-        let stdout_chunk = if self.pipe_out.is_some() {
-            stdout.clone()
-        } else {
-            stdout.prefix(stdout_remaining)
-        };
-        let stderr_chunk = stderr.prefix(stderr_remaining);
-        if stdout_chunk.is_empty() && stderr_chunk.is_empty() {
-            return false;
-        }
+            let stdout_remaining = self
+                .limits
+                .max_stdout_bytes
+                .saturating_sub(self.output_stream_stdout_bytes);
+            let stderr_remaining = self
+                .limits
+                .max_stderr_bytes
+                .saturating_sub(self.output_stream_stderr_bytes);
+            // A stage's pipe is not caller-visible output: no stdout cap.
+            let output = self.execution_output().filter(|_| self.pipe_out.is_none());
+            let stdout_chunk = if self.pipe_out.is_some() || output.is_some() {
+                stdout.clone()
+            } else {
+                stdout.prefix(stdout_remaining)
+            };
+            let stderr_chunk = if output.is_some() {
+                stderr.clone()
+            } else {
+                stderr.prefix(stderr_remaining)
+            };
+            if stdout_chunk.is_empty() && stderr_chunk.is_empty() {
+                return Ok(false);
+            }
 
-        if let Some(ref mut cb) = self.output_callback {
-            cb(&stdout_chunk, &stderr_chunk);
-            self.output_emit_count += 1;
-            self.output_stream_stdout_bytes += stdout_chunk.len();
-            self.output_stream_stderr_bytes += stderr_chunk.len();
-        }
-        true
+            let delivery = async {
+                if let Some(output) = output {
+                    self.execution_budget
+                        .run(output.stdout.write_bounded(stdout_chunk.as_bytes()))
+                        .await??;
+                    self.execution_budget
+                        .run(output.stderr.write_bounded(stderr_chunk.as_bytes()))
+                        .await??;
+                } else if let Some(pipe) = &self.pipe_out {
+                    self.execution_budget
+                        .run(pipe.write_bounded(stdout_chunk.as_bytes()))
+                        .await??;
+                }
+                Ok::<_, crate::Error>(())
+            }
+            .await;
+            if let Err(error) = delivery {
+                if self.pipe_out.is_some()
+                    && matches!(&error, crate::Error::Io(e) if e.kind() == std::io::ErrorKind::BrokenPipe)
+                {
+                    return Ok(true);
+                }
+                return Err(error);
+            }
+            if let Some(ref mut cb) = self.output_callback {
+                if self.pipe_out.is_none() {
+                    cb(&stdout_chunk, &stderr_chunk);
+                }
+                self.output_emit_count += 1;
+                self.output_stream_stdout_bytes += stdout_chunk.len();
+                self.output_stream_stderr_bytes += stderr_chunk.len();
+            }
+            Ok(true)
+        })
     }
 
     /// Set the HTTP client for network builtins (curl, wget).
@@ -4156,7 +4231,8 @@ impl Interpreter {
                 Self::merge_stderr_into_stdout(&mut result);
             }
             let emit_before = self.output_emit_count;
-            self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
+            self.maybe_emit_output(&result.stdout, &result.stderr, emit_before)
+                .await?;
             self.flush_exec_passthrough(&mut result);
             Ok(result)
         })
@@ -4202,6 +4278,7 @@ impl Interpreter {
         let mut exit_code = 0;
         let mut stdout_truncated = false;
         let mut stderr_truncated = false;
+        let retain_output = self.retain_streamed_output();
         let max_stdout = self.limits.max_stdout_bytes;
         let max_stderr = self.limits.max_stderr_bytes;
 
@@ -4277,13 +4354,14 @@ impl Interpreter {
             if self.merge_stderr {
                 Self::merge_stderr_into_stdout(&mut result);
             }
-            self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
+            self.maybe_emit_output(&result.stdout, &result.stderr, emit_before)
+                .await?;
             if top_level {
                 self.flush_exec_passthrough(&mut result);
             }
 
             // Accumulate stdout with truncation
-            if !stdout_truncated {
+            if retain_output && !stdout_truncated {
                 let remaining = max_stdout.saturating_sub(stdout.len());
                 if remaining == 0 {
                     if !result.stdout.is_empty() {
@@ -4298,7 +4376,7 @@ impl Interpreter {
             }
 
             // Accumulate stderr with truncation
-            if !stderr_truncated {
+            if retain_output && !stderr_truncated {
                 let remaining = max_stderr.saturating_sub(stderr.len());
                 if remaining == 0 {
                     if !result.stderr.is_empty() {
@@ -4310,6 +4388,9 @@ impl Interpreter {
                     stderr.append(&result.stderr.prefix(remaining));
                     stderr_truncated = true;
                 }
+            }
+            if !retain_output {
+                stdout_truncated |= result.stdout_truncated;
             }
             stderr_truncated |= result.stderr_truncated;
 
@@ -4422,7 +4503,8 @@ impl Interpreter {
         if !stopped && let Some(message) = &view.get().trailing_error {
             let emit_before = self.output_emit_count;
             let err = crate::StreamData::from(message.clone());
-            self.maybe_emit_output(&crate::StreamData::new(), &err, emit_before);
+            self.maybe_emit_output(&crate::StreamData::new(), &err, emit_before)
+                .await?;
             if !stderr_truncated {
                 stderr.append(&err);
             }
@@ -4444,7 +4526,8 @@ impl Interpreter {
                             &trap_result.stdout,
                             &trap_result.stderr,
                             emit_before,
-                        );
+                        )
+                        .await?;
                         stdout.append(&trap_result.stdout);
                         stderr.append(&trap_result.stderr);
                         // `exit N` in the handler is the shell's status.
@@ -4612,6 +4695,12 @@ impl Interpreter {
             // Whether ERR may fire after this command: bash decides before
             // running it, so a trap the command itself sets (`f` setting
             // ERR inside) does not fire for that same command.
+            if self.counters.commands > 0
+                && self.counters.commands.is_multiple_of(64)
+                && self.execution_output().is_some()
+            {
+                crate::execution::yield_once().await;
+            }
             let skip_stage = std::mem::take(&mut self.err_trap_skip_stage);
             let err_armed = !skip_stage && self.err_trap_armed() && Self::fires_err_trap(command);
             let emit_before = self.output_emit_count;
@@ -4850,7 +4939,9 @@ impl Interpreter {
     /// Run the ERR trap after a failing command, its output following the
     /// command's own (streamed first, so neither is dropped).
     async fn run_err_trap_after(&mut self, result: &mut ExecResult, emit_before: u64) {
-        self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
+        self.maybe_emit_output(&result.stdout, &result.stderr, emit_before)
+            .await
+            .ok();
         self.last_exit_code = result.exit_code;
         let mut stdout = crate::StreamData::new();
         let mut stderr = crate::StreamData::new();
@@ -5029,7 +5120,8 @@ impl Interpreter {
                                     &trap_result.stdout,
                                     &trap_result.stderr,
                                     emit_before,
-                                );
+                                )
+                                .await?;
                                 res.stdout.append(&trap_result.stdout);
                                 res.stderr.append(&trap_result.stderr);
                             }
@@ -5187,7 +5279,7 @@ impl Interpreter {
             ));
         }
 
-        let mut acc = state::LoopAccumulator::new();
+        let mut acc = state::LoopAccumulator::new(self.retain_streamed_output());
 
         // Get iteration values: expand fields, then apply brace/glob expansion
         let values: Vec<String> = if let Some(words) = &for_cmd.words {
@@ -5267,7 +5359,8 @@ impl Interpreter {
                 let emit_before = self.output_emit_count;
                 let result = self.execute_command_sequence(&for_cmd.body).await;
                 let result = DebugTrapOutput::prepend_opt(debug, result)?;
-                self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
+                self.maybe_emit_output(&result.stdout, &result.stderr, emit_before)
+                    .await?;
                 let should_errexit = self.errexit_active()
                     && result.exit_code != 0
                     && result.control_flow == ControlFlow::None
@@ -5472,9 +5565,12 @@ impl Interpreter {
                 // Execute body
                 let emit_before = self.output_emit_count;
                 let result = self.execute_command_sequence(&select_cmd.body).await?;
-                self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
-                stdout.append(&result.stdout);
-                stderr.append(&result.stderr);
+                self.maybe_emit_output(&result.stdout, &result.stderr, emit_before)
+                    .await?;
+                if self.retain_streamed_output() {
+                    stdout.append(&result.stdout);
+                    stderr.append(&result.stderr);
+                }
                 exit_code = result.exit_code;
 
                 // Check for break/continue
@@ -5554,7 +5650,7 @@ impl Interpreter {
         &mut self,
         arith_for: &ArithmeticForCommand,
     ) -> Result<ExecResult> {
-        let mut acc = state::LoopAccumulator::new();
+        let mut acc = state::LoopAccumulator::new(self.retain_streamed_output());
         // DEBUG output of the clauses (bash runs it before each one), put
         // ahead of the next body's output or the loop's result.
         let mut debug: Option<Box<DebugTrapOutput>> = None;
@@ -5600,7 +5696,8 @@ impl Interpreter {
                 let emit_before = self.output_emit_count;
                 let result = self.execute_command_sequence(&arith_for.body).await;
                 let result = DebugTrapOutput::prepend_opt(debug.take(), result)?;
-                self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
+                self.maybe_emit_output(&result.stdout, &result.stderr, emit_before)
+                    .await?;
                 let should_errexit = self.errexit_active()
                     && result.exit_code != 0
                     && result.control_flow == ControlFlow::None
@@ -6208,7 +6305,7 @@ impl Interpreter {
         body: &[Command],
         break_on_zero: bool,
     ) -> Result<ExecResult> {
-        let mut acc = state::LoopAccumulator::new();
+        let mut acc = state::LoopAccumulator::new(self.retain_streamed_output());
 
         self.counters.enter_loop();
         let result = async {
@@ -6224,7 +6321,8 @@ impl Interpreter {
                     &condition_result.stdout,
                     &condition_result.stderr,
                     emit_before_cond,
-                );
+                )
+                .await?;
                 acc.stdout.append(&condition_result.stdout);
                 acc.stderr.append(&condition_result.stderr);
                 // `while break; do` leaves the loop from its condition.
@@ -6252,7 +6350,8 @@ impl Interpreter {
                 // Execute body
                 let emit_before = self.output_emit_count;
                 let result = self.execute_command_sequence(body).await?;
-                self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
+                self.maybe_emit_output(&result.stdout, &result.stderr, emit_before)
+                    .await?;
                 let should_errexit = self.errexit_active()
                     && result.exit_code != 0
                     && result.control_flow == ControlFlow::None
@@ -6396,7 +6495,8 @@ impl Interpreter {
         };
         // The report is streamed on its own below; stream the command's
         // output first, or the caller would take the report for all of it.
-        self.maybe_emit_output(&result.stdout, &result.stderr, emit_start);
+        self.maybe_emit_output(&result.stdout, &result.stderr, emit_start)
+            .await?;
         let mut elapsed = start.elapsed();
         // THREAT[TM-INF-033]: Hardened mode exposes only a 100ms lower-bound
         // bucket, preventing `time` from becoming a high-resolution oracle.
@@ -6426,7 +6526,8 @@ impl Interpreter {
                     self.append_time_stderr(
                         &mut result,
                         "time: formatted report exceeds output limit\n",
-                    );
+                    )
+                    .await;
                     result.exit_code = 1;
                     return Ok(result);
                 }
@@ -6457,7 +6558,8 @@ impl Interpreter {
 
         // THREAT[TM-DOS-099]: `-o` must not bypass the diagnostic output cap.
         if report.len() > self.limits.max_stderr_bytes {
-            self.append_time_stderr(&mut result, "time: formatted report exceeds output limit\n");
+            self.append_time_stderr(&mut result, "time: formatted report exceeds output limit\n")
+                .await;
             result.exit_code = 1;
             return Ok(result);
         }
@@ -6474,24 +6576,27 @@ impl Interpreter {
                         "time: cannot write output file '{}'\n",
                         sanitize_time_path(&path)
                     ),
-                );
+                )
+                .await;
                 result.exit_code = 1;
             }
         } else {
-            self.append_time_stderr(&mut result, &report);
+            self.append_time_stderr(&mut result, &report).await;
         }
 
         Ok(result)
     }
 
-    fn append_time_stderr(&mut self, result: &mut ExecResult, message: &str) {
+    async fn append_time_stderr(&mut self, result: &mut ExecResult, message: &str) {
         result.stderr.push_str(message);
         let emit_before = self.output_emit_count;
         self.maybe_emit_output(
             &crate::StreamData::new(),
             &crate::StreamData::from(message),
             emit_before,
-        );
+        )
+        .await
+        .ok();
     }
 
     async fn write_time_report(&self, path: &str, report: &[u8], append: bool) -> Result<()> {
@@ -6941,7 +7046,8 @@ impl Interpreter {
                 &crate::StreamData::new(),
                 &crate::StreamData::from(warning.clone()),
                 before,
-            );
+            )
+            .await?;
         }
 
         // Push call frame, apply options, execute, restore, pop
@@ -7579,9 +7685,12 @@ impl Interpreter {
                 Self::merge_stderr_into_stdout(&mut result);
             }
             self.reap_coprocs();
-            self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
-            stdout.append(&result.stdout);
-            stderr.append(&result.stderr);
+            self.maybe_emit_output(&result.stdout, &result.stderr, emit_before)
+                .await?;
+            if self.retain_streamed_output() {
+                stdout.append(&result.stdout);
+                stderr.append(&result.stderr);
+            }
             exit_code = result.exit_code;
             self.last_exit_code = exit_code;
 
@@ -7629,84 +7738,100 @@ impl Interpreter {
     /// handing over complete output. From the first stage that runs shell
     /// code (a loop, group, function), the rest run concurrently over
     /// bounded pipes (`execute_streaming_stages`), unless concurrency is off.
-    async fn execute_pipeline(&mut self, pipeline: &Pipeline) -> Result<ExecResult> {
-        // Kept small: recursive pipelines (`f() { f | f; }`) nest this poll
-        // frame once per level, so bookkeeping lives in sync helpers.
-        let (stream_from, lastpipe) = self.plan_pipeline(pipeline);
-        let mut acc = PipelineAcc::default();
-        let mut stdin_data: Option<crate::StreamData> = None;
-        let count = pipeline.commands.len();
-        // bash runs DEBUG for each simple-command stage from the shell
-        // itself, ahead of the stages' output; never inside a stage.
-        let mut debug = if count > 1 && self.has_debug_trap() {
-            self.pipeline_debug_traps(pipeline).await
-        } else {
-            None
-        };
-        if let Some(r) = DebugTrapOutput::exit_result(&mut debug) {
-            return Ok(r);
-        }
-        let saved_dormant = self.debug_trap_dormant;
-        self.debug_trap_dormant |= count > 1;
-        acc.merge = self.merge_stderr;
-        self.merge_stderr &= count == 1;
+    // THREAT[TM-DOS-089]: keep pipeline state out of execute_command's poll
+    // frame, which repeats even for simple commands inside nested $(...).
+    // Cancellation guards make that state large enough to overflow instrumented
+    // test stacks when it is embedded in every command future.
+    fn execute_pipeline<'a>(
+        &'a mut self,
+        pipeline: &'a Pipeline,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecResult>> + Send + 'a>> {
+        Box::pin(async move {
+            // Kept small: recursive pipelines (`f() { f | f; }`) nest this poll
+            // frame once per level, so bookkeeping lives in sync helpers.
+            let (stream_from, lastpipe) = self.plan_pipeline(pipeline);
+            let mut acc = PipelineAcc::default();
+            let mut stdin_data: Option<crate::StreamData> = None;
+            let count = pipeline.commands.len();
+            // bash runs DEBUG for each simple-command stage from the shell
+            // itself, ahead of the stages' output; never inside a stage.
+            let mut debug = if count > 1 && self.has_debug_trap() {
+                self.pipeline_debug_traps(pipeline).await
+            } else {
+                None
+            };
+            if let Some(r) = DebugTrapOutput::exit_result(&mut debug) {
+                return Ok(r);
+            }
+            let saved_dormant = self.debug_trap_dormant;
+            self.debug_trap_dormant |= count > 1;
+            acc.merge = self.merge_stderr;
+            self.merge_stderr &= count == 1;
 
-        for (i, command) in pipeline.commands.iter().enumerate() {
-            if stream_from == Some(i) {
-                let stages = self
-                    .execute_streaming_group(&pipeline.commands[i..], stdin_data.take(), lastpipe)
-                    .await;
-                let stages = match stages {
-                    Ok(s) => s,
+            for (i, command) in pipeline.commands.iter().enumerate() {
+                if stream_from == Some(i) {
+                    let stages = self
+                        .execute_streaming_group(
+                            &pipeline.commands[i..],
+                            stdin_data.take(),
+                            lastpipe,
+                        )
+                        .await;
+                    let stages = match stages {
+                        Ok(s) => s,
+                        Err(e) => {
+                            self.debug_trap_dormant = saved_dormant;
+                            return Err(e);
+                        }
+                    };
+                    for result in stages {
+                        self.absorb_stage(&mut acc, result, true);
+                    }
+                    break;
+                }
+                let is_last = i == count - 1;
+                // Every stage of a multi-command pipeline runs in a subshell,
+                // except the last one under `shopt -s lastpipe` (bash, job
+                // control off).
+                let subshell = count > 1 && !(is_last && lastpipe);
+                // A non-last stage's stdout feeds the next stage, never the
+                // streaming observer.
+                let saved_callback = if is_last {
+                    None
+                } else {
+                    self.output_callback.take()
+                };
+                let result = match self.enter_pipeline_stage(command, stdin_data.take(), subshell) {
+                    Ok((scope, stdin)) => {
+                        let guard = PipelineStageGuard::new(self, scope);
+                        let result = match command {
+                            Command::Simple(simple) => {
+                                self.execute_simple_command(simple, stdin).await
+                            }
+                            _ => {
+                                self.err_trap_skip_stage = count > 1;
+                                self.execute_command(command).await
+                            }
+                        };
+                        guard.complete(self, result)
+                    }
+                    Err(e) => Err(e),
+                };
+                if let Some(cb) = saved_callback {
+                    self.output_callback = Some(cb);
+                }
+                let result = match result {
+                    Ok(r) => r,
                     Err(e) => {
                         self.debug_trap_dormant = saved_dormant;
                         return Err(e);
                     }
                 };
-                for result in stages {
-                    self.absorb_stage(&mut acc, result, true);
-                }
-                break;
+                stdin_data = self.absorb_stage(&mut acc, result, is_last);
             }
-            let is_last = i == count - 1;
-            // Every stage of a multi-command pipeline runs in a subshell,
-            // except the last one under `shopt -s lastpipe` (bash, job
-            // control off).
-            let subshell = count > 1 && !(is_last && lastpipe);
-            // A non-last stage's stdout feeds the next stage, never the
-            // streaming observer.
-            let saved_callback = if is_last {
-                None
-            } else {
-                self.output_callback.take()
-            };
-            let result = match self.enter_pipeline_stage(command, stdin_data.take(), subshell) {
-                Ok((scope, stdin)) => {
-                    let result = match command {
-                        Command::Simple(simple) => self.execute_simple_command(simple, stdin).await,
-                        _ => {
-                            self.err_trap_skip_stage = count > 1;
-                            self.execute_command(command).await
-                        }
-                    };
-                    self.exit_pipeline_stage(scope, result)
-                }
-                Err(e) => Err(e),
-            };
-            if let Some(cb) = saved_callback {
-                self.output_callback = Some(cb);
-            }
-            let result = match result {
-                Ok(r) => r,
-                Err(e) => {
-                    self.debug_trap_dormant = saved_dormant;
-                    return Err(e);
-                }
-            };
-            stdin_data = self.absorb_stage(&mut acc, result, is_last);
-        }
-        self.debug_trap_dormant = saved_dormant;
-        DebugTrapOutput::prepend_opt(debug, Ok(self.finish_pipeline(pipeline, acc)))
+            self.debug_trap_dormant = saved_dormant;
+            DebugTrapOutput::prepend_opt(debug, Ok(self.finish_pipeline(pipeline, acc)))
+        })
     }
 
     /// DEBUG before each simple-command stage of a pipeline, at its line.
@@ -7847,7 +7972,8 @@ impl Interpreter {
             [WordPart::Literal(name)] => name.as_str(),
             _ => return false,
         };
-        !matches!(name, "eval" | "source" | "." | "bash" | "sh")
+        !self.is_streaming_host_command(name)
+            && !matches!(name, "eval" | "source" | "." | "bash" | "sh")
             && !self.scoped.functions.contains_key(name)
             && !self.scoped.aliases.contains_key(name)
             && !Self::streams_stdout(simple)
@@ -7872,6 +7998,30 @@ impl Interpreter {
     /// whole input (`grep -c`, `tr -s`).
     fn streams_stdin(name: &str) -> bool {
         matches!(name, "cat" | "grep" | "tr")
+    }
+
+    fn execution_output(&self) -> Option<Arc<crate::execution::ExecutionOutput>> {
+        self.current_execution_extensions()
+            .get::<Arc<crate::execution::ExecutionOutput>>()?
+            .try_with(Arc::clone)
+            .ok()
+    }
+
+    /// Caller-delivered bytes belong to output pumps, not every list/loop.
+    fn retain_streamed_output(&self) -> bool {
+        self.output_callback.is_none()
+            || self.pipe_out.is_some()
+            || self.execution_output().is_none()
+            || !self.exec_fd_table.is_empty()
+            || self.pending_fd_capture_depth > 0
+    }
+
+    fn is_streaming_host_command(&self, name: &str) -> bool {
+        self.host_builtins
+            .as_ref()
+            .and_then(|r| r.lookup(name))
+            .or_else(|| self.builtins.get(name).cloned())
+            .is_some_and(|b| b.streams_io())
     }
 
     /// Run `commands` (the tail of a pipeline) concurrently: every stage but
@@ -7941,6 +8091,8 @@ impl Interpreter {
                 // `( )` stage counts itself once.
                 child.bash_subshell = self.bash_subshell;
             }
+            let command_handles_pipe = matches!(command, Command::Simple(c)
+                if matches!(c.name.parts.as_slice(), [WordPart::Literal(n)] if child.is_streaming_host_command(n)));
             let future = async move {
                 let _read_end = read_end;
                 if let Command::Simple(simple) = command
@@ -7960,7 +8112,7 @@ impl Interpreter {
                 if r.stdout.len() > sent {
                     write_end.0.write(&r.stdout.as_bytes()[sent..]);
                 }
-                if write_end.0.is_broken() {
+                if write_end.0.is_broken() && !command_handles_pipe {
                     r.exit_code = 141;
                 } else if let ControlFlow::Exit(code) | ControlFlow::Return(code) = r.control_flow {
                     r.exit_code = code;
@@ -7992,6 +8144,7 @@ impl Interpreter {
         {
             let mut last_fut = Box::pin(async {
                 let (scope, stdin) = self.enter_pipeline_stage(last, None, !lastpipe)?;
+                let guard = PipelineStageGuard::new(self, scope);
                 let result = match last {
                     Command::Simple(simple) => self.execute_simple_command(simple, stdin).await,
                     _ => {
@@ -7999,7 +8152,7 @@ impl Interpreter {
                         self.execute_command(last).await
                     }
                 };
-                self.exit_pipeline_stage(scope, result)
+                guard.complete(self, result)
             });
             // Readers first (last stage, then upstream), so each blocks on
             // its pipe before the writer feeding it runs.
@@ -8264,7 +8417,8 @@ impl Interpreter {
         };
 
         if let Some(result) = finished {
-            self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
+            self.maybe_emit_output(&result.stdout, &result.stderr, emit_before)
+                .await?;
             // Emit output immediately (background output goes to terminal in real bash)
             parent_stdout.append(&result.stdout);
             parent_stderr.append(&result.stderr);
@@ -8333,9 +8487,12 @@ impl Interpreter {
             if self.merge_stderr {
                 Self::merge_stderr_into_stdout(&mut result);
             }
-            self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
-            stdout.append(&result.stdout);
-            stderr.append(&result.stderr);
+            self.maybe_emit_output(&result.stdout, &result.stderr, emit_before)
+                .await?;
+            if self.retain_streamed_output() {
+                stdout.append(&result.stdout);
+                stderr.append(&result.stderr);
+            }
             exit_code = result.exit_code;
             self.last_exit_code = exit_code;
             control_flow = result.control_flow;
@@ -8436,9 +8593,12 @@ impl Interpreter {
                     if self.merge_stderr {
                         Self::merge_stderr_into_stdout(&mut result);
                     }
-                    self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
-                    stdout.append(&result.stdout);
-                    stderr.append(&result.stderr);
+                    self.maybe_emit_output(&result.stdout, &result.stderr, emit_before)
+                        .await?;
+                    if self.retain_streamed_output() {
+                        stdout.append(&result.stdout);
+                        stderr.append(&result.stderr);
+                    }
                     exit_code = result.exit_code;
                     self.last_exit_code = exit_code;
                     control_flow = result.control_flow;
@@ -8863,7 +9023,9 @@ impl Interpreter {
             {
                 let pending = self.subst_stderr.clone();
                 let before = self.output_emit_count;
-                self.maybe_emit_output(&crate::StreamData::new(), &pending, before);
+                self.maybe_emit_output(&crate::StreamData::new(), &pending, before)
+                    .await
+                    .ok();
             }
         })
     }
@@ -9368,20 +9530,37 @@ impl Interpreter {
         stdin: Option<crate::StreamData>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecResult>> + Send + 'a>> {
         Box::pin(async move {
-            // The stage's own `yes`/`seq` writes straight into the pipe.
-            self.builtin_stdout_pipe = if self.stream_stdout_command
-                == Some(command as *const SimpleCommand as usize)
-                && command.redirects.is_empty()
-                && !self.scoped.functions.contains_key(name)
+            let streaming_host = self.is_streaming_host_command(name);
+            let output = self
+                .execution_output()
+                .filter(|_| self.output_callback.is_some());
+            let can_stream = !Self::has_output_redirect(&command.redirects)
+                && !self.scoped.functions.contains_key(name);
+            self.builtin_stdout_pipe = if can_stream
+                && (self.stream_stdout_command == Some(command as *const SimpleCommand as usize)
+                    || (self.output_callback.is_some()
+                        && (streaming_host || Self::streams_stdout(command))))
             {
-                self.pipe_out.clone()
+                self.pipe_out
+                    .clone()
+                    .or_else(|| output.as_ref().map(|o| o.stdout.clone()))
             } else {
                 None
             };
-            // A streaming filter (`cat`) reads its input pipe as it goes
-            // instead of having it collected up front.
+            let explicit_input = command.redirects.iter().any(|r| {
+                r.fd.unwrap_or(0) == 0
+                    && matches!(
+                        r.kind,
+                        RedirectKind::Input
+                            | RedirectKind::HereDoc
+                            | RedirectKind::HereDocStrip
+                            | RedirectKind::HereString
+                            | RedirectKind::DupInput
+                            | RedirectKind::ReadWrite
+                    )
+            });
             self.builtin_stdin_pipe =
-                if self.builtin_stdout_pipe.is_some() && Self::streams_stdin(name) {
+                if !explicit_input && (streaming_host || Self::streams_stdin(name)) {
                     self.pipe_in.take()
                 } else {
                     None
@@ -9913,6 +10092,8 @@ impl Interpreter {
                     execution_extensions,
                     stdout_pipe: None,
                     stdin_pipe: None,
+                    stderr_pipe: None,
+                    command_routes: None,
                     loop_depth: self.loop_depth,
                     return_depth: self.return_depth,
                     last_exit_code: self.last_exit_code,
@@ -9969,6 +10150,33 @@ impl Interpreter {
             } else {
                 (fs, None)
             };
+            let streaming_command = builtin.streams_io();
+            let command_routes = if streaming_command {
+                self.builtin_stdout_pipe = self
+                    .pipe_out
+                    .clone()
+                    .filter(|_| self.output_callback.is_some())
+                    .or_else(|| {
+                        self.output_callback
+                            .as_ref()
+                            .and_then(|_| self.execution_output())
+                            .map(|o| o.stdout.clone())
+                    });
+                match self.live_command_routes(redirects, fs.clone()).await {
+                    Ok(routes) => Some(routes),
+                    Err(crate::Error::CommandFailure(message)) => {
+                        return Ok(ExecResult::err(message, 1));
+                    }
+                    Err(error) => return Err(error),
+                }
+            } else {
+                None
+            };
+            let stderr_pipe = if builtin.streams_io() && self.output_callback.is_some() {
+                self.execution_output().map(|o| o.stderr.clone())
+            } else {
+                None
+            };
             let shell_ref = ShellRef {
                 builtins: &self.builtins,
                 host_builtins: self.host_builtins.as_ref(),
@@ -9990,6 +10198,8 @@ impl Interpreter {
                 execution_extensions,
                 stdout_pipe: self.builtin_stdout_pipe.take(),
                 stdin_pipe: self.builtin_stdin_pipe.take(),
+                stderr_pipe,
+                command_routes,
                 loop_depth: self.loop_depth,
                 return_depth: self.return_depth,
                 last_exit_code: self.last_exit_code,
@@ -10072,7 +10282,11 @@ impl Interpreter {
 
             self.apply_builtin_side_effects(&mut result).await?;
 
-            let result = self.apply_redirections(result, redirects).await?;
+            let result = if streaming_command {
+                result
+            } else {
+                self.apply_redirections(result, redirects).await?
+            };
             let result = self.apply_after_tool(name, result);
             drop(diagnostic_storage);
             drop(std_storage);
@@ -12250,7 +12464,8 @@ impl Interpreter {
                                 // A command that did not stream its own
                                 // output (`xargs -t echo`) streams it now,
                                 // after the driver's earlier `Emit`s.
-                                self.maybe_emit_output(&r.stdout, &r.stderr, emit_before);
+                                self.maybe_emit_output(&r.stdout, &r.stderr, emit_before)
+                                    .await?;
                             }
                             if let Some(dir) = saved_cwd {
                                 self.cwd = dir;
@@ -12263,7 +12478,7 @@ impl Interpreter {
                         }
                         builtins::PlanStep::Emit { stdout, stderr } => {
                             let before = self.output_emit_count;
-                            self.maybe_emit_output(&stdout, &stderr, before);
+                            self.maybe_emit_output(&stdout, &stderr, before).await?;
                         }
                         builtins::PlanStep::Done(result) => break Ok(result),
                     }
@@ -12631,6 +12846,9 @@ impl Interpreter {
             self.enter_subshell_pid();
             self.xtrace_depth += 1;
             self.enter_nofork_scope(commands, true, 0);
+            // Input substitutions still collect into /dev/fd. Live producer
+            // bytes must stay in that capture instead of reaching outer sinks.
+            let saved_callback = self.output_callback.take();
             let mut failed = None;
             for cmd in commands {
                 match self.execute_command(cmd).await {
@@ -12649,6 +12867,7 @@ impl Interpreter {
                     }
                 }
             }
+            self.output_callback = saved_callback;
             self.restore_subshell_state(*snapshot);
             self.leave_nofork_scope();
             self.last_exit_code = last_exit_code;
@@ -14679,7 +14898,9 @@ impl Interpreter {
             }
             Err(_) => return None,
         };
-        self.maybe_emit_output(&trap_result.stdout, &trap_result.stderr, emit_before);
+        self.maybe_emit_output(&trap_result.stdout, &trap_result.stderr, emit_before)
+            .await
+            .ok();
         stdout.append(&trap_result.stdout);
         stderr.append(&trap_result.stderr);
         Some((trap_result.control_flow, trap_result.exit_code))
@@ -14723,7 +14944,9 @@ impl Interpreter {
         let Some(trap_cmd) = self.scoped.traps.get("RETURN").cloned() else {
             return;
         };
-        self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
+        self.maybe_emit_output(&result.stdout, &result.stderr, emit_before)
+            .await
+            .ok();
         let saved_exit = self.last_exit_code;
         let flow = self
             .run_trap_command(&trap_cmd, &mut result.stdout, &mut result.stderr)
@@ -15127,9 +15350,10 @@ mod tests {
         assert!(budget.live_bytes_for_test() > 0);
         drop(future);
         assert!(jobs.try_claim(1).is_some());
-        // The caller still owns the final pipe until the ordinary cancelled
-        // request reconciliation releases its transient streaming state.
-        assert!(budget.live_bytes_for_test() > 0);
+        // Live final-stage dispatch owns its reader inside the command future.
+        // Dropping it restores the subshell and releases both endpoints at once;
+        // ordinary request reconciliation remains safe to repeat afterwards.
+        assert_eq!(budget.live_bytes_for_test(), 0);
         bash.interpreter.clear_cancelled_execution_state();
         assert!(bash.interpreter.pipe_in.is_none());
         assert_eq!(budget.live_bytes_for_test(), 0);

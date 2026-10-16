@@ -1,10 +1,9 @@
 //! In-process pipe between concurrent pipeline stages.
 //!
 //! Important decision: a pipe is a shared byte buffer, not a channel of
-//! chunks. The writing stage appends whole command outputs at command
-//! boundaries (overshooting the capacity is allowed, so a single builtin's
-//! output is never split) and then waits at its next command until the buffer
-//! drops below [`PIPE_CAPACITY`]. The reading stage pulls bytes on demand.
+//! chunks. Live commands and output pumps use strict bounded writes; buffered
+//! command paths can still append at command boundaries and wait at the next
+//! command. The reading stage pulls bytes on demand.
 //! Closing the read end makes the next append fail, which the writer turns
 //! into SIGPIPE (exit 141), like a write to a pipe with no readers.
 //!
@@ -85,10 +84,14 @@ impl Pipe {
     pub(crate) fn new_admitted(
         budget: &crate::limits::ExecutionBudget,
     ) -> crate::error::Result<Arc<Self>> {
-        let storage =
-            budget.lease_bytes(std::mem::size_of::<Self>() + 2 * std::mem::size_of::<usize>())?;
+        let storage = budget.lease_bytes(
+            std::mem::size_of::<Self>() + 2 * std::mem::size_of::<usize>() + PIPE_CAPACITY,
+        )?;
         Ok(Arc::new(Self {
-            state: Mutex::new(State::default()),
+            state: Mutex::new(State {
+                buf: Vec::with_capacity(PIPE_CAPACITY),
+                ..Default::default()
+            }),
             _metadata_storage: Some(storage),
         }))
     }
@@ -111,6 +114,37 @@ impl Pipe {
         s.buf.extend_from_slice(data);
         s.wake_reader();
         true
+    }
+
+    /// Strictly bounded writes for live command I/O. A large caller buffer
+    /// never becomes a large queued buffer, and reader close wakes the writer.
+    pub(crate) async fn write_bounded(&self, mut data: &[u8]) -> std::io::Result<()> {
+        while !data.is_empty() {
+            let written = poll_fn(|cx| {
+                let mut s = self.lock();
+                if s.read_closed {
+                    s.broken = true;
+                    return Poll::Ready(Err(std::io::Error::from(std::io::ErrorKind::BrokenPipe)));
+                }
+                let room = PIPE_CAPACITY.saturating_sub(s.available());
+                if room == 0 {
+                    s.write_waker = Some(cx.waker().clone());
+                    return Poll::Pending;
+                }
+                if s.pos > 0 {
+                    let pos = s.pos;
+                    s.buf.drain(..pos);
+                    s.pos = 0;
+                }
+                let n = data.len().min(room);
+                s.buf.extend_from_slice(&data[..n]);
+                s.wake_reader();
+                Poll::Ready(Ok(n))
+            })
+            .await?;
+            data = &data[written..];
+        }
+        Ok(())
     }
 
     /// A write hit a closed read end.
@@ -214,6 +248,25 @@ impl Drop for ReadEnd {
 mod tests {
     use super::*;
     use std::future::Future;
+
+    #[tokio::test]
+    async fn live_writes_are_bounded_and_reader_close_wakes_writer() {
+        let pipe = Pipe::new();
+        let data = vec![0u8; PIPE_CAPACITY * 8];
+        let mut write = Box::pin(pipe.write_bounded(&data));
+        let waker = futures_util::task::noop_waker();
+        let mut cx = Context::from_waker(&waker);
+        assert!(write.as_mut().poll(&mut cx).is_pending());
+        assert_eq!(pipe.lock().available(), PIPE_CAPACITY);
+        assert_eq!(pipe.lock().buf.capacity(), PIPE_CAPACITY);
+        let _ = pipe.read_some().await;
+        assert!(write.as_mut().poll(&mut cx).is_pending());
+        assert_eq!(pipe.lock().available(), PIPE_CAPACITY);
+        drop(ReadEnd(pipe.clone()));
+        assert!(
+            matches!(write.as_mut().poll(&mut cx), Poll::Ready(Err(e)) if e.kind() == std::io::ErrorKind::BrokenPipe)
+        );
+    }
 
     #[tokio::test]
     async fn read_sees_writes_then_eof() {

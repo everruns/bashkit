@@ -41,6 +41,14 @@ Safe to call at any time — the new builtin is visible to the next
 `execute*()` invocation with no interpreter rebuild or VFS disturbance.
 Survives `reset()`.
 
+### `addCommand`
+
+```typescript
+bash.addCommand(name: string, callback: CommandCallback): void
+```
+
+Register a live command with async byte I/O and separate exit status.
+
 ### `analyze`
 
 ```typescript
@@ -513,6 +521,14 @@ bashTool.addBuiltin(name: string, callback: BuiltinCallback): void
 ```
 
 Register a JS callback as a custom builtin. See `Bash.addBuiltin`.
+
+### `addCommand`
+
+```typescript
+bashTool.addCommand(name: string, callback: CommandCallback): void
+```
+
+Register a live command with async byte I/O and separate exit status.
 
 ### `analyze`
 
@@ -1298,6 +1314,7 @@ Options for creating a Bash or BashTool instance.
 
   Required for `mounts` and runtime `mount()` APIs. Mount targets must
   resolve under one of these prefixes; otherwise the call is rejected.
+- **`commands?`** — `Record<string, CommandCallback>`
 - **`customBuiltins?`** — `Record<string, BuiltinCallback>`
 
   Custom JS callbacks registered as bash builtins.
@@ -1439,6 +1456,21 @@ The environment that produced a commit.
 - **`features`** — `string[]`
 - **`fsBackend`** — `string`
 
+## CommandContext
+
+Request-scoped byte I/O for a live shell command.
+
+### Fields
+
+- **`argv`** — `string[]`
+- **`cwd`** — `string`
+- **`env`** — `Record<string, string>`
+- **`fs`** — `FileSystem`
+- **`name`** — `string`
+- **`stderr`** — `{ write:  }`
+- **`stdin`** — `AsyncIterable<Uint8Array<ArrayBufferLike>, any, any> & { readChunk:  }`
+- **`stdout`** — `{ write:  }`
+
 ## CommitOptions
 
 Options for `Bash.commit`.
@@ -1489,6 +1521,9 @@ Result from executing bash commands.
 
 ### Fields
 
+- **`capture?`** — `number`
+
+  Capture this many bytes per stream in addition to optional live sinks.
 - **`onOutput?`** — `OnOutput`
 
   Live chunk callback. Must be synchronous.
@@ -1498,6 +1533,10 @@ Result from executing bash commands.
   binding rejects same-instance re-entry to avoid deadlocks and runtime
   panics.
 - **`signal?`** — `AbortSignal`
+- **`stderr?`** — `(bytes: Uint8Array) => void | Promise<void>`
+- **`stdout?`** — `(bytes: Uint8Array) => void | Promise<void>`
+
+  Awaited byte sinks apply backpressure. Omitted capture retains no output.
 
 ## FileSystemRealOptions
 
@@ -1773,7 +1812,7 @@ Arguments of `Terminal.call`, named as in `toolDefinition()`.
 
 ### Fields
 
-- **`activity`** — `"prompt" | "continuation" | "running" | "input" | "exited"`
+- **`activity`** — `"input" | "prompt" | "continuation" | "running" | "exited"`
 
   `input`: a running command waits for a typed line (see `input_prompt`).
 - **`closed?`** — `boolean`
@@ -1873,6 +1912,12 @@ fine, so snapshots keep restoring after a bashkit upgrade adds one.
 
 ```typescript
 type CheckoutPolicy = "strict" | "superset" | "force"
+```
+
+## CommandCallback
+
+```typescript
+type CommandCallback = (ctx: CommandContext) => Promise<number | { exitCode: number }>
 ```
 
 ## ExecutionProfileName
@@ -2260,6 +2305,7 @@ Options for configuring the bash tool adapter.
 
   Required for `mounts` and runtime `mount()` APIs. Mount targets must
   resolve under one of these prefixes; otherwise the call is rejected.
+- **`commands?`** — `Record<string, CommandCallback>`
 - **`customBuiltins?`** — `Record<string, BuiltinCallback>`
 
   Custom JS callbacks registered as bash builtins.
@@ -2489,6 +2535,7 @@ Options for configuring the bash tool adapter.
 
   Required for `mounts` and runtime `mount()` APIs. Mount targets must
   resolve under one of these prefixes; otherwise the call is rejected.
+- **`commands?`** — `Record<string, CommandCallback>`
 - **`customBuiltins?`** — `Record<string, BuiltinCallback>`
 
   Custom JS callbacks registered as bash builtins.
@@ -2699,6 +2746,7 @@ Options for configuring the bash tool adapter.
 
   Required for `mounts` and runtime `mount()` APIs. Mount targets must
   resolve under one of these prefixes; otherwise the call is rejected.
+- **`commands?`** — `Record<string, CommandCallback>`
 - **`customBuiltins?`** — `Record<string, BuiltinCallback>`
 
   Custom JS callbacks registered as bash builtins.

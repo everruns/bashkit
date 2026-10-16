@@ -83,10 +83,18 @@ Example:
 ... )
 ```
 
+### `add_command`
+
+```python
+Bash.add_command(name: str, callback: CommandCallback) -> None
+```
+
+Register a live byte command; requires native async execute().
+
 ### `execute`
 
 ```python
-Bash.execute(commands: str, on_output: OutputHandler | None = None) -> ExecResult
+Bash.execute(commands: str, on_output: OutputHandler | None = None, capture: int | None = None, stdout: ByteSink | None = None, stderr: ByteSink | None = None) -> ExecResult
 ```
 
 Execute bash commands asynchronously.
@@ -649,10 +657,18 @@ bash
 '21\n21\n'
 ```
 
+### `add_command`
+
+```python
+BashTool.add_command(name: str, callback: CommandCallback) -> None
+```
+
+Register a live byte command; requires native async execute().
+
 ### `execute`
 
 ```python
-BashTool.execute(commands: str, on_output: OutputHandler | None = None) -> ExecResult
+BashTool.execute(commands: str, on_output: OutputHandler | None = None, capture: int | None = None, stdout: ByteSink | None = None, stderr: ByteSink | None = None) -> ExecResult
 ```
 
 Execute bash commands asynchronously.
@@ -1612,6 +1628,55 @@ Shell-facing result for a custom builtin callback.
 
 ```python
 BuiltinResult(stdout: str = '', stderr: str = '', exit_code: int = 0) -> None
+```
+
+## CommandContext
+
+Live command capabilities; I/O is revoked when execution ends.
+
+### Fields
+
+- **`name`** — `str`
+- **`argv`** — `list[str]`
+- **`env`** — `dict[str, str]`
+- **`cwd`** — `str`
+- **`fs`** — `FileSystem`
+- **`stdin`** — `CommandInput`
+- **`stdout`** — `CommandOutput`
+- **`stderr`** — `CommandOutput`
+
+## CommandInput
+
+Request-scoped byte reader. Clones share the cursor.
+
+### `read_chunk`
+
+```python
+CommandInput.read_chunk() -> bytes | None
+```
+
+## CommandOutput
+
+Request-scoped byte writer. Awaiting write applies backpressure.
+
+### `write`
+
+```python
+CommandOutput.write(data: bytes) -> None
+```
+
+## CommandStatus
+
+Command completion, separate from output. Native async API only.
+
+### Fields
+
+- **`exit_code`** — `int`
+
+### Constructor
+
+```python
+CommandStatus(exit_code: int = 0) -> None
 ```
 
 ## BashError

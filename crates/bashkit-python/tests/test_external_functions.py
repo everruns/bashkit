@@ -364,7 +364,8 @@ async def test_unrelated_calls_queue_while_handler_is_running(runtime):
 
 
 @pytest.mark.asyncio
-async def test_cancelling_queued_request_preserves_active_handler(runtime):
+@pytest.mark.parametrize("capture", [None, 64])
+async def test_cancelling_queued_request_preserves_active_handler(runtime, capture):
     started, released = asyncio.Event(), asyncio.Event()
 
     async def handler(name, args, kwargs):
@@ -373,9 +374,9 @@ async def test_cancelling_queued_request_preserves_active_handler(runtime):
         return {"value": 42}
 
     tool = runtime.make_tool(handler)
-    active = tool.execute(runtime.script)
+    active = tool.execute(runtime.script, capture=capture)
     await asyncio.wait_for(started.wait(), 5)
-    queued = tool.execute("echo must-not-run > /tmp/cancelled-request")
+    queued = tool.execute("echo must-not-run > /tmp/cancelled-request", capture=capture)
     queued.cancel()
     with pytest.raises(asyncio.CancelledError):
         await queued

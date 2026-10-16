@@ -27,6 +27,12 @@ revocable execution extension owns a weak NAPI threadsafe dispatcher. Completion
 timeout or cancellation drops native waits and aborts the JS session's signal.
 Host I/O must observe that signal; arbitrary application side effects cannot be
 rolled back. Request context and callbacks are never snapshot data.
+Live byte sinks and explicit capture install the same execution-local host-function
+lease as buffered calls. Both paths use the async/sync admission guard; queued
+Python/TypeScript callbacks preserve caller context and revoke their signals when
+the execution and sinks finish.
+Live sink callbacks bind an AsyncResource before crossing NAPI, preserving the
+same caller context before and after awaiting downstream work.
 
 An AsyncLocalStorage owner marker rejects same-instance callback reentry,
 including live filesystem handles, while independent async requests queue. Native

@@ -18,6 +18,8 @@ export class Bash extends glue.Bash {
     validateHandlers(options);
     super(options);
     configs.set(this, { options: { ...options }, running: false });
+    for (const [name, callback] of Object.entries(options.commands ?? {}))
+      this.addCommand(name, callback);
   }
 
   execute(commands, options = {}) {
@@ -29,9 +31,25 @@ export class Bash extends glue.Bash {
         ),
       );
     if (options.signal?.aborted)
-      return Promise.reject(new Error("execution cancelled"));
+      return Promise.reject(
+        new DOMException("execution cancelled", "AbortError"),
+      );
+    if (
+      options.onOutput &&
+      (options.signal ||
+        options.capture !== undefined ||
+        options.stdout ||
+        options.stderr)
+    )
+      return Promise.reject(
+        new TypeError(
+          "use stdout/stderr byte sinks instead of combining onOutput with live execution options",
+        ),
+      );
     const controller = new AbortController();
+    let aborted = false;
     const cancel = () => {
+      aborted = true;
       this.cancel();
       controller.abort();
     };
@@ -46,21 +64,33 @@ export class Bash extends glue.Bash {
             commands,
             createDispatcher(state.options, controller.signal),
             options.onOutput,
+            options,
           )
         : options.onOutput
           ? super.executeWithOutput(commands, options.onOutput)
-          : super.execute(commands);
+          : super.execute(commands, options);
       return result.finally(() => {
         state.running = false;
         options.signal?.removeEventListener("abort", cancel);
+        if (aborted) this.clearCancel();
         controller.abort();
       });
     } catch (error) {
       state.running = false;
       options.signal?.removeEventListener("abort", cancel);
+      if (aborted) this.clearCancel();
       controller.abort();
       return Promise.reject(error);
     }
+  }
+
+  executeSync(commands, options) {
+    if (
+      options &&
+      (options.capture !== undefined || options.stdout || options.stderr)
+    )
+      throw new TypeError("streaming I/O requires async execute()");
+    return super.executeSync(commands);
   }
 
   executeWithOutput(commands, onOutput) {

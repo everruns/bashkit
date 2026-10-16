@@ -75,6 +75,24 @@ unsafe extern "C" fn handler(data: *mut c_void, call: *mut BashkitRuntimeCall) {
                 bashkit_runtime_call_free(call);
             }
             4 => bashkit_runtime_call_free(call),
+            5 => {
+                let mut result = ptr::null_mut();
+                let mut error = ptr::null_mut();
+                let status = bashkit_execute_streaming(
+                    host.bash.load(Ordering::SeqCst),
+                    bytes(b"echo forbidden"),
+                    0,
+                    None,
+                    ptr::null_mut(),
+                    &mut result,
+                    &mut error,
+                );
+                host.reentry.store(status as u32, Ordering::SeqCst);
+                bashkit_result_free(result);
+                bashkit_error_free(error);
+                bashkit_runtime_call_respond_json(call, bytes(b"42"));
+                bashkit_runtime_call_free(call);
+            }
             _ => {
                 let mut result = ptr::null_mut();
                 let mut error = ptr::null_mut();
@@ -412,5 +430,109 @@ fn c_runtime_callbacks_preserve_hardened_python_memory_limit() {
         );
         assert!(host.requests.lock().unwrap().is_empty());
         bashkit_free(bash);
+    }
+}
+
+struct LiveOutput {
+    bytes: Vec<u8>,
+    caller: thread::ThreadId,
+    other: *mut Bashkit,
+    reentry: Option<BashkitStatus>,
+}
+unsafe extern "C" fn collect_live(data: *mut c_void, stream: u32, chunk: BashkitBytes) -> u32 {
+    unsafe {
+        let output = &mut *data.cast::<LiveOutput>();
+        if stream != 1 || thread::current().id() != output.caller {
+            return 1;
+        }
+        output.bytes.extend(view(chunk));
+        let mut result = ptr::null_mut();
+        let mut error = ptr::null_mut();
+        output.reentry = Some(bashkit_execute_streaming(
+            output.other,
+            bytes(b"echo forbidden"),
+            0,
+            None,
+            ptr::null_mut(),
+            &mut result,
+            &mut error,
+        ));
+        bashkit_result_free(result);
+        bashkit_error_free(error);
+        0
+    }
+}
+
+#[test]
+fn c_runtime_callbacks_work_with_live_output_and_capture() {
+    unsafe {
+        let mut other = ptr::null_mut();
+        let mut error = ptr::null_mut();
+        assert_eq!(
+            bashkit_create_default(&mut other, &mut error),
+            BashkitStatus::Ok
+        );
+        for mode in [0, 1, 5] {
+            let host = Host::new(mode);
+            let bash = create(&host, 5000);
+            for capture in [0, 2, 64] {
+                for script in [
+                    "python -c 'print(lookup())' | cat",
+                    "ts -c 'await lookup()' | cat",
+                ] {
+                    let mut output = LiveOutput {
+                        bytes: Vec::new(),
+                        caller: thread::current().id(),
+                        other,
+                        reentry: None,
+                    };
+                    let mut result = ptr::null_mut();
+                    assert_eq!(
+                        bashkit_execute_streaming(
+                            bash,
+                            bytes(script.as_bytes()),
+                            capture,
+                            Some(collect_live),
+                            ptr::from_mut(&mut output).cast(),
+                            &mut result,
+                            &mut error,
+                        ),
+                        BashkitStatus::Ok
+                    );
+                    assert_eq!(bashkit_result_exit_code(result), 0);
+                    assert_eq!(output.bytes, b"42\n");
+                    assert_eq!(output.reentry, Some(BashkitStatus::Busy));
+                    assert_eq!(
+                        view(bashkit_result_stdout(result)),
+                        &b"42\n"[..capture.min(3)]
+                    );
+                    assert_eq!(
+                        bashkit_result_flags(result) & BASHKIT_RESULT_STDOUT_TRUNCATED != 0,
+                        capture == 2
+                    );
+                    bashkit_result_free(result);
+                }
+            }
+            if mode == 5 {
+                assert_eq!(
+                    host.reentry.load(Ordering::SeqCst),
+                    BashkitStatus::Busy as u32
+                );
+            }
+            assert!(
+                host.requests
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .all(|(id, _)| *id == thread::current().id())
+            );
+            host.join();
+            bashkit_free(bash);
+        }
+        assert_eq!(
+            execute(other, "echo reusable"),
+            (BashkitStatus::Ok, 0, b"reusable\n".to_vec())
+        );
+        bashkit_free(other);
     }
 }

@@ -37,6 +37,32 @@ export interface BuiltinRequest {
  */
 export type CustomBuiltin = (ctx: BuiltinRequest) => string | Promise<string>;
 
+/** Live byte I/O; handles are revoked when their execution ends. */
+export interface CommandContext {
+  readonly name: string;
+  readonly argv: string[];
+  readonly env: Record<string, string>;
+  readonly cwd: string;
+  readonly fs: FileSystem;
+  readonly stdin: AsyncIterable<Uint8Array> & {
+    readChunk(): Promise<Uint8Array | null>;
+  };
+  readonly stdout: { write(bytes: Uint8Array): Promise<void> };
+  readonly stderr: { write(bytes: Uint8Array): Promise<void> };
+}
+export type CommandCallback = (
+  ctx: CommandContext,
+) => Promise<number | { exitCode: number }>;
+export interface ExecuteOptions {
+  /** Text observer; use byte sinks with capture or AbortSignal. */
+  onOutput?: (stdout: string, stderr: string) => void;
+  /** Maximum captured bytes per stream. Without capture, sinks retain no output. */
+  capture?: number;
+  stdout?: (bytes: Uint8Array) => void | Promise<void>;
+  stderr?: (bytes: Uint8Array) => void | Promise<void>;
+  signal?: AbortSignal;
+}
+
 /** Closed set of named execution-policy baselines. */
 export type ExecutionProfileName = "hardened" | "standard" | "interactive";
 
@@ -136,10 +162,6 @@ export type TypeScriptExternalHandler = (
   args: RuntimeValue[],
   context: HostFunctionContext,
 ) => RuntimeValue | undefined | Promise<RuntimeValue | undefined>;
-export interface ExecuteOptions {
-  signal?: AbortSignal;
-  onOutput?: (stdout: string, stderr: string) => void;
-}
 
 export interface BashOptions {
   /** Requires the optional /runtimes bundle; disabled by default. */
@@ -177,6 +199,8 @@ export interface BashOptions {
   fs?: HostFileSystem;
   /** JS callbacks registered as bash builtins. */
   customBuiltins?: Record<string, CustomBuiltin>;
+  /** Async live byte commands. */
+  commands?: Record<string, CommandCallback>;
 }
 
 /** Result of a bash execution. */
@@ -249,6 +273,8 @@ export class Bash {
   executeSync(commands: string): ExecResult;
   /** Execute asynchronously; supports async custom builtins. */
   execute(commands: string, options?: ExecuteOptions): Promise<ExecResult>;
+  /** Register an async byte command. */
+  addCommand(name: string, callback: CommandCallback): void;
   /** Execute asynchronously and receive incremental stdout/stderr chunks. */
   executeWithOutput(
     commands: string,
@@ -286,6 +312,7 @@ export class Bash {
 /** Options for constructing a {@link Terminal}. */
 export interface TerminalOptions extends Omit<
   BashOptions,
+  | "commands"
   | "externalFunctions"
   | "externalHandler"
   | "typescriptExternalFunctions"

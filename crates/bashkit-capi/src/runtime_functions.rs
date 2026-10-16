@@ -37,6 +37,10 @@ thread_local! { static IN_CALLBACK: Cell<bool> = const { Cell::new(false) }; }
 pub(super) fn in_callback() -> bool {
     IN_CALLBACK.get()
 }
+pub(super) fn enter_callback() -> impl Drop {
+    CallbackScope(IN_CALLBACK.replace(true))
+}
+
 struct CallbackScope(bool);
 impl Drop for CallbackScope {
     fn drop(&mut self) {
@@ -199,7 +203,7 @@ fn invoke(
         lease: lease.clone(),
         budget: context.execution_budget(),
     });
-    let _scope = CallbackScope(IN_CALLBACK.replace(true));
+    let _scope = enter_callback();
     // SAFETY: registration is host-provided and obeys the lifetime/no-unwind
     // contract. Ownership of this call transfers to that callback exactly once.
     unsafe {

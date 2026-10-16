@@ -136,6 +136,39 @@ BuiltinCallback = Callable[
     str | BuiltinResult | Awaitable[str | BuiltinResult],
 ]
 
+class CommandStatus:
+    """Command completion, separate from output. Native async API only."""
+
+    exit_code: int
+    def __init__(self, exit_code: int = 0) -> None: ...
+
+class CommandInput:
+    """Request-scoped byte reader. Clones share the cursor."""
+
+    def __aiter__(self) -> CommandInput: ...
+    async def __anext__(self) -> bytes: ...
+    async def read_chunk(self) -> bytes | None: ...
+
+class CommandOutput:
+    """Request-scoped byte writer. Awaiting write applies backpressure."""
+
+    async def write(self, data: bytes) -> None: ...
+
+class CommandContext:
+    """Live command capabilities; I/O is revoked when execution ends."""
+
+    name: str
+    argv: list[str]
+    env: dict[str, str]
+    cwd: str
+    fs: FileSystem
+    stdin: CommandInput
+    stdout: CommandOutput
+    stderr: CommandOutput
+
+CommandCallback = Callable[[CommandContext], Awaitable[CommandStatus | int]]
+ByteSink = Callable[[bytes], Awaitable[None]]
+
 class FileSystem:
     """Direct access to Bashkit's virtual filesystem or a standalone mountable FS.
 
@@ -569,7 +602,19 @@ class Bash:
         """
         ...
 
-    async def execute(self, commands: str, on_output: OutputHandler | None = None) -> ExecResult:
+    def add_command(self, name: str, callback: CommandCallback) -> None:
+        """Register a live byte command; requires native async execute()."""
+        ...
+
+    async def execute(
+        self,
+        commands: str,
+        on_output: OutputHandler | None = None,
+        *,
+        capture: int | None = None,
+        stdout: ByteSink | None = None,
+        stderr: ByteSink | None = None,
+    ) -> ExecResult:
         """Execute bash commands asynchronously.
 
         Args:
@@ -1194,7 +1239,19 @@ class BashTool:
         """
         ...
 
-    async def execute(self, commands: str, on_output: OutputHandler | None = None) -> ExecResult:
+    def add_command(self, name: str, callback: CommandCallback) -> None:
+        """Register a live byte command; requires native async execute()."""
+        ...
+
+    async def execute(
+        self,
+        commands: str,
+        on_output: OutputHandler | None = None,
+        *,
+        capture: int | None = None,
+        stdout: ByteSink | None = None,
+        stderr: ByteSink | None = None,
+    ) -> ExecResult:
         """Execute bash commands asynchronously.
 
         Async ``custom_builtins`` callbacks run on the caller's active asyncio

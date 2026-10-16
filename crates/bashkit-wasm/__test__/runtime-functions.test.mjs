@@ -267,13 +267,198 @@ if (variant === "runtimes") {
     assert.deepEqual(result.stdout.trim().split("\n"), ["42", "42"]);
   });
   test("runtime streaming reports a callback failure once without host paths", async () => {
-    const bash = new Bash({ python: true, externalFunctions: ["lookup"], externalHandler: () => 42 });
+    const bash = new Bash({
+      python: true,
+      externalFunctions: ["lookup"],
+      externalHandler: () => 42,
+    });
     let calls = 0;
-    await assert.rejects(bash.executeWithOutput("echo before; python -c 'print(lookup())'; echo after", () => {
-      calls++; throw new Error("output failed in /home/host/private.js");
-    }), (error) => /output failed/.test(error.message) && !error.message.includes("private.js"));
+    await assert.rejects(
+      bash.executeWithOutput(
+        "echo before; python -c 'print(lookup())'; echo after",
+        () => {
+          calls++;
+          throw new Error("output failed in /home/host/private.js");
+        },
+      ),
+      (error) =>
+        /output failed/.test(error.message) &&
+        !error.message.includes("private.js"),
+    );
     assert.equal(calls, 1);
     assert.equal((await bash.execute("echo reusable")).stdout, "reusable\n");
   });
 
+  for (const language of ["python", "typescript"]) {
+    const script =
+      language === "python"
+        ? "python -c 'print(lookup())'"
+        : "ts -c 'await lookup()'";
+    const runtime = (handler) =>
+      language === "python"
+        ? {
+            python: true,
+            externalFunctions: ["lookup"],
+            externalHandler: (_n, _a, _k, context) => handler(context),
+          }
+        : {
+            typescript: true,
+            typescriptExternalFunctions: ["lookup"],
+            typescriptExternalHandler: (_n, _a, context) => handler(context),
+          };
+    test(
+      `${language} host functions share live commands, byte sinks and capture`,
+      { timeout: 5000 },
+      async () => {
+        let signal;
+        const bash = new Bash({
+          ...runtime(async (context) => {
+            signal = context.signal;
+            await new Promise((resolve) => setTimeout(resolve, 1));
+            return 42;
+          }),
+          commands: {
+            async copy(ctx) {
+              for await (const bytes of ctx.stdin)
+                await ctx.stdout.write(bytes);
+              return 0;
+            },
+          },
+        });
+        for (let i = 0; i < 2; i++) {
+          const chunks = [];
+          const result = await bash.execute(`${script} | copy`, {
+            capture: 2,
+            async stdout(bytes) {
+              assert.equal(signal.aborted, false);
+              await new Promise((resolve) => setTimeout(resolve, 1));
+              assert.equal(signal.aborted, false);
+              chunks.push(bytes);
+            },
+          });
+          assert.equal(result.exitCode, 0, result.stderr);
+          assert.equal(result.stdout, "42");
+          assert.equal(result.stdoutTruncated, true);
+          assert.equal(Buffer.concat(chunks).toString(), "42\n");
+          assert.equal(signal.aborted, true);
+          bash.reset();
+        }
+      },
+    );
+    test(
+      `${language} live cancellation revokes pending host calls and permits reuse`,
+      { timeout: 5000 },
+      async () => {
+        let ready, signal;
+        const started = new Promise((resolve) => {
+          ready = resolve;
+        });
+        const bash = new Bash(
+          runtime(async (context) => {
+            signal = context.signal;
+            ready();
+            await new Promise(() => {});
+          }),
+        );
+        await assert.rejects(
+          bash.execute(script, { capture: 64, signal: AbortSignal.abort() }),
+          (error) => error.name === "AbortError",
+        );
+        assert.equal(signal, undefined);
+        const controller = new AbortController();
+        const pending = bash.execute(script, {
+          capture: 64,
+          signal: controller.signal,
+        });
+        await started;
+        controller.abort();
+        await assert.rejects(pending, /cancelled/);
+        assert.equal(signal.aborted, true);
+        assert.equal(
+          (await bash.execute("echo recovered")).stdout,
+          "recovered\n",
+        );
+      },
+    );
+    test(
+      `${language} live sink deadlines revoke the host session`,
+      { timeout: 5000 },
+      async () => {
+        let signal,
+          delivered = false;
+        const bash = new Bash({
+          ...runtime((context) => {
+            signal = context.signal;
+            return 42;
+          }),
+          timeoutMs: 200,
+        });
+        await assert.rejects(
+          bash.execute(script, {
+            stdout: async () => {
+              delivered = true;
+              assert.equal(signal.aborted, false);
+              await new Promise(() => {});
+            },
+          }),
+          /timed out|timeout|deadline/i,
+        );
+        assert.equal(delivered, true);
+        assert.equal(signal.aborted, true);
+        assert.equal(
+          (await bash.execute("echo reusable")).stdout,
+          "reusable\n",
+        );
+      },
+    );
+  }
+  test(
+    "live execution preserves each host callback caller context",
+    { timeout: 5000 },
+    async () => {
+      const request = new AsyncLocalStorage();
+      const make = () =>
+        new Bash({
+          typescript: true,
+          typescriptExternalFunctions: ["lookup"],
+          typescriptExternalHandler: async () => {
+            await new Promise((resolve) => setTimeout(resolve, 1));
+            return request.getStore();
+          },
+        });
+      const a = make(),
+        b = make();
+      const options = {
+        capture: 64,
+        async stdout() {
+          await new Promise((resolve) => setTimeout(resolve, 1));
+        },
+      };
+      const results = await Promise.all([
+        request.run("a", () => a.execute("ts -c 'await lookup()'", options)),
+        request.run("b", () => b.execute("ts -c 'await lookup()'", options)),
+      ]);
+      assert.deepEqual(
+        results.map((result) => result.stdout),
+        ["a\n", "b\n"],
+      );
+    },
+  );
+  test("text observers reject incompatible live options before host work", async () => {
+    let calls = 0;
+    const bash = new Bash({
+      python: true,
+      externalFunctions: ["lookup"],
+      externalHandler: () => ++calls,
+    });
+    await assert.rejects(
+      bash.execute("python -c 'print(lookup())'", {
+        capture: 64,
+        onOutput() {},
+      }),
+      /byte sinks/,
+    );
+    assert.equal(calls, 0);
+    assert.equal((await bash.execute("echo reusable")).stdout, "reusable\n");
+  });
 }

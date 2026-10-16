@@ -438,6 +438,18 @@ pub(crate) struct RegisteredBuiltin {
 }
 
 impl BuiltinRegistry {
+    /// Register or replace a streaming command in the live registry.
+    pub fn insert_command(&self, name: impl Into<String>, command: impl crate::Command + 'static) {
+        let name = name.into();
+        self.insert(
+            name.clone(),
+            Arc::new(crate::command::CommandAdapter {
+                name,
+                command: Arc::new(command),
+            }),
+        );
+    }
+
     /// Create an empty registry.
     pub fn new() -> Self {
         Self::default()
@@ -1118,8 +1130,7 @@ pub(crate) struct StdoutStream(std::sync::Arc<crate::interpreter::pipe::Pipe>);
 impl StdoutStream {
     /// Wait for room in the pipe, then write. False once nobody reads.
     pub(crate) async fn write(&self, data: &[u8]) -> bool {
-        self.0.writable().await;
-        self.0.write(data)
+        self.0.write_bounded(data).await.is_ok()
     }
 }
 
@@ -1351,6 +1362,11 @@ pub(crate) fn test_stream_opt(text: Option<&str>) -> Option<&'static crate::Stre
 /// or [`ExecResult::err`](crate::ExecResult::err) for errors with exit code.
 #[async_trait]
 pub trait Builtin: Send + Sync {
+    /// Internal bridge used by registered `Command` adapters.
+    #[doc(hidden)]
+    fn streams_io(&self) -> bool {
+        false
+    }
     /// Execute the builtin command.
     ///
     /// # Arguments
@@ -1711,6 +1727,9 @@ fn cap_diagnostic(mut text: String, max_bytes: usize) -> String {
 
 #[async_trait]
 impl Builtin for std::sync::Arc<dyn Builtin> {
+    fn streams_io(&self) -> bool {
+        (**self).streams_io()
+    }
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
         (**self).execute(ctx).await
     }

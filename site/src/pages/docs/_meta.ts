@@ -348,6 +348,16 @@ export const DOC_META: DocMeta[] = [
     editPath: "docs/custom_builtins_js.md",
   },
   {
+    slug: "streaming",
+    title: "Streaming commands and execution",
+    summary: "Live byte commands, async sinks, bounded capture, and runtime support.",
+    seoTitle: "Stream Bashkit commands in Rust, Python and JavaScript",
+    seoDescription:
+      "Use Bashkit streaming commands in Rust, Python and JavaScript with async byte sinks, explicit capture, migration guidance and a runtime support matrix.",
+    section: "Extending",
+    editPath: "docs/streaming.md",
+  },
+  {
     slug: "clap-builtins",
     title: "Clap builtins",
     summary: "Use clap parser structs to build typed custom commands.",
