@@ -36,6 +36,14 @@ access fails during asynchronous execution; asynchronous entry waits for any
 earlier synchronous entry to finish. Sync host calls fail explicitly;
 ordinary synchronous commands remain available. Separate worker-thread environments
 own separate dispatchers; weak references do not keep Node alive at shutdown.
+If worker termination drops the last private-runtime owner inside an async task,
+the owner uses Tokio's nonblocking shutdown instead of Runtime::drop (which
+panics in that context). Ordinary thread teardown keeps graceful runtime drop.
+A subprocess regression captures native stderr while terminating workers during
+pending and CPU-bound Python/TypeScript host callbacks; completed ScriptedTool
+worker teardown is covered too. ScriptedTool retains its synchronous callback
+ABI; force-interrupting V8 inside such a native callback frame is outside this
+async host-function shutdown contract.
 
 `runtime-functions.spec.ts` exercises real HTTP request contexts, aborts, timeout,
 queued calls, worker threads, adapters, reentry, bad values and snapshot/reset.
