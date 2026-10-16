@@ -3452,6 +3452,7 @@ impl PyCallbackEngine {
 
 struct PyCallbackSession {
     state: StdMutex<PyCallbackSessionState>,
+    cancel_requested: AtomicBool,
     active_caller_tasks: Arc<StdMutex<Vec<Py<PyAny>>>>,
     private_async_loop: Arc<PyPrivateAsyncLoop>,
     engine: Arc<PyCallbackEngine>,
@@ -3481,6 +3482,7 @@ impl PyCallbackSession {
                 needs_async_callbacks,
                 use_caller_loop,
             )?),
+            cancel_requested: AtomicBool::new(false),
             active_caller_tasks: Arc::new(StdMutex::new(Vec::new())),
             private_async_loop,
             engine,
@@ -3517,6 +3519,9 @@ impl PyCallbackSession {
     }
 
     fn cancel_active_caller_tasks(&self, py: Python<'_>) -> PyResult<()> {
+        // Python cancellation must be visible before the native bridge handles
+        // its wakeup: a queued request may acquire the shell mutex first.
+        self.cancel_requested.store(true, Ordering::Release);
         let Some(locals) = self.current_caller_loop_locals() else {
             return Ok(());
         };
@@ -3550,6 +3555,13 @@ impl PyCallbackSession {
     ) -> PyResult<Py<PyAny>> {
         let context = self.current_context(py);
         self.engine.invoke(py, &context, callback, args)
+    }
+
+    fn check_cancelled(&self) -> PyResult<()> {
+        if self.cancel_requested.load(Ordering::Acquire) {
+            return Err(Python::attach(asyncio_cancelled_error)?);
+        }
+        Ok(())
     }
 
     fn run_awaitable_on_private_loop(
@@ -4347,6 +4359,7 @@ async fn exec_bash_with_optional_output(
 ) -> PyResult<ExecResult> {
     let mut execution_extensions = ExecutionExtensions::new();
     if let Some(session) = builtin_session {
+        session.check_cancelled()?;
         let _ = execution_extensions.insert(session);
     }
 

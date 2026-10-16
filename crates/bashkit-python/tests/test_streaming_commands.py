@@ -7,6 +7,31 @@ import pytest
 from bashkit import Bash, BashTool, CommandStatus
 
 
+@pytest.mark.parametrize("factory", [Bash, BashTool])
+@pytest.mark.parametrize("capture", [None, 64])
+async def test_cancelled_queued_command_does_not_write_files(factory, capture):
+    shell = factory()
+    started, released = asyncio.Event(), asyncio.Event()
+
+    async def hold(ctx):
+        started.set()
+        await released.wait()
+        await ctx.stdout.write(b"done")
+        return CommandStatus()
+
+    shell.add_command("hold", hold)
+    active = shell.execute("hold", capture=capture)
+    await asyncio.wait_for(started.wait(), 5)
+    queued = shell.execute("echo forbidden > /tmp/cancelled-request", capture=capture)
+    queued.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await queued
+    released.set()
+    result = await asyncio.wait_for(active, 5)
+    assert result.stdout_bytes == b"done"
+    assert not shell.exists("/tmp/cancelled-request")
+
+
 @pytest.mark.parametrize("runtime", ["python", "typescript"])
 async def test_host_functions_work_with_byte_sinks(runtime):
     loop = asyncio.get_running_loop()

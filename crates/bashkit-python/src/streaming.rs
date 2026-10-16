@@ -211,6 +211,7 @@ pub(crate) async fn execute(
     stderr: Option<Py<PyAny>>,
     session: Arc<PyCallbackSession>,
 ) -> PyResult<ExecResult> {
+    session.check_cancelled()?;
     let mut extensions = ExecutionExtensions::new();
     let _ = extensions.insert(session.clone());
     let mut execution = bash

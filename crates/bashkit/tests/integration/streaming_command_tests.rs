@@ -7,6 +7,21 @@ use tokio::sync::Notify;
 
 struct Copy;
 
+#[tokio::test]
+async fn input_process_substitution_captures_streaming_producers() {
+    for script in [
+        "paste <(seq 3) <(seq 4 6)",
+        "paste <(seq 3 | copy) <(seq 4 6 | copy)",
+        "paste <(seq 3) <(seq 4 6) | copy",
+    ] {
+        let mut bash = Bash::builder().command("copy", Copy).build();
+        let result = bash.execute(script).capture(1024).await.unwrap();
+        assert_eq!(result.exit_code, 0, "{script}");
+        assert_eq!(result.stdout.as_bytes(), b"1\t4\n2\t5\n3\t6\n", "{script}");
+        assert!(result.stderr.is_empty(), "{script}");
+    }
+}
+
 struct MixedOutput;
 #[async_trait]
 impl Command for MixedOutput {

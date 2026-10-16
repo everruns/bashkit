@@ -12831,6 +12831,9 @@ impl Interpreter {
             self.enter_subshell_pid();
             self.xtrace_depth += 1;
             self.enter_nofork_scope(commands, true, 0);
+            // Input substitutions still collect into /dev/fd. Live producer
+            // bytes must stay in that capture instead of reaching outer sinks.
+            let saved_callback = self.output_callback.take();
             let mut failed = None;
             for cmd in commands {
                 match self.execute_command(cmd).await {
@@ -12849,6 +12852,7 @@ impl Interpreter {
                     }
                 }
             }
+            self.output_callback = saved_callback;
             self.restore_subshell_state(*snapshot);
             self.leave_nofork_scope();
             self.last_exit_code = last_exit_code;
