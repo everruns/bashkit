@@ -72,18 +72,54 @@ pub fn strip_errno(err: &std::io::Error) -> String {
     msg
 }
 
+/// Stand-in for `uucore::quoting_style::QuotingStyle`, carrying only the
+/// styles the vendored `format` module actually names.
+///
+/// Upstream renamed the `C_NO_QUOTES` associated constant to an `Escape`
+/// variant; both map to uucore's `CQuoter` with `CQuotesEnforce::None` and
+/// both are what `--quoting-style=escape` selects, so the rename carries no
+/// behaviour change. Both spellings live here during the window where the
+/// pinned `generated/format/` still says `C_NO_QUOTES` while the drift run
+/// regenerates it against an upstream HEAD that says `Escape` — a shim that
+/// only knew one of them would fail the drift build. Drop `C_NO_QUOTES` once
+/// the pin has moved past the rename.
 #[allow(non_camel_case_types)]
 #[derive(Clone, Copy, Debug)]
 pub enum QuotingStyle {
+    /// Upstream's pre-rename `QuotingStyle::C_NO_QUOTES`.
     C_NO_QUOTES,
+    /// Upstream's post-rename `QuotingStyle::Escape`. Same escaping.
+    Escape,
     SHELL_ESCAPE,
 }
 
+/// Style the vendored `format` module quotes a rejected numeric argument
+/// with before reporting it.
+///
+/// `printf` recovers the raw argument by re-quoting each candidate the same
+/// way and prefix-matching the diagnostic
+/// ([`crate::builtins::printf`]`::numeric_argument_diagnostics`), so the two
+/// sides must agree. Naming the style once keeps them in step across an
+/// upstream rename: the drift PR may only touch generated files, so it
+/// cannot update `printf.rs` itself.
+pub const DIAGNOSTIC_QUOTING_STYLE: QuotingStyle = QuotingStyle::Escape;
+
 pub fn locale_aware_escape_name(input: &OsStr, style: QuotingStyle) -> OsString {
     match style {
-        QuotingStyle::C_NO_QUOTES => input.to_os_string(),
+        // No C escaping: the escaped value is only ever a matching key and
+        // the text bashkit discards, never user-visible output (printf
+        // reports the raw argument, as bash does).
+        QuotingStyle::C_NO_QUOTES | QuotingStyle::Escape => input.to_os_string(),
         QuotingStyle::SHELL_ESCAPE => shell_quote(&input.to_string_lossy()).into(),
     }
+}
+
+/// Mirrors `uucore::quoting_style::locale_aware_shell_escape`, the shorthand
+/// upstream extracted for `printf %q`. Shell-escapes and returns `String`.
+pub fn locale_aware_shell_escape(input: impl AsRef<OsStr>) -> String {
+    locale_aware_escape_name(input.as_ref(), QuotingStyle::SHELL_ESCAPE)
+        .into_string()
+        .unwrap_or_else(|os| os.to_string_lossy().into_owned())
 }
 
 /// Most diagnostics one [`collect_diagnostics`] call keeps (one per bad
@@ -199,4 +235,83 @@ fn shell_quote(s: &str) -> String {
         out.push(ch);
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Upstream renamed `C_NO_QUOTES` to the `Escape` variant; both select
+    /// uucore's `CQuoter` with `CQuotesEnforce::None`, and both are what
+    /// `--quoting-style=escape` resolves to. Pin the equivalence so the two
+    /// spellings cannot drift apart while both are live.
+    #[test]
+    fn escape_and_c_no_quotes_escape_identically() {
+        for input in ["", "abc", "a\tb", "a b", "quote'd", "\u{1b}[0m"] {
+            let os = OsStr::new(input);
+            assert_eq!(
+                locale_aware_escape_name(os, QuotingStyle::C_NO_QUOTES),
+                locale_aware_escape_name(os, QuotingStyle::Escape),
+                "styles disagree on {input:?}" // debug-ok: assert-failure message
+            );
+        }
+    }
+
+    /// `locale_aware_shell_escape` is upstream's shorthand, not a second
+    /// implementation: it must agree with the style it delegates to.
+    #[test]
+    fn shell_escape_shorthand_matches_escape_name() {
+        for input in ["", "plain", "hello world", "a'b", "tab\there"] {
+            assert_eq!(
+                locale_aware_shell_escape(input),
+                locale_aware_escape_name(OsStr::new(input), QuotingStyle::SHELL_ESCAPE)
+                    .to_string_lossy(),
+                "shorthand diverged on {input:?}" // debug-ok: assert-failure message
+            );
+        }
+    }
+
+    /// `printf` reverse-matches the vendored module's numeric diagnostics by
+    /// re-quoting candidates with [`DIAGNOSTIC_QUOTING_STYLE`], so the style
+    /// the generated code names must escape the same way. A drift PR may
+    /// only touch generated files, so this scan is what makes an upstream
+    /// switch to some other style fail loudly instead of silently dropping
+    /// `printf: <arg>: invalid number`.
+    #[test]
+    fn generated_module_quotes_diagnostics_with_the_style_printf_expects() {
+        const ARGUMENT_RS: &str = include_str!("format/argument.rs");
+
+        let probe = OsStr::new("a\tb c'd");
+        let expected = locale_aware_escape_name(probe, DIAGNOSTIC_QUOTING_STYLE);
+
+        let named: Vec<&str> = ARGUMENT_RS
+            .match_indices("QuotingStyle::")
+            .map(|(i, _)| {
+                let rest = &ARGUMENT_RS[i + "QuotingStyle::".len()..];
+                let end = rest
+                    .find(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+                    .unwrap_or(rest.len());
+                &rest[..end]
+            })
+            .collect();
+        assert!(
+            !named.is_empty(),
+            "generated/format/argument.rs no longer quotes its diagnostics; \
+             printf's prefix match cannot work"
+        );
+        for name in named {
+            let style = match name {
+                "C_NO_QUOTES" => QuotingStyle::C_NO_QUOTES,
+                "Escape" => QuotingStyle::Escape,
+                "SHELL_ESCAPE" => QuotingStyle::SHELL_ESCAPE,
+                other => panic!("generated code names unknown QuotingStyle::{other}"),
+            };
+            assert_eq!(
+                locale_aware_escape_name(probe, style),
+                expected,
+                "generated code quotes with QuotingStyle::{name}, which escapes \
+                 differently from DIAGNOSTIC_QUOTING_STYLE; update printf.rs"
+            );
+        }
+    }
 }

@@ -16,7 +16,7 @@ use super::generated::format::{
     FormatArgument, FormatArguments, FormatError, FormatItem, parse_spec_and_escape,
 };
 use super::generated::format_support::{
-    QuotingStyle, collect_diagnostics, locale_aware_escape_name,
+    DIAGNOSTIC_QUOTING_STYLE, collect_diagnostics, locale_aware_escape_name,
 };
 use super::limits::PRINTF_MAX_DIAG_CHARS as MAX_PRINTF_DIAG_CHARS;
 use super::{Builtin, BuiltinSideEffect, Context, Date, MAX_FORMAT_WIDTH};
@@ -145,10 +145,9 @@ fn numeric_argument_diagnostics(diags: &[String], args: &[String]) -> (String, i
         // uucore writes `<quoted arg>: <reason>`; recover the raw argument by
         // quoting each candidate the same way.
         let Some(arg) = args.iter().find(|a| {
-            let quoted =
-                locale_aware_escape_name(OsStr::new(a.as_str()), QuotingStyle::C_NO_QUOTES)
-                    .quote()
-                    .to_string();
+            let quoted = locale_aware_escape_name(OsStr::new(a.as_str()), DIAGNOSTIC_QUOTING_STYLE)
+                .quote()
+                .to_string();
             diag.strip_prefix(quoted.as_str())
                 .is_some_and(|rest| rest.starts_with(": "))
         }) else {
@@ -968,6 +967,24 @@ mod tests {
         assert_eq!((f.as_str(), a), ("%% %s", vec!["x".to_string()]));
         let err = expand_time_directives("%(%F)T", vec![], |_, _| Err("bad".into()));
         assert_eq!(err.unwrap_err(), "bad");
+    }
+
+    /// The vendored `format` module quotes a rejected numeric argument
+    /// before reporting it, and [`numeric_argument_diagnostics`] recovers
+    /// the raw argument by re-quoting each candidate the same way. A
+    /// control character is where a style mismatch first shows: plain
+    /// `abc` escapes to itself under every style, so the
+    /// `printf_invalid_number_stderr` spec case cannot catch a
+    /// drift-induced divergence between the two sides.
+    #[test]
+    fn numeric_diagnostic_survives_control_characters_in_argument() {
+        let args = vec!["a\tb".to_string()];
+        let (_, diags) = collect_diagnostics(|| render_printf_bytes("%d", &args));
+        assert_eq!(diags.len(), 1, "uucore should reject the argument");
+        let (stderr, status) = numeric_argument_diagnostics(&diags, &args);
+        // bash 5.2 prints the argument raw, tab and all.
+        assert_eq!(stderr, "bash: printf: a\tb: invalid number\n");
+        assert_eq!(status, 1);
     }
 
     #[test]
