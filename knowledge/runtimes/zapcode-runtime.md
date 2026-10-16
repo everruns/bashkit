@@ -165,7 +165,6 @@ a hint to `help()` and `system_prompt()`:
 > File I/O via readFile()/writeFile() async functions. No npm/import/require.
 > No HTTP/network. No eval().
 
-
 ### Browser platform clocks
 
 Only wasm32-unknown-unknown uses the source copy in
