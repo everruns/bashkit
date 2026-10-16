@@ -711,6 +711,31 @@ impl BashToolBuilder {
             .builtin("python3", Box::new(Python::with_limits(limits)))
     }
 
+    /// Enable embedded Python with named asynchronous host functions.
+    ///
+    /// The handler is shared across executions; request-local state belongs in
+    /// [`crate::RuntimeCallContext`]. The Python runtime gate still applies.
+    #[cfg(feature = "python")]
+    pub fn python_with_external_handler(
+        self,
+        limits: crate::builtins::PythonLimits,
+        external_fns: Vec<String>,
+        handler: crate::builtins::PythonExternalFnHandler,
+    ) -> Self {
+        use crate::builtins::Python;
+        self.builtin(
+            "python",
+            Box::new(
+                Python::with_limits(limits.clone())
+                    .with_external_handler(external_fns.clone(), handler.clone()),
+            ),
+        )
+        .builtin(
+            "python3",
+            Box::new(Python::with_limits(limits).with_external_handler(external_fns, handler)),
+        )
+    }
+
     /// Enable embedded TypeScript/JavaScript execution via ZapCode with defaults.
     ///
     /// Requires the `typescript` feature flag.
@@ -1710,6 +1735,69 @@ mod tests {
             .unwrap_or_else(|err| panic!("execution should succeed: {err}"));
 
         assert_eq!(output.result["stdout"], "4\n");
+    }
+
+    #[cfg(feature = "python")]
+    #[tokio::test]
+    async fn test_python_host_functions_execute_through_tool() {
+        let handler: crate::PythonExternalFnHandler = Arc::new(|name, args, kwargs| {
+            Box::pin(async move {
+                assert_eq!(name, "lookup");
+                assert_eq!(args, vec![crate::MontyObject::Int(21)]);
+                assert_eq!(kwargs.len(), 1);
+                crate::ExtFunctionResult::Return(crate::MontyObject::Int(42))
+            })
+        });
+        let tool = BashTool::builder()
+            .env("BASHKIT_ALLOW_INPROCESS_PYTHON", "1")
+            .python_with_external_handler(
+                crate::PythonLimits::default(),
+                vec!["lookup".into()],
+                handler,
+            )
+            .build();
+        for command in ["python", "python3"] {
+            let mut bash = tool.create_bash();
+            let result = bash
+                .exec(&format!("{command} -c 'print(lookup(21, multiplier=2))'"))
+                .await
+                .unwrap();
+            assert_eq!(result.stdout, "42\n", "{}", result.stderr);
+            let unknown = bash
+                .exec(&format!("{command} -c 'unregistered()'"))
+                .await
+                .unwrap();
+            assert_ne!(unknown.exit_code, 0);
+        }
+    }
+
+    #[cfg(feature = "typescript")]
+    #[tokio::test]
+    async fn test_typescript_host_functions_execute_through_tool() {
+        let handler: crate::TypeScriptExternalFnHandler = Arc::new(|name, args| {
+            Box::pin(async move {
+                assert_eq!(name, "lookup");
+                assert_eq!(args, vec![crate::ZapcodeValue::Int(21)]);
+                Ok(crate::ZapcodeValue::Int(42))
+            })
+        });
+        let tool = BashTool::builder()
+            .typescript_with_external_handler(
+                crate::TypeScriptLimits::default(),
+                vec!["lookup".into()],
+                handler,
+            )
+            .build();
+        let mut bash = tool.create_bash();
+        let result = bash.exec("ts -c 'await lookup(21)'").await.unwrap();
+        assert_eq!(result.stdout, "42\n", "{}", result.stderr);
+        assert_ne!(
+            bash.exec("ts -c 'await unregistered()'")
+                .await
+                .unwrap()
+                .exit_code,
+            0
+        );
     }
 
     #[cfg(feature = "http_client")]

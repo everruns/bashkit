@@ -55,3 +55,9 @@ Cargo.lock
 
 # IDE
 .vscode-test
+
+# Runtime host-function bridge output
+runtime-functions.js
+runtime-functions.d.ts
+runtime-functions.js.map
+runtime-functions.d.ts.map

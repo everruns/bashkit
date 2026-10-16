@@ -57,6 +57,8 @@
     "wrapper.d.ts",
     "scripted.js",
     "scripted.d.ts",
+    "runtime-functions.js",
+    "runtime-functions.d.ts",
     "internal.js",
     "internal.d.ts",
     "langchain.js",

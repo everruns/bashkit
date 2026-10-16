@@ -440,7 +440,7 @@ const bash = await Bash.create({
 ### `fromSnapshot`
 
 ```typescript
-Bash.fromSnapshot(data: Uint8Array, options?: SnapshotOptions): Bash
+Bash.fromSnapshot(data: Uint8Array, snapshotOptions?: SnapshotOptions, options?: BashOptions): Bash
 ```
 
 Create a new Bash instance from a snapshot.
@@ -453,7 +453,7 @@ const restored = Bash.fromSnapshot(snapshot);
 ### `fromSnapshotKeyed`
 
 ```typescript
-Bash.fromSnapshotKeyed(data: Uint8Array, key: Uint8Array): Bash
+Bash.fromSnapshotKeyed(data: Uint8Array, key: Uint8Array, options?: BashOptions): Bash
 ```
 
 Create a new Bash instance from a HMAC-protected snapshot.
@@ -985,7 +985,7 @@ FileSystem.fromExternal(external: unknown): FileSystem
 ### `fromNative`
 
 ```typescript
-FileSystem.fromNative(nativeFs: any): FileSystem
+FileSystem.fromNative(nativeFs: any, owner?: object): FileSystem
 ```
 
 ### `real`
@@ -1331,6 +1331,7 @@ Options for creating a Bash or BashTool instance.
 
   These function names become available as Python builtins within
   the embedded interpreter. When called, they invoke the external handler.
+- **`externalHandler?`** — `ExternalHandler`
 - **`files?`** — `Record<string, FileValue>`
 
   Files to mount in the virtual filesystem.
@@ -1389,6 +1390,9 @@ Options for creating a Bash or BashTool instance.
 
   When set, commands that exceed this duration are aborted with
   exit code 124 (matching the bash `timeout` convention).
+- **`typescript?`** — `boolean`
+- **`typescriptExternalFunctions?`** — `string[]`
+- **`typescriptExternalHandler?`** — `TypeScriptExternalHandler`
 - **`username?`** — `string`
 
 ## BuiltinContext
@@ -1503,6 +1507,14 @@ Standalone filesystem handle for direct VFS operations and native addon interop.
 
 - **`allowedMountPaths`** — `string[]`
 - **`writable?`** — `boolean`
+
+## HostFunctionContext
+
+### Fields
+
+- **`signal`** — `AbortSignal`
+
+  Aborted when execution is cancelled, times out, or completes.
 
 ## NetworkCredential
 
@@ -1869,6 +1881,12 @@ type CheckoutPolicy = "strict" | "superset" | "force"
 type ExecutionProfileName = typeof ExecutionProfile[keyof typeof ExecutionProfile]
 ```
 
+## ExternalHandler
+
+```typescript
+type ExternalHandler = (name: string, args: RuntimeValue[], kwargs: Record<string, RuntimeValue>, context: HostFunctionContext) => RuntimeValue | undefined | Promise<RuntimeValue | undefined>
+```
+
 ## FileValue
 
 A file value: either a string, a sync function returning a string,
@@ -1884,6 +1902,18 @@ type FileValue = string | () => string | () => Promise<string>
 
 ```typescript
 type OnOutput = (chunk: OutputChunk) => void
+```
+
+## RuntimeValue
+
+```typescript
+type RuntimeValue = null | boolean | number | string | RuntimeValue[] | object
+```
+
+## TypeScriptExternalHandler
+
+```typescript
+type TypeScriptExternalHandler = (name: string, args: RuntimeValue[], context: HostFunctionContext) => RuntimeValue | undefined | Promise<RuntimeValue | undefined>
 ```
 
 ---
@@ -2263,6 +2293,7 @@ Options for configuring the bash tool adapter.
 
   These function names become available as Python builtins within
   the embedded interpreter. When called, they invoke the external handler.
+- **`externalHandler?`** — `ExternalHandler`
 - **`files?`** — `Record<string, string>`
 
   Pre-populate VFS files. Keys are absolute paths, values are file contents.
@@ -2336,6 +2367,9 @@ Options for configuring the bash tool adapter.
   Commands exceeding this duration are aborted with exit code 124.
   Framework-level timeouts can be propagated here to ensure bashkit
   stops execution when the framework cancels a tool call.
+- **`typescript?`** — `boolean`
+- **`typescriptExternalFunctions?`** — `string[]`
+- **`typescriptExternalHandler?`** — `TypeScriptExternalHandler`
 - **`username?`** — `string`
 
 ### HandlerOptions
@@ -2488,6 +2522,7 @@ Options for configuring the bash tool adapter.
 
   These function names become available as Python builtins within
   the embedded interpreter. When called, they invoke the external handler.
+- **`externalHandler?`** — `ExternalHandler`
 - **`files?`** — `Record<string, string>`
 
   Pre-populate VFS files. Keys are absolute paths, values are file contents.
@@ -2557,6 +2592,9 @@ Options for configuring the bash tool adapter.
   Commands exceeding this duration are aborted with exit code 124.
   Framework-level timeouts can be propagated here to ensure bashkit
   stops execution when the framework cancels a tool call.
+- **`typescript?`** — `boolean`
+- **`typescriptExternalFunctions?`** — `string[]`
+- **`typescriptExternalHandler?`** — `TypeScriptExternalHandler`
 - **`username?`** — `string`
 
 ### HandlerOptions
@@ -2694,6 +2732,7 @@ Options for configuring the bash tool adapter.
 
   These function names become available as Python builtins within
   the embedded interpreter. When called, they invoke the external handler.
+- **`externalHandler?`** — `ExternalHandler`
 - **`files?`** — `Record<string, string>`
 
   Pre-populate VFS files. Keys are absolute paths, values are file contents.
@@ -2748,4 +2787,7 @@ Options for configuring the bash tool adapter.
 
   When set, commands that exceed this duration are aborted with
   exit code 124 (matching the bash `timeout` convention).
+- **`typescript?`** — `boolean`
+- **`typescriptExternalFunctions?`** — `string[]`
+- **`typescriptExternalHandler?`** — `TypeScriptExternalHandler`
 - **`username?`** — `string`

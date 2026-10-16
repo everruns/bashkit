@@ -200,6 +200,8 @@ let help = tool.help();  // Includes a Markdown Notes section with Python hints
 The builtin's `llm_hint()` is automatically included in the tool's documentation,
 so LLMs know file I/O is VFS-scoped and HTTP requests/classes are unavailable.
 
+`BashTool::builder().python_with_external_handler(limits, names, handler)` exposes the same named callbacks through the Rust tool builder. The Python runtime gate still applies. Foreign bindings can use `bashkit::runtime_value` for bounded JSON conversion; native Rust callbacks keep their Monty value types.
+
 ## Limitations
 
 **VFS-only file I/O.** `open()` and `pathlib.Path` read/write Bashkit's virtual

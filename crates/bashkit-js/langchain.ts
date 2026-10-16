@@ -82,13 +82,15 @@ export function createBashTool(
   return new DynamicStructuredTool({
     name: bashTool.name,
     description: [
-      bashTool.shortDescription,
+      bashTool.description(),
       "Execute bash commands in a sandboxed virtual filesystem.",
       "State persists between calls. Use for file operations, text processing, and scripting.",
     ].join(" "),
     schema: bashInputSchema,
-    func: async ({ commands }: { commands: string }) => {
-      const result = bashTool.executeSync(commands);
+    func: async ({ commands }: { commands: string }, _runManager, config) => {
+      const result = await bashTool.execute(commands, {
+        signal: config?.signal,
+      });
       return formatResult(result);
     },
   });

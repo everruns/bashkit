@@ -1,3 +1,17 @@
+import {
+  assertRuntimeAccess,
+  captureRuntimeSession,
+  configureRuntimeFunctions,
+  executeNativeRuntime,
+  validateRuntimeFunctions,
+} from "./runtime-functions.js";
+import type { RuntimeFunctionOptions } from "./runtime-functions.js";
+export type {
+  ExternalHandler,
+  TypeScriptExternalHandler,
+  HostFunctionContext,
+  RuntimeValue,
+} from "./runtime-functions.js";
 import { AsyncResource } from "node:async_hooks";
 import type {
   Bash as NativeBashType,
@@ -175,7 +189,7 @@ export type BuiltinCallback = (ctx: BuiltinContext) => string | Promise<string>;
 /**
  * Options for creating a Bash or BashTool instance.
  */
-export interface BashOptions {
+export interface BashOptions extends RuntimeFunctionOptions {
   /** Named resource-policy baseline. Individual limit options override it. */
   profile?: ExecutionProfileName;
   username?: string;
@@ -508,6 +522,7 @@ function toNativeOptions(
   options?: BashOptions,
   resolvedFiles?: Record<string, string>,
 ): NativeBashOptions | undefined {
+  validateRuntimeFunctions(options);
   if (!options && !resolvedFiles) return undefined;
   return {
     username: options?.username,
@@ -530,6 +545,8 @@ function toNativeOptions(
     allowedMountPaths: options?.allowedMountPaths,
     python: options?.python,
     externalFunctions: options?.externalFunctions,
+    typescript: options?.typescript,
+    typescriptExternalFunctions: options?.typescriptExternalFunctions,
     sqlite: options?.sqlite,
     network: options?.network,
   };
@@ -569,16 +586,25 @@ export interface FileSystemRealOptions {
 }
 
 export class FileSystem {
-  private native: any;
+  private nativeValue: any;
+  private owner?: object;
+  private get native(): any {
+    if (this.owner) assertRuntimeAccess(this.owner);
+    return this.nativeValue;
+  }
+  private set native(value: any) {
+    this.nativeValue = value;
+  }
   private external?: unknown;
 
   constructor() {
     this.native = nativeCreateFileSystem();
   }
 
-  static fromNative(nativeFs: any): FileSystem {
+  static fromNative(nativeFs: any, owner?: object): FileSystem {
     const fs = Object.create(FileSystem.prototype) as FileSystem;
     fs.native = nativeFs;
+    fs.owner = owner;
     fs.external = undefined;
     return fs;
   }
@@ -760,6 +786,7 @@ export class Bash {
     const resolved = resolveFilesSync(options?.files);
     this.native = new NativeBash(toNativeOptions(options, resolved));
     this.maxInputBytes = options?.maxInputBytes ?? DEFAULT_MAX_INPUT_BYTES;
+    this.native = configureRuntimeFunctions(this.native, options);
     registerCustomBuiltins(this.native, options?.customBuiltins);
   }
 
@@ -782,6 +809,7 @@ export class Bash {
     const instance = Object.create(Bash.prototype) as Bash;
     instance.native = new NativeBash(toNativeOptions(options, resolved));
     instance.maxInputBytes = options?.maxInputBytes ?? DEFAULT_MAX_INPUT_BYTES;
+    instance.native = configureRuntimeFunctions(instance.native, options);
     registerCustomBuiltins(instance.native, options?.customBuiltins);
     return instance;
   }
@@ -886,6 +914,7 @@ export class Bash {
     commands: string,
     options?: ExecuteOptions,
   ): Promise<ExecResult> {
+    const runtimeSession = captureRuntimeSession(this.native);
     const nativeOnOutput = toNativeOnOutput(options?.onOutput);
     const signal = options?.signal;
     if (signal?.aborted) {
@@ -910,13 +939,12 @@ export class Bash {
         };
         signal.addEventListener("abort", onAbort, { once: true });
         try {
-          if (nativeOnOutput) {
-            return await this.native.executeWithOutput(
-              commands,
-              nativeOnOutput,
-            );
-          }
-          return await this.native.execute(commands);
+          return await executeNativeRuntime(
+            this.native,
+            commands,
+            nativeOnOutput,
+            runtimeSession,
+          );
         } finally {
           signal.removeEventListener("abort", onAbort);
           if (signalTriggered) {
@@ -924,11 +952,13 @@ export class Bash {
           }
         }
       }
-      if (nativeOnOutput) {
-        return this.native.executeWithOutput(commands, nativeOnOutput);
-      }
-      return this.native.execute(commands);
-    });
+      return executeNativeRuntime(
+        this.native,
+        commands,
+        nativeOnOutput,
+        runtimeSession,
+      );
+    }).finally(() => runtimeSession?.finish());
   }
 
   /**
@@ -1127,25 +1157,42 @@ export class Bash {
    * const restored = Bash.fromSnapshot(snapshot);
    * ```
    */
-  static fromSnapshot(data: Uint8Array, options?: SnapshotOptions): Bash {
-    const instance = new Bash();
+  static fromSnapshot(
+    data: Uint8Array,
+    snapshotOptions?: SnapshotOptions,
+    options?: BashOptions,
+  ): Bash {
+    const instance = Object.create(Bash.prototype) as Bash;
+    const resolved = resolveFilesSync(options?.files);
     instance.native = NativeBash.fromSnapshot(
       Buffer.from(data),
-      undefined,
-      toNativeSnapshotOptions(options),
+      toNativeOptions(options, resolved),
+      toNativeSnapshotOptions(snapshotOptions),
     );
+    instance.native = configureRuntimeFunctions(instance.native, options);
+    registerCustomBuiltins(instance.native, options?.customBuiltins);
+    instance.maxInputBytes = options?.maxInputBytes ?? DEFAULT_MAX_INPUT_BYTES;
     return instance;
   }
 
   /**
    * Create a new Bash instance from a HMAC-protected snapshot.
    */
-  static fromSnapshotKeyed(data: Uint8Array, key: Uint8Array): Bash {
-    const instance = new Bash();
+  static fromSnapshotKeyed(
+    data: Uint8Array,
+    key: Uint8Array,
+    options?: BashOptions,
+  ): Bash {
+    const instance = Object.create(Bash.prototype) as Bash;
+    const resolved = resolveFilesSync(options?.files);
     instance.native = NativeBash.fromSnapshotKeyed(
       Buffer.from(data),
       Buffer.from(key),
+      toNativeOptions(options, resolved),
     );
+    instance.native = configureRuntimeFunctions(instance.native, options);
+    registerCustomBuiltins(instance.native, options?.customBuiltins);
+    instance.maxInputBytes = options?.maxInputBytes ?? DEFAULT_MAX_INPUT_BYTES;
     return instance;
   }
 
@@ -1234,7 +1281,7 @@ export class Bash {
 
   /** Get a FileSystem handle for direct VFS operations. */
   fs(): FileSystem {
-    return FileSystem.fromNative(this.native.fs());
+    return FileSystem.fromNative(this.native.fs(), this.native);
   }
 
   mount(vfsPath: string, fs: FileSystem, readOnly?: boolean): void;
@@ -1337,6 +1384,7 @@ export class BashTool {
     const resolved = resolveFilesSync(options?.files);
     this.native = new NativeBashTool(toNativeOptions(options, resolved));
     this.maxInputBytes = options?.maxInputBytes ?? DEFAULT_MAX_INPUT_BYTES;
+    this.native = configureRuntimeFunctions(this.native, options);
     registerCustomBuiltins(this.native, options?.customBuiltins);
   }
 
@@ -1348,6 +1396,7 @@ export class BashTool {
     const instance = Object.create(BashTool.prototype) as BashTool;
     instance.native = new NativeBashTool(toNativeOptions(options, resolved));
     instance.maxInputBytes = options?.maxInputBytes ?? DEFAULT_MAX_INPUT_BYTES;
+    instance.native = configureRuntimeFunctions(instance.native, options);
     registerCustomBuiltins(instance.native, options?.customBuiltins);
     return instance;
   }
@@ -1413,6 +1462,7 @@ export class BashTool {
     commands: string,
     options?: ExecuteOptions,
   ): Promise<ExecResult> {
+    const runtimeSession = captureRuntimeSession(this.native);
     const nativeOnOutput = toNativeOnOutput(options?.onOutput);
     const signal = options?.signal;
     if (signal?.aborted) {
@@ -1437,13 +1487,12 @@ export class BashTool {
         };
         signal.addEventListener("abort", onAbort, { once: true });
         try {
-          if (nativeOnOutput) {
-            return await this.native.executeWithOutput(
-              commands,
-              nativeOnOutput,
-            );
-          }
-          return await this.native.execute(commands);
+          return await executeNativeRuntime(
+            this.native,
+            commands,
+            nativeOnOutput,
+            runtimeSession,
+          );
         } finally {
           signal.removeEventListener("abort", onAbort);
           if (signalTriggered) {
@@ -1451,11 +1500,13 @@ export class BashTool {
           }
         }
       }
-      if (nativeOnOutput) {
-        return this.native.executeWithOutput(commands, nativeOnOutput);
-      }
-      return this.native.execute(commands);
-    });
+      return executeNativeRuntime(
+        this.native,
+        commands,
+        nativeOnOutput,
+        runtimeSession,
+      );
+    }).finally(() => runtimeSession?.finish());
   }
 
   /**
@@ -1595,6 +1646,7 @@ export class BashTool {
       toNativeOptions(options, resolved),
       toNativeSnapshotOptions(snapshotOptions),
     );
+    instance.native = configureRuntimeFunctions(instance.native, options);
     registerCustomBuiltins(instance.native, options?.customBuiltins);
     instance.maxInputBytes = options?.maxInputBytes ?? DEFAULT_MAX_INPUT_BYTES;
     return instance;
@@ -1615,6 +1667,7 @@ export class BashTool {
       Buffer.from(key),
       toNativeOptions(options, resolved),
     );
+    instance.native = configureRuntimeFunctions(instance.native, options);
     registerCustomBuiltins(instance.native, options?.customBuiltins);
     instance.maxInputBytes = options?.maxInputBytes ?? DEFAULT_MAX_INPUT_BYTES;
     return instance;
@@ -1729,7 +1782,7 @@ export class BashTool {
 
   /** Get a FileSystem handle for direct VFS operations. */
   fs(): FileSystem {
-    return FileSystem.fromNative(this.native.fs());
+    return FileSystem.fromNative(this.native.fs(), this.native);
   }
 
   mount(vfsPath: string, fs: FileSystem, readOnly?: boolean): void;
