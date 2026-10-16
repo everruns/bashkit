@@ -84,7 +84,7 @@ dispatcher receives JSON language/name/args/kwargs requests. Boundary values use
 the shared bounded core codec (depth 64, signed i64, finite numbers, string-key
 objects, arrays and scalars); request/response JSON is capped at 10 MB.
 
-Each callback runs on the `bashkit_execute` caller's thread and receives ownership
+Each callback runs on the buffered or streaming execution caller's thread and receives ownership
 of a `BashkitRuntimeCall`. It can reply immediately or transfer the call to an I/O
 worker and return promptly. Responses copy JSON into library-owned storage. One
 response is accepted; invalid JSON leaves it unanswered, freeing without a
@@ -118,12 +118,17 @@ actual shared library.
 
 `bashkit_execute_streaming` is additive in ABI v1 (`streaming-output`
 capability). It runs the shared execution builder with per-stream capture and
-synchronous, borrowed byte callbacks. Return nonzero to fail the sink. No
-same-handle reentry: a thread-local callback guard rejects access before the
-state mutex. Lock-free cancellation is allowed. Lifetime synchronization and
+synchronous, borrowed byte callbacks. Return nonzero to fail the sink. Runtime
+host functions remain available through the same execution lease. Both execution
+entry points use the host-function admission guard. A thread-local callback scope
+rejects blocking APIs on any handle from output or runtime callbacks, before
+locking state or nesting a current-thread Tokio runtime. Lock-free cancellation
+is allowed. Lifetime synchronization and
 no unload/free during callbacks remain caller obligations. Native callback code
 cannot be preempted by an engine timeout. The compiled C example verifies the
 header and capture/delivery contract; ABI tests add reentry and failure recovery.
+The combined runtime test covers immediate/cross-thread replies, live sinks,
+capture/discard/truncation, caller affinity and recursive streaming entry.
 
 ## Deferred surface
 
@@ -140,7 +145,7 @@ rejection. Mount tests cover the read-only round trip, live mount/unmount with
 shell state preserved, allowlist containment at config time and runtime, and
 the sensitive-path rule (refused under a broad allowlist entry, allowed when
 the entry names the root exactly). The C example runner compiles the public
-header under C11 with warnings denied and executes three programs against the
+header under C11 with warnings denied and executes four programs against the
 built shared library.
 
 ## See also
