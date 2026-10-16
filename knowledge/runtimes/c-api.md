@@ -114,9 +114,20 @@ invalid values, abandonment and host failure. `examples/runtime_functions.c`
 compiles against the public header with warnings denied and runs against the
 actual shared library.
 
+## Streaming output callbacks
+
+`bashkit_execute_streaming` is additive in ABI v1 (`streaming-output`
+capability). It runs the shared execution builder with per-stream capture and
+synchronous, borrowed byte callbacks. Return nonzero to fail the sink. No
+same-handle reentry: a thread-local callback guard rejects access before the
+state mutex. Lock-free cancellation is allowed. Lifetime synchronization and
+no unload/free during callbacks remain caller obligations. Native callback code
+cannot be preempted by an engine timeout. The compiled C example verifies the
+header and capture/delivery contract; ABI tests add reentry and failure recovery.
+
 ## Deferred surface
 
-Custom builtins, streaming,
+Custom builtins, asynchronous shell execution,
 transport hooks, snapshots, scripted tools, and external filesystem providers
 remain outside v1. They need explicit reentrancy, callback lifetime, and dynamic
 library unload rules before becoming permanent ABI.
@@ -129,7 +140,7 @@ rejection. Mount tests cover the read-only round trip, live mount/unmount with
 shell state preserved, allowlist containment at config time and runtime, and
 the sensitive-path rule (refused under a broad allowlist entry, allowed when
 the entry names the root exactly). The C example runner compiles the public
-header under C11 with warnings denied and executes two programs against the
+header under C11 with warnings denied and executes three programs against the
 built shared library.
 
 ## See also

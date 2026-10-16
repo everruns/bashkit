@@ -132,12 +132,17 @@ anything.
 |---|---|---|
 | `name` | `string \| null` | Command name if fully literal, else `null` |
 | `args` | `(string \| null)[]` | One entry per argument; `null` when not fully literal |
-| `context` | `CommandContext` | Where the command sits |
+| `context` | `CommandPlacement` | Where the command sits |
 | `assignments` | `string[]` | Names of prefix assignments (`FOO=1 cmd`) |
 
-`CommandContext` is `Direct` (runs when the script runs), `Substitution`
+`CommandPlacement` is `Direct` (runs when the script runs), `Substitution`
 (inside `$(…)`, backticks, or process substitution), or `FunctionBody` (inside
 a function definition, so it runs only if the function is called).
+
+Rust exposes this enum as both `bashkit::CommandPlacement` and
+`bashkit::analysis::CommandPlacement`. `CommandContext` is reserved for live
+command handlers. The analysis field remains `context`, and its serialized
+values remain `direct`, `substitution` and `function_body`.
 
 ### `AnalyzedRedirect`
 
