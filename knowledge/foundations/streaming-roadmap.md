@@ -15,7 +15,11 @@ tags:
 
 Implemented the public live command boundary and explicit execution sink/capture
 policy. This is an incremental engine change; process substitutions, buffered
-utilities and legacy tool/terminal queues remain separate work. Native process
+utilities and legacy tool/terminal queues remain separate work. Input process
+substitutions suppress outer output sinks while collecting their producer bytes,
+including incremental builtins and live host commands; this preserves the
+existing buffered `/dev/fd` behavior without leaking intermediate output.
+Native process
 spawning, a browser process host, and jobs surviving `exec()` require separate
 designs; the default remains an in-process sandbox.
 
