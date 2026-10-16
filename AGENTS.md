@@ -44,6 +44,7 @@ Fix root cause. Unsure: read more code; if stuck, ask w/ short options. Unrecogn
 | operations/eval | LLM eval study on the mira framework, dataset format, scoring |
 | operations/oils-spec | Upstream Oils spec suite pass rate vs real bash (`just oils-spec`) |
 | operations/maintenance | Pre-release maintenance requirements |
+| runtimes/node-package | Native JavaScript package, runtime callbacks, caller context and worker-thread safety |
 | runtimes/python-package | Python package, PyPI wheels, platform matrix |
 | integrations/scripted-tool-orchestration | Compose ToolDef+callback pairs into OrchestratorTool via bash scripts |
 | integrations/ssh-support | Sandboxed SSH/SCP/SFTP operations |

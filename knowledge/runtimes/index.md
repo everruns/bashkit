@@ -11,3 +11,4 @@
 * [Browser Package](browser-package.md) - Slim single-threaded WebAssembly package design for browsers and JavaScript runtimes.
 * [Non-JS WebAssembly Embedding](non-js-wasm.md) - Running bashkit as a wasm component with no JS engine and no WASI, including the Hyperlight micro-VM guest.
 * [C API](c-api.md) - Versioned native C ABI, ownership rules, packaging, and compatibility boundaries.
+* [Node Package](node-package.md) - Native JavaScript bindings and embedded-runtime callback execution across Node, Bun and Deno.

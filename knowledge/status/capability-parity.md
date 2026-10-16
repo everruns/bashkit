@@ -38,9 +38,11 @@ A dash means the feature is intentionally unsupported and has a recorded reason 
 | Filesystem mounts beyond seeded virtual files | ✅ | ✅ | — | ✅ | ✅ | ✅ | — | — |
 | Snapshot and restore of interpreter state | ✅ | — | — | — | ✅ | ✅ | ✅ | — |
 | Explicit embedded Python opt-in | ✅ | ✅ | — | ✅ | ✅ | ✅ | — | — |
-| Explicit embedded TypeScript opt-in | ✅ | ✅ | — | — | ✅ | — | — | — |
+| Explicit embedded TypeScript opt-in | ✅ | ✅ | — | — | ✅ | ✅ | — | — |
 | Explicit embedded SQLite opt-in | ✅ | ✅ | — | ✅ | ✅ | ✅ | — | — |
 | In-process interactive terminal session (keystrokes in, screen text and per-command transcript out; vi, less) | ✅ | — | — | — | ✅ | ✅ | — | — |
+| Named host callbacks invoked from embedded Python | ✅ | ✅ | — | — | ✅ | ✅ | — | — |
+| Named host callbacks invoked from embedded TypeScript | ✅ | ✅ | — | — | ✅ | ✅ | — | — |
 
 ## Intentional exclusions
 
@@ -74,6 +76,8 @@ A dash means the feature is intentionally unsupported and has a recorded reason 
 - `runtime_typescript`: Language runtimes are intentionally absent from the logic-only shell.
 - `runtime_sqlite`: Language runtimes are intentionally absent from the logic-only shell.
 - `interactive_terminal`: ScriptedTool runs logic-only scripts per call and has no terminal device.
+- `host_functions_python`: Language runtimes are intentionally absent from the logic-only shell.
+- `host_functions_typescript`: Language runtimes are intentionally absent from the logic-only shell.
 
 ### CLI
 
@@ -88,6 +92,8 @@ A dash means the feature is intentionally unsupported and has a recorded reason 
 - `snapshots`: The CLI exposes no snapshot commands.
 - `runtime_typescript`: The CLI build does not register the TypeScript runtime.
 - `interactive_terminal`: The CLI's interactive mode runs on the host's real terminal (rustyline), not the in-process Terminal.
+- `host_functions_python`: A standalone process cannot receive in-process host callbacks.
+- `host_functions_typescript`: A standalone process cannot receive in-process host callbacks.
 
 ### Python
 
@@ -100,7 +106,6 @@ A dash means the feature is intentionally unsupported and has a recorded reason 
 - `stdin`: execute() accepts a command string and output callback, not top-level host stdin.
 - `host_call_suspension`: NAPI custom builtins await callbacks directly; no request and resume handle is exposed.
 - `transport_hooks`: NAPI exposes network policy and credentials but no JavaScript HttpTransport hook.
-- `runtime_typescript`: The NAPI package does not compile or expose the TypeScript runtime.
 
 ### Browser WASM
 
@@ -115,6 +120,8 @@ A dash means the feature is intentionally unsupported and has a recorded reason 
 - `runtime_typescript`: The slim browser build omits embedded language runtimes.
 - `runtime_sqlite`: The slim browser build omits embedded language runtimes.
 - `interactive_terminal`: Not exposed in the slim browser package yet.
+- `host_functions_python`: The slim browser build currently omits embedded language runtimes.
+- `host_functions_typescript`: The slim browser build currently omits embedded language runtimes.
 
 ### C ABI
 
@@ -132,6 +139,8 @@ A dash means the feature is intentionally unsupported and has a recorded reason 
 - `runtime_typescript`: ABI v1 omits embedded language runtimes.
 - `runtime_sqlite`: ABI v1 omits embedded language runtimes.
 - `interactive_terminal`: Not exposed in the C ABI.
+- `host_functions_python`: ABI v1 currently omits embedded language runtimes and runtime callback registration.
+- `host_functions_typescript`: ABI v1 currently omits embedded language runtimes and runtime callback registration.
 
 ## Enforcement
 
