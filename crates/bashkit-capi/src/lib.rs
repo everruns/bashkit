@@ -5,6 +5,9 @@
 // boundary and reports a generic error so unwinding cannot enter the foreign
 // caller and the returned error does not include panic details.
 
+mod runtime_functions;
+pub use runtime_functions::*;
+
 use bashkit::{
     Bash, Error as BashError, ExecutionLimits, FileSystem, LimitExceeded, PosixFs, RealFs,
     RealFsMode,
@@ -28,7 +31,7 @@ pub const BASHKIT_RESULT_STDERR_TRUNCATED: u32 = 1 << 1;
 
 const MAX_ERROR_BYTES: usize = 1024;
 const CAPABILITIES_JSON: &[u8] =
-    br#"{"abi":1,"features":["git","jq","vfs","realfs-mounts","cancellation"]}"#;
+    br#"{"abi":1,"features":["git","jq","vfs","realfs-mounts","cancellation","python","typescript","runtime-host-functions"]}"#;
 const VERSION: &[u8] = env!("CARGO_PKG_VERSION").as_bytes();
 
 #[repr(u32)]
@@ -42,6 +45,7 @@ pub enum BashkitStatus {
     IoError = 5,
     Unsupported = 6,
     Cancelled = 7,
+    Busy = 8,
     InternalError = 255,
 }
 
@@ -83,6 +87,7 @@ pub struct Bashkit {
     // lock: bashkit_execute holds that lock while blocked, and cancellation
     // must stay reachable — and lock-free — from any thread.
     cancelled: Arc<AtomicBool>,
+    runtime_callbacks: bool,
 }
 
 pub struct BashkitResult {
@@ -133,6 +138,14 @@ impl ApiFailure {
 #[serde(deny_unknown_fields)]
 struct ConfigV1 {
     schema_version: u32,
+    #[serde(default)]
+    python: bool,
+    #[serde(default)]
+    typescript: bool,
+    #[serde(default)]
+    external_functions: Vec<String>,
+    #[serde(default)]
+    typescript_external_functions: Vec<String>,
     #[serde(default)]
     profile: ProfileConfigV1,
     #[serde(default)]
@@ -320,7 +333,10 @@ fn apply_config_mounts(
     Ok(())
 }
 
-fn build_from_config(config: ConfigV1) -> Result<(Bash, usize, Arc<[String]>), ApiFailure> {
+fn build_from_config(
+    config: ConfigV1,
+    handler: Option<runtime_functions::Registration>,
+) -> Result<(Bash, usize, Arc<[String]>), ApiFailure> {
     if config.schema_version != 1 {
         return Err(ApiFailure::new(
             BashkitStatus::InvalidConfig,
@@ -353,6 +369,8 @@ fn build_from_config(config: ConfigV1) -> Result<(Bash, usize, Arc<[String]>), A
     limits.capture_final_env = config.capture_final_env;
     let max_input_bytes = limits.max_input_bytes;
 
+    let python_limits = profile.python_limits().clone();
+    let typescript_limits = profile.typescript_limits().clone();
     let mut builder = Bash::builder()
         .profile(profile)
         .limits(limits)
@@ -371,6 +389,45 @@ fn build_from_config(config: ConfigV1) -> Result<(Bash, usize, Arc<[String]>), A
     }
     for (path, content) in config.files {
         builder = builder.mount_text(path, content);
+    }
+    if (!config.external_functions.is_empty() || !config.typescript_external_functions.is_empty())
+        && handler.is_none()
+    {
+        return Err(ApiFailure::new(
+            BashkitStatus::InvalidConfig,
+            "external functions require a runtime handler",
+        ));
+    }
+    if (!config.external_functions.is_empty() && !config.python)
+        || (!config.typescript_external_functions.is_empty() && !config.typescript)
+    {
+        return Err(ApiFailure::new(
+            BashkitStatus::InvalidConfig,
+            "external functions require their runtime to be enabled",
+        ));
+    }
+    if config.python {
+        builder = builder.env("BASHKIT_ALLOW_INPROCESS_PYTHON", "1");
+        builder = if config.external_functions.is_empty() {
+            builder.python()
+        } else {
+            builder.python_with_external_handler(
+                python_limits,
+                config.external_functions,
+                runtime_functions::python_handler(handler.expect("validated runtime handler")),
+            )
+        };
+    }
+    if config.typescript {
+        builder = if config.typescript_external_functions.is_empty() {
+            builder.typescript()
+        } else {
+            builder.typescript_with_external_handler(
+                typescript_limits,
+                config.typescript_external_functions,
+                runtime_functions::typescript_handler(handler.expect("validated runtime handler")),
+            )
+        };
     }
     let mut bash = builder.build();
     let allowed: Arc<[String]> = Arc::from(config.allowed_mount_paths);
@@ -512,6 +569,7 @@ pub unsafe extern "C" fn bashkit_create_default(
                     allowed_mount_paths: Arc::from(Vec::<String>::new()),
                 }),
                 cancelled,
+                runtime_callbacks: false,
             };
             *out_bash = Box::into_raw(Box::new(bash));
             Ok(())
@@ -525,6 +583,15 @@ pub unsafe extern "C" fn bashkit_create_default(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn bashkit_create_json(
     config_json: BashkitBytes,
+    out_bash: *mut *mut Bashkit,
+    out_error: *mut *mut BashkitError,
+) -> BashkitStatus {
+    unsafe { create_json(config_json, None, out_bash, out_error) }
+}
+
+unsafe fn create_json(
+    config_json: BashkitBytes,
+    handler: Option<runtime_functions::Registration>,
     out_bash: *mut *mut Bashkit,
     out_error: *mut *mut BashkitError,
 ) -> BashkitStatus {
@@ -544,7 +611,8 @@ pub unsafe extern "C" fn bashkit_create_json(
                     format!("invalid configuration: {error}"),
                 )
             })?;
-            let (engine, max_input_bytes, allowed_mount_paths) = build_from_config(config)?;
+            let (engine, max_input_bytes, allowed_mount_paths) =
+                build_from_config(config, handler)?;
             let cancelled = engine.cancellation_token();
             let bash = Bashkit {
                 state: Mutex::new(State {
@@ -554,6 +622,7 @@ pub unsafe extern "C" fn bashkit_create_json(
                     allowed_mount_paths,
                 }),
                 cancelled,
+                runtime_callbacks: handler.is_some(),
             };
             *out_bash = Box::into_raw(Box::new(bash));
             Ok(())
@@ -588,9 +657,7 @@ pub unsafe extern "C" fn bashkit_execute(
         ffi_boundary(out_error, || {
             let out_result = output_slot(out_result, "out_result")?;
             let bash = handle(bash)?;
-            let mut state = bash.state.lock().map_err(|_| {
-                ApiFailure::new(BashkitStatus::InternalError, "bash instance is unavailable")
-            })?;
+            let mut state = lock_state(bash)?;
             if script.len > state.max_input_bytes {
                 return Err(ApiFailure::from_bash(BashError::ResourceLimit(
                     LimitExceeded::InputTooLarge(script.len, state.max_input_bytes),
@@ -721,14 +788,38 @@ pub unsafe extern "C" fn bashkit_result_free(result: *mut BashkitResult) {
     }));
 }
 
+fn lock_state(bash: &Bashkit) -> Result<std::sync::MutexGuard<'_, State>, ApiFailure> {
+    if runtime_functions::in_callback() {
+        return Err(ApiFailure::new(
+            BashkitStatus::Busy,
+            "blocking APIs cannot be called from a runtime handler",
+        ));
+    }
+    if bash.runtime_callbacks {
+        match bash.state.try_lock() {
+            Ok(state) => Ok(state),
+            Err(std::sync::TryLockError::WouldBlock) => Err(ApiFailure::new(
+                BashkitStatus::Busy,
+                "bash instance is busy",
+            )),
+            Err(std::sync::TryLockError::Poisoned(_)) => Err(ApiFailure::new(
+                BashkitStatus::InternalError,
+                "bash instance is unavailable",
+            )),
+        }
+    } else {
+        bash.state.lock().map_err(|_| {
+            ApiFailure::new(BashkitStatus::InternalError, "bash instance is unavailable")
+        })
+    }
+}
+
 unsafe fn with_filesystem(
     bash: *mut Bashkit,
     operation: impl FnOnce(&Runtime, &dyn FileSystem) -> Result<(), BashError>,
 ) -> Result<(), ApiFailure> {
     let bash = unsafe { handle(bash)? };
-    let state = bash.state.lock().map_err(|_| {
-        ApiFailure::new(BashkitStatus::InternalError, "bash instance is unavailable")
-    })?;
+    let state = lock_state(bash)?;
     operation(&state.runtime, state.bash.fs().as_ref()).map_err(ApiFailure::from_bash)
 }
 
@@ -768,9 +859,7 @@ pub unsafe extern "C" fn bashkit_read_file(
             let out_buffer = output_slot(out_buffer, "out_buffer")?;
             let path = input_str(path, "path")?;
             let bash = handle(bash)?;
-            let state = bash.state.lock().map_err(|_| {
-                ApiFailure::new(BashkitStatus::InternalError, "bash instance is unavailable")
-            })?;
+            let state = lock_state(bash)?;
             let bytes = state
                 .runtime
                 .block_on(state.bash.fs().read_file(Path::new(path)))
@@ -841,9 +930,7 @@ pub unsafe extern "C" fn bashkit_mount(
             let bash = handle(bash)?;
             let vfs_path = input_str(vfs_path, "vfs_path")?;
             let host_root = input_str(host_root, "host_root")?;
-            let state = bash.state.lock().map_err(|_| {
-                ApiFailure::new(BashkitStatus::InternalError, "bash instance is unavailable")
-            })?;
+            let state = lock_state(bash)?;
             let root = validate_mount_root(host_root, &state.allowed_mount_paths)?;
             let mode = if writable != 0 {
                 RealFsMode::ReadWrite
@@ -883,9 +970,7 @@ pub unsafe extern "C" fn bashkit_unmount(
         ffi_boundary(out_error, || {
             let bash = handle(bash)?;
             let vfs_path = input_str(vfs_path, "vfs_path")?;
-            let state = bash.state.lock().map_err(|_| {
-                ApiFailure::new(BashkitStatus::InternalError, "bash instance is unavailable")
-            })?;
+            let state = lock_state(bash)?;
             state
                 .bash
                 .unmount(Path::new(vfs_path))

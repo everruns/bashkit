@@ -378,8 +378,8 @@ jobs:
       # The C ABI mount-root guard is Windows-conditional, so the Linux
       # workspace test run compiles it out. Nothing else runs bashkit-capi's
       # tests on Windows, which left them never executing anywhere.
-      - name: Test C ABI mount-root validation
-        run: cargo test -p bashkit-capi --lib
+      - name: Test C ABI mount-root validation and runtime callbacks
+        run: cargo test -p bashkit-capi --lib --test runtime_functions
 
   # The adoption shape this covers — bashkit as an agent's shell, with commands
   # bridged to host processes — exists to work on Windows without a real bash.

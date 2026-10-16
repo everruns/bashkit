@@ -29,6 +29,18 @@ pub fn validate(value: &Value) -> Result<()> {
             Value::Number(n) if n.is_u64() && n.as_i64().is_none() => Err(Error::Execution(
                 "host integers must fit in signed 64 bits".into(),
             )),
+            // serde_json falls back to f64 for integer literals beyond i64/u64.
+            // Reject those rounded boundary values instead of changing an
+            // oversized integer into a different floating-point value.
+            Value::Number(n)
+                if n.is_f64()
+                    && n.as_f64()
+                        .is_some_and(|v| v >= i64::MAX as f64 || v <= i64::MIN as f64) =>
+            {
+                Err(Error::Execution(
+                    "host numbers exceed signed 64-bit range".into(),
+                ))
+            }
             Value::Array(values) => values.iter().try_for_each(|v| walk(v, depth + 1)),
             Value::Object(values) => values.values().try_for_each(|v| walk(v, depth + 1)),
             _ => Ok(()),
@@ -39,9 +51,11 @@ pub fn validate(value: &Value) -> Result<()> {
 
 #[cfg(any(feature = "python", feature = "typescript"))]
 fn number(value: f64) -> Result<Value> {
-    serde_json::Number::from_f64(value)
+    let value = serde_json::Number::from_f64(value)
         .map(Value::Number)
-        .ok_or_else(|| Error::Execution("host numbers must be finite".into()))
+        .ok_or_else(|| Error::Execution("host numbers must be finite".into()))?;
+    validate(&value)?;
+    Ok(value)
 }
 
 /// Encode a Python value as JSON, rejecting unsupported objects.
@@ -187,6 +201,10 @@ mod tests {
         assert!(validate(&nested).is_err());
         assert!(validate(&Value::from(u64::MAX)).is_err());
         assert!(validate(&Value::from(i64::MAX)).is_ok());
+        assert!(validate(&Value::from(i64::MIN)).is_ok());
+        for source in ["-9223372036854775809", "18446744073709551616", "1e30"] {
+            assert!(validate(&serde_json::from_str::<Value>(source).unwrap()).is_err());
+        }
     }
 
     #[cfg(feature = "python")]

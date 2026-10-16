@@ -609,6 +609,7 @@ All unexpected errors are caught and converted to safe, human-readable messages.
 | Binary output bypasses resource limits (TM-INT-009) | Invalid UTF-8 exceeds configured caps when counted as text | Byte-native accumulation and callbacks truncate by exact byte length | **MITIGATED** |
 | Invalid UTF-8 line input panics (TM-INT-010) | `read`/`select` apply a lossy-text newline offset to raw pipeline bytes | Line consumers find and split newlines in the authoritative byte buffer | **MITIGATED** |
 | Command resolver panic (TM-INT-011) | Unresolved command name triggers a panic in embedder resolver code | `catch_unwind` wrapper and sanitized shell error | **MITIGATED** |
+| C runtime callback lifetime (TM-INT-012) | A delayed reply targets a later request, or callback reentry blocks a locked handle | Owned calls, copied bounded JSON and one-shot revocable execution leases reject stale replies; callback-enabled handles return BUSY for concurrent blocking access. Hosts must preserve code/user-data lifetime and free calls without racing use | **MITIGATED** |
 
 **Panic Recovery:**
 

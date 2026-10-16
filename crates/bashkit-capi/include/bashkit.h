@@ -25,6 +25,7 @@ typedef struct bashkit Bashkit;
 typedef struct bashkit_result BashkitResult;
 typedef struct bashkit_error BashkitError;
 typedef struct bashkit_buffer BashkitBuffer;
+typedef struct bashkit_runtime_call BashkitRuntimeCall;
 
 typedef struct {
     const uint8_t *ptr;
@@ -40,6 +41,8 @@ typedef uint32_t BashkitStatus;
 #define BASHKIT_IO_ERROR 5u
 #define BASHKIT_UNSUPPORTED 6u
 #define BASHKIT_CANCELLED 7u
+#define BASHKIT_BUSY 8u
+#define BASHKIT_MAX_RUNTIME_VALUE_BYTES 10000000u
 #define BASHKIT_INTERNAL_ERROR 255u
 
 /* Static views returned by these functions remain valid for process lifetime. */
@@ -61,6 +64,42 @@ BASHKIT_API BashkitStatus bashkit_execute(
     BashkitBytes script,
     BashkitResult **out_result,
     BashkitError **out_error);
+
+/* Embedded runtime callbacks (capability runtime-host-functions).
+   Config schema v1 adds python/typescript booleans, external_functions and
+   typescript_external_functions arrays. Names require an enabled runtime and
+   this constructor's non-NULL handler. One dispatcher receives both languages.
+
+   handler runs on bashkit_execute's caller thread and must return promptly.
+   It receives OWNERSHIP of call: respond/fail and free it once, or transfer it
+   to another thread and return. Request JSON contains language, name, args,
+   and kwargs for Python. JSON values are bounded to 64 nesting levels, finite
+   numbers and signed 64-bit integers. No arbitrary language objects.
+
+   respond_json copies input; invalid input leaves the call unanswered. Exactly
+   one response is accepted. Late replies return CANCELLED. Poll cancelled to
+   stop host I/O after timeout/cancel; free an unanswered call to fail promptly.
+   Every call must be freed, including cancelled calls. View validity ends at
+   call_free. Respond/query may run concurrently, but never race call_free.
+
+   Blocking handle APIs called from a handler return BUSY, including on another
+   handle (nested current-thread runtimes are forbidden). Callback-enabled
+   handles return BUSY for concurrent blocking operations. cancel/clear_cancel
+   and runtime_call_* stay available. Queue other work after handler returns.
+
+   handler/user_data must remain valid through handle lifetime and executions.
+   Never unwind/longjmp through the callback or free a Bashkit during use. The
+   shared library must stay loaded until all handles/results/calls are freed. */
+typedef void (*BashkitRuntimeHandlerV1)(void *user_data, BashkitRuntimeCall *call);
+BASHKIT_API BashkitStatus bashkit_create_with_runtime_handler_v1(
+    BashkitBytes config_json, BashkitRuntimeHandlerV1 handler, void *user_data,
+    Bashkit **out_bash, BashkitError **out_error);
+BASHKIT_API BashkitBytes bashkit_runtime_call_request(const BashkitRuntimeCall *call);
+BASHKIT_API uint32_t bashkit_runtime_call_cancelled(const BashkitRuntimeCall *call);
+BASHKIT_API BashkitStatus bashkit_runtime_call_respond_json(
+    BashkitRuntimeCall *call, BashkitBytes value);
+BASHKIT_API BashkitStatus bashkit_runtime_call_fail(BashkitRuntimeCall *call);
+BASHKIT_API void bashkit_runtime_call_free(BashkitRuntimeCall *call);
 
 /* Cancellation requires the `cancellation` capability. Both are lock-free and
    safe to call from any thread while bashkit_execute is blocked on the same
