@@ -120,6 +120,80 @@ defaults, independent runtime selection, metadata, sync/async execution, shared
 VFS, reset, keyed/unkeyed snapshot factories, framework forwarding, invalid
 programs, and rejection of script-only Python opt-in.
 
+### Embedded runtime host functions
+
+`BashTool` exposes Python `external_functions` / `external_handler`, matching
+`Bash`; handlers are async `(name, args, kwargs)` callables. TypeScript has
+separate `typescript_external_functions` / `typescript_external_handler`
+kwargs on `BashTool`, with an async `(name, args)` callable. Both are forwarded
+by LangChain and deepagents. Language selection and the explicit `BashTool`
+Python host-env grant remain mandatory; handlers grant no other runtime access.
+Names appear in tool metadata; hosts supply their function signatures.
+
+Decision: use the existing `PyCallbackEngine` / per-execution
+`PyCallbackSession` via `RuntimeCallContext` request extensions. Do not cache
+caller event loops on handlers or derive them on a Tokio worker. Each async
+execution schedules handlers on its caller's loop and captures that request's
+ContextVars. Sync execution uses the instance's dedicated private-loop worker;
+this includes FastAPI sync endpoints, ordinary threads and synchronous notebook
+cells. A client owned by an outer loop requires async execution instead.
+`Bash.execute_sync()` now supports external handlers through this same engine.
+Deepagents provides native coroutine implementations for backend `aexecute`
+and middleware `ainvoke` rather than offloading sync execution to a thread.
+
+Same-instance calls serialize on the existing interpreter mutex. Reentry
+protection uses a per-instance ContextVar set inside the handler task, not an
+instance-wide activity counter: recursive interpreter/live-FS access fails
+immediately, while unrelated requests can queue during callback I/O. Other
+interpreter instances are usable from a handler. Private-loop work items carry
+their own cancellation state/task handle so timeout/revocation cancels that
+item even if it has not started; cancelling an old item cannot cancel the next
+request on the shared loop. Worker teardown retains the interpreter-exit guard.
+
+Native result delivery has an additional exit boundary in `src/async_bridge.rs`.
+Decision: retain upstream `pyo3-async-runtimes` cancellation, panic and task-local
+behavior through its generic runtime interface, while enrolling blocking result
+deliveries under a shared shutdown lock. A weak registry first closes private
+loop creation, cancels outstanding private callbacks and joins their workers
+while Python is still attachable. This also drains timeout-cancellation cleanup;
+setting only an exit flag leaves a worker already inside Python racing finalization.
+The atexit hook then closes result-delivery enrollment and
+releases the GIL until enrolled deliveries finish releasing Python references.
+Without that drain, `call_soon_threadsafe` can wake Python, which exits while
+the native worker still owns attached references; CPython can destroy its thread
+state before tuple cleanup, causing a native crash. Future deliveries skip Python
+after the boundary closes. The deterministic subprocess test delays a native
+delivery after publishing the result and checks Bash, BashTool and ScriptedTool;
+parallel subprocess churn also exercises immediate exit after runtime callbacks.
+Another deterministic test delays cancellation cleanup in private callbacks for
+custom builtins, embedded Python and TypeScript, then immediately exits.
+
+A per-instance count of active handlers on each Python thread protects sync
+entry points too: another task on the handler's own loop cannot synchronously
+wait for the interpreter lock without deadlocking that loop. Those sync calls
+fail fast with an async/to-thread hint; async calls and sync callers on other
+threads still queue. The subprocess regression bounds a native deadlock and
+checks retained live-FS handles as well as execution and snapshot APIs. Guards
+skip Python lookups entirely when no external handlers are configured.
+
+Callbacks are host configuration: preserved on reset/in-place restore, supplied
+again to keyed/unkeyed snapshot factories, never serialized. Both native
+external-handler kwargs fail loudly on Pyodide. TypeScript conversions accept
+JSON-shaped values, map undefined to None, cap nesting at 64, and reject function
+inputs, non-finite numbers, unsupported outputs and integers outside i64.
+Use a final expression or VFS output after TypeScript host calls; upstream
+ZapCode does not retain post-suspension console.log output.
+
+Regression evidence: `tests/test_external_functions.py` shares execution-model
+coverage across Python/TypeScript (sync/async, multiple threads, successive loops,
+Selector/uvloop, callback cancellation, timeout/reuse, reentry, mixed builtins,
+FastAPI and framework invocation). `tests/test_typescript_external_functions.py`
+covers direct TypeScript dispatch/conversion and both languages sharing the VFS.
+`examples/runtime_external_functions.ipynb` runs in a real Jupyter kernel in CI.
+Python CI uses a thread-based per-test watchdog so a native deadlock cannot
+leave a runner hanging indefinitely. It runs the callback suite on macOS/Windows in addition to the Linux
+3.9–3.14 matrix; the Windows default tests Proactor and explicit Selector loops.
+
 ### Runtime host mutations
 
 `set_env()` and runtime `mount()` are recorded and replayed on every rebuild,
@@ -270,7 +344,7 @@ invocation regardless of mechanism.
 ## Optional Dependencies
 
 `bashkit[langchain]`, `bashkit[deepagents]`, `bashkit[pydantic-ai]`,
-`bashkit[dev]` (pytest, pytest-asyncio).
+`bashkit[dev]` (pytest, pytest-asyncio, pytest-timeout).
 
 ## Deep Agents backend
 

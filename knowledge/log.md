@@ -1,5 +1,9 @@
 # Bashkit Knowledge Update Log
 
+## 2026-10-16
+
+* **Python / agent integrations**: Added Python and TypeScript host function callbacks to `BashTool`, LangChain and deepagents. Reuse per-execution callback sessions for caller-loop affinity, ContextVars and cancellation; sync execution uses the dedicated private worker loop. Reentry is callback-context-specific so independent requests queue safely. Private-loop timeout cancellation now targets its own work item; native result deliveries drain before interpreter finalization to prevent a shutdown race. Added FastAPI, real Jupyter, alternate-loop and cross-thread regression coverage plus macOS/Windows callback CI. See [Python Package](runtimes/python-package.md).
+
 ## 2026-10-15
 
 * **npm publication**: The 0.19.0 browser upload returned a staged-version E409, but public registry read-back showed the version and `latest` tag. Both npm lanes now publish one retained archive and require its SHA-512 integrity plus the intended public dist-tag. Only the specific staged conflict enters bounded verification; authentication errors and private or mismatched artifacts still fail. See [Release Process](operations/release-process.md).

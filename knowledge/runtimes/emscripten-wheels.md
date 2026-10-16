@@ -50,7 +50,7 @@ no caller-loop).
 Absent on wasm: async `execute()` / `execute_or_throw()` (methods absent),
 `FileSystem.real()` / capsule `to/from_capsule` (methods absent). Gated-off
 *configuration* kwargs, `network=`, `sqlite=True`, `mounts=`,
-`external_handler=`, **fail loudly** with `RuntimeError` at construction
+`external_handler=` / `typescript_external_handler=`, **fail loudly** with `RuntimeError` at construction
 rather than silently no-op, so callers learn immediately the WASM build
 can't do it.
 

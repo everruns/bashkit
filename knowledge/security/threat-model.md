@@ -1969,6 +1969,29 @@ re-entering Python no longer race the caller's GIL hold.
 **TM-PY-027** (mitigated): see table. Coverage:
 `tests/_security_advanced.py::JsonConversionBoundariesTests`.
 
+Python-package external handlers now share the lease-bound callback sessions
+used by custom builtins. Pending private-loop tasks have per-work-item
+cancellation: a timeout cancels that callback instead of leaving host I/O running
+until tool teardown, without cancelling the next request on the shared loop.
+Reentry detection follows the handler's ContextVar (including child tasks), so
+concurrent unrelated requests can queue without gaining recursive live-VFS
+access. Evidence: `test_external_functions.py` timeout/reuse, queued requests,
+caller-loop/context, cancellation and retained-FS-handle regressions, shared
+across embedded Python and TypeScript. TypeScript value conversion is bounded
+at 64 levels and rejects functions and non-JSON host values before execution
+continues (`test_typescript_external_functions.py`).
+
+Native async result deliveries enroll before entering Python. The atexit hook
+first closes private-loop creation, cancels callbacks and joins private workers
+while Python is still attachable, including callbacks unwinding after timeout.
+It then closes enrollment and drains already-enrolled deliveries with the GIL released;
+new deliveries skip Python. This prevents a worker's post-publication reference
+cleanup racing CPython finalization, which can otherwise segfault after a fully
+awaited execution. `test_teardown_determinism.py::test_exit_waits_for_native_result_delivery_to_return`
+forces this window for Bash, BashTool and ScriptedTool (TM-PY-030).
+`test_exit_drains_private_callback_cancellation` forces cancellation cleanup to
+overlap process exit for custom builtins and both embedded runtimes.
+
 **TM-PY-030** (mitigated): three crash/deadlock variants in the async-callback
 private-loop machinery (`crates/bashkit-python/src/lib.rs`), resolved by a
 deterministic teardown protocol and root-cause channel fix. (1) `PyPrivateAsyncLoop::run_awaitable`
