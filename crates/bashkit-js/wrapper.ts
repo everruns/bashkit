@@ -5,7 +5,10 @@ import {
   executeNativeRuntime,
   validateRuntimeFunctions,
 } from "./runtime-functions.js";
-import type { RuntimeFunctionOptions } from "./runtime-functions.js";
+import type {
+  RuntimeFunctionOptions,
+  RuntimeSession,
+} from "./runtime-functions.js";
 export type {
   ExternalHandler,
   TypeScriptExternalHandler,
@@ -60,8 +63,10 @@ const NativeTerminal: typeof NativeTerminalType = native.Terminal;
 const nativeGetVersion: () => string = native.getVersion;
 const nativeCommandReadChunk: (input: unknown) => Promise<Uint8Array | null> =
   native.__commandReadChunk;
-const nativeCommandWrite: (output: unknown, bytes: Uint8Array) => Promise<void> =
-  native.__commandWrite;
+const nativeCommandWrite: (
+  output: unknown,
+  bytes: Uint8Array,
+) => Promise<void> = native.__commandWrite;
 const nativeCreateFileSystem: () => any = native.__createFileSystem;
 const nativeRealFileSystem: (
   hostPath: string,
@@ -845,15 +850,19 @@ function executeNative(
   native: NativeBashType | NativeBashToolType,
   commands: string,
   options?: ExecuteOptions,
+  runtimeSession?: RuntimeSession,
 ): Promise<ExecResult> {
   if (!hasLiveOptions(options))
-    return native
-      .execute(commands)
-      .finally(() => liveSinkOwners.delete(native));
+    return executeNativeRuntime(
+      native,
+      commands,
+      toNativeOnOutput(options?.onOutput),
+      runtimeSession,
+    ).finally(() => liveSinkOwners.delete(native));
   const wrap = (sink?: (bytes: Uint8Array) => void | Promise<void>) =>
     sink === undefined
       ? undefined
-      : async ([bytes]: [Uint8Array]) => {
+      : AsyncResource.bind(async ([bytes]: [Uint8Array]) => {
           const release = enterLiveOwner(native);
           try {
             await sink(bytes);
@@ -862,13 +871,14 @@ function executeNative(
           } finally {
             release();
           }
-        };
+        });
   return native
     .executeLive(
       commands,
       options?.capture,
       wrap(options?.stdout),
       wrap(options?.stderr),
+      runtimeSession?.dispatch,
     )
     .finally(() => liveSinkOwners.delete(native));
 }
@@ -1092,7 +1102,6 @@ export class Bash {
       throw new Error("host callbacks cannot re-enter the same Bash instance");
     validateLiveOptions(options);
     const runtimeSession = captureRuntimeSession(this.native);
-    const nativeOnOutput = toNativeOnOutput(options?.onOutput);
     const signal = options?.signal;
     if (signal?.aborted) {
       return cancelledExecResult();
@@ -1116,10 +1125,10 @@ export class Bash {
         };
         signal.addEventListener("abort", onAbort, { once: true });
         try {
-          return await executeNativeRuntime(
+          return await executeNative(
             this.native,
             commands,
-            nativeOnOutput,
+            options,
             runtimeSession,
           );
         } finally {
@@ -1129,12 +1138,7 @@ export class Bash {
           }
         }
       }
-      return executeNativeRuntime(
-        this.native,
-        commands,
-        nativeOnOutput,
-        runtimeSession,
-      );
+      return executeNative(this.native, commands, options, runtimeSession);
     }).finally(() => runtimeSession?.finish());
   }
 
@@ -1655,7 +1659,6 @@ export class BashTool {
       throw new Error("host callbacks cannot re-enter the same Bash instance");
     validateLiveOptions(options);
     const runtimeSession = captureRuntimeSession(this.native);
-    const nativeOnOutput = toNativeOnOutput(options?.onOutput);
     const signal = options?.signal;
     if (signal?.aborted) {
       return cancelledExecResult();
@@ -1679,10 +1682,10 @@ export class BashTool {
         };
         signal.addEventListener("abort", onAbort, { once: true });
         try {
-          return await executeNativeRuntime(
+          return await executeNative(
             this.native,
             commands,
-            nativeOnOutput,
+            options,
             runtimeSession,
           );
         } finally {
@@ -1692,12 +1695,7 @@ export class BashTool {
           }
         }
       }
-      return executeNativeRuntime(
-        this.native,
-        commands,
-        nativeOnOutput,
-        runtimeSession,
-      );
+      return executeNative(this.native, commands, options, runtimeSession);
     }).finally(() => runtimeSession?.finish());
   }
 

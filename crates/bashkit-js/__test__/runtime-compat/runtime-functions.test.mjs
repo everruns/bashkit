@@ -38,6 +38,22 @@ for (const Factory of [Bash, BashTool]) {
         results.map((r) => r.stdout),
         ["first\n", "second\n"],
       );
+      for (const capture of [undefined, 64]) {
+        const chunks = [];
+        const live = await context.run("live", () =>
+          bash.execute(`${command} | cat`, {
+            capture,
+            stdout: async (bytes) => {
+              await new Promise((resolve) => setTimeout(resolve, 1));
+              assert.equal(context.getStore(), "live");
+              chunks.push(new TextDecoder().decode(bytes));
+            },
+          }),
+        );
+        assert.equal(live.exitCode, 0, live.stderr);
+        assert.equal(chunks.join(""), "live\n");
+        assert.equal(live.stdout, capture === undefined ? "" : "live\n");
+      }
       assert.notEqual(bash.executeSync(command).exitCode, 0);
       bash.reset();
       assert.equal(

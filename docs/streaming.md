@@ -134,6 +134,10 @@ console.assert(result.exitCode === 0);
 return a Promise resolving to an integer or `{exitCode}`. Native `BashTool`
 supports the same options.
 
+Configured [Python and TypeScript host functions](start-node.md#python-and-typescript-host-functions)
+remain available with byte sinks and explicit capture. Their handlers retain
+the caller's async context and receive an execution-scoped abort signal.
+
 Sinks receive `Uint8Array` and may return `void` or a Promise; return the
 Promise when your destination needs time to consume a chunk. Use
 `stdin.readChunk()` to read a chunk or `null` at EOF, and

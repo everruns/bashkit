@@ -56,6 +56,83 @@ for (const language of ["python", "typescript"] as const) {
       t.deepEqual(seen, [["lookup", [21], { multiplier: 2 }]]);
     });
 
+    for (const capture of [undefined, 64]) {
+      test(`${Factory.name}: ${language} live sinks preserve queued runtime sessions (capture=${capture})`, async (t) => {
+        const signals: AbortSignal[] = [];
+        const bash = new Factory(
+          options(async (_name, _args, _kwargs, ctx) => {
+            signals.push(ctx.signal);
+            const before = request.getStore();
+            await delay(2);
+            t.is(request.getStore(), before);
+            return before;
+          }),
+        );
+        const results = await Promise.all(
+          Array.from({ length: 3 }, (_, i) =>
+            request.run(String(i), async () => {
+              const chunks: string[] = [];
+              const result = await bash.execute(`${call} | cat`, {
+                capture,
+                stdout: async (bytes) => {
+                  const before = request.getStore();
+                  t.is(before, String(i));
+                  await delay(2);
+                  t.is(request.getStore(), before);
+                  chunks.push(new TextDecoder().decode(bytes));
+                },
+              });
+              t.is(result.exitCode, 0, result.stderr);
+              t.is(result.stdout, capture === undefined ? "" : `${i}\n`);
+              return chunks.join("");
+            }),
+          ),
+        );
+        t.deepEqual(results, ["0\n", "1\n", "2\n"]);
+        t.is(signals.length, 3);
+        t.true(signals.every((signal) => signal.aborted));
+      });
+    }
+
+    test(`${Factory.name}: ${language} live cancellation revokes host work and permits reuse`, async (t) => {
+      let started!: () => void;
+      const ready = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      let hostSignal: AbortSignal | undefined;
+      const bash = new Factory(
+        options(async (_name, _args, _kwargs, ctx) => {
+          hostSignal = ctx.signal;
+          started();
+          await new Promise((_resolve, reject) =>
+            ctx.signal.addEventListener(
+              "abort",
+              () => reject(new Error("cancelled")),
+              { once: true },
+            ),
+          );
+        }),
+      );
+      const controller = new AbortController();
+      const active = bash.execute(call, {
+        capture: 64,
+        stdout: async () => {},
+        signal: controller.signal,
+      });
+      await ready;
+      controller.abort();
+      t.not((await active).exitCode, 0);
+      t.true(hostSignal!.aborted);
+      const chunks: string[] = [];
+      const result = await bash.execute("echo reusable", {
+        stdout: (bytes) => {
+          chunks.push(new TextDecoder().decode(bytes));
+        },
+      });
+      t.is(result.exitCode, 0, result.stderr);
+      t.is(chunks.join(""), "reusable\n");
+    });
+
     test(`${Factory.name}: ${language} callbacks retain queued request contexts`, async (t) => {
       const bash = new Factory(
         options(async () => {

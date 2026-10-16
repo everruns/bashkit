@@ -1984,7 +1984,7 @@ impl Bash {
     }
 
     #[napi(
-        ts_args_type = "commands: string, capture?: number, stdout?: (pair: [Uint8Array]) => Promise<void>, stderr?: (pair: [Uint8Array]) => Promise<void>"
+        ts_args_type = "commands: string, capture?: number, stdout?: (pair: [Uint8Array]) => Promise<void>, stderr?: (pair: [Uint8Array]) => Promise<void>, dispatcher?: (request: string) => Promise<string>"
     )]
     pub fn execute_live<'env>(
         &self,
@@ -2005,8 +2005,19 @@ impl Bash {
                 napi::bindgen_prelude::Promise<()>,
             >,
         >,
+        dispatcher: Option<
+            napi::bindgen_prelude::Function<'env, String, napi::bindgen_prelude::Promise<String>>,
+        >,
     ) -> napi::Result<napi::bindgen_prelude::PromiseRaw<'env, ExecResult>> {
-        streaming::execute(env, self.state.clone(), commands, capture, stdout, stderr)
+        streaming::execute(
+            env,
+            self.state.clone(),
+            commands,
+            capture,
+            stdout,
+            stderr,
+            dispatcher,
+        )
     }
 
     /// Register a JS callback as a custom bash builtin.
@@ -2855,7 +2866,7 @@ impl BashTool {
     }
 
     #[napi(
-        ts_args_type = "commands: string, capture?: number, stdout?: (pair: [Uint8Array]) => Promise<void>, stderr?: (pair: [Uint8Array]) => Promise<void>"
+        ts_args_type = "commands: string, capture?: number, stdout?: (pair: [Uint8Array]) => Promise<void>, stderr?: (pair: [Uint8Array]) => Promise<void>, dispatcher?: (request: string) => Promise<string>"
     )]
     pub fn execute_live<'env>(
         &self,
@@ -2876,8 +2887,19 @@ impl BashTool {
                 napi::bindgen_prelude::Promise<()>,
             >,
         >,
+        dispatcher: Option<
+            napi::bindgen_prelude::Function<'env, String, napi::bindgen_prelude::Promise<String>>,
+        >,
     ) -> napi::Result<napi::bindgen_prelude::PromiseRaw<'env, ExecResult>> {
-        streaming::execute(env, self.state.clone(), commands, capture, stdout, stderr)
+        streaming::execute(
+            env,
+            self.state.clone(),
+            commands,
+            capture,
+            stdout,
+            stderr,
+            dispatcher,
+        )
     }
 
     /// Register a buffered JS builtin. See [`Bash::add_builtin`].

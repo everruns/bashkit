@@ -110,17 +110,24 @@ pub(super) fn execute<'env>(
     capture: Option<u32>,
     stdout: Option<Function<'env, (Uint8Array,), Promise<()>>>,
     stderr: Option<Function<'env, (Uint8Array,), Promise<()>>>,
+    dispatcher: Option<Function<'env, String, Promise<String>>>,
 ) -> napi::Result<PromiseRaw<'env, ExecResult>> {
     reject_on_output_reentry(&state)?;
+    let extensions = dispatcher
+        .map(runtime_functions::extensions)
+        .transpose()?
+        .unwrap_or_default();
     let stdout = sink(stdout)?;
     let stderr = sink(stderr)?;
     env.spawn_future(async move {
         if let Some(result) = validate_async_execute_input(&state, &commands) {
             return Ok(result);
         }
-        let _slot = acquire_async_execute_slot(&state)?;
+        let _slot = acquire_async_execute_slot(&state).await?;
         let mut bash = state.inner.lock().await;
-        let mut execution = bash.execute(&commands);
+        let mut execution = bash
+            .execute(&commands)
+            .options(bashkit::ExecOptions::new().extensions(extensions));
         if let Some(limit) = capture {
             execution = execution.capture(limit as usize);
         }

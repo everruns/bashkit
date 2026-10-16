@@ -102,6 +102,19 @@ pub(super) fn typescript_handler() -> TypeScriptExternalFnHandler {
     })
 }
 
+// Both buffered and live execution must install the same request-local lease.
+pub(super) fn extensions(
+    dispatcher: Function<'_, String, Promise<String>>,
+) -> napi::Result<bashkit::ExecutionExtensions> {
+    let dispatcher = Arc::new(
+        dispatcher
+            .build_threadsafe_function::<String>()
+            .weak::<true>()
+            .build()?,
+    );
+    Ok(bashkit::ExecutionExtensions::new().with(Arc::new(RuntimeSession { dispatcher })))
+}
+
 pub(super) fn execute<'env>(
     state: Arc<super::SharedState>,
     commands: String,
@@ -110,14 +123,8 @@ pub(super) fn execute<'env>(
 ) -> napi::Result<PromiseRaw<'env, super::ExecResult>> {
     super::reject_on_output_reentry(&state)?;
     let env = dispatcher.value().env;
-    let dispatcher = Arc::new(
-        dispatcher
-            .build_threadsafe_function::<String>()
-            .weak::<true>()
-            .build()?,
-    );
+    let extensions = extensions(dispatcher)?;
     let output = on_output.map(super::create_output_tsfn).transpose()?;
-    let session = Arc::new(RuntimeSession { dispatcher });
     let promise = napi::bindgen_prelude::execute_tokio_future(
         env,
         async move {
@@ -126,7 +133,6 @@ pub(super) fn execute<'env>(
             }
             let _slot = super::acquire_async_execute_slot(&state).await?;
             let mut bash = state.inner.lock().await;
-            let extensions = bashkit::ExecutionExtensions::new().with(session);
             let cancelled = bash.cancellation_token();
             let requested = Arc::new(std::sync::atomic::AtomicBool::new(false));
             let output = output.map(|tsfn| {
