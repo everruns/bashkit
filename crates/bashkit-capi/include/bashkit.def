@@ -3,16 +3,17 @@ EXPORTS
     bashkit_abi_version
     bashkit_buffer_bytes
     bashkit_buffer_free
+    bashkit_cancel
     bashkit_capabilities_json
+    bashkit_clear_cancel
     bashkit_create_default
     bashkit_create_json
+    bashkit_create_with_runtime_handler_v1
     bashkit_error_code
     bashkit_error_free
     bashkit_error_message
     bashkit_execute
     bashkit_execute_streaming
-    bashkit_cancel
-    bashkit_clear_cancel
     bashkit_free
     bashkit_mkdir
     bashkit_mount
@@ -24,6 +25,11 @@ EXPORTS
     bashkit_result_free
     bashkit_result_stderr
     bashkit_result_stdout
+    bashkit_runtime_call_cancelled
+    bashkit_runtime_call_fail
+    bashkit_runtime_call_free
+    bashkit_runtime_call_request
+    bashkit_runtime_call_respond_json
     bashkit_unmount
     bashkit_version
     bashkit_write_file
