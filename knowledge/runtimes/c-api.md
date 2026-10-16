@@ -73,6 +73,7 @@ and defaults to deny on credential paths.
   incompatibly.
 - Opaque layouts may change at any time.
 - Additive functions and status values are allowed.
+- Windows import libraries are generated from `include/bashkit.def`. Every public header function and Rust C entry point must be listed there; `scripts/tests/test_capi_exports.py` enforces the complete inventory, including runtime callback APIs.
 - Breaking changes require a parallel ABI major.
 
 ## Embedded runtime host functions
