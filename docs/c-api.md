@@ -153,10 +153,13 @@ engine cannot preempt native callback code.
 callback still receives all delivered bytes when capture truncates. A null
 callback discards delivery. Free the final result normally. See the runnable
 [streaming C example](../crates/bashkit-capi/examples/streaming.c).
+Runtime host functions configured on the handle also work with streaming
+execution, including replies completed from another thread.
 
 Callbacks must not call blocking APIs on any handle; same-thread reentry is
-rejected rather than waiting on a mutex or nesting runtimes. Cross-thread calls that wait for a callback to return
-must not be joined from that callback. Lock-free `bashkit_cancel()` is permitted. Do not
+rejected rather than waiting on a mutex or nesting runtimes. Cross-thread calls
+that wait for a callback to return must not be joined from that callback.
+Lock-free `bashkit_cancel()` is permitted. Do not
 free the handle or unload the library while execution or a callback is active.
 Independent handles may run concurrently. Cancellation cannot roll back host
 side effects already performed by a callback.

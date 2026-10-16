@@ -740,9 +740,7 @@ pub unsafe extern "C" fn bashkit_execute_streaming(
             let out_result = output_slot(out_result, "out_result")?;
             let handle_id = bash as usize;
             let instance = handle(bash)?;
-            let mut state = instance.state.lock().map_err(|_| {
-                ApiFailure::new(BashkitStatus::InternalError, "bash instance is unavailable")
-            })?;
+            let mut state = lock_state(instance)?;
             if script.len > state.max_input_bytes {
                 return Err(ApiFailure::from_bash(BashError::ResourceLimit(
                     LimitExceeded::InputTooLarge(script.len, state.max_input_bytes),
@@ -758,6 +756,9 @@ pub unsafe extern "C" fn bashkit_execute_streaming(
             if let Some(callback) = callback {
                 let emit = move |stream, bytes: Vec<u8>| async move {
                     let _guard = OutputCallbackGuard::enter(handle_id);
+                    // Output callbacks obey the same no-nested-runtime rule
+                    // as embedded host functions, including other handles.
+                    let _callback = runtime_functions::enter_callback();
                     let status = callback(
                         context as *mut c_void,
                         stream,
@@ -903,7 +904,7 @@ fn lock_state(bash: &Bashkit) -> Result<std::sync::MutexGuard<'_, State>, ApiFai
     if runtime_functions::in_callback() {
         return Err(ApiFailure::new(
             BashkitStatus::Busy,
-            "blocking APIs cannot be called from a runtime handler",
+            "blocking APIs cannot be called from a callback",
         ));
     }
     if bash.runtime_callbacks {
