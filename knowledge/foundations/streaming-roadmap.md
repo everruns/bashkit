@@ -75,10 +75,18 @@ commands for fairness; buffered synchronous APIs retain their single-poll model.
 
 Native Python and NAPI JS expose live commands and async byte sinks on Bash and
 BashTool; JS/WASM uses the same core on its cooperative executor. C ABI exposes
-output-only synchronous callbacks. CLI oneshot/interactive output uses the new
-builder. The [public support matrix](../../docs/streaming.md) explicitly keeps
-Bun/Deno/edge hosts, Terminal, Rust informational tool queues, reduced Pyodide,
-WASI embeddings and Hyperlight out of unverified parity claims. Process
+output-only synchronous callbacks.
+
+NAPI command I/O uses type-checked opaque `External` handles, matching the
+filesystem boundary. Read/write entry points clone Rust capabilities on the JS
+thread before spawning futures; pending I/O does not borrow generated JS class
+instances. Forged and mismatched handles reject before execution. This removes
+the generated class pointer-conversion paths flagged by CodeQL.
+
+CLI oneshot/interactive output uses the new builder. The
+[public support matrix](../../docs/streaming.md) distinguishes verified native
+and JS/WASM APIs from the remaining tool/Terminal, Pyodide, WASI and Hyperlight
+limitations and host-specific edge verification. Process
 substitutions are still buffered; the audit below records the original baseline
 and remaining roadmap. New tests live in core `streaming_command_tests`, Python
 `test_streaming_commands.py`, NAPI `streaming-commands.spec.ts`, WASM
