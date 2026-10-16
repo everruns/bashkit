@@ -217,7 +217,12 @@ def test_sync_access_cannot_block_an_active_handler_loop(runtime):
             assert (await queued).stdout == "queued\\n"
         asyncio.run(main())
     """)
-    result = subprocess.run([sys.executable, "-c", code, runtime.name], capture_output=True, text=True, timeout=8)
+    # Wheel CI runs from the Python package directory. Match the parent's
+    # import paths so the source checkout cannot shadow the installed wheel.
+    preamble = "import sys; sys.path[:0] = %r\n" % [p for p in sys.path if p]
+    result = subprocess.run(
+        [sys.executable, "-c", preamble + code, runtime.name], capture_output=True, text=True, timeout=8
+    )
     assert result.returncode == 0, result.stdout + result.stderr
 
 
