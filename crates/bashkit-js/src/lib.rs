@@ -521,6 +521,42 @@ impl Default for NativeFileSystemState {
     }
 }
 
+// Opaque, type-checked handles use the same boundary as the filesystem API.
+// Clone Rust capabilities on the JS thread before spawning: pending I/O never
+// borrows a JS class instance whose lifetime is controlled by garbage collection.
+#[napi(js_name = "__commandReadChunk")]
+pub fn command_read_chunk<'env>(
+    env: &'env Env,
+    input: &External<bashkit::CommandInput>,
+) -> napi::Result<napi::bindgen_prelude::PromiseRaw<'env, Option<napi::bindgen_prelude::Uint8Array>>>
+{
+    let input = (**input).clone();
+    env.spawn_future(async move {
+        input
+            .read_chunk()
+            .await
+            .map(|b| b.map(napi::bindgen_prelude::Uint8Array::new))
+            .map_err(|e| napi::Error::from_reason(e.to_string()))
+    })
+}
+
+#[napi(js_name = "__commandWrite")]
+pub fn command_write<'env>(
+    env: &'env Env,
+    output: &External<bashkit::CommandOutput>,
+    bytes: napi::bindgen_prelude::Uint8Array,
+) -> napi::Result<napi::bindgen_prelude::PromiseRaw<'env, ()>> {
+    // Snapshot mutable JS bytes before returning its Promise.
+    let bytes = bytes.to_vec();
+    let output = (**output).clone();
+    env.spawn_future(async move {
+        output
+            .write_all(&bytes)
+            .await
+            .map_err(|e| napi::Error::from_reason(e.to_string()))
+    })
+}
+
 #[napi(js_name = "__createFileSystem")]
 pub fn create_file_system() -> External<NativeFileSystemState> {
     External::new(NativeFileSystemState::new())

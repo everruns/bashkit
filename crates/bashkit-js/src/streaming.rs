@@ -5,41 +5,6 @@ use super::*;
 use bashkit::{Command, CommandContext, CommandInput, CommandOutput, CommandStatus};
 use napi::bindgen_prelude::{Function, Promise, PromiseRaw, Uint8Array};
 
-// Opaque, type-checked handles use the same boundary as the filesystem API.
-// Clone Rust capabilities on the JS thread before spawning: pending I/O never
-// borrows a JS class instance whose lifetime is controlled by garbage collection.
-#[napi(js_name = "__commandReadChunk")]
-pub fn read_chunk<'env>(
-    env: &'env Env,
-    input: &External<CommandInput>,
-) -> napi::Result<PromiseRaw<'env, Option<Uint8Array>>> {
-    let input = (**input).clone();
-    env.spawn_future(async move {
-        input
-            .read_chunk()
-            .await
-            .map(|b| b.map(Uint8Array::new))
-            .map_err(|e| napi::Error::from_reason(e.to_string()))
-    })
-}
-
-#[napi(js_name = "__commandWrite")]
-pub fn write<'env>(
-    env: &'env Env,
-    output: &External<CommandOutput>,
-    bytes: Uint8Array,
-) -> napi::Result<PromiseRaw<'env, ()>> {
-    // Snapshot mutable JS bytes before returning its Promise.
-    let bytes = bytes.to_vec();
-    let output = (**output).clone();
-    env.spawn_future(async move {
-        output
-            .write_all(&bytes)
-            .await
-            .map_err(|e| napi::Error::from_reason(e.to_string()))
-    })
-}
-
 type CommandArgs = (
     String,
     External<NativeFileSystemState>,
