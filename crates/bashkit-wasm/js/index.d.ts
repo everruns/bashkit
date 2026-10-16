@@ -35,9 +35,7 @@ export interface BuiltinRequest {
  * `Promise` of it. Async callbacks are only awaited by {@link Bash.execute}
  * (not `executeSync`). Throwing / rejecting becomes stderr with exit code 1.
  */
-export type CustomBuiltin = (
-  ctx: BuiltinRequest,
-) => string | Promise<string>;
+export type CustomBuiltin = (ctx: BuiltinRequest) => string | Promise<string>;
 
 /** Closed set of named execution-policy baselines. */
 export type ExecutionProfileName = "hardened" | "standard" | "interactive";
@@ -116,7 +114,43 @@ export interface HostFileSystem {
 }
 
 /** Options for constructing a {@link Bash} instance. */
+/** Values shared by Python, TypeScript and the browser host (depth <= 64). */
+export type RuntimeValue =
+  | null
+  | boolean
+  | number
+  | string
+  | RuntimeValue[]
+  | { [key: string]: RuntimeValue };
+export interface HostFunctionContext {
+  signal: AbortSignal;
+}
+export type ExternalHandler = (
+  name: string,
+  args: RuntimeValue[],
+  kwargs: Record<string, RuntimeValue>,
+  context: HostFunctionContext,
+) => RuntimeValue | undefined | Promise<RuntimeValue | undefined>;
+export type TypeScriptExternalHandler = (
+  name: string,
+  args: RuntimeValue[],
+  context: HostFunctionContext,
+) => RuntimeValue | undefined | Promise<RuntimeValue | undefined>;
+export interface ExecuteOptions {
+  signal?: AbortSignal;
+  onOutput?: (stdout: string, stderr: string) => void;
+}
+
 export interface BashOptions {
+  /** Requires the optional /runtimes bundle; disabled by default. */
+  python?: boolean;
+  /** Requires the optional /runtimes bundle; disabled by default. */
+  typescript?: boolean;
+  externalFunctions?: string[];
+  externalHandler?: ExternalHandler;
+  typescriptExternalFunctions?: string[];
+  typescriptExternalHandler?: TypeScriptExternalHandler;
+
   /** Resource-policy baseline; individual limit options override it. */
   profile?: ExecutionProfileName;
   username?: string;
@@ -214,7 +248,7 @@ export class Bash {
    */
   executeSync(commands: string): ExecResult;
   /** Execute asynchronously; supports async custom builtins. */
-  execute(commands: string): Promise<ExecResult>;
+  execute(commands: string, options?: ExecuteOptions): Promise<ExecResult>;
   /** Execute asynchronously and receive incremental stdout/stderr chunks. */
   executeWithOutput(
     commands: string,
@@ -250,7 +284,13 @@ export class Bash {
 }
 
 /** Options for constructing a {@link Terminal}. */
-export interface TerminalOptions extends BashOptions {
+export interface TerminalOptions extends Omit<
+  BashOptions,
+  | "externalFunctions"
+  | "externalHandler"
+  | "typescriptExternalFunctions"
+  | "typescriptExternalHandler"
+> {
   /** Rows (default 24, min 2). */
   rows?: number;
   /** Columns (default 80, min 2). */
@@ -259,8 +299,7 @@ export interface TerminalOptions extends BashOptions {
 
 /** Result of {@link Terminal.runUntilIdle}. */
 export type TerminalStatus =
-  | { status: "idle" }
-  | { status: "exited"; exitCode: number };
+  { status: "idle" } | { status: "exited"; exitCode: number };
 
 /**
  * Interactive bash session on an in-memory terminal: keystrokes in,

@@ -1,7 +1,7 @@
 // Manual browser experiment. CI gates deterministic bytes/semantics, not noisy wall time.
 // Supply PLAYWRIGHT_MODULE when Playwright is installed outside this workspace.
 import { createServer } from "node:http";
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { brotliCompressSync, constants } from "node:zlib";
@@ -19,7 +19,8 @@ const conditions = {
 };
 const routes = new Map();
 packages.forEach((pkg, i) => {
-  for (const file of ["index.js", "bashkit_wasm.js", "bashkit_wasm_bg.wasm"]) {
+  for (const file of ["index.js", "runtime-functions.js", "bashkit_wasm.js", "bashkit_wasm_bg.wasm"]) {
+    if (!existsSync(resolve(pkg, file))) continue;
     routes.set(`/${i}/${file}`, { type: file.endsWith("wasm") ? "application/wasm" : "text/javascript",
       bytes: brotliCompressSync(readFileSync(resolve(pkg, file)), { params: { [constants.BROTLI_PARAM_QUALITY]: 11 } }) });
   }

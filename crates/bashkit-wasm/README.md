@@ -259,7 +259,7 @@ filesystem there is no built-in VFS underneath to supply it.
 
 Plain bash plus the built-in text tooling (`grep`, `sed`, `awk`, `jq`, `find`,
 …) and `jq`. Not included in the browser build: outbound HTTP (`curl`/`wget`),
-`ssh`, `sqlite`, and embedded `python`, these need sockets, threads, or a host
+`ssh` and `sqlite`, these need sockets, threads, or a host
 filesystem the browser sandbox doesn't provide. Bridge to the network through a
 custom builtin (see above) so requests go through your app's own `fetch`.
 
@@ -320,3 +320,16 @@ node crates/bashkit-wasm/bench/artifact.mjs crates/bashkit-wasm/pkg --check
 
 The [browser benchmark methodology](https://github.com/everruns/bashkit/blob/main/crates/bashkit-wasm/bench/README.md) describes reproducible
 cold-start and execution experiments and the measured profile tradeoff.
+
+## Optional Python/TypeScript and host functions
+
+Import `@everruns/bashkit-wasm/runtimes` for the runtime-enabled single-threaded
+bundle; the default import stays slim. Enable `python`/`typescript` explicitly
+and pass `externalFunctions`/`externalHandler` (Python) or
+`typescriptExternalFunctions`/`typescriptExternalHandler` (TypeScript).
+Callbacks support JSON values and an execution-local AbortSignal. Use async
+`Bash.execute`, with one active execution per instance. See the
+[host function guide](../../docs/start-browser.md#python-and-typescript-host-functions).
+
+Build both variants with `scripts/build.sh release`, followed by
+`BASHKIT_WASM_VARIANT=runtimes BASHKIT_WASM_FEATURES=terminal,python,typescript scripts/build.sh release`.

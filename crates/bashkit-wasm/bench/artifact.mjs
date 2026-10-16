@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import { gzipSync, brotliCompressSync, constants } from "node:zlib";
 
 export function artifact(pkg) {
-  const files = ["index.js", "bashkit_wasm.js", "bashkit_wasm_bg.wasm"].map(name => {
+  const files = ["index.js", "runtime-functions.js", "bashkit_wasm.js", "bashkit_wasm_bg.wasm"].filter(name => existsSync(resolve(pkg, name))).map(name => {
     const bytes = readFileSync(resolve(pkg, name));
     return { name, sha256: createHash("sha256").update(bytes).digest("hex"), raw: bytes.length,
       gzip: gzipSync(bytes, { level: 9 }).length,

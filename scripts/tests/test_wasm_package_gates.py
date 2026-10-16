@@ -31,6 +31,7 @@ class WasmPackageGatesTests(unittest.TestCase):
             script = root / "crates/bashkit-wasm/scripts/build-info.mjs"
             script.parent.mkdir(parents=True)
             shutil.copy(ROOT / "crates/bashkit-wasm/scripts/build-info.mjs", script)
+            (script.parent.parent / "package.json").write_text('{"version":"1.2.3"}')
             pkg = root / "pkg"
             pkg.mkdir()
             (pkg / "package.json").write_text('{"version":"1.2.3"}')

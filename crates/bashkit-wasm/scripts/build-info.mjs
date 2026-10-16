@@ -22,7 +22,7 @@ try {
   // from the package version; CI/release checkouts always have both fields.
 }
 const info = {
-  version: JSON.parse(readFileSync(resolve(pkg, "package.json"))).version,
+  version: JSON.parse(readFileSync(new URL("../package.json", import.meta.url))).version,
   sourceRevision,
   sourceDirty,
   profile,

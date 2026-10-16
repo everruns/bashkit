@@ -207,7 +207,7 @@
     },
     "browser_wasm": {
       "label": "Browser WASM",
-      "supported": ["execution_limits", "cancellation", "deadlines", "output_caps", "cwd", "env", "custom_builtins", "virtual_filesystem", "snapshots"],
+      "supported": ["execution_limits", "cancellation", "deadlines", "output_caps", "cwd", "env", "custom_builtins", "virtual_filesystem", "snapshots", "runtime_python", "runtime_typescript", "host_functions_python", "host_functions_typescript", "interactive_terminal"],
       "evidence": {
         "execution_limits": ["crates/bashkit-wasm/__test__/bashkit-wasm.test.mjs#options: maxLoopIterations bounds runaway loops"],
         "cancellation": ["crates/bashkit-wasm/__test__/bashkit-wasm.test.mjs#cancel aborts in-flight work and remains sticky until clearCancel"],
@@ -217,7 +217,12 @@
         "env": ["crates/bashkit-wasm/__test__/bashkit-wasm.test.mjs#options: env and cwd"],
         "custom_builtins": ["crates/bashkit-wasm/__test__/bashkit-wasm.test.mjs#reset preserves registered custom builtins"],
         "virtual_filesystem": ["crates/bashkit-wasm/__test__/bashkit-wasm.test.mjs#bash.fs() returns a live handle"],
-        "snapshots": ["crates/bashkit-wasm/__test__/bashkit-wasm.test.mjs#commit and checkout restore persistent state"]
+        "snapshots": ["crates/bashkit-wasm/__test__/bashkit-wasm.test.mjs#commit and checkout restore persistent state"],
+        "runtime_python": ["crates/bashkit-wasm/__test__/runtime-functions.test.mjs#both browser runtimes share VFS"],
+        "runtime_typescript": ["crates/bashkit-wasm/__test__/runtime-functions.test.mjs#both browser runtimes share VFS"],
+        "host_functions_python": ["crates/bashkit-wasm/__test__/runtime-functions.test.mjs#browser host functions, reset and VFS"],
+        "host_functions_typescript": ["crates/bashkit-wasm/__test__/runtime-functions.test.mjs#browser host functions, reset and VFS"],
+        "interactive_terminal": ["crates/bashkit-wasm/__test__/terminal.test.mjs#terminal: vi edits a VFS file"]
       },
       "unsupported": {
         "runtime_env": "The slim wasm package exposes no post-construction host mutation API; env is construction-only.",
@@ -227,12 +232,7 @@
         "network_policy": "The slim browser build has no network builtin or host socket access.",
         "transport_hooks": "The slim browser build has no HTTP transport.",
         "mounts": "Browser WASM exposes one in-memory VFS and no host filesystem mounts.",
-        "runtime_python": "The slim browser build omits embedded language runtimes.",
-        "runtime_typescript": "The slim browser build omits embedded language runtimes.",
-        "runtime_sqlite": "The slim browser build omits embedded language runtimes.",
-        "interactive_terminal": "Not exposed in the slim browser package yet.",
-        "host_functions_python": "The slim browser build currently omits embedded language runtimes.",
-        "host_functions_typescript": "The slim browser build currently omits embedded language runtimes."
+        "runtime_sqlite": "The slim browser build omits embedded language runtimes."
       }
     },
     "c_abi": {

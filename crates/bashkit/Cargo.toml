@@ -156,7 +156,6 @@ monty-types = { version = "=0.0.19", optional = true }
 get-size2 = { version = "=0.10.1", optional = true }
 
 # Embedded TypeScript interpreter (optional)
-zapcode-core = { version = "1.5.1", optional = true }
 
 # Embedded SQLite engine via Turso (optional, BETA upstream).
 # Pulls a multi-MB transitive dep tree only when the `sqlite` feature is active.
@@ -273,7 +272,7 @@ cpython = ["dep:bashkit-cpython-wasm", "dep:wasmtime"]
 cpython-native = ["cpython", "bashkit-cpython-wasm/native"]
 # Enable ts/node/deno/bun builtins via embedded ZapCode TypeScript interpreter
 # Usage: cargo build --features typescript
-typescript = ["dep:zapcode-core"]
+typescript = ["dep:zapcode-core", "dep:oxc_parser", "dep:oxc_ast", "dep:oxc_allocator", "dep:oxc_span", "dep:oxc_syntax", "dep:postcard", "dep:indexmap", "indexmap/serde", "serde/rc"]
 # Enable sqlite/sqlite3 builtins backed by Turso (pure-Rust SQLite-compatible
 # engine). Phase 1 uses turso's `MemoryIO` with a load/flush against the VFS
 # at command boundaries; Phase 2 plugs the bashkit VFS in via a custom `IO`
@@ -435,6 +434,14 @@ tokio = { version = "1", features = ["rt-multi-thread", "fs"] }
 web-time = { workspace = true, optional = true }
 
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+# Vendored browser ZapCode uses the same parser/codec versions as upstream.
+oxc_parser = { version = "0.117.0", optional = true }
+oxc_ast = { version = "0.117.0", optional = true }
+oxc_allocator = { version = "0.117.0", optional = true }
+oxc_span = { version = "0.117.0", optional = true }
+oxc_syntax = { version = "0.117.0", optional = true }
+postcard = { version = "1.1.3", features = ["alloc"], optional = true }
+
 gloo-timers = { version = "0.4", features = ["futures"], optional = true }
 send_wrapper = { version = "0.6", features = ["futures"], optional = true }
 # Task spawner for the host-call execution driver (see host_call.rs). JS-backed
@@ -455,3 +462,6 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("i18n-deci
 # on the workspace Tokio feature set without changing versions or the lock.
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 tokio = { workspace = true, features = ["process"] }
+
+[target.'cfg(not(all(target_arch = "wasm32", target_os = "unknown")))'.dependencies]
+zapcode-core = { version = "1.5.1", optional = true }

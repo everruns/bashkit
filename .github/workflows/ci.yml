@@ -89,6 +89,9 @@ jobs:
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
 
+      - name: Check browser VM source drift
+        run: python3 scripts/check_zapcode_browser.py
+
       - name: Check bashkit for wasm32-unknown-unknown
         run: cargo check -p bashkit -p bashkit-scripted-tool --target wasm32-unknown-unknown --features bashkit/jq,bashkit/wasm_js,bashkit/terminal
         env:
@@ -166,6 +169,17 @@ jobs:
 
       - name: Integration tests (headless Node)
         run: node --test "crates/bashkit-wasm/__test__/*.test.mjs"
+
+      - name: Build optional runtime bundle
+        run: BASHKIT_WASM_VARIANT=runtimes BASHKIT_WASM_FEATURES=terminal,python,typescript bash crates/bashkit-wasm/scripts/build.sh release
+
+      - name: Embedded runtime callback tests
+        run: BASHKIT_WASM_VARIANT=runtimes node --test crates/bashkit-wasm/__test__/runtime-functions.test.mjs
+
+      - name: Browser runtime callbacks (Chromium and module workers)
+        run: |
+          npm install --prefix "$RUNNER_TEMP/bashkit-browser-test" --ignore-scripts --no-audit --no-fund playwright@1.58.2
+          PLAYWRIGHT_MODULE="file://$RUNNER_TEMP/bashkit-browser-test/node_modules/playwright/index.mjs" node crates/bashkit-wasm/scripts/test-runtime-browser.mjs
 
       - name: Browser compatibility and transfer-size gates
         run: |

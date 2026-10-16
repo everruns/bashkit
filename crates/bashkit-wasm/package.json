@@ -1,7 +1,7 @@
 {
   "name": "@everruns/bashkit-wasm",
   "version": "0.19.0",
-  "description": "Sandboxed bash interpreter for the browser (WebAssembly). Single-threaded — no SharedArrayBuffer, no COOP/COEP headers.",
+  "description": "Sandboxed bash interpreter for the browser (WebAssembly). Single-threaded \u2014 no SharedArrayBuffer, no COOP/COEP headers.",
   "type": "module",
   "main": "index.js",
   "module": "index.js",
@@ -12,11 +12,18 @@
       "default": "./index.js"
     },
     "./bashkit_wasm_bg.wasm": "./bashkit_wasm_bg.wasm",
-    "./build-info.json": "./build-info.json"
+    "./build-info.json": "./build-info.json",
+    "./runtimes": {
+      "types": "./runtimes/index.d.ts",
+      "default": "./runtimes/index.js"
+    },
+    "./runtimes/bashkit_wasm_bg.wasm": "./runtimes/bashkit_wasm_bg.wasm"
   },
   "sideEffects": [
     "./index.js",
-    "./bashkit_wasm.js"
+    "./bashkit_wasm.js",
+    "./runtimes/index.js",
+    "./runtimes/bashkit_wasm.js"
   ],
   "files": [
     "index.js",
@@ -26,7 +33,9 @@
     "bashkit_wasm_bg.wasm",
     "bashkit_wasm_bg.wasm.d.ts",
     "build-info.json",
-    "README.md"
+    "README.md",
+    "runtime-functions.js",
+    "runtimes/"
   ],
   "license": "MIT",
   "author": "Mykhailo Chalyi <mike@chaliy.name>",

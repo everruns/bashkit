@@ -783,7 +783,7 @@ async fn call_external_with_deadline(
     let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
         return python_external_timeout_error();
     };
-    match tokio::time::timeout(
+    match crate::time_compat::timeout(
         remaining,
         (external_fns.handler)(function_name, args, kwargs),
     )

@@ -7,7 +7,71 @@
 
 import init, * as glue from "./bashkit_wasm.js";
 
-const { Bash, ExecResult } = glue;
+import { validateHandlers, createDispatcher } from "./runtime-functions.js";
+const { ExecResult } = glue;
+const configs = new WeakMap();
+
+/** Browser interpreter. One active execution per instance; callbacks are execution-local. */
+export class Bash extends glue.Bash {
+  constructor(options = {}) {
+    options ??= {};
+    validateHandlers(options);
+    super(options);
+    configs.set(this, { options: { ...options }, running: false });
+  }
+
+  execute(commands, options = {}) {
+    const state = configs.get(this);
+    if (state.running)
+      return Promise.reject(
+        new Error(
+          "bash instance is busy (reentrant execution is not supported)",
+        ),
+      );
+    if (options.signal?.aborted)
+      return Promise.reject(new Error("execution cancelled"));
+    const controller = new AbortController();
+    const cancel = () => {
+      this.cancel();
+      controller.abort();
+    };
+    state.running = true;
+    options.signal?.addEventListener("abort", cancel, { once: true });
+    try {
+      const host =
+        state.options.externalHandler ||
+        state.options.typescriptExternalHandler;
+      const result = host
+        ? super.executeWithRuntime(
+            commands,
+            createDispatcher(state.options, controller.signal),
+            options.onOutput,
+          )
+        : options.onOutput
+          ? super.executeWithOutput(commands, options.onOutput)
+          : super.execute(commands);
+      return result.finally(() => {
+        state.running = false;
+        options.signal?.removeEventListener("abort", cancel);
+        controller.abort();
+      });
+    } catch (error) {
+      state.running = false;
+      options.signal?.removeEventListener("abort", cancel);
+      controller.abort();
+      return Promise.reject(error);
+    }
+  }
+
+  executeWithOutput(commands, onOutput) {
+    return this.execute(commands, { onOutput });
+  }
+
+  reset() {
+    if (configs.get(this).running) throw new Error("bash instance is busy");
+    return super.reset();
+  }
+}
 
 /**
  * Interactive terminal session, or `undefined` when the bundle was built
@@ -42,4 +106,4 @@ export function initBashkit(input) {
   return initPromise;
 }
 
-export { Bash, ExecResult };
+export { ExecResult };

@@ -10,7 +10,11 @@ set -euo pipefail
 
 CRATE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORKSPACE_ROOT="$(cd "$CRATE_DIR/../.." && pwd)"
-OUT_DIR="$CRATE_DIR/pkg"
+case "${BASHKIT_WASM_VARIANT:-}" in
+  ""|runtimes) ;;
+  *) echo "unsupported wasm variant" >&2; exit 1 ;;
+esac
+OUT_DIR="$CRATE_DIR/pkg${BASHKIT_WASM_VARIANT:+/$BASHKIT_WASM_VARIANT}"
 TARGET=wasm32-unknown-unknown
 PROFILE="${1:-wasm-release}"
 # Cargo features, comma-separated. The npm package ships `terminal` (the
@@ -57,8 +61,9 @@ fi
 
 # Ship the hand-authored wrapper + option/context types alongside the generated glue.
 cp "$CRATE_DIR/js/index.js" "$OUT_DIR/index.js"
+cp "$CRATE_DIR/js/runtime-functions.js" "$OUT_DIR/runtime-functions.js"
 cp "$CRATE_DIR/js/index.d.ts" "$OUT_DIR/index.d.ts"
-cp "$CRATE_DIR/package.json" "$OUT_DIR/package.json"
+if [[ -z "${BASHKIT_WASM_VARIANT:-}" ]]; then cp "$CRATE_DIR/package.json" "$OUT_DIR/package.json"; fi
 cp "$CRATE_DIR/README.md" "$OUT_DIR/README.md"
 node "$CRATE_DIR/scripts/build-info.mjs" "$OUT_DIR" "$PROFILE" "$FEATURES" "$WASM_OPT_VERSION"
 
