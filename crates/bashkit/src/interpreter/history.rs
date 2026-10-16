@@ -278,7 +278,9 @@ impl Interpreter {
             text.push_str("exit\n");
         }
         let prompt = crate::StreamData::from(text);
-        self.maybe_emit_output(&crate::StreamData::new(), &prompt, emit_before);
+        self.maybe_emit_output(&crate::StreamData::new(), &prompt, emit_before)
+            .await
+            .ok();
         err.append(&prompt);
         (out, err)
     }
@@ -300,7 +302,9 @@ impl Interpreter {
             Err(e) => ExecResult::err(self.diag(format!("{e}\n")), 2),
         };
         self.last_exit_code = saved_status;
-        self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
+        self.maybe_emit_output(&result.stdout, &result.stderr, emit_before)
+            .await
+            .ok();
         Some(result)
     }
 
@@ -842,7 +846,8 @@ impl Interpreter {
         }
         let echo = crate::StreamData::from(format!("{command}\n"));
         let emit_before = self.output_emit_count;
-        self.maybe_emit_output(&crate::StreamData::new(), &echo, emit_before);
+        self.maybe_emit_output(&crate::StreamData::new(), &echo, emit_before)
+            .await?;
         let mut result = match self.parse_embedded_script(&command).await {
             Ok(script) => self.execute_command_sequence(&script.commands).await?,
             Err(e) => ExecResult::err(self.diag(format!("{e}\n")), 2),

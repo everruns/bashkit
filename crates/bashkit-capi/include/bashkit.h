@@ -101,6 +101,20 @@ BASHKIT_API BashkitStatus bashkit_runtime_call_respond_json(
 BASHKIT_API BashkitStatus bashkit_runtime_call_fail(BashkitRuntimeCall *call);
 BASHKIT_API void bashkit_runtime_call_free(BashkitRuntimeCall *call);
 
+/* Live byte delivery. The callback borrows bytes only for its duration and
+   returns 0 after consuming the whole chunk, nonzero to fail execution.
+   It runs on the thread calling bashkit_execute_streaming. It may call
+   bashkit_cancel, but must not free or otherwise re-enter the same instance.
+   context and callback must remain valid until this function returns.
+   capture_limit is per stream; 0 disables capture. NULL callback discards output. */
+#define BASHKIT_STREAM_STDOUT 1u
+#define BASHKIT_STREAM_STDERR 2u
+typedef uint32_t (*BashkitOutputCallback)(void *context, uint32_t stream, BashkitBytes bytes);
+BASHKIT_API BashkitStatus bashkit_execute_streaming(
+    Bashkit *bash, BashkitBytes script, size_t capture_limit,
+    BashkitOutputCallback callback, void *context,
+    BashkitResult **out_result, BashkitError **out_error);
+
 /* Cancellation requires the `cancellation` capability. Both are lock-free and
    safe to call from any thread while bashkit_execute is blocked on the same
    handle; execution aborts at the next command boundary with

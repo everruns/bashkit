@@ -436,9 +436,11 @@ compile_error!(
 /// Static, pre-execution introspection of a script.
 pub mod analysis;
 mod builtins;
+mod command;
 #[cfg(feature = "http_client")]
 mod credential;
 mod error;
+mod execution;
 mod execution_capability;
 mod fs;
 /// Interceptor hooks for the execution pipeline.
@@ -485,10 +487,12 @@ mod time_compat;
 pub mod tool;
 /// Structured execution trace events.
 pub mod trace;
+pub use command::{Command, CommandContext, CommandInput, CommandOutput, CommandStatus};
+pub use execution::Execution;
 pub use stream::StreamData;
 
 pub use analysis::{
-    AnalyzedCommand, AnalyzedRedirect, CommandContext, RedirectMode, ScriptAnalysis,
+    AnalyzedCommand, AnalyzedRedirect, CommandPlacement, RedirectMode, ScriptAnalysis,
 };
 pub use async_trait::async_trait;
 pub use builtins::git::GitConfig;
@@ -693,6 +697,7 @@ pub struct ExecOptions {
     arg0: Option<String>,
     positional: Option<Vec<String>>,
     stdin: Option<StreamData>,
+    stream_output: Option<std::sync::Arc<execution::ExecutionOutput>>,
 }
 
 impl ExecOptions {
@@ -868,6 +873,11 @@ fn inmem_fs_with_home(username: &str, limits: FsLimits) -> InMemoryFs {
 }
 
 impl Bash {
+    /// Execute with explicit capture and async byte sinks. Output is not
+    /// retained unless `.capture(max_bytes)` is selected on the builder.
+    pub fn execute<'a>(&'a mut self, script: &'a str) -> Execution<'a> {
+        Execution::new(self, script)
+    }
     /// Create a new Bash instance with default settings.
     pub fn new() -> Self {
         Self::builder().build()
@@ -937,6 +947,7 @@ impl Bash {
             arg0,
             positional,
             stdin,
+            stream_output,
         } = options;
         let invocation = Invocation {
             arg0,
@@ -946,7 +957,17 @@ impl Bash {
         self.interpreter.begin_execution_budget();
         // THREAT[TM-ISO-027]: close every request-owned boundary on all exits,
         // including timeout/cancellation and unwinding teardown paths.
-        let _budget_completion = self.interpreter.execution_budget().completion_guard();
+        let _budget_completion = if stream_output.is_none() {
+            Some(self.interpreter.execution_budget().completion_guard())
+        } else {
+            None
+        };
+        if let Some(output) = stream_output {
+            output.install(
+                self.interpreter.execution_budget(),
+                self.interpreter.limits(),
+            )?;
+        }
         self.interpreter.bind_command_hash_budget()?;
         // Expose active execution limits and deadline to builtins that need to
         // honor per-execution sandbox settings inside synchronous VM sections.
@@ -2802,6 +2823,19 @@ impl BashBuilder {
         self
     }
 
+    /// Register a streaming host command. Completion is separate from byte I/O.
+    pub fn command(mut self, name: impl Into<String>, command: impl Command + 'static) -> Self {
+        let name = name.into();
+        self.custom_builtins.insert(
+            name.clone(),
+            Box::new(command::CommandAdapter {
+                name,
+                command: std::sync::Arc::new(command),
+            }),
+        );
+        self
+    }
+
     /// Register a builtin whose invocation is fulfilled by an [`ExecutionHandle`].
     ///
     /// Calling this command through ordinary [`Bash::exec`] returns a shell
@@ -4088,6 +4122,10 @@ pub mod script_analysis_guide {}
 /// **Related:** [`BashBuilder::builtin`], [`compatibility_scorecard`]
 #[doc = include_str!("../docs/custom_builtins.md")]
 pub mod custom_builtins_guide {}
+
+/// Live byte commands, output sinks, capture and runtime support.
+#[doc = include_str!("../docs/streaming.md")]
+pub mod streaming_guide {}
 
 /// Public guide for clap-backed custom builtins.
 ///

@@ -7,7 +7,32 @@
 
 import init, * as glue from "./bashkit_wasm.js";
 
-const { Bash, ExecResult } = glue;
+const { ExecResult } = glue;
+
+export class Bash extends glue.Bash {
+  constructor(options) {
+    super(options);
+    for (const [name, callback] of Object.entries(options?.commands ?? {})) this.addCommand(name, callback);
+  }
+  async execute(commands, options) {
+    const signal = options?.signal;
+    if (signal?.aborted) throw new DOMException("execution cancelled", "AbortError");
+    let aborted = false;
+    const onAbort = () => { aborted = true; this.cancel(); };
+    signal?.addEventListener("abort", onAbort, { once: true });
+    try { return await super.execute(commands, options); }
+    finally {
+      signal?.removeEventListener("abort", onAbort);
+      if (aborted) this.clearCancel();
+    }
+  }
+  executeSync(commands, options) {
+    if (options && (options.capture !== undefined || options.stdout || options.stderr)) {
+      throw new TypeError("streaming I/O requires async execute()");
+    }
+    return super.executeSync(commands);
+  }
+}
 
 /**
  * Interactive terminal session, or `undefined` when the bundle was built
@@ -42,4 +67,4 @@ export function initBashkit(input) {
   return initPromise;
 }
 
-export { Bash, ExecResult };
+export { ExecResult };

@@ -65,6 +65,12 @@ from bashkit._bashkit import (
     get_version,
 )
 
+# Streaming command I/O needs the native asyncio bridge.
+try:
+    from bashkit._bashkit import CommandContext, CommandInput, CommandOutput, CommandStatus
+except ImportError:
+    pass  # Reduced Pyodide builds do not export the native async command API.
+
 __version__ = get_version()
 __all__ = [
     "AnalyzedCommand",
@@ -74,6 +80,10 @@ __all__ = [
     "ExecutionProfile",
     "BuiltinContext",
     "BuiltinResult",
+    "CommandContext",
+    "CommandInput",
+    "CommandOutput",
+    "CommandStatus",
     "BashTool",
     "CapabilityFingerprint",
     "ExecResult",
@@ -107,3 +117,9 @@ def __getattr__(name: str):
         )
         return getattr(importlib.import_module(target), name)
     raise AttributeError(f"module 'bashkit' has no attribute {name!r}")
+
+
+if "CommandStatus" not in globals():
+    __all__ = [
+        name for name in __all__ if name not in {"CommandContext", "CommandInput", "CommandOutput", "CommandStatus"}
+    ]

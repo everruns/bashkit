@@ -14,6 +14,7 @@
 //! holding a raw-pointer-derived `&self` across `block_on` or `.await` points.
 
 mod runtime_functions;
+mod streaming;
 mod terminal;
 
 use bashkit::interop::fs::{
@@ -1938,6 +1939,40 @@ impl Bash {
         arc.store(false, Ordering::SeqCst);
     }
 
+    /// Register an async byte command; output is written before status returns.
+    #[napi(
+        ts_args_type = "name: string, callback: (requestPair: [string, unknown, unknown, unknown, unknown]) => Promise<number>"
+    )]
+    pub fn add_command(&self, name: String, callback: streaming::Callback<'_>) -> napi::Result<()> {
+        streaming::register(&self.state, name, callback)
+    }
+
+    #[napi(
+        ts_args_type = "commands: string, capture?: number, stdout?: (pair: [Uint8Array]) => Promise<void>, stderr?: (pair: [Uint8Array]) => Promise<void>"
+    )]
+    pub fn execute_live<'env>(
+        &self,
+        env: &'env Env,
+        commands: String,
+        capture: Option<u32>,
+        stdout: Option<
+            napi::bindgen_prelude::Function<
+                'env,
+                (napi::bindgen_prelude::Uint8Array,),
+                napi::bindgen_prelude::Promise<()>,
+            >,
+        >,
+        stderr: Option<
+            napi::bindgen_prelude::Function<
+                'env,
+                (napi::bindgen_prelude::Uint8Array,),
+                napi::bindgen_prelude::Promise<()>,
+            >,
+        >,
+    ) -> napi::Result<napi::bindgen_prelude::PromiseRaw<'env, ExecResult>> {
+        streaming::execute(env, self.state.clone(), commands, capture, stdout, stderr)
+    }
+
     /// Register a JS callback as a custom bash builtin.
     ///
     /// The callback receives a JSON-serialized `BuiltinContext`
@@ -2775,8 +2810,41 @@ impl BashTool {
         arc.store(false, Ordering::SeqCst);
     }
 
-    /// Register a JS callback as a custom bash builtin.
-    /// See [`Bash::add_builtin`] for semantics.
+    /// Register an async byte command. See [`Bash::add_command`].
+    #[napi(
+        ts_args_type = "name: string, callback: (requestPair: [string, unknown, unknown, unknown, unknown]) => Promise<number>"
+    )]
+    pub fn add_command(&self, name: String, callback: streaming::Callback<'_>) -> napi::Result<()> {
+        streaming::register(&self.state, name, callback)
+    }
+
+    #[napi(
+        ts_args_type = "commands: string, capture?: number, stdout?: (pair: [Uint8Array]) => Promise<void>, stderr?: (pair: [Uint8Array]) => Promise<void>"
+    )]
+    pub fn execute_live<'env>(
+        &self,
+        env: &'env Env,
+        commands: String,
+        capture: Option<u32>,
+        stdout: Option<
+            napi::bindgen_prelude::Function<
+                'env,
+                (napi::bindgen_prelude::Uint8Array,),
+                napi::bindgen_prelude::Promise<()>,
+            >,
+        >,
+        stderr: Option<
+            napi::bindgen_prelude::Function<
+                'env,
+                (napi::bindgen_prelude::Uint8Array,),
+                napi::bindgen_prelude::Promise<()>,
+            >,
+        >,
+    ) -> napi::Result<napi::bindgen_prelude::PromiseRaw<'env, ExecResult>> {
+        streaming::execute(env, self.state.clone(), commands, capture, stdout, stderr)
+    }
+
+    /// Register a buffered JS builtin. See [`Bash::add_builtin`].
     #[napi(
         ts_args_type = "name: string, callback: (requestPair: [string, unknown]) => Promise<string>"
     )]

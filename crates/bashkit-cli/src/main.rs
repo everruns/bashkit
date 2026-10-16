@@ -26,7 +26,7 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, ValueEnum};
 use std::{
     ffi::OsStr,
-    io::{IsTerminal, Write},
+    io::IsTerminal,
     path::{Path, PathBuf},
 };
 use tokio::runtime::Builder;
@@ -431,20 +431,7 @@ fn split_invocation_args(args: &Args) -> (Option<String>, Vec<String>) {
 
 /// Build the per-execution options: positional parameters, `$0`, and stdin.
 fn exec_options(args: &Args, timeout: std::time::Duration) -> Result<bashkit::ExecOptions> {
-    let mut options = bashkit::ExecOptions::new().streaming(Box::new(|stdout, stderr| {
-        // Write through as chunks arrive so long scripts are observable and a
-        // run aborted by a resource limit keeps what it already produced.
-        if !stdout.is_empty() {
-            let mut out = std::io::stdout().lock();
-            let _ = out.write_all(stdout.as_bytes());
-            let _ = out.flush();
-        }
-        if !stderr.is_empty() {
-            let mut err = std::io::stderr().lock();
-            let _ = err.write_all(stderr.as_bytes());
-            let _ = err.flush();
-        }
-    }));
+    let mut options = bashkit::ExecOptions::new();
 
     // Left unset when there is nothing to install, so `$0` keeps its default
     // instead of being overwritten with an empty name.
@@ -461,6 +448,18 @@ fn exec_options(args: &Args, timeout: std::time::Duration) -> Result<bashkit::Ex
     }
 
     Ok(options)
+}
+
+// Flush each accepted chunk: standard output can buffer a partial line even
+// when its async write has completed. CLI output must be observable immediately.
+async fn write_output_chunk<W: tokio::io::AsyncWrite + Unpin>(
+    mut writer: W,
+    bytes: Vec<u8>,
+) -> bashkit::Result<()> {
+    use tokio::io::AsyncWriteExt;
+    writer.write_all(&bytes).await?;
+    writer.flush().await?;
+    Ok(())
 }
 
 fn run_oneshot(args: Args, mode: CliMode) -> Result<i32> {
@@ -489,7 +488,13 @@ fn run_oneshot(args: Args, mode: CliMode) -> Result<i32> {
             // Boxed: the exec future is large, and `block_on` keeps this block on
             // the main thread's stack, which the recursion limit is sized
             // against (TM-DOS-020, two-MiB stack check in cli_oneshot).
-            let result = match Box::pin(bash.exec_with_options(&script, options)).await {
+            let result = match bash
+                .execute(&script)
+                .options(options)
+                .stdout_fn(|bytes| write_output_chunk(tokio::io::stdout(), bytes))
+                .stderr_fn(|bytes| write_output_chunk(tokio::io::stderr(), bytes))
+                .await
+            {
                 Ok(result) => result,
                 // Like bash: a syntax error with nothing runnable before it is
                 // reported on stderr and exits 2 (the partial-run case already
@@ -511,7 +516,7 @@ fn run_oneshot(args: Args, mode: CliMode) -> Result<i32> {
             };
 
             // Output already reached the terminal through the streaming
-            // callback — printing `result.stdout` here would duplicate it.
+            // writers — printing `result.stdout` here would duplicate it.
             Ok(result.exit_code)
         })
 }

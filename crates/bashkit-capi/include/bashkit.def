@@ -10,6 +10,9 @@ EXPORTS
     bashkit_error_free
     bashkit_error_message
     bashkit_execute
+    bashkit_execute_streaming
+    bashkit_cancel
+    bashkit_clear_cancel
     bashkit_free
     bashkit_mkdir
     bashkit_mount

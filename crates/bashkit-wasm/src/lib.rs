@@ -36,6 +36,7 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::{JsFuture, future_to_promise};
 
 mod hostfs;
+mod streaming;
 use hostfs::HostFs;
 
 #[cfg(feature = "terminal")]
@@ -362,6 +363,7 @@ fn sanitize_js_error(value: &JsValue) -> String {
 /// Parsed, `Send`-free construction config. Kept so `reset()` can rebuild an
 /// equivalent interpreter.
 struct Config {
+    registry: bashkit::BuiltinRegistry,
     profile: bashkit::ExecutionProfileName,
     username: Option<String>,
     hostname: Option<String>,
@@ -413,6 +415,19 @@ impl Bash {
         })
     }
 
+    /// Register a live command. Cloned I/O handles expire with the execution.
+    #[wasm_bindgen(js_name = addCommand)]
+    pub fn add_command(&self, name: String, callback: js_sys::Function) {
+        self.config.registry.insert_command(
+            name.clone(),
+            streaming::JsCommand {
+                name,
+                callback: SendWrapper::new(callback),
+                in_sync: self.sync_flag.clone(),
+            },
+        );
+    }
+
     /// Execute `commands` synchronously and return the result.
     ///
     /// Only valid for scripts that complete without yielding — i.e. plain bash
@@ -446,15 +461,15 @@ impl Bash {
     // (e.g. execute() invoked from inside a builtin callback) into a clean error
     // instead of a panic, so holding it across the await point is sound here.
     #[allow(clippy::await_holding_refcell_ref)]
-    pub fn execute(&self, commands: String) -> js_sys::Promise {
+    pub fn execute(&self, commands: String, options: JsValue) -> js_sys::Promise {
         let inner = self.inner.clone();
         future_to_promise(async move {
             let mut guard = inner.try_borrow_mut().map_err(|_| {
                 JsError::new("bash instance is busy (reentrant execution is not supported)")
             })?;
-            match guard.exec(&commands).await {
+            match streaming::execute(&mut guard, &commands, options).await {
                 Ok(r) => Ok(JsValue::from(ExecResult::from(r))),
-                Err(e) => Err(JsValue::from(JsError::new(&e.to_string()))),
+                Err(e) => Err(e),
             }
         })
     }
@@ -876,7 +891,7 @@ fn core_builder(config: &Config, sync_flag: &Arc<AtomicBool>) -> bashkit::BashBu
         );
     }
 
-    builder
+    builder.builtin_registry(config.registry.clone())
 }
 
 /// Seed pre-created files as normal writable VFS entries.
@@ -896,6 +911,7 @@ fn seed_files(fs: &Arc<dyn FileSystemTrait>, files: &[(String, String)]) -> Resu
 fn parse_options(options: &JsValue) -> Result<Config, JsError> {
     if options.is_undefined() || options.is_null() {
         return Ok(Config {
+            registry: bashkit::BuiltinRegistry::new(),
             profile: bashkit::ExecutionProfileName::Standard,
             username: None,
             hostname: None,
@@ -981,6 +997,7 @@ fn parse_options(options: &JsValue) -> Result<Config, JsError> {
     }
 
     Ok(Config {
+        registry: bashkit::BuiltinRegistry::new(),
         profile,
         username: get_str("username"),
         hostname: get_str("hostname"),

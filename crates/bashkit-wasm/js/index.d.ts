@@ -39,6 +39,28 @@ export type CustomBuiltin = (
   ctx: BuiltinRequest,
 ) => string | Promise<string>;
 
+/** Live byte I/O; handles are revoked when their execution ends. */
+export interface CommandContext {
+  readonly name: string;
+  readonly argv: string[];
+  readonly env: Record<string, string>;
+  readonly cwd: string;
+  readonly fs: FileSystem;
+  readonly stdin: AsyncIterable<Uint8Array> & {
+    readChunk(): Promise<Uint8Array | null>;
+  };
+  readonly stdout: { write(bytes: Uint8Array): Promise<void> };
+  readonly stderr: { write(bytes: Uint8Array): Promise<void> };
+}
+export type CommandCallback = (ctx: CommandContext) => Promise<number | { exitCode: number }>;
+export interface ExecuteOptions {
+  /** Maximum captured bytes per stream. Without capture, sinks retain no output. */
+  capture?: number;
+  stdout?: (bytes: Uint8Array) => void | Promise<void>;
+  stderr?: (bytes: Uint8Array) => void | Promise<void>;
+  signal?: AbortSignal;
+}
+
 /** Closed set of named execution-policy baselines. */
 export type ExecutionProfileName = "hardened" | "standard" | "interactive";
 
@@ -143,6 +165,8 @@ export interface BashOptions {
   fs?: HostFileSystem;
   /** JS callbacks registered as bash builtins. */
   customBuiltins?: Record<string, CustomBuiltin>;
+  /** Async live byte commands. */
+  commands?: Record<string, CommandCallback>;
 }
 
 /** Result of a bash execution. */
@@ -214,7 +238,9 @@ export class Bash {
    */
   executeSync(commands: string): ExecResult;
   /** Execute asynchronously; supports async custom builtins. */
-  execute(commands: string): Promise<ExecResult>;
+  execute(commands: string, options?: ExecuteOptions): Promise<ExecResult>;
+  /** Register an async byte command. */
+  addCommand(name: string, callback: CommandCallback): void;
   /** Execute asynchronously and receive incremental stdout/stderr chunks. */
   executeWithOutput(
     commands: string,
@@ -250,7 +276,7 @@ export class Bash {
 }
 
 /** Options for constructing a {@link Terminal}. */
-export interface TerminalOptions extends BashOptions {
+export interface TerminalOptions extends Omit<BashOptions, "commands"> {
   /** Rows (default 24, min 2). */
   rows?: number;
   /** Columns (default 80, min 2). */

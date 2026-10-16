@@ -167,6 +167,14 @@ jobs:
       - name: Integration tests (headless Node)
         run: node --test "crates/bashkit-wasm/__test__/*.test.mjs"
 
+      - name: Browser streaming (main thread and worker)
+        run: |
+          npm install --prefix "$RUNNER_TEMP/bashkit-browser-test" --no-save playwright@1.62.1
+          export PLAYWRIGHT_MODULE="$RUNNER_TEMP/bashkit-browser-test/node_modules/playwright/index.mjs"
+          node "$RUNNER_TEMP/bashkit-browser-test/node_modules/playwright/cli.js" install --with-deps chromium
+          export CHROME_EXECUTABLE=$(node --input-type=module -e 'const {chromium} = await import(process.env.PLAYWRIGHT_MODULE); console.log(chromium.executablePath())')
+          node crates/bashkit-wasm/scripts/test-streaming-browser.mjs
+
       - name: Browser compatibility and transfer-size gates
         run: |
           node crates/bashkit-wasm/bench/compat.mjs
