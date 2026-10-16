@@ -2,6 +2,19 @@
 import { it } from "node:test";
 import assert from "node:assert/strict";
 import { Bash, BashTool } from "./_setup.mjs";
+import { native } from "../../internal.js";
+
+it("native command I/O rejects forged and mismatched handles", () => {
+  const fs = native.__createFileSystem();
+  for (const handle of [undefined, null, {}, fs]) {
+    assert.throws(() => native.__commandReadChunk(handle), /external|External/);
+    assert.throws(
+      () => native.__commandWrite(handle, Uint8Array.of(1)),
+      /external|External/,
+    );
+  }
+});
+
 for (const [name, create] of [
   ["Bash", () => new Bash()],
   ["BashTool", () => new BashTool()],

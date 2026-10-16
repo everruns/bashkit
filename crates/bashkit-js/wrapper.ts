@@ -58,6 +58,10 @@ const NativeBash: typeof NativeBashType = native.Bash;
 const NativeBashTool: typeof NativeBashToolType = native.BashTool;
 const NativeTerminal: typeof NativeTerminalType = native.Terminal;
 const nativeGetVersion: () => string = native.getVersion;
+const nativeCommandReadChunk: (input: unknown) => Promise<Uint8Array | null> =
+  native.__commandReadChunk;
+const nativeCommandWrite: (output: unknown, bytes: Uint8Array) => Promise<void> =
+  native.__commandWrite;
 const nativeCreateFileSystem: () => any = native.__createFileSystem;
 const nativeRealFileSystem: (
   hostPath: string,
@@ -756,12 +760,12 @@ function makeCommandDispatcher(
     unknown,
     unknown,
   ]): Promise<number> => {
-    const reader = input as { readChunk(): Promise<Uint8Array | null> };
+    const readChunk = () => nativeCommandReadChunk(input);
     const stdin: CommandContext["stdin"] = {
-      readChunk: () => reader.readChunk(),
+      readChunk,
       async *[Symbol.asyncIterator]() {
         for (;;) {
-          const bytes = await reader.readChunk();
+          const bytes = await readChunk();
           if (bytes == null) return;
           yield bytes;
         }
@@ -774,8 +778,8 @@ function makeCommandDispatcher(
         ...JSON.parse(payload),
         fs: FileSystem.fromNative(fs),
         stdin,
-        stdout,
-        stderr,
+        stdout: { write: (bytes) => nativeCommandWrite(stdout, bytes) },
+        stderr: { write: (bytes) => nativeCommandWrite(stderr, bytes) },
       });
       const code = typeof status === "number" ? status : status?.exitCode;
       if (!Number.isInteger(code) || code < -0x80000000 || code > 0x7fffffff)

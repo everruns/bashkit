@@ -1,6 +1,19 @@
 // Exercise the public wrapper against the real native addon.
 import test from "ava";
 import { Bash, BashTool, type CommandContext } from "../wrapper.js";
+import { native } from "../internal.js";
+
+test("native command I/O rejects forged and mismatched handles", (t) => {
+  const fs = native.__createFileSystem();
+  for (const handle of [undefined, null, {}, fs]) {
+    t.throws(() => native.__commandReadChunk(handle), {
+      message: /external|External/,
+    });
+    t.throws(() => native.__commandWrite(handle, Uint8Array.of(1)), {
+      message: /external|External/,
+    });
+  }
+});
 
 for (const [label, create] of [
   ["Bash", () => new Bash()],

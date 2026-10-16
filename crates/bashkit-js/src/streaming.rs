@@ -5,53 +5,47 @@ use super::*;
 use bashkit::{Command, CommandContext, CommandInput, CommandOutput, CommandStatus};
 use napi::bindgen_prelude::{Function, Promise, PromiseRaw, Uint8Array};
 
-#[napi(js_name = "__CommandInput")]
-pub struct Input {
-    inner: CommandInput,
-}
-#[napi]
-impl Input {
-    #[napi]
-    pub async fn read_chunk(&self) -> napi::Result<Option<Uint8Array>> {
-        self.inner
+// Opaque, type-checked handles use the same boundary as the filesystem API.
+// Clone Rust capabilities on the JS thread before spawning: pending I/O never
+// borrows a JS class instance whose lifetime is controlled by garbage collection.
+#[napi(js_name = "__commandReadChunk")]
+pub fn read_chunk<'env>(
+    env: &'env Env,
+    input: &External<CommandInput>,
+) -> napi::Result<PromiseRaw<'env, Option<Uint8Array>>> {
+    let input = (**input).clone();
+    env.spawn_future(async move {
+        input
             .read_chunk()
             .await
             .map(|b| b.map(Uint8Array::new))
             .map_err(|e| napi::Error::from_reason(e.to_string()))
-    }
+    })
 }
 
-#[napi(js_name = "__CommandOutput")]
-pub struct Output {
-    inner: CommandOutput,
-}
-#[napi]
-impl Output {
-    #[napi]
-    pub fn write<'env>(
-        &self,
-        env: &'env Env,
-        bytes: Uint8Array,
-    ) -> napi::Result<PromiseRaw<'env, ()>> {
-        // Copy on the JS thread before handing the future to Tokio. JS may
-        // mutate its array as soon as write() returns its Promise.
-        let bytes = bytes.to_vec();
-        let output = self.inner.clone();
-        env.spawn_future(async move {
-            output
-                .write_all(&bytes)
-                .await
-                .map_err(|e| napi::Error::from_reason(e.to_string()))
-        })
-    }
+#[napi(js_name = "__commandWrite")]
+pub fn write<'env>(
+    env: &'env Env,
+    output: &External<CommandOutput>,
+    bytes: Uint8Array,
+) -> napi::Result<PromiseRaw<'env, ()>> {
+    // Snapshot mutable JS bytes before returning its Promise.
+    let bytes = bytes.to_vec();
+    let output = (**output).clone();
+    env.spawn_future(async move {
+        output
+            .write_all(&bytes)
+            .await
+            .map_err(|e| napi::Error::from_reason(e.to_string()))
+    })
 }
 
 type CommandArgs = (
     String,
     External<NativeFileSystemState>,
-    Input,
-    Output,
-    Output,
+    External<CommandInput>,
+    External<CommandOutput>,
+    External<CommandOutput>,
 );
 pub type Callback<'env> = Function<'env, CommandArgs, Promise<i32>>;
 type CommandTsfn = napi::threadsafe_function::ThreadsafeFunction<
@@ -92,15 +86,9 @@ impl Command for JsCommand {
         let args = (
             payload,
             External::new(NativeFileSystemState::from_static(ctx.fs.clone())),
-            Input {
-                inner: ctx.stdin.clone(),
-            },
-            Output {
-                inner: ctx.stdout.clone(),
-            },
-            Output {
-                inner: ctx.stderr.clone(),
-            },
+            External::new(ctx.stdin.clone()),
+            External::new(ctx.stdout.clone()),
+            External::new(ctx.stderr.clone()),
         );
         let result = async {
             let promise = self.callback.call_async(args).await?;
