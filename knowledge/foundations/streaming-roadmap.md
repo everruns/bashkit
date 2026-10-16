@@ -55,6 +55,10 @@ invocation, and streams file writes. Pipes strictly bound live writes at 4 KiB;
 reader close wakes writers. The request budget and completion guard remain
 active through final sink flush; retained handles are revoked on every exit.
 Sink errors drop pending engine futures. Sandbox byte caps still bound delivery
+Pipeline futures have a separate heap boundary: their cancellation-guard state
+must not enlarge every recursive simple-command poll frame. Both buffered and
+live execution preserve depth-32 substitution tests, including coverage builds
+(TM-DOS-089); stack limits and substitution limits are not raised.
 independently of a smaller explicit capture cap (TM-INT-009). Deadlines/cancellation cover sinks on
 native and JS/WASM executors. Live output cannot safely apply whole-output
 transforming after hooks, so those combinations reject before running.
