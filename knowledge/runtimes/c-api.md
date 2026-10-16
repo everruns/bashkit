@@ -37,7 +37,7 @@ oversized byte view before dereferencing it or validating UTF-8. This preserves
 the core input resource limit at the untrusted native boundary.
 
 Execution is synchronous in v1. Each handle owns a current-thread Tokio runtime
-and mutex-protected `Bash`; same-handle calls serialize, while distinct handles
+and mutex-protected `Bash`; ordinary same-handle calls serialize, while distinct handles
 can execute concurrently. Callers own lifetime synchronization and cannot race
 destruction with use.
 
@@ -75,9 +75,48 @@ and defaults to deny on credential paths.
 - Additive functions and status values are allowed.
 - Breaking changes require a parallel ABI major.
 
+## Embedded runtime host functions
+
+Config schema v1 adds explicit `python`/`typescript` flags and
+`external_functions`/`typescript_external_functions` lists. Runtimes remain off
+by default, and callback registration preserves the selected profile's VM limits. Names require `bashkit_create_with_runtime_handler_v1`, whose single
+dispatcher receives JSON language/name/args/kwargs requests. Boundary values use
+the shared bounded core codec (depth 64, signed i64, finite numbers, string-key
+objects, arrays and scalars); request/response JSON is capped at 10 MB.
+
+Each callback runs on the `bashkit_execute` caller's thread and receives ownership
+of a `BashkitRuntimeCall`. It can reply immediately or transfer the call to an I/O
+worker and return promptly. Responses copy JSON into library-owned storage. One
+response is accepted; invalid JSON leaves it unanswered, freeing without a
+response fails the script, and a revoked response returns `BASHKIT_CANCELLED`.
+Host workers poll `bashkit_runtime_call_cancelled` and must free every call,
+including cancelled calls. Revocable execution leases prevent a late reply from
+reaching another execution or extending its deadline.
+
+Callback-enabled handles reject concurrent blocking calls with `BASHKIT_BUSY`.
+All blocking C APIs also reject calls on the callback's thread, even to another
+handle, because a nested current-thread Tokio runtime is invalid. Cancellation
+and call response/query/free remain available. Ordinary v1 handles retain their
+existing serialization. Callers may move an idle handle between threads, and
+distinct handles execute concurrently.
+
+The host owns handler/user_data lifetime through handle lifetime and all active
+executions. Foreign callbacks must not unwind, longjmp, or block indefinitely;
+Bashkit cannot preempt arbitrary C code. Freeing a handle during execution is
+forbidden. Never unload the shared library until every handle, result, error,
+buffer and runtime call is freed. Runtime call access may be concurrent, but
+must never race its destructor. Host service authorization and I/O limits remain
+the application's responsibility.
+
+`tests/runtime_functions.rs` exercises immediate and cross-thread replies,
+parallel instances, caller affinity, reentry, deadlines, cancellation/reuse,
+invalid values, abandonment and host failure. `examples/runtime_functions.c`
+compiles against the public header with warnings denied and runs against the
+actual shared library.
+
 ## Deferred surface
 
-Callbacks, custom builtins, streaming, async cancellation,
+Custom builtins, streaming,
 transport hooks, snapshots, scripted tools, and external filesystem providers
 remain outside v1. They need explicit reentrancy, callback lifetime, and dynamic
 library unload rules before becoming permanent ABI.

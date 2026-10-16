@@ -237,32 +237,32 @@
     },
     "c_abi": {
       "label": "C ABI",
-      "supported": ["execution_limits", "deadlines", "output_caps", "cwd", "env", "virtual_filesystem"],
+      "supported": ["execution_limits", "deadlines", "output_caps", "cwd", "env", "virtual_filesystem", "runtime_python", "runtime_typescript", "host_functions_python", "host_functions_typescript", "cancellation", "mounts"],
       "evidence": {
         "execution_limits": ["crates/bashkit-capi/tests/abi.rs#configures_environment_files_limits_and_final_environment"],
         "deadlines": ["crates/bashkit-capi/tests/abi.rs#configured_deadline_aborts_execution"],
         "output_caps": ["crates/bashkit-capi/tests/abi.rs#reports_output_truncation_flags"],
         "cwd": ["crates/bashkit-capi/tests/abi.rs#configures_environment_files_limits_and_final_environment"],
         "env": ["crates/bashkit-capi/tests/abi.rs#configures_environment_files_limits_and_final_environment"],
-        "virtual_filesystem": ["crates/bashkit-capi/tests/abi.rs#reads_and_writes_binary_vfs_content"]
+        "virtual_filesystem": ["crates/bashkit-capi/tests/abi.rs#reads_and_writes_binary_vfs_content"],
+        "runtime_python": ["crates/bashkit-capi/tests/runtime_functions.rs#c_runtime_callbacks_run_on_caller_thread_and_reject_reentry"],
+        "runtime_typescript": ["crates/bashkit-capi/tests/runtime_functions.rs#c_runtime_callbacks_run_on_caller_thread_and_reject_reentry"],
+        "host_functions_python": ["crates/bashkit-capi/tests/runtime_functions.rs#c_runtime_callbacks_accept_replies_from_other_threads"],
+        "host_functions_typescript": ["crates/bashkit-capi/tests/runtime_functions.rs#c_runtime_callbacks_accept_replies_from_other_threads"],
+        "cancellation": ["crates/bashkit-capi/tests/abi.rs#cancellation_aborts_running_execution_and_stays_sticky_until_cleared"],
+        "mounts": ["crates/bashkit-capi/tests/abi.rs#runtime_mount_and_unmount_round_trip"]
       },
       "unsupported": {
         "runtime_env": "The C ABI exposes no post-construction configuration surface.",
-        "cancellation": "ABI v1 exposes synchronous execute with no cancellation handle.",
         "stdin": "ABI v1 execute accepts script bytes only.",
         "custom_builtins": "ABI v1 has no callback registration table.",
         "host_call_suspension": "ABI v1 has no asynchronous event and resume API.",
         "tool_callbacks": "ABI v1 has no tool-callback registration table.",
         "network_policy": "ABI v1 deliberately ships only git, jq, and VFS capabilities.",
         "transport_hooks": "ABI v1 has no host HTTP transport vtable.",
-        "mounts": "ABI v1 supports seeded and mutable VFS files, not filesystem mounts.",
         "snapshots": "ABI v1 has no snapshot functions.",
-        "runtime_python": "ABI v1 omits embedded language runtimes.",
-        "runtime_typescript": "ABI v1 omits embedded language runtimes.",
         "runtime_sqlite": "ABI v1 omits embedded language runtimes.",
-        "interactive_terminal": "Not exposed in the C ABI.",
-        "host_functions_python": "ABI v1 currently omits embedded language runtimes and runtime callback registration.",
-        "host_functions_typescript": "ABI v1 currently omits embedded language runtimes and runtime callback registration."
+        "interactive_terminal": "Not exposed in the C ABI."
       }
     }
   }

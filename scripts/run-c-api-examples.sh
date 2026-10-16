@@ -26,7 +26,7 @@ case "$(uname -s)" in
         ;;
 esac
 
-for example in hello files; do
+for example in hello files runtime_functions; do
     cc -std=c11 -Wall -Wextra -Werror \
         -I "$repo_root/crates/bashkit-capi/include" \
         "$example_dir/$example.c" \
