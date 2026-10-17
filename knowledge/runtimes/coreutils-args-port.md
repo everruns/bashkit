@@ -398,6 +398,14 @@ and on `workflow_dispatch`:
    credentials, applies only generated-file changes from that patch, and
    opens or updates the drift PR with `gh`.
 
+The PR lookup matches **open** PRs only (`gh pr list --head <branch> --state
+open`). `gh pr view <branch>` resolves a PR for the branch in any state, so
+once a drift PR is closed unmerged it keeps matching and every later run edits
+that closed PR instead of opening a new one — the branch is force-pushed, the
+run goes green, and the drift never surfaces. #2161 was closed in July 2026
+and silently absorbed every run after it. Regression test:
+`scripts/tests/test_coreutils_drift_pr.py`.
+
 The read-only job is the only job that builds or executes uutils code. The
 write-scoped job must not checkout, build, or execute uutils code, and must
 not use third-party PR-creation actions. Module diffs and args diffs land in

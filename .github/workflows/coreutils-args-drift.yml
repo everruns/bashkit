@@ -327,8 +327,16 @@ jobs:
           Design: [\`knowledge/runtimes/coreutils-args-port.md\`](../tree/main/knowledge/runtimes/coreutils-args-port.md).
           EOF
 
-          if gh pr view "$branch" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-              gh pr edit "$branch" --repo "$GITHUB_REPOSITORY" \
+          # Match only an OPEN PR. `gh pr view "$branch"` resolves a PR for
+          # the branch in any state, so once a drift PR is closed unmerged it
+          # keeps matching and every later run edits that closed PR instead of
+          # opening a new one — the drift then never surfaces again. #2161 was
+          # closed in July and absorbed every run since.
+          open_pr="$(gh pr list --repo "$GITHUB_REPOSITORY" \
+              --head "$branch" --state open --json number \
+              --jq '.[0].number // empty')"
+          if [ -n "$open_pr" ]; then
+              gh pr edit "$open_pr" --repo "$GITHUB_REPOSITORY" \
                   --title "$title" \
                   --body-file "$body_file"
           else
