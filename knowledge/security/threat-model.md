@@ -517,6 +517,24 @@ so `arithmetic_fuzz` went red in run 271 on `:A>>=::TTA:::Tok::::` until it
 pre-filtered. Adding a builtin whose errors quote user text means choosing one
 of the two, never relaxing `UNIVERSAL_BANNED`.
 
+Run 272 showed the same false-positive class reaches the **host canary**, and
+that the detector itself is what arms it. `assert_fuzz_invariants` compares
+output against `FUZZ_HOST_CANARY` with `contains`, and that comparison is
+instrumented: libFuzzer recovered the needle as a 32-byte `PersAutoDict` entry
+(`DE: "BASHKIT_FUZZ_HOST_CANARY_47a83bc"`), crossed the remaining bytes in from
+the corpus, and fed `arithmetic_fuzz` an expression carrying the whole canary
+(`**HOST_CARY:ARY_47a83bcf_DO_NOT_LHi&<canary>EAKa`). The diagnostic echoed it
+and the canary assertion fired with no builtin having touched host env.
+Obfuscating the constant does not help — the reconstructed needle is still
+compared — so the canary check is now **attribution-based**: a canary
+occurrence is a TM-INF-013 leak only when the executed script cannot account
+for it. `assert_fuzz_invariants` therefore takes the script, and
+`input_echo_would_trip` counts the canary alongside `UNIVERSAL_BANNED` so
+pre-filtering targets skip these inputs before executing them. Both layers are
+kept: the pre-filter saves the execution, the attribution check covers every
+target that inlines input, including those with no pre-filter. A canary in
+output that the script does not contain still fails, unchanged.
+
 Display of a **Bashkit** error is not a safe formatter either: `Error`'s own
 variants stringify as Rust enum shapes (`io error: `, `internal error: `) that
 no shell prints, and `internal error:` is in `UNIVERSAL_BANNED`. Builtins
@@ -552,7 +570,10 @@ machinery (`bashkit::testing::assert_fuzz_invariants`):
   the magic value `BASHKIT_FUZZ_HOST_CANARY_47a83bcf_DO_NOT_LEAK` once
   per process. Every fuzz iteration asserts the canary appears in
   neither stdout nor stderr, a builtin reading `std::env::vars()`
-  instead of the sandboxed `ctx.env` trips this immediately.
+  instead of the sandboxed `ctx.env` trips this immediately. The
+  assertion is scoped by attribution: a canary the executed script
+  itself contains is the shell echoing input back, not a host read
+  (run 272, above), so only an unexplained occurrence fails.
 - **TM-INF-016 (host paths)**: `UNIVERSAL_BANNED` includes `/rustc/`,
   `/.cargo/registry/`, `target/{debug,release}/deps/`,
   `/.rustup/toolchains/` so leaked panic backtraces / build-artifact
@@ -570,7 +591,8 @@ containing `/rustc/` lands in clap's quoted-argument chrome and trips the host-p
 check. These are not internal Debug leaks. To keep the detector strict on real internals
 while suppressing this false-positive class, `assert_fuzz_invariants` strips lines
 matching a recognized real-shell or clap error template before the banned-shape check;
-the byte-length cap and host-canary check still run on the unfiltered stderr, so flood
+the byte-length cap runs on the unfiltered stderr and the host-canary check runs on
+whatever the script cannot account for, so flood
 and TM-INF-013 regressions are still caught. The strict per-builtin path
 (`assert_no_leak`) is unchanged, non-fuzz tests must not produce shell echoes at all.
 

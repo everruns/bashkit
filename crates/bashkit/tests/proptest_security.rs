@@ -371,7 +371,7 @@ proptest! {
             let escaped = filter.replace('\'', "'\\''");
             let script = format!("echo '{{}}' | jq '{}'", escaped);
             let result = bash.exec(&script).await.unwrap_or_default();
-            assert_fuzz_invariants(&result, "jq_arbitrary_filter", &[]);
+            assert_fuzz_invariants(&result, &script, "jq_arbitrary_filter", &[]);
         }));
     }
 
@@ -403,6 +403,7 @@ proptest! {
             let result = bash.exec(&script).await.unwrap_or_default();
             assert_fuzz_invariants(
                 &result,
+                &script,
                 "yq_arbitrary_yaml_and_filter",
                 &["serde_norway::", "Mapping {", "TaggedValue {"],
             );
@@ -429,7 +430,7 @@ proptest! {
             let escaped = program.replace('\'', "'\\''");
             let script = format!("echo 'a b c' | awk '{}'", escaped);
             let result = bash.exec(&script).await.unwrap_or_default();
-            assert_fuzz_invariants(&result, "awk_arbitrary_program", &[]);
+            assert_fuzz_invariants(&result, &script, "awk_arbitrary_program", &[]);
         }));
     }
 
@@ -453,7 +454,7 @@ proptest! {
             let escaped = pattern.replace('\'', "'\\''");
             let script = format!("echo 'hello world' | grep -E '{}'", escaped);
             let result = bash.exec(&script).await.unwrap_or_default();
-            assert_fuzz_invariants(&result, "grep_arbitrary_regex", &[]);
+            assert_fuzz_invariants(&result, &script, "grep_arbitrary_regex", &[]);
         }));
     }
 
@@ -477,7 +478,7 @@ proptest! {
             let escaped = expr.replace('\'', "'\\''");
             let script = format!("echo 'hello' | sed '{}'", escaped);
             let result = bash.exec(&script).await.unwrap_or_default();
-            assert_fuzz_invariants(&result, "sed_arbitrary_expr", &[]);
+            assert_fuzz_invariants(&result, &script, "sed_arbitrary_expr", &[]);
         }));
     }
 
@@ -501,7 +502,7 @@ proptest! {
             let escaped = path.replace('\'', "'\\''");
             let script = format!("echo '{{\"a\":1}}' | json get '{}'", escaped);
             let result = bash.exec(&script).await.unwrap_or_default();
-            assert_fuzz_invariants(&result, "json_arbitrary_path", &[]);
+            assert_fuzz_invariants(&result, &script, "json_arbitrary_path", &[]);
         }));
     }
 }

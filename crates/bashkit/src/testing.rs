@@ -13,7 +13,10 @@
 //!  - **TM-INF-013** — no host environment variables leak through
 //!    builtins; verified via the canary mechanism: `fuzz_init()` sets a
 //!    magic env var on the host process, and `assert_fuzz_invariants`
-//!    asserts that magic value never appears in builtin stdout/stderr.
+//!    asserts that magic value never appears in builtin stdout/stderr
+//!    unless the executed script itself carries it (a coverage-guided
+//!    fuzzer can forge the canary into its own input — see
+//!    `assert_fuzz_invariants`).
 
 use crate::{Bash, ControlFlow, ExecResult};
 
@@ -107,7 +110,7 @@ pub async fn fuzz_exec(bash: &mut Bash, script: &str, ctx: &str, tool_banned: &[
         control_flow: ControlFlow::None,
         ..Default::default()
     });
-    assert_fuzz_invariants(&result, ctx, tool_banned);
+    assert_fuzz_invariants(&result, script, ctx, tool_banned);
 }
 
 /// Assert that stderr is short and contains no banned Debug-shape or
@@ -188,8 +191,9 @@ fn ends_shell_error_template(line: &str) -> bool {
     SHELL_ERROR_SUFFIXES.iter().any(|suf| line.ends_with(suf))
 }
 
-/// True when the shell would echo `input` back into a diagnostic
-/// containing a [`UNIVERSAL_BANNED`] shape.
+/// True when the shell would echo `input` back into a diagnostic that
+/// trips the leak detector — either a [`UNIVERSAL_BANNED`] shape or the
+/// [`FUZZ_HOST_CANARY`].
 ///
 /// Fuzz targets that inline raw bytes into scripts use this to skip such
 /// inputs, keeping the leak detector strict for real internals. Checking
@@ -197,10 +201,17 @@ fn ends_shell_error_template(line: &str) -> bool {
 /// expansion, so `\0{ code:` reaches stderr as ` { code:` and `</r\0ustc/`
 /// as `/rustc/`. That transformation is what defeated `glob_fuzz`'s
 /// original pre-filter in runs 218 and 219.
+///
+/// The canary belongs in this list because the detector hands libFuzzer
+/// the bytes to forge it: `assert_fuzz_invariants` compares output
+/// against [`FUZZ_HOST_CANARY`], that comparison is instrumented, and in
+/// run 272 libFuzzer recovered a 32-byte `PersAutoDict` entry for it and
+/// spliced the whole canary into an `arithmetic_fuzz` expression.
 pub fn input_echo_would_trip(input: &str) -> bool {
     let without_nul = input.replace('\0', "");
     UNIVERSAL_BANNED
         .iter()
+        .chain(std::iter::once(&FUZZ_HOST_CANARY))
         .any(|pat| input.contains(pat) || without_nul.contains(pat))
 }
 
@@ -311,12 +322,21 @@ fn is_clap_error_chrome_line(line: &str) -> bool {
 /// Full fuzz-invariant check. Like [`assert_no_leak`] but tolerates
 /// real-shell-style error lines (which echo user input verbatim) and
 /// adds the host-canary check (TM-INF-013): the canary must not appear
-/// in stdout or stderr.
+/// in stdout or stderr unless `script` accounts for it.
+///
+/// `script` is the script that produced `result`. The canary check is
+/// attribution-based rather than absolute because the detector arms the
+/// fuzzer against itself: the `contains(FUZZ_HOST_CANARY)` comparisons
+/// below are instrumented, so libFuzzer can learn the canary and splice
+/// it into its own input (run 272), and any builtin that echoes input
+/// verbatim then reproduces it. A canary the script already carries is
+/// that echo; a canary the script never mentions can only have come
+/// from `std::env`, which is the regression this guards.
 ///
 /// Call this from cargo-fuzz targets and proptest cases — anywhere
 /// random input runs through a builtin.
 #[track_caller]
-pub fn assert_fuzz_invariants(result: &ExecResult, ctx: &str, tool_banned: &[&str]) {
+pub fn assert_fuzz_invariants(result: &ExecResult, script: &str, ctx: &str, tool_banned: &[&str]) {
     let stderr = &result.stderr;
     assert!(
         stderr.len() <= MAX_STDERR_BYTES,
@@ -331,18 +351,24 @@ pub fn assert_fuzz_invariants(result: &ExecResult, ctx: &str, tool_banned: &[&st
              ---raw stderr---\n{stderr}\n---stripped---\n{stripped}\n---"
         );
     }
-    assert!(
-        !result.stdout.contains(FUZZ_HOST_CANARY),
-        "[{ctx}] FUZZ canary leaked into stdout (TM-INF-013 regression — \
-         a builtin is reading host env). stdout:\n---\n{}\n---",
-        truncate(&result.stdout, 512)
-    );
-    assert!(
-        !result.stderr.contains(FUZZ_HOST_CANARY),
-        "[{ctx}] FUZZ canary leaked into stderr (TM-INF-013 regression — \
-         a builtin is reading host env). stderr:\n---\n{}\n---",
-        truncate(&result.stderr, 512)
-    );
+    // Only an occurrence the script cannot explain is a host-env read.
+    // The shell strips NUL during word expansion, so a script carrying a
+    // NUL-split canary still echoes it whole — check both renderings, the
+    // same way `input_echo_would_trip` does.
+    if !(script.contains(FUZZ_HOST_CANARY) || script.replace('\0', "").contains(FUZZ_HOST_CANARY)) {
+        assert!(
+            !result.stdout.contains(FUZZ_HOST_CANARY),
+            "[{ctx}] FUZZ canary leaked into stdout (TM-INF-013 regression — \
+             a builtin is reading host env). stdout:\n---\n{}\n---",
+            truncate(&result.stdout, 512)
+        );
+        assert!(
+            !result.stderr.contains(FUZZ_HOST_CANARY),
+            "[{ctx}] FUZZ canary leaked into stderr (TM-INF-013 regression — \
+             a builtin is reading host env). stderr:\n---\n{}\n---",
+            truncate(&result.stderr, 512)
+        );
+    }
 }
 
 fn truncate(s: &str, max: usize) -> String {
@@ -366,6 +392,53 @@ pub fn check_cpython_http_request(data: &[u8]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn canary_in_the_input_is_counted_as_an_echo() {
+        // Run 272: libFuzzer learned the canary from the detector's own
+        // `contains` and spliced it into the expression. The pre-filter must
+        // treat it like any other self-inflicted echo.
+        let input = format!("1+{FUZZ_HOST_CANARY}");
+        assert!(input_echo_would_trip(&input));
+        // NUL-split, as the shell will rejoin it during word expansion.
+        let (head, tail) = FUZZ_HOST_CANARY.split_at(10);
+        assert!(input_echo_would_trip(&format!("{head}\0{tail}")));
+    }
+
+    #[test]
+    fn canary_echoed_from_the_script_is_not_a_leak() {
+        let result = ExecResult {
+            stderr: format!("bash: {FUZZ_HOST_CANARY}: syntax error").into(),
+            ..Default::default()
+        };
+        // The script put the canary there, so this is an echo, not a host read.
+        assert_fuzz_invariants(
+            &result,
+            &format!("echo $(({FUZZ_HOST_CANARY}))"),
+            "canary_echo",
+            &[],
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "FUZZ canary leaked into stderr")]
+    fn canary_absent_from_the_script_is_still_a_leak() {
+        let result = ExecResult {
+            stderr: format!("env: {FUZZ_HOST_CANARY}").into(),
+            ..Default::default()
+        };
+        assert_fuzz_invariants(&result, "env", "canary_leak", &[]);
+    }
+
+    #[test]
+    #[should_panic(expected = "FUZZ canary leaked into stdout")]
+    fn canary_absent_from_the_script_is_still_a_leak_on_stdout() {
+        let result = ExecResult {
+            stdout: FUZZ_HOST_CANARY.into(),
+            ..Default::default()
+        };
+        assert_fuzz_invariants(&result, "env", "canary_leak_stdout", &[]);
+    }
 
     #[test]
     fn strip_keeps_unrelated_lines() {
