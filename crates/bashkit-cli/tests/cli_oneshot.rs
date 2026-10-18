@@ -26,6 +26,10 @@ const BIN: &str = env!("CARGO_BIN_EXE_bashkit");
 fn cli() -> Command {
     let mut cmd = Command::new(BIN);
     cmd.env_remove("RUST_BACKTRACE");
+    // This binary is instrumented under coverage and several tests below kill
+    // it mid-run; a SIGKILLed child leaves a truncated profraw, which fails
+    // tarpaulin's merge step. See `bashkit::testing::child_profile_path`.
+    cmd.env("LLVM_PROFILE_FILE", bashkit::testing::child_profile_path());
     cmd
 }
 
@@ -314,6 +318,9 @@ fn run_bounded_child(argv: &[&str], limits: &ProbeLimits) -> ProbeRun {
     cmd.args(&argv[1..]);
     let mut child = cmd
         .env_remove("RUST_BACKTRACE")
+        // Killed by the bound below when it overruns; keep its truncated
+        // profraw out of tarpaulin's merge set.
+        .env("LLVM_PROFILE_FILE", bashkit::testing::child_profile_path())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -1508,7 +1515,9 @@ fn streamed_output_is_not_printed_twice() {
 fn output_without_a_newline_arrives_before_the_script_is_released() {
     let dir = tempfile::tempdir().unwrap();
     let mount = format!("{}:/gate", dir.path().display());
-    let mut child = Command::new(BIN)
+    // Through `cli()`: it carries the backtrace scrub and the coverage
+    // profile redirect every spawn of this binary needs.
+    let mut child = cli()
         .args([
             "--no-stdin",
             "--timeout",
@@ -1518,7 +1527,6 @@ fn output_without_a_newline_arrives_before_the_script_is_released() {
             "-c",
             "printf first; while [ ! -e /gate/release ]; do sleep 0.01; done; printf last",
         ])
-        .env_remove("RUST_BACKTRACE")
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()

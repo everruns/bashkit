@@ -87,3 +87,70 @@ fn bounded_child_launchers_never_cap_address_space() {
         offenders.join("\n")
     );
 }
+
+/// Every test file that spawns the instrumented `bashkit` binary redirects
+/// the child's coverage profile away from tarpaulin's merge set.
+///
+/// A child inherits the parent's `LLVM_PROFILE_FILE` template, so it writes a
+/// profraw named after the *parent* test binary into
+/// `target/tarpaulin/profraws/`. Supervised children are killed by design and
+/// a SIGKILLed process never flushes its profraw, so tarpaulin's merge step
+/// panics inside `llvm_profparser` (`unreachable!("llvm_profparsers works on
+/// complete data")`). That failed the Coverage job on main runs 4588 and 4600,
+/// two days apart on unrelated commits, while required CI — which is not
+/// instrumented — stayed green on the same trees.
+///
+/// Satisfied either by `bashkit::testing::child_profile_path` or by setting
+/// `LLVM_PROFILE_FILE` directly, which a test asserting on the child's
+/// profraw as a bounded-artifact receipt needs to do.
+///
+/// See knowledge/operations/testing.md, "Spawned CLI children get their own
+/// coverage profile path".
+#[test]
+fn cli_spawning_tests_redirect_the_child_coverage_profile() {
+    let mut files = Vec::new();
+    rust_files(&crates_dir(), &mut files);
+
+    // How a file gets hold of the instrumented binary.
+    const SPAWN_MARKERS: &[&str] = &["bashkit_cli_path()", "CARGO_BIN_EXE_bashkit"];
+    // How it redirects the child: the shared helper, or its own path.
+    const REDIRECT_MARKERS: &[&str] = &["child_profile_path", "LLVM_PROFILE_FILE"];
+
+    let mut spawners = Vec::new();
+    let mut offenders = Vec::new();
+    for file in &files {
+        if file.ends_with("integration/bounded_child_launcher_scan_tests.rs") {
+            continue;
+        }
+        let source = std::fs::read_to_string(file)
+            .unwrap_or_else(|e| panic!("read {}: {e}", file.display()));
+        // Only code spawns; prose about the rule names the markers too.
+        let code: String = source
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        if !SPAWN_MARKERS.iter().any(|m| code.contains(m)) {
+            continue;
+        }
+        spawners.push(file.display().to_string());
+        if !REDIRECT_MARKERS.iter().any(|m| code.contains(m)) {
+            offenders.push(file.display().to_string());
+        }
+    }
+
+    // Fail closed: a scan that found no spawners proves nothing.
+    assert!(
+        spawners.len() >= 3,
+        "scan did not reach the known CLI-spawning harnesses, found: {spawners:?}"
+    );
+    assert!(
+        offenders.is_empty(),
+        "these spawn the instrumented bashkit binary without redirecting the \
+         child's coverage profile; a killed child then leaves a truncated \
+         profraw in tarpaulin's merge set and the Coverage job fails at random. \
+         Set `LLVM_PROFILE_FILE` from `bashkit::testing::child_profile_path()` \
+         (knowledge/operations/testing.md):\n{}",
+        offenders.join("\n")
+    );
+}

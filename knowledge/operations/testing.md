@@ -369,6 +369,42 @@ overran it under ASAN, which is how nightly #247 surfaced it. Two rules follow:
 - Make the linear path fast rather than the budget generous. Raising the
   budget to fit a slow linear run also lets a quadratic run through.
 
+## Spawned CLI children get their own coverage profile path
+
+A test that spawns the instrumented `bashkit` binary must point the child's
+`LLVM_PROFILE_FILE` somewhere `cargo tarpaulin` does not merge.
+
+A child inherits the *parent's* profile-path template, so it writes a profraw
+named after the parent test binary into `target/tarpaulin/profraws/` -- the
+directory tarpaulin merges. Supervised children are killed by design, and a
+SIGKILLed process never flushes its profraw, so the merge step panics inside
+`llvm_profparser` (`unreachable!("llvm_profparsers works on complete data")`)
+and the Coverage job fails. It is a race on whether the victim flushed, so it
+is intermittent: main Coverage runs 4588 and 4600 failed two days apart on
+unrelated commits, each after all 2,441 tests had passed, while required CI --
+which is not instrumented -- stayed green on the same trees. The same
+divergence shape as the ASAN address-space bug above.
+
+`bashkit::testing::child_profile_path()` supplies the path: one directory per
+process, a unique file per call, removal left to the OS. Cleanup is
+deliberately not guarded, because a killed child's foreign descendant can
+still be writing there and a per-call remove could fail for reasons unrelated
+to the test. A test that instead *asserts* on the child's profraw, as
+`run_input_shape_bounded` does for its bounded-artifact receipt, sets
+`LLVM_PROFILE_FILE` to its own path; the rule is only that the child never
+writes into the merge set.
+
+Two layers enforce it. `bounded_child_launcher_scan_tests` scans every crate
+and fails any file that reaches the binary (`bashkit_cli_path()`,
+`CARGO_BIN_EXE_bashkit`) without setting a profile path, and it fails closed
+when the scan finds no spawners at all. The scan cannot prove the variable
+survives the `bash -c` launcher and its `exec`, so
+`bounded_cli_child_profile_points_outside_the_merge_set` has a real bounded
+child print its own `LLVM_PROFILE_FILE` back.
+
+Redirecting also fixes attribution: without it the CLI's counters land in a
+file tarpaulin credits to the parent test binary.
+
 ## Public capability parity contract
 
 [`contracts/capability-parity.json`](../../contracts/capability-parity.json) is the

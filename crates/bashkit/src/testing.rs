@@ -81,6 +81,48 @@ pub fn fuzz_init() {
     });
 }
 
+/// A throwaway `LLVM_PROFILE_FILE` path for a spawned child, outside the
+/// directory `cargo tarpaulin` merges.
+///
+/// Any test that spawns the instrumented `bashkit` binary must set this on
+/// the child. A child inherits the *parent's* profile-path template, so it
+/// writes a profraw named after the parent test binary into
+/// `target/tarpaulin/profraws/`, which tarpaulin then merges. Supervised
+/// children are killed by design, and a SIGKILLed process never flushes its
+/// profraw, so the merge step panicked inside `llvm_profparser`
+/// (`unreachable!("llvm_profparsers works on complete data")`) and failed the
+/// Coverage job at random — main runs 4588 and 4600, two days apart on
+/// unrelated commits. Redirecting the child keeps truncated writes out of the
+/// merge set, and stops the child's counters being misattributed to the
+/// parent binary.
+///
+/// One directory per process, a unique file per call, removal left to the OS.
+/// Deliberately not a cleanup-guarded temp dir: a killed child's foreign
+/// descendant can still be writing here, so a per-call remove could fail for
+/// reasons that have nothing to do with the test using it.
+///
+/// A test that needs to *assert* on the child's profraw (as a bounded-artifact
+/// receipt, say) should set `LLVM_PROFILE_FILE` to its own path instead; the
+/// point is only that the child never writes into tarpaulin's merge set.
+pub fn child_profile_path() -> std::path::PathBuf {
+    use std::sync::OnceLock;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static DIR: OnceLock<std::path::PathBuf> = OnceLock::new();
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let dir = DIR.get_or_init(|| {
+        let dir =
+            std::env::temp_dir().join(format!("bashkit-child-profraws-{}", std::process::id()));
+        // Best-effort: if the directory cannot be created the child's write
+        // simply fails, which is the outcome this redirect wants anyway.
+        let _ = std::fs::create_dir_all(&dir);
+        dir
+    });
+    dir.join(format!(
+        "child-{}.profraw",
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ))
+}
+
 /// Execute a script under a fresh `Bash` and capture the result.
 /// Both `Ok(ExecResult)` and the hard `Err(execution error)` paths are
 /// normalized into `ExecResult` so callers don't have to branch.
@@ -400,6 +442,27 @@ pub fn check_cpython_http_request(data: &[u8]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn child_profile_paths_are_unique_and_outside_the_merge_set() {
+        let a = child_profile_path();
+        let b = child_profile_path();
+        assert_ne!(a, b, "each child needs its own profraw path");
+        for p in [&a, &b] {
+            let text = p.to_string_lossy();
+            // The whole point: never inside the directory tarpaulin merges.
+            assert!(
+                !text.contains("tarpaulin"),
+                "child profraw must not land in tarpaulin's merge set: {text}"
+            );
+            assert!(text.ends_with(".profraw"), "{text}");
+        }
+        assert_eq!(a.parent(), b.parent(), "one directory per process");
+        assert!(
+            a.parent().expect("parent dir").is_dir(),
+            "the sink directory is created up front"
+        );
+    }
 
     #[test]
     fn canary_in_the_input_is_counted_as_an_echo() {

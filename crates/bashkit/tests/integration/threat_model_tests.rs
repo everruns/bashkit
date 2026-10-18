@@ -255,17 +255,29 @@ pub(crate) mod resource_exhaustion {
         };
     }
 
-    fn run_cli_argv_bounded(script: &str, extra_args: &[&str], limit: Duration) -> BoundedRun {
+    /// The launcher-wrapped CLI command a bounded run executes. Separated so
+    /// the harness wiring itself is assertable without running a child: the
+    /// sandbox does not expose host env to the script, so a bounded run
+    /// cannot report back what its own process received.
+    fn bounded_cli_command(script: &str, extra_args: &[&str]) -> Command {
         let launcher = limit_launcher();
         let mut cmd = Command::new("bash");
         cmd.args(["-c", &launcher, "_"])
             .arg(bashkit_cli_path())
             .args(["-c", script])
             .args(extra_args)
+            // The CLI is instrumented under coverage and these children are
+            // killed by design; without this the truncated profraw lands in
+            // tarpaulin's merge set. See `testing::child_profile_path`.
+            .env("LLVM_PROFILE_FILE", bashkit::testing::child_profile_path())
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        let mut run = run_command_bounded(cmd, limit);
+        cmd
+    }
+
+    fn run_cli_argv_bounded(script: &str, extra_args: &[&str], limit: Duration) -> BoundedRun {
+        let mut run = run_command_bounded(bounded_cli_command(script, extra_args), limit);
         strip_launcher_note(&mut run);
         run
     }
@@ -917,6 +929,10 @@ pub(crate) mod resource_exhaustion {
         cmd.args(["-c", &launcher, "_"])
             .arg(program)
             .args(args)
+            // `program` is a parameter, so an instrumented binary can reach
+            // here; a non-instrumented helper just ignores this. Same reason
+            // as `run_cli_argv_bounded`.
+            .env("LLVM_PROFILE_FILE", bashkit::testing::child_profile_path())
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -929,6 +945,39 @@ pub(crate) mod resource_exhaustion {
     /// no trailing words after the `-c` script.
     fn run_cli_bounded(script: &str, limit: Duration) -> BoundedRun {
         run_cli_argv_bounded(script, &[], limit)
+    }
+
+    /// Every bounded CLI child is handed a coverage profile path outside the
+    /// directory tarpaulin merges, and a distinct one per child.
+    ///
+    /// These children are killed by design, and a SIGKILLed instrumented
+    /// process leaves a truncated profraw that fails tarpaulin's merge step
+    /// (main Coverage runs 4588 and 4600). Asserted on the built `Command`
+    /// rather than from inside the child: the sandbox deliberately withholds
+    /// host env from the script (TM-INF-013), so a bounded run cannot echo
+    /// back what its own process received. This pins the actual value, which
+    /// the static scan in `bounded_child_launcher_scan_tests` cannot.
+    #[test]
+    fn bounded_cli_children_get_a_profile_path_outside_the_merge_set() {
+        fn profile_of(cmd: &Command) -> std::ffi::OsString {
+            cmd.get_envs()
+                .find(|(key, _)| *key == std::ffi::OsStr::new("LLVM_PROFILE_FILE"))
+                .map(|(_, value)| value.expect("profile path is set, not removed"))
+                .expect("bounded CLI children must get LLVM_PROFILE_FILE")
+                .to_owned()
+        }
+
+        let first = profile_of(&bounded_cli_command("echo hi", &[]));
+        let text = first.to_string_lossy();
+        assert!(text.ends_with(".profraw"), "{text}");
+        assert!(
+            !text.contains("tarpaulin"),
+            "child would write into tarpaulin's merge set: {text}"
+        );
+
+        // Distinct per child: two victims must not race on one file.
+        let second = profile_of(&bounded_cli_command("echo hi", &[]));
+        assert_ne!(first, second);
     }
 
     /// Reaps a victim inside a finite grace via caller-supplied polling.
