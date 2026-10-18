@@ -208,11 +208,22 @@ fn ends_shell_error_template(line: &str) -> bool {
 /// run 272 libFuzzer recovered a 32-byte `PersAutoDict` entry for it and
 /// spliced the whole canary into an `arithmetic_fuzz` expression.
 pub fn input_echo_would_trip(input: &str) -> bool {
-    let without_nul = input.replace('\0', "");
     UNIVERSAL_BANNED
         .iter()
         .chain(std::iter::once(&FUZZ_HOST_CANARY))
-        .any(|pat| input.contains(pat) || without_nul.contains(pat))
+        .any(|pat| carries_through_expansion(input, pat))
+}
+
+/// True when `text` carries `needle` into a diagnostic — literally, or
+/// after the shell drops NUL bytes during word expansion, which turns
+/// `</r\0ustc/` into `/rustc/` and `\0{ code:` into ` { code:`.
+///
+/// Comparing the raw bytes alone is what defeated `glob_fuzz`'s original
+/// pre-filter in runs 218 and 219. The `contains('\0')` guard keeps the
+/// allocation off the common path: almost no input has a NUL, and this
+/// runs once per pattern per fuzz iteration.
+fn carries_through_expansion(text: &str, needle: &str) -> bool {
+    text.contains(needle) || (text.contains('\0') && text.replace('\0', "").contains(needle))
 }
 
 /// Trailing halves of the real-shell diagnostic templates that quote user
@@ -352,10 +363,7 @@ pub fn assert_fuzz_invariants(result: &ExecResult, script: &str, ctx: &str, tool
         );
     }
     // Only an occurrence the script cannot explain is a host-env read.
-    // The shell strips NUL during word expansion, so a script carrying a
-    // NUL-split canary still echoes it whole — check both renderings, the
-    // same way `input_echo_would_trip` does.
-    if !(script.contains(FUZZ_HOST_CANARY) || script.replace('\0', "").contains(FUZZ_HOST_CANARY)) {
+    if !carries_through_expansion(script, FUZZ_HOST_CANARY) {
         assert!(
             !result.stdout.contains(FUZZ_HOST_CANARY),
             "[{ctx}] FUZZ canary leaked into stdout (TM-INF-013 regression — \
