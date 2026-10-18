@@ -75,6 +75,12 @@ state on dropped futures. Async output emission stays boxed to respect the
 existing native debug-build stack budget. Live execution yields every 64
 commands for fairness; buffered synchronous APIs retain their single-poll model.
 
+Background output remains buffered until completion. Jobs finishing after the
+last top-level command drain into live stdout/stderr before execution writers
+close, including scripts with no explicit `wait`. Job cleanup runs even if that
+delivery fails; explicit live execution does not copy delivered job bytes into
+its discarded final engine result.
+
 Streaming utilities and host commands share `CommandIo` output destinations.
 Their redirects open once; incremental writes, buffered option results and
 diagnostics use those same destinations. Saved original stdout/stderr copies

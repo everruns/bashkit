@@ -220,6 +220,10 @@ Process substitutions `<(...)` and `>(...)` preserve raw bytes, including NUL
 and invalid UTF-8, but still buffer rather than running both sides as live
 tasks. Command substitution `$(...)` remains a text boundary and removes NUL.
 
+Background jobs remain scoped to one execution and buffer output until
+completion. Final job output reaches live sinks before execution completes,
+including when the script does not explicitly call `wait`.
+
 ## Routing, errors and cancellation
 
 A command context provides its name, expanded arguments (`args` in Rust,
