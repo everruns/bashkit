@@ -900,10 +900,10 @@ async fn scan_input(
     let opts = sh.opts;
     let term = if opts.null_data { b'\0' } else { b'\n' };
     let (name, mut input, whole_binary) = match source {
-        Source::Stdin(name) => (name, super::InputChunks::stdin(ctx), false),
+        Source::Stdin(name) => (name, super::InputChunks::stdin(ctx)?, false),
         Source::File(name, bytes) => {
             let nul = bytes.contains(&0);
-            (name, super::InputChunks::bytes(bytes), nul)
+            (name, super::InputChunks::bytes(ctx, bytes)?, nul)
         }
     };
     let mut scan = FileScan::new(&name, opts);
@@ -911,7 +911,7 @@ async fn scan_input(
         scan.set_binary(opts);
     }
     while !scan.done {
-        let Some(piece) = input.next(super::cut_records(term)).await else {
+        let Some(piece) = input.next(super::cut_records(term)).await? else {
             break;
         };
         ctx.consume_budget_work(1)?;
@@ -928,7 +928,7 @@ async fn scan_input(
         if let Some(s) = stream
             && !out.is_empty()
         {
-            if !s.write(out).await {
+            if !s.write(out).await? {
                 return Ok((scan.nlines, true));
             }
             out.clear();
@@ -938,7 +938,7 @@ async fn scan_input(
     if let Some(s) = stream
         && !out.is_empty()
     {
-        if !s.write(out).await {
+        if !s.write(out).await? {
             return Ok((n, true));
         }
         out.clear();
@@ -969,7 +969,11 @@ impl Builtin for Grep {
         for pattern_file in &opts.pattern_files {
             let content = match read_operand_file(&ctx, pattern_file).await {
                 Ok(c) => c,
+                Err(error @ (crate::Error::ResourceLimit(_) | crate::Error::Cancelled)) => {
+                    return Err(error);
+                }
                 Err(reason) => {
+                    let reason = crate::error::io_error_reason(&reason);
                     return Ok(ExecResult::err(
                         format!("grep: {pattern_file}: {reason}\n"),
                         2,
@@ -991,7 +995,11 @@ impl Builtin for Grep {
                     opts.exclude_patterns
                         .extend(text.lines().filter(|l| !l.is_empty()).map(str::to_string));
                 }
+                Err(error @ (crate::Error::ResourceLimit(_) | crate::Error::Cancelled)) => {
+                    return Err(error);
+                }
                 Err(reason) => {
+                    let reason = crate::error::io_error_reason(&reason);
                     return Ok(ExecResult::err(
                         format!("grep: {exclude_file}: {reason}\n"),
                         2,
@@ -1182,18 +1190,11 @@ fn resolve(cwd: &std::path::Path, file: &str) -> std::path::PathBuf {
 
 /// Read a file named on the command line (`-f`, `--exclude-from`); `-`
 /// is standard input. `Err` is the strerror-style reason.
-async fn read_operand_file(ctx: &Context<'_>, name: &str) -> std::result::Result<Vec<u8>, String> {
+async fn read_operand_file(ctx: &Context<'_>, name: &str) -> Result<Vec<u8>> {
     if name == "-" {
-        return Ok(ctx
-            .stdin_to_end()
-            .await
-            .map(|s| s.as_bytes().to_vec())
-            .unwrap_or_default());
+        return Ok(ctx.stdin_to_end().await?.as_bytes().to_vec());
     }
-    ctx.fs
-        .read_file(&resolve(ctx.cwd, name))
-        .await
-        .map_err(|e| crate::error::io_error_reason(&e))
+    ctx.fs.read_file(&resolve(ctx.cwd, name)).await
 }
 
 /// A resolved directory ancestor. Sibling aliases remain independent searches.

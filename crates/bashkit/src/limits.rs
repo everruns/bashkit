@@ -1184,6 +1184,10 @@ impl<T> BudgetedVec<T> {
         self.inner.pop()
     }
 
+    pub(crate) fn truncate(&mut self, len: usize) {
+        self.inner.truncate(len);
+    }
+
     pub(crate) fn into_parts(self) -> (Vec<T>, Option<ExecutionBudgetLease>) {
         (self.inner, self.lease)
     }

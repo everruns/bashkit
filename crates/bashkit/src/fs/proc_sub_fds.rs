@@ -36,9 +36,18 @@ pub(crate) type ProcSubBuffer = Arc<Mutex<Vec<u8>>>;
 #[derive(Clone)]
 pub(crate) enum ProcSubData {
     /// `<(cmd)`: the list's output, read by the command.
-    Input(Arc<[u8]>),
+    Input(Arc<crate::limits::BudgetedBytes>),
     /// `>(cmd)`: what the command writes, fed to the list afterwards.
     Output(ProcSubBuffer),
+}
+
+#[cfg(test)]
+impl ProcSubData {
+    pub(crate) fn test_input(data: &[u8]) -> Self {
+        let mut bytes = crate::limits::BudgetedBytes::new(None).unwrap();
+        bytes.try_extend_from_slice(data).unwrap();
+        Self::Input(Arc::new(bytes))
+    }
 }
 
 pub(crate) struct ProcSubFs {
@@ -345,7 +354,7 @@ mod tests {
         let a = ProcSubFs::new(Arc::clone(&shared));
         let b = ProcSubFs::new(Arc::clone(&shared));
         let p = Path::new("/dev/fd/63");
-        a.open(63, ProcSubData::Input(Arc::from(&b"a-data"[..])));
+        a.open(63, ProcSubData::test_input(b"a-data"));
         assert_eq!(a.read_file(p).await.unwrap(), b"a-data");
         assert!(a.exists(p).await.unwrap());
         assert_eq!(a.stat(p).await.unwrap().file_type, FileType::Fifo);

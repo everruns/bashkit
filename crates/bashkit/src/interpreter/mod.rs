@@ -421,6 +421,7 @@ pub(crate) struct ShellRef<'a> {
     pub(crate) stdin_pipe: Option<Arc<pipe::Pipe>>,
     pub(crate) stderr_pipe: Option<Arc<pipe::Pipe>>,
     pub(crate) command_routes: Option<[crate::command::CommandRoute; 2]>,
+    pub(crate) stdout_stream: Option<crate::command::CommandOutput>,
     /// Enclosing loops in the current function (`break`/`continue`).
     pub(crate) loop_depth: usize,
     /// Active function calls and `source`s (`return` is valid when > 0).
@@ -4233,7 +4234,7 @@ impl Interpreter {
             let emit_before = self.output_emit_count;
             self.maybe_emit_output(&result.stdout, &result.stderr, emit_before)
                 .await?;
-            self.flush_exec_passthrough(&mut result);
+            Box::pin(self.flush_exec_passthrough(&mut result)).await?;
             Ok(result)
         })
     }
@@ -4357,7 +4358,7 @@ impl Interpreter {
             self.maybe_emit_output(&result.stdout, &result.stderr, emit_before)
                 .await?;
             if top_level {
-                self.flush_exec_passthrough(&mut result);
+                Box::pin(self.flush_exec_passthrough(&mut result)).await?;
             }
 
             // Accumulate stdout with truncation
@@ -7984,18 +7985,18 @@ impl Interpreter {
     /// large, so `yes | head -1` and `seq 1000000 | head -1` stop at the
     /// first line with SIGPIPE instead of running into the output caps.
     fn streams_stdout(simple: &SimpleCommand) -> bool {
-        simple.redirects.is_empty()
-            && matches!(
-                simple.name.parts.as_slice(),
-                [WordPart::Literal(name)]
-                    if matches!(name.as_str(), "yes" | "seq" | "cat" | "grep" | "tr")
-            )
+        matches!(
+            simple.name.parts.as_slice(),
+            [WordPart::Literal(name)]
+                if matches!(name.as_str(), "yes" | "seq" | "cat" | "grep" | "tr")
+        )
     }
 
     /// Streaming stages that also read their stdin pipe incrementally
     /// (`Context::stdin_stream`), so `loop | grep y | head -1` stops early.
-    /// They read the pipe to the end themselves when an option needs the
-    /// whole input (`grep -c`, `tr -s`).
+    /// They consume incrementally; options such as `tr -s` explicitly collect
+    /// budget-owned whole input. Grep summaries can delay output, while -q
+    /// still exits after its first matching record.
     fn streams_stdin(name: &str) -> bool {
         matches!(name, "cat" | "grep" | "tr")
     }
@@ -8489,6 +8490,9 @@ impl Interpreter {
             }
             self.maybe_emit_output(&result.stdout, &result.stderr, emit_before)
                 .await?;
+            if route {
+                Box::pin(self.flush_exec_passthrough(&mut result)).await?;
+            }
             if self.retain_streamed_output() {
                 stdout.append(&result.stdout);
                 stderr.append(&result.stderr);
@@ -8595,6 +8599,9 @@ impl Interpreter {
                     }
                     self.maybe_emit_output(&result.stdout, &result.stderr, emit_before)
                         .await?;
+                    if route {
+                        Box::pin(self.flush_exec_passthrough(&mut result)).await?;
+                    }
                     if self.retain_streamed_output() {
                         stdout.append(&result.stdout);
                         stderr.append(&result.stderr);
@@ -9534,8 +9541,7 @@ impl Interpreter {
             let output = self
                 .execution_output()
                 .filter(|_| self.output_callback.is_some());
-            let can_stream = !Self::has_output_redirect(&command.redirects)
-                && !self.scoped.functions.contains_key(name);
+            let can_stream = !self.scoped.functions.contains_key(name);
             self.builtin_stdout_pipe = if can_stream
                 && (self.stream_stdout_command == Some(command as *const SimpleCommand as usize)
                     || (self.output_callback.is_some()
@@ -9843,10 +9849,22 @@ impl Interpreter {
 
     /// Hand output written to a saved original stdout/stderr (`>&3` after
     /// `exec 3>&1 >log`) to the caller, unrouted.
-    fn flush_exec_passthrough(&mut self, result: &mut ExecResult) {
+    async fn flush_exec_passthrough(&mut self, result: &mut ExecResult) -> Result<()> {
         let (out, err) = std::mem::take(&mut self.exec_passthrough);
         if out.is_empty() && err.is_empty() {
-            return;
+            return Ok(());
+        }
+        // Saved original descriptors bypass persistent redirects, but must
+        // still use the request's awaited, capped byte-output pumps.
+        if self.output_callback.is_some()
+            && let Some(output) = self.execution_output().filter(|_| self.pipe_out.is_none())
+        {
+            self.execution_budget
+                .run(output.stdout.write_bounded(out.as_bytes()))
+                .await??;
+            self.execution_budget
+                .run(output.stderr.write_bounded(err.as_bytes()))
+                .await??;
         }
         if let Some(cb) = self.output_callback.as_mut() {
             cb(&out, &err);
@@ -9856,6 +9874,7 @@ impl Interpreter {
         }
         result.stdout.append(&out);
         result.stderr.append(&err);
+        Ok(())
     }
 
     fn exec_fd_alias_target(&self, target_fd: i32) -> FdTarget {
@@ -10094,6 +10113,7 @@ impl Interpreter {
                     stdin_pipe: None,
                     stderr_pipe: None,
                     command_routes: None,
+                    stdout_stream: None,
                     loop_depth: self.loop_depth,
                     return_depth: self.return_depth,
                     last_exit_code: self.last_exit_code,
@@ -10151,7 +10171,11 @@ impl Interpreter {
                 (fs, None)
             };
             let streaming_command = builtin.streams_io();
-            let command_routes = if streaming_command {
+            let streaming_utility = bundled
+                && matches!(name, "yes" | "seq" | "cat" | "grep" | "tr")
+                && self.builtin_stdout_pipe.is_some();
+            let routed_output = streaming_command || streaming_utility;
+            let command_routes = if routed_output {
                 self.builtin_stdout_pipe = self
                     .pipe_out
                     .clone()
@@ -10172,7 +10196,7 @@ impl Interpreter {
             } else {
                 None
             };
-            let stderr_pipe = if builtin.streams_io() && self.output_callback.is_some() {
+            let stderr_pipe = if routed_output && self.output_callback.is_some() {
                 self.execution_output().map(|o| o.stderr.clone())
             } else {
                 None
@@ -10200,11 +10224,12 @@ impl Interpreter {
                 stdin_pipe: self.builtin_stdin_pipe.take(),
                 stderr_pipe,
                 command_routes,
+                stdout_stream: None,
                 loop_depth: self.loop_depth,
                 return_depth: self.return_depth,
                 last_exit_code: self.last_exit_code,
             };
-            let ctx = builtins::Context {
+            let mut ctx = builtins::Context {
                 args,
                 env: &self.env,
                 variables: Arc::make_mut(&mut self.scoped.variables),
@@ -10218,6 +10243,14 @@ impl Interpreter {
                 #[cfg(feature = "ssh")]
                 ssh_client: self.ssh_client.as_deref(),
                 shell: Some(shell_ref),
+            };
+
+            let utility_io = if streaming_utility {
+                let io = crate::command::CommandIo::new(&ctx)?;
+                ctx.shell.as_mut().expect("builtin shell").stdout_stream = Some(io.stdout.clone());
+                Some(io)
+            } else {
+                None
             };
 
             // THREAT[TM-INT-001]: Execute builtin with panic catching for security
@@ -10235,6 +10268,14 @@ impl Interpreter {
                 Ok(Err(crate::error::Error::Regex(e))) if bundled => {
                     builtin_usage_error(&format!("{name}: {e}"))
                 }
+                Ok(Err(crate::Error::Io(error))) if utility_io.is_some() => ExecResult {
+                    exit_code: utility_io
+                        .as_ref()
+                        .expect("routed utility")
+                        .write_error(name, error)
+                        .await?,
+                    ..Default::default()
+                },
                 Ok(Err(e)) => return Err(e),
                 Err(_panic) => ExecResult::err(
                     self.diag(format!("{name}: builtin failed unexpectedly\n")),
@@ -10282,7 +10323,9 @@ impl Interpreter {
 
             self.apply_builtin_side_effects(&mut result).await?;
 
-            let result = if streaming_command {
+            let result = if let Some(io) = utility_io {
+                io.complete(name, result).await?
+            } else if streaming_command {
                 result
             } else {
                 self.apply_redirections(result, redirects).await?
@@ -12837,7 +12880,7 @@ impl Interpreter {
         }
 
         if is_input {
-            let mut stdout = String::new();
+            let mut stdout = crate::limits::BudgetedBytes::new(Some(&self.execution_budget))?;
             // The substituted list runs in a subshell: nothing it changes
             // (variables, cwd, options, `$?`) reaches the parent.
             let snapshot = Box::new(self.snapshot_subshell_state());
@@ -12853,7 +12896,14 @@ impl Interpreter {
             for cmd in commands {
                 match self.execute_command(cmd).await {
                     Ok(cmd_result) => {
-                        stdout.push_str(&cmd_result.stdout.command_substitution_text());
+                        // Process substitution is byte transport, unlike $(...).
+                        // Admit capture growth without applying shell-word decoding.
+                        if let Err(error) =
+                            stdout.try_extend_from_slice(cmd_result.stdout.as_bytes())
+                        {
+                            failed = Some(error.into());
+                            break;
+                        }
                         if matches!(
                             cmd_result.control_flow,
                             ControlFlow::Exit(_) | ControlFlow::Abort
@@ -12877,10 +12927,8 @@ impl Interpreter {
             // Allocated after the list ran: in bash the child closes its own
             // end, so a substitution nested inside sees the number free.
             let fd = self.allocate_proc_sub_fd()?;
-            self.proc_subs.open(
-                fd,
-                crate::fs::ProcSubData::Input(Arc::from(stdout.into_bytes())),
-            );
+            self.proc_subs
+                .open(fd, crate::fs::ProcSubData::Input(Arc::new(stdout)));
             Ok(format!("/dev/fd/{fd}"))
         } else {
             let fd = self.allocate_proc_sub_fd()?;
@@ -18369,7 +18417,7 @@ cat /tmp/test_fd_exec_public.txt"#,
         // While open in `owner`, the fd exists only there.
         owner
             .proc_subs
-            .open(63, crate::fs::ProcSubData::Input(Arc::from(&b"secret"[..])));
+            .open(63, crate::fs::ProcSubData::test_input(b"secret"));
         assert_eq!(
             owner.fs.read_file(Path::new("/dev/fd/63")).await.unwrap(),
             b"secret"

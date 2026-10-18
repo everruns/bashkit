@@ -1882,7 +1882,7 @@ mod input_admission_tests {
             bash.interpreter.begin_execution_budget();
             bash.interpreter
                 .proc_subs
-                .open(63, crate::fs::ProcSubData::Input(Arc::from(&b"ab"[..])));
+                .open(63, crate::fs::ProcSubData::test_input(b"ab"));
             let path = Path::new("/dev/fd/63");
             assert_eq!(bash.interpreter.fs.stat(path).await.unwrap().size, 0);
             let result = bash.interpreter.read_input_stream(path, false).await;

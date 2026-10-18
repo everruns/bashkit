@@ -226,13 +226,16 @@ pub(crate) struct CommandAdapter {
     pub command: Arc<dyn Command>,
 }
 
-#[async_trait]
-impl Builtin for CommandAdapter {
-    fn streams_io(&self) -> bool {
-        true
-    }
+/// Shared routed byte destinations for host commands and streaming utilities.
+pub(crate) struct CommandIo {
+    pub stdout: CommandOutput,
+    pub stderr: CommandOutput,
+    out_capture: Arc<Mutex<Capture>>,
+    err_capture: Arc<Mutex<Capture>>,
+}
 
-    async fn execute(&self, ctx: BuiltinContext<'_>) -> Result<ExecResult> {
+impl CommandIo {
+    pub(crate) fn new(ctx: &BuiltinContext<'_>) -> Result<Self> {
         let budget = ctx
             .execution_budget()
             .ok_or_else(|| Error::Internal("missing command budget".into()))?
@@ -277,6 +280,79 @@ impl Builtin for CommandAdapter {
             Some([out, err]) => (resolve(out), resolve(err)),
             None => (stdout, stderr),
         };
+        Ok(Self {
+            stdout: CommandOutput {
+                destination: stdout,
+                budget: budget.clone(),
+            },
+            stderr: CommandOutput {
+                destination: stderr,
+                budget,
+            },
+            out_capture,
+            err_capture,
+        })
+    }
+
+    pub(crate) fn collect(&self, mut result: ExecResult) -> Result<ExecResult> {
+        let mut out = self.out_capture.lock().unwrap_or_else(|e| e.into_inner());
+        let mut err = self.err_capture.lock().unwrap_or_else(|e| e.into_inner());
+        result.stdout = std::mem::replace(&mut out.bytes, crate::limits::BudgetedVec::new(None)?)
+            .into_parts()
+            .0
+            .into();
+        result.stderr = std::mem::replace(&mut err.bytes, crate::limits::BudgetedVec::new(None)?)
+            .into_parts()
+            .0
+            .into();
+        result.stdout_truncated |= out.truncated;
+        result.stderr_truncated |= err.truncated;
+        Ok(result)
+    }
+
+    pub(crate) async fn write_error(&self, name: &str, error: std::io::Error) -> Result<i32> {
+        if error.kind() == std::io::ErrorKind::BrokenPipe {
+            return Ok(141);
+        }
+        let message = format!(
+            "{name}: write error: {}\n",
+            crate::error::io_error_reason(&Error::Io(error))
+        );
+        write_diagnostic(&self.stderr, message.as_bytes()).await?;
+        Ok(1)
+    }
+
+    /// Buffered options and diagnostics use the same already-open destinations;
+    /// applying redirects again would truncate files and lose streamed bytes.
+    pub(crate) async fn complete(&self, name: &str, mut result: ExecResult) -> Result<ExecResult> {
+        for (output, bytes) in [
+            (&self.stdout, std::mem::take(&mut result.stdout)),
+            (&self.stderr, std::mem::take(&mut result.stderr)),
+        ] {
+            if bytes.is_empty() {
+                continue;
+            }
+            match output.write_all(bytes.as_bytes()).await {
+                Ok(()) => {}
+                Err(Error::Io(error)) => {
+                    result.exit_code = self.write_error(name, error).await?;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        self.collect(result)
+    }
+}
+
+#[async_trait]
+impl Builtin for CommandAdapter {
+    fn streams_io(&self) -> bool {
+        true
+    }
+
+    async fn execute(&self, ctx: BuiltinContext<'_>) -> Result<ExecResult> {
+        let io = CommandIo::new(&ctx)?;
+        let budget = io.stdout.budget.clone();
         let input_pipe = ctx.shell.as_ref().and_then(|s| s.stdin_pipe.clone());
         let input_storage = budget.lease_bytes(ctx.stdin.map_or(0, StreamData::len))?;
         let buffered = ctx.stdin.cloned().unwrap_or_default();
@@ -289,10 +365,6 @@ impl Builtin for CommandAdapter {
                 _storage: input_storage,
             })),
         };
-        let error_output = CommandOutput {
-            destination: stderr.clone(),
-            budget: budget.clone(),
-        };
         let result = self.command.execute(CommandContext {
             name: &self.name,
             args: ctx.args,
@@ -300,14 +372,8 @@ impl Builtin for CommandAdapter {
             cwd: ctx.cwd,
             fs: ctx.fs.clone(),
             stdin: input,
-            stdout: CommandOutput {
-                destination: stdout,
-                budget: budget.clone(),
-            },
-            stderr: CommandOutput {
-                destination: stderr,
-                budget: budget.clone(),
-            },
+            stdout: io.stdout.clone(),
+            stderr: io.stderr.clone(),
             extensions: ctx
                 .shell
                 .as_ref()
@@ -320,37 +386,14 @@ impl Builtin for CommandAdapter {
             .await?
         {
             Ok(Ok(status)) => status,
-            Ok(Err(Error::Io(e))) if e.kind() == std::io::ErrorKind::BrokenPipe => {
-                CommandStatus::with_code(141)
-            }
-            Ok(Err(Error::Io(e))) => {
-                let message = format!(
-                    "{}: write error: {}\n",
-                    self.name,
-                    crate::error::io_error_reason(&Error::Io(e))
-                );
-                write_diagnostic(&error_output, message.as_bytes()).await?;
-                CommandStatus::with_code(1)
-            }
+            Ok(Err(Error::Io(e))) => CommandStatus::with_code(io.write_error(&self.name, e).await?),
             Ok(Err(e)) => return Err(e),
             Err(_) => {
-                write_diagnostic(&error_output, b"command failed unexpectedly\n").await?;
+                write_diagnostic(&io.stderr, b"command failed unexpectedly\n").await?;
                 CommandStatus::with_code(1)
             }
         };
-        let mut out = out_capture.lock().unwrap_or_else(|e| e.into_inner());
-        let mut err = err_capture.lock().unwrap_or_else(|e| e.into_inner());
-        Ok(ExecResult {
-            stdout: std::mem::replace(&mut out.bytes, crate::limits::BudgetedVec::new(None)?)
-                .into_parts()
-                .0
-                .into(),
-            stderr: std::mem::replace(&mut err.bytes, crate::limits::BudgetedVec::new(None)?)
-                .into_parts()
-                .0
-                .into(),
-            stdout_truncated: out.truncated,
-            stderr_truncated: err.truncated,
+        io.collect(ExecResult {
             exit_code: status.exit_code,
             ..Default::default()
         })
