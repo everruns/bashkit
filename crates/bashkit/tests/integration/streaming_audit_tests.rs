@@ -153,6 +153,61 @@ async fn process_substitution_preserves_bytes_in_buffered_and_live_execution() {
 
 struct Gated(Arc<Notify>);
 
+struct DelayedOutput {
+    started: Arc<Notify>,
+    release: Arc<Notify>,
+}
+
+#[async_trait]
+impl Command for DelayedOutput {
+    async fn execute(&self, ctx: CommandContext<'_>) -> bashkit::Result<CommandStatus> {
+        ctx.stdout.write_all(b"first").await?;
+        self.started.notify_one();
+        self.release.notified().await;
+        ctx.stdout.write_all(b"last\n").await?;
+        ctx.stderr.write_all(b"diagnostic\n").await?;
+        Ok(CommandStatus::success())
+    }
+}
+
+#[tokio::test]
+async fn background_completion_drains_to_live_sinks_and_capture_once() {
+    let started = Arc::new(Notify::new());
+    let release = Arc::new(Notify::new());
+    let mut bash = Bash::builder()
+        .command(
+            "delayed",
+            DelayedOutput {
+                started: started.clone(),
+                release: release.clone(),
+            },
+        )
+        .build();
+    let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
+    let execution = async {
+        bash.execute("delayed &")
+            .stdout(&mut stdout)
+            .stderr(&mut stderr)
+            .capture(64)
+            .await
+    };
+    let unblock = async {
+        started.notified().await;
+        release.notify_one();
+    };
+    let (result, ()) = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        tokio::join!(execution, unblock)
+    })
+    .await
+    .unwrap();
+    let result = result.unwrap();
+    assert_eq!(result.exit_code, 0);
+    assert_eq!(stdout, b"firstlast\n");
+    assert_eq!(stderr, b"diagnostic\n");
+    assert_eq!(result.stdout.as_bytes(), stdout);
+    assert_eq!(result.stderr.as_bytes(), stderr);
+}
+
 #[async_trait]
 impl Command for Gated {
     async fn execute(&self, ctx: CommandContext<'_>) -> bashkit::Result<CommandStatus> {

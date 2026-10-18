@@ -4035,7 +4035,22 @@ impl Interpreter {
             self.close_coprocs();
             jobs.finish_all().await;
             let (out, err) = jobs.lock().take_finished_output();
-            if let Ok(r) = &mut result {
+            // Jobs completing after the last command boundary still owe their
+            // output to live sinks. Drain before closing the execution writers;
+            // keep cleanup unconditional when delivery fails.
+            let emission = if result.is_ok()
+                && self.output_callback.is_some()
+                && (!out.is_empty() || !err.is_empty())
+            {
+                self.maybe_emit_output(&out, &err, self.output_emit_count)
+                    .await
+                    .map(|_| ())
+            } else {
+                Ok(())
+            };
+            if self.retain_streamed_output()
+                && let Ok(r) = &mut result
+            {
                 r.stdout.append(&out);
                 r.stderr.append(&err);
             }
@@ -4043,7 +4058,7 @@ impl Interpreter {
             if let Some(error) = &self.memory_limit_error {
                 Err(crate::error::Error::ResourceLimit(error.clone()))
             } else {
-                result
+                emission.and(result)
             }
         };
 
