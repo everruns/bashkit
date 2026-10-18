@@ -267,4 +267,7 @@ async fn streaming_write_errors_remain_command_statuses() {
         .unwrap();
     assert_eq!(result.exit_code, 0);
     assert!(result.stderr.is_empty());
+    let result = bash.execute("seq 0 1>&-").capture(64).await.unwrap();
+    assert_eq!(result.exit_code, 0);
+    assert!(result.stderr.is_empty());
 }

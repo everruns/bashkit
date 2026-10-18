@@ -319,7 +319,7 @@ impl Builtin for Seq {
             output.push('\n');
         }
         if let Some(stream) = &stream {
-            if !stream.write(output.as_bytes()).await? {
+            if !output.is_empty() && !stream.write(output.as_bytes()).await? {
                 return Ok(ExecResult::with_code("", 141));
             }
             output.clear();
