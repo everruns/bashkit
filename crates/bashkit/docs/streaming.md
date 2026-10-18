@@ -70,6 +70,13 @@ sandbox delivery truncation.
 before the next execution. Deadlines cover pending sinks as well as engine work.
 Command I/O and filesystem handles expire when the execution ends.
 
+Streaming builtin readers share the aggregate input budget. Record buffers
+and whole-input collectors reserve intermediate memory before growth; even a
+sink-only execution can reject an oversized record. Streaming `cat`, `grep`
+and `tr` output follows descriptor routing without disabling live delivery.
+Process substitutions preserve raw bytes but remain buffered; `$(...)` is
+still a text boundary.
+
 Use buffered execution when `after_tool` or `after_exec` must inspect or replace
 whole output. Live execution rejects those hooks and `ExecOptions` output
 observers; use async byte sinks for live delivery.

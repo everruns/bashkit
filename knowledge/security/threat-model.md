@@ -1454,6 +1454,14 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | TM-DOS-108 | CLI host-stdin read can stall before execution | A producer keeps the one-shot CLI's stdin pipe open while idle or trickles fewer than 10 MiB, so the pre-execution read never reaches EOF or the byte cap | Read stdin on a dedicated thread and bound the wait with the selected execution timeout; timeout exits with a diagnostic suggesting `--no-stdin`, while the existing byte cap remains enforced — **MITIGATED** |
 | TM-DOS-112 | `sed r` output amplification | A script can read the complete stdin after every input line, synchronously growing output quadratically inside the sed engine before any interpreter-level truncation applies | Every sed sink (stdout, `w`/`W` files, in-place edits) is a `BudgetedString` that leases capacity from the shared live-intermediate budget (`max_live_intermediate_bytes`) *before* growing, and a refused lease becomes `sed: <error>` with exit 1. The stdout *capture* cap is deliberately not a sink limit: sed output is routinely piped onward or redirected to a file, neither of which is captured stdout, so bounding sinks by it truncated ordinary transformations (#2455). Regression tests: `sed_resource_tests` — **MITIGATED** |
 
+Streaming builtin pipe reads also follow TM-DOS-096: each read consumes the
+shared input/work budget and polls request cancellation/deadlines. Delimited
+record assembly, returned record copies, `cat` accumulation and `tr` whole-input
+collection use capacity-owning buffers before growth (TM-DOS-103). Input
+process-substitution captures keep their byte-storage leases attached to their
+shared descriptors. `streaming_audit_tests` covers small-budget rejection and
+recovery; bounded pipe queues do not imply that record storage is bounded.
+
 Command-local input redirection storage also follows TM-DOS-103: canonical
 file metadata and bounded device sizes are admitted before opening/reading;
 cached text and fd copies use capacity-owning builders. Leases remain attached

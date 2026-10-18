@@ -19,6 +19,8 @@ utilities and legacy tool/terminal queues remain separate work. Input process
 substitutions suppress outer output sinks while collecting their producer bytes,
 including incremental builtins and live host commands; this preserves the
 existing buffered `/dev/fd` behavior without leaking intermediate output.
+Their input captures retain budget-owned bytes with the descriptor instead of
+decoding through command-substitution text; NUL and invalid UTF-8 survive.
 Native process
 spawning, a browser process host, and jobs surviving `exec()` require separate
 designs; the default remains an in-process sandbox.
@@ -72,6 +74,21 @@ before ordinary engine failure; a failed sink drops the engine immediately. Pipe
 state on dropped futures. Async output emission stays boxed to respect the
 existing native debug-build stack budget. Live execution yields every 64
 commands for fairness; buffered synchronous APIs retain their single-poll model.
+
+Streaming utilities and host commands share `CommandIo` output destinations.
+Their redirects open once; incremental writes, buffered option results and
+diagnostics use those same destinations. Saved original stdout/stderr copies
+(`exec 3>&1 >log; echo hi >&3`) reach the awaited output pumps, including caps
+and sink failure. Top-level list elements flush saved-descriptor output before
+the next element can emit, preserving per-destination order.
+
+Internal streaming readers charge each pipe read to aggregate input/work.
+`InputChunks` uses capacity-owning byte buffers for records and returned pieces;
+`cat` and `tr` whole-input paths keep capture leases while consuming data. A
+long delimiter-free record can fail admission even with sink-only execution.
+`streaming_audit_tests` pins input/live-byte rejection, session recovery, byte
+substitution, saved-fd delivery and gated redirected filters. This does not
+establish memory bounds for every buffered utility or tool/terminal queue.
 
 Native Python and NAPI JS expose live commands and async byte sinks on Bash and
 BashTool; JS/WASM uses the same core on its cooperative executor. C ABI exposes

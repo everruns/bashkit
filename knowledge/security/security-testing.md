@@ -161,6 +161,17 @@ zero/three-byte admission configurations, session recovery, discarded
 redirects, and a two-byte alias/append comparison with real Bash.
 No amplified-output or host-exhaustion workload is required.
 
+## Streaming boundary regressions
+
+`streaming_audit_tests` uses a producer emitting 1 KiB stack chunks, a 16 KiB
+aggregate input budget, and a 64 KiB live-memory budget. It checks builtin
+stream readers, delimiter-free records and whole-input collectors without host
+exhaustion workloads, plus recovery after refusal. Gated producers prove
+redirected filters deliver before producer completion. Saved-fd tests cover
+stdout/stderr, ordering, output caps and failed sinks; byte substitution and
+redirect permutations compare against real Bash. These complement the existing
+`streaming_command_tests` cancellation/revocation and pipe backpressure tests.
+
 ## Adding New Fail Points
 
 Add `fail_point!("module::function", |action| ...)` under

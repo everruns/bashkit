@@ -203,6 +203,23 @@ host array or queue can still retain the whole output even when capture is
 disabled. Rust async writers flush at completion; flush inside a byte callback
 when a buffered destination must make each chunk visible immediately.
 
+Streaming builtin readers charge input to the request's aggregate byte budget.
+Record buffers and whole-input collectors also reserve intermediate memory
+before growing. A very long line can therefore fail the memory budget even
+when pipe queues remain within 4 KiB; disabling capture does not disable these
+resource limits.
+
+Plain `cat`, line-printing `grep`, and nonsqueezing `tr` preserve live delivery
+through descriptor duplication and file redirection, including `2>&1`.
+Redirected files are opened once before execution. Options that collect or
+summarize output can still delay delivery until their result is available.
+Other utilities, including `sed`, `awk`, and `tee`, retain their buffered
+execution paths.
+
+Process substitutions `<(...)` and `>(...)` preserve raw bytes, including NUL
+and invalid UTF-8, but still buffer rather than running both sides as live
+tasks. Command substitution `$(...)` remains a text boundary and removes NUL.
+
 ## Routing, errors and cancellation
 
 A command context provides its name, expanded arguments (`args` in Rust,
