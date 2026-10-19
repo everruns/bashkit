@@ -4,6 +4,7 @@
 //! on the stack, and admits output growth through the shared request budget.
 
 use super::clap_cache::cached_command;
+use super::helpers::{string_value, string_values};
 use async_trait::async_trait;
 
 use super::{Builtin, Context};
@@ -226,7 +227,7 @@ fn od_options_from_matches(
         show_duplicates: matches.get_flag("output-duplicates"),
     };
 
-    if let Some(radix) = matches.get_one::<String>("address-radix") {
+    if let Some(radix) = string_value(matches, "address-radix") {
         opts.addr_radix = match radix.as_str() {
             "d" => AddrRadix::Decimal,
             "o" => AddrRadix::Octal,
@@ -239,11 +240,8 @@ fn od_options_from_matches(
     // Specs apply in command-line order, so collect (index, TYPE) pairs from
     // both `-t` and the single-letter shorthands, then sort.
     let mut ordered: Vec<(usize, String)> = Vec::new();
-    if let (Some(idx), Some(vals)) = (
-        matches.indices_of("format"),
-        matches.get_many::<String>("format"),
-    ) {
-        ordered.extend(idx.zip(vals.cloned()));
+    if let Some(idx) = matches.indices_of("format") {
+        ordered.extend(idx.zip(string_values(matches, "format")));
     }
     const SHORTHANDS: &[(&str, &str)] = &[
         ("a", "a"),
@@ -285,27 +283,24 @@ fn od_options_from_matches(
         });
     }
 
-    if let Some(s) = matches.get_one::<String>("read-bytes") {
-        opts.count = Some(parse_od_num(s, "-N")?);
+    if let Some(s) = string_value(matches, "read-bytes") {
+        opts.count = Some(parse_od_num(&s, "-N")?);
     }
-    if let Some(s) = matches.get_one::<String>("skip-bytes") {
-        opts.skip = parse_od_num(s, "-j")?;
+    if let Some(s) = string_value(matches, "skip-bytes") {
+        opts.skip = parse_od_num(&s, "-j")?;
     }
-    if let Some(s) = matches.get_one::<String>("width") {
-        let width = parse_od_num(s, "-w")?;
+    if let Some(s) = string_value(matches, "width") {
+        let width = parse_od_num(&s, "-w")?;
         if width > OD_MAX_WIDTH {
             return Err(format!("od: width exceeds maximum of {OD_MAX_WIDTH} bytes"));
         }
         opts.width = Some(width);
     }
-    if let Some(e) = matches.get_one::<String>("endian") {
+    if let Some(e) = string_value(matches, "endian") {
         opts.big_endian = e == "big";
     }
 
-    let files: Vec<String> = matches
-        .get_many::<String>("FILENAME")
-        .map(|vs| vs.cloned().collect())
-        .unwrap_or_default();
+    let files = string_values(matches, "FILENAME");
 
     Ok((opts, files))
 }
@@ -992,6 +987,73 @@ mod tests {
         };
 
         Od.execute(ctx).await.unwrap()
+    }
+
+    /// Upstream owns the value parser on every generated arg: the pinned
+    /// uutils rev leaves them on clap's default `String` parser, while
+    /// upstream HEAD gives `od`'s FILENAME an `OsStringValueParser`. Naming
+    /// one type in the consumer turned that flip into a panic
+    /// ("Mismatch between definition and access of `FILENAME`") that only
+    /// the weekly drift run saw. Both surfaces must yield the same options.
+    #[test]
+    fn od_options_read_either_value_parser() {
+        const FLIPPABLE: [&str; 7] = [
+            "FILENAME",
+            "address-radix",
+            "skip-bytes",
+            "read-bytes",
+            "width",
+            "endian",
+            "format",
+        ];
+        let argv = [
+            "od",
+            "-An",
+            "-t",
+            "x2",
+            "-c",
+            "--endian=big",
+            "-w",
+            "8",
+            "-j",
+            "1",
+            "-N",
+            "4",
+            "z",
+        ];
+
+        for os_string in [false, true] {
+            let mut cmd = crate::builtins::generated::od_args::od_command();
+            if os_string {
+                for id in FLIPPABLE {
+                    cmd = cmd.mut_arg(id, |arg| {
+                        arg.value_parser(clap::builder::OsStringValueParser::new())
+                    });
+                }
+            }
+            let matches = cmd.try_get_matches_from(argv).unwrap();
+            let (opts, files) = od_options_from_matches(&matches).unwrap();
+
+            assert_eq!(files, vec!["z".to_string()], "os_string={os_string}");
+            assert_eq!(opts.skip, 1, "os_string={os_string}");
+            assert_eq!(opts.count, Some(4), "os_string={os_string}");
+            assert_eq!(opts.width, Some(8), "os_string={os_string}");
+            assert!(opts.big_endian, "os_string={os_string}");
+            assert!(
+                matches!(opts.addr_radix, AddrRadix::None),
+                "os_string={os_string}"
+            );
+            // `-t x2` then `-c`, kept in command-line order.
+            assert_eq!(opts.specs.len(), 2, "os_string={os_string}");
+            assert!(
+                opts.specs[0].kind == OdKind::Hex && opts.specs[0].size == 2,
+                "os_string={os_string}"
+            );
+            assert!(
+                opts.specs[1].kind == OdKind::Char && opts.specs[1].size == 1,
+                "os_string={os_string}"
+            );
+        }
     }
 
     async fn run_xxd(args: &[&str], stdin: Option<&str>) -> ExecResult {
