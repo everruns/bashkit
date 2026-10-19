@@ -213,7 +213,7 @@ jobs:
       # override even for `cargo install`), which broke this job. A prebuilt
       # binary is immune to future tool-dependency MSRV bumps.
       - name: Install cargo-audit
-        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
         with:
           tool: cargo-audit
 
@@ -246,7 +246,7 @@ jobs:
           command: check licenses sources
 
       - name: Install cargo-vet
-        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
         with:
           # 0.10.2+ parses trusted-publisher entries in imports.lock (wasmtime
           # crates publish via GitHub trusted publishing); 0.10.0 rejects them.
@@ -290,7 +290,7 @@ jobs:
       - name: Install uutils coreutils multicall for differential tests
         id: install_uutils
         continue-on-error: true
-        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
         with:
           tool: coreutils
       - name: Verify uutils on PATH
