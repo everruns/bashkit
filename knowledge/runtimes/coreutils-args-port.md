@@ -376,6 +376,14 @@ Rule: read generated args through `builtins::helpers::string_values` /
 valid against the current pin and upstream HEAD at once. Reading one
 type directly is only safe where bashkit owns the surface.
 
+Trying two types and giving up would turn clap's loud panic into a
+silent "no value", quietly dropping a flag the user did pass. Only
+`String` and `OsString` are expected, so both helpers
+`debug_assert!` that an arg which is present is readable as one of them:
+loud under `cargo test` — and so in the drift run's own test steps —
+while an embedder's release build degrades instead of aborting. Covered
+by `helpers::tests::string_value_rejects_an_unhandled_value_type`.
+
 Known exposure: `cat`, `ls`, `truncate`, `shuf`, `tac` (`textrev`),
 `realpath` (`path`), `tee` (`pipeline`), `stat` (`inspect`) and `mktemp`
 (`fileops`) still name `OsString` directly. All of them only want text

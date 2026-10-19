@@ -63,6 +63,7 @@ pub(crate) fn string_values(matches: &clap::ArgMatches, id: &str) -> Vec<String>
     if let Ok(Some(values)) = matches.try_get_many::<String>(id) {
         return values.cloned().collect();
     }
+    debug_assert_readable(matches, id, "string_values");
     Vec::new()
 }
 
@@ -74,7 +75,27 @@ pub(crate) fn string_value(matches: &clap::ArgMatches, id: &str) -> Option<Strin
     if let Ok(Some(value)) = matches.try_get_one::<String>(id) {
         return Some(value.clone());
     }
+    debug_assert_readable(matches, id, "string_value");
     None
+}
+
+/// Guard the one hole the tolerant reads above open: a *third* value type.
+///
+/// Trying two types and giving up turns clap's loud panic into a silent
+/// "no value", which for an arg the user did pass would mean the flag is
+/// quietly ignored — worse than a panic, because nothing reports it. Only
+/// `String` and `OsString` are expected (upstream flips between exactly
+/// those two), so an arg that is present and readable as neither is a
+/// porting bug, not user input. Firing only under `debug_assertions`
+/// keeps the loud signal everywhere it is actionable — `cargo test`, and
+/// so the weekly drift run's own test steps — while an embedder's release
+/// build degrades instead of aborting.
+fn debug_assert_readable(matches: &clap::ArgMatches, id: &str, caller: &str) {
+    debug_assert!(
+        !matches.try_contains_id(id).unwrap_or(false),
+        "helpers::{caller}: arg `{id}` is present but is neither OsString \
+         nor String; teach this helper the value type upstream now uses"
+    );
 }
 
 /// Default helpers shared by builtin commands.
@@ -207,6 +228,23 @@ mod tests {
             assert!(string_values(&matches, "files").is_empty());
             assert_eq!(string_value(&matches, "width"), None);
         }
+    }
+
+    /// A value type neither read handles must not pass silently: a flag the
+    /// user did supply would otherwise be dropped with no diagnostic.
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "neither OsString nor String")]
+    fn string_value_rejects_an_unhandled_value_type() {
+        let matches = clap::Command::new("demo")
+            .arg(
+                clap::Arg::new("width")
+                    .long("width")
+                    .value_parser(clap::value_parser!(u64)),
+            )
+            .try_get_matches_from(["demo", "--width", "16"])
+            .unwrap();
+        let _ = string_value(&matches, "width");
     }
 
     /// An id that is not in the surface at all must not panic the way
