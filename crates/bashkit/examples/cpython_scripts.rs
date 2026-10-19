@@ -6,13 +6,13 @@
 //!
 //! Run with: cargo run --features cpython --example cpython_scripts
 
-use bashkit::{Bash, CPython, CPythonLimits};
+use bashkit::{Bash, CPythonLimits};
 use std::time::Duration;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Optional: load the interpreter at startup instead of on the first call.
-    CPython::warm_up().map_err(anyhow::Error::msg)?;
+    bashkit::warm_up().map_err(anyhow::Error::msg)?;
 
     let mut bash = Bash::builder()
         .cpython_with_limits(CPythonLimits::default().max_duration(Duration::from_secs(10)))

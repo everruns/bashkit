@@ -125,7 +125,7 @@ Still nothing is compiled at run time and it is still one crate; the trade:
   3.7 ms, `import http.client` 34 ms vs 461 ms, `fib(20)` 6.4 ms vs 69 ms.
 - **Executable memory** is required at run time; Pulley needs none.
 - **First load copies** the module into executable memory (native code
-  cannot run from the binary's read-only static): `CPython::warm_up()` takes
+  cannot run from the binary's read-only static): `bashkit::warm_up()` takes
   ~47 ms instead of ~15 ms. Call it at startup.
 - **Baseline ISA**: compiled for the target triple with no host CPU feature
   detection, so a binary built on one machine runs on any CPU of that

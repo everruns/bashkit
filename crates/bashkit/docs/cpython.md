@@ -44,7 +44,7 @@ the guest never runs native code in your process.
 The interpreter loads on the first call of a process: the first `python3`
 takes about 19 ms on the reference machine, later calls about 4.4 ms. To move
 that one-time cost out of the first request, call
-`bashkit::CPython::warm_up()` at startup. On hosts where the linker or loader
+`bashkit::warm_up()` at startup. On hosts where the linker or loader
 cannot preserve 64 KiB module alignment, such as macOS, an aligned immutable
 copy is cached once for the process; later calls reuse it.
 
@@ -247,7 +247,7 @@ bashkit = { version = "0.19.0", features = ["cpython-native"] }
 
 Calls get 4-10x faster (`print(1)` ~1 ms instead of ~4 ms; CPU-bound code
 ~10x). In exchange the host must allow executable memory, and the first load
-in a process takes ~47 ms, so call `bashkit::CPython::warm_up()` at startup.
+in a process takes ~47 ms, so call `bashkit::warm_up()` at startup.
 Nothing is compiled at run time with either option.
 
 ## Binary size

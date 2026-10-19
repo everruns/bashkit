@@ -267,7 +267,7 @@ python = ["dep:monty", "dep:monty-types", "dep:get-size2"]
 cpython = ["dep:bashkit-cpython-wasm", "dep:wasmtime"]
 # Opt-in: CPython compiled to native machine code at build time instead of
 # Pulley bytecode. ~2x faster calls; needs executable memory, and the first
-# load in a process copies the module (call CPython::warm_up at startup).
+# load in a process copies the module (call bashkit::warm_up() at startup).
 # Usage: cargo build --features cpython-native
 cpython-native = ["cpython", "bashkit-cpython-wasm/native"]
 # Enable ts/node/deno/bun builtins via embedded ZapCode TypeScript interpreter

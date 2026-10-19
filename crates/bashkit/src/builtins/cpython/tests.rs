@@ -43,6 +43,11 @@ fn runtime_loads() {
 }
 
 #[test]
+fn crate_warm_up_delegates_to_cpython() {
+    crate::warm_up().expect("crate warm_up loads the embedded interpreter");
+}
+
+#[test]
 fn on_demand_fallback_links() {
     // The path taken when the pooled engine cannot reserve address space.
     let rt = link(Engine::new(&runtime_config(false)).unwrap(), None).unwrap();

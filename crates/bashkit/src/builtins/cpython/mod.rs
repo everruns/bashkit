@@ -10,7 +10,7 @@
 //!   the guest never runs native code in the host, so calling
 //!   `BashBuilder::cpython()` is the opt-in.
 //! - One process-wide engine and pre-linked module, created on first use (or
-//!   by [`CPython::warm_up`]). Every call gets a fresh store and instance,
+//!   by [`crate::warm_up`]). Every call gets a fresh store and instance,
 //!   mapped copy-on-write from the pre-initialized snapshot; nothing survives
 //!   between calls or tenants.
 //! - Guest work is metered with fuel and yields to the async runtime at a fixed
@@ -220,7 +220,8 @@ impl CPython {
 
     /// Load the embedded interpreter now instead of on the first `python3`
     /// call. Idempotent and process-wide; returns the error text if the
-    /// embedded module cannot be loaded.
+    /// embedded module cannot be loaded. Prefer [`crate::warm_up`], which
+    /// warms every enabled runtime.
     pub fn warm_up() -> std::result::Result<(), String> {
         runtime().map(|_| ()).map_err(str::to_string)
     }

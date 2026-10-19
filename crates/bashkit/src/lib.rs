@@ -804,6 +804,24 @@ impl Invocation {
     }
 }
 
+/// Load embedded runtimes now instead of on the first call.
+///
+/// Feature-gated warm-up: with `cpython` this loads the embedded CPython
+/// interpreter (delegates to [`CPython::warm_up`]); without it, a no-op
+/// returning `Ok`. Idempotent and process-wide.
+#[cfg(feature = "cpython")]
+pub fn warm_up() -> std::result::Result<(), String> {
+    CPython::warm_up()
+}
+
+/// Load embedded runtimes now instead of on the first call.
+///
+/// No-op: no enabled feature needs eager loading.
+#[cfg(not(feature = "cpython"))]
+pub fn warm_up() -> std::result::Result<(), String> {
+    Ok(())
+}
+
 /// Main entry point for Bashkit.
 ///
 /// Provides a virtual bash interpreter with an in-memory virtual filesystem.
@@ -2587,7 +2605,7 @@ impl BashBuilder {
     /// both features are enabled and this method is called after
     /// [`BashBuilder::python`].
     ///
-    /// The interpreter loads on the first call; call [`CPython::warm_up`] at
+    /// The interpreter loads on the first call; call [`warm_up`] at
     /// process start to move that cost out of the first request.
     ///
     /// # Example
