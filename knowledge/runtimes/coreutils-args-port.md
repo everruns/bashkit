@@ -447,6 +447,24 @@ and on `workflow_dispatch`:
    credentials, applies only generated-file changes from that patch, and
    opens or updates the drift PR with `gh`.
 
+The PR job uses **two tokens**, because the Actions job token can push a
+branch but cannot open a pull request: with "Allow GitHub Actions to create
+and approve pull requests" off — the safer setting, since the same switch also
+governs approvals — `gh pr create` is rejected with "GitHub Actions is not
+permitted to create or approve pull requests". Run 39234801977 regenerated the
+drift, force-pushed it, then died on that call, so the run went red with no PR
+and the drift stayed invisible. The branch is therefore pushed with
+`github.token` (only `contents: write` is needed), and the PR is opened with a
+PAT read from Doppler's `GITHUB_TOKEN` — the same pattern `ci.yml` uses for
+privileged CI credentials, gated on `DOPPLER_TOKEN` being configured and masked
+before it crosses a step boundary. The PAT needs `pull-requests: write` on this
+repository.
+
+With no PAT the job **fails loudly** naming the branch, rather than skipping
+the PR: the drift is already pushed at that point, so a green run with no PR is
+exactly the silent-absorption failure mode this design exists to prevent.
+Regression test: `scripts/tests/test_coreutils_drift_pr.py`.
+
 The PR lookup matches **open** PRs only (`gh pr list --head <branch> --state
 open`). `gh pr view <branch>` resolves a PR for the branch in any state, so
 once a drift PR is closed unmerged it keeps matching and every later run edits

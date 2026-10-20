@@ -16,6 +16,10 @@ name: Coreutils Args Drift
 # build, and tests run without repository write permission and without
 # persisted checkout credentials. Only the later PR job gets write
 # permission, and it only commits generated files after tests pass.
+#
+# Token split: the drift branch is pushed with the job token, but the PR is
+# opened with a Doppler-resolved PAT, because the job token is not permitted
+# to create pull requests. See the comment on the PR steps below.
 
 on:
   schedule:
@@ -271,19 +275,52 @@ jobs:
               exit 1
           fi
 
-      - name: Commit and open PR
+      # The job token cannot open pull requests. With "Allow GitHub Actions
+      # to create and approve pull requests" off — the safer setting, since
+      # the same switch also governs approvals — `gh pr create` is rejected
+      # with "GitHub Actions is not permitted to create or approve pull
+      # requests". Run 39234801977 regenerated the drift, pushed it, then
+      # died on that call: red run, no PR, drift invisible for a week.
+      #
+      # Pushing only needs `contents: write`, which the job token has, so
+      # the two are split: the branch goes up on the job token, the PR is
+      # opened with a PAT resolved from Doppler — this repo's existing
+      # pattern for privileged CI credentials (see ci.yml). With no PAT the
+      # job fails saying exactly that, instead of with a GraphQL error that
+      # reads like a bug in the drift tooling.
+      - name: Detect Doppler availability
+        run: echo "DOPPLER_AVAILABLE=${{ secrets.DOPPLER_TOKEN != '' }}" >> "$GITHUB_ENV"
+
+      - name: Install Doppler CLI
+        if: env.DOPPLER_AVAILABLE == 'true'
+        uses: dopplerhq/cli-action@4819d808ab99e5cde19a0637a16536a4038fad73 # v4
+
+      # Resolve only the required key, and mask it before it crosses the
+      # step boundary. Non-fatal: a missing key is reported by the guard in
+      # the PR step, which can name what is actually wrong.
+      - name: Fetch pull-request token
+        id: pat
+        if: env.DOPPLER_AVAILABLE == 'true'
+        continue-on-error: true
+        shell: bash
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+        run: |
+          set -euo pipefail
+          token="$(doppler secrets get GITHUB_TOKEN --plain)"
+          printf '::add-mask::%s\n' "$token"
+          printf 'token=%s\n' "$token" >> "$GITHUB_OUTPUT"
+
+      - name: Commit and push drift branch
         working-directory: bashkit
         env:
           GH_TOKEN: ${{ github.token }}
           NEW_REV: ${{ needs.regenerate.outputs.rev }}
-          OLD_REV: ${{ needs.regenerate.outputs.old_rev }}
           UTILS: ${{ needs.regenerate.outputs.utils }}
           MODULES: ${{ needs.regenerate.outputs.modules }}
         run: |
           set -euo pipefail
           branch="chore/coreutils-args-drift"
-          title="chore: sync uutils/coreutils argument surfaces and vendored modules"
-          body_file="$(mktemp)"
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -298,6 +335,28 @@ jobs:
           # drift branch, so --force-with-lease aborts with "stale info"
           # whenever the branch already exists from a prior week's run.
           git push --force --set-upstream origin "$branch"
+
+      - name: Open or update pull request
+        working-directory: bashkit
+        env:
+          GH_TOKEN: ${{ steps.pat.outputs.token }}
+          HAVE_PAT: ${{ steps.pat.outputs.token != '' }}
+          NEW_REV: ${{ needs.regenerate.outputs.rev }}
+          OLD_REV: ${{ needs.regenerate.outputs.old_rev }}
+          UTILS: ${{ needs.regenerate.outputs.utils }}
+          MODULES: ${{ needs.regenerate.outputs.modules }}
+        run: |
+          set -euo pipefail
+          branch="chore/coreutils-args-drift"
+          title="chore: sync uutils/coreutils argument surfaces and vendored modules"
+          body_file="$(mktemp)"
+
+          # The drift is pushed by the time this runs, so say so: the work is
+          # recoverable by hand and only the PR step is blocked.
+          if [ "$HAVE_PAT" != "true" ]; then
+              echo "::error::Drift was regenerated and pushed to '$branch', but no pull request could be opened. The Actions job token is not permitted to create pull requests, and no Doppler-provided GITHUB_TOKEN was available. Add a GITHUB_TOKEN secret in Doppler with 'pull-requests: write' on this repository, or open a PR from '$branch' by hand."
+              exit 1
+          fi
 
           cat > "$body_file" <<EOF
           Automated regeneration of argument surfaces and vendored modules
