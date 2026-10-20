@@ -43,7 +43,7 @@ bashkit = { path = "../bashkit", version = "0.19.0", default-features = false, f
 tokio = { workspace = true, features = ["macros", "net", "rt", "rt-multi-thread", "time", "io-std"] }
 clap.workspace = true
 anyhow.workspace = true
-rustyline = { version = "18", optional = true }
+rustyline = { version = "19", optional = true }
 terminal_size = { version = "0.4", optional = true }
 signal-hook = { version = "0.4", optional = true }
 
