@@ -465,6 +465,14 @@ the PR: the drift is already pushed at that point, so a green run with no PR is
 exactly the silent-absorption failure mode this design exists to prevent.
 Regression test: `scripts/tests/test_coreutils_drift_pr.py`.
 
+The PAT must stay confined to the PR job. `regenerate` is the job that builds
+and executes third-party uutils code, and it has no Doppler step and no secret
+access; `open-pr` holds the PAT but never checks out, builds or runs uutils.
+That split is what keeps a compromised upstream from reaching a credential, so
+a Doppler step must never be added to `regenerate`. The workflow is
+`schedule` + `workflow_dispatch` only for the same reason — no pull-request
+trigger can reach the secret.
+
 The PR lookup matches **open** PRs only (`gh pr list --head <branch> --state
 open`). `gh pr view <branch>` resolves a PR for the branch in any state, so
 once a drift PR is closed unmerged it keeps matching and every later run edits
