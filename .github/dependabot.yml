@@ -107,6 +107,30 @@ updates:
       # rationale sits next to the dep in the root Cargo.toml.
       - dependency-name: "branches"
 
+      # oxc_* is held at 0.117.x, and not for API churn alone. bashkit declares
+      # these five (`oxc_parser`, `oxc_ast`, `oxc_allocator`, `oxc_span`,
+      # `oxc_syntax`) for the wasm32-unknown-unknown TypeScript path, where
+      # `zapcode_browser/parser` walks the oxc AST directly. The versions exist
+      # to match what upstream `zapcode-core` vendors — see the pin comment next
+      # to the deps in crates/bashkit/Cargo.toml.
+      #
+      # `zapcode-core` 1.5.1 requires `oxc ^0.117`, so it does not move with a
+      # bump of bashkit's declaration. #2758 bumped to 0.154.0 and resolved a
+      # *second* copy of all 13 oxc crates, leaving the two sides of the same
+      # parser pipeline on trees 37 minor versions apart — and 0.154 also needs
+      # rustc 1.97.0 against the 1.95.0 in rust-toolchain.toml, which is what
+      # reddened the "WASM web package" job, the same shape as the wasmtime
+      # 49.x failure in #2708. It also pulled in 19 unvetted crates
+      # (`compact_str` 0.10, `phf` 0.14, `oxc_index` 5.0 and the oxc stack).
+      #
+      # Ignore outright rather than by update-type: every release past 0.117.x
+      # splits the graph the same way, so no bump helps until `zapcode-core`
+      # moves upstream. Doing it then means bumping the pinned toolchain and
+      # porting the vendored parser together — a deliberate change, not an
+      # aggregated `chore(deps)` PR. Without this entry dependabot reopens the
+      # same unlandable PR every week.
+      - dependency-name: "oxc_*"
+
   # Fuzz targets are a separate cargo workspace with their own lockfile, so the
   # "/" entry above never touches them. Without this the fuzz lockfile silently
   # rots between releases (it drifted onto an unsound `anyhow` and two yanked
