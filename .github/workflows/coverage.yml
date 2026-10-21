@@ -25,7 +25,9 @@ env:
 jobs:
   coverage:
     name: Generate Rust Coverage
-    runs-on: ubuntu-latest
+    # Pinned for the GNU coreutils oracle, like ci.yml's `test` job; see the
+    # note there.
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

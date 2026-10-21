@@ -298,7 +298,7 @@ async fn output_shape_flags_are_last_wins() {
     ];
     for (args, expected) in cases {
         let result = run_jq_with_args(args, r#"{"a":[1,2]}"#).await.unwrap();
-        assert_eq!(result, expected, "args: {args:?}");
+        assert_eq!(result, expected, "args: jq {}", args.join(" "));
     }
 }
 
@@ -1715,7 +1715,12 @@ mod differential {
 
     #[tokio::test]
     async fn diff_indent_0_nested() {
-        assert_matches_from_jq((1, 8), &["--indent", "0", "."], r#"{"a":[1,2],"b":{"c":3}}"#).await;
+        assert_matches_from_jq(
+            (1, 8),
+            &["--indent", "0", "."],
+            r#"{"a":[1,2],"b":{"c":3}}"#,
+        )
+        .await;
     }
 
     /// `-c`, `--tab` and `--indent N` all set the same thing, so the last one

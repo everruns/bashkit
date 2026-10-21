@@ -240,8 +240,11 @@ jobs:
         os: [linux, macos, windows]
         python-version: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
         include:
+          # linux is pinned rather than `ubuntu-latest` because Ubuntu 26.04
+          # ships no hosted 3.9 build; see the note on `python.yml`'s `test`
+          # job, which is pinned for the same reason.
           - os: linux
-            runs-on: ubuntu-latest
+            runs-on: ubuntu-24.04
           - os: macos
             runs-on: macos-latest
           - os: windows

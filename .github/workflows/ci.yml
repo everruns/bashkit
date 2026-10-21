@@ -258,7 +258,14 @@ jobs:
 
   test:
     name: Test
-    runs-on: ubuntu-latest
+    # Pinned, not `ubuntu-latest`: this job's `*_match_gnu` differential tests
+    # need real GNU coreutils as the oracle, and 24.04 is the last image that
+    # ships it as the default. Ubuntu 26.04 installs uutils as `coreutils`
+    # instead, so `dd`/`join`/`od`/`pr` stopped reporting "GNU coreutils" and
+    # those tests fail closed by design rather than skipping. Unpin once the
+    # GNU oracle is installed explicitly, the way `rg` and `jq` already are;
+    # see "Pinned External Oracles" in knowledge/operations/testing.md.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

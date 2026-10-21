@@ -125,7 +125,9 @@ jobs:
 
   asan:
     name: AddressSanitizer
-    runs-on: ubuntu-latest
+    # Pinned for the GNU coreutils oracle, like ci.yml's `test` job; see the
+    # note there.
+    runs-on: ubuntu-24.04
     # ASAN with --test-threads=1 plus the expanded rg/coreutils
     # differential corpora needs well over the previous 30-minute cap;
     # the last two nightly runs cancelled mid-suite at exactly 30 min.
