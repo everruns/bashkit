@@ -71,7 +71,7 @@ use compat::{
 };
 use convert::{JqJson, jq_to_val, parse_json_stream, val_to_jq_capped};
 use errors::{format_compile_errors, format_load_errors, format_runtime_error_at};
-use format::{Indent, render, sort_keys as sort_jq_keys};
+use format::{render, sort_keys as sort_jq_keys};
 
 /// Custom DataT that holds both the LUT and a shared input iterator.
 /// Required by jaq 3.0 for `input`/`inputs` filter support.
@@ -455,11 +455,7 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
         }
     }
 
-    let indent = if parsed.compact_output {
-        Indent::Compact
-    } else {
-        parsed.indent
-    };
+    let indent = parsed.indent;
 
     let mut output = String::new();
 

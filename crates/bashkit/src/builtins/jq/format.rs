@@ -7,8 +7,8 @@
 
 use super::convert::JqJson;
 
-/// Output indentation choice. `Spaces(0)` matches `-c` semantics in tools
-/// that bypass the compact path.
+/// Output indentation choice. `-c` is the only way to get compact output;
+/// `Spaces(0)` is still pretty-printed, just with zero-width indentation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Indent {
     /// Compact output, no whitespace between tokens (matches `-c`).
@@ -36,13 +36,14 @@ pub(super) fn sort_keys(v: JqJson) -> JqJson {
 
 /// Render a `JqJson` value using the chosen indent style.
 ///
-/// Note: real jq treats `--indent 0` as equivalent to `-c` (compact, no
-/// newlines), not "newlines without indentation". We match that.
+/// Note: `--indent 0` is pretty output with zero-width indentation — newlines
+/// between tokens, no leading spaces — not compact output. jq 1.7 and earlier
+/// let `--indent 0` imply `-c`; jq 1.8 removed that implication
+/// (jqlang/jq#3232) and we match current jq. `-c` is the only compact switch.
 pub(super) fn render(v: &JqJson, indent: Indent) -> String {
     let mut out = String::new();
     match indent {
         Indent::Compact => render_compact(v, &mut out),
-        Indent::Spaces(0) => render_compact(v, &mut out),
         Indent::Spaces(n) => render_pretty(v, &mut out, &" ".repeat(n as usize), 0),
         Indent::Tab => render_pretty(v, &mut out, "\t", 0),
     }
@@ -194,11 +195,25 @@ mod tests {
     }
 
     #[test]
-    fn indent_zero_renders_compact() {
-        // Real jq: --indent 0 is equivalent to -c (no newlines at all).
+    fn indent_zero_renders_newlines_without_indent() {
+        // jq >= 1.8: --indent 0 keeps the newlines and drops the spaces.
         let v = JqJson::Object(vec![("a".into(), n("1"))]);
         let out = render(&v, Indent::Spaces(0));
-        assert_eq!(out, "{\"a\":1}");
+        assert_eq!(out, "{\n\"a\": 1\n}");
+    }
+
+    #[test]
+    fn indent_zero_nests_without_indent() {
+        let v = JqJson::Object(vec![("a".into(), JqJson::Array(vec![n("1"), n("2")]))]);
+        let out = render(&v, Indent::Spaces(0));
+        assert_eq!(out, "{\n\"a\": [\n1,\n2\n]\n}");
+    }
+
+    #[test]
+    fn compact_is_the_only_compact_switch() {
+        // -c stays byte-for-byte compact even though --indent 0 no longer is.
+        let v = JqJson::Object(vec![("a".into(), JqJson::Array(vec![n("1"), n("2")]))]);
+        assert_eq!(render(&v, Indent::Compact), "{\"a\":[1,2]}");
     }
 
     #[test]

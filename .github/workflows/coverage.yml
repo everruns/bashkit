@@ -20,6 +20,7 @@ env:
   CARGO_TERM_COLOR: always
   LLVM_COV_IGNORE_FILENAME_REGEX: "(tests/|test_cases/|/tests\\.rs$)"
   RG_VERSION: 15.1.0
+  JQ_VERSION: 1.8.1
 
 jobs:
   coverage:
@@ -47,6 +48,9 @@ jobs:
       # binary so coverage does not depend on the runner image package set.
       - name: Install pinned ripgrep for differential tests
         run: scripts/install-ripgrep-ci.sh "$RG_VERSION"
+
+      - name: Install pinned jq for differential tests
+        run: scripts/install-jq-ci.sh "$JQ_VERSION"
 
       # bashkit-eval is excluded: it enables bashkit's cpython and sqlite
       # features, and under --workspace feature unification that would pull
