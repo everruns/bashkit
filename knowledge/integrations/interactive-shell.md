@@ -74,7 +74,10 @@ Completes based on context:
 - Directories show trailing `/`
 
 Uses rustyline `Completer` trait with `CompletionType::List` (shows
-all matches on tab).
+all matches on tab). From rustyline 19, the "display all N
+possibilities?" prompt that `List` shows for a large match set accepts
+Tab as confirmation alongside `y`/`n` (rustyline #955), so a second Tab
+no longer falls through as a rejected keypress.
 
 #### History Hints
 
