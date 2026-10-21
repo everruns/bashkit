@@ -16,6 +16,7 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
   RG_VERSION: 15.1.0
+  JQ_VERSION: 1.8.1
 
 jobs:
   lint:
@@ -301,6 +302,12 @@ jobs:
       # binary so upstream formatting/path semantics cannot drift under CI.
       - name: Install pinned ripgrep for differential tests
         run: scripts/install-ripgrep-ci.sh "$RG_VERSION"
+
+      # Same reason for `jq`, and the runner image already proved it: an
+      # unpinned oracle made the jq parity suite a function of which
+      # `ubuntu-latest` image the job landed on.
+      - name: Install pinned jq for differential tests
+        run: scripts/install-jq-ci.sh "$JQ_VERSION"
 
       # Examples have a dedicated job below; skipping them here avoids
       # duplicated example links that can exhaust runner disk on main.

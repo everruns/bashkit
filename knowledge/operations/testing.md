@@ -576,6 +576,35 @@ publishes one headline number, bashkit passes over real-bash passes. It is a
 measurement, not a gate: no floor, no CI job. See
 [Oils Spec Pass Rate](oils-spec.md).
 
+## Pinned External Oracles
+
+A differential test that asserts byte-for-byte parity against a tool on
+`PATH` is only as reproducible as that tool's version. Leave it unpinned and
+the suite becomes a function of the runner image, which changes on GitHub's
+schedule rather than ours. `ripgrep` (`scripts/install-ripgrep-ci.sh`,
+`RG_VERSION`) and `jq` (`scripts/install-jq-ci.sh`, `JQ_VERSION`) are both
+installed from a digest-pinned release in every job that runs their
+differential tests — today `ci.yml`'s `test` job, `coverage.yml`, and
+nightly's `asan` job. Both scripts verify a SHA-256 before the binary reaches
+`PATH`, so a compromised release asset cannot become CI code execution, and
+both prepend their install directory via `GITHUB_PATH` so the pin wins over
+an image-preinstalled copy.
+
+The jq pin was added after the cost was paid: when `ubuntu-latest` began
+rolling from 24.04 to 26.04 the two images shipped jq 1.7 and jq 1.8, which
+disagree on `--indent 0` (1.7 implied `--compact-output`, 1.8 emits newlines
+without indentation, jqlang/jq#3232). One parity case went red on whichever
+half of the fleet disagreed with the implementation, with no change on our
+side, and the two halves could not both be satisfied.
+
+Pinning the oracle in CI does not help a developer whose distro ships an
+older build, so a case whose expectation only holds from some version upwards
+is gated rather than asserted unconditionally:
+`assert_matches_from_jq((1, 8), …)` skips just that case on an older host
+oracle and prints why. This is the same bargain `minimum_bash_major` strikes
+for the competitor corpus. Gate the individual case, never the whole suite —
+a skipped suite is indistinguishable from a passing one.
+
 ## SQLite CLI Differential Tests
 
 CSV comparisons explicitly set the host CLI row separator to LF. SQLite
