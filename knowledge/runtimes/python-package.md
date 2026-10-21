@@ -398,6 +398,17 @@ per version), examples (wheel + `crates/bashkit-python/examples/` +
 build-wheel (maturin + twine check, produces the shared abi3 wheel artifact),
 python-check (branch-protection gate).
 
+The version matrix runs on a pinned `ubuntu-24.04`, not `ubuntu-latest`, in
+both `python.yml`'s `test` job and `publish-python.yml`'s `test-builds`.
+Ubuntu 26.04 ships no hosted 3.9 build and `setup-python` has no fallback, so
+the 3.9 leg failed outright ("The version '3.9' with architecture 'x64' was
+not found for Ubuntu 26.04") as soon as `ubuntu-latest` began rolling onto
+26.04. The package claims `>=3.9` through one cp39-abi3 wheel, so the matrix
+needs an image that can host the whole declared range; shrinking the matrix
+would stop testing a version the wheel still promises. Unpin when 3.9 support
+is dropped. The two matrices are kept in step by `just check-workflow-parity`,
+which compares version coverage and ignores runner labels.
+
 ## Linting
 
 ruff (config in `crates/bashkit-python/pyproject.toml`; rules E/F/W/I/UP,

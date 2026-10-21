@@ -16,6 +16,7 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
   RG_VERSION: 15.1.0
+  JQ_VERSION: 1.8.1
 
 jobs:
   lint:
@@ -257,7 +258,14 @@ jobs:
 
   test:
     name: Test
-    runs-on: ubuntu-latest
+    # Pinned, not `ubuntu-latest`: this job's `*_match_gnu` differential tests
+    # need real GNU coreutils as the oracle, and 24.04 is the last image that
+    # ships it as the default. Ubuntu 26.04 installs uutils as `coreutils`
+    # instead, so `dd`/`join`/`od`/`pr` stopped reporting "GNU coreutils" and
+    # those tests fail closed by design rather than skipping. Unpin once the
+    # GNU oracle is installed explicitly, the way `rg` and `jq` already are;
+    # see "Pinned External Oracles" in knowledge/operations/testing.md.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -301,6 +309,12 @@ jobs:
       # binary so upstream formatting/path semantics cannot drift under CI.
       - name: Install pinned ripgrep for differential tests
         run: scripts/install-ripgrep-ci.sh "$RG_VERSION"
+
+      # Same reason for `jq`, and the runner image already proved it: an
+      # unpinned oracle made the jq parity suite a function of which
+      # `ubuntu-latest` image the job landed on.
+      - name: Install pinned jq for differential tests
+        run: scripts/install-jq-ci.sh "$JQ_VERSION"
 
       # Examples have a dedicated job below; skipping them here avoids
       # duplicated example links that can exhaust runner disk on main.

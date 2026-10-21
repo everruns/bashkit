@@ -14,6 +14,7 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
   RG_VERSION: 15.1.0
+  JQ_VERSION: 1.8.1
 
 jobs:
   miri:
@@ -124,7 +125,9 @@ jobs:
 
   asan:
     name: AddressSanitizer
-    runs-on: ubuntu-latest
+    # Pinned for the GNU coreutils oracle, like ci.yml's `test` job; see the
+    # note there.
+    runs-on: ubuntu-24.04
     # ASAN with --test-threads=1 plus the expanded rg/coreutils
     # differential corpora needs well over the previous 30-minute cap;
     # the last two nightly runs cancelled mid-suite at exactly 30 min.
@@ -149,9 +152,13 @@ jobs:
         with:
           cache-on-failure: true
 
-      # ASAN runs the Rust test suite, including `rg` differential tests.
+      # ASAN runs the Rust test suite, including the `rg` and `jq`
+      # differential tests.
       - name: Install pinned ripgrep for differential tests
         run: scripts/install-ripgrep-ci.sh "$RG_VERSION"
+
+      - name: Install pinned jq for differential tests
+        run: scripts/install-jq-ci.sh "$JQ_VERSION"
 
       - name: Run tests with AddressSanitizer
         env:

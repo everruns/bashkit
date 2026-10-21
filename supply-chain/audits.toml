@@ -538,6 +538,12 @@ criteria = "safe-to-deploy"
 delta = "0.103.14 -> 0.103.15"
 notes = "Reviewed complete runtime delta: FIPS status reports underlying AWS-LC signature implementation status. Certificate parsing, verification algorithms and input bounds unchanged."
 
+[[audits.rustls-webpki]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.103.15 -> 0.103.16"
+notes = "Reviewed complete runtime delta (the RUSTSEC-2026-0382 fix): path building now rejects any leaf, intermediate or trust anchor whose SPKI matches a static distrust list of eight emSign G3 SPKIs, surfaced as the new fail-closed Error::CertDistrusted. The distrust data is include_bytes! of DER SPKI blobs under src/data/distrusted. No unsafe code, no new dependencies, MSRV unchanged, and no change to signature verification or input bounds."
+
 [[audits.serde_json]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
@@ -794,6 +800,12 @@ who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 delta = "0.3.104 -> 0.3.105"
 notes = "Reviewed generated shared input slices for read/copy browser APIs, typed feature-gated OffscreenCanvas WebGL catch overloads, and deprecation metadata. No automatic browser API invocation."
+
+[[audits.webpki-root-certs]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "1.0.9 -> 1.0.10"
+notes = "Reviewed complete delta (the RUSTSEC-2026-0383 fix): the bundled emSign ECC Root CA - G3 trust anchor is dropped from TLS_SERVER_ROOT_CERTS and nothing else in src/lib.rs changes. Package MSRV moves 1.70 -> 1.71, still below the pinned toolchain. Data-only change: no code, no unsafe, no new dependencies."
 
 [[audits.wnaf]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"

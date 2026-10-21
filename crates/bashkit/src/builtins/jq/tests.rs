@@ -270,12 +270,45 @@ async fn indent_4_uses_4_spaces() {
 }
 
 #[tokio::test]
-async fn indent_0_renders_compact() {
-    // Real jq: --indent 0 is equivalent to -c.
+async fn indent_0_renders_newlines_without_indent() {
+    // jq >= 1.8: --indent 0 keeps the newlines and drops the spaces. Only -c
+    // is compact.
     let result = run_jq_with_args(&["--indent", "0", "."], r#"{"a":1}"#)
         .await
         .unwrap();
-    assert_eq!(result.trim(), r#"{"a":1}"#);
+    assert_eq!(result, "{\n\"a\": 1\n}\n");
+}
+
+#[tokio::test]
+async fn output_shape_flags_are_last_wins() {
+    // -c, --tab and --indent N set the same thing, so the last one wins.
+    let cases: [(&[&str], &str); 6] = [
+        (&["-c", "--indent", "0", "."], "{\n\"a\": [\n1,\n2\n]\n}\n"),
+        (&["--indent", "0", "-c", "."], "{\"a\":[1,2]}\n"),
+        (
+            &["-c", "--indent", "4", "."],
+            "{\n    \"a\": [\n        1,\n        2\n    ]\n}\n",
+        ),
+        (&["--indent", "4", "-c", "."], "{\"a\":[1,2]}\n"),
+        (&["--tab", "-c", "."], "{\"a\":[1,2]}\n"),
+        (
+            &["-c", "--tab", "."],
+            "{\n\t\"a\": [\n\t\t1,\n\t\t2\n\t]\n}\n",
+        ),
+    ];
+    for (args, expected) in cases {
+        let result = run_jq_with_args(args, r#"{"a":[1,2]}"#).await.unwrap();
+        assert_eq!(result, expected, "args: jq {}", args.join(" "));
+    }
+}
+
+#[tokio::test]
+async fn later_indent_overrides_tab() {
+    // --tab used to stick regardless of a later --indent N.
+    let result = run_jq_with_args(&["--tab", "--indent", "4", "."], r#"{"a":1}"#)
+        .await
+        .unwrap();
+    assert_eq!(result, "{\n    \"a\": 1\n}\n");
 }
 
 #[tokio::test]
@@ -1512,11 +1545,48 @@ mod differential {
     use super::*;
 
     fn real_jq_available() -> bool {
-        std::process::Command::new("jq")
+        real_jq_version().is_some()
+    }
+
+    /// `(major, minor)` of the host `jq`, or `None` when there is no usable
+    /// one. `jq --version` prints `jq-1.8.1`, older builds `jq-1.7`.
+    fn real_jq_version() -> Option<(u32, u32)> {
+        let out = std::process::Command::new("jq")
             .arg("--version")
             .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let text = String::from_utf8_lossy(&out.stdout);
+        let version = text.trim().strip_prefix("jq-")?;
+        let mut parts = version.split('.');
+        let major = parts.next()?.parse().ok()?;
+        // `jq-1.7` has no minor component; treat the missing one as 0.
+        let minor = parts.next().unwrap_or("0").parse().unwrap_or(0);
+        Some((major, minor))
+    }
+
+    /// Like [`assert_matches`], for a case whose expected output only holds
+    /// from a given jq upwards. An older host oracle skips just that case
+    /// rather than reddening the suite, the same bargain
+    /// `minimum_bash_major` strikes for the competitor corpus.
+    ///
+    /// The one case that needs it today is `--indent 0`: jq 1.7 and earlier
+    /// let it imply `-c`, jq 1.8 emits newlines without indentation
+    /// (jqlang/jq#3232). CI pins the oracle (`scripts/install-jq-ci.sh`), so
+    /// this only ever skips on a developer machine with an older jq.
+    async fn assert_matches_from_jq(min: (u32, u32), args: &[&str], input: &str) {
+        match real_jq_version() {
+            Some(found) if found >= min => assert_matches(args, input).await,
+            Some((major, minor)) => eprintln!(
+                "host jq {major}.{minor} predates {}.{}; skipping `jq {}`",
+                min.0,
+                min.1,
+                args.join(" ")
+            ),
+            None => eprintln!("real jq not present; skipping differential test"),
+        }
     }
 
     fn run_real_jq(args: &[&str], input: &str) -> Option<(String, i32)> {
@@ -1640,7 +1710,39 @@ mod differential {
 
     #[tokio::test]
     async fn diff_indent_0() {
-        assert_matches(&["--indent", "0", "."], r#"{"a":1}"#).await;
+        assert_matches_from_jq((1, 8), &["--indent", "0", "."], r#"{"a":1}"#).await;
+    }
+
+    #[tokio::test]
+    async fn diff_indent_0_nested() {
+        assert_matches_from_jq(
+            (1, 8),
+            &["--indent", "0", "."],
+            r#"{"a":[1,2],"b":{"c":3}}"#,
+        )
+        .await;
+    }
+
+    /// `-c`, `--tab` and `--indent N` all set the same thing, so the last one
+    /// on the command line wins. Each pair below disagrees with its reverse.
+    /// jq has behaved this way since at least 1.7; only what `--indent 0`
+    /// itself means changed in 1.8, which is why one case is gated.
+    #[tokio::test]
+    async fn diff_output_shape_flags_are_last_wins() {
+        let input = r#"{"a":[1,2]}"#;
+        for args in [
+            ["-c", "--indent", "4", "."].as_slice(),
+            ["--indent", "4", "-c", "."].as_slice(),
+            ["--indent", "0", "-c", "."].as_slice(),
+            ["-c", "--tab", "."].as_slice(),
+            ["--tab", "-c", "."].as_slice(),
+            ["--tab", "--indent", "4", "."].as_slice(),
+            ["--indent", "4", "--tab", "."].as_slice(),
+            ["--indent", "0", "--indent", "4", "."].as_slice(),
+        ] {
+            assert_matches(args, input).await;
+        }
+        assert_matches_from_jq((1, 8), &["-c", "--indent", "0", "."], input).await;
     }
 
     #[tokio::test]

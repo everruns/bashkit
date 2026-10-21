@@ -27,6 +27,7 @@ Implemented:
 | `-e`, `--exit-status` | Set exit code based on the output |
 | `-j` | Like `-r` but suppresses trailing newlines |
 | `--tab` | Use tabs for indentation |
+| `--indent N` | Indent with N spaces, 0..7 (default 2). `0` still pretty-prints — newlines, no leading spaces — so `-c` is the only way to get compact output |
 | `-a`, `--ascii-output` | Escape non-ASCII characters as `\uXXXX` (strings stay quoted even with `-r`) |
 | `--raw-output0` | Like `-r` with a NUL after each output; a string containing NUL is an error |
 | `--seq` | Write RS (0x1e) before each output; RS separates input values |
@@ -37,6 +38,10 @@ Implemented:
 | `-V`, `--version` | Print the version |
 | `-h`, `--help` | Print help |
 | Combined flags like `-snr` | Treated as the union of the individual flags |
+
+`-c`, `--tab` and `--indent N` all choose the same thing — the output shape —
+so the last one on the command line wins. `jq --indent 4 -c` is compact and
+`jq -c --indent 4` is indented four spaces.
 
 ## Variables
 

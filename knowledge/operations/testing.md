@@ -576,6 +576,53 @@ publishes one headline number, bashkit passes over real-bash passes. It is a
 measurement, not a gate: no floor, no CI job. See
 [Oils Spec Pass Rate](oils-spec.md).
 
+## Pinned External Oracles
+
+A differential test that asserts byte-for-byte parity against a tool on
+`PATH` is only as reproducible as that tool's version. Leave it unpinned and
+the suite becomes a function of the runner image, which changes on GitHub's
+schedule rather than ours. `ripgrep` (`scripts/install-ripgrep-ci.sh`,
+`RG_VERSION`) and `jq` (`scripts/install-jq-ci.sh`, `JQ_VERSION`) are both
+installed from a digest-pinned release in every job that runs their
+differential tests — today `ci.yml`'s `test` job, `coverage.yml`, and
+nightly's `asan` job. Both scripts verify a SHA-256 before the binary reaches
+`PATH`, so a compromised release asset cannot become CI code execution, and
+both prepend their install directory via `GITHUB_PATH` so the pin wins over
+an image-preinstalled copy.
+
+The jq pin was added after the cost was paid: when `ubuntu-latest` began
+rolling from 24.04 to 26.04 the two images shipped jq 1.7 and jq 1.8, which
+disagree on `--indent 0` (1.7 implied `--compact-output`, 1.8 emits newlines
+without indentation, jqlang/jq#3232). One parity case went red on whichever
+half of the fleet disagreed with the implementation, with no change on our
+side, and the two halves could not both be satisfied.
+
+**GNU coreutils is pinned by image, not by tool, and that is a stopgap.** The
+`*_match_gnu` differential tests (`dd`, `join`, `od`, `pr`) require real GNU
+coreutils and fail closed on Linux CI rather than skipping, which is why they
+caught this. Ubuntu 26.04 installs uutils as the `coreutils` binary package,
+so `dd --version` no longer says "GNU coreutils" and all four failed at once.
+The jobs that run them — `ci.yml`'s `test`, `coverage.yml`'s `coverage`,
+nightly's `asan` — are therefore pinned to `ubuntu-24.04`, the last image
+shipping GNU coreutils as the default. That keeps the oracle at the 9.4 these
+expectations were written against, but it is borrowed time: 24.04 runners
+retire, and the pin stops those jobs exercising newer images. The durable fix
+is to install the GNU oracle explicitly, as `rg` and `jq` are, so the image
+stops deciding; it is deliberately not bundled with the unbreak-CI change
+because moving the oracle's version can move the expectations with it, and
+that deserves its own differential review. Note the tests already probe a
+`g`-prefixed binary first (`gdd`, `god`, `gpr`) for Homebrew GNU on macOS —
+`join` probes only `/opt/homebrew/bin/gjoin`, so it needs normalising before a
+PATH-based GNU install would cover all four.
+
+Pinning the oracle in CI does not help a developer whose distro ships an
+older build, so a case whose expectation only holds from some version upwards
+is gated rather than asserted unconditionally:
+`assert_matches_from_jq((1, 8), …)` skips just that case on an older host
+oracle and prints why. This is the same bargain `minimum_bash_major` strikes
+for the competitor corpus. Gate the individual case, never the whole suite —
+a skipped suite is indistinguishable from a passing one.
+
 ## SQLite CLI Differential Tests
 
 CSV comparisons explicitly set the host CLI row separator to LF. SQLite

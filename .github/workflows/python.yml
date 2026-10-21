@@ -69,7 +69,16 @@ jobs:
   test:
     name: Test (Python ${{ matrix.python-version }})
     needs: [build-wheel]
-    runs-on: ubuntu-latest
+    # Pinned, not `ubuntu-latest`: Ubuntu 26.04 ships no hosted 3.9 build, and
+    # `setup-python` has no fallback, so the 3.9 leg died the moment
+    # `ubuntu-latest` began rolling onto it ("The version '3.9' with
+    # architecture 'x64' was not found for Ubuntu 26.04"). The wheel is
+    # cp39-abi3 and the package claims >=3.9, so the fix is an image that can
+    # host the whole declared range, not a smaller matrix. Unpin when 3.9
+    # support is dropped; `publish-python.yml`'s `test-builds` is pinned for
+    # the same reason and the two matrices are kept in step by
+    # `just check-workflow-parity`.
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
