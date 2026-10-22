@@ -93,7 +93,7 @@ jobs:
       - name: Setup node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         with:
-          node-version: 24
+          node-version: "24.22.1"
           cache: pnpm
           cache-dependency-path: crates/bashkit-js/pnpm-lock.yaml
 
@@ -182,7 +182,7 @@ jobs:
           - host: macos-latest
             target: x86_64-apple-darwin
             architecture: x64
-        node: ["20", "22", "24"]
+        node: ["20", "22.23.4", "24.22.1"]
     runs-on: ${{ matrix.settings.host }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -274,7 +274,7 @@ jobs:
       # repository code runs. Mask the output before crossing the step boundary.
       - name: Fetch OpenAI example key
         id: openai
-        if: steps.doppler.outputs.available == 'true' && !(runner.os == 'Windows' && matrix.node == '24')
+        if: steps.doppler.outputs.available == 'true' && !(runner.os == 'Windows' && matrix.node == '24.22.1')
         shell: bash
         env:
           DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
@@ -284,7 +284,7 @@ jobs:
           printf 'OPENAI_API_KEY=%s\n' "$key" >> "$GITHUB_OUTPUT"
 
       - name: Run AI examples
-        if: steps.doppler.outputs.available == 'true' && !(runner.os == 'Windows' && matrix.node == '24')
+        if: steps.doppler.outputs.available == 'true' && !(runner.os == 'Windows' && matrix.node == '24.22.1')
         shell: bash
         env:
           OPENAI_API_KEY: ${{ steps.openai.outputs.OPENAI_API_KEY }}
@@ -305,7 +305,7 @@ jobs:
         target:
           - x86_64-unknown-linux-gnu
           - aarch64-unknown-linux-gnu
-        node: ["20", "22", "24"]
+        node: ["20", "22.23.4", "24.22.1"]
     runs-on: ${{ contains(matrix.target, 'aarch64') && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -504,7 +504,7 @@ jobs:
       - name: Setup node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         with:
-          node-version: 24
+          node-version: "24.22.1"
           cache: pnpm
           cache-dependency-path: crates/bashkit-js/pnpm-lock.yaml
           registry-url: "https://registry.npmjs.org"
