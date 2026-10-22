@@ -564,7 +564,7 @@ mod tests {
         for raw in ["", "5", "a-b", "1-", "-", "1-2-3"] {
             assert!(
                 parse_input_range(raw).is_err(),
-                "expected {raw:?} to be rejected"
+                "expected '{raw}' to be rejected"
             );
         }
     }
