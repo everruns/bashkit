@@ -404,6 +404,34 @@ real generated surface twice, once with `OsStringValueParser` forced
 onto every flippable arg via `Command::mut_arg`, and asserts both yield
 the same options.
 
+The rule is not limited to the `String`/`OsString` pair. Upstream may
+also **add or drop a value parser that yields a non-string type**, which
+moves an arg between "clap pre-parsed it" and "clap handed back the raw
+text". `string_value` covers only the second state, so an arg in the
+first needs its own tolerant read.
+
+Worked example (2026-10, drift run 39753862402): upstream dropped
+`.value_parser(parse_range)` from `shuf`'s `input-range` and moved range
+parsing into its own `uumain`, so the regenerated surface stores a plain
+`String` where the pin stores a `RangeInclusive<u64>`. `shuf.rs` read
+only the pre-parsed type, so `shuf -i 1-5` produced no output and
+`shuf_input_range` failed — that run stayed red at *Run cat/tac spec
+tests*, again after regeneration, so no patch uploaded and no PR
+opened. Fix: `shuf::read_input_range` tries
+`try_get_one::<RangeInclusive<u64>>` first and falls back to
+`helpers::string_value` plus a local `parse_input_range`; an `Err` from
+the typed read means the other surface, not a bad value. Guards:
+`shuf::tests::reads_input_range_under_both_value_types` and
+`absent_input_range_reads_none_under_both_value_types` build both arg
+shapes by hand, so they hold without a live upstream checkout.
+
+Behaviour note: a malformed `-i` exits 2 with clap's rendering under the
+pinned surface, because clap rejects the value before `shuf` sees it.
+On the regenerated surface `parse_input_range` reports it instead, so it
+exits 1 with GNU's `shuf: invalid input range: '<range>'` — the GNU
+behaviour. The pin bump therefore moves this diagnostic closer to GNU
+rather than away from it; no spec case pins the old shape.
+
 Note the asymmetry with the rename rule above: a value-type flip passes
 *Verify build still passes* and fails later, in the spec-test or
 differential step, because it is a runtime type check rather than a
