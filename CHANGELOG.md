@@ -1,5 +1,58 @@
 # Changelog
 
+## [0.20.0] - 2026-10-24
+
+### Highlights
+
+- **Live command I/O and async output sinks.** Rust, Python, JavaScript, C and browser WASM consumers can stream command input/output while preserving shell routing and execution budgets ([#2741](https://github.com/everruns/bashkit/pull/2741), [#2749](https://github.com/everruns/bashkit/pull/2749)).
+- **Host functions for embedded runtimes.** Python and TypeScript scripts can call application-provided functions across native and browser bindings ([#2739](https://github.com/everruns/bashkit/pull/2739), [#2740](https://github.com/everruns/bashkit/pull/2740), [#2742](https://github.com/everruns/bashkit/pull/2742), [#2743](https://github.com/everruns/bashkit/pull/2743)).
+- **Security updates across runtime graphs.** Wasmtime 48.0.7, patched TLS validation/root bundles, Tokio 1.53.3 in the standalone Hyperlight guest, constant-time crypto fixes and supported Node security patches are included in the release source/build recipes. Unsoundness findings now fail every Cargo lockfile audit ([#2767](https://github.com/everruns/bashkit/pull/2767), [#2768](https://github.com/everruns/bashkit/pull/2768), [#2772](https://github.com/everruns/bashkit/pull/2772), [#2773](https://github.com/everruns/bashkit/pull/2773), [#2774](https://github.com/everruns/bashkit/pull/2774)).
+- **Optional runtime warm-up.** Embedders can initialize feature-enabled runtimes before serving requests with `warm_up()` ([#2750](https://github.com/everruns/bashkit/pull/2750)).
+
+**Breaking Rust API change:** the static-analysis enum `analysis::CommandContext` is now `analysis::CommandPlacement`. Before: `use bashkit::analysis::CommandContext;` and `CommandContext::Direct`. After: `use bashkit::analysis::CommandPlacement;` and `CommandPlacement::Direct`. Update annotations for `AnalyzedCommand.context` accordingly. The root `bashkit::CommandContext` now describes a live host-command invocation; it is not the analysis enum. Serialized `context` field names and values remain unchanged. See the [streaming guide](https://github.com/everruns/bashkit/blob/v0.20.0/docs/streaming.md) ([#2741](https://github.com/everruns/bashkit/pull/2741)).
+
+**Remaining dependency caveats:** optional SSH still uses RSA affected by Marvin (RUSTSEC-2023-0071); upstream has no published fix. Prefer Ed25519 to avoid RSA private-key operations. `atomic-polyfill` remains an unmaintained transitive dependency. Node is supplied by the embedding application: Node 18/20 compatibility does not imply security support; use a patched supported runtime. Downstream Rust applications should refresh their own lockfiles and rebuild. This release does not claim every dependency is vulnerability-free ([#2774](https://github.com/everruns/bashkit/pull/2774)).
+
+### What's Changed
+
+* fix(release): recover publication from immutable tags by @chaliy
+* fix(builtins): track uucore quoting-style rename in printf shim ([#2738](https://github.com/everruns/bashkit/pull/2738)) by @chaliy
+* feat(python): expose embedded runtime host functions to agent tools ([#2739](https://github.com/everruns/bashkit/pull/2739)) by @chaliy
+* feat(js): add Python and TypeScript runtime host functions ([#2740](https://github.com/everruns/bashkit/pull/2740)) by @chaliy
+* feat(capi): add Python and TypeScript runtime host functions ([#2742](https://github.com/everruns/bashkit/pull/2742)) by @chaliy
+* feat(streaming): add live command I/O and async output sinks ([#2741](https://github.com/everruns/bashkit/pull/2741)) by @chaliy
+* fix(capi): export runtime callbacks in Windows import libraries ([#2744](https://github.com/everruns/bashkit/pull/2744)) by @chaliy
+* feat(wasm): add Python and TypeScript runtime host functions ([#2743](https://github.com/everruns/bashkit/pull/2743)) by @chaliy
+* fix(ci): open a new coreutils drift PR when the previous one was closed ([#2745](https://github.com/everruns/bashkit/pull/2745)) by @chaliy
+* chore(builtins): sync uutils/coreutils argument surfaces and vendored modules ([#2746](https://github.com/everruns/bashkit/pull/2746)) by @chaliy
+* fix(testing): attribute fuzz canary echoes to the script that caused them ([#2747](https://github.com/everruns/bashkit/pull/2747)) by @chaliy
+* fix(testing): keep killed CLI children out of tarpaulin's coverage merge ([#2748](https://github.com/everruns/bashkit/pull/2748)) by @chaliy
+* fix(streaming): enforce budgets and preserve routed byte output ([#2749](https://github.com/everruns/bashkit/pull/2749)) by @chaliy
+* feat(bashkit): add feature-gated warm_up() entry point ([#2750](https://github.com/everruns/bashkit/pull/2750)) by @chaliy
+* fix(builtins): read od's generated args under either clap value type ([#2754](https://github.com/everruns/bashkit/pull/2754)) by @chaliy
+* chore(ci): bump taiki-e/install-action from 2.87.28 to 2.87.29 in the github-actions group ([#2756](https://github.com/everruns/bashkit/pull/2756)) by @app/dependabot
+* chore(deps): bump the site-npm group in /site with 3 updates ([#2751](https://github.com/everruns/bashkit/pull/2751)) by @app/dependabot
+* chore(deps): bump the docs-grep-agent-uv group in /examples/docs-grep-agent with 4 updates ([#2757](https://github.com/everruns/bashkit/pull/2757)) by @app/dependabot
+* chore(deps): bump the js-npm group in /crates/bashkit-js with 4 updates ([#2752](https://github.com/everruns/bashkit/pull/2752)) by @app/dependabot
+* chore(deps): bump the examples-npm group across 1 directory with 6 updates ([#2753](https://github.com/everruns/bashkit/pull/2753)) by @app/dependabot
+* chore(deps): bump the fuzz-dependencies group in /crates/bashkit/fuzz with 2 updates ([#2755](https://github.com/everruns/bashkit/pull/2755)) by @app/dependabot
+* chore(builtins): sync uutils/coreutils argument surfaces and vendored modules ([#2759](https://github.com/everruns/bashkit/pull/2759)) by @chaliy
+* fix(ci): open coreutils drift PRs with a token permitted to create them ([#2760](https://github.com/everruns/bashkit/pull/2760)) by @chaliy
+* chore(deps): land the safe rust-dependencies bumps and hold oxc at 0.117.x ([#2761](https://github.com/everruns/bashkit/pull/2761)) by @chaliy
+* chore(deps): bump wrangler from 4.151.0 to 4.151.1 in /site in the site-npm group ([#2762](https://github.com/everruns/bashkit/pull/2762)) by @app/dependabot
+* chore(deps): bump the docs-grep-agent-uv group in /examples/docs-grep-agent with 2 updates ([#2763](https://github.com/everruns/bashkit/pull/2763)) by @app/dependabot
+* chore(deps): bump the examples-npm group across 1 directory with 4 updates ([#2764](https://github.com/everruns/bashkit/pull/2764)) by @app/dependabot
+* fix(deps): bump wasmtime to 48.0.7 for RUSTSEC-2026-0379 and -0378 ([#2767](https://github.com/everruns/bashkit/pull/2767)) by @chaliy
+* fix(ci): unbreak main after the ubuntu-26.04 roll and the October advisories ([#2768](https://github.com/everruns/bashkit/pull/2768)) by @chaliy
+* chore(deps): bump rustyline from 18.0.1 to 19.0.0 ([#2765](https://github.com/everruns/bashkit/pull/2765)) by @app/dependabot
+* fix(builtins): read shuf's input range under either generated value type ([#2770](https://github.com/everruns/bashkit/pull/2770)) by @chaliy
+* chore(builtins): sync uutils/coreutils argument surfaces and vendored modules ([#2771](https://github.com/everruns/bashkit/pull/2771)) by @chaliy
+* fix(deps): clear the 2026-10-23 constant-time and npm advisories ([#2773](https://github.com/everruns/bashkit/pull/2773)) by @chaliy
+* fix(ci): pin supported Node security patch versions ([#2772](https://github.com/everruns/bashkit/pull/2772)) by @chaliy
+* fix(security): complete standalone runtime audits ([#2774](https://github.com/everruns/bashkit/pull/2774)) by @chaliy
+
+**Full Changelog**: https://github.com/everruns/bashkit/compare/v0.19.0...v0.20.0
+
 ## [0.19.0] - 2026-10-15
 
 ### Highlights

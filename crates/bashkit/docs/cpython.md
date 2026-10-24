@@ -19,7 +19,7 @@ Enable the `cpython` cargo feature and register the builtins:
 
 ```toml
 [dependencies]
-bashkit = { version = "0.19.0", features = ["cpython"] }
+bashkit = { version = "0.20.0", features = ["cpython"] }
 ```
 
 ```rust
@@ -242,7 +242,7 @@ executable memory. Enable `cpython-native` instead of `cpython` to compile it
 to machine code for your target at build time:
 
 ```toml
-bashkit = { version = "0.19.0", features = ["cpython-native"] }
+bashkit = { version = "0.20.0", features = ["cpython-native"] }
 ```
 
 Calls get 4-10x faster (`print(1)` ~1 ms instead of ~4 ms; CPU-bound code
