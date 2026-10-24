@@ -56,6 +56,15 @@ queued calls, worker threads, adapters, reentry, bad values and snapshot/reset.
 `runtime-compat/runtime-functions.test.mjs` runs in Node, Bun and Deno. Dedicated
 macOS and Windows CI runs the callback suite as well as Linux's runtime matrix.
 
+## Host runtime security
+
+Build/release jobs use Node 24.22.1 and general CI uses 22.23.4, the patched
+October 2026 releases. The runtime matrix explicitly tests both versions.
+Node 20 remains an EOL compatibility-only lane; its green result does not imply
+security support. The npm `engines >=18` field is the native ABI compatibility
+floor, not a security-supported runtime list. Consumers supply Node themselves
+and must use a currently patched supported runtime. No Node executable is bundled.
+
 ## See also
 
 - [Python Package](python-package.md)

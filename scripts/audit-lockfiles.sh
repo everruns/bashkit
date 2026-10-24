@@ -53,31 +53,11 @@ IGNORED_ADVISORIES=(
     RUSTSEC-2023-0071
 )
 
-# npm advisories, by GHSA (or CVE) id. A patched release is almost always
-# reachable by a bump, because the npm dependencies are all dev- or
-# example-only; the entry below is the exception the mechanism exists for. It
-# landed on 2026-10-02 against the newest published version of the package,
-# with no fixed release to move to, so the choice is an explicit, documented
-# acceptance or a red scan that stays red — not a pinned floor nobody records.
-#
-# It is a `last_affected` advisory in OSV, not a `fixed` one: there is no
-# patched version, so re-check the advisory's own fixed-range before dropping
-# the entry. A sibling entry for GHSA-ch52-4w7c-c8xp
-# (`http-cache-semantics`) was dropped this way once 4.3.0 published above its
-# `last_affected` 4.2.0; `site/package.json` now pins that floor as an
-# override. The package below reaches no consumer of a published artifact.
-#
-# GHSA-vfj7-8cjw-p6xm — stack-exhaustion DoS in `braces` from deeply nested
-# patterns. Reached only as ava → globby → fast-glob → micromatch → braces, a
-# devDependency of crates/bashkit-js: the test runner globbing test-file
-# patterns that live in this repo. `braces` 3.0.3 is both the latest release
-# and the last affected one. The published package ships the files listed in
-# its package.json `files` array, so no consumer installs this chain. Drop
-# once `braces` ships a release above 3.0.3.
-#
-IGNORED_NPM_ADVISORIES=(
-    GHSA-vfj7-8cjw-p6xm
-)
+# npm advisories, by GHSA/CVE id. No active exceptions. The previous
+# GHSA-vfj7-8cjw-p6xm (braces) exception was retired after GitHub withdrew
+# the advisory on 2026-10-23 as not practically exploitable. This is not a
+# patched-code claim; a newly published finding must fail normally.
+IGNORED_NPM_ADVISORIES=()
 
 # PyPI advisories, by OSV (or GHSA) id. Empty: nothing has yet needed
 # suppressing here. Same bar as the npm list above — an entry needs a rationale
@@ -125,7 +105,7 @@ found=0
 while IFS= read -r lock; do
     found=$((found + 1))
     echo "::group::cargo audit $lock"
-    cargo audit ${cargo_ignore_flags[@]+"${cargo_ignore_flags[@]}"} -f "$lock" || status=1
+    cargo audit --deny unsound ${cargo_ignore_flags[@]+"${cargo_ignore_flags[@]}"} -f "$lock" || status=1
     echo "::endgroup::"
 done < <(discover Cargo.lock)
 require_found "$found" Cargo.lock

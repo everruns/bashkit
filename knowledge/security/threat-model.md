@@ -1853,7 +1853,6 @@ checks.
 |----------|-------|----------------|-------------|
 | RUSTSEC-2023-0071 | `rsa` | Marvin timing sidechannel (TM-CRY-002). No patched version exists; reachable only via the opt-in `ssh` feature | `rsa` ships a constant-time release |
 | RUSTSEC-2023-0089 | `atomic-polyfill` | Unmaintained, no known vulnerability; transitive via `monty` → `postcard` → `heapless` (pinned at 0.7, which still requires it) | Upstream drops the dependency |
-| GHSA-vfj7-8cjw-p6xm | `braces` (npm) | Stack-exhaustion DoS through deeply nested patterns. No patched version exists — 3.0.3 is both the latest release and the last affected one. Reached only as `ava` → `globby` → `fast-glob` → `micromatch` → `braces`, a devDependency of `crates/bashkit-js`, globbing test-file patterns committed to this repo; it is not in the published package's `files` list, so no consumer installs it | `braces` ships a release above 3.0.3 |
 
 A suppression that stops matching is not evidence that it can be dropped.
 `cargo deny check advisories` currently warns `advisory-not-detected` for
@@ -1861,8 +1860,18 @@ RUSTSEC-2023-0071, because `ssh-key` resolves `rsa` to a pre-release
 (0.10.0-rc.18) and RustSec version ranges do not match pre-release versions.
 The advisory still carries `patched = []`, so the exposure is unchanged and
 matching resumes as soon as `rsa` ships a stable release. Before removing any
-entry above, check the advisory's own `patched` list rather than the scanner's
-silence.
+entry above, verify the advisory's own patched release, dependency removal, or
+explicit upstream withdrawal rather than the scanner's silence.
+
+Retired: [GHSA-vfj7-8cjw-p6xm](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm)
+(`braces`, npm), withdrawn by GitHub on 2026-10-23 at 12:53:02 UTC because it
+was not a practically exploitable vulnerability. The AVA dev-only chain still
+resolves braces 3.0.3; withdrawal is not evidence of patched parser code. The
+npm suppression list is now empty, so future findings fail without that exception.
+
+Cargo scans use `--deny unsound` across every discovered lockfile. Informational
+soundness findings such as RUSTSEC-2026-0386 must fail the required audit gate,
+not merely print a warning. Other documented risk decisions remain unchanged.
 
 Retired: RUSTSEC-2026-0173 (`proc-macro-error2`, unmaintained). Its recorded
 removal condition — "`tabled` releases a version without it" — was met by

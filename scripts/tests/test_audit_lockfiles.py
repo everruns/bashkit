@@ -55,7 +55,7 @@ ALL_LOCKS = [
 
 
 class AuditLockfilesTests(unittest.TestCase):
-    def run_script(self, locks):
+    def run_script(self, locks, cargo_stub=None):
         """Run the script against a temp tree containing `locks`, return (result, calls)."""
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -77,7 +77,7 @@ class AuditLockfilesTests(unittest.TestCase):
                 (root / 'scripts/lib/npm_audit.py', 'npm'),
                 (root / 'scripts/lib/pypi_audit.py', 'pypi'),
             ):
-                target.write_text(STUB.format(label=label))
+                target.write_text(cargo_stub if label == "cargo" and cargo_stub else STUB.format(label=label))
                 target.chmod(target.stat().st_mode | stat.S_IEXEC)
 
             calls_file = root / 'calls.txt'
@@ -156,6 +156,25 @@ class AuditLockfilesTests(unittest.TestCase):
         result, calls = self.run_script(ALL_LOCKS + ['poison/Cargo.lock'])
         self.assertEqual(result.returncode, 1)
         self.assertEqual(len(self.by_label(calls, 'cargo')), 3, calls)
+
+    def test_unsound_warning_fails_scan_without_hiding_other_ecosystems(self):
+        # cargo-audit normally returns success for informational unsoundness.
+        # Simulate a finding in a standalone workspace, honoring its deny flag.
+        cargo_stub = """#!/bin/sh
+echo "cargo $@" >> "$AUDIT_CALLS"
+case "$*" in
+  *hyperlight*)
+    case "$*" in *"--deny unsound"*) exit 1 ;; esac ;;
+esac
+exit 0
+"""
+        result, calls = self.run_script(
+            ALL_LOCKS + ['examples/hyperlight/Cargo.lock'], cargo_stub=cargo_stub
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(len(self.by_label(calls, 'cargo')), 3, calls)
+        self.assertEqual(len(self.by_label(calls, 'npm')), 2, calls)
+        self.assertEqual(len(self.by_label(calls, 'pypi')), 1, calls)
 
     def test_a_failure_in_one_ecosystem_still_audits_the_others(self):
         # An npm advisory must not stop the cargo or PyPI scan: each ecosystem

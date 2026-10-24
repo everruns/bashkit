@@ -1,5 +1,11 @@
 # Bashkit Knowledge Update Log
 
+## 2026-10-24
+
+* **Runtime security completion**: Pin CI/release Node lanes to patched 22.23.4/24.22.1; document legacy Node20 as compatibility-only. Align standalone Hyperlight Tokio with patched root/fuzz 1.53.3 for RUSTSEC-2026-0386. Cargo lockfile audits now fail on unsound warnings, with a regression preserving coverage of other ecosystems.
+* **Windows dependency**: Replace yanked clipboard-win5.4.1 with 5.4.3 via Rustyline; reviewed the HTML range/copy safety delta and recorded a precise cargo-vet delta audit without new exemptions or publisher trust. Rustyline calls Unicode reads, so exploitation through the changed HTML API is not established.
+* **Advisory retirement**: Remove the npm braces suppression after GitHub withdrew GHSA-vfj7-8cjw-p6xm on 2026-10-23; braces3.0.3 remains in AVA's dev-only graph, not patched code. RSA Marvin remains accepted only for opt-in SSH: the latest published RSA prerelease still warns of exposure, and russh pins rc.18. See [Threat Model](security/threat-model.md).
+
 ## 2026-10-16
 
 * **Browser live runtime callbacks**: Integrated the runtime dispatcher with live byte sinks, bounded capture and command pipelines after the streaming API landed. Both execution paths retain request-local leases; tests cover async sink completion/deadlines, abort/reuse, reset and caller context. See [Browser Package](runtimes/browser-package.md).

@@ -12,7 +12,7 @@ component="target/bashkit-sandbox.component.wasm"
 
 echo "==> building guest (wasm32-unknown-unknown, no JS, no WASI)"
 RUSTFLAGS='--cfg getrandom_backend="custom"' \
-    cargo build --release --target wasm32-unknown-unknown
+    cargo build --locked --release --target wasm32-unknown-unknown
 
 echo "==> wrapping core module as a component"
 wasm-tools component new "$core" -o "$component"
@@ -26,7 +26,7 @@ if grep -qv '"bashkit:sandbox/host"' <<<"$imports"; then
 fi
 
 echo "==> running under wasmtime"
-actual=$(cd host && cargo run --release --quiet -- "../$component" "$(cat "$here/smoke.sh")")
+actual=$(cd host && cargo run --locked --release --quiet -- "../$component" "$(cat "$here/smoke.sh")")
 expected=$'beta gamma alpha \n6\nslept 1s'
 
 echo "$actual"

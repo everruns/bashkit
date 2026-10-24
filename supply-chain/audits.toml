@@ -96,6 +96,12 @@ criteria = "safe-to-deploy"
 delta = "4.6.4 -> 4.6.7"
 notes = "Reviewed defer attribute codegen (Defer magic attr, bool-lit helper, initial/final method ordering); proc-macro output only, no new unsafe or ambient access."
 
+[[audits.clipboard-win]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "5.4.1 -> 5.4.3"
+notes = "Reviewed the complete source delta against the existing exempted baseline. HTML fragment offsets use checked subtraction followed by str::get and Vec::extend_from_slice, replacing unchecked pointer copying/set_len; malformed ranges or UTF-8 boundaries return invalid_data. The sum equals the parsed end offset after checked subtraction. Clipboard-open retries now sleep 5ms per bounded attempt. No dependency, feature, license, build-script or external-capability changes. Existing Windows FFI baseline was not re-audited. Rustyline uses Unicode clipboard reads, not the changed HTML API."
+
 [[audits.combine]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"

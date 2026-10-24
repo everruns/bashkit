@@ -25,6 +25,12 @@ bun add @everruns/bashkit       # Bun
 deno add npm:@everruns/bashkit  # Deno
 ```
 
+Use a patched, supported Node.js release. The October 2026 security minimums
+are **22.23.4**, **24.22.1**, and **26.12.1** in their respective release lines;
+keep taking subsequent upstream security updates. The package's `engines >=18`
+is an ABI compatibility floor, not security support for EOL Node 18/20. The
+Node 20 CI lane checks legacy compatibility only. Bashkit does not bundle Node.
+
 ## Quick Start
 
 ### Sync Execution
