@@ -441,7 +441,7 @@ version = "0.2.4"
 criteria = "safe-to-run"
 
 [[exemptions.crypto-bigint]]
-version = "0.7.5"
+version = "0.7.6"
 criteria = "safe-to-deploy"
 
 [[exemptions.crypto-common]]

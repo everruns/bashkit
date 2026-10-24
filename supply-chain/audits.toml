@@ -126,6 +126,12 @@ criteria = "safe-to-deploy"
 delta = "0.0.7 -> 0.0.13"
 notes = "Reviewed delta: crate metadata only; generated code behavior is unchanged."
 
+[[audits.ctutils]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.4.2 -> 0.4.5"
+notes = 'Reviewed complete runtime delta (the RUSTSEC-2026-0385 fix). Two constant-time repairs: every `Choice::to_*_mask` now negates `to_u8()` rather than reading the inner byte directly, so the `black_box` barrier is no longer bypassed on the mask path; and `from_u128_lt`/`from_u128_le` switch to half-width `u64` predicates on 32-bit targets, where full-width subtraction let LLVM lower the comparison to a short-circuiting multiword branch. The comparison macros move verbatim into a new public `primitives` module, which adds a `bitborrow` helper and `black_box` barriers behind `cfg(all(target_arch = "arm", not(target_has_atomic = "ptr")))` (Thumb-1); `CtGt for u128` is hand-written over `from_u128_lt` instead of the macro. The rest is MSRV follow-through for 1.87: `cast_signed`/`cast_unsigned` replacing `as` casts, `to_bool`/`to_u8` becoming `const fn`, and `to_bool_vartime`/`to_u8_vartime` deprecated and redirected to them. `#![forbid(unsafe_code)]` holds, no new dependencies (the `subtle` floor moves 2 -> 2.6), no filesystem, network or process access, and MSRV 1.85 -> 1.87 stays below the pinned toolchain.'
+
 [[audits.der]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
