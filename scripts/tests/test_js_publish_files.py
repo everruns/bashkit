@@ -4,6 +4,18 @@ Regression: publish-js.yml carried only wrapper.js/.d.ts in its `js-stubs`
 artifact, so `@everruns/bashkit@0.18.2` shipped without langchain.js, ai.js,
 anthropic.js and openai.js even though package.json exports them. The publish
 job never runs tsc itself; whatever the artifact omits is missing on npm.
+
+Second regression, v0.20.0: `runtime-functions.ts` arrived in #2740 without
+being added to tsconfig's `include`. tsc still emitted it, because `wrapper.ts`
+imports it and TypeScript compiles a reachable import either way, so every
+local build and `js.yml` stayed green. But the omission also made the file
+invisible to the two checks above, which read their notion of "tsc output"
+straight out of `include` -- so the guard written for the 0.18.2 failure could
+not see the next instance of it. All fifteen `Publish JS` test jobs then died
+on `ERR_MODULE_NOT_FOUND` for runtime-functions.js and npm stalled at 0.19.0.
+
+`include` is therefore checked against the sources on disk, so no entry point
+can be absent from it and silently narrow the two checks that depend on it.
 """
 
 from __future__ import annotations
@@ -25,6 +37,24 @@ def stub_paths() -> set[str]:
 
 
 class JsPublishFilesTests(unittest.TestCase):
+    def test_tsconfig_includes_every_ts_source(self) -> None:
+        """`include` is the root both checks below trust; it must be complete.
+
+        A source missing here is not a build failure -- tsc follows imports --
+        so nothing else reveals it. It just quietly shrinks `tsc_outputs`.
+        `tsconfig.check.json` overrides `include` rather than extending it, so
+        it needs the same entries to type-check each source in its own right.
+        """
+        sources = {p.name for p in JS.glob("*.ts") if not p.name.endswith(".d.ts")}
+        for config in ("tsconfig.json", "tsconfig.check.json"):
+            included = set(json.loads((JS / config).read_text())["include"])
+            for source in sorted(sources):
+                self.assertIn(
+                    source,
+                    included,
+                    f"{source} is a package source but is not in {config} include",
+                )
+
     def test_every_ts_entry_output_is_uploaded(self) -> None:
         tsconfig = json.loads((JS / "tsconfig.json").read_text())
         uploaded = stub_paths()

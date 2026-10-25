@@ -1,5 +1,9 @@
 # Bashkit Knowledge Update Log
 
+## 2026-10-25
+
+* **npm publish gap**: `tsconfig.json`'s `include` must name every `.ts` source in the native package, including one reached only through an import. tsc compiles a reachable import regardless, so omitting `runtime-functions.ts` broke no build but narrowed what `scripts/tests/test_js_publish_files.py` treats as a tsc output, disabling that guard for the one file it omitted. The `js-stubs` artifact then shipped without `runtime-functions.js` and all fifteen v0.20.0 `Publish JS` test jobs failed on `ERR_MODULE_NOT_FOUND`, leaving both npm packages on 0.19.0 while crates.io and PyPI published. `include` completeness is now guarded; see [Release Process](operations/release-process.md).
+
 ## 2026-10-24
 
 * **0.20.0 release preparation**: Synchronize workspace, native/browser package versions, internal release dependencies and standalone lockfiles; refresh self-hosted Python/TypeScript API references. The minor release documents the Rust analysis enum migration from `CommandContext` to `CommandPlacement`, live command I/O, runtime callbacks, and the security fixes since 0.19.0. Keep the opt-in SSH RSA Marvin and unmaintained atomic-polyfill caveats explicit. Exact multi-crate packaging validation and registry/platform verification follow the [Release Process](operations/release-process.md).

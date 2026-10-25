@@ -10,6 +10,7 @@
     "wrapper.ts",
     "scripted.ts",
     "internal.ts",
+    "runtime-functions.ts",
     "langchain.ts",
     "anthropic.ts",
     "openai.ts",

@@ -321,6 +321,17 @@ carries. That artifact must list every `tsc` output (`.js` + `.d.ts` for each
 without `langchain.js`/`ai.js`/`anthropic.js`/`openai.js` while `package.json`
 exported them. Guarded by `scripts/tests/test_js_publish_files.py`.
 
+`tsconfig.json`'s `include` must name every `.ts` source in the package, even
+one reached only through an import. tsc compiles a reachable import whether or
+not it is listed, so an omission breaks no build: it narrows what the guard
+above treats as a `tsc` output, disabling the guard for exactly the file it
+left out. `runtime-functions.ts` landed that way in #2740, so v0.20.0 reached
+the registry on crates.io and PyPI while all fifteen `Publish JS` test jobs
+died on `ERR_MODULE_NOT_FOUND` for `runtime-functions.js`, leaving both npm
+packages on 0.19.0. `include` completeness is now itself guarded by that same
+test file -- treat `include`, the `js-stubs` list and `package.json` `files` as
+one invariant, since each is a hand-maintained copy of the same set.
+
 ### publish-wasm.yml
 
 Dispatched by `release.yml` from the verified release tag. Builds the

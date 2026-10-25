@@ -149,6 +149,8 @@ jobs:
             crates/bashkit-js/scripted.d.ts
             crates/bashkit-js/internal.js
             crates/bashkit-js/internal.d.ts
+            crates/bashkit-js/runtime-functions.js
+            crates/bashkit-js/runtime-functions.d.ts
             crates/bashkit-js/langchain.js
             crates/bashkit-js/langchain.d.ts
             crates/bashkit-js/anthropic.js
