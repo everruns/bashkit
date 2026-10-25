@@ -8,8 +8,8 @@ with pipes, variables, loops and `jq`.
 
 ```toml
 [dependencies]
-bashkit = "0.19"
-bashkit-scripted-tool = { version = "0.19", features = ["jq"] }
+bashkit = "0.20"
+bashkit-scripted-tool = { version = "0.20", features = ["jq"] }
 ```
 
 ```rust,ignore
