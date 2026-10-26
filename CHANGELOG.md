@@ -4,8 +4,8 @@
 
 ### Highlights
 
-- **Windows CPython builds.** The embedded CPython module uses a plain static slice on Windows and caches a 64 KiB-aligned copy at runtime, avoiding the Rust compiler trap when generating Windows COFF objects. Python and the hosted integration catalog remain available.
-- **Complete npm runtime files.** The npm publish artifact includes `runtime-functions.js` and its declarations so importing the package succeeds.
+- **Windows CPython builds.** The embedded CPython module uses a plain static slice on Windows and caches a 64 KiB-aligned copy at runtime, avoiding the Rust compiler trap when generating Windows COFF objects. Python and the hosted integration catalog remain available ([#2777](https://github.com/everruns/bashkit/pull/2777)).
+- **Complete npm runtime files.** The npm publish artifact includes `runtime-functions.js` and its declarations so importing the package succeeds ([#2776](https://github.com/everruns/bashkit/pull/2776)).
 
 ### What's Changed
 
