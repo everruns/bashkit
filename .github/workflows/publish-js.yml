@@ -3,9 +3,13 @@
 # Triggered alongside publish.yml on GitHub Release or manual dispatch.
 # Adapted from https://github.com/pydantic/monty CI JS-building pattern.
 #
-# Prerequisites:
-#   - NPM_TOKEN secret with publish access (GitHub Settings > Secrets > Actions)
-#   - id-token: write permission for npm provenance (OIDC attestation)
+# Auth: npm trusted publishing (GitHub OIDC), no NPM_TOKEN secret.
+#   - npmjs.com @everruns/bashkit > Settings > Trusted publisher:
+#     GitHub Actions, everruns/bashkit, workflow publish-js.yml, no environment
+#   - release-js needs id-token: write; npm >= 11.5.1 exchanges the OIDC token
+#     for a short-lived publish token and attaches provenance automatically
+#   - setup-node has no registry option: it would write an .npmrc carrying a
+#     placeholder auth token
 
 name: Publish JS
 
@@ -509,7 +513,18 @@ jobs:
           node-version: "24.22.1"
           cache: pnpm
           cache-dependency-path: crates/bashkit-js/pnpm-lock.yaml
-          registry-url: "https://registry.npmjs.org"
+
+      - name: Require npm with trusted publishing (>= 11.5.1)
+        # npm trusted publishing (GitHub OIDC -> short-lived publish token)
+        # landed in npm 11.5.1. Upgrade to a pinned release if the bundled
+        # npm is older, then assert.
+        run: |
+          npm_ok() {
+            node -e 'const [a,b,c]=process.argv[1].split(".").map(Number);process.exit(a>11||(a==11&&(b>5||(b==5&&c>=1)))?0:1)' "$(npm --version)"
+          }
+          npm_ok || npm install -g npm@11.6.2
+          npm_ok || { echo "::error::npm $(npm --version) lacks trusted publishing"; exit 1; }
+          echo "npm $(npm --version)"
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -558,8 +573,6 @@ jobs:
           echo "Publishing with dist-tag: $TAG"
           python3 "$GITHUB_WORKSPACE/scripts/publish_npm.py" --tag "$TAG"
         working-directory: crates/bashkit-js
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Verify npm publish
         run: |

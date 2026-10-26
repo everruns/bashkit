@@ -159,6 +159,23 @@ class ReleaseWorkflowTests(unittest.TestCase):
             with self.subTest(workflow=name):
                 self.assertIn('python3 "$GITHUB_WORKSPACE/scripts/publish_npm.py" --tag "$TAG"', workflow)
 
+    def test_npm_publish_lanes_use_trusted_publishing(self) -> None:
+        """npm auth is GitHub OIDC trusted publishing, never a long-lived token.
+
+        A rejected NPM_TOKEN made npm answer the 0.20.1 wasm publish with a
+        misleading 404. setup-node's registry-url writes an .npmrc carrying a
+        placeholder NODE_AUTH_TOKEN, so it stays off too.
+        """
+        for name, job in (("publish-js.yml", "release-js"), ("publish-wasm.yml", "publish-wasm")):
+            workflow = (ROOT / ".github/workflows" / name).read_text()
+            with self.subTest(workflow=name):
+                self.assertNotIn("secrets.NPM_TOKEN", workflow)
+                self.assertNotIn("NODE_AUTH_TOKEN", workflow)
+                self.assertNotIn("registry-url:", workflow)
+                body = workflow.split(f"\n  {job}:\n", 1)[1]
+                self.assertIn("id-token: write", body.split("\n    steps:\n", 1)[0])
+                self.assertIn("npm install -g npm@11.6.2", body)
+
     def test_web_ci_exercises_release_wasm_optimization(self) -> None:
         build_script = (ROOT / "crates/bashkit-wasm/scripts/build.sh").read_text()
         ci_workflow = (ROOT / ".github/workflows/ci.yml").read_text()

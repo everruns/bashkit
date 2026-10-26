@@ -303,9 +303,8 @@ Trigger: Release published (parallel). Builds native NAPI-RS bindings
 (macOS x86_64/aarch64, Linux x86_64/aarch64, Windows x86_64,
 wasm32-wasip1-threads), tests on Node 20/22/24 (Node 20 runs the
 runtime-compat suite, not the ava suites, since ava >= 8 needs Node 22.20+),
-publishes to npm. Secret:
-`NPM_TOKEN` (Automation token); provenance via `id-token: write` OIDC +
-`--provenance`, same pattern as everruns/sdk. JS package version is synced
+publishes to npm via npm trusted publishing (GitHub OIDC, `id-token: write`,
+npm >= 11.5.1, provenance automatic); no `NPM_TOKEN`. JS package version is synced
 from the workspace `Cargo.toml` by `build.rs` updating `package.json`.
 
 Only a run whose ref is the release tag (`refs/tags/vX.Y.Z`, version matching
@@ -337,7 +336,7 @@ one invariant, since each is a hand-maintained copy of the same set.
 Dispatched by `release.yml` from the verified release tag. Builds the
 single-threaded `wasm32-unknown-unknown` browser bundle, runs the headless Node
 integration suite, and publishes `@everruns/bashkit-wasm` to npm with
-provenance. Uses the same `NPM_TOKEN` as `publish-js.yml`; the package version
+provenance via npm trusted publishing, same as `publish-js.yml`; the package version
 is synced manually from the workspace version during release preparation.
 
 CI and publication both use the `wasm-release` profile and run the package's
@@ -365,7 +364,17 @@ from `main`; build checkout remains pinned to the tag.
 
 - `CARGO_REGISTRY_TOKEN` (crates.io token, publish scopes) in GitHub Actions secrets.
 - PyPI trusted publishing: configure publisher at pypi.org for repo `everruns/bashkit`, workflow `publish-python.yml`, environment `release-python`.
-- `NPM_TOKEN` (Automation token) in GitHub Actions secrets; no separate GitHub environment required.
+- npm trusted publishing (GitHub OIDC), no npm token secret. On npmjs.com, each
+  package's Settings > Trusted publisher: GitHub Actions, organization `everruns`,
+  repository `bashkit`, workflow `publish-js.yml` (`@everruns/bashkit`) or
+  `publish-wasm.yml` (`@everruns/bashkit-wasm`), environment empty. Publish jobs
+  need `id-token: write` and npm >= 11.5.1 (the step upgrades to a pinned npm if
+  Node's bundled one is older). Do not set setup-node `registry-url`: its `.npmrc`
+  carries a placeholder `NODE_AUTH_TOKEN`. The long-lived `NPM_TOKEN` was rejected
+  before 0.20.1 and npm reported the auth failure as a 404 on
+  `@everruns/bashkit-wasm`; an npm publish 404 on an existing package means auth,
+  check the trusted publisher config first. Guarded by
+  `scripts/tests/test_release_workflow.py`.
 
 ## Post-Release Verification
 

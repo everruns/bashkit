@@ -3,8 +3,11 @@
 # publishes to npm. Triggered alongside publish.yml on GitHub Release.
 #
 # Prerequisites:
-#   - NPM_TOKEN secret with publish access
-#   - id-token: write permission for npm provenance (OIDC attestation)
+#   - npm trusted publishing (GitHub OIDC), no NPM_TOKEN secret:
+#     npmjs.com @everruns/bashkit-wasm > Settings > Trusted publisher:
+#     GitHub Actions, everruns/bashkit, workflow publish-wasm.yml, no environment
+#   - id-token: write on publish-wasm; npm >= 11.5.1 (OIDC token exchange +
+#     automatic provenance)
 #
 # Derive the bindgen CLI from Cargo.lock; never duplicate its schema version.
 
@@ -110,7 +113,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write # npm provenance
+      id-token: write # npm trusted publishing + provenance
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -129,7 +132,18 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         with:
           node-version: "24.22.1"
-          registry-url: "https://registry.npmjs.org"
+
+      - name: Require npm with trusted publishing (>= 11.5.1)
+        # npm trusted publishing (GitHub OIDC -> short-lived publish token)
+        # landed in npm 11.5.1. Upgrade to a pinned release if the bundled
+        # npm is older, then assert.
+        run: |
+          npm_ok() {
+            node -e 'const [a,b,c]=process.argv[1].split(".").map(Number);process.exit(a>11||(a==11&&(b>5||(b==5&&c>=1)))?0:1)' "$(npm --version)"
+          }
+          npm_ok || npm install -g npm@11.6.2
+          npm_ok || { echo "::error::npm $(npm --version) lacks trusted publishing"; exit 1; }
+          echo "npm $(npm --version)"
 
       - name: Download pkg
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
@@ -161,5 +175,3 @@ jobs:
           TAG="${{ steps.dist-tag.outputs.tag }}"
           echo "Publishing @everruns/bashkit-wasm with dist-tag: $TAG"
           python3 "$GITHUB_WORKSPACE/scripts/publish_npm.py" --tag "$TAG"
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
