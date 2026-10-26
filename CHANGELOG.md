@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.20.1] - 2026-10-25
+
+### Highlights
+
+- **Windows CPython builds.** The embedded CPython module uses a plain static slice on Windows and caches a 64 KiB-aligned copy at runtime, avoiding the Rust compiler trap when generating Windows COFF objects. Python and the hosted integration catalog remain available.
+- **Complete npm runtime files.** The npm publish artifact includes `runtime-functions.js` and its declarations so importing the package succeeds.
+
+### What's Changed
+
+- fix(cpython): avoid unsupported over-aligned statics on Windows (EVE-1311).
+- fix(release): ship runtime-functions.js in the npm publish artifact ([#2776](https://github.com/everruns/bashkit/pull/2776)).
+
 ## [0.20.0] - 2026-10-25
 
 ### Highlights

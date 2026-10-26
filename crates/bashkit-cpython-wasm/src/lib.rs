@@ -32,17 +32,18 @@ pub static STDLIB_ZIP: &[u8] = include_bytes!("../artifacts/python314.zip");
 
 // Wasmtime maps data segments from immutable host-page-aligned bytes. Keep
 // 64 KiB alignment for every supported host. Mach-O only preserves host-page
-// alignment through linking/ASLR; do not form an over-aligned Rust reference
-// there. Cache a padded, aligned copy once when the embedded slice needs one.
+// alignment through linking/ASLR, and Windows COFF cannot encode a 64 KiB
+// aligned static. Do not form an over-aligned Rust reference on those hosts.
+// Cache a padded, aligned copy once when the embedded slice needs one.
 const MODULE_ALIGNMENT: usize = 65536;
 
-#[cfg(not(target_vendor = "apple"))]
+#[cfg(not(any(target_vendor = "apple", windows)))]
 #[repr(C, align(65536))]
 struct Aligned<T: ?Sized>(T);
 
-#[cfg(not(target_vendor = "apple"))]
+#[cfg(not(any(target_vendor = "apple", windows)))]
 static CWASM: &Aligned<[u8]> = &Aligned(*include_bytes!(concat!(env!("OUT_DIR"), "/python.cwasm")));
-#[cfg(target_vendor = "apple")]
+#[cfg(any(target_vendor = "apple", windows))]
 static CWASM: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/python.cwasm"));
 
 struct PaddedModule {
@@ -73,9 +74,9 @@ impl PaddedModule {
 /// Precompiled module bytes (Pulley, or native with the `native` feature) (for diagnostics and size reporting).
 /// The returned slice is immutable and 64 KiB aligned for the process lifetime.
 pub fn cwasm_bytes() -> &'static [u8] {
-    #[cfg(not(target_vendor = "apple"))]
+    #[cfg(not(any(target_vendor = "apple", windows)))]
     let bytes: &[u8] = &CWASM.0;
-    #[cfg(target_vendor = "apple")]
+    #[cfg(any(target_vendor = "apple", windows))]
     let bytes = CWASM;
     if bytes.as_ptr().align_offset(MODULE_ALIGNMENT) == 0 {
         return bytes;

@@ -66,8 +66,15 @@ call:
    embed a byte slice rather than an over-aligned Rust reference. If its runtime
    address is not 64 KiB aligned, one immutable padded `Vec` copy is cached for
    the process lifetime; retaining the allocation preserves the chosen aligned
-   offset. Other hosts retain the aligned static fast path. The original
-   64 KiB pointer assertion plus byte-preservation tests cover this contract.
+   offset. Windows uses the same plain-slice path: COFF cannot encode 64 KiB
+   static alignment (Rust 1.96.0 traps during object generation). Reducing
+   the runtime alignment to COFF's 8 KiB limit would violate Wasmtime's
+   requirements. ELF hosts retain the aligned static fast path. The original
+   64 KiB pointer assertion plus byte-preservation tests cover this contract;
+   `scripts/tests/test_cpython_embedding.py` compiles the real embedding with
+   a tiny payload and checks object generation, byte preservation, alignment
+   and process-lifetime caching, including concurrent access. CI runs it and
+   actual module loading/Python execution on Windows, Apple and ELF hosts.
 4. **Copy-on-write instances**: `memory_init_cow` +
    `memory_guaranteed_dense_image_size(128 MB)` map the ~40 MB snapshot heap
    instead of copying it (without the dense image every instantiation copied

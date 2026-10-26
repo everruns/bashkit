@@ -30,7 +30,7 @@ jq = ["bashkit/jq"]
 tracing = ["dep:tracing"]
 
 [dependencies]
-bashkit = { path = "../bashkit", version = "0.20.0", default-features = false, features = ["bash_tool"] }
+bashkit = { path = "../bashkit", version = "0.20.1", default-features = false, features = ["bash_tool"] }
 tokio = { workspace = true }
 async-trait = { workspace = true }
 tower = { workspace = true }
