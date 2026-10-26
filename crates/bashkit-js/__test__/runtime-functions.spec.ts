@@ -36,7 +36,7 @@ const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 //
 // Raising it slows these cases down by design, since they wait out the full
 // timeout, but ava runs them concurrently: the cost is one timeout, not four.
-const HOST_TIMEOUT_MS = 20_000;
+const HOST_TIMEOUT_MS = 2_000;
 
 for (const language of ["python", "typescript"] as const) {
   const command =
