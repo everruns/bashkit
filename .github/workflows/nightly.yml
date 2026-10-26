@@ -63,7 +63,7 @@ jobs:
       # dependencies resolve unlocked, and an MSRV bump in one of them past our
       # pinned toolchain broke this step once already in CI.
       - name: Install cargo-audit
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
+        uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2
         with:
           tool: cargo-audit
 
@@ -93,7 +93,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
 
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
 
       # Built from source against the pinned toolchain, so the tool version is
       # pinned too: an unpinned tool resolves to the newest release, and
@@ -148,7 +148,7 @@ jobs:
         with:
           components: rust-src
 
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           cache-on-failure: true
 
