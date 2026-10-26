@@ -1,5 +1,12 @@
 # Bashkit Knowledge Update Log
 
+## 2026-10-26
+
+* Preserve binary [HTTP transport](security/http-transport.md) output in curl
+  files and curl/wget streams. Lossy text conversion belongs at an explicit
+  consumer boundary; downloads, redirections, pipelines, compressed responses,
+  and write-out byte counts must retain the original bytes.
+
 ## 2026-10-25
 
 * **npm publish gap**: `tsconfig.json`'s `include` must name every `.ts` source in the native package, including one reached only through an import. tsc compiles a reachable import regardless, so omitting `runtime-functions.ts` broke no build but narrowed what `scripts/tests/test_js_publish_files.py` treats as a tsc output, disabling that guard for the one file it omitted. The `js-stubs` artifact then shipped without `runtime-functions.js` and all fifteen v0.20.0 `Publish JS` test jobs failed on `ERR_MODULE_NOT_FOUND`, leaving both npm packages on 0.19.0 while crates.io and PyPI published. `include` completeness is now guarded; see [Release Process](operations/release-process.md).

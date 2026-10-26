@@ -43,6 +43,17 @@ Embedding hosts (reference consumer: [everruns](https://github.com/everruns/ever
 
 ## Request Pipeline
 
+HTTP response bodies stay byte-native through `curl`/`wget` output files,
+stdout, redirections, and pipelines. Invalid UTF-8 and NUL bytes must not be
+rewritten before reaching the filesystem or the next command. Text decoding
+belongs to an explicit consumer boundary; `curl --compressed` applies that
+same rule to the decompressed body. Write-out byte quantities use the original
+output bytes rather than a replacement-expanded text representation.
+
+`tests/integration/http_binary_output_tests.rs` covers raw downloads, streams,
+pipelines, compressed responses, gzip extraction, byte counts, and HTTP error
+handling without live network dependencies.
+
 ```
 1. Allowlist check              ← security gate
 2. Private IP / SSRF check      ← SSRF protection, produces pinned_addrs

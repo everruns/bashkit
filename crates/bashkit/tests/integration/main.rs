@@ -53,6 +53,7 @@ pub mod curl_data_compat_tests;
 pub mod custom_builtins_tests;
 pub mod custom_fs_tests;
 pub mod function_metadata_security_tests;
+pub mod http_binary_output_tests;
 pub mod input_redirect_budget_tests;
 pub mod interactive_builtins_tests;
 pub mod make_substitution_tests;
