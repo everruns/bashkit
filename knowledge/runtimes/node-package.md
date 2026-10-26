@@ -54,7 +54,19 @@ async host-function shutdown contract.
 `runtime-functions.spec.ts` exercises real HTTP request contexts, aborts, timeout,
 queued calls, worker threads, adapters, reentry, bad values and snapshot/reset.
 `runtime-compat/runtime-functions.test.mjs` runs in Node, Bun and Deno. Dedicated
-macOS and Windows CI runs the callback suite as well as Linux's runtime matrix.
+macOS and Windows CI runs the callback suite as well as Linux's runtime matrix,
+including the shipped x86_64-apple-darwin binding translated under Rosetta 2 on
+the arm64 macOS runner. That is the slowest lane shipped; until v0.20.1 only
+`publish-js.yml` ran it, so a timing regression there first surfaced at release
+and blocked `release-js`, and with it both npm packages.
+
+Cases that cancel a hanging host callback must budget an execution timeout
+covering interpreter start-up and scheduling latency before the callback is
+dispatched, not just the hang itself. Too small a budget expires first, the run
+is cancelled before the callback is invoked, and no abort listener is ever
+registered, so the case reports a missing abort instead of a slow start. On the
+Rosetta lane a first embedded-runtime call alone cost 3.7s, well past the 2s
+budget that failed there; `HOST_TIMEOUT_MS` is kept far clear of it.
 
 ## Host runtime security
 

@@ -17,6 +17,27 @@ const request = new AsyncLocalStorage<string>();
 const key = new Uint8Array(32).fill(7);
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// Budget for the cases that let a host callback hang until the execution
+// timeout cancels it. The clock starts at `execute` and so covers everything
+// that happens before the host callback is dispatched -- interpreter start-up
+// on first use in the process, plus scheduling latency while the rest of the
+// suite runs concurrently. Only what is left over is the hang these cases
+// actually mean to cancel. Too small a budget expires first, the run is
+// cancelled before the callback is ever invoked, and no abort listener is ever
+// registered: correct behaviour, but not what is under test.
+//
+// 2s was too small on x86_64-apple-darwin -- the shipped Intel binding, which
+// runs translated under Rosetta 2 because `macos-latest` is arm64. In the
+// v0.20.1 `Publish JS` run on that lane the first `python host functions` call
+// alone took 3.7s, already past the whole budget, and three of these four
+// variants failed there. The one that passed ran later, against an already
+// warm runtime, and still took 4.7s of wall time for its 2s timeout. Keep this
+// well clear of both numbers.
+//
+// Raising it slows these cases down by design, since they wait out the full
+// timeout, but ava runs them concurrently: the cost is one timeout, not four.
+const HOST_TIMEOUT_MS = 20_000;
+
 for (const language of ["python", "typescript"] as const) {
   const command =
     language === "python"
@@ -171,8 +192,10 @@ for (const language of ["python", "typescript"] as const) {
 
     test(`${Factory.name}: ${language} timeout aborts host work and permits reuse`, async (t) => {
       let aborted = false;
+      let entered = false;
       const bash = new Factory({
         ...options(async (_name, _args, _kwargs, ctx) => {
+          entered = true;
           await new Promise((_resolve, reject) =>
             ctx.signal.addEventListener(
               "abort",
@@ -184,11 +207,15 @@ for (const language of ["python", "typescript"] as const) {
             ),
           );
         }),
-        timeoutMs: 2_000,
+        timeoutMs: HOST_TIMEOUT_MS,
       });
       t.not((await bash.execute(call)).exitCode, 0);
       await delay(0);
-      t.true(aborted);
+      // Two different failures reach this point, and only one is about
+      // cancellation. Assert them apart so a run that timed out before the
+      // host callback started can never read as an abort regression.
+      t.true(entered, "host callback never ran; the timeout fired first");
+      t.true(aborted, "host callback ran but was never aborted");
       t.is((await bash.execute("echo reusable")).stdout, "reusable\n");
     });
 
