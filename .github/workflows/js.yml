@@ -290,12 +290,36 @@ jobs:
         run: pnpm run build
         working-directory: crates/bashkit-js
       - if: ${{ matrix.target }}
-        run: pnpm exec napi build --platform --release --target ${{ matrix.target }} && pnpm run build:cjs && pnpm run build:ts
+        name: Build ${{ matrix.target }}
         working-directory: crates/bashkit-js
+        shell: bash
         env:
           # Match publish-js.yml, which is the other workflow building this
           # target.
           MACOSX_DEPLOYMENT_TARGET: "10.13"
+        run: |
+          # Cross-linking to x86_64 on the arm64 runner intermittently dies
+          # with `clang: error: unable to execute command: Segmentation
+          # fault: 11` while linking a *build script* -- the host-side binary,
+          # so nothing in this repo's flags is involved. It hit `libc` once and
+          # `getrandom` another time, roughly two runs in five, and because
+          # `js-check` gates on this job a crash of the toolchain would block
+          # unrelated PRs. cargo keeps whatever already compiled, so a retry
+          # resumes rather than rebuilds. Only the toolchain crash is retried:
+          # a genuine compile error fails again and still fails the job.
+          for attempt in 1 2 3; do
+            if pnpm exec napi build --platform --release --target ${{ matrix.target }}; then
+              break
+            fi
+            if [ "$attempt" = 3 ]; then
+              echo "cross build still failing after $attempt attempts"
+              exit 1
+            fi
+            echo "::warning::cross build attempt $attempt failed; retrying"
+            sleep 15
+          done
+          pnpm run build:cjs
+          pnpm run build:ts
       - run: pnpm exec ava __test__/runtime-functions.spec.ts
         working-directory: crates/bashkit-js
       - run: node --test __test__/runtime-compat/runtime-functions.test.mjs

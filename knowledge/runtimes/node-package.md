@@ -60,6 +60,13 @@ the arm64 macOS runner. That is the slowest lane shipped; until v0.20.1 only
 `publish-js.yml` ran it, so a timing regression there first surfaced at release
 and blocked `release-js`, and with it both npm packages.
 
+Cross-linking that target on the arm64 runner intermittently dies with
+`clang: error: unable to execute command: Segmentation fault: 11` while linking
+a build script -- a host-side binary, so no repo flag is involved. Observed on
+`libc` and on `getrandom`, roughly two runs in five. The build step retries up
+to three times; cargo keeps what already compiled, so a retry resumes. A real
+compile error fails every attempt and still fails the job.
+
 Cases that cancel a hanging host callback must budget an execution timeout
 covering interpreter start-up and scheduling latency before the callback is
 dispatched, not just the hang itself. Too small a budget expires first, the run
