@@ -6,6 +6,7 @@
 //! holds the lock across an `.await`.
 
 use std::collections::VecDeque;
+use std::num::NonZero;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
@@ -24,6 +25,15 @@ pub(crate) const MAX_PENDING_OUTPUT: usize = 4 * 1024 * 1024;
 pub(crate) const MAX_OUTPUT_TAP: usize = 256 * 1024;
 /// Lines of primary-screen history kept for `history_text`.
 pub(crate) const SCROLLBACK_LINES: usize = 1000;
+
+/// vt100 0.18 takes screen dimensions as `NonZero<u16>`; [`TerminalSize`] keeps
+/// plain `u16` because its fields are public API. `TerminalSize::new` already
+/// clamps to 2, but the struct can also be built literally, so a zero can still
+/// reach here. Clamp it to 1 rather than panic: a degenerate size is the
+/// caller's to notice, and it is not worth aborting a session over.
+fn nz(v: u16) -> NonZero<u16> {
+    NonZero::new(v).unwrap_or(NonZero::<u16>::MIN)
+}
 
 /// What a blocking terminal read returned.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -85,7 +95,7 @@ impl Tty {
                 reading_line: false,
                 resized: false,
                 closed: false,
-                screen: vt100::Parser::new(size.rows, size.cols, SCROLLBACK_LINES),
+                screen: vt100::Parser::new(nz(size.rows), nz(size.cols), SCROLLBACK_LINES),
                 output: Vec::new(),
                 tap: Vec::new(),
                 tap_total: 0,
@@ -136,7 +146,9 @@ impl Tty {
     pub(crate) fn resize(&self, size: TerminalSize) {
         {
             let mut st = self.lock();
-            st.screen.screen_mut().set_size(size.rows, size.cols);
+            st.screen
+                .screen_mut()
+                .set_size(nz(size.rows), nz(size.cols));
             st.resized = true;
             st.waiting = false;
         }
@@ -190,6 +202,7 @@ impl Tty {
         let mut st = self.lock();
         let screen = st.screen.screen_mut();
         let (rows, cols) = screen.size();
+        let (rows, cols) = (rows.get(), cols.get());
         let rows = usize::from(rows);
         screen.set_scrollback(usize::MAX);
         let total = screen.scrollback();
@@ -212,7 +225,10 @@ impl Tty {
 
     pub(crate) fn size(&self) -> TerminalSize {
         let (rows, cols) = self.lock().screen.screen().size();
-        TerminalSize { rows, cols }
+        TerminalSize {
+            rows: rows.get(),
+            cols: cols.get(),
+        }
     }
 
     pub(crate) fn set_raw(&self, raw: bool) {

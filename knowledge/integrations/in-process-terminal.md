@@ -61,6 +61,13 @@ C FFI, which would break the wasm, PyPI and npm builds, for a feature whose
 screen needs are basic (cells, cursor, alternate screen). Revisit only if
 fidelity gaps show up that vt100 cannot close.
 
+From vt100 0.18 the screen dimensions are `NonZero<u16>`. `TerminalSize` keeps
+plain `u16`, because its fields are public API, and converts at the vt100
+boundary only. `TerminalSize::new` clamps to 2, but the struct can also be
+built literally, so a zero can still reach that boundary; it clamps to 1 rather
+than panicking, since a degenerate size is the caller's to notice and not worth
+aborting a session over.
+
 ## Decision: device handle via execution extensions
 
 The shell loop passes the `Tty` handle on every `exec_with_options` call
