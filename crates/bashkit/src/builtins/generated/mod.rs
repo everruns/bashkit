@@ -26,7 +26,7 @@
 // and at test time (the invariant assertion). Nothing in the lib's
 // runtime path needs it, hence `allow(dead_code)`.
 #[allow(dead_code)]
-pub const UUTILS_REVISION: &str = "afe06319a";
+pub const UUTILS_REVISION: &str = "07763857f";
 
 pub mod cat_args;
 #[allow(clippy::collapsible_if, clippy::unwrap_used)]
