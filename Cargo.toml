@@ -73,7 +73,7 @@ fancy-regex = "0.19"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 chrono-tz = "0.10"
 # In-process terminal screen model (terminal feature)
-vt100 = "0.16"
+vt100 = "0.18"
 
 # Compression
 flate2 = "1"
