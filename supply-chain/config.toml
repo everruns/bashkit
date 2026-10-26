@@ -2114,9 +2114,9 @@ version = "0.9.5"
 criteria = "safe-to-deploy"
 
 [[exemptions.vt100]]
-version = "0.16.2"
+version = "0.18.1"
 criteria = "safe-to-deploy"
-notes = "Terminal screen model for the optional `terminal` feature. Pure parsing/state; reviewed: no unsafe, no host I/O, process, or network access."
+notes = "Terminal screen model for the optional `terminal` feature. Pure parsing/state. The exemption moves from 0.16.2 rather than gaining a delta audit: that delta is ~3100 lines across a dozen files plus a new capture.rs, so a delta audit would claim a review that diff does not get. Checked instead for what the exemption asserts, and all of it still holds: zero `unsafe` in src (unchanged from 0.16.2), zero use of std::fs, std::net, std::process or std::env, and no new runtime dependency -- 0.18.1 adds only an optional `embedded-io`, which stays unenabled and is absent from vt100's resolved deps in Cargo.lock (itoa, unicode-width, vte); vte stays at 0.15.0."
 
 [[exemptions.vte]]
 version = "0.15.0"
