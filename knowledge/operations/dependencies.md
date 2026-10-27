@@ -84,6 +84,21 @@ and failed with `feature-banned` after it, while the workspace still passed.
 Cargo-deny's [feature restrictions](https://embarkstudios.github.io/cargo-deny/checks/bans/cfg.html#the-features-field-optional)
 enforce this audit boundary in CI.
 
+A workspace crate that is published to crates.io needs the same `policy.*`
+entry from the other direction: `audit-as-crates-io = false`. cargo-vet calls a
+member first-party by provenance -- it was not fetched from crates.io -- so once
+the same name and version is also published, the two descriptions collide and
+`cargo vet` refuses to run until an entry says which to believe. The gap is
+quiet where it matters: CI runs `cargo vet --locked`, which never reaches that
+check, so the Audit job stays green while the command is broken for every
+developer and for refreshing `supply-chain/imports.lock` -- the non-locked run
+is the only way to record publisher facts, which `[[trusted.*]]` crates such as
+`tokio` need on every bump. `bashkit-scripted-tool` went public in 0.20.0 with
+no entry and nothing failed until #2792 needed that refresh.
+`scripts/tests/test_ci_supply_chain.py` derives the published set from the
+`release-check` recipe and fails when one of those crates has no entry; a new
+published crate must be added in both places.
+
 `get-size2` is constrained to `=0.10.1` as a Python-only direct dependency,
 so downstream resolution is protected even without this workspace's lockfile.
 Both 0.10.2 and 0.10.3 implement `GetSize` for `compact_str` 0.10, whereas
