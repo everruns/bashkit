@@ -2507,3 +2507,31 @@ async fn decoding_builtins_follow_jq() {
          \"date \\\"2026-01-15\\\" does not match format \\\"%Y-%m-%dT%H:%M:%SZ\\\"\"\n1768478400\n"
     );
 }
+
+/// A filter whose trailing comment is not followed by a newline, which had
+/// no coverage: every other comment case here is followed by more filter.
+///
+/// jaq-core 3.1.2 fixes a lexer panic on exactly this shape (the comment
+/// scanner replaced the remaining input with a `""` literal, breaking the
+/// invariant that the replacement is a suffix of the previous input). That
+/// panic does not reproduce through this builtin on 3.1.1 -- checked across
+/// these inputs plus a dozen malformed ones, all of which returned the same
+/// output on both versions -- so this pins the shape rather than guarding a
+/// regression: the prepended compat prefix and the `loc`/`altpat` rewrites
+/// put the filter at the end of the lexer input, where the fix applies.
+#[tokio::test]
+async fn filter_ending_in_a_comment_is_accepted() {
+    assert_eq!(run_jq(".a # trailing", r#"{"a":1}"#).await.unwrap(), "1\n");
+    // The comment is the whole filter, and the input ends mid-comment.
+    assert_eq!(run_jq(". # c", r#"1"#).await.unwrap(), "1\n");
+    // A comment ending in a carriage return, and one ending in a backslash
+    // (the odd-backslash line-continuation branch the fix touches).
+    assert_eq!(
+        run_jq(".a # trailing\r", r#"{"a":1}"#).await.unwrap(),
+        "1\n"
+    );
+    assert_eq!(
+        run_jq(".a # trailing\\", r#"{"a":1}"#).await.unwrap(),
+        "1\n"
+    );
+}

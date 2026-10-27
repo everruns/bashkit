@@ -261,6 +261,12 @@ criteria = "safe-to-deploy"
 delta = "3.1.0 -> 3.1.1"
 notes = "Reviewed complete package delta: dependency feature metadata only; interpreter source unchanged."
 
+[[audits.jaq-core]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "3.1.1 -> 3.1.2"
+notes = 'Fixes a lexer panic: when a comment ended the input, the comment scanner replaced the remaining input with a "" literal, breaking the invariant that the replacement is a suffix of the previous input; it now takes the empty suffix at the end of the input, and the same change writes that invariant down on the field. Remaining delta is a new example, one test and a README note. unsafe count unchanged at 1; no new ambient access.'
+
 [[audits.jaq-json]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
@@ -272,6 +278,12 @@ who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 delta = "3.0.2 -> 3.0.3"
 notes = "Reviewed no_std float rounding with bounded IEEE754 bit operations; std keeps native floor/round/ceil. Corrected import feature gates; no unsafe or ambient changes."
+
+[[audits.jaq-std]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "3.0.3 -> 3.0.4"
+notes = "jq-level definitions only (src/defs.jq): scan becomes scan_ and gains jq's semantics, applying the g flag automatically and yielding captures rather than the whole match when the regex has capture groups, with a new scan(re; flags) wrapper. No Rust change, no unsafe, no ambient access."
 
 [[audits.jiter]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
@@ -347,6 +359,17 @@ criteria = "safe-to-deploy"
 delta = "3.14.0 -> 3.14.2"
 notes = "Reviewed complete published package diff across 3.14.1 and 3.14.2: no new dependencies, no build scripts, no new host filesystem, network or process access. Four upstream fixes, all hardening. NativeBorrowScope now owns its storage through NonNull instead of aliasing a reference, removing an aliasing violation. serde_json::Value conversion is bounded at 128 levels of nesting, so deeply nested JSON from a caller can no longer recurse without limit - the change that matters most for this tree, where the binding converts untrusted input. The wasm cleanup is registered through the env cleanup hook rather than ad hoc. Object creation uses napi_define_properties on every Node version. Existing unsafe in the js_values conversions is refactored in place; no new unsafe blocks."
 
+[[audits.napi]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "3.14.2 -> 3.15.0"
+notes = """
+Reviewed the complete published delta (24 files, ~2700 lines). No new ambient capability: no std::fs, std::net or std::env appears, std::process is unchanged at 8 occurrences, build.rs is byte-identical, and the only Cargo.toml change is the napi-sys 3.4.1 bump, so no new dependency.
+
+New here, and the reason to look twice: napi_run_script compiles FOLLOW_LIKE_AWAIT to follow a cancel result exactly as await does. The source is a three-line async arrow held in a CStr constant with no interpolation, so there is no injection surface; it runs only on the ReadableStream cancel path, and where eval is blocked the future resolves to Err.
+
+The rest is hardening. New class_identity.rs records the wrapped Rust class in the REFERENCE_MAP entry and checks it before casting a napi_unwrap result to *mut T on builds without Node-API type tags, which is every build bashkit-js makes since it selects napi6, turning a type-confusion cast into InvalidArg. TypedArray views now scale their byte slice by element size instead of treating the element count as a byte count, so a multi-byte view is no longer truncated. native_borrow gains deferred scopes with lease counting and hands roots to the owning env's custom-GC threadsafe function instead of calling napi_delete_reference off-thread; its two new unsafe impl Send/Sync carry raw handles that are only dereferenced on the owner JavaScript thread or through that tsfn. New unsafe is N-API handle calls plus three extern "C" promise-settle trampolines, and the three added raw-pointer sites are slice/Vec reconstruction over N-API buffer data."""
+
 [[audits.napi-build]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
@@ -389,6 +412,12 @@ criteria = "safe-to-deploy"
 delta = "3.6.9 -> 3.6.12"
 notes = "Reviewed syn 3 parser migration: function arguments read their type field, new AST attributes initialized and non-exhaustive path fields ignored. No new unsafe or build-time execution."
 
+[[audits.napi-derive]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "3.6.12 -> 3.6.13"
+notes = "No source changes; the release only bumps the napi-derive-backend dependency to 6.1.6 in Cargo.toml."
+
 [[audits.napi-derive-backend]]
 who = "Mykhailo Chalyi <mykhailo.chalyi-contractor@procore.com>"
 criteria = "safe-to-deploy"
@@ -407,6 +436,12 @@ criteria = "safe-to-deploy"
 delta = "6.1.4 -> 6.1.5"
 notes = "Reviewed syn 3 AST adaptation and generated enum property flags changed to writable/enumerable/configurable. No new unsafe or external execution."
 
+[[audits.napi-derive-backend]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "6.1.5 -> 6.1.6"
+notes = "Codegen only. Borrow scopes become deferred: a synchronous callback records its borrowed values and hands the scope to whichever async sink claims it during return-value conversion, with a guard that releases it on Err, throw or panic; the zero-argument fast path emits no defer because it builds no CallbackInfo. Class instance wraps replace a 0x1 wrapped pointer with a real one-byte allocation so zero-sized classes cannot share the dangling key napi's new class-identity check keys on. No new unsafe (74 occurrences unchanged), no ambient access."
+
 [[audits.napi-sys]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
@@ -418,6 +453,12 @@ who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 delta = "3.3.2 -> 3.4.0"
 notes = "Reviewed exact-target build cfg, atomic shared-memory refresh and worker-crash flag modules. Checked pointer/page bounds and target gating; native code unchanged outside tests."
+
+[[audits.napi-sys]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "3.4.0 -> 3.4.1"
+notes = "Doc-comment only: the wasi_heap_sync design-note reference moves from rolldown's internal docs to cli/docs/wasi-heap-sync-design.md. No code, FFI declaration or build-script change."
 
 [[audits.num-bigint]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
