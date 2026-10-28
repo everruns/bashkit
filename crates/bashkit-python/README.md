@@ -27,6 +27,17 @@ pip install 'bashkit[pydantic-ai]'
 pip install 'bashkit[deepagents]'
 ```
 
+### Windows 11 Smart App Control
+
+If importing the native module fails with `An Application Control policy has
+blocked this file`, PondGuard's reported workaround is to pin
+`bashkit==0.20.0` and run tests with `python -m pytest`. Keep Smart App Control
+enabled. The pin was verified on the reporter's machine; both 0.20.0 and 0.20.1
+Windows modules lack embedded Authenticode signatures, so other machines may
+make a different trust decision. `python -m pytest` avoids a blocked launcher
+but cannot load a blocked native module. See the
+[Windows reproduction, evidence, and workaround guide](https://bashkit.sh/docs/start-python/#windows-11-smart-app-control).
+
 ## Quick Start
 
 ### Sync Execution
