@@ -69,6 +69,29 @@ Auth: PyPI trusted publishing (OIDC), no API tokens. Prerequisites: GitHub
 environment `release-python` exists; PyPI trusted publisher configured for
 `everruns/bashkit`, workflow `publish-python.yml`, environment `release-python`.
 
+## Windows Smart App Control
+
+PondGuard reported that the 0.20.1 Windows native module was blocked on Windows
+11 / Python 3.11.9 while 0.20.0 loaded. The published x64 wheels were inspected
+on 2026-10-27: both use maturin 1.15.0, both native PE certificate tables are
+empty, and both PyPI wheel provenance endpoints return 404. The release-tag
+`publish-python.yml` files are identical. Trusted publishing authenticates an
+upload; it does not Authenticode-sign the native module. A missing signature
+introduced in 0.20.1 is therefore not supported by the artifact evidence.
+
+The [Python guide](../../docs/start-python.md#windows-11-smart-app-control)
+records wheel/native hashes, the temporary Windows constraint, and a SAC-On
+comparison with Code Integrity events. The policy failure remains reported,
+not independently reproduced on Windows. Cloud reputation is a hypothesis, not
+a demonstrated root cause; 0.20.0 is not guaranteed to load everywhere.
+
+Decision: preserve SAC, document the reported pin, and require trusted
+Authenticode signing plus import/execution/affected-plugin collection on a
+SAC-On Windows 11 host before declaring a permanent packaging fix. Sign native
+files before final wheel packing (or regenerate `RECORD` when repacking), then
+publish a new patch version. Standard hosted Windows smoke jobs do not prove
+SAC enforcement. See [Release Process](../operations/release-process.md).
+
 ## Public API
 
 Full signatures: `crates/bashkit-python/bashkit/_bashkit.pyi`. Runnable
