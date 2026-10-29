@@ -176,6 +176,22 @@ class ReleaseWorkflowTests(unittest.TestCase):
                 self.assertIn("id-token: write", body.split("\n    steps:\n", 1)[0])
                 self.assertIn("npm install -g npm@11.6.2", body)
 
+    def test_npm_publish_lanes_build_only_the_resolved_source(self) -> None:
+        """A `tag` input re-publishes that tag; every job must build the same commit."""
+        for name in ("publish-js.yml", "publish-wasm.yml"):
+            workflow = (ROOT / ".github/workflows" / name).read_text()
+            with self.subTest(workflow=name):
+                self.assertIn("run: bash scripts/resolve_publish_source.sh", workflow)
+                self.assertIn("INPUT_TAG: ${{ inputs.tag }}", workflow)
+                self.assertNotIn("GITHUB_REF", workflow)
+                jobs = workflow.split("\njobs:\n", 1)[1]
+                for job in re.split(r"\n  (?=[a-z][a-z-]*:\n)", jobs):
+                    if job.startswith(("verify-source:", "#")) or "actions/checkout@" not in job:
+                        continue
+                    with self.subTest(job=job.split(":", 1)[0]):
+                        self.assertIn("ref: ${{ needs.verify-source.outputs.sha }}", job)
+                        self.assertRegex(job, r"needs: \[?[^\n]*verify-source|needs:\n(\s+- [a-z-]+\n)*\s+- verify-source")
+
     def test_web_ci_exercises_release_wasm_optimization(self) -> None:
         build_script = (ROOT / "crates/bashkit-wasm/scripts/build.sh").read_text()
         ci_workflow = (ROOT / ".github/workflows/ci.yml").read_text()

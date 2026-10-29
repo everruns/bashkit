@@ -17,6 +17,11 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Re-publish an existing release tag (e.g. v0.20.1) as npm latest; empty builds the selected ref'
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -25,22 +30,24 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # A `tag` input re-publishes that release tag's exact commit; see the script.
   verify-source:
     name: Verify publish source
     runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+      dist_tag: ${{ steps.source.outputs.dist_tag }}
+      version: ${{ steps.source.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - name: Verify publish source is reachable from main
-        run: |
-          git fetch --no-tags origin main:refs/remotes/origin/main
-          SOURCE_SHA=$(git rev-parse HEAD)
-          if ! git merge-base --is-ancestor "$SOURCE_SHA" origin/main; then
-            echo "Error: publish source $SOURCE_SHA is not reachable from origin/main"
-            exit 1
-          fi
-          echo "Publish source verified on origin/main: $SOURCE_SHA"
+          persist-credentials: false
+      - name: Resolve publish source
+        id: source
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: bash scripts/resolve_publish_source.sh
 
   build-wasm:
     name: Build web bundle
@@ -52,6 +59,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.verify-source.outputs.sha }}
           persist-credentials: false
 
       - name: Install Rust
@@ -109,7 +117,7 @@ jobs:
 
   publish-wasm:
     name: Publish to npm
-    needs: build-wasm
+    needs: [verify-source, build-wasm]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -117,16 +125,13 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
+          ref: ${{ needs.verify-source.outputs.sha }}
+          persist-credentials: false
 
-      - name: Verify publish source is reachable from main
-        run: |
-          git fetch --no-tags origin main:refs/remotes/origin/main
-          SOURCE_SHA=$(git rev-parse HEAD)
-          if ! git merge-base --is-ancestor "$SOURCE_SHA" origin/main; then
-            echo "Error: publish source $SOURCE_SHA is not reachable from origin/main"
-            exit 1
-          fi
+      - name: Confirm checkout is the verified publish source
+        env:
+          SOURCE_SHA: ${{ needs.verify-source.outputs.sha }}
+        run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
 
       - name: Setup node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
@@ -154,20 +159,18 @@ jobs:
       - name: Determine npm dist-tag
         id: dist-tag
         working-directory: pkg
+        env:
+          DIST_TAG: ${{ needs.verify-source.outputs.dist_tag }}
+          TAG_VERSION: ${{ needs.verify-source.outputs.version }}
         run: |
           PKG_VERSION=$(node -p "require('./package.json').version")
           echo "version=$PKG_VERSION"
           # Only verified release tags publish as npm latest.
-          if [[ "$GITHUB_REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            TAG_VERSION="${GITHUB_REF#refs/tags/v}"
-            if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
-              echo "Error: Tag version ($TAG_VERSION) does not match package.json version ($PKG_VERSION)"
-              exit 1
-            fi
-            echo "tag=latest" >> "$GITHUB_OUTPUT"
-          else
-            echo "tag=next" >> "$GITHUB_OUTPUT"
+          if [ "$DIST_TAG" = latest ] && [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "Error: Tag version ($TAG_VERSION) does not match package.json version ($PKG_VERSION)"
+            exit 1
           fi
+          echo "tag=$DIST_TAG" >> "$GITHUB_OUTPUT"
 
       - name: Publish
         working-directory: pkg

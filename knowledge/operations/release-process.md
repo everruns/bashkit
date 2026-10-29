@@ -308,11 +308,21 @@ npm >= 11.5.1, provenance automatic); no `NPM_TOKEN`. JS package version is sync
 from the workspace `Cargo.toml` by `build.rs` updating `package.json`.
 
 Only a run whose ref is the release tag (`refs/tags/vX.Y.Z`, version matching
-`package.json`) publishes as npm `latest`; every other ref, including a manual
-dispatch from `main`, publishes under `next`. So a failed npm publish cannot be
-recovered by re-dispatching from `main`: fix the cause and cut a patch release,
-whose tag then publishes `latest`. v0.17.0 landed on `next` this way, and
-v0.17.1 is what put the native package back on `latest`.
+`package.json`) publishes as npm `latest`; every other ref, including a plain
+manual dispatch from `main`, publishes under `next`. v0.17.0 landed on `next`
+this way, and v0.17.1 is what put the native package back on `latest`.
+
+To recover a release whose npm lane failed without cutting a new version,
+dispatch `publish-js.yml` / `publish-wasm.yml` from `main` with the `tag`
+input (`gh workflow run publish-js.yml --ref main -f tag=v0.20.1`).
+`scripts/resolve_publish_source.sh` then builds the tag's exact commit and
+publishes it as `latest`; the workflow definition must be the tag's or current
+`main`'s, and the tag must be reachable from `main`. Package bytes come from
+the tag, but `publish-js.yml` gates them with the workflow commit's
+`crates/bashkit-js/__test__` (tests are not in the tarball), so a test fix
+landed after the tag (v0.20.1's Rosetta timeout, #2780) still applies. Use this
+when the failure was in the workflow or credentials, not in the shipped code;
+a code bug still needs a patch release.
 
 The publish job never runs `tsc`; it ships whatever the `js-stubs` artifact
 carries. That artifact must list every `tsc` output (`.js` + `.d.ts` for each
