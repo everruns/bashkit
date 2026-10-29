@@ -1,5 +1,9 @@
 # Bashkit Knowledge Update Log
 
+## 2026-10-29
+
+* **npm release recovery**: `publish-js.yml` and `publish-wasm.yml` accept a `tag` input on manual dispatch to re-publish an existing release tag's exact commit as `latest`, from the current workflow definition. Added after 0.20.1 never reached npm (revoked token in the tag's workflow, Rosetta test timeout). See [Release Process](operations/release-process.md).
+
 ## 2026-10-27
 
 * **Windows Python packaging**: Document the reported 0.20.0 pin for the PondGuard SAC block and a fresh-environment A/B procedure with file hashes, Authenticode checks, and correlated Code Integrity events. Both published 0.20.0/0.20.1 x64 modules lack embedded signatures; both PyPI wheel provenance endpoints returned 404. No Windows reproduction or permanent signing fix is claimed. See [Python Package](runtimes/python-package.md).
