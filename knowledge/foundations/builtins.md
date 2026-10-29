@@ -48,6 +48,16 @@ option spelling matches GNU; builtins on a ported clap surface (see
 Obsolete forms GNU still accepts (`head -5`, `fold -5`) are rewritten to the
 modern option before getopt runs, never when they are an option's value.
 
+### Directory copy operands
+
+`cp` preserves an explicit final `.` component before path normalization:
+`cp -r source/. destination` merges the complete contents, while `source/`
+retains its basename inside an existing destination. This uses the existing
+budgeted recursive walker, including hidden entries, symlink preservation,
+no-clobber and self/descendant-copy rejection. Behavioral and GNU differential
+regressions live in `cp_directory_dot_tests`; the public
+[filesystem guide](../../docs/filesystem.md) shows the layout.
+
 ### Navigation resource accounting
 
 `cd` borrows its target and `CDPATH` rather than cloning them. It searches

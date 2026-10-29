@@ -4,6 +4,7 @@
 
 ### What's Changed
 
+- fix(cp): copy directory contents for `source/.` operands without nesting the source directory in an existing destination.
 - fix(http): preserve binary curl downloads and curl/wget stdout through redirections and pipelines, including compressed responses and byte counts.
 
 ## [0.20.1] - 2026-10-25

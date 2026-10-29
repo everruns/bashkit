@@ -2,6 +2,8 @@
 
 ## 2026-10-29
 
+* **Directory copy**: Preserve final-dot operands so `cp -r source/. destination` copies contents without an extra source directory; ordinary directory operands retain their basename. Regression fixtures compare nested/hidden entries, symlinks, no-clobber and rejection paths with GNU bash. See [Builtins](foundations/builtins.md).
+
 * **npm release recovery**: `publish-js.yml` and `publish-wasm.yml` accept a `tag` input on manual dispatch to re-publish an existing release tag's exact commit as `latest`, from the current workflow definition. Added after 0.20.1 never reached npm (revoked token in the tag's workflow, Rosetta test timeout). See [Release Process](operations/release-process.md).
 
 ## 2026-10-27
