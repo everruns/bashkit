@@ -102,29 +102,18 @@ jobs:
         with:
           version: 10.33.0
 
+      # No pnpm/cargo caches: the shipped binaries build from a clean state, so
+      # no cache entry (written by any run in the default-branch scope) can
+      # reach the npm artifact.
       - name: Setup node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         with:
           node-version: "24.22.1"
-          cache: pnpm
-          cache-dependency-path: crates/bashkit-js/pnpm-lock.yaml
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
         with:
           targets: ${{ matrix.settings.target }}
-
-      - name: Cache cargo
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
-        with:
-          path: |
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            ~/.napi-rs
-            .cargo-cache
-            target/
-          key: ${{ matrix.settings.target }}-cargo-${{ matrix.settings.host }}
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -544,8 +533,6 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
         with:
           node-version: "24.22.1"
-          cache: pnpm
-          cache-dependency-path: crates/bashkit-js/pnpm-lock.yaml
 
       - name: Require npm with trusted publishing (>= 11.5.1)
         # npm trusted publishing (GitHub OIDC -> short-lived publish token)
