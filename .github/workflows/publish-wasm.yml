@@ -67,8 +67,7 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
 
-      # No rust-cache: the shipped bundle builds from a clean state, so no cache
-      # entry (written by any run in the default-branch scope) can reach npm.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
 
       - name: Install wasm-bindgen-cli
         run: bash scripts/install-wasm-bindgen.sh
