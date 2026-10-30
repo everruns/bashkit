@@ -1,11 +1,38 @@
 # Changelog
 
-## [Unreleased]
+## [0.20.2] - 2026-10-30
+
+### Highlights
+
+- **Patched CPython sandbox engine.** Wasmtime 48.0.8 addresses RUSTSEC-2026-0422, RUSTSEC-2026-0423 and RUSTSEC-2026-0424; the embedded CPython artifact is rebuilt with the same exact engine version ([#2798](https://github.com/everruns/bashkit/pull/2798)).
+- **Signed Windows Python wheels.** Windows native modules receive Authenticode signatures and timestamps, verified before the final wheel is tested and published ([#2799](https://github.com/everruns/bashkit/pull/2799)).
+- **Binary-safe HTTP output.** curl downloads and curl/wget stdout preserve bytes through redirections and pipelines, including compressed responses ([#2778](https://github.com/everruns/bashkit/pull/2778)).
+- **Correct directory-content copies.** `cp -r source/. destination` copies contents into an existing destination without adding a source-directory layer ([#2796](https://github.com/everruns/bashkit/pull/2796)).
 
 ### What's Changed
 
-- fix(cp): copy directory contents for `source/.` operands without nesting the source directory in an existing destination.
-- fix(http): preserve binary curl downloads and curl/wget stdout through redirections and pipelines, including compressed responses and byte counts.
+* chore(python): sign Windows release wheels with Authenticode ([#2799](https://github.com/everruns/bashkit/pull/2799)) by @chaliy
+* Fix Wasmtime security advisories ([#2798](https://github.com/everruns/bashkit/pull/2798)) by @chaliy
+* fix(testing): render the diagnostic slot in the fuzz echo gate ([#2797](https://github.com/everruns/bashkit/pull/2797)) by @chaliy
+* fix(cp): preserve directory-dot contents operands ([#2796](https://github.com/everruns/bashkit/pull/2796)) by @chaliy
+* ci(npm): re-publish an existing release tag via a tag input ([#2794](https://github.com/everruns/bashkit/pull/2794)) by @chaliy
+* fix(deps): clear the seroval script-injection advisories in the site lockfile ([#2795](https://github.com/everruns/bashkit/pull/2795)) by @chaliy
+* chore(python): document Smart App Control workaround and reproduction ([#2793](https://github.com/everruns/bashkit/pull/2793)) by @chaliy
+* chore(deps): bump the rust-dependencies group and record its vet audits ([#2792](https://github.com/everruns/bashkit/pull/2792)) by @chaliy
+* ci(npm): publish via npm trusted publishing (GitHub OIDC) ([#2791](https://github.com/everruns/bashkit/pull/2791)) by @chaliy
+* chore(deps): bump vt100 to 0.18 and migrate the NonZero screen API ([#2789](https://github.com/everruns/bashkit/pull/2789)) by @chaliy
+* fix(ci): retry the Rosetta cross build through toolchain segfaults ([#2788](https://github.com/everruns/bashkit/pull/2788)) by @chaliy
+* chore(ci): bump the github-actions group across 1 directory with 4 updates ([#2787](https://github.com/everruns/bashkit/pull/2787)) by @app/dependabot
+* chore(deps): bump the examples-npm group across 2 directories with 7 updates ([#2785](https://github.com/everruns/bashkit/pull/2785)) by @app/dependabot
+* fix(js): size the host-callback timeout for the slowest shipped lane ([#2780](https://github.com/everruns/bashkit/pull/2780)) by @chaliy
+* chore(deps): bump the fuzz-dependencies group in /crates/bashkit/fuzz with 3 updates ([#2784](https://github.com/everruns/bashkit/pull/2784)) by @app/dependabot
+* chore(deps): bump the site-npm group in /site with 4 updates ([#2783](https://github.com/everruns/bashkit/pull/2783)) by @app/dependabot
+* chore(deps): bump the docs-grep-agent-uv group in /examples/docs-grep-agent with 2 updates ([#2782](https://github.com/everruns/bashkit/pull/2782)) by @app/dependabot
+* chore(deps): bump the js-npm group in /crates/bashkit-js with 4 updates ([#2781](https://github.com/everruns/bashkit/pull/2781)) by @app/dependabot
+* chore(builtins): sync uutils/coreutils argument surfaces and vendored modules ([#2779](https://github.com/everruns/bashkit/pull/2779)) by @chaliy
+* fix(http): preserve binary download and stream output ([#2778](https://github.com/everruns/bashkit/pull/2778)) by @chaliy
+
+**Full Changelog**: https://github.com/everruns/bashkit/compare/v0.20.1...v0.20.2
 
 ## [0.20.1] - 2026-10-25
 
