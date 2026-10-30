@@ -250,11 +250,41 @@ fn ends_shell_error_template(line: &str) -> bool {
 /// run 272 libFuzzer recovered a 32-byte `PersAutoDict` entry for it and
 /// spliced the whole canary into an `arithmetic_fuzz` expression.
 pub fn input_echo_would_trip(input: &str) -> bool {
+    // Matching the raw bytes alone is not enough either: a diagnostic wraps
+    // the slot in its own punctuation, so a banned shape can be spelled
+    // across the join without appearing in the input at all. See
+    // `DIAGNOSTIC_ECHO_PAD`.
+    let (lead, trail) = DIAGNOSTIC_ECHO_PAD;
+    // Mirror `diag_echo(expr.trim())`: the slot holds the trimmed text, so
+    // trailing whitespace must not hide a join the render will still make.
+    let rendered = format!("{lead}{}{trail}", input.trim());
     UNIVERSAL_BANNED
         .iter()
         .chain(std::iter::once(&FUZZ_HOST_CANARY))
-        .any(|pat| carries_through_expansion(input, pat))
+        .any(|pat| {
+            carries_through_expansion(input, pat) || carries_through_expansion(&rendered, pat)
+        })
 }
+
+/// Punctuation a real-shell diagnostic places immediately around an echoed
+/// user-input slot, used to render the slot before matching it.
+///
+/// `Interpreter::arith_diag` renders
+/// `bash: line N: {diag_echo(expr.trim())}: {msg}`, so the expression slot
+/// carries `: ` on its left from the line prefix and `: ` on its right as
+/// the message separator. A banned shape can therefore form across either
+/// join while the input itself is clean: nightly fuzz run 295 submitted
+/// `wZTok:`, whose diagnostic reads `bash: line 1: wZTok:: syntax error in
+/// expression (error token is ":")` and spells the parser-token shape
+/// `Tok::` out of the input's trailing colon plus the separator's. The
+/// tokenizer's `Tok` enum is never formatted, and `Tok::` appears nowhere
+/// in the script, so this is an echo and not a TM-INF-022 leak.
+///
+/// Padding both sides at once is the real rendering rather than a widening:
+/// both characters come from the same template around the same slot. The
+/// "error token" slot is rendered inside double quotes and no banned shape
+/// contains `"`, so it needs no padding of its own.
+const DIAGNOSTIC_ECHO_PAD: (&str, &str) = (": ", ": ");
 
 /// True when `text` carries `needle` into a diagnostic — literally, or
 /// after the shell drops NUL bytes during word expansion, which turns
@@ -614,6 +644,23 @@ mod tests {
         let stripped = strip_real_shell_error_lines(s);
         assert!(stripped.contains("Span {"), "stripped: {stripped:?}");
         assert!(stripped.contains("Tok::"), "stripped: {stripped:?}");
+    }
+
+    #[test]
+    fn input_echo_would_trip_sees_the_diagnostic_separator() {
+        // Run 295: `wZTok:` carries only `Tok:`; the arithmetic diagnostic
+        // renders `{expr}: {msg}` and the separator's colon completes the
+        // banned `Tok::`. The gate has to render the slot, not match raw.
+        assert!(!"wZTok:".contains("Tok::"));
+        assert!(input_echo_would_trip("wZTok:"));
+        // The slot holds `expr.trim()`, so padding is measured after trimming.
+        assert!(input_echo_would_trip("wZTok:  "));
+        // The leading `: ` of `bash: line N: ` completes a space-prefixed
+        // shape the same way (glob_fuzz's ` { code:` class).
+        assert!(input_echo_would_trip("{ code:x"));
+        // Still narrow: one character short of the shape keeps running.
+        assert!(!input_echo_would_trip("wZTo:"));
+        assert!(!input_echo_would_trip("1+2*3"));
     }
 
     #[test]

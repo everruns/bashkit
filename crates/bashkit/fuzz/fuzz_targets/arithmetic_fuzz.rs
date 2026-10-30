@@ -39,6 +39,12 @@ fuzz_target!(|data: &[u8]| {
         // `strip_real_shell_error_lines` recognizes, so filter at the input
         // layer, as `glob_fuzz` and `cpython_fuzz` do, and keep the leak
         // detector strict for genuine internals.
+        //
+        // The shape need not be in the input at all. The diagnostic renders
+        // `{expr}: {msg}`, so run 295's `wZTok:` gained the separator's colon
+        // and read `bash: line 1: wZTok:: syntax error in expression`,
+        // spelling `Tok::` across the join. `input_echo_would_trip` renders
+        // the slot before matching, so the gate sees those too.
         if bashkit::testing::input_echo_would_trip(input) {
             return;
         }

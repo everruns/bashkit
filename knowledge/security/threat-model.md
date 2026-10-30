@@ -517,6 +517,22 @@ so `arithmetic_fuzz` went red in run 271 on `:A>>=::TTA:::Tok::::` until it
 pre-filtered. Adding a builtin whose errors quote user text means choosing one
 of the two, never relaxing `UNIVERSAL_BANNED`.
 
+A pre-filter that matches the raw input is not enough, because the banned shape
+need not be in the input at all -- the diagnostic's own punctuation can finish
+it. Arithmetic errors render `{diag_echo(expr.trim())}: {msg}`, so run 295's
+`wZTok:` picked up the message separator's colon and the line read `bash: line
+1: wZTok:: syntax error in expression (error token is ":")`, spelling `Tok::`
+across the join while the script contained only `Tok:`. `input_echo_would_trip`
+therefore renders the slot with the punctuation a diagnostic places around it
+(`DIAGNOSTIC_ECHO_PAD`) before matching, and matches the trimmed text because
+the slot holds `expr.trim()`. The same join completes the space-prefixed
+` { code:` shape from the `bash: line N: ` prefix. Keeping this in the gate
+rather than widening `strip_real_shell_error_lines` to the arithmetic template
+is deliberate: that template's `{msg}` half is bashkit's own text, the one slot
+where a genuine Debug leak would appear, so stripping the line would blind the
+detector exactly where it has to look. A skipped input hides nothing, because
+the skip condition is that the shape is attributable to the input.
+
 Run 272 showed the same false-positive class reaches the **host canary**, and
 that the detector itself is what arms it. `assert_fuzz_invariants` compares
 output against `FUZZ_HOST_CANARY` with `contains`, and that comparison is
