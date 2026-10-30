@@ -199,6 +199,12 @@ Do not mix criterion `.md` files into `crates/bashkit-bench/results/`.
 - Tests: `pytest crates/bashkit-python/tests/ -v` (requires `maturin develop` first)
 - CI: `.github/workflows/python.yml` (lint, test on 3.9/3.12/3.13, build wheel)
 
+Windows wheel signing checks: `.github/workflows/windows-signing.yml` runs
+`python -m unittest discover -s scripts/tests -p test_windows_signing.py -v`
+with pinned wheel tooling on Windows. Packaging tests also run on other hosts;
+WinVerifyTrust tests require Windows. Production signing prerequisites and the
+unsigned/signed artifact boundary live in `knowledge/runtimes/python-package.md`.
+
 ### Pre-PR Checklist
 
 1. `just pre-pr` (runs 2-4 automatically)

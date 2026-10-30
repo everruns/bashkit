@@ -297,6 +297,25 @@ to PyPI via trusted publishing (OIDC, no secrets; environment
 `release-python` must exist in repo settings). Python version is read
 dynamically from `Cargo.toml` via maturin (`dynamic = ["version"]`).
 
+Windows wheels additionally require Authenticode signing in the separate
+`release-windows-signing` environment. Its Azure OIDC identity has only the
+Certificate Profile Signer role at the validated Public Trust profile's scope;
+the environment must restrict deployment to release tags. The account, tenant,
+client and profile identifiers in `scripts/windows-signing.json` are public
+configuration, not secrets. Publisher identity validation is a human portal
+step; do not substitute a Private Trust or test profile.
+
+The source inspection job gates signing credentials. Unsigned Windows build
+outputs use the `pypi_unsigned-*` namespace; only the signing job's verified,
+repacked archive enters `pypi_files-*`. Native files require valid embedded
+signatures and timestamps, and Python/metadata content cannot change during
+signing. A signing/configuration/verification failure blocks publication rather
+than falling back to the original wheel. The credential-free smoke jobs consume
+the final archive. Unit and Windows integration coverage lives in
+`scripts/tests/test_windows_signing.py`; see
+[Python Package](../runtimes/python-package.md#authenticode-release-path) for
+provisioning prerequisites and the remaining SAC enforcement check.
+
 ### publish-js.yml
 
 Trigger: Release published (parallel). Builds native NAPI-RS bindings

@@ -6,6 +6,8 @@
 # Prerequisites:
 #   - PyPI trusted publisher configured for this repo + workflow
 #   - GitHub environment "release-python" created in repo settings
+#   - "release-windows-signing" environment restricted to release tags
+#   - Validated Public Trust profile + profile-scoped OIDC signer permission
 
 name: Publish Python
 
@@ -117,7 +119,8 @@ jobs:
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: pypi_files-${{ matrix.os }}-${{ matrix.target }}-${{ matrix.manylinux || 'manylinux' }}
+          # Unsigned Windows wheels must never match the publisher's glob.
+          name: ${{ matrix.os == 'windows' && 'pypi_unsigned' || 'pypi_files' }}-${{ matrix.os }}-${{ matrix.target }}-${{ matrix.manylinux || 'manylinux' }}
           path: crates/bashkit-python/dist
 
   # Reduced-feature Pyodide/Emscripten wheel (browser / JupyterLite).
@@ -217,6 +220,12 @@ jobs:
           merge-multiple: true
           path: dist
 
+      - name: Download unsigned Windows wheel for inspection
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: pypi_unsigned-windows-x86_64-manylinux
+          path: dist
+
       - name: List dist files
         run: |
           ls -lhR dist/
@@ -226,6 +235,98 @@ jobs:
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
       - run: uvx twine check dist/*
 
+  # Credentials live only here, after the release source and unsigned archives
+  # have been inspected. No compiler, native import, or smoke test runs here.
+  # THREAT[TM-INF-035]: never give build scripts or the native module signer access.
+  sign-windows:
+    name: Sign Windows wheel
+    needs: [inspect]
+    runs-on: windows-latest
+    environment: release-windows-signing
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: pypi_unsigned-windows-x86_64-manylinux
+          path: unsigned-dist
+
+      - name: Install wheel tooling
+        run: >-
+          python -m pip install --only-binary=:all: wheel==0.48.0
+
+      - name: Unpack and retain unsigned file hashes
+        id: unpack
+        run: python scripts/windows_wheel.py prepare --source unsigned-dist --work wheel-work
+
+      - name: Read public signing configuration
+        id: config
+        shell: pwsh
+        run: |
+          $config = Get-Content scripts/windows-signing.json -Raw | ConvertFrom-Json
+          foreach ($key in @("tenant-id", "subscription-id", "client-id", "endpoint", "signing-account-name", "certificate-profile-name")) {
+            $value = $config.PSObject.Properties[$key].Value
+            if ([string]::IsNullOrWhiteSpace($value) -or $value -match "[\r\n]") {
+              throw "Invalid signing configuration: $key"
+            }
+            $name = $key.Replace("-", "_")
+            "$name=$value" | Out-File $env:GITHUB_OUTPUT -Append -Encoding utf8
+          }
+
+      - name: Authenticate release signer with OIDC
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3
+        with:
+          client-id: ${{ steps.config.outputs.client_id }}
+          tenant-id: ${{ steps.config.outputs.tenant_id }}
+          subscription-id: ${{ steps.config.outputs.subscription_id }}
+
+      - name: Sign native files and timestamp
+        uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2
+        with:
+          endpoint: ${{ steps.config.outputs.endpoint }}
+          signing-account-name: ${{ steps.config.outputs.signing_account_name }}
+          certificate-profile-name: ${{ steps.config.outputs.certificate_profile_name }}
+          files-folder: ${{ steps.unpack.outputs.root }}
+          files-folder-filter: pyd,dll,exe
+          files-folder-recurse: true
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Verify every native signature
+        shell: pwsh
+        env:
+          WHEEL_ROOT: ${{ steps.unpack.outputs.root }}
+        run: ./scripts/verify_windows_signatures.ps1 -Root $env:WHEEL_ROOT
+
+      - name: Repack with regenerated RECORD and verify archive hashes
+        run: python scripts/windows_wheel.py repack --work wheel-work --output signed-dist
+
+      - name: Extract the final archive for signature verification
+        id: final
+        run: python scripts/windows_wheel.py prepare --source signed-dist --work final-check
+
+      - name: Verify signatures from the final wheel
+        shell: pwsh
+        env:
+          WHEEL_ROOT: ${{ steps.final.outputs.root }}
+        run: ./scripts/verify_windows_signatures.ps1 -Root $env:WHEEL_ROOT
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: pypi_files-windows-x86_64-manylinux
+          path: signed-dist
+
   # Smoke-test the single cp39-abi3 wheel on every targeted Python version.
   # With abi3 there is one wheel per platform, so this is the check that it
   # actually installs and runs across the full 3.9–3.14 range it claims — not
@@ -233,7 +334,7 @@ jobs:
   # the include entries only map each os to its runner.
   test-builds:
     name: Test wheel on ${{ matrix.os }} (Python ${{ matrix.python-version }})
-    needs: [build]
+    needs: [build, sign-windows]
     strategy:
       fail-fast: false
       matrix:
@@ -270,7 +371,7 @@ jobs:
   # Publish to PyPI using trusted publishing (OIDC)
   publish:
     name: Publish to PyPI
-    needs: [inspect, test-builds]
+    needs: [inspect, sign-windows, test-builds]
     if: success()
     runs-on: ubuntu-latest
 

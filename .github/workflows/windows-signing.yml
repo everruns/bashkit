@@ -1,0 +1,45 @@
+# Test packaging and real WinVerifyTrust without production signing credentials.
+# This hosted Windows Server job is not a SAC enforcement test.
+name: Windows signing
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/windows-signing.yml"
+      - ".github/workflows/publish-python.yml"
+      - "scripts/windows_wheel.py"
+      - "scripts/windows-signing.json"
+      - "scripts/verify_windows_signatures.ps1"
+      - "scripts/tests/test_windows_signing.py"
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/windows-signing.yml"
+      - ".github/workflows/publish-python.yml"
+      - "scripts/windows_wheel.py"
+      - "scripts/windows-signing.json"
+      - "scripts/verify_windows_signatures.ps1"
+      - "scripts/tests/test_windows_signing.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Windows wheel integrity and Authenticode
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Install test tooling
+        run: >-
+          python -m pip install --only-binary=:all: wheel==0.48.0 PyYAML==6.0.3
+      - name: Test RECORD repair and Windows signature validation
+        run: python -m unittest discover -s scripts/tests -p test_windows_signing.py -v
