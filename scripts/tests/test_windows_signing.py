@@ -151,6 +151,19 @@ class AuthenticodeTests(unittest.TestCase):
 
 
 class SigningWorkflowTests(unittest.TestCase):
+    def test_published_comparison_uses_exact_reported_wheels_without_signing_credentials(self):
+        jobs = yaml.safe_load((ROOT / ".github/workflows/windows-signing.yml").read_text())["jobs"]
+        baseline = jobs["published-baseline"]
+        versions = baseline["strategy"]["matrix"]["include"]
+        self.assertEqual([entry["version"] for entry in versions], ["0.20.0", "0.20.1"])
+        self.assertTrue(all(len(entry["sha256"]) == 64 for entry in versions))
+        self.assertNotIn("environment", baseline)
+        self.assertNotEqual(baseline.get("permissions", {}).get("id-token"), "write")
+        commands = "\n".join(step.get("run", "") for step in baseline["steps"])
+        self.assertIn("EXPECTED_SHA256", commands)
+        self.assertIn("Get-AuthenticodeSignature", commands)
+        self.assertIn("BashTool().execute_sync", commands)
+
     def test_unsigned_artifacts_cannot_reach_pypi(self):
         jobs = yaml.safe_load((ROOT / ".github/workflows/publish-python.yml").read_text())["jobs"]
         self.assertIn("sign-windows", jobs["publish"]["needs"])

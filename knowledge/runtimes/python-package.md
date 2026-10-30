@@ -125,6 +125,9 @@ signatures, unsigned dependencies, wheel hash repair, and metadata tampering.
 This needs neither production credentials nor a self-signed test root. It tests
 packaging on Windows Server, not Windows 11 SAC enforcement. Production signing
 and a SAC-On native import/pytest check remain required release evidence.
+The same workflow downloads the exact two reported PyPI wheels, verifies their
+recorded SHA-256 digests, records native signatures, and imports/executes each
+under Python 3.11.9 as a Windows Server baseline. Its success is not a SAC result.
 
 ## Public API
 

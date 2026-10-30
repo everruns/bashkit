@@ -27,6 +27,45 @@ permissions:
   contents: read
 
 jobs:
+  published-baseline:
+    name: Published wheel ${{ matrix.version }} (Windows baseline)
+    runs-on: windows-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - version: "0.20.0"
+            sha256: 4bcee1e7bf4bed6b55d80c04694c95f1116685d847fbd9bfce42f76740e7915c
+          - version: "0.20.1"
+            sha256: 948f3f73a3e1289caeba7581330732fd145d5b26e5c018d97345c1bd92ce9099
+    steps:
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.11.9"
+      - name: Verify published bytes, record signature, and test native execution
+        shell: pwsh
+        env:
+          VERSION: ${{ matrix.version }}
+          EXPECTED_SHA256: ${{ matrix.sha256 }}
+        run: |
+          # No production identity or signing permission belongs in this job.
+          Get-ComputerInfo | Select-Object WindowsProductName, OsVersion, OsBuildNumber
+          python --version
+          python -m pip download --index-url https://pypi.org/simple --only-binary=:all: --no-deps --no-cache-dir --dest published "bashkit==$env:VERSION"
+          if ($LASTEXITCODE -ne 0) { throw "Wheel download failed" }
+          $wheels = @(Get-ChildItem published -Filter *.whl)
+          if ($wheels.Count -ne 1) { throw "Expected one published wheel" }
+          $digest = (Get-FileHash $wheels[0].FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($digest -ne $env:EXPECTED_SHA256) { throw "Published wheel hash differs from the inspected artifact" }
+          python -m pip install --no-index --find-links published --no-deps "bashkit==$env:VERSION"
+          if ($LASTEXITCODE -ne 0) { throw "Wheel installation failed" }
+          $site = python -c "import sysconfig; print(sysconfig.get_path('platlib'))"
+          Get-FileHash "$site\bashkit\_bashkit.pyd" -Algorithm SHA256
+          Get-AuthenticodeSignature "$site\bashkit\_bashkit.pyd" | Format-List Path, Status, StatusMessage, SignerCertificate
+          python -c "from bashkit import BashTool; r = BashTool().execute_sync('echo hello'); assert r.exit_code == 0; assert r.stdout.strip() == 'hello'; print(r.stdout)"
+          if ($LASTEXITCODE -ne 0) { throw "Native import/execution failed" }
+
   test:
     name: Windows wheel integrity and Authenticode
     runs-on: windows-latest
