@@ -204,6 +204,9 @@ Windows wheel signing checks: `.github/workflows/windows-signing.yml` runs
 with pinned wheel tooling on Windows. Packaging tests also run on other hosts;
 WinVerifyTrust tests require Windows. Production signing prerequisites and the
 unsigned/signed artifact boundary live in `knowledge/runtimes/python-package.md`.
+The manual `windows-signing-smoke.yml` workflow tests the actual Azure signer
+through the same reusable job as publication, from a main-reachable test tag,
+and emits a validation wheel without publishing. See the release knowledge.
 
 ### Pre-PR Checklist
 

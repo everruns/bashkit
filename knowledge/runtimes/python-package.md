@@ -129,6 +129,20 @@ The same workflow downloads the exact two reported PyPI wheels, verifies their
 recorded SHA-256 digests, records native signatures, and imports/executes each
 under Python 3.11.9 as a Windows Server baseline. Its success is not a SAC result.
 
+`sign-windows-wheel.yml` is shared by the publisher and a manual
+`windows-signing-smoke.yml` check. The signer itself verifies that its immutable
+source is reachable from main and its ref is either a stable release tag or a
+`vX.Y.Z-signing-smoke-<12-hex-source-SHA>` tag; callers cannot skip this gate.
+After merging configuration, create such a test tag on the merged main commit
+and dispatch the smoke workflow from it. The smoke workflow hashes the exact
+published 0.20.1 Windows wheel, signs a copy through the production Azure OIDC
+path, verifies signatures and repaired RECORD, then installs it on a separate
+credential-free Windows runner. Pytest explicitly loads a plugin importing the
+native module and executes a sandbox-state check. The resulting
+`windows-signing-validation` artifact is for validation only: no registry upload,
+GitHub release, or replacement of the original PyPI wheel occurs. Use its exact
+bytes for the remaining SAC-On check before a new production patch release.
+
 ## Public API
 
 Full signatures: `crates/bashkit-python/bashkit/_bashkit.pyi`. Runnable

@@ -8,6 +8,8 @@ on:
     paths:
       - ".github/workflows/windows-signing.yml"
       - ".github/workflows/publish-python.yml"
+      - ".github/workflows/sign-windows-wheel.yml"
+      - ".github/workflows/windows-signing-smoke.yml"
       - "scripts/windows_wheel.py"
       - "scripts/windows-signing.json"
       - "scripts/verify_windows_signatures.ps1"
@@ -17,6 +19,8 @@ on:
     paths:
       - ".github/workflows/windows-signing.yml"
       - ".github/workflows/publish-python.yml"
+      - ".github/workflows/sign-windows-wheel.yml"
+      - ".github/workflows/windows-signing-smoke.yml"
       - "scripts/windows_wheel.py"
       - "scripts/windows-signing.json"
       - "scripts/verify_windows_signatures.ps1"

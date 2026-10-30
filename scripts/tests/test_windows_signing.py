@@ -151,6 +151,46 @@ class AuthenticodeTests(unittest.TestCase):
 
 
 class SigningWorkflowTests(unittest.TestCase):
+    @unittest.skipUnless(os.name != "nt" and shutil.which("git") and shutil.which("bash"),
+                         "requires POSIX git fixture")
+    def test_signer_rejects_branch_refs_and_tags_outside_main(self):
+        jobs = yaml.safe_load((ROOT / ".github/workflows/sign-windows-wheel.yml").read_text())["jobs"]
+        guard = next(s["run"] for s in jobs["sign"]["steps"]
+                     if s.get("name") == "Verify immutable tag source")
+        with tempfile.TemporaryDirectory() as temp:
+            upstream = Path(temp) / "upstream"
+            checkout = Path(temp) / "checkout"
+
+            def git(*args, cwd=upstream):
+                return subprocess.check_output(["git", *args], cwd=cwd, text=True,
+                                               stderr=subprocess.DEVNULL).strip()
+
+            subprocess.run(["git", "init", "-b", "main", str(upstream)], check=True,
+                           capture_output=True)
+            commit = ["-c", "user.name=Signing Fixture", "-c", "user.email=fixture@example.test",
+                      "commit", "--allow-empty", "-m", "fixture"]
+            git(*commit)
+            trusted = git("rev-parse", "HEAD")
+            git("switch", "-c", "unreviewed")
+            git(*commit)
+            unreviewed = git("rev-parse", "HEAD")
+            git("switch", "main")
+            subprocess.run(["git", "clone", str(upstream), str(checkout)], check=True,
+                           capture_output=True)
+            cases = [
+                ("refs/tags/v1.2.3", trusted, True),
+                ("refs/tags/v1.2.3-signing-smoke-" + trusted[:12], trusted, True),
+                ("refs/heads/main", trusted, False),
+                ("refs/tags/v1.2.3", unreviewed, False),
+            ]
+            for ref, sha, allowed in cases:
+                with self.subTest(ref=ref, source=sha):
+                    git("checkout", "--detach", sha, cwd=checkout)
+                    result = subprocess.run(["bash", "-e", "-c", guard], cwd=checkout,
+                                            env={**os.environ, "GITHUB_REF": ref, "GITHUB_SHA": sha},
+                                            capture_output=True, text=True)
+                    self.assertEqual(result.returncode == 0, allowed, result.stdout + result.stderr)
+
     def test_published_comparison_uses_exact_reported_wheels_without_signing_credentials(self):
         jobs = yaml.safe_load((ROOT / ".github/workflows/windows-signing.yml").read_text())["jobs"]
         baseline = jobs["published-baseline"]
@@ -170,12 +210,14 @@ class SigningWorkflowTests(unittest.TestCase):
         self.assertIn("sign-windows", jobs["test-builds"]["needs"])
         signing = jobs["sign-windows"]
         self.assertIn("inspect", signing["needs"])
-        self.assertEqual(signing["environment"], "release-windows-signing")
+        self.assertEqual(signing["uses"], "./.github/workflows/sign-windows-wheel.yml")
+        worker = yaml.safe_load((ROOT / ".github/workflows/sign-windows-wheel.yml").read_text())["jobs"]["sign"]
+        self.assertEqual(worker["environment"], "release-windows-signing")
         self.assertEqual(signing["permissions"], {"contents": "read", "id-token": "write"})
         upload = next(s for s in jobs["build"]["steps"] if s.get("uses", "").startswith("actions/upload-artifact@"))
         self.assertIn("pypi_unsigned", upload["with"]["name"])
         self.assertIn("matrix.os == 'windows'", upload["with"]["name"])
-        sign_step = next(s for s in signing["steps"] if s.get("uses", "").startswith("azure/artifact-signing-action@"))
+        sign_step = next(s for s in worker["steps"] if s.get("uses", "").startswith("azure/artifact-signing-action@"))
         self.assertEqual(sign_step["with"]["files-folder-filter"], "pyd,dll,exe")
         self.assertEqual(sign_step["with"]["timestamp-digest"], "SHA256")
         publish_downloads = [s for s in jobs["publish"]["steps"]
@@ -183,12 +225,27 @@ class SigningWorkflowTests(unittest.TestCase):
         self.assertTrue(publish_downloads)
         for step in publish_downloads:
             self.assertEqual(step["with"]["pattern"], "pypi_files-*")
-        signed_upload = next(s for s in signing["steps"]
+        signed_upload = next(s for s in worker["steps"]
                              if s.get("uses", "").startswith("actions/upload-artifact@"))
         self.assertEqual(signed_upload["with"]["path"], "signed-dist")
-        self.assertEqual(signed_upload["with"]["name"], "pypi_files-windows-x86_64-manylinux")
+        self.assertEqual(signed_upload["with"]["name"], "${{ inputs.signed-artifact-name }}")
+        self.assertEqual(signing["with"]["signed-artifact-name"], "pypi_files-windows-x86_64-manylinux")
+        source_guard = next(s["run"] for s in worker["steps"] if s.get("name") == "Verify immutable tag source")
+        self.assertIn('git merge-base --is-ancestor "$GITHUB_SHA" origin/main', source_guard)
+        self.assertIn("refs/tags/v", source_guard)
         for name in ("build", "build-sdist", "build-emscripten", "test-builds"):
             self.assertNotEqual(jobs[name].get("permissions", {}).get("id-token"), "write")
+
+    def test_production_signing_smoke_cannot_publish(self):
+        workflow = yaml.safe_load((ROOT / ".github/workflows/windows-signing-smoke.yml").read_text())
+        jobs = workflow["jobs"]
+        events = workflow.get("on", workflow.get(True))
+        self.assertEqual(set(events), {"workflow_dispatch"})
+        self.assertEqual(jobs["sign"]["uses"], "./.github/workflows/sign-windows-wheel.yml")
+        self.assertEqual(jobs["sign"]["with"]["signed-artifact-name"], "windows-signing-validation")
+        self.assertNotIn("publish", jobs)
+        self.assertNotIn("environment", jobs["verify"])
+        self.assertNotEqual(jobs["verify"].get("permissions", {}).get("id-token"), "write")
 
 
 if __name__ == "__main__":

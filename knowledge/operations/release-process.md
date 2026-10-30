@@ -316,6 +316,14 @@ the final archive. Unit and Windows integration coverage lives in
 [Python Package](../runtimes/python-package.md#authenticode-release-path) for
 provisioning prerequisites and the remaining SAC enforcement check.
 
+Before a new Python release, run `windows-signing-smoke.yml` from a
+main-reachable `vX.Y.Z-signing-smoke-<12-hex-source-SHA>` tag. It uses the same
+reusable signing job as publication and validates Azure OIDC, actual signing,
+timestamps, repaired wheel metadata, pytest plugin loading and native execution.
+Its artifact is a signed copy of the hash-checked historical 0.20.1 Windows wheel
+for controlled comparison, never a registry release. Retain the run and artifact
+digest as evidence; Windows Server success does not prove SAC-On enforcement.
+
 ### publish-js.yml
 
 Trigger: Release published (parallel). Builds native NAPI-RS bindings
