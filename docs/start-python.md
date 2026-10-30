@@ -211,6 +211,15 @@ to select a trusted signing provider. A self-signed certificate or a PyPI
 attestation alone does not supply that trust. Signing credentials and a SAC-On
 validation host are required before claiming this fix is shipped.
 
+The release workflow's signing path uses Azure Artifact Signing with a validated
+Public Trust profile. It keeps unsigned wheels separate from publishable
+artifacts, signs native files in a dedicated job, regenerates `RECORD`, and
+verifies native signatures from the final wheel. A failure blocks publishing.
+Windows CI also tests the packaging and signature checks without production
+credentials; those tests do not replace the SAC-On comparison above. The
+reported pin remains the workaround until a new signed release has passed that
+comparison on the affected machine.
+
 ## Next steps
 
 - [Sandbox configuration & limits](configuration.md), resource limits and sandbox options.

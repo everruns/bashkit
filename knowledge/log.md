@@ -1,5 +1,9 @@
 # Bashkit Knowledge Update Log
 
+## 2026-10-30
+
+* **Windows signing preparation**: Separate unsigned Windows build outputs from publishable wheels. Add a credential-isolated Azure OIDC signing job, native signature/timestamp checks, RECORD regeneration, and a Windows packaging test job. Rollout requires verified publisher identity, a Public Trust profile, profile-scoped signer permission, and a GitHub environment restricted to release tags; the signing gate must remain unmerged until those prerequisites are ready. See [Python Package](runtimes/python-package.md#authenticode-release-path).
+
 ## 2026-10-29
 
 * **Directory copy**: Preserve final-dot operands so `cp -r source/. destination` copies contents without an extra source directory; ordinary directory operands retain their basename. Regression fixtures compare nested/hidden entries, symlinks, no-clobber and rejection paths with GNU bash. See [Builtins](foundations/builtins.md).

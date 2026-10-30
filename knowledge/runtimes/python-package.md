@@ -92,6 +92,57 @@ files before final wheel packing (or regenerate `RECORD` when repacking), then
 publish a new patch version. Standard hosted Windows smoke jobs do not prove
 SAC enforcement. See [Release Process](../operations/release-process.md).
 
+### Authenticode release path
+
+The Python release workflow retains the build's Windows wheel as
+`pypi_unsigned-windows-x86_64-manylinux`, outside the publisher's `pypi_files-*`
+glob. After source/tag and archive inspection, `sign-windows` unpacks it,
+Authenticode-signs `.pyd`/`.dll`/`.exe` files with a SHA-256 timestamp, verifies
+every native signature, repacks with fresh `RECORD` hashes, and verifies the
+native signatures extracted from the final archive. Only this job creates the
+publishable Windows artifact; smoke tests and publishing depend on its success.
+There is no unsigned fallback.
+
+`scripts/windows_wheel.py` uses the pinned wheel CLI and refuses changes to
+Python/metadata files or the file set during signing. Its manifest stays outside
+the package. `scripts/verify_windows_signatures.ps1` requires embedded, valid,
+timestamped signatures without installing trust roots. Signing runs in a
+separate OIDC job that never compiles or imports the extension. Public resource
+identifiers live in `scripts/windows-signing.json`; no private key or client
+secret belongs in the repository.
+
+Before enabling this release path, complete publisher identity validation,
+create the `bashkit-public` **Public Trust** certificate profile, configure
+`release-windows-signing` to accept only release tags, and grant the GitHub
+service principal Certificate Profile Signer at that profile's scope. The Azure
+federated subject must be exactly
+`repo:everruns/bashkit:environment:release-windows-signing`.
+Do not merge the release gate before those external prerequisites are ready.
+
+`.github/workflows/windows-signing.yml` exercises real Windows signature
+verification with a copy of the already-signed Python interpreter, plus corrupt
+signatures, unsigned dependencies, wheel hash repair, and metadata tampering.
+This needs neither production credentials nor a self-signed test root. It tests
+packaging on Windows Server, not Windows 11 SAC enforcement. Production signing
+and a SAC-On native import/pytest check remain required release evidence.
+The same workflow downloads the exact two reported PyPI wheels, verifies their
+recorded SHA-256 digests, records native signatures, and imports/executes each
+under Python 3.11.9 as a Windows Server baseline. Its success is not a SAC result.
+
+`sign-windows-wheel.yml` is shared by the publisher and a manual
+`windows-signing-smoke.yml` check. The signer itself verifies that its immutable
+source is reachable from main and its ref is either a stable release tag or a
+`vX.Y.Z-signing-smoke-<12-hex-source-SHA>` tag; callers cannot skip this gate.
+After merging configuration, create such a test tag on the merged main commit
+and dispatch the smoke workflow from it. The smoke workflow hashes the exact
+published 0.20.1 Windows wheel, signs a copy through the production Azure OIDC
+path, verifies signatures and repaired RECORD, then installs it on a separate
+credential-free Windows runner. Pytest explicitly loads a plugin importing the
+native module and executes a sandbox-state check. The resulting
+`windows-signing-validation` artifact is for validation only: no registry upload,
+GitHub release, or replacement of the original PyPI wheel occurs. Use its exact
+bytes for the remaining SAC-On check before a new production patch release.
+
 ## Public API
 
 Full signatures: `crates/bashkit-python/bashkit/_bashkit.pyi`. Runnable

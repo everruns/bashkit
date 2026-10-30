@@ -486,6 +486,19 @@ steps from a compromised compiler dependency persisting on the same runner.
 Workflow execution regressions inspect verification/upload environments in
 `scripts/tests/test_release_security.py`.
 
+**TM-INF-035 — Windows signing authority**: Compiler dependencies and native
+modules must not inherit the production code-signing identity. Windows builds
+upload unsigned artifacts in a namespace the PyPI publisher never downloads.
+Only a separate, source-validated release job receives Azure OIDC signing
+access; it compiles no code and never imports the wheel. Its federated identity
+is bound to `release-windows-signing`, whose deployment policy must restrict
+release tags, and its signer role is scoped to the validated Public Trust
+profile. Python/metadata files and the file set must survive signing unchanged;
+every native signature and timestamp is checked again after packing. Missing
+credentials, signatures, timestamps or repaired RECORD hashes block publishing.
+External environment/profile provisioning must complete before this release
+gate is merged. Regression coverage: `scripts/tests/test_windows_signing.py`.
+
 **TM-INF-022**: Generalizes TM-INF-016 to the whole builtin surface. Originating bug:
 `builtins/jq/` formatted jaq compile/parse errors with `{:?}`, leaking the jaq `File`
 struct, the prepended compat-defs source, and raw `Undefined::Filter(N)` tags. Fixed via
