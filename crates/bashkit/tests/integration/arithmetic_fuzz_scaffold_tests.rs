@@ -203,3 +203,46 @@ fn canary_in_stdout_not_explained_by_the_script_is_still_a_leak() {
     };
     bashkit::testing::assert_fuzz_invariants(&result, "echo hi", "canary_real_leak_stdout", &[]);
 }
+
+/// Run 295: the banned shape straddles the join between the echoed
+/// expression and the diagnostic's own punctuation.
+///
+/// `evaluate_arithmetic` renders `{diag_echo(expr.trim())}: {msg}`, so an
+/// expression ending in `Tok:` picks up the separator's colon and the line
+/// reads `bash: line 1: wZTok:: syntax error in expression (error token is
+/// ":")`. The input carries only `Tok:`, which is not banned -- `Tok::`
+/// exists nowhere in the script and nowhere in bashkit's own text; it is
+/// spelled by the input's trailing colon sitting next to the template's.
+/// Checking the raw input therefore admitted it and the detector tripped on
+/// a faithful echo, so the gate renders the slot before matching.
+#[tokio::test]
+async fn run_295_banned_shape_straddles_the_separator() {
+    let input = "wZTok:";
+    // The input on its own carries no banned shape.
+    assert!(!input.contains("Tok::"), "{input}");
+    // The rendered diagnostic does, so the gate must skip it.
+    assert!(bashkit::testing::input_echo_would_trip(input));
+
+    let mut bash = fuzz_bash();
+    let r = bash
+        .exec(&format!("echo $(({input}))"))
+        .await
+        .expect("exec");
+    let err = r.stderr.to_string();
+    // The shape is the echo plus the separator, not a formatted `Tok` enum.
+    assert!(
+        err.contains("wZTok:: syntax error in expression"),
+        "expected the verbatim echo and separator: {err}"
+    );
+    assert!(err.len() <= 1024, "stderr is {} bytes:\n{err}", err.len());
+}
+
+/// The widened gate is still narrow: an expression that ends one character
+/// short of the shape cannot form it against the separator, so it keeps
+/// running under the strict detector.
+#[tokio::test]
+async fn near_miss_at_the_separator_is_still_checked() {
+    let input = "wZTo:";
+    assert!(!bashkit::testing::input_echo_would_trip(input));
+    fuzz_arith(input, "near_miss_separator").await;
+}
