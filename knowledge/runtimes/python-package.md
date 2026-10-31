@@ -238,6 +238,17 @@ while Python is still attachable. This also drains timeout-cancellation cleanup;
 setting only an exit flag leaves a worker already inside Python racing finalization.
 The atexit hook then closes result-delivery enrollment and
 releases the GIL until enrolled deliveries finish releasing Python references.
+Enrollment is not only for result deliveries: every native task that may attach
+to Python must take an `enroll_python_work()` guard and hold it across its
+Python work *and* the drops of the `Py` values and sessions it owns (a last
+session clone can run `PyPrivateAsyncLoop::drop`, which attaches). The
+`execute_sync` blocking-pool dispatch is enrolled for exactly this reason: a
+timeout abandons it, a blocking task cannot be cancelled, and the private-loop
+join hands it the cancelled result at the very end of the hook — unenrolled, its
+re-attach raced `Py_FinalizeEx` and aborted the process on CPython < 3.13
+(TM-PY-030 variant 4). Joining the private-loop worker is therefore necessary
+but not sufficient: it proves the worker finished, not that the thread waiting
+on it has.
 Without that drain, `call_soon_threadsafe` can wake Python, which exits while
 the native worker still owns attached references; CPython can destroy its thread
 state before tuple cleanup, causing a native crash. Future deliveries skip Python
