@@ -108,6 +108,16 @@ the existing Python graph. Remove it when Monty's AST upgrades its string
 type. The Python binding's `num-bigint` dependency must still match Monty's
 0.4 line.
 
+## JavaScript test-tool audit boundary
+
+The native JavaScript package constrains AVA's transitive file-tracing tools to
+patched `glob` and `minimatch` versions. The upstream `@vercel/nft` constraint
+still selects vulnerable glob 13, so the package's pnpm overrides carry the
+security floor until upstream catches up. These dependencies belong to test
+instrumentation, not the published runtime. Keep the normal release cooldown
+and audit gate; never suppress the cancellation-bypass or pattern-amplification
+advisories. See [package overrides](../../crates/bashkit-js/package.json).
+
 ## YAML maintenance boundary
 
 The `jq` feature's `yq` builtin uses `serde_norway` and
