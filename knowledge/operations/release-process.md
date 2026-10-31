@@ -142,6 +142,30 @@ fetch process exits before examples execute. See the
   `publish-wasm.yml` / `publish-python.yml` publish to crates.io, npm, PyPI;
   each includes a published-version verification step.
 
+## crates.io trusted publishing
+
+The publishing workflow uses GitHub OIDC instead of a stored registry token.
+Each publish job obtains a masked, short-lived token only after the package has
+been verified without registry credentials. The pinned official authentication
+action revokes the token when the job finishes; only the upload step receives it.
+Token issuance alone does not prove a crate was published: retain the existing
+registry verification and record the first successful OIDC release separately.
+
+Before enabling the workflow, configure every published crate on crates.io to
+trust this repository, the publishing workflow filename, and the `release`
+environment. The workflow is [`publish.yml`](../../.github/workflows/publish.yml).
+The GitHub `release` environment must allow only the `main` branch and `v*`
+tags, preserving the existing main-based recovery path. The validated immutable
+release source and dependency order remain mandatory. Check all four crates:
+`bashkit-cpython-wasm`, `bashkit`, `bashkit-cli`, and `bashkit-scripted-tool`.
+
+A new crate needs its first version published by an owner with a suitably scoped
+API token before crates.io permits a trusted publisher. Complete that bootstrap
+and configure trust before adding a new name to automated publication. Trusted
+publishing cannot yank versions. Preserve any token needed for separate yank or
+bootstrap operations; remove obsolete publishing credentials only after a real
+OIDC publication succeeds and their other consumers have been checked.
+
 ## Pre-Release Checklist
 
 `AGENTS.md` Pre-PR Checklist applies, plus: CI green on main, CHANGELOG.md

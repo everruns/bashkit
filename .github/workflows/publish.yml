@@ -88,6 +88,9 @@ jobs:
     needs: validate-tag
     runs-on: ubuntu-latest
     environment: release
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -123,10 +126,15 @@ jobs:
             exit 1
           fi
 
+      # Exchange after package verification so the 30-minute token stays fresh.
+      - name: Authenticate to crates.io
+        id: auth
+        uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
+
       - name: Publish bashkit-cpython-wasm to crates.io
         run: cargo publish --no-verify -p bashkit-cpython-wasm
         env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
 
   # Publish bashkit (core library) to crates.io
   publish-bashkit:
@@ -134,6 +142,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: [validate-tag, publish-bashkit-cpython-wasm]
     environment: release
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -171,10 +182,15 @@ jobs:
       - name: Verify bashkit package without credentials
         run: cargo publish --dry-run -p bashkit
 
+      # Exchange after package verification so the 30-minute token stays fresh.
+      - name: Authenticate to crates.io
+        id: auth
+        uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
+
       - name: Publish bashkit to crates.io
         run: cargo publish --no-verify -p bashkit
         env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
 
   # Publish bashkit-cli (depends on bashkit)
   publish-bashkit-cli:
@@ -182,6 +198,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: [validate-tag, publish-bashkit]
     environment: release
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -197,10 +216,15 @@ jobs:
       - name: Verify bashkit-cli package without credentials
         run: cargo publish --dry-run -p bashkit-cli
 
+      # Exchange after package verification so the 30-minute token stays fresh.
+      - name: Authenticate to crates.io
+        id: auth
+        uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
+
       - name: Publish bashkit-cli to crates.io
         run: cargo publish --no-verify -p bashkit-cli
         env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
 
   # Publish bashkit-scripted-tool (depends on bashkit)
   publish-bashkit-scripted-tool:
@@ -208,6 +232,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: [validate-tag, publish-bashkit]
     environment: release
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -223,10 +250,15 @@ jobs:
       - name: Verify bashkit-scripted-tool package without credentials
         run: cargo publish --dry-run -p bashkit-scripted-tool
 
+      # Exchange after package verification so the 30-minute token stays fresh.
+      - name: Authenticate to crates.io
+        id: auth
+        uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
+
       - name: Publish bashkit-scripted-tool to crates.io
         run: cargo publish --no-verify -p bashkit-scripted-tool
         env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
 
   # ============================================================================
   # Verify all packages were published successfully
