@@ -27,7 +27,7 @@ pub(super) fn register_private_loop(private_loop: &Arc<super::PyPrivateAsyncLoop
     }
 }
 
-struct DeliveryGuard;
+pub(super) struct DeliveryGuard;
 
 impl Drop for DeliveryGuard {
     fn drop(&mut self) {
@@ -54,15 +54,7 @@ impl generic::Runtime for CallbackRuntime {
     where
         F: FnOnce() + Send + 'static,
     {
-        let guard = {
-            let mut active = DELIVERIES.0.lock().expect("async deliveries lock");
-            if super::interpreter_at_exit() {
-                None
-            } else {
-                *active += 1;
-                Some(DeliveryGuard)
-            }
-        };
+        let guard = enroll_python_work();
         pyo3_async_runtimes::tokio::get_runtime().spawn_blocking(move || {
             let Some(_guard) = guard else {
                 // Drop unattached: PyO3 defers decrefs rather than touching a
@@ -73,6 +65,25 @@ impl generic::Runtime for CallbackRuntime {
             deliver();
         })
     }
+}
+
+// THREAT[TM-PY-030]: enroll a native task that will attach to Python, so the
+// atexit barrier below drains it before CPython reaches the finalization phase.
+// Hold the returned guard for as long as the task may touch Python — including
+// the decrefs of the `Py` values it owns, and any `Drop` that re-attaches.
+//
+// `None` means the boundary is already closed and the caller must skip Python
+// entirely. Attaching during finalization is fatal on CPython < 3.13: `take_gil`
+// sees the thread must exit and calls `PyThread_exit_thread()`, whose
+// `pthread_exit` forced unwind crosses Rust frames that never rethrow it, so
+// glibc aborts the process ("FATAL: exception not rethrown", SIGABRT).
+pub(super) fn enroll_python_work() -> Option<DeliveryGuard> {
+    let mut active = DELIVERIES.0.lock().expect("async deliveries lock");
+    if super::interpreter_at_exit() {
+        return None;
+    }
+    *active += 1;
+    Some(DeliveryGuard)
 }
 
 tokio::task_local! {

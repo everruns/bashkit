@@ -2030,7 +2030,7 @@ re-entering Python no longer race the caller's GIL hold.
 
 | TM-PY-026 | reset() discards security config | `BashTool.reset()` creates new `Bash` with bare builder, dropping all configured limits | `PyBash::reset` and `BashTool::reset` rebuild via `replace_live_bash_with_builder` + `build_live_builder`, which preserves the original limits, env, and registered builtins | **MITIGATED** |
 | TM-PY-027 | Unbounded recursion in JSON conversion | `py_to_json`/`json_to_py` recurse without depth limit on nested dicts/lists | `json_to_py_inner`, `py_to_json_inner`, and the MontyObject converters all carry a `depth` arg; depth > `MAX_NESTING_DEPTH = 64` raises `ValueError("… nesting depth exceeds maximum of 64")` | **MITIGATED** |
-| TM-PY-030 | GIL deadlock / exit crash via async-callback private loop | Private-loop dispatch blocked on a rendezvous channel while attached (GIL held); pyclass dealloc joined in-flight blocking tasks that must re-attach to finish (froze the whole process, observed as a 6 h CI hang); worker thread attached during interpreter finalization to close its loop (SIGABRT at process exit) | Deterministic teardown protocol: dispatch detaches around send/receive; in-flight callbacks are cancelled and workers/runtime joined with the GIL released while the interpreter is alive; once the atexit-set exit flag flips, threads skip Python and the OS reclaims resources | **MITIGATED** |
+| TM-PY-030 | GIL deadlock / exit crash via async-callback private loop | Private-loop dispatch blocked on a rendezvous channel while attached (GIL held); pyclass dealloc joined in-flight blocking tasks that must re-attach to finish (froze the whole process, observed as a 6 h CI hang); worker thread attached during interpreter finalization to close its loop (SIGABRT at process exit); a timed-out callback's blocking-pool dispatch thread stayed parked in its result receive and re-attached after the exit hook returned, racing `Py_FinalizeEx` (flaky SIGABRT, "FATAL: exception not rethrown") | Deterministic teardown protocol: dispatch detaches around send/receive; in-flight callbacks are cancelled and workers/runtime joined with the GIL released while the interpreter is alive; every native task that may attach enrolls in the atexit barrier, abandoned blocking dispatch included, so finalization cannot begin while a re-attach is owed; once the atexit-set exit flag flips, threads skip Python and the OS reclaims resources | **MITIGATED** |
 
 **TM-PY-026** (mitigated): see table. Regression tests:
 `tests/test_python_security.py::test_bash_reset_preserves_limits`,
@@ -2062,7 +2062,7 @@ forces this window for Bash, BashTool and ScriptedTool (TM-PY-030).
 `test_exit_drains_private_callback_cancellation` forces cancellation cleanup to
 overlap process exit for custom builtins and both embedded runtimes.
 
-**TM-PY-030** (mitigated): three crash/deadlock variants in the async-callback
+**TM-PY-030** (mitigated): four crash/deadlock variants in the async-callback
 private-loop machinery (`crates/bashkit-python/src/lib.rs`), resolved by a
 deterministic teardown protocol and root-cause channel fix. (1) `PyPrivateAsyncLoop::run_awaitable`
 originally sent work to the dedicated worker thread over a `sync_channel(0)` rendezvous
@@ -2078,7 +2078,21 @@ and an abandoned (timed-out) callback task must re-attach to finish, freezing th
 entire interpreter. (3) The private-loop worker attached on its exit path while the
 interpreter was finalizing, `Py_Finalize` gc is what usually wakes it, which fatals
 CPython (`PyGILState_Release`, SIGABRT; `Python::try_attach` cannot detect
-finalization before 3.13).
+finalization before 3.13). (4) `execute_sync` dispatches a private-loop
+callback from Tokio's blocking pool, and a timeout abandons that task: dropping a
+`JoinHandle` cannot cancel a *blocking* task, so the pool thread stayed parked in
+`result_rx.recv()` with the GIL released. The exit hook joined the private-loop
+worker, which hands the cancelled result to that thread at the very end of the
+hook, leaving its re-attach to race `Py_FinalizeEx`. The task was never enrolled
+in the delivery barrier, so nothing waited for it. Losing that race aborts the
+process on CPython < 3.13: `take_gil` sees the thread must exit and calls
+`PyThread_exit_thread()`, whose `pthread_exit` forced unwind crosses Rust frames
+that never rethrow it, so glibc kills the process with
+"FATAL: exception not rethrown" (SIGABRT). Observed as a rare flake in
+`test_interpreter_exit_does_not_crash[abandoned]`. **Fix**: the dispatch enrolls
+via `async_bridge::enroll_python_work()` and holds the guard across its Python
+work and its own `Py`/session drops, so the barrier drains it before
+finalization; past the boundary it skips Python entirely.
 
 Teardown protocol: an `atexit` handler registered at module import sets
 `INTERPRETER_AT_EXIT`; atexit runs at the very start of `Py_FinalizeEx`, strictly

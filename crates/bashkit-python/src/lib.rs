@@ -3982,8 +3982,31 @@ async fn run_private_loop_awaitable_yielding(
     // THREAT[TM-DOS-057]: execute_sync() has no caller asyncio loop. Run the
     // private Python event loop on Tokio's blocking pool so the interpreter
     // future yields and Bashkit's execution timeout can preempt slow callbacks.
+    //
+    // THREAT[TM-PY-030]: a timeout abandons this task, and dropping a
+    // JoinHandle cannot cancel a *blocking* task — the pool thread stays
+    // parked in `result_rx.recv()` with the GIL released and re-attaches once
+    // the private loop delivers the (cancelled) result. Enroll it in the
+    // atexit barrier so interpreter finalization cannot begin while that
+    // re-attach is still owed. Joining the private-loop worker is not enough:
+    // that join only proves the *worker* is done, and it hands the result to
+    // this thread at the very end of the exit hook, leaving its re-attach to
+    // race `Py_FinalizeEx` (abort on CPython < 3.13 — see `enroll_python_work`).
+    let enrolled = async_bridge::enroll_python_work();
     tokio::task::spawn_blocking(move || {
-        Python::attach(|py| session.run_awaitable_on_private_loop(py, &awaitable, call))
+        let Some(_enrolled) = enrolled else {
+            // Boundary already closed: never attach. The `Py` values this task
+            // owns drop unattached (PyO3 defers the decrefs).
+            return Err(PyRuntimeError::new_err("interpreter is shutting down"));
+        };
+        let result =
+            Python::attach(|py| session.run_awaitable_on_private_loop(py, &awaitable, call));
+        // Release this task's Python references while still enrolled. Dropping
+        // the last `session` clone can run `PyPrivateAsyncLoop::drop`, which
+        // attaches, so it must happen inside the barrier too.
+        drop(awaitable);
+        drop(session);
+        result
     })
     .await
     .map_err(|e| PyRuntimeError::new_err(format!("Python async callback worker failed: {e}")))?

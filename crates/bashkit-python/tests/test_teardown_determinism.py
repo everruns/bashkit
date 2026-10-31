@@ -197,7 +197,43 @@ assert t.execute_sync("slow").exit_code == 1
 """
 
 
-@pytest.mark.parametrize("script", [_EXIT_SCRIPT_CLEAN, _EXIT_SCRIPT_ABANDONED], ids=["clean", "abandoned"])
+_EXIT_SCRIPT_ABANDONED_SLOW_CANCEL = """
+import asyncio
+import threading
+import time
+
+from bashkit.scripted import ScriptedTool
+
+cancelling = threading.Event()
+
+async def slow(params, stdin=None):
+    try:
+        await asyncio.sleep(30)
+    finally:
+        # Hold the private-loop worker inside the cancelled callback past
+        # interpreter exit. The timeout already abandoned the blocking-pool
+        # thread that dispatched this callback, and a blocking task cannot be
+        # cancelled, so that thread is still parked in its result receive when
+        # the exit hook runs: it only wakes when the hook joins this worker,
+        # and must then re-attach from inside the hook. Unenrolled, that
+        # re-attach raced Py_FinalizeEx and aborted the process on CPython
+        # < 3.13 (SIGABRT, "FATAL: exception not rethrown").
+        cancelling.set()
+        time.sleep(0.3)
+    return "late\\n"
+
+t = ScriptedTool("api", timeout_seconds=0.05)
+t.add_tool("slow", "Slow", callback=slow)
+assert t.execute_sync("slow").exit_code == 1
+assert cancelling.wait(2), "callback never cancelled"
+"""
+
+
+@pytest.mark.parametrize(
+    "script",
+    [_EXIT_SCRIPT_CLEAN, _EXIT_SCRIPT_ABANDONED, _EXIT_SCRIPT_ABANDONED_SLOW_CANCEL],
+    ids=["clean", "abandoned", "abandoned-slow-cancel"],
+)
 def test_interpreter_exit_does_not_crash(script):
     """Module-level tools torn down at Py_Finalize must not abort (SIGABRT)."""
     # Replicate this (parent) interpreter's exact import surface in the child.
