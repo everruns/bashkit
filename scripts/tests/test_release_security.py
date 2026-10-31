@@ -16,6 +16,27 @@ def jobs(name):
 
 
 class ReleaseSecurityTests(unittest.TestCase):
+    def test_crates_oidc_is_scoped_to_publish_jobs_after_verification(self):
+        workflow = yaml.safe_load((ROOT / '.github/workflows/publish.yml').read_text())
+        self.assertNotIn('id-token', workflow['permissions'])
+        for name, job in workflow['jobs'].items():
+            with self.subTest(job=name):
+                if not name.startswith('publish-'):
+                    self.assertNotIn('id-token', job.get('permissions', {}))
+                    continue
+                self.assertEqual(job['environment'], 'release')
+                self.assertEqual(job['permissions'], {'contents': 'read', 'id-token': 'write'})
+                steps = job['steps']
+                auth = next(i for i, s in enumerate(steps) if s.get('id') == 'auth')
+                self.assertRegex(steps[auth]['uses'], r'^rust-lang/crates-io-auth-action@[0-9a-f]{40}$')
+                self.assertIn('--dry-run', steps[auth - 1]['run'])
+                publish = steps[auth + 1]
+                self.assertIn('cargo publish --no-verify', publish['run'])
+                self.assertEqual(publish['env']['CARGO_REGISTRY_TOKEN'], '${{ steps.auth.outputs.token }}')
+                for step in steps[:auth]:
+                    self.assertNotIn('CARGO_REGISTRY_TOKEN', step.get('env', {}))
+        self.assertNotIn('secrets.CARGO_REGISTRY_TOKEN', (ROOT / '.github/workflows/publish.yml').read_text())
+
     def test_binary_builds_use_validated_immutable_commit(self):
         for name in ('c-api-binaries.yml', 'cli-binaries.yml', 'publish.yml'):
             with self.subTest(workflow=name):
