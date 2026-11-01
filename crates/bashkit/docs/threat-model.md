@@ -33,6 +33,7 @@ through configurable limits.
 | Output flooding (TM-DOS-002) | `yes \| head -n 1000000000` | Command limit stops loop | MITIGATED |
 | Width-derived allocation (TM-DOS-103) | `printf x \| od -w1152921504606846976` | Reject widths above 65,536 bytes; stack-pad one numeric field; budget output capacity before fallible growth | MITIGATED |
 | Pagination amplification (TM-DOS-137) | Long `pr -h` headers repeated on many short pages | Check the 16 MiB cap before every append; lease input, rows and output capacity before growth; borrow cells/page slices and retain date timestamps; charge input/work and poll cancellation/deadlines, including skipped pages | MITIGATED |
+| Embedded CLI limit escalation (TM-DOS-139) | `markkit extract x --max-input-size 99999999999` | `markkit` limits can only be lowered below their defaults; `fetchkit` bodies capped by HTTP limits; `--ocr` refused | MITIGATED |
 | Variable explosion (TM-DOS-003) | `x=$(cat /dev/urandom)` | /dev/urandom returns bounded 8KB | MITIGATED |
 | Array growth (TM-DOS-004) | `arr+=(element)` in loop | Command limit | MITIGATED |
 
@@ -411,6 +412,7 @@ Network access is disabled by default. When enabled, strict controls apply.
 | HTTP-transport SSRF via fail-open precheck (TM-NET-023) | Malformed/no-host URL or rebind window bypasses the IP filter | Precheck fails closed on bad URLs; transports receive pinned addresses + `is_private_ip` | MITIGATED |
 | Repeated curl data bypasses body cap (TM-NET-028) | Many data/file parts plus encoding expansion exceed 10 MB in aggregate | Checked aggregate appends; file metadata checked against remaining capacity before reads | MITIGATED |
 | Private IP behind NAT64/6to4 or reserved range (TM-NET-029) | AAAA `64:ff9b::a9fe:a9fe` / `2002:7f00:1::`, or A in `0.0.0.0/8`, `198.18.0.0/15`, multicast | `is_private_ip` checks the embedded IPv4 of NAT64/6to4 and blocks all non-global special-purpose ranges | MITIGATED |
+| Embedded CLI egress bypass (TM-NET-030) | `fetchkit fetch`/`markkit extract URL` follow a redirect off the allowlist or read host proxy env | Both builtins send every hop through the sandbox HTTP client (allowlist re-checked per hop); no own TLS stack; `--allow-env-proxy` refused | MITIGATED |
 
 **Credential Injection (TM-NET-024–027):**
 
