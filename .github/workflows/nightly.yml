@@ -28,14 +28,18 @@ jobs:
       - name: Install Rust nightly with Miri
         uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # nightly
         with:
+          # Pinned: nightly 2026-10-31 (rustc f9ceb4a4d) fails to compile bashkit
+          # (E0391 async-drop cycle on parser::ast::CommandList). Unpin once a
+          # later nightly builds `cargo +nightly check -p bashkit --lib`.
+          toolchain: nightly-2026-10-30
           components: miri
 
       - name: Setup Miri
-        run: cargo +nightly miri setup
+        run: cargo +nightly-2026-10-30 miri setup
 
       - name: Run Miri on library tests
         run: |
-          cargo +nightly miri test --lib -p bashkit -- \
+          cargo +nightly-2026-10-30 miri test --lib -p bashkit -- \
             --test-threads=1 \
             test_parse_simple_command \
             test_parse_variable \
@@ -146,6 +150,10 @@ jobs:
       - name: Install Rust nightly
         uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # nightly
         with:
+          # Pinned: nightly 2026-10-31 (rustc f9ceb4a4d) fails to compile bashkit
+          # (E0391 async-drop cycle on parser::ast::CommandList). Unpin once a
+          # later nightly builds `cargo +nightly check -p bashkit --lib`.
+          toolchain: nightly-2026-10-30
           components: rust-src
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
@@ -165,5 +173,5 @@ jobs:
           RUSTFLAGS: "-Z sanitizer=address"
           ASAN_OPTIONS: "detect_stack_use_after_return=1:detect_leaks=0"
         run: |
-          cargo +nightly test -Z build-std --target x86_64-unknown-linux-gnu --lib --tests \
+          cargo +nightly-2026-10-30 test -Z build-std --target x86_64-unknown-linux-gnu --lib --tests \
             -- --test-threads=1

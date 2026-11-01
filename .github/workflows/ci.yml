@@ -642,6 +642,11 @@ jobs:
 
       - name: Install Rust nightly
         uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # nightly
+        with:
+          # Pinned: nightly 2026-10-31 (rustc f9ceb4a4d) fails to compile bashkit
+          # (E0391 async-drop cycle on parser::ast::CommandList). Unpin once a
+          # later nightly builds `cargo +nightly check -p bashkit --lib`.
+          toolchain: nightly-2026-10-30
 
       - name: Install cargo-fuzz
         uses: taiki-e/cache-cargo-install-action@9ee83daaa7b96a6fab930949ecf1122bba04a389 # v3
@@ -652,9 +657,9 @@ jobs:
       - name: Verify fuzz targets compile
         working-directory: crates/bashkit
         run: |
-          cargo +nightly fuzz build
-          cargo +nightly fuzz build --features cpython cpython_fuzz
-          cargo +nightly fuzz build --features cpython cpython_http_fuzz
+          cargo +nightly-2026-10-30 fuzz build
+          cargo +nightly-2026-10-30 fuzz build --features cpython cpython_fuzz
+          cargo +nightly-2026-10-30 fuzz build --features cpython cpython_http_fuzz
 
   # Gate job for branch protection — name must stay "Check"
   check:
