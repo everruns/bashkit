@@ -99,6 +99,11 @@ startup cost: registration is a map insert, nothing is loaded until a call.
 - Upstream versions: markkit >= 0.3, fetchkit >= 0.7 (the `CliHost` releases).
   fetchkit must depend on the same markkit minor as bashkit, or bashkit links
   two markkit copies.
+- Supply chain: the 85 crates these trees add (PDF/DOCX/zip/image parsers,
+  html5ever, fetchkit's own deps) entered `supply-chain/config.toml` as
+  `safe-to-deploy` exemptions, not audits, when the features landed. They are
+  only compiled with `markkit`/`fetchkit` on; audit them before turning either
+  feature on by default.
 
 ## Tests
 
