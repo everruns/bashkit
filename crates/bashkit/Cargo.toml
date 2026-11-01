@@ -284,6 +284,23 @@ typescript = ["dep:zapcode-core", "dep:oxc_parser", "dep:oxc_ast", "dep:oxc_allo
 # back to the async VFS via `block_in_place`.
 # Usage: cargo build --features sqlite
 sqlite = ["dep:turso_core", "dep:branches", "tokio/rt-multi-thread"]
+# `markkit` builtin: the markkit CLI (document -> Markdown), identical
+# interface, reading the VFS. URL sources go through `http_client` when that
+# feature and a network allowlist are configured. Off by default.
+#
+# Important decision: depend on `markkit-cli`'s library (`markkit_cli::run`)
+# rather than re-declaring its flags, so the interface cannot drift. markkit is
+# built without `http_client` (no second HTTP/TLS stack) and without OCR (host
+# Tesseract / model files). See knowledge/runtimes/markkit-fetchkit-builtins.md.
+# Usage: cargo build --features markkit
+markkit = ["dep:markkit", "dep:markkit-cli"]
+# `fetchkit` builtin: the fetchkit CLI (URL -> Markdown with frontmatter),
+# identical interface. Every request goes through the `http_client` sandbox
+# client (allowlist, credentials, signing, host transport). Off by default.
+# Same library-reuse decision as `markkit`; see
+# knowledge/runtimes/markkit-fetchkit-builtins.md.
+# Usage: cargo build --features fetchkit
+fetchkit = ["http_client", "dep:fetchkit", "dep:fetchkit-cli", "dep:bytes"]
 # Enable RealFs backend for accessing host filesystem directories
 # WARNING: This intentionally breaks the sandbox boundary.
 # Usage: cargo build --features realfs
@@ -421,6 +438,13 @@ required-features = ["sqlite"]
 # Additional tokio features needed only on native (not WASM)
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "fs"] }
+# markkit builtin (native only: markkit-cli needs tokio's multi-thread rt).
+markkit-cli = { version = "0.3", default-features = false, features = ["all_formats"], optional = true }
+markkit = { version = "0.3", default-features = false, features = ["all_formats"], optional = true }
+# fetchkit builtin (native only). No `reqwest-tls`: all traffic goes through
+# bashkit's HttpClient, so fetchkit adds no TLS stack.
+fetchkit-cli = { version = "0.7", default-features = false, features = ["docs-pdf", "docs-markkit"], optional = true }
+fetchkit = { version = "0.7", default-features = false, features = ["docs-pdf", "docs-markkit"], optional = true }
 
 # std::time::{Instant,SystemTime} panic on wasm32-unknown-unknown; see
 # time_compat/mod.rs. Only pulled in for wasm32 — everywhere else time_compat

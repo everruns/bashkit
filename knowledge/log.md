@@ -4,6 +4,8 @@
 
 * **CI nightly pin**: Every nightly job (fuzz compile check, scheduled fuzz, Miri, ASan build-std) is pinned to `nightly-2026-10-30`. Nightly 2026-10-31 (rustc f9ceb4a4d) rejects the `bashkit` lib with E0391, an async-drop query cycle on `parser::ast::CommandList`; reproduced on unmodified `main`, and the 2026-10-30 nightly builds it. Unpin when a later nightly passes `cargo +nightly check -p bashkit --lib`.
 
+* **markkit and fetchkit builtins**: new off-by-default features `markkit` and `fetchkit` register both CLIs with their exact interface by calling the upstream `run(args, host)` libraries. All file access goes to the VFS and all requests through the sandbox `HttpClient`, hop by hop. Host-only flags (`--ocr`, `--allow-env-proxy`, `--render-rakers`, `--bot-auth-*`, `--allow-remote-conversion`) and `mcp` are refused. See [Markkit and Fetchkit Builtins](runtimes/markkit-fetchkit-builtins.md), TM-NET-030, TM-DOS-139, L-DOC-001.
+
 ## 2026-10-30
 
 * **Windows signing preparation**: Separate unsigned Windows build outputs from publishable wheels. Add a credential-isolated Azure OIDC signing job, native signature/timestamp checks, RECORD regeneration, and a Windows packaging test job. Rollout requires verified publisher identity, a Public Trust profile, profile-scoped signer permission, and a GitHub environment restricted to release tags; the signing gate must remain unmerged until those prerequisites are ready. See [Python Package](runtimes/python-package.md#authenticode-release-path).

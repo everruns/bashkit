@@ -2352,6 +2352,10 @@ impl Interpreter {
         builtins.insert("jq".to_string(), Arc::new(builtins::Jq));
         #[cfg(feature = "jq")]
         builtins.insert("yq".to_string(), Arc::new(builtins::Yq));
+        #[cfg(all(feature = "markkit", not(target_arch = "wasm32")))]
+        builtins.insert("markkit".to_string(), Arc::new(builtins::Markkit));
+        #[cfg(all(feature = "fetchkit", not(target_arch = "wasm32")))]
+        builtins.insert("fetchkit".to_string(), Arc::new(builtins::Fetchkit));
 
         // Custom-construction builtins that need parameters
 

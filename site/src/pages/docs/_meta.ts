@@ -261,6 +261,16 @@ export const DOC_META: DocMeta[] = [
     editPath: "crates/bashkit/docs/sqlite.md",
   },
   {
+    slug: "markkit-fetchkit",
+    title: "markkit and fetchkit",
+    summary: "Document-to-Markdown and URL fetching builtins with the standalone CLIs' interface.",
+    seoTitle: "Bashkit markkit and fetchkit builtins",
+    seoDescription:
+      "Convert PDF, DOCX, HTML and more to Markdown and fetch URLs as LLM-ready Markdown inside Bashkit, with the exact markkit and fetchkit CLIs, the VFS and the network allowlist.",
+    section: "Runtimes",
+    editPath: "docs/markkit-fetchkit.md",
+  },
+  {
     slug: "ssh",
     title: "SSH support",
     summary: "Sandboxed ssh, scp, and sftp builtins with host allowlists.",

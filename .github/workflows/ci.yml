@@ -378,6 +378,14 @@ jobs:
           cargo test -p bashkit --features terminal --test integration -- terminal_tests l_term_
           cargo test -p bashkit --features terminal --doc terminal
 
+      # markkit/fetchkit builtins are `cfg(markkit|fetchkit)` (off by default),
+      # so the main "Run tests" step compiles them out entirely.
+      - name: Run markkit/fetchkit builtin tests
+        run: |
+          cargo test -p bashkit --features markkit,fetchkit --lib -- builtins::markkit:: builtins::fetchkit::
+          cargo test -p bashkit --features markkit,fetchkit --test integration -- markkit_builtin_tests fetchkit_builtin_tests
+          cargo test -p bashkit --features markkit --test integration -- markkit_builtin_tests
+
       - name: Run fail-point tests (single-threaded)
         run: cargo test --features failpoints --test security_failpoint_tests -- --test-threads=1
 
