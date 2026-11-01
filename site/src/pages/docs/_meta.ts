@@ -266,7 +266,7 @@ export const DOC_META: DocMeta[] = [
     summary: "Document-to-Markdown and URL fetching builtins with the standalone CLIs' interface.",
     seoTitle: "Bashkit markkit and fetchkit builtins",
     seoDescription:
-      "Convert PDF, DOCX, HTML and more to Markdown and fetch URLs as LLM-ready Markdown inside Bashkit, with the exact markkit and fetchkit CLIs, the VFS and the network allowlist.",
+      "Convert PDF, DOCX and HTML to Markdown and fetch URLs inside Bashkit with the exact markkit and fetchkit CLIs, sandboxed.",
     section: "Runtimes",
     editPath: "docs/markkit-fetchkit.md",
   },
