@@ -268,7 +268,8 @@ export const DOC_META: DocMeta[] = [
     seoDescription:
       "Convert PDF, DOCX and HTML to Markdown and fetch URLs inside Bashkit with the exact markkit and fetchkit CLIs, sandboxed.",
     section: "Runtimes",
-    editPath: "docs/markkit-fetchkit.md",
+    collection: "rustdocs",
+    editPath: "crates/bashkit/docs/markkit-fetchkit.md",
   },
   {
     slug: "ssh",

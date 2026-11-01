@@ -385,6 +385,7 @@ jobs:
           cargo test -p bashkit --features markkit,fetchkit --lib -- builtins::markkit:: builtins::fetchkit::
           cargo test -p bashkit --features markkit,fetchkit --test integration -- markkit_builtin_tests fetchkit_builtin_tests
           cargo test -p bashkit --features markkit --test integration -- markkit_builtin_tests
+          cargo test -p bashkit --features markkit,fetchkit --doc -- markkit_fetchkit_guide
 
       - name: Run fail-point tests (single-threaded)
         run: cargo test --features failpoints --test security_failpoint_tests -- --test-threads=1
@@ -534,6 +535,7 @@ jobs:
           cargo run --example realfs_readwrite --features realfs
           cargo run --example sqlite_basic --features sqlite
           cargo run --example sqlite_workflow --features sqlite
+          cargo run --example markkit_fetchkit --features markkit,fetchkit
           cargo run --example terminal_vi --features terminal
           cargo run --example terminal_record --features terminal
 

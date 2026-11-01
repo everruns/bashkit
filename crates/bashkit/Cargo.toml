@@ -435,6 +435,10 @@ required-features = ["sqlite"]
 name = "sqlite_workflow"
 required-features = ["sqlite"]
 
+[[example]]
+name = "markkit_fetchkit"
+required-features = ["markkit", "fetchkit"]
+
 # Additional tokio features needed only on native (not WASM)
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "fs"] }

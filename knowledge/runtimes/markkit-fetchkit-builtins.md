@@ -112,6 +112,12 @@ startup cost: registration is a map insert, nothing is loaded until a call.
   errors, VFS + stdin, allowlist and redirect enforcement, refused flags, limit
   clamping, tenant isolation.
 - `no_leak_*` in `builtins/markkit.rs` and `builtins/fetchkit.rs` (TM-INF-022).
+- `examples/markkit_fetchkit.rs`: self-checking smoke (VFS, stdin, URL with
+  redirect, JSON + jq, allowlist denial, refused flag) over an in-process
+  `HttpTransport`; run in the CI Examples job. `LIVE_URL=<url>` adds a real
+  fetch (checked by hand on 2026-11-01 against example.com, docs.rs and a W3C
+  PDF). User guide: `crates/bashkit/docs/markkit-fetchkit.md` (rustdoc
+  `markkit_fetchkit_guide`, site page `/docs/markkit-fetchkit`).
 - Upstream: `crates/*-cli/tests/host.rs` in each repo (binary vs `run()` byte
   parity, host routing, `Send` futures).
 

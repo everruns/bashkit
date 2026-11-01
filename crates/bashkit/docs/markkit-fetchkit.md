@@ -32,7 +32,7 @@ print: bashkit calls the same library code, so flags never drift.
 - **Files** come from the virtual filesystem (paths relative to the shell's
   working directory). The host filesystem is never read.
 - **Network** goes through the same default-deny allowlist as `curl`
-  ([Networking](networking.md)). Every redirect hop is checked again.
+  ([Networking](../../../docs/networking.md)). Every redirect hop is checked again.
   Credential injection, request signing and a custom `HttpTransport` apply.
   Without a `NetworkAllowlist`, URLs fail with `network access not configured`.
 - **Limits**: markkit's `--max-*` and `--timeout` flags can lower its limits but
@@ -40,14 +40,33 @@ print: bashkit calls the same library code, so flags never drift.
 - **Environment**: fetchkit reads variables from the shell, never from the
   host process.
 
-```rust
+```rust,no_run
 use bashkit::{Bash, NetworkAllowlist};
 
+# #[tokio::main]
+# async fn main() -> bashkit::Result<()> {
 let mut bash = Bash::builder()
     .network(NetworkAllowlist::new().allow("https://docs.rs"))
     .build();
 let out = bash.exec("fetchkit fetch https://docs.rs/tokio").await?;
+assert_eq!(out.exit_code, 0);
+# Ok(())
+# }
 ```
+
+A runnable, self-checking example lives in
+[`examples/markkit_fetchkit.rs`](../examples/markkit_fetchkit.rs). It serves pages from an
+in-process `HttpTransport`, so it needs no network. Set `LIVE_URL` to also
+fetch a real page:
+
+```bash
+cargo run --example markkit_fetchkit --features markkit,fetchkit
+LIVE_URL=https://example.com cargo run --example markkit_fetchkit --features markkit,fetchkit
+```
+
+Specialized fetchers follow the same rule. For example, fetchkit's arXiv
+fetcher calls `export.arxiv.org`, so allow that origin too or the fetch fails
+with `URL not in allowlist`.
 
 ## Not available in the sandbox
 
@@ -60,13 +79,13 @@ exit code 1 and `Error: <flag> is not available in bashkit`:
 | markkit | `--ocr` | needs a host Tesseract binary or model files |
 | fetchkit | `--allow-env-proxy` | host proxy settings |
 | fetchkit | `--render-rakers` | embedded JavaScript renderer |
-| fetchkit | `--bot-auth-key`, `--bot-auth-agent` | bashkit already signs requests ([Request signing](request-signing.md)) |
+| fetchkit | `--bot-auth-key`, `--bot-auth-agent` | bashkit already signs requests ([Request signing](../../../docs/request-signing.md)) |
 | fetchkit | `--allow-remote-conversion` | uploads documents to a third party |
 
 Both builtins are native only; the browser (wasm) package does not include them.
 
 ## See also
 
-- [Networking & HTTP](networking.md)
-- [Credential injection](../crates/bashkit/docs/credential-injection.md)
-- [Security](security.md)
+- [Networking & HTTP](../../../docs/networking.md)
+- [Credential injection](credential-injection.md)
+- [Security](../../../docs/security.md)
