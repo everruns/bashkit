@@ -52,6 +52,7 @@ Fix root cause. Unsure: read more code; if stuck, ask w/ short options. Unrecogn
 | security/request-signing | Transparent Ed25519 request signing (bot-auth) per RFC 9421 |
 | integrations/interactive-shell | Interactive REPL mode with rustyline line editing |
 | integrations/in-process-terminal | In-memory PTY-like `Terminal` (feature `terminal`), screen text, `vi` builtin |
+| runtimes/markkit-fetchkit-builtins | `markkit`/`fetchkit` builtins: same CLI via upstream `run(args, host)`, VFS + allowlist |
 | runtimes/sqlite-builtin | Embedded SQLite via Turso (MemoryIO + VfsIO backends, dot-commands) |
 | runtimes/coreutils-args-port | Codegen port of uutils clap definitions + uucore modules |
 | security/credential-injection | Per-host HTTP credential injection without exposing secrets |

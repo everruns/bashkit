@@ -4255,6 +4255,22 @@ pub mod cpython_guide {}
 #[doc = include_str!("../docs/sqlite.md")]
 pub mod sqlite_guide {}
 
+/// Guide for the `markkit` and `fetchkit` builtins (features `markkit`, `fetchkit`).
+///
+/// Topics covered:
+/// - Same CLI as the standalone tools (`markkit extract`, `fetchkit fetch`)
+/// - VFS files, pipeline stdin, and the network allowlist
+/// - Limits that can only be lowered
+/// - Flags refused in the sandbox (`mcp`, `--ocr`, `--render-rakers`, ...)
+///
+/// **Related:** `BashBuilder::network`, `NetworkAllowlist`, [`threat_model`]
+#[cfg(all(
+    any(feature = "markkit", feature = "fetchkit"),
+    not(target_arch = "wasm32")
+))]
+#[doc = include_str!("../docs/markkit-fetchkit.md")]
+pub mod markkit_fetchkit_guide {}
+
 /// Guide for embedded TypeScript execution via the ZapCode interpreter.
 ///
 /// This guide covers:
