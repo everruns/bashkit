@@ -20,6 +20,13 @@
 //!   so those read the modification time.
 //! - THREAT[TM-DOS-121]: `-L` loop detection, budget-charged listings, capped
 //!   output, bounded `{} +` batches.
+//! - Round trips (remote VFS backends pay ~one network call per FS call): an
+//!   entry's metadata comes from its parent's `read_dir` listing; `lstat` runs
+//!   only for roots, and symlinks add `read_link` + a target `stat`. A
+//!   directory listing read for `%n`/`-ls` is reused when descending. Without
+//!   side-effecting or traversal-cutting actions (`-exec*`, `-delete`,
+//!   `-prune`, `-quit`), each directory root is listed with one
+//!   `FileSystem::walk` call, which bulk backends answer in one query.
 //! - `-ok`/`-okdir`, `-samefile`, `-inum`, `-links`,
 //!   `-fstype`, `-context` are not implemented (L-FIND-001).
 
@@ -42,7 +49,7 @@ use super::{
 };
 use crate::StreamData;
 use crate::error::Result;
-use crate::fs::{FileSystem, Metadata, vfs_join};
+use crate::fs::{DirEntry, FileSystem, Metadata, vfs_join};
 use crate::interpreter::ExecResult;
 
 const HELP: &str = "Usage: find [-H] [-L] [-P] [PATH...] [EXPRESSION]\nSearch for files in a directory hierarchy.\n\nOperators: ( EXPR ), ! EXPR, -not EXPR, EXPR -a EXPR, EXPR -o EXPR, EXPR , EXPR\nOptions: -maxdepth N -mindepth N -depth -follow -daystart -regextype TYPE -xdev\nTests: -name -iname -path -ipath -lname -regex -iregex -type -xtype -size -empty\n       -mtime -mmin -atime -amin -ctime -cmin -newer -newerXY -perm -readable\n       -writable -executable -user -group -uid -gid -nouser -nogroup -true -false\nActions: -print -print0 -printf FMT -delete -prune -quit\n         -exec CMD {} ; -exec CMD {} + -execdir CMD {} ; -execdir CMD {} +\n      --help\tdisplay this help and exit\n      --version\toutput version information and exit\n";
@@ -122,6 +129,8 @@ pub(super) struct Entry {
     pub(super) link_target: Option<String>,
     follow: bool,
     subdirs: usize,
+    /// Listing read for `%n`/`-ls`, reused when descending.
+    listing: Option<Vec<DirEntry>>,
 }
 
 impl Entry {
@@ -187,6 +196,8 @@ enum Work {
         root: usize,
         depth: usize,
         ancestors: Option<Arc<Ancestor>>,
+        /// `lstat` metadata already known from the parent's listing.
+        lmeta: Option<Metadata>,
     },
     /// `-depth`: evaluate a directory after its children.
     Post(Box<Entry>),
@@ -502,6 +513,11 @@ pub(super) struct FindRun {
     budget: Option<crate::ExecutionCapability<crate::limits::ExecutionBudget>>,
     exec_templates: HashMap<usize, Vec<String>>,
     needs_nlink: bool,
+    /// Whether directory roots may be listed up front with `walk` (no
+    /// action changes or cuts the traversal).
+    bulk_walk: bool,
+    /// Listings from `walk`, consumed as directories are descended.
+    prefetched: HashMap<PathBuf, Vec<DirEntry>>,
     next_root: usize,
     stack: Vec<Work>,
     current: Option<Pending>,
@@ -589,6 +605,15 @@ impl FindRun {
         }
         let mut exec_templates = HashMap::new();
         let mut needs_nlink = false;
+        let mut bulk_walk = true;
+        expr.walk(&mut |e| {
+            if matches!(
+                e,
+                Expr::Exec { .. } | Expr::Delete { .. } | Expr::Prune | Expr::Quit
+            ) {
+                bulk_walk = false;
+            }
+        });
         expr.walk_mut(&mut |e| match e {
             Expr::Newer { reference, .. } => {
                 if let NewerRef::File(key) | NewerRef::Date(key) = reference {
@@ -625,6 +650,8 @@ impl FindRun {
             budget: ctx.execution_budget(),
             exec_templates,
             needs_nlink,
+            bulk_walk,
+            prefetched: HashMap::new(),
             next_root: 0,
             stack: Vec::new(),
             current: None,
@@ -737,9 +764,19 @@ impl FindRun {
     async fn start_root(&mut self, index: usize) {
         let root = self.cfg.roots[index].clone();
         let abs = resolve_path(&self.cwd, &root);
-        if self.cfg.fs.lstat(&abs).await.is_err() {
+        let Ok(lmeta) = self.cfg.fs.lstat(&abs).await else {
             self.error(format!("find: '{root}': No such file or directory\n"));
             return;
+        };
+        if self.bulk_walk && lmeta.file_type.is_dir() {
+            // One call for the whole subtree on bulk backends; the default is
+            // the same `read_dir`s the traversal would issue anyway. A failed
+            // walk just leaves the traversal to list (and report) on its own.
+            if let Ok(listings) = self.cfg.fs.walk(&abs, self.cfg.opts.max_depth).await {
+                for listing in listings {
+                    self.prefetched.insert(listing.path, listing.entries);
+                }
+            }
         }
         self.stack.push(Work::Visit {
             abs,
@@ -747,6 +784,7 @@ impl FindRun {
             root: index,
             depth: 0,
             ancestors: None,
+            lmeta: Some(lmeta),
         });
     }
 
@@ -759,7 +797,7 @@ impl FindRun {
     }
 
     async fn visit(&mut self, work: Work) -> Result<()> {
-        let (abs, display, root, depth, ancestors) = match work {
+        let (abs, display, root, depth, ancestors, lmeta) = match work {
             Work::Post(entry) => {
                 self.current = Some(Pending {
                     entry: *entry,
@@ -775,15 +813,19 @@ impl FindRun {
                 root,
                 depth,
                 ancestors,
-            } => (abs, display, root, depth, ancestors),
+                lmeta,
+            } => (abs, display, root, depth, ancestors, lmeta),
         };
         let fs = self.cfg.fs.clone();
-        let lmeta = match fs.lstat(&abs).await {
-            Ok(m) => m,
-            Err(e) => {
-                self.error(format!("find: '{display}': {e}\n"));
-                return Ok(());
-            }
+        let lmeta = match lmeta {
+            Some(m) => m,
+            None => match fs.lstat(&abs).await {
+                Ok(m) => m,
+                Err(e) => {
+                    self.error(format!("find: '{display}': {e}\n"));
+                    return Ok(());
+                }
+            },
         };
         let follow = self.follows(depth);
         let (link_target, fmeta, dir_path) = if lmeta.file_type.is_symlink() {
@@ -813,14 +855,21 @@ impl FindRun {
             link_target,
             follow,
             subdirs: 0,
+            listing: None,
         };
         let is_dir = entry.meta().file_type.is_dir();
         if is_dir && self.needs_nlink {
-            entry.subdirs = fs
-                .read_dir(&entry.dir_path)
-                .await
-                .map(|c| c.iter().filter(|d| d.metadata.file_type.is_dir()).count())
-                .unwrap_or(0);
+            let listing = match self.prefetched.remove(&entry.dir_path) {
+                Some(list) => Ok(list),
+                None => fs.read_dir(&entry.dir_path).await,
+            };
+            if let Ok(list) = listing {
+                entry.subdirs = list
+                    .iter()
+                    .filter(|d| d.metadata.file_type.is_dir())
+                    .count();
+                entry.listing = Some(list);
+            }
         }
         if is_dir && self.cfg.opts.follow != Follow::Never {
             let mut cur = ancestors.as_deref();
@@ -837,7 +886,7 @@ impl FindRun {
             }
         }
         if self.cfg.opts.depth_first && is_dir {
-            let children = self.children(&entry, ancestors).await?;
+            let children = self.children(&mut entry, ancestors).await?;
             self.stack.push(Work::Post(Box::new(entry)));
             self.stack.extend(children.into_iter().rev());
         } else {
@@ -857,7 +906,7 @@ impl FindRun {
     /// and at -maxdepth).
     async fn children(
         &mut self,
-        entry: &Entry,
+        entry: &mut Entry,
         ancestors: Option<Arc<Ancestor>>,
     ) -> Result<Vec<Work>> {
         if !entry.meta().file_type.is_dir()
@@ -865,12 +914,19 @@ impl FindRun {
         {
             return Ok(Vec::new());
         }
-        let mut list = match self.cfg.fs.read_dir(&entry.dir_path).await {
-            Ok(list) => list,
-            Err(e) => {
-                self.error(format!("find: '{}': {e}\n", entry.display));
-                return Ok(Vec::new());
-            }
+        let listed = match entry.listing.take() {
+            Some(list) => Some(list),
+            None => self.prefetched.remove(&entry.dir_path),
+        };
+        let mut list = match listed {
+            Some(list) => list,
+            None => match self.cfg.fs.read_dir(&entry.dir_path).await {
+                Ok(list) => list,
+                Err(e) => {
+                    self.error(format!("find: '{}': {e}\n", entry.display));
+                    return Ok(Vec::new());
+                }
+            },
         };
         self.consume_work(list.len())?;
         list.sort_by(|a, b| a.name.cmp(&b.name));
@@ -893,6 +949,7 @@ impl FindRun {
                 root: entry.root,
                 depth: entry.depth + 1,
                 ancestors: chain.clone(),
+                lmeta: Some(child.metadata),
             })
             .collect())
     }
@@ -967,7 +1024,8 @@ impl PlanDriver for FindRun {
                     Ok(_) => {
                         self.commit(effects, &pending.cache);
                         if !pending.post && !prune && !self.quit {
-                            let children = self.children(&pending.entry, pending.ancestors).await?;
+                            let children =
+                                self.children(&mut pending.entry, pending.ancestors).await?;
                             self.stack.extend(children.into_iter().rev());
                         }
                     }

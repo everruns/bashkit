@@ -277,6 +277,10 @@ impl FileSystem for ProcSubFs {
     async fn read_dir(&self, path: &Path) -> Result<Vec<DirEntry>> {
         self.inner.read_dir(path).await
     }
+
+    async fn walk(&self, root: &Path, max_depth: Option<usize>) -> Result<Vec<super::DirListing>> {
+        self.inner.walk(root, max_depth).await
+    }
     async fn exists(&self, path: &Path) -> Result<bool> {
         match self.slot(path) {
             Slot::Vfs => self.inner.exists(path).await,

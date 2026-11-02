@@ -580,14 +580,12 @@ async fn create_tar(
         }
         let path = resolve_path(&base_dir, file);
 
-        if !ctx.fs.exists(&path).await.unwrap_or(false) {
+        let Ok(metadata) = ctx.fs.stat(&path).await else {
             return Ok(ExecResult::err(
                 format!("tar: {}: Cannot stat: No such file or directory\n", file),
                 2,
             ));
-        }
-
-        let metadata = ctx.fs.stat(&path).await?;
+        };
 
         if metadata.file_type.is_dir() {
             // Add directory recursively
@@ -595,6 +593,7 @@ async fn create_tar(
                 ctx,
                 &path,
                 file,
+                metadata,
                 &mut output_data,
                 &mut verbose_output,
                 names,
@@ -607,6 +606,7 @@ async fn create_tar(
                 ctx,
                 &path,
                 file,
+                Some(metadata),
                 &mut output_data,
                 &mut verbose_output,
                 names,
@@ -658,10 +658,13 @@ async fn create_tar(
 }
 
 /// Add a file to tar archive
+/// `known` is the followed metadata when the caller has it (a listing entry
+/// that is not a symlink), which saves a `stat` round trip per member.
 async fn add_file_to_tar(
     ctx: &Context<'_>,
     path: &Path,
     name: &str,
+    known: Option<crate::fs::Metadata>,
     output: &mut BudgetedBytes,
     verbose_output: &mut BudgetedString,
     names: TarNames,
@@ -670,7 +673,10 @@ async fn add_file_to_tar(
         verbose,
         absolute_names,
     } = names;
-    let metadata = ctx.fs.stat(path).await?;
+    let metadata = match known {
+        Some(metadata) => metadata,
+        None => ctx.fs.stat(path).await?,
+    };
     let content = ctx.fs.read_file(path).await?;
     ctx.consume_budget_input(content.len())?;
     ctx.consume_budget_work(u64::try_from(content.len().div_ceil(64)).unwrap_or(u64::MAX))?;
@@ -744,10 +750,12 @@ fn tar_member_name(name: &str, absolute_names: bool) -> &str {
 }
 
 /// Add a directory to tar archive recursively
+#[allow(clippy::too_many_arguments)]
 fn add_directory_to_tar<'a>(
     ctx: &'a Context<'_>,
     path: &'a Path,
     name: &'a str,
+    metadata: crate::fs::Metadata,
     output: &'a mut BudgetedBytes,
     verbose_output: &'a mut BudgetedString,
     names: TarNames,
@@ -763,8 +771,6 @@ fn add_directory_to_tar<'a>(
             verbose_output.try_push_str(name)?;
             verbose_output.try_push_str("/\n")?;
         }
-
-        let metadata = ctx.fs.stat(path).await?;
 
         // Create tar header for directory
         let mut header = [0u8; TAR_BLOCK_SIZE];
@@ -823,6 +829,7 @@ fn add_directory_to_tar<'a>(
                     ctx,
                     &child_path,
                     &child_name,
+                    entry.metadata,
                     output,
                     verbose_output,
                     names,
@@ -830,8 +837,17 @@ fn add_directory_to_tar<'a>(
                 )
                 .await?;
             } else {
-                add_file_to_tar(ctx, &child_path, &child_name, output, verbose_output, names)
-                    .await?;
+                let known = (!entry.metadata.file_type.is_symlink()).then_some(entry.metadata);
+                add_file_to_tar(
+                    ctx,
+                    &child_path,
+                    &child_name,
+                    known,
+                    output,
+                    verbose_output,
+                    names,
+                )
+                .await?;
             }
         }
 

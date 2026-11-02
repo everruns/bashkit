@@ -437,7 +437,10 @@ pub use search::{
     SearchCapabilities, SearchCapable, SearchMatch, SearchProvider, SearchQuery, SearchResults,
 };
 pub(crate) use std_streams::{StdStreamsFs, args_name_std_stream};
-pub use traits::{DirEntry, FileSystem, FileSystemExt, FileType, Metadata, fs_errors};
+pub use traits::{
+    DirEntry, DirListing, FileSystem, FileSystemExt, FileType, Metadata, fs_errors,
+    walk_with_read_dir,
+};
 
 use crate::error::Result;
 use std::io::{Error as IoError, ErrorKind};

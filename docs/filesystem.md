@@ -87,6 +87,24 @@ and path normalization. It does not mutate the filesystem or certify failure
 atomicity, symlink behavior, quota accounting, or error normalization; custom
 adapter tests remain responsible for those invariants.
 
+### Remote backends
+
+When every `FileSystem` call is a network round trip, the call count decides
+how fast `find`, `rg`, `grep -r` and `du` are. Bashkit's walkers list each
+directory once and trust the metadata in `read_dir` entries, so a backend
+should return the same metadata there that `lstat` returns. Two optional
+methods cut the count further:
+
+- `as_search_capable()`: a content index (`SearchCapable`). `rg` and `grep -r`
+  then make one `search` call and read only the matching files, with
+  `.gitignore`/`.ignore` rules still applied.
+- `walk(root, max_depth)`: every directory listing below `root` in one call
+  (for example one path-prefix query). The default issues one `read_dir` per
+  directory. `find` and `du` use it.
+
+`cargo bench --bench remote_fs -- --counts` prints the calls each command makes
+over a copy of the bashkit repository.
+
 ## Built-in implementations
 
 | Implementation | Purpose |

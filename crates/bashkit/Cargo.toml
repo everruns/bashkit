@@ -350,6 +350,10 @@ name = "file_ops"
 harness = false
 
 [[bench]]
+name = "remote_fs"
+harness = false
+
+[[bench]]
 name = "awk_regex"
 harness = false
 

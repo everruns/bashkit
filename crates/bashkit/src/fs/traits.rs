@@ -417,6 +417,70 @@ pub trait FileSystem: FileSystemExt {
     fn as_search_capable(&self) -> Option<&dyn super::SearchCapable> {
         None
     }
+
+    /// List `root` and every directory below it in one call.
+    ///
+    /// Returns one [`DirListing`] per directory: `root` itself (depth 0) and
+    /// each descendant directory at depth `d` with `d + 1 <= max_depth`, so
+    /// `max_depth = Some(1)` returns only `root`'s listing and `None` walks
+    /// the whole subtree. Entries carry the same metadata `read_dir` returns.
+    /// Symlinks are listed, never followed. A descendant directory that
+    /// cannot be listed is left out; callers that need its error call
+    /// `read_dir` on it. Listing order is unspecified.
+    ///
+    /// The default issues one `read_dir` per directory. Backends where each
+    /// call is a network round trip (a database or object store) should
+    /// override it with one bulk query, e.g. a path-prefix scan. `find`,
+    /// `ls -R`, `du` and `tree` use it when they would list every directory
+    /// anyway.
+    ///
+    /// # Errors
+    ///
+    /// Returns the `read_dir` error for `root`.
+    async fn walk(&self, root: &Path, max_depth: Option<usize>) -> Result<Vec<DirListing>> {
+        walk_with_read_dir(self, root, max_depth).await
+    }
+}
+
+/// One directory listing returned by [`FileSystem::walk`].
+#[derive(Debug, Clone)]
+pub struct DirListing {
+    /// Absolute path of the listed directory.
+    pub path: std::path::PathBuf,
+    /// Its entries, as [`FileSystem::read_dir`] returns them.
+    pub entries: Vec<DirEntry>,
+}
+
+/// The default [`FileSystem::walk`]: one `read_dir` per directory.
+///
+/// Public so overriding implementations can fall back to it for paths they
+/// cannot answer in bulk.
+pub async fn walk_with_read_dir<F: FileSystem + ?Sized>(
+    fs: &F,
+    root: &Path,
+    max_depth: Option<usize>,
+) -> Result<Vec<DirListing>> {
+    let mut out = Vec::new();
+    if max_depth == Some(0) {
+        return Ok(out);
+    }
+    let entries = fs.read_dir(root).await?;
+    let mut stack = vec![(root.to_path_buf(), 0usize, entries)];
+    while let Some((path, depth, entries)) = stack.pop() {
+        let child_depth = depth + 1;
+        if max_depth.is_none_or(|m| child_depth < m) {
+            for entry in &entries {
+                if entry.metadata.file_type.is_dir() {
+                    let child = super::vfs_join(&path, &entry.name);
+                    if let Ok(list) = fs.read_dir(&child).await {
+                        stack.push((child, child_depth, list));
+                    }
+                }
+            }
+        }
+        out.push(DirListing { path, entries });
+    }
+    Ok(out)
 }
 
 /// File or directory metadata.

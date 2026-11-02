@@ -469,6 +469,15 @@ impl FileSystem for RootFs {
         }
     }
 
+    async fn walk(&self, root: &Path, max_depth: Option<usize>) -> Result<Vec<super::DirListing>> {
+        // Subtrees without system paths are the session filesystem's alone.
+        let p = normalize_path(root);
+        if Self::sys_path(&p).is_some() || SYS_TREES.iter().any(|t| Path::new(t).starts_with(&p)) {
+            return super::walk_with_read_dir(self, root, max_depth).await;
+        }
+        self.inner.walk(root, max_depth).await
+    }
+
     async fn exists(&self, path: &Path) -> Result<bool> {
         if self.inner.exists(path).await? {
             return Ok(true);

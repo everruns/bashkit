@@ -4,6 +4,9 @@
 //! recorded GNU goldens.
 //!
 //! Decisions:
+//! - Round trips: `-r` takes file sizes from the directory listing (no
+//!   `stat` per file) and resolves only the root and symlinked directories;
+//!   an index answer with zero matches is final, never re-walked.
 //! - Patterns: `-G` (default) and `-E` are GNU BRE/ERE translated by
 //!   `grep_pattern` and matched leftmost-longest (`-o` prints the longest
 //!   alternative); back-references fall back to fancy-regex. `-P` is
@@ -1139,6 +1142,7 @@ impl Builtin for Grep {
                     &mut errors,
                     &mut read_failed,
                     stream.as_ref(),
+                    None,
                 )
                 .await?
             };
@@ -1206,6 +1210,8 @@ struct GrepAncestor {
 
 struct GrepDirectory {
     path: std::path::PathBuf,
+    /// Symlink-free path, when known without resolving.
+    canonical: Option<std::path::PathBuf>,
     ancestors: Option<std::sync::Arc<GrepAncestor>>,
     _lease: Option<crate::limits::ExecutionBudgetLease>,
 }
@@ -1214,11 +1220,15 @@ impl GrepDirectory {
     fn new(
         ctx: &Context<'_>,
         path: &std::path::Path,
+        canonical: Option<std::path::PathBuf>,
         ancestors: Option<std::sync::Arc<GrepAncestor>>,
     ) -> Result<Self> {
-        let lease = ctx.lease_budget_bytes(path.as_os_str().len())?;
+        let lease = ctx.lease_budget_bytes(
+            path.as_os_str().len() + canonical.as_ref().map_or(0, |c| c.as_os_str().len()),
+        )?;
         Ok(Self {
             path: path.to_path_buf(),
+            canonical,
             ancestors,
             _lease: lease,
         })
@@ -1263,16 +1273,22 @@ async fn scan_file(
     errors: &mut String,
     read_failed: &mut bool,
     stream: Option<&super::StdoutStream>,
+    size_hint: Option<u64>,
 ) -> Result<(usize, bool)> {
     ctx.consume_budget_work(1)?;
-    let meta = match ctx.fs.stat(path).await {
-        Ok(meta) => meta,
-        Err(e) => {
-            read_error(sh.opts, name, &e, errors, read_failed);
-            return Ok((0, false));
-        }
+    // A recursive walk already has the size from the directory listing; a
+    // `stat` per file would double the round trips on remote backends.
+    let size = match size_hint {
+        Some(size) => size,
+        None => match ctx.fs.stat(path).await {
+            Ok(meta) => meta.size,
+            Err(e) => {
+                read_error(sh.opts, name, &e, errors, read_failed);
+                return Ok((0, false));
+            }
+        },
     };
-    let size = usize::try_from(meta.size).unwrap_or(usize::MAX);
+    let size = usize::try_from(size).unwrap_or(usize::MAX);
     ctx.consume_budget_input(size)?;
     let _lease = ctx.lease_budget_bytes(size)?;
     let bytes = match ctx.fs.read_file(path).await {
@@ -1316,7 +1332,8 @@ async fn scan_recursive(
     {
         for path in found.paths.iter() {
             let name = recursive_display(operand, &root, path);
-            let (n, _) = scan_file(ctx, sh, &name, path, out, errors, read_failed, None).await?;
+            let (n, _) =
+                scan_file(ctx, sh, &name, path, out, errors, read_failed, None, None).await?;
             selected = selected.saturating_add(n);
             if n > 0 && opts.quiet {
                 break;
@@ -1325,18 +1342,24 @@ async fn scan_recursive(
         return Ok(selected);
     }
     let mut stack = budgeted_vec(ctx)?;
-    stack.try_push(GrepDirectory::new(ctx, &root, None)?)?;
+    stack.try_push(GrepDirectory::new(ctx, &root, None, None)?)?;
     // THREAT[TM-DOS-011,TM-DOS-096]: A hop cap bounds one lookup, not a
     // branching walk. Reject ancestor cycles and meter synchronous VFS work.
     while let Some(dir) = stack.pop() {
         ctx.consume_budget_work(1)?;
-        let canonical = match crate::fs::canonicalize(ctx.fs.as_ref(), &dir.path).await {
-            Ok(path) => path,
-            Err(e) => {
-                let name = recursive_display(operand, &root, &dir.path);
-                read_error(opts, &name, &e, errors, read_failed);
-                continue;
-            }
+        // Only the root and directories reached through a symlink need a
+        // resolve (one `lstat` per path component); a plain subdirectory's
+        // canonical path is its parent's plus its name.
+        let canonical = match dir.canonical.clone() {
+            Some(path) => path,
+            None => match crate::fs::canonicalize(ctx.fs.as_ref(), &dir.path).await {
+                Ok(path) => path,
+                Err(e) => {
+                    let name = recursive_display(operand, &root, &dir.path);
+                    read_error(opts, &name, &e, errors, read_failed);
+                    continue;
+                }
+            },
         };
         let mut ancestor = dir.ancestors.as_deref();
         let mut cycle = false;
@@ -1365,7 +1388,7 @@ async fn scan_recursive(
                 .saturating_add(std::mem::size_of::<GrepAncestor>()),
         )?;
         let ancestors = std::sync::Arc::new(GrepAncestor {
-            path: canonical,
+            path: canonical.clone(),
             parent: dir.ancestors,
             _lease: ancestor_lease,
         });
@@ -1392,12 +1415,17 @@ async fn scan_recursive(
             ctx.consume_budget_work(1)?;
             let entry_path = vfs_join(&dir.path, &entry.name);
             let mut ft = entry.metadata.file_type;
-            if ft.is_symlink() {
+            let mut size = entry.metadata.size;
+            let via_link = ft.is_symlink();
+            if via_link {
                 if !opts.dereference {
                     continue;
                 }
                 match ctx.fs.stat(&entry_path).await {
-                    Ok(meta) => ft = meta.file_type,
+                    Ok(meta) => {
+                        ft = meta.file_type;
+                        size = meta.size;
+                    }
                     Err(_) => continue,
                 }
             }
@@ -1412,14 +1440,25 @@ async fn scan_recursive(
                 subdirs.try_push(GrepDirectory::new(
                     ctx,
                     &entry_path,
+                    (!via_link).then(|| vfs_join(&canonical, &entry.name)),
                     Some(ancestors.clone()),
                 )?)?;
             } else if ft.is_file()
                 && should_include_file(&entry.name, &opts.include_patterns, &opts.exclude_patterns)
             {
                 let name = recursive_display(operand, &root, &entry_path);
-                let (n, _) =
-                    scan_file(ctx, sh, &name, &entry_path, out, errors, read_failed, None).await?;
+                let (n, _) = scan_file(
+                    ctx,
+                    sh,
+                    &name,
+                    &entry_path,
+                    out,
+                    errors,
+                    read_failed,
+                    None,
+                    Some(size),
+                )
+                .await?;
                 selected = selected.saturating_add(n);
                 if n > 0 && opts.quiet {
                     return Ok(selected);
@@ -1582,9 +1621,8 @@ async fn try_indexed_search(
         inputs.try_push(candidate)?;
     }
 
-    if inputs.is_empty() {
-        return Ok(None);
-    }
+    // An index that answered with no (in-scope) match is still an answer:
+    // walking the tree to find nothing again costs a read per file.
     Ok(Some(IndexedInputs {
         paths: inputs,
         _leases: path_leases,
@@ -2188,7 +2226,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_grep_recursive_indexed_search_falls_back_for_multiple_roots() {
+    /// The index is authoritative for every root it covers: an empty answer
+    /// is final, not a cue to re-walk (a walk costs a read per file on
+    /// remote backends). An index that may be stale must not be offered.
+    async fn test_grep_recursive_indexed_search_empty_answer_is_final() {
         let grep = Grep;
         let inner = InMemoryFs::new();
         inner.mkdir(Path::new("/safe"), true).await.unwrap();
@@ -2232,8 +2273,8 @@ mod tests {
         };
 
         let result = grep.execute(ctx).await.unwrap();
-        assert_eq!(result.exit_code, 0);
-        assert!(result.stdout.contains("/other/hit.txt:SECRET"));
+        assert_eq!(result.exit_code, 1);
+        assert_eq!(result.stdout, "");
     }
 
     #[tokio::test]

@@ -473,8 +473,50 @@ impl crate::FileSystem for ExecutionFileSystem {
         self.run(self.inner.set_modified_time(path, time)).await?
     }
 
-    // Returning the raw search provider would bypass the execution lease.
+    async fn walk(
+        &self,
+        root: &std::path::Path,
+        max_depth: Option<usize>,
+    ) -> crate::Result<Vec<crate::DirListing>> {
+        self.run(self.inner.walk(root, max_depth)).await?
+    }
+
+    // The raw provider would outlive the execution lease, so providers are
+    // wrapped: every search re-checks the lease (see `LeasedSearchProvider`).
     fn as_search_capable(&self) -> Option<&dyn crate::SearchCapable> {
-        None
+        self.scope.ensure_active().ok()?;
+        self.inner.as_search_capable()?;
+        Some(self)
+    }
+}
+
+impl crate::SearchCapable for ExecutionFileSystem {
+    fn search_provider(&self, path: &std::path::Path) -> Option<Box<dyn crate::SearchProvider>> {
+        self.scope.ensure_active().ok()?;
+        let inner = self.inner.as_search_capable()?.search_provider(path)?;
+        Some(Box::new(LeasedSearchProvider {
+            inner,
+            scope: Arc::clone(&self.scope),
+        }))
+    }
+}
+
+/// Search provider that stops working when its execution lease is revoked,
+/// so a builtin cannot keep querying the index after its command returns.
+struct LeasedSearchProvider {
+    inner: Box<dyn crate::SearchProvider>,
+    scope: Arc<ExecutionScope>,
+}
+
+impl crate::SearchProvider for LeasedSearchProvider {
+    fn search(&self, query: &crate::SearchQuery) -> crate::Result<crate::SearchResults> {
+        self.scope
+            .ensure_active()
+            .map_err(|_| ExecutionFileSystem::revoked())?;
+        self.inner.search(query)
+    }
+
+    fn capabilities(&self) -> crate::SearchCapabilities {
+        self.inner.capabilities()
     }
 }

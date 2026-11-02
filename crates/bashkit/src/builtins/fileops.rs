@@ -429,11 +429,26 @@ pub(crate) fn copy_tree<'a>(
     dst: &'a Path,
     no_clobber: bool,
 ) -> CopyTreeFuture<'a> {
+    copy_tree_entry(ctx, src, dst, no_clobber, None)
+}
+
+/// [`copy_tree`] for an entry whose `lstat` metadata may already be known
+/// from its parent's listing (saves one round trip per entry).
+fn copy_tree_entry<'a>(
+    ctx: &'a Context<'_>,
+    src: &'a Path,
+    dst: &'a Path,
+    no_clobber: bool,
+    known: Option<crate::fs::Metadata>,
+) -> CopyTreeFuture<'a> {
     Box::pin(async move {
         ctx.consume_budget_work(1)?;
-        let meta = match ctx.fs.lstat(src).await {
-            Ok(m) => m,
-            Err(e) => return Ok(Err(format!("cannot stat '{}': {e}", src.display()))),
+        let meta = match known {
+            Some(m) => m,
+            None => match ctx.fs.lstat(src).await {
+                Ok(m) => m,
+                Err(e) => return Ok(Err(format!("cannot stat '{}': {e}", src.display()))),
+            },
         };
         if meta.file_type.is_dir() {
             match ctx.fs.stat(dst).await {
@@ -462,7 +477,9 @@ pub(crate) fn copy_tree<'a>(
             for entry in entries {
                 let from = vfs_join(src, &entry.name);
                 let to = vfs_join(dst, &entry.name);
-                if let Err(msg) = copy_tree(ctx, &from, &to, no_clobber).await? {
+                if let Err(msg) =
+                    copy_tree_entry(ctx, &from, &to, no_clobber, Some(entry.metadata)).await?
+                {
                     return Ok(Err(msg));
                 }
             }

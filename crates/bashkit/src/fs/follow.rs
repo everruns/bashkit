@@ -143,6 +143,16 @@ impl FollowFs {
     }
 
     /// Path to write: the link's target when the final component is a link.
+    /// `path` with every link resolved, for operations on an existing file.
+    /// Fast path: one inner `stat` shows no link is involved (inner layers
+    /// fail on a link in a parent and report a final link as a link).
+    async fn resolve_existing(&self, path: &Path) -> Result<PathBuf> {
+        match self.inner.stat(path).await {
+            Ok(meta) if !meta.file_type.is_symlink() => Ok(normalize_path(path)),
+            _ => self.resolve(path, true).await,
+        }
+    }
+
     async fn write_target(&self, path: &Path) -> Result<PathBuf> {
         match self.inner.stat(path).await {
             Ok(meta) if meta.file_type.is_symlink() => self.resolve(path, true).await,
@@ -261,6 +271,32 @@ impl FileSystem for FollowFs {
         retry_resolved!(self, followed, path, |p| self.inner.read_dir(p).await)
     }
 
+    async fn walk(&self, root: &Path, max_depth: Option<usize>) -> Result<Vec<super::DirListing>> {
+        // Inner layers never follow, so only `root` itself may need resolving;
+        // listings below it come back with link entries unresolved, the same
+        // as `read_dir`.
+        match self.inner.walk(root, max_depth).await {
+            Err(e) if may_be_link_error(&e) => match self.followed(root).await? {
+                Some(resolved) => {
+                    let mut listings = self.inner.walk(&resolved, max_depth).await?;
+                    let root = normalize_path(root);
+                    for listing in &mut listings {
+                        if let Ok(rest) = listing.path.strip_prefix(&resolved) {
+                            listing.path = if rest.as_os_str().is_empty() {
+                                root.clone()
+                            } else {
+                                super::vfs_join(&root, rest)
+                            };
+                        }
+                    }
+                    Ok(listings)
+                }
+                None => Err(e),
+            },
+            other => other,
+        }
+    }
+
     async fn exists(&self, path: &Path) -> Result<bool> {
         // `test -e` follows links: a dangling link does not exist.
         match self.stat(path).await {
@@ -290,6 +326,16 @@ impl FileSystem for FollowFs {
     }
 
     async fn copy(&self, from: &Path, to: &Path) -> Result<()> {
+        // Fast path: `from` is no link and `to` is no link (or missing), so
+        // the inner layers copy as given. Resolving both paths up front costs
+        // one `stat` per path component, a round trip each on remote backends.
+        let from_plain = matches!(self.inner.stat(from).await, Ok(m) if !m.file_type.is_symlink());
+        if from_plain && !matches!(self.inner.stat(to).await, Ok(m) if m.file_type.is_symlink()) {
+            match self.inner.copy(from, to).await {
+                Err(e) if may_be_link_error(&e) => {}
+                other => return other,
+            }
+        }
         let from_r = self.resolve(from, true).await?;
         let to_r = self.write_target(to).await?;
         self.inner.copy(&from_r, &to_r).await
@@ -310,12 +356,12 @@ impl FileSystem for FollowFs {
     }
 
     async fn chmod(&self, path: &Path, mode: u32) -> Result<()> {
-        let resolved = self.resolve(path, true).await?;
+        let resolved = self.resolve_existing(path).await?;
         self.inner.chmod(&resolved, mode).await
     }
 
     async fn set_modified_time(&self, path: &Path, time: SystemTime) -> Result<()> {
-        let resolved = self.resolve(path, true).await?;
+        let resolved = self.resolve_existing(path).await?;
         self.inner.set_modified_time(&resolved, time).await
     }
 

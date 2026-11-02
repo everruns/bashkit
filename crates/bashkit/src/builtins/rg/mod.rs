@@ -14,12 +14,21 @@
 //!   rg -m NUM PATTERN file      # max count per file
 //!   rg --no-filename PATTERN    # suppress filename
 //!   rg --color never PATTERN    # disable ANSI color output
+//!
+//! Decisions (round trips; remote VFS backends pay ~one network call per FS
+//! call, see `knowledge/foundations/vfs.md`):
+//! - A `SearchCapable` index answers even with ignore rules on: matches are
+//!   filtered through the walk's rules ([`RgIndexIgnore`]), loaded only along
+//!   the directories that lead to a match.
+//! - The walk lists a directory before loading its ignore files and opens
+//!   only those the listing shows; "inside a git repo" is carried down the
+//!   walk instead of a `stat` per ancestor.
 
 use async_trait::async_trait;
 use fancy_regex::RegexBuilder as FancyRegexBuilder;
 use regex::{Regex, RegexBuilder};
 use serde_json::json;
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -3158,7 +3167,7 @@ async fn load_rg_ignore_files(
 
     for ignore_file in opts.ignore_file_paths.clone() {
         let path = resolve_path(cwd, &ignore_file);
-        let content = match read_rg_ignore_file(fs, &path).await {
+        let content = match read_rg_ignore_file(fs, &path, None).await {
             Ok(content) => content,
             Err(Error::Execution(message)) if message.starts_with("rg: ignore file") => {
                 return Err(ExecResult::err(format!("{message}\n"), 2));
@@ -3316,9 +3325,47 @@ fn parse_rg_ignore_rules(
     Ok(rules)
 }
 
+/// Names of the per-directory ignore files, lowest precedence first.
+const RG_VCS_IGNORE_FILE: &str = ".gitignore";
+const RG_DOT_IGNORE_FILES: [&str; 2] = [".ignore", ".rgignore"];
+
+/// Whether a directory listing holds a `.git` directory.
+fn listing_has_git_dir(listing: &[crate::fs::DirEntry]) -> bool {
+    listing
+        .iter()
+        .any(|e| e.name == ".git" && e.metadata.file_type.is_dir())
+}
+
+/// What a directory listing says about an ignore file: `None` when the
+/// listing shows it is absent (skip it, no round trip), otherwise the size
+/// hint to validate against (`None` inside: unknown, `stat` it first).
+fn listed_ignore_file(listing: Option<&[crate::fs::DirEntry]>, name: &str) -> Option<Option<u64>> {
+    let Some(listing) = listing else {
+        return Some(None);
+    };
+    let entry = listing.iter().find(|e| e.name == name)?;
+    Some(
+        entry
+            .metadata
+            .file_type
+            .is_file()
+            .then_some(entry.metadata.size),
+    )
+}
+
+/// Load `dir`'s own ignore files.
+///
+/// `listing` is `dir`'s `read_dir` result when the caller already has it:
+/// ignore files it does not list are skipped without a lookup, so a walk
+/// costs one `read_dir` per directory plus one read per ignore file that
+/// exists. `in_git` is whether `dir` or an ancestor up to `root` holds a
+/// `.git` directory, when the caller tracks it; otherwise it is probed.
+#[allow(clippy::too_many_arguments)]
 async fn load_local_ignore_rules(
     fs: &dyn crate::fs::FileSystem,
     dir: &Path,
+    listing: Option<&[crate::fs::DirEntry]>,
+    in_git: Option<bool>,
     root: &Path,
     opts: &RgOptions,
     inherited_rule_count: usize,
@@ -3329,11 +3376,19 @@ async fn load_local_ignore_rules(
     }
 
     // Ignore evaluation is last-match-wins, so load lower-precedence files first.
-    if !opts.no_ignore_vcs && (!opts.require_git || has_git_dir_in_ancestors(fs, dir, root).await) {
-        if !opts.no_ignore_exclude {
+    let git_applies = !opts.no_ignore_vcs
+        && (!opts.require_git
+            || match in_git {
+                Some(in_git) => in_git,
+                None => has_git_dir_in_ancestors(fs, dir, root).await,
+            });
+    if git_applies {
+        let has_git = listing.is_none_or(listing_has_git_dir);
+        if !opts.no_ignore_exclude && has_git {
             load_optional_ignore_file_with_rule_base(
                 fs,
                 &vfs_join(dir, ".git/info/exclude"),
+                None,
                 dir,
                 opts.ignore_file_case_insensitive,
                 inherited_rule_count,
@@ -3341,35 +3396,34 @@ async fn load_local_ignore_rules(
             )
             .await?;
         }
-        load_optional_ignore_file_with_rule_base(
-            fs,
-            &vfs_join(dir, ".gitignore"),
-            dir,
-            opts.ignore_file_case_insensitive,
-            inherited_rule_count,
-            rules,
-        )
-        .await?;
+        if let Some(size) = listed_ignore_file(listing, RG_VCS_IGNORE_FILE) {
+            load_optional_ignore_file_with_rule_base(
+                fs,
+                &vfs_join(dir, RG_VCS_IGNORE_FILE),
+                size,
+                dir,
+                opts.ignore_file_case_insensitive,
+                inherited_rule_count,
+                rules,
+            )
+            .await?;
+        }
     }
     if !opts.no_ignore_dot {
-        load_optional_ignore_file_with_rule_base(
-            fs,
-            &vfs_join(dir, ".ignore"),
-            dir,
-            opts.ignore_file_case_insensitive,
-            inherited_rule_count,
-            rules,
-        )
-        .await?;
-        load_optional_ignore_file_with_rule_base(
-            fs,
-            &vfs_join(dir, ".rgignore"),
-            dir,
-            opts.ignore_file_case_insensitive,
-            inherited_rule_count,
-            rules,
-        )
-        .await?;
+        for name in RG_DOT_IGNORE_FILES {
+            if let Some(size) = listed_ignore_file(listing, name) {
+                load_optional_ignore_file_with_rule_base(
+                    fs,
+                    &vfs_join(dir, name),
+                    size,
+                    dir,
+                    opts.ignore_file_case_insensitive,
+                    inherited_rule_count,
+                    rules,
+                )
+                .await?;
+            }
+        }
     }
     Ok(())
 }
@@ -3390,8 +3444,26 @@ async fn load_parent_ignore_rules(
     let mut ancestors: Vec<PathBuf> = parent.ancestors().map(Path::to_path_buf).collect();
     ancestors.reverse();
 
+    // Top-down, so "a `.git` at or above this directory" accumulates from
+    // the listings instead of a `stat` per ancestor per level.
+    let mut in_git = false;
     for ancestor in ancestors {
-        load_local_ignore_rules(fs, &ancestor, Path::new("/"), opts, 0, rules).await?;
+        let listing = fs.read_dir(&ancestor).await.ok();
+        in_git = match &listing {
+            Some(listing) => in_git || listing_has_git_dir(listing),
+            None => has_git_dir_in_ancestors(fs, &ancestor, Path::new("/")).await,
+        };
+        load_local_ignore_rules(
+            fs,
+            &ancestor,
+            listing.as_deref(),
+            Some(in_git),
+            Path::new("/"),
+            opts,
+            0,
+            rules,
+        )
+        .await?;
     }
     Ok(())
 }
@@ -3419,18 +3491,19 @@ async fn load_optional_ignore_file(
     case_insensitive: bool,
     rules: &mut Vec<RgIgnoreRule>,
 ) -> Result<()> {
-    load_optional_ignore_file_with_rule_base(fs, path, base, case_insensitive, 0, rules).await
+    load_optional_ignore_file_with_rule_base(fs, path, None, base, case_insensitive, 0, rules).await
 }
 
 async fn load_optional_ignore_file_with_rule_base(
     fs: &dyn crate::fs::FileSystem,
     path: &Path,
+    size_hint: Option<u64>,
     base: &Path,
     case_insensitive: bool,
     inherited_rule_count: usize,
     rules: &mut Vec<RgIgnoreRule>,
 ) -> Result<()> {
-    let content = match read_rg_ignore_file(fs, path).await {
+    let content = match read_rg_ignore_file(fs, path, size_hint).await {
         Ok(content) => content,
         Err(Error::Execution(message)) if message.starts_with("rg: ignore file") => {
             return Err(Error::Execution(message));
@@ -3442,9 +3515,20 @@ async fn load_optional_ignore_file_with_rule_base(
     append_rg_ignore_rules_with_base(rules, parsed, inherited_rule_count)
 }
 
-async fn read_rg_ignore_file(fs: &dyn crate::fs::FileSystem, path: &Path) -> Result<Vec<u8>> {
-    if let Ok(meta) = fs.stat(path).await {
-        validate_rg_ignore_file_size(path, meta.size)?;
+/// Read an ignore file, refusing oversized ones before loading them.
+/// `size_hint` is the size from a directory listing, which saves the `stat`.
+async fn read_rg_ignore_file(
+    fs: &dyn crate::fs::FileSystem,
+    path: &Path,
+    size_hint: Option<u64>,
+) -> Result<Vec<u8>> {
+    match size_hint {
+        Some(size) => validate_rg_ignore_file_size(path, size)?,
+        None => {
+            if let Ok(meta) = fs.stat(path).await {
+                validate_rg_ignore_file_size(path, meta.size)?;
+            }
+        }
     }
     let content = fs.read_file(path).await?;
     validate_rg_ignore_file_size(path, content.len() as u64)?;
@@ -3551,6 +3635,8 @@ struct RgWalkItem {
     rules: Arc<RgIgnoreRuleSet>,
     ancestors: Vec<PathBuf>,
     display_hint: RgDisplayHint,
+    /// A `.git` directory sits in an ancestor between the walk root and here.
+    in_git: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -3636,26 +3722,33 @@ async fn collect_rg_files_recursive(
             rules: Arc::new(RgIgnoreRuleSet::root(rules)),
             ancestors: vec![root.actual.clone()],
             display_hint: root.display_hint,
+            in_git: false,
         });
     }
 
     while let Some(item) = stack.pop() {
-        let mut local_rules = Vec::new();
-        let _ = load_local_ignore_rules(
-            fs,
-            &item.actual,
-            &item.actual_root,
-            opts,
-            item.rules.len(),
-            &mut local_rules,
-        )
-        .await;
-        let rules = if local_rules.is_empty() {
-            item.rules.clone()
-        } else {
-            Arc::new(RgIgnoreRuleSet::child(item.rules.clone(), local_rules))
-        };
-        if let Ok(entries) = fs.read_dir(&item.actual).await {
+        // List first: the listing says which ignore files exist, so missing
+        // ones cost no lookup (one `read_dir` per directory on remote VFSes).
+        let listing = fs.read_dir(&item.actual).await;
+        if let Ok(entries) = listing {
+            let in_git = item.in_git || listing_has_git_dir(&entries);
+            let mut local_rules = Vec::new();
+            let _ = load_local_ignore_rules(
+                fs,
+                &item.actual,
+                Some(&entries),
+                Some(in_git),
+                &item.actual_root,
+                opts,
+                item.rules.len(),
+                &mut local_rules,
+            )
+            .await;
+            let rules = if local_rules.is_empty() {
+                item.rules.clone()
+            } else {
+                Arc::new(RgIgnoreRuleSet::child(item.rules.clone(), local_rules))
+            };
             for entry in entries {
                 let path = vfs_join(&item.logical, &entry.name);
                 let actual_path = vfs_join(&item.actual, &entry.name);
@@ -3692,6 +3785,7 @@ async fn collect_rg_files_recursive(
                             rules: rules.clone(),
                             ancestors: child_ancestors,
                             display_hint: item.display_hint,
+                            in_git,
                         });
                     }
                 } else if entry_metadata.file_type.is_file()
@@ -3872,7 +3966,6 @@ async fn try_indexed_search(
     if opts.invert_match
         || opts.files_without_matches
         || opts.crlf
-        || opts.uses_ignore_files()
         || opts.patterns.len() != 1
         || opts.max_filesize.is_some()
         || !opts.type_includes.is_empty()
@@ -3912,12 +4005,11 @@ async fn try_indexed_search(
         if !caps.content_search || (!opts.fixed_strings && !caps.regex) {
             return None;
         }
-        let explicit_file_root = root_arg.is_some()
-            && fs
-                .stat(&root)
-                .await
-                .ok()
-                .is_some_and(|meta| meta.file_type.is_file());
+        // A missing operand goes to the walk, which reports it like ripgrep.
+        let explicit_file_root = match root_arg {
+            Some(_) => fs.stat(&root).await.ok()?.file_type.is_file(),
+            None => false,
+        };
         let pattern = if index_can_use_literal {
             opts.patterns[0].clone()
         } else {
@@ -3937,6 +4029,9 @@ async fn try_indexed_search(
         };
 
         let results = provider.search(&query).ok()?;
+        // Built on the first match that needs it: no matches, no listings.
+        let mut ignore: Option<RgIndexIgnore<'_>> = None;
+        let uses_ignore = opts.uses_ignore_files() && !explicit_file_root;
         for m in &results.matches {
             let candidate = if m.path.is_absolute() {
                 crate::fs::normalize_path(&m.path)
@@ -3950,8 +4045,19 @@ async fn try_indexed_search(
                 || (!explicit_file_match && !opts.matches_globs(&candidate, cwd))
                 || (!explicit_file_match
                     && !path_allowed_by_hidden_filter(&candidate, &root, opts, cwd))
+                || (!explicit_file_match && !within_rg_max_depth(&candidate, &root, opts))
             {
                 continue;
+            }
+            if uses_ignore && !explicit_file_match {
+                if ignore.is_none() {
+                    ignore = Some(RgIndexIgnore::new(fs, &root, opts).await);
+                }
+                if let Some(ignore) = ignore.as_mut()
+                    && !ignore.allows(&candidate).await
+                {
+                    continue;
+                }
             }
             if let Ok(content) = fs.read_file(&candidate).await {
                 let display = display_path_for(&candidate, cwd, root_arg.as_deref(), opts);
@@ -3967,6 +4073,123 @@ async fn try_indexed_search(
     }
 
     Some(inputs)
+}
+
+/// `--max-depth` for an index match: the root's children are depth 1.
+fn within_rg_max_depth(path: &Path, root: &Path, opts: &RgOptions) -> bool {
+    opts.max_depth.is_none_or(|max_depth| {
+        path.strip_prefix(root)
+            .map(|rel| rel.components().count() <= max_depth)
+            .unwrap_or(false)
+    })
+}
+
+/// Ignore rules for index matches, loaded only along the directories that
+/// lead to a match.
+///
+/// The walk loads every directory's ignore files; an index answer only needs
+/// the directories between the root and each matching file. Each such
+/// directory is listed once (the listing says which ignore files exist and
+/// whether it is a git repository), and a directory that the rules exclude
+/// is never listed: everything below it is dropped. The rules, their order
+/// and their precedence are the walk's (`collect_rg_files_recursive`).
+struct RgIndexIgnore<'a> {
+    fs: &'a dyn crate::fs::FileSystem,
+    opts: &'a RgOptions,
+    root: PathBuf,
+    /// Rules in effect inside each visited directory and its `in_git` flag;
+    /// `None` marks a directory that is ignored (or hidden), with its subtree.
+    dirs: HashMap<PathBuf, Option<(Arc<RgIgnoreRuleSet>, bool)>>,
+}
+
+impl<'a> RgIndexIgnore<'a> {
+    async fn new(fs: &'a dyn crate::fs::FileSystem, root: &Path, opts: &'a RgOptions) -> Self {
+        let mut rules = Vec::new();
+        append_global_ignore_rules_for_root(fs, root, opts, &mut rules).await;
+        rules.extend(opts.explicit_ignore_rules.clone());
+        let _ = load_parent_ignore_rules(fs, root, opts, &mut rules).await;
+        let base = Arc::new(RgIgnoreRuleSet::root(rules));
+        let mut this = Self {
+            fs,
+            opts,
+            root: root.to_path_buf(),
+            dirs: HashMap::new(),
+        };
+        let state = this.enter(root, base, false).await;
+        this.dirs.insert(root.to_path_buf(), Some(state));
+        this
+    }
+
+    /// Rules in effect inside `dir`, given the rules of its parent.
+    async fn enter(
+        &self,
+        dir: &Path,
+        parent_rules: Arc<RgIgnoreRuleSet>,
+        parent_in_git: bool,
+    ) -> (Arc<RgIgnoreRuleSet>, bool) {
+        let listing = self.fs.read_dir(dir).await.ok();
+        let in_git = parent_in_git || listing.as_deref().is_some_and(listing_has_git_dir);
+        let mut local = Vec::new();
+        let _ = load_local_ignore_rules(
+            self.fs,
+            dir,
+            listing.as_deref(),
+            Some(in_git),
+            &self.root,
+            self.opts,
+            parent_rules.len(),
+            &mut local,
+        )
+        .await;
+        let rules = if local.is_empty() {
+            parent_rules
+        } else {
+            Arc::new(RgIgnoreRuleSet::child(parent_rules, local))
+        };
+        (rules, in_git)
+    }
+
+    /// Whether the walk would have searched `path`, a file under the root.
+    async fn allows(&mut self, path: &Path) -> bool {
+        let Ok(rel) = path.strip_prefix(&self.root) else {
+            return false;
+        };
+        let names: Vec<String> = rel
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy().into_owned())
+            .collect();
+        let Some((_, dirs)) = names.split_last() else {
+            return false;
+        };
+        let mut dir = self.root.clone();
+        let Some(Some((mut rules, mut in_git))) = self.dirs.get(&dir).cloned() else {
+            return false;
+        };
+        for name in dirs {
+            let child = vfs_join(&dir, name);
+            let state = match self.dirs.get(&child) {
+                Some(state) => state.clone(),
+                None => {
+                    let state = if (!self.opts.hidden && is_hidden_name(name))
+                        || rules.is_ignored(&child, true)
+                    {
+                        None
+                    } else {
+                        Some(self.enter(&child, rules.clone(), in_git).await)
+                    };
+                    self.dirs.insert(child.clone(), state.clone());
+                    state
+                }
+            };
+            let Some((child_rules, child_in_git)) = state else {
+                return false;
+            };
+            rules = child_rules;
+            in_git = child_in_git;
+            dir = child;
+        }
+        !rules.is_ignored(path, false)
+    }
 }
 
 fn path_allowed_by_hidden_filter(path: &Path, root: &Path, opts: &RgOptions, cwd: &Path) -> bool {

@@ -464,6 +464,90 @@ impl MountableFs {
             }
         }
     }
+
+    /// Mount point that serves `path` (`None`: the root filesystem).
+    fn mount_point_of(&self, path: &Path) -> Option<PathBuf> {
+        let mounts = self.mounts.read().unwrap();
+        mounts
+            .keys()
+            .filter(|m| path.starts_with(m))
+            .max_by_key(|m| m.components().count())
+            .cloned()
+    }
+
+    /// Whether a mount sits strictly below `path`, so one backend cannot
+    /// answer a subtree query for it alone.
+    fn has_mount_below(&self, path: &Path) -> bool {
+        let mounts = self.mounts.read().unwrap();
+        mounts.keys().any(|m| m != path && m.starts_with(path))
+    }
+}
+
+/// Map a backend-relative path back under its mount point.
+fn under_mount(mount: Option<&Path>, inner: &Path) -> PathBuf {
+    match mount {
+        None => inner.to_path_buf(),
+        Some(m) => {
+            let rel = inner.strip_prefix("/").unwrap_or(inner);
+            if rel.as_os_str().is_empty() {
+                m.to_path_buf()
+            } else {
+                vfs_join(m, rel)
+            }
+        }
+    }
+}
+
+/// Search provider of a mounted backend, translating paths at the mount.
+struct MountedSearchProvider {
+    inner: Box<dyn super::SearchProvider>,
+    mount: Option<PathBuf>,
+}
+
+impl super::SearchProvider for MountedSearchProvider {
+    fn search(&self, query: &super::SearchQuery) -> Result<super::SearchResults> {
+        let Some(mount) = &self.mount else {
+            return self.inner.search(query);
+        };
+        let root = MountableFs::normalize_path(&query.root);
+        // This backend only holds paths under its mount point.
+        let Ok(rel) = root.strip_prefix(mount) else {
+            return Ok(super::SearchResults::default());
+        };
+        let mut translated = query.clone();
+        translated.root = vfs_join(Path::new("/"), rel);
+        let mut results = self.inner.search(&translated)?;
+        for m in &mut results.matches {
+            let inner = if is_posix_absolute(&m.path) {
+                m.path.clone()
+            } else {
+                vfs_join(&translated.root, &m.path)
+            };
+            m.path = under_mount(Some(mount), &inner);
+        }
+        Ok(results)
+    }
+
+    fn capabilities(&self) -> super::SearchCapabilities {
+        self.inner.capabilities()
+    }
+}
+
+/// Indexed search passes through to the backend that serves the whole
+/// requested subtree. A subtree with another mount below it has no single
+/// index, so callers fall back to walking.
+impl super::SearchCapable for MountableFs {
+    fn search_provider(&self, path: &Path) -> Option<Box<dyn super::SearchProvider>> {
+        self.validate_path(path).ok()?;
+        let path = Self::normalize_path(path);
+        if self.has_mount_below(&path) {
+            return None;
+        }
+        let mount = self.mount_point_of(&path);
+        let (fs, resolved) = self.resolve(&path);
+        let inner = fs.as_search_capable()?.search_provider(&resolved)?;
+        Some(Box::new(MountedSearchProvider { inner, mount }))
+    }
 }
 
 #[async_trait]
@@ -515,30 +599,50 @@ impl FileSystem for MountableFs {
 
         let mut entries = fs.read_dir(&resolved).await?;
 
-        // Add mount points that are direct children of this directory
-        let mounts = self.mounts.read().unwrap();
-        for mount_path in mounts.keys() {
-            if mount_path.parent() == Some(&path)
-                && let Some(name) = mount_path.file_name()
-            {
-                // Check if this entry already exists
-                let name_str = name.to_string_lossy().to_string();
-                if !entries.iter().any(|e| e.name == name_str) {
-                    entries.push(DirEntry {
-                        name: name_str,
-                        metadata: Metadata {
-                            file_type: FileType::Directory,
-                            size: 0,
-                            mode: 0o755,
-                            modified: crate::time_compat::SystemTime::now(),
-                            created: crate::time_compat::SystemTime::now(),
-                        },
-                    });
-                }
+        // Add mount points that are direct children of this directory. Their
+        // entry carries the mounted root's metadata, the same `stat` returns,
+        // so callers can trust listing metadata without a per-entry `stat`.
+        let children: Vec<(String, Arc<dyn FileSystem>)> = {
+            let mounts = self.mounts.read().unwrap();
+            mounts
+                .iter()
+                .filter(|(mount_path, _)| mount_path.parent() == Some(&path))
+                .filter_map(|(mount_path, mfs)| {
+                    let name = mount_path.file_name()?.to_string_lossy().into_owned();
+                    Some((name, Arc::clone(mfs)))
+                })
+                .collect()
+        };
+        for (name, mfs) in children {
+            let metadata = mfs.stat(Path::new("/")).await.unwrap_or_else(|_| Metadata {
+                file_type: FileType::Directory,
+                size: 0,
+                mode: 0o755,
+                modified: crate::time_compat::SystemTime::now(),
+                created: crate::time_compat::SystemTime::now(),
+            });
+            match entries.iter_mut().find(|e| e.name == name) {
+                Some(entry) => entry.metadata = metadata,
+                None => entries.push(DirEntry { name, metadata }),
             }
         }
 
         Ok(entries)
+    }
+
+    async fn walk(&self, root: &Path, max_depth: Option<usize>) -> Result<Vec<super::DirListing>> {
+        self.validate_path(root)?;
+        let root = Self::normalize_path(root);
+        if self.has_mount_below(&root) {
+            return super::walk_with_read_dir(self, &root, max_depth).await;
+        }
+        let mount = self.mount_point_of(&root);
+        let (fs, resolved) = self.resolve(&root);
+        let mut listings = fs.walk(&resolved, max_depth).await?;
+        for listing in &mut listings {
+            listing.path = under_mount(mount.as_deref(), &listing.path);
+        }
+        Ok(listings)
     }
 
     async fn exists(&self, path: &Path) -> Result<bool> {
@@ -613,6 +717,10 @@ impl FileSystem for MountableFs {
         self.validate_path(path)?;
         let (fs, resolved) = self.resolve(path);
         fs.set_modified_time(&resolved, time).await
+    }
+
+    fn as_search_capable(&self) -> Option<&dyn super::SearchCapable> {
+        Some(self)
     }
 }
 
