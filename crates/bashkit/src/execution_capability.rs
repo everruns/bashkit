@@ -476,9 +476,9 @@ impl crate::FileSystem for ExecutionFileSystem {
     async fn walk(
         &self,
         root: &std::path::Path,
-        max_depth: Option<usize>,
+        opts: crate::WalkOptions,
     ) -> crate::Result<Vec<crate::DirListing>> {
-        self.run(self.inner.walk(root, max_depth)).await?
+        self.run(self.inner.walk(root, opts)).await?
     }
 
     // The raw provider would outlive the execution lease, so providers are

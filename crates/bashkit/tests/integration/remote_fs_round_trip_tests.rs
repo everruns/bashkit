@@ -277,6 +277,87 @@ async fn find_output_is_the_same_with_and_without_bulk_walk() {
     }
 }
 
+// ---- memory bounds -------------------------------------------------------
+
+/// Entries in the seeded tree: every file plus every directory below the root.
+const ENTRIES: u64 = TOTAL_FILES + DIRS - 1;
+/// Backend page size for the bounded-walk tests: ~1/11 of the tree.
+const PAGE: usize = 100;
+
+/// A walk answer is a bounded batch: find and du hold at most one page
+/// (plus one listing) and refill as they descend, with the same output.
+#[tokio::test]
+async fn walk_batches_are_bounded_for_find_and_du() {
+    let (plain, mut plain_bash) = setup(CountingFs::new()).await;
+    let (fs, mut bash) = setup(CountingFs::new().with_native_walk().with_walk_page(PAGE)).await;
+    for script in [
+        "find tree | sort",
+        "find tree -type f -name 'f1*' | sort",
+        "find tree -maxdepth 2 | sort",
+        "find tree -printf '%n %p\\n' | sort",
+        "du -a tree | sort",
+    ] {
+        let (_, expected) = run(&plain, &mut plain_bash, script).await;
+        let (c, got) = run(&fs, &mut bash, script).await;
+        assert_eq!(got, expected, "{script}");
+        assert!(!expected.is_empty(), "{script}: vacuous");
+        assert!(
+            c.walk_peak_entries <= (PAGE + SUB.max(FILES)) as u64,
+            "{script}: {c} peak {}",
+            c.walk_peak_entries
+        );
+        assert_eq!(c.read_dir, 0, "{script}: {c}");
+        assert!(c.walk <= DIRS, "{script}: {c}");
+    }
+    // Whole-tree walks need several pages, not one answer.
+    let (c, _) = run(&fs, &mut bash, "find tree -type f").await;
+    assert!(c.walk >= ENTRIES / (PAGE as u64 + 10), "{c}");
+}
+
+/// The default walk (no bulk backend) still lists each directory once when
+/// answers are cut at the bound.
+#[tokio::test]
+async fn walk_batches_are_bounded_with_the_default_walk() {
+    let (fs, mut bash) = setup(CountingFs::new().with_walk_page(PAGE)).await;
+    for script in ["find tree -type f", "du -s tree"] {
+        let (c, _) = run(&fs, &mut bash, script).await;
+        assert_eq!(c.read_dir, DIRS, "{script}: {c}");
+        assert!(
+            c.walk_peak_entries <= (PAGE + SUB.max(FILES)) as u64,
+            "{script}: {c}"
+        );
+    }
+}
+
+/// rg charges each file to the aggregate-input budget as it reads, so a tree
+/// bigger than the budget stops early instead of loading every file first.
+#[tokio::test]
+async fn rg_stops_reading_at_input_budget() {
+    use bashkit::{Error, ExecutionLimits, LimitExceeded};
+    for backend in [CountingFs::new(), CountingFs::new().with_index()] {
+        let fs = Arc::new(backend);
+        seed(fs.as_ref()).await;
+        // Files are ~30 bytes: the budget covers about 100 of 1,000.
+        let limits = ExecutionLimits::new().max_aggregate_input_bytes(3_000);
+        let mut bash = Bash::builder()
+            .fs(fs.clone())
+            .cwd("/workspace")
+            .limits(limits)
+            .build();
+        fs.reset();
+        let result = bash.exec("rg -c line tree").await;
+        assert!(
+            matches!(
+                result,
+                Err(Error::ResourceLimit(LimitExceeded::ExecutionBudget(_)))
+            ),
+            "expected input budget exhaustion, got {result:?}"
+        );
+        let c = fs.counts();
+        assert!(c.read_file < 200, "read past the budget: {c}");
+    }
+}
+
 // ---- other tree walkers -------------------------------------------------
 
 #[tokio::test]

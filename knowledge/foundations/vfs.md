@@ -413,15 +413,22 @@ and measured by `benches/remote_fs.rs` over the bashkit checkout:
   `stat` an entry they just listed. Only roots, symlinks (`read_link` + target
   `stat`) and explicit operands get a lookup. `MountableFs` lists a mount point
   with the mounted root's `stat`, so the rule also holds at mounts.
-- **`FileSystem::walk(root, max_depth)`** returns the listings of `root` and
-  every directory below it in one call. The default is one `read_dir` per
-  directory (`walk_with_read_dir`); bulk backends override it with a prefix
-  query. Wrappers forward it when they map the subtree one-to-one
+- **`FileSystem::walk(root, WalkOptions { max_depth, max_entries })`** returns
+  the listings of `root` and the directories below it in one call, as a
+  bounded batch: it stops once the answer holds `max_entries` entries
+  (default 10k; at most one listing over, never a split listing). The
+  default is one `read_dir` per directory, depth first, reading a directory
+  only when popped (`walk_with_read_dir`); bulk backends override it with a
+  prefix query and a row limit. Wrappers forward it when they map the subtree one-to-one
   (`FollowFs` rebases a linked root, `MountableFs` when no mount lies below the
   root, `RootFs` outside system trees, `ReadOnlyFs`, per-execution wrappers);
   otherwise they fall back to the default. Callers use it only when they would
   list every directory anyway: `find` without `-exec*`/`-delete`/`-prune`/
-  `-quit`, and `du`. Not `rg` (ignore rules prune), `ls -R` (skips dot
+  `-quit`, and `du`, through `builtins/walk_cache.rs`: a directory missing
+  from the cache triggers another bounded `walk` rooted there, listings are
+  dropped as they are consumed, and an answer without the requested
+  directory switches the run to plain `read_dir`. Memory stays at about one
+  batch for trees of millions of files (TM-DOS-140). Not `rg` (ignore rules prune), `ls -R` (skips dot
   directories), `tree` (entry budget stops early), where an eager default
   walk would read more than today.
 - **`SearchCapable` reaches builtins.** `MountableFs` forwards the provider of
@@ -437,6 +444,10 @@ and measured by `benches/remote_fs.rs` over the bashkit checkout:
   listing shows, and tracks "inside a git repo" down the walk instead of a
   `stat` per ancestor. `--max-depth` is applied to index matches. `-L`,
   `--type`, `--max-filesize`, `--sort` other than path still walk.
+- `rg` keeps every searched file's text until output is built; it charges
+  each file to the aggregate-input budget as it reads (default 100 MB) and
+  stops at the first refusal, so a huge tree fails at the budget instead of
+  after loading every file (TM-DOS-140). Streaming search is a follow-up.
 - An index that answers with no match is an answer: `grep -r` no longer
   re-walks the tree on zero matches.
 - `FollowFs` `copy`/`chmod`/`touch -d` take a fast path (one inner `stat` per

@@ -136,6 +136,7 @@ mod verify;
 #[cfg(feature = "terminal")]
 mod vi;
 mod wait;
+mod walk_cache;
 mod wc;
 mod yes;
 #[cfg(feature = "jq")]

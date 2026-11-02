@@ -11,13 +11,13 @@
 //! trip per call, so a `stat` per file would dominate.
 
 use async_trait::async_trait;
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use super::arg_parser::{OptArg, gnu_getopt};
+use super::walk_cache::WalkCache;
 use super::{Builtin, Context};
 use crate::error::Result;
-use crate::fs::{DirEntry, Metadata, vfs_join};
+use crate::fs::{Metadata, vfs_join};
 use crate::interpreter::ExecResult;
 
 /// The du builtin - estimate file space usage.
@@ -238,21 +238,10 @@ impl Builtin for Du {
                 ));
                 continue;
             };
-            // du lists every directory below the operand, so list them in
-            // one `walk` call (one query on bulk backends); nested entries
-            // take their metadata from these listings, never a per-file stat.
-            let mut listings = HashMap::new();
-            if metadata.file_type.is_dir()
-                && let Ok(found) = ctx.fs.walk(&path, None).await
-            {
-                for listing in found {
-                    listings.insert(listing.path, listing.entries);
-                }
-            }
             let mut walker = DuWalk {
                 ctx: &ctx,
                 opts: &opts,
-                listings,
+                listings: WalkCache::new(true),
                 output: &mut output,
             };
             grand_total += walker.walk(&path, operand, 0, metadata).await?;
@@ -276,8 +265,10 @@ impl Builtin for Du {
 struct DuWalk<'a, 'c> {
     ctx: &'a Context<'c>,
     opts: &'a DuOptions,
-    /// Directory listings from `walk`, consumed as directories are summed.
-    listings: HashMap<PathBuf, Vec<DirEntry>>,
+    /// du lists every directory below the operand, so listings come in
+    /// bounded `walk` batches (one query each on bulk backends); nested
+    /// entries take their metadata from them, never a per-file stat.
+    listings: WalkCache,
     output: &'a mut String,
 }
 
@@ -306,10 +297,7 @@ impl DuWalk<'_, '_> {
             }
 
             let mut total = 0u64;
-            let entries = match self.listings.remove(path) {
-                Some(entries) => entries,
-                None => self.ctx.fs.read_dir(path).await?,
-            };
+            let entries = self.listings.list(&*self.ctx.fs, path, None).await?;
             self.ctx
                 .consume_budget_work(u64::try_from(entries.len()).unwrap_or(u64::MAX))?;
             for entry in entries {

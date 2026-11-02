@@ -630,15 +630,15 @@ impl FileSystem for MountableFs {
         Ok(entries)
     }
 
-    async fn walk(&self, root: &Path, max_depth: Option<usize>) -> Result<Vec<super::DirListing>> {
+    async fn walk(&self, root: &Path, opts: super::WalkOptions) -> Result<Vec<super::DirListing>> {
         self.validate_path(root)?;
         let root = Self::normalize_path(root);
         if self.has_mount_below(&root) {
-            return super::walk_with_read_dir(self, &root, max_depth).await;
+            return super::walk_with_read_dir(self, &root, opts).await;
         }
         let mount = self.mount_point_of(&root);
         let (fs, resolved) = self.resolve(&root);
-        let mut listings = fs.walk(&resolved, max_depth).await?;
+        let mut listings = fs.walk(&resolved, opts).await?;
         for listing in &mut listings {
             listing.path = under_mount(mount.as_deref(), &listing.path);
         }

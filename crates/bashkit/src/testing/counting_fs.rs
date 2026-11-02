@@ -11,6 +11,9 @@
 //!   walked tree, the same way a server-side index answers in one query.
 //! - `native_walk` makes `walk` one counted call (a prefix query) instead of
 //!   the `read_dir`-per-directory default, to show what a bulk backend saves.
+//! - `walk_page` caps entries per `walk` answer below the caller's
+//!   `max_entries` (a backend page size), and `walk_peak_entries` records the
+//!   largest answer, so tests can prove walkers hold a bounded batch.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -25,7 +28,7 @@ use crate::error::Result;
 use crate::fs::{
     DirEntry, DirListing, FileSystem, FileSystemExt, FsLimits, FsUsage, InMemoryFs, Metadata,
     SearchCapabilities, SearchCapable, SearchMatch, SearchProvider, SearchQuery, SearchResults,
-    walk_with_read_dir,
+    WalkOptions, walk_with_read_dir,
 };
 use crate::time_compat::SystemTime;
 
@@ -47,6 +50,8 @@ struct Counters {
     walk: AtomicU64,
     search: AtomicU64,
     other: AtomicU64,
+    /// Most entries returned by one `walk` (a peak, not a call count).
+    walk_peak_entries: AtomicU64,
 }
 
 /// Snapshot of the call counters.
@@ -73,6 +78,8 @@ pub struct CallCounts {
     pub search: u64,
     /// Anything else.
     pub other: u64,
+    /// Most entries any single `walk` answer held (not a round trip).
+    pub walk_peak_entries: u64,
 }
 
 impl CallCounts {
@@ -136,6 +143,7 @@ pub struct CountingFs {
     counters: Arc<Counters>,
     index: Option<Index>,
     native_walk: bool,
+    walk_page: Option<usize>,
 }
 
 impl CountingFs {
@@ -146,6 +154,7 @@ impl CountingFs {
             counters: Arc::new(Counters::default()),
             index: None,
             native_walk: false,
+            walk_page: None,
         }
     }
 
@@ -158,6 +167,13 @@ impl CountingFs {
     /// Answer `walk` in one counted call instead of one `read_dir` per directory.
     pub fn with_native_walk(mut self) -> Self {
         self.native_walk = true;
+        self
+    }
+
+    /// Return at most `entries` entries per `walk` answer (a backend page
+    /// size), even when the caller allows more.
+    pub fn with_walk_page(mut self, entries: usize) -> Self {
+        self.walk_page = Some(entries);
         self
     }
 
@@ -194,6 +210,7 @@ impl CountingFs {
             walk: get(&c.walk),
             search: get(&c.search),
             other: get(&c.other),
+            walk_peak_entries: get(&c.walk_peak_entries),
         }
     }
 
@@ -211,6 +228,7 @@ impl CountingFs {
             &c.walk,
             &c.search,
             &c.other,
+            &c.walk_peak_entries,
         ] {
             a.store(0, Ordering::Relaxed);
         }
@@ -347,12 +365,21 @@ impl FileSystem for CountingFs {
         self.hit(&self.counters.write);
         self.inner.set_modified_time(path, time).await
     }
-    async fn walk(&self, root: &Path, max_depth: Option<usize>) -> Result<Vec<DirListing>> {
-        if !self.native_walk {
-            return walk_with_read_dir(self, root, max_depth).await;
+    async fn walk(&self, root: &Path, mut opts: WalkOptions) -> Result<Vec<DirListing>> {
+        if let Some(page) = self.walk_page {
+            opts.max_entries = opts.max_entries.min(page);
         }
-        self.hit(&self.counters.walk);
-        walk_with_read_dir(&self.inner, root, max_depth).await
+        let listings = if self.native_walk {
+            self.hit(&self.counters.walk);
+            walk_with_read_dir(&self.inner, root, opts).await?
+        } else {
+            walk_with_read_dir(self, root, opts).await?
+        };
+        let held: usize = listings.iter().map(|l| l.entries.len()).sum();
+        self.counters
+            .walk_peak_entries
+            .fetch_max(u64::try_from(held).unwrap_or(u64::MAX), Ordering::Relaxed);
+        Ok(listings)
     }
     fn as_search_capable(&self) -> Option<&dyn SearchCapable> {
         self.index.as_ref().map(|_| self as &dyn SearchCapable)

@@ -271,14 +271,14 @@ impl FileSystem for FollowFs {
         retry_resolved!(self, followed, path, |p| self.inner.read_dir(p).await)
     }
 
-    async fn walk(&self, root: &Path, max_depth: Option<usize>) -> Result<Vec<super::DirListing>> {
+    async fn walk(&self, root: &Path, opts: super::WalkOptions) -> Result<Vec<super::DirListing>> {
         // Inner layers never follow, so only `root` itself may need resolving;
         // listings below it come back with link entries unresolved, the same
         // as `read_dir`.
-        match self.inner.walk(root, max_depth).await {
+        match self.inner.walk(root, opts).await {
             Err(e) if may_be_link_error(&e) => match self.followed(root).await? {
                 Some(resolved) => {
-                    let mut listings = self.inner.walk(&resolved, max_depth).await?;
+                    let mut listings = self.inner.walk(&resolved, opts).await?;
                     let root = normalize_path(root);
                     for listing in &mut listings {
                         if let Ok(rest) = listing.path.strip_prefix(&resolved) {

@@ -438,7 +438,7 @@ pub use search::{
 };
 pub(crate) use std_streams::{StdStreamsFs, args_name_std_stream};
 pub use traits::{
-    DirEntry, DirListing, FileSystem, FileSystemExt, FileType, Metadata, fs_errors,
+    DirEntry, DirListing, FileSystem, FileSystemExt, FileType, Metadata, WalkOptions, fs_errors,
     walk_with_read_dir,
 };
 

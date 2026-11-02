@@ -25,8 +25,9 @@
 //!   only for roots, and symlinks add `read_link` + a target `stat`. A
 //!   directory listing read for `%n`/`-ls` is reused when descending. Without
 //!   side-effecting or traversal-cutting actions (`-exec*`, `-delete`,
-//!   `-prune`, `-quit`), each directory root is listed with one
-//!   `FileSystem::walk` call, which bulk backends answer in one query.
+//!   `-prune`, `-quit`), directories are listed through bounded
+//!   `FileSystem::walk` batches (`WalkCache`): one query per ~10k entries on
+//!   bulk backends, and never more than one batch held in memory.
 //! - `-ok`/`-okdir`, `-samefile`, `-inum`, `-links`,
 //!   `-fstype`, `-context` are not implemented (L-FIND-001).
 
@@ -44,6 +45,7 @@ use async_trait::async_trait;
 use parse::{Cmp, Expr, Follow, Identity, NewerRef, Options, PermKind, TimeField};
 
 use super::limits::FIND_MAX_OUTPUT_BYTES;
+use super::walk_cache::WalkCache;
 use super::{
     Builtin, Context, Date, ExecutionPlan, PlanDriver, PlanStep, SubCommand, fnmatch, resolve_path,
 };
@@ -513,11 +515,9 @@ pub(super) struct FindRun {
     budget: Option<crate::ExecutionCapability<crate::limits::ExecutionBudget>>,
     exec_templates: HashMap<usize, Vec<String>>,
     needs_nlink: bool,
-    /// Whether directory roots may be listed up front with `walk` (no
-    /// action changes or cuts the traversal).
-    bulk_walk: bool,
-    /// Listings from `walk`, consumed as directories are descended.
-    prefetched: HashMap<PathBuf, Vec<DirEntry>>,
+    /// Listings fetched ahead in bounded `walk` batches (only when no action
+    /// changes or cuts the traversal), consumed as directories are descended.
+    walk: WalkCache,
     next_root: usize,
     stack: Vec<Work>,
     current: Option<Pending>,
@@ -650,8 +650,7 @@ impl FindRun {
             budget: ctx.execution_budget(),
             exec_templates,
             needs_nlink,
-            bulk_walk,
-            prefetched: HashMap::new(),
+            walk: WalkCache::new(bulk_walk),
             next_root: 0,
             stack: Vec::new(),
             current: None,
@@ -768,16 +767,6 @@ impl FindRun {
             self.error(format!("find: '{root}': No such file or directory\n"));
             return;
         };
-        if self.bulk_walk && lmeta.file_type.is_dir() {
-            // One call for the whole subtree on bulk backends; the default is
-            // the same `read_dir`s the traversal would issue anyway. A failed
-            // walk just leaves the traversal to list (and report) on its own.
-            if let Ok(listings) = self.cfg.fs.walk(&abs, self.cfg.opts.max_depth).await {
-                for listing in listings {
-                    self.prefetched.insert(listing.path, listing.entries);
-                }
-            }
-        }
         self.stack.push(Work::Visit {
             abs,
             display: root,
@@ -859,10 +848,8 @@ impl FindRun {
         };
         let is_dir = entry.meta().file_type.is_dir();
         if is_dir && self.needs_nlink {
-            let listing = match self.prefetched.remove(&entry.dir_path) {
-                Some(list) => Ok(list),
-                None => fs.read_dir(&entry.dir_path).await,
-            };
+            let levels = self.levels_below(entry.depth);
+            let listing = self.walk.list(&*fs, &entry.dir_path, levels).await;
             if let Ok(list) = listing {
                 entry.subdirs = list
                     .iter()
@@ -902,6 +889,11 @@ impl FindRun {
         Ok(())
     }
 
+    /// Directory levels still to list below `depth` (`None` = unlimited).
+    fn levels_below(&self, depth: usize) -> Option<usize> {
+        self.cfg.opts.max_depth.map(|m| m.saturating_sub(depth))
+    }
+
     /// List `entry`'s children as Visit work items (empty for non-directories
     /// and at -maxdepth).
     async fn children(
@@ -914,19 +906,19 @@ impl FindRun {
         {
             return Ok(Vec::new());
         }
-        let listed = match entry.listing.take() {
-            Some(list) => Some(list),
-            None => self.prefetched.remove(&entry.dir_path),
-        };
-        let mut list = match listed {
+        let mut list = match entry.listing.take() {
             Some(list) => list,
-            None => match self.cfg.fs.read_dir(&entry.dir_path).await {
-                Ok(list) => list,
-                Err(e) => {
-                    self.error(format!("find: '{}': {e}\n", entry.display));
-                    return Ok(Vec::new());
+            None => {
+                let levels = self.levels_below(entry.depth);
+                let fs = self.cfg.fs.clone();
+                match self.walk.list(&*fs, &entry.dir_path, levels).await {
+                    Ok(list) => list,
+                    Err(e) => {
+                        self.error(format!("find: '{}': {e}\n", entry.display));
+                        return Ok(Vec::new());
+                    }
                 }
-            },
+            }
         };
         self.consume_work(list.len())?;
         list.sort_by(|a, b| a.name.cmp(&b.name));

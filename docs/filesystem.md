@@ -98,9 +98,11 @@ methods cut the count further:
 - `as_search_capable()`: a content index (`SearchCapable`). `rg` and `grep -r`
   then make one `search` call and read only the matching files, with
   `.gitignore`/`.ignore` rules still applied.
-- `walk(root, max_depth)`: every directory listing below `root` in one call
-  (for example one path-prefix query). The default issues one `read_dir` per
-  directory. `find` and `du` use it.
+- `walk(root, WalkOptions)`: the directory listings below `root` in one call
+  (for example one path-prefix query), up to `max_entries` entries per answer
+  (10,000 by default) so huge trees are fetched in bounded batches. The
+  default issues one `read_dir` per directory. `find` and `du` use it and ask
+  for the next batch as they descend.
 
 `cargo bench --bench remote_fs -- --counts` prints the calls each command makes
 over a copy of the bashkit repository.

@@ -513,7 +513,7 @@ pub use fs::{
     FsLimits, FsUsage, InMemoryFs, LazyLoader, Metadata, MountableFs, NamespaceAccess, NamespaceFs,
     NamespaceFsBuilder, OverlayFs, PosixFs, ReadOnlyFs, SearchCapabilities, SearchCapable,
     SearchMatch, SearchProvider, SearchQuery, SearchResults, VfsEntry, VfsEntryKind, VfsSnapshot,
-    normalize_path, verify_filesystem_requirements, vfs_join, walk_with_read_dir,
+    WalkOptions, normalize_path, verify_filesystem_requirements, vfs_join, walk_with_read_dir,
 };
 #[cfg(feature = "realfs")]
 pub use fs::{RealFs, RealFsMode};

@@ -3013,18 +3013,20 @@ async fn read_rg_text_file(
 async fn collect_rg_inputs(
     ctx: Context<'_>,
     opts: &RgOptions,
+    budget: &mut RgReadBudget,
 ) -> std::result::Result<RgCollectedInputs, ExecResult> {
     if opts.paths.is_empty() {
         if !opts.stdin_consumed_for_patterns
             && let Some(stdin) = ctx.stdin
         {
+            let stdin = stdin.to_string();
+            budget.charge(stdin.len());
             return Ok(RgCollectedInputs::new(vec![RgInput::explicit(
-                "(stdin)",
-                stdin.to_string(),
+                "(stdin)", stdin,
             )]));
         }
 
-        if let Some(inputs) = try_indexed_search(&*ctx.fs, opts, ctx.cwd).await {
+        if let Some(inputs) = try_indexed_search(&*ctx.fs, opts, ctx.cwd, budget).await {
             return Ok(RgCollectedInputs::new(inputs));
         }
 
@@ -3034,10 +3036,10 @@ async fn collect_rg_inputs(
             display_hint: RgDisplayHint::None,
         };
         let files = collect_rg_files_recursive(&*ctx.fs, &[root], opts, ctx.cwd).await;
-        return Ok(read_rg_files(&*ctx.fs, files, ctx.cwd, opts).await);
+        return Ok(read_rg_files(&*ctx.fs, files, ctx.cwd, opts, budget).await);
     }
 
-    if let Some(inputs) = try_indexed_search(&*ctx.fs, opts, ctx.cwd).await {
+    if let Some(inputs) = try_indexed_search(&*ctx.fs, opts, ctx.cwd, budget).await {
         return Ok(RgCollectedInputs::new(inputs));
     }
 
@@ -3065,6 +3067,9 @@ async fn collect_rg_inputs(
                 });
             }
             None => {
+                if budget.exhausted() {
+                    break;
+                }
                 let text = match read_rg_text_file(&*ctx.fs, &path, ctx.cwd, p, opts).await {
                     Ok(t) => t,
                     Err(e) => {
@@ -3075,6 +3080,7 @@ async fn collect_rg_inputs(
                         continue;
                     }
                 };
+                budget.charge(text.len());
                 collected.inputs.push(RgInput::explicit(
                     apply_path_separator_to_display(p, opts),
                     text,
@@ -3088,11 +3094,58 @@ async fn collect_rg_inputs(
     if opts.sort != RgSort::Path || opts.sort_reverse {
         sort_rg_candidates(&mut candidates, opts);
     }
-    let read = read_rg_files(&*ctx.fs, candidates, ctx.cwd, opts).await;
+    let read = read_rg_files(&*ctx.fs, candidates, ctx.cwd, opts, budget).await;
     collected.had_errors |= read.had_errors;
     collected.stderr.push_str(&read.stderr);
     collected.inputs.extend(read.inputs);
     Ok(collected)
+}
+
+/// Charges file contents to the execution budget as they are read.
+///
+/// THREAT[TM-DOS-140]: rg holds every searched file's text until output is
+/// built, so a tree bigger than the input budget must stop at the budget,
+/// not load everything first and fail after. Reading stops at the first
+/// refused charge; the caller turns it into the limit error.
+struct RgReadBudget {
+    budget: Option<crate::limits::ExecutionBudget>,
+    exceeded: Option<crate::limits::LimitExceeded>,
+}
+
+impl RgReadBudget {
+    fn new(budget: Option<crate::limits::ExecutionBudget>) -> Self {
+        Self {
+            budget,
+            exceeded: None,
+        }
+    }
+
+    /// Charge one file's text; false once the budget is spent.
+    fn charge(&mut self, bytes: usize) -> bool {
+        if self.exceeded.is_some() {
+            return false;
+        }
+        let Some(budget) = &self.budget else {
+            return true;
+        };
+        let work = u64::try_from(bytes.div_ceil(64))
+            .unwrap_or(u64::MAX)
+            .saturating_add(1);
+        match budget
+            .consume_input(bytes)
+            .and_then(|()| budget.consume_work(work))
+        {
+            Ok(()) => true,
+            Err(e) => {
+                self.exceeded = Some(e);
+                false
+            }
+        }
+    }
+
+    fn exhausted(&self) -> bool {
+        self.exceeded.is_some()
+    }
 }
 
 #[derive(Default)]
@@ -3933,11 +3986,16 @@ async fn read_rg_files(
     files: Vec<RgFileCandidate>,
     cwd: &Path,
     opts: &RgOptions,
+    budget: &mut RgReadBudget,
 ) -> RgCollectedInputs {
     let mut collected = RgCollectedInputs::default();
     for file in files {
+        if budget.exhausted() {
+            break;
+        }
         let display = candidate_display_path(&file, cwd, opts);
         match read_rg_text_file(fs, &file.actual, cwd, &display, opts).await {
+            Ok(text) if !budget.charge(text.len()) => break,
             Ok(text) if file.explicit => collected.inputs.push(RgInput::explicit(display, text)),
             Ok(text) => collected.inputs.push(RgInput::discovered(display, text)),
             Err(e) => {
@@ -3961,6 +4019,7 @@ async fn try_indexed_search(
     fs: &dyn crate::fs::FileSystem,
     opts: &RgOptions,
     cwd: &Path,
+    budget: &mut RgReadBudget,
 ) -> Option<Vec<RgInput>> {
     let index_can_use_literal = opts.fixed_strings && !opts.word_boundary && !opts.line_regexp;
     if opts.invert_match
@@ -4059,9 +4118,15 @@ async fn try_indexed_search(
                     continue;
                 }
             }
+            if budget.exhausted() {
+                break;
+            }
             if let Ok(content) = fs.read_file(&candidate).await {
                 let display = display_path_for(&candidate, cwd, root_arg.as_deref(), opts);
                 let content = decode_rg_content(&content, opts);
+                if !budget.charge(content.len()) {
+                    break;
+                }
                 let input = if explicit_file_match {
                     RgInput::explicit(display, content)
                 } else {
@@ -5547,19 +5612,13 @@ impl Builtin for Rg {
         let execution_budget = ctx
             .execution_budget()
             .and_then(|budget| budget.try_with(Clone::clone).ok());
-        let collected_inputs = match collect_rg_inputs(ctx, &opts).await {
+        let mut read_budget = RgReadBudget::new(execution_budget);
+        let collected_inputs = match collect_rg_inputs(ctx, &opts, &mut read_budget).await {
             Ok(inputs) => inputs,
             Err(result) => return Ok(result),
         };
-        if let Some(budget) = execution_budget {
-            let input_bytes = collected_inputs.inputs.iter().fold(0usize, |total, input| {
-                total.saturating_add(input.content.len())
-            });
-            budget.consume_input(input_bytes)?;
-            budget.consume_work(
-                u64::try_from(input_bytes.div_ceil(64)).unwrap_or(u64::MAX)
-                    + u64::try_from(collected_inputs.inputs.len()).unwrap_or(u64::MAX),
-            )?;
+        if let Some(exceeded) = read_budget.exceeded {
+            return Err(exceeded.into());
         }
         let inputs = collected_inputs.inputs;
 
