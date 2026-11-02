@@ -62,7 +62,7 @@ rustls = { version = "0.23", default-features = false, features = ["std", "tls12
 # Regex
 regex = "1"
 regex-automata = { version = "0.4", default-features = false, features = ["std", "syntax", "hybrid", "unicode", "perf"] }
-fancy-regex = "0.19"
+fancy-regex = "0.20"
 
 # Date/Time
 # Important decision: `default-features = false` drops chrono's `wasmbind`,
@@ -142,7 +142,7 @@ tracing = "0.1"
 tower = { version = "0.5", features = ["util"] }
 
 # SSH client (for ssh/scp/sftp builtins)
-russh = "0.64"
+russh = "0.65"
 # Embedded SQLite engine (Turso, pure Rust). Upstream is BETA — gated behind
 # the `sqlite` feature and disabled by default; see knowledge/runtimes/sqlite-builtin.md.
 turso_core = "0.8.0-pre.1"
