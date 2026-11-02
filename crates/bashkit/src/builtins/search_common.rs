@@ -13,7 +13,14 @@ use crate::builtins::limits::RUNTIME_REGEX_CACHE_ENTRIES;
 /// Default compiled-regex size limit (1 MB).
 pub(crate) const REGEX_SIZE_LIMIT: usize = 1_000_000;
 
-/// Default DFA size limit (1 MB).
+/// Default DFA budget (1 MB).
+///
+/// Two engines read this constant and mean different things by it. For the
+/// `regex` crate it is `dfa_size_limit`, a cap on compiled DFA size. For
+/// fancy-regex it is `delegate_dfa_size_limit`, which since 0.20.0 sets the
+/// *lazy-DFA cache capacity* rather than a compiled-DFA size cap; 0.20.0 also
+/// enables `delegate_dfa_skip_cache_capacity_check` by default, so a value too
+/// small for a pattern degrades instead of failing to compile.
 pub(crate) const REGEX_DFA_SIZE_LIMIT: usize = 1_000_000;
 
 /// Backtracking step cap for the fancy-regex (PCRE / `grep -P`) engine.
