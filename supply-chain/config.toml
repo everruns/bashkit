@@ -597,7 +597,7 @@ version = "0.17.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.fancy-regex]]
-version = "0.19.2"
+version = "0.20.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.fastbloom]]
