@@ -267,3 +267,48 @@ async fn set_dashdash_keeps_a_supplied_arg0() {
         .unwrap();
     assert_eq!(result.stdout, "run.sh x\n");
 }
+
+#[tokio::test]
+async fn exec_with_options_timeout_caps_one_call_and_session_recovers() {
+    use std::time::{Duration, Instant};
+    let mut bash = Bash::new();
+    let started = Instant::now();
+    let result = bash
+        .exec_with_options(
+            "export KEPT=1; sleep 5",
+            ExecOptions::new().timeout(Duration::from_millis(100)),
+        )
+        .await;
+    assert!(started.elapsed() < Duration::from_secs(3));
+    match result {
+        Err(bashkit::Error::ResourceLimit(bashkit::LimitExceeded::Timeout(t))) => {
+            assert_eq!(t, Duration::from_millis(100));
+        }
+        other => panic!("expected per-call timeout, got {other:?}"),
+    }
+    // The cap applies to that call only: the next call uses the session limit.
+    let result = bash
+        .exec_with_options("sleep 0.2; echo ok", ExecOptions::new())
+        .await
+        .unwrap();
+    assert_eq!(result.stdout, "ok\n");
+}
+
+#[tokio::test]
+async fn exec_with_options_timeout_never_extends_configured_limit() {
+    use std::time::Duration;
+    let limits = bashkit::ExecutionLimits::default().timeout(Duration::from_millis(100));
+    let mut bash = Bash::builder().limits(limits).build();
+    let result = bash
+        .exec_with_options(
+            "sleep 5",
+            ExecOptions::new().timeout(Duration::from_secs(60)),
+        )
+        .await;
+    match result {
+        Err(bashkit::Error::ResourceLimit(bashkit::LimitExceeded::Timeout(t))) => {
+            assert_eq!(t, Duration::from_millis(100));
+        }
+        other => panic!("expected configured timeout to win, got {other:?}"),
+    }
+}

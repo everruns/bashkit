@@ -688,9 +688,16 @@ assert backend.grep("print", "/tmp", glob="*.py").matches[0]["line"] == 1
 middleware = backend.create_middleware()  # Shares the same virtual filesystem
 ```
 
-Uses the structured Deep Agents 0.7.13+ backend protocol. Shell execution reports
-native output truncation; file operations preserve exact VFS contents. Configure
-execution timeouts on the backend constructor.
+Uses the structured Deep Agents 0.7.32+ backend protocol. Shell execution reports
+native output truncation; file operations preserve exact VFS contents. The
+constructor `timeout_seconds` is the execution budget; a per-command `timeout`
+from the agent can shorten it but never extend it. Images, PDFs and other
+binary files are read as base64 (up to 500 KB) so multimodal models can see
+them, and upload/download failures use the protocol's error codes
+(`file_not_found`, `is_directory`, `permission_denied`, `invalid_path`).
+
+`Bash`/`BashTool` `execute*` methods accept the same per-call cap directly:
+`execute_sync("make test", timeout_seconds=10)`.
 
 ## API Reference
 

@@ -438,14 +438,20 @@ invocation regardless of mechanism.
 
 ## Deep Agents backend
 
-The optional `deepagents` extra requires Deep Agents 0.7.13 or later and Python
+The optional `deepagents` extra requires Deep Agents 0.7.32 or later and Python
 3.11+ (the upstream framework minimum); the base package remains Python 3.9+.
 CI installs the extra on Python 3.11–3.14 so protocol tests cannot silently skip. `BashkitBackend`
 implements its structured `read`, `ls`, `glob`, `grep`, `write`, `edit`, and
 `delete` results; obsolete `ls_info`, `glob_info`, and `grep_raw` are removed.
-`execute` propagates either native stream's truncation flag. Timeout policy
-remains configured on construction (`timeout_seconds`); per-call timeout
-support is not advertised to the framework.
+`execute` propagates either native stream's truncation flag. The constructor
+`timeout_seconds` is the execution budget. `execute`/`aexecute` accept Deep
+Agents' per-call `timeout` and pass it as the native `timeout_seconds`
+(`ExecOptions::timeout`), which only tightens the budget; `None` and `0` (the
+framework's "no timeout" hint) keep the configured limit. Non-text files (by
+Deep Agents' extension classifier) and text files with invalid UTF-8 read as
+whole-file base64 `FileData` capped at 500 KB, matching upstream sandboxes, so
+multimodal reads work. Upload/download failures map to the protocol's
+`FileOperationError` codes, with the native message kept for anything else.
 
 File operations use the live native VFS directly, avoiding shell output caps,
 newline insertion, option injection, and colon-delimited path parsing. They
