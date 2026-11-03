@@ -696,8 +696,16 @@ binary files are read as base64 (up to 500 KB) so multimodal models can see
 them, and upload/download failures use the protocol's error codes
 (`file_not_found`, `is_directory`, `permission_denied`, `invalid_path`).
 
+Large command output is kept in the virtual filesystem: when Deep Agents
+offloads an `execute` result, the full combined output (up to 10 MB, beyond the
+1 MB in-memory stdout cap) is written to `/large_tool_results/<id>` and the
+model gets a head/tail preview it can follow up with `grep` or `read_file`.
+Shell state (`cd`, `export`, functions) carries over between commands.
+
 `Bash`/`BashTool` `execute*` methods accept the same per-call cap directly:
-`execute_sync("make test", timeout_seconds=10)`.
+`execute_sync("make test", timeout_seconds=10)`. `execute`/`execute_sync` can
+also tee combined output to a VFS file:
+`execute_sync("pytest", output_file="/tmp/pytest.log", max_output_file_bytes=10_000_000)`.
 
 ## API Reference
 

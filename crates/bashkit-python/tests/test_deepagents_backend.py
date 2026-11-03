@@ -254,3 +254,74 @@ def test_transfer_errors_use_protocol_codes(backend):
     assert backend.download_files(["/missing"])[0].error == "file_not_found"
     assert backend.download_files(["/tmp"])[0].error == "is_directory"
     assert backend.upload_files([("/tmp", b"no")])[0].error == "is_directory"
+
+
+def test_backend_is_base_sandbox_for_capture_offload(backend):
+    from deepagents.backends.sandbox import BaseSandbox
+
+    assert isinstance(backend, BaseSandbox) and backend.enable_capture_offload
+
+
+def test_execute_with_offload_keeps_large_output_in_vfs(backend):
+    command = (
+        "export KEPT=1; cd /tmp; "
+        "for i in $(seq 1 30); do head -c 100000 /dev/zero | tr '\\0' x; echo; done; echo END >&2"
+    )
+    result = backend.execute_with_offload(command, "/large_tool_results/call_1", max_inline_bytes=80_000)
+    assert result.offloaded and result.response.exit_code == 0
+    assert result.preview_has_truncation_marker
+    assert "lines truncated" in result.response.output
+    assert len(result.response.output) < 10_000
+    # The full 3 MB survives in the VFS, past the 1 MB in-memory stdout cap.
+    saved = backend.download_files(["/large_tool_results/call_1"])[0].content
+    assert len(saved) == 30 * 100_001 + 4 and saved.endswith(b"END\n")
+    assert backend.grep("END", "/large_tool_results").matches
+    # No subshell: shell state carries over to the next command.
+    assert backend.execute("echo $KEPT $PWD").output == "1 /tmp\n"
+
+
+def test_execute_with_offload_inline_and_capped(backend):
+    small = backend.execute_with_offload(
+        "echo hi; echo err >&2; exit 3", "/large_tool_results/c2", max_inline_bytes=1000
+    )
+    assert not small.offloaded
+    assert small.response.output == "hi\nerr\n" and small.response.exit_code == 3
+    assert backend.download_files(["/large_tool_results/c2"])[0].error == "file_not_found"
+    capped = backend.execute_with_offload(
+        "head -c 50000 /dev/zero | tr '\\0' y", "/large_tool_results/c3", max_inline_bytes=100, max_capture_bytes=5000
+    )
+    assert capped.offloaded and capped.response.truncated
+    assert "capture stopped at its 5000-byte limit" in capped.response.output
+    assert len(backend.download_files(["/large_tool_results/c3"])[0].content) == 5000
+
+
+async def test_aexecute_with_offload_and_timeout(backend):
+    result = await backend.aexecute_with_offload(
+        "seq 1 50000; sleep 5", "/large_tool_results/c4", max_inline_bytes=1000, timeout=1
+    )
+    assert result.offloaded and result.response.exit_code != 0
+    assert "timeout" in result.response.output
+
+
+def test_framework_offloads_large_execute_output(backend):
+    from deepagents import create_deep_agent
+    from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+    from langchain_core.messages import AIMessage
+
+    class ScriptedModel(FakeMessagesListChatModel):
+        def bind_tools(self, tools, **kwargs):
+            return self
+
+    command = "for i in $(seq 1 20); do head -c 100000 /dev/zero | tr '\\0' z; echo; done"
+    model = ScriptedModel(
+        responses=[
+            AIMessage(content="", tool_calls=[{"name": "execute", "args": {"command": command}, "id": "big"}]),
+            AIMessage(content="done"),
+        ]
+    )
+    agent = create_deep_agent(model=model, backend=backend)
+    response = agent.invoke({"messages": [{"role": "user", "content": "run"}]})
+    tool = next(message for message in response["messages"] if message.type == "tool")
+    assert "large_tool_results" in str(tool.content)
+    files = backend.glob("**", "/large_tool_results").matches
+    assert files and files[0]["size"] == 20 * 100_001

@@ -62,6 +62,50 @@ _MAX_GREP_RESULT_BYTES = 100_000
 _MAX_BINARY_READ_BYTES = 500 * 1024
 
 
+# Capture-at-source preview shape, mirroring Deep Agents' `BaseSandbox` wrapper
+# so the model sees the same head/tail excerpt whichever sandbox it runs in.
+_CAPTURE_MAX_BYTES = 10 * 1024 * 1024
+_CAPTURE_HEAD_LINES = 5
+_CAPTURE_TAIL_LINES = 5
+_CAPTURE_HEAD_BYTES = 2000
+_CAPTURE_TAIL_BYTES = 2000
+_CAPTURE_CLIP_NOTICE = "... [output clipped here; {captured_bytes} bytes total, full output at the path above] ..."
+_CAPTURE_CLIP_NOTICE_CAPPED = (
+    "... [output clipped here; capture stopped at its {captured_bytes}-byte limit, "
+    "so the file at the path above is also incomplete] ..."
+)
+_CAPTURE_EXCERPT_CLIP_NOTICE = (
+    "... [the excerpts above and below are byte-capped, so the lines bordering this marker may be cut mid-line] ..."
+)
+
+
+def _capture_preview(data: bytes, *, capped: bool) -> tuple[str, bool]:
+    """Build the offload preview for captured output.
+
+    Returns ``(preview, has_truncation_marker)``: a head/tail excerpt around a
+    truncation marker when there are more lines than the head+tail budget,
+    otherwise a leading byte excerpt closed by a clip notice.
+    """
+    omitted = data.count(b"\n") - _CAPTURE_HEAD_LINES - _CAPTURE_TAIL_LINES
+    if omitted > 0:
+        head_lines = data.splitlines(keepends=True)[:_CAPTURE_HEAD_LINES]
+        tail_lines = data.splitlines(keepends=True)[-_CAPTURE_TAIL_LINES:]
+        head = b"".join(data[:_CAPTURE_HEAD_BYTES].splitlines(keepends=True)[:_CAPTURE_HEAD_LINES])
+        tail = b"".join(data[-_CAPTURE_TAIL_BYTES:].splitlines(keepends=True)[-_CAPTURE_TAIL_LINES:])
+        parts = [head]
+        if sum(map(len, head_lines)) > _CAPTURE_HEAD_BYTES or sum(map(len, tail_lines)) > _CAPTURE_TAIL_BYTES:
+            parts.append(b"\n" + _CAPTURE_EXCERPT_CLIP_NOTICE.encode() + b"\n")
+        parts.append(TRUNCATION_MARKER_TEMPLATE.format(omitted_lines=omitted).encode() + b"\n")
+        parts.append(tail)
+        return b"".join(parts).decode("utf-8", errors="replace"), True
+    budget = _CAPTURE_HEAD_BYTES + _CAPTURE_TAIL_BYTES
+    preview = data[:budget]
+    if len(data) > budget:
+        notice = _CAPTURE_CLIP_NOTICE_CAPPED if capped else _CAPTURE_CLIP_NOTICE
+        preview += b"\n" + notice.format(captured_bytes=len(data)).encode() + b"\n"
+    return preview.decode("utf-8", errors="replace"), False
+
+
 def _file_error_code(exc: Exception) -> str:
     """Map a native VFS error to deepagents' `FileOperationError` codes.
 
@@ -113,6 +157,7 @@ try:
     from deepagents.backends.protocol import (
         DeleteResult,
         EditResult,
+        ExecuteOffloadResult,
         ExecuteResponse,
         FileDownloadResponse,
         FileInfo,
@@ -125,7 +170,12 @@ try:
         SandboxBackendProtocol,
         WriteResult,
     )
-    from deepagents.backends.utils import _get_backend_read_file_type, compile_grep_include_glob
+    from deepagents.backends.sandbox import BaseSandbox
+    from deepagents.backends.utils import (
+        TRUNCATION_MARKER_TEMPLATE,
+        _get_backend_read_file_type,
+        compile_grep_include_glob,
+    )
     from langchain.agents.middleware.types import AgentMiddleware
     from langchain_core.tools import StructuredTool
 
@@ -134,6 +184,7 @@ except ImportError:
     DEEPAGENTS_AVAILABLE = False
     if not TYPE_CHECKING:
         SandboxBackendProtocol = object
+        BaseSandbox = object
         AgentMiddleware = object
 
 
@@ -260,7 +311,14 @@ if DEEPAGENTS_AVAILABLE:
             if self._owns_bash:
                 self._bash.reset()
 
-    class BashkitBackend(SandboxBackendProtocol):
+    # Decision: subclass `BaseSandbox` only so Deep Agents routes large
+    # `execute` output through `execute_with_offload` (it gates that on
+    # `isinstance(..., BaseSandbox)`). Every inherited shell/python3-script
+    # helper is overridden with a direct VFS implementation, and capture uses
+    # the native `output_file` tee: no wrapper script, `eval` or subshell, so
+    # `cd`/`export` still carry over and output beyond the in-memory stdout cap
+    # survives in the file.
+    class BashkitBackend(BaseSandbox):
         """Backend implementing SandboxBackendProtocol with Bashkit VFS.
 
         Provides execute, read, write, edit, delete, ls, glob, grep
@@ -345,6 +403,77 @@ if DEEPAGENTS_AVAILABLE:
             # Preserve caller-loop clients and ContextVars in runtime callbacks.
             result = await self._bash.execute(command, timeout_seconds=self._timeout_seconds(timeout))
             return self._execute_response(result)
+
+        enable_capture_offload = True
+
+        def execute_with_offload(
+            self,
+            command: str,
+            capture_path: str,
+            *,
+            max_inline_bytes: int,
+            max_capture_bytes: int | None = None,
+            timeout: int | None = None,
+        ) -> ExecuteOffloadResult:
+            """Run `command`, keeping its combined output in a VFS file when large."""
+            if not self.enable_capture_offload:
+                return ExecuteOffloadResult(offloaded=False, response=self.execute(command, timeout=timeout))
+            cap = self._prepare_capture(capture_path, max_capture_bytes)
+            result = self._bash.execute_sync(
+                command,
+                timeout_seconds=self._timeout_seconds(timeout),
+                output_file=capture_path,
+                max_output_file_bytes=cap,
+            )
+            return self._offload_result(result, capture_path, cap, max_inline_bytes)
+
+        async def aexecute_with_offload(
+            self,
+            command: str,
+            capture_path: str,
+            *,
+            max_inline_bytes: int,
+            max_capture_bytes: int | None = None,
+            timeout: int | None = None,  # noqa: ASYNC109
+        ) -> ExecuteOffloadResult:
+            """Async version of `execute_with_offload`."""
+            if not self.enable_capture_offload:
+                return ExecuteOffloadResult(offloaded=False, response=await self.aexecute(command, timeout=timeout))
+            cap = self._prepare_capture(capture_path, max_capture_bytes)
+            result = await self._bash.execute(
+                command,
+                timeout_seconds=self._timeout_seconds(timeout),
+                output_file=capture_path,
+                max_output_file_bytes=cap,
+            )
+            return self._offload_result(result, capture_path, cap, max_inline_bytes)
+
+        def _prepare_capture(self, capture_path: str, max_capture_bytes: int | None) -> int:
+            self._bash.mkdir(posixpath.dirname(capture_path), recursive=True)
+            return _CAPTURE_MAX_BYTES if max_capture_bytes is None else max(0, max_capture_bytes)
+
+        def _offload_result(self, result, capture_path: str, cap: int, max_inline_bytes: int) -> ExecuteOffloadResult:
+            try:
+                data = self._bash.fs().read_file(capture_path)
+            except (RuntimeError, ValueError):
+                # The tee never started (e.g. unusable path): report the
+                # in-memory result as complete output instead.
+                return ExecuteOffloadResult(offloaded=False, response=self._execute_response(result))
+            error = f"\nError: {result.error}" if result.error and result.error.encode() not in data else ""
+            if len(data) <= max_inline_bytes:
+                self._bash.remove(capture_path)
+                output = data.decode("utf-8", errors="replace") + error
+                return ExecuteOffloadResult(
+                    offloaded=False,
+                    response=ExecuteResponse(output=output, exit_code=result.exit_code, truncated=False),
+                )
+            capped = len(data) >= cap
+            preview, has_marker = _capture_preview(data, capped=capped)
+            return ExecuteOffloadResult(
+                offloaded=True,
+                response=ExecuteResponse(output=preview + error, exit_code=result.exit_code, truncated=capped),
+                preview_has_truncation_marker=has_marker,
+            )
 
         @staticmethod
         def _execute_response(result) -> ExecuteResponse:
@@ -440,6 +569,22 @@ if DEEPAGENTS_AVAILABLE:
             except (RuntimeError, ValueError) as exc:
                 return ReadResult(error=str(exc))
             return ReadResult(file_data={"content": base64.b64encode(raw).decode("ascii"), "encoding": "base64"})
+
+        # BaseSandbox's async helpers run shell scripts through `aexecute`;
+        # route them to the direct VFS implementations instead.
+        async def als(self, path: str) -> LsResult:
+            return await asyncio.to_thread(self.ls, path)
+
+        async def awrite(self, file_path: str, content: str) -> WriteResult:
+            return await asyncio.to_thread(self.write, file_path, content)
+
+        async def aedit(
+            self, file_path: str, old_string: str, new_string: str, replace_all: bool = False
+        ) -> EditResult:
+            return await asyncio.to_thread(self.edit, file_path, old_string, new_string, replace_all)
+
+        async def adelete(self, file_path: str) -> DeleteResult:
+            return await asyncio.to_thread(self.delete, file_path)
 
         async def aread(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
             return await self._run_cancellable(self.read, file_path, offset, limit)

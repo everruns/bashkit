@@ -94,7 +94,7 @@ Register a live byte command; requires native async execute().
 ### `execute`
 
 ```python
-Bash.execute(commands: str, on_output: OutputHandler | None = None, capture: int | None = None, stdout: ByteSink | None = None, stderr: ByteSink | None = None, timeout_seconds: float | None = None) -> ExecResult
+Bash.execute(commands: str, on_output: OutputHandler | None = None, capture: int | None = None, stdout: ByteSink | None = None, stderr: ByteSink | None = None, timeout_seconds: float | None = None, output_file: str | None = None, max_output_file_bytes: int | None = None) -> ExecResult
 ```
 
 Execute bash commands asynchronously.
@@ -104,6 +104,7 @@ Execute bash commands asynchronously.
 - **`commands`** — Bash script to run (like ``bash -c "commands"``).
 - **`on_output`** — Optional callback receiving chunked ``(stdout, stderr)`` pairs during execution. Must be synchronous.
 - **`timeout_seconds`** — Optional wall-clock cap for this call only. It can only tighten the constructor ``timeout_seconds``, never extend it.
+- **`output_file`** — Optional absolute VFS path that receives combined stdout+stderr, created or truncated first. Bounded by ``max_output_file_bytes`` (default 10 MiB) and filesystem limits, not the in-memory output caps. Not combinable with ``on_output``.
 
 Async ``custom_builtins`` callbacks run on the caller's active asyncio
 loop.
@@ -123,7 +124,7 @@ world
 ### `execute_sync`
 
 ```python
-Bash.execute_sync(commands: str, on_output: OutputHandler | None = None, timeout_seconds: float | None = None) -> ExecResult
+Bash.execute_sync(commands: str, on_output: OutputHandler | None = None, timeout_seconds: float | None = None, output_file: str | None = None, max_output_file_bytes: int | None = None) -> ExecResult
 ```
 
 Execute bash commands synchronously (blocking).
@@ -669,7 +670,7 @@ Register a live byte command; requires native async execute().
 ### `execute`
 
 ```python
-BashTool.execute(commands: str, on_output: OutputHandler | None = None, capture: int | None = None, stdout: ByteSink | None = None, stderr: ByteSink | None = None, timeout_seconds: float | None = None) -> ExecResult
+BashTool.execute(commands: str, on_output: OutputHandler | None = None, capture: int | None = None, stdout: ByteSink | None = None, stderr: ByteSink | None = None, timeout_seconds: float | None = None, output_file: str | None = None, max_output_file_bytes: int | None = None) -> ExecResult
 ```
 
 Execute bash commands asynchronously.
@@ -691,7 +692,7 @@ True
 ### `execute_sync`
 
 ```python
-BashTool.execute_sync(commands: str, on_output: OutputHandler | None = None, timeout_seconds: float | None = None) -> ExecResult
+BashTool.execute_sync(commands: str, on_output: OutputHandler | None = None, timeout_seconds: float | None = None, output_file: str | None = None, max_output_file_bytes: int | None = None) -> ExecResult
 ```
 
 Execute bash commands synchronously (blocking).

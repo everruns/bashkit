@@ -1,10 +1,21 @@
 //! One execution builder, with explicit capture and async byte sinks. Engine
 //! and output pumps run on the caller's executor; no threads are required.
+//!
+//! Decision: [`Execution::output_file`] tees combined stdout+stderr into a VFS
+//! file with its own byte cap instead of the stdout/stderr delivery caps. It is
+//! the host-side equivalent of `{ script; } > file 2>&1`: the bytes land in the
+//! sandbox filesystem (bounded by `FsLimits` and the cap), not in host memory,
+//! so the in-memory output caps that protect the host do not apply to it. It
+//! runs in the current shell, so no wrapper script, `eval` or subshell is
+//! needed and shell state carries over to the next call.
 
+use crate::fs::FileSystem;
 use crate::interpreter::pipe::{PIPE_CAPACITY, Pipe, ReadEnd, WriteEnd};
 use crate::{Bash, ExecOptions, ExecResult, ExecutionBudget, ExecutionLimits, Result};
 use std::future::{Future, IntoFuture};
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 
@@ -106,6 +117,39 @@ pub struct Execution<'a> {
     stderr: Option<Sink<'a>>,
     options: ExecOptions,
     cancel: Option<Arc<std::sync::atomic::AtomicBool>>,
+    output_file: Option<(PathBuf, usize)>,
+}
+
+/// Combined-output tee into a VFS file (see [`Execution::output_file`]).
+struct OutputFile {
+    fs: Arc<dyn FileSystem>,
+    path: PathBuf,
+    max_bytes: usize,
+    written: AtomicUsize,
+    failed: AtomicBool,
+}
+
+impl OutputFile {
+    /// Append the part of `chunk` that still fits under the cap. A filesystem
+    /// error (for example `FsLimits`) stops the tee; it never fails the
+    /// execution, matching how a full disk truncates a redirected file.
+    async fn append(&self, chunk: &[u8]) {
+        if chunk.is_empty() || self.failed.load(Ordering::Relaxed) {
+            return;
+        }
+        let Ok(start) = self
+            .written
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |w| {
+                (w < self.max_bytes).then(|| w + chunk.len().min(self.max_bytes - w))
+            })
+        else {
+            return;
+        };
+        let n = chunk.len().min(self.max_bytes - start);
+        if self.fs.append_file(&self.path, &chunk[..n]).await.is_err() {
+            self.failed.store(true, Ordering::Relaxed);
+        }
+    }
 }
 
 impl<'a> Execution<'a> {
@@ -118,6 +162,7 @@ impl<'a> Execution<'a> {
             stderr: None,
             options: ExecOptions::new(),
             cancel: None,
+            output_file: None,
         }
     }
     /// Capture at most this many bytes per stream, within sandbox output limits.
@@ -164,6 +209,33 @@ impl<'a> Execution<'a> {
         self
     }
 
+    /// Also write combined stdout+stderr, in arrival order, to the VFS file at
+    /// absolute `path`, keeping at most `max_bytes`.
+    ///
+    /// The file is created (or truncated) before the script runs; its parent
+    /// directory must exist. Unlike [`capture`](Self::capture) and the sinks,
+    /// the file is bounded by `max_bytes` and the filesystem's `FsLimits`, not
+    /// by `ExecutionLimits::max_stdout_bytes`/`max_stderr_bytes`, because the
+    /// bytes stay inside the sandbox like a `> file 2>&1` redirect. A file
+    /// whose size equals `max_bytes` may have been cut short. Typical use: keep
+    /// large tool output on disk for later `grep` while returning a preview.
+    ///
+    /// ```no_run
+    /// # async fn run() -> bashkit::Result<()> {
+    /// let mut bash = bashkit::Bash::new();
+    /// let result = bash
+    ///     .execute("seq 1 100000; echo done >&2")
+    ///     .output_file("/tmp/out.log", 10 * 1024 * 1024)
+    ///     .await?;
+    /// assert_eq!(result.exit_code, 0);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn output_file(mut self, path: impl Into<PathBuf>, max_bytes: usize) -> Self {
+        self.output_file = Some((path.into(), max_bytes));
+        self
+    }
+
     /// Invocation parameters, input and request-scoped extensions.
     pub fn options(mut self, options: ExecOptions) -> Self {
         self.options = options;
@@ -183,6 +255,26 @@ impl<'a> Execution<'a> {
         }
         let timeout = self.bash.interpreter.limits().timeout;
         let session_cancel = self.bash.cancellation_token();
+        let output_file = match self.output_file {
+            Some((path, max_bytes)) => {
+                if !path.is_absolute() {
+                    return Err(crate::Error::Execution(format!(
+                        "output file must be an absolute path: {}",
+                        path.display()
+                    )));
+                }
+                let fs = self.bash.fs();
+                fs.write_file(Path::new(&path), b"").await?;
+                Some(Arc::new(OutputFile {
+                    fs,
+                    path,
+                    max_bytes,
+                    written: AtomicUsize::new(0),
+                    failed: AtomicBool::new(false),
+                }))
+            }
+            None => None,
+        };
         let output = ExecutionOutput::new(self.capture);
         let mut options = self.options;
         // The observer acts as the routing-scope marker already honored by
@@ -202,8 +294,13 @@ impl<'a> Execution<'a> {
         let driven = Box::pin(async {
             tokio::try_join!(
                 engine,
-                Box::pin(pump(output.clone(), false, self.stdout)),
-                Box::pin(pump(output.clone(), true, self.stderr)),
+                Box::pin(pump(
+                    output.clone(),
+                    false,
+                    self.stdout,
+                    output_file.clone()
+                )),
+                Box::pin(pump(output.clone(), true, self.stderr, output_file.clone())),
             )
         });
         let completed = async {
@@ -255,6 +352,7 @@ async fn pump(
     output: Arc<ExecutionOutput>,
     stderr: bool,
     mut sink: Option<Sink<'_>>,
+    output_file: Option<Arc<OutputFile>>,
 ) -> Result<(Vec<u8>, bool)> {
     let pipe = if stderr {
         output.stderr.clone()
@@ -269,6 +367,9 @@ async fn pump(
         let mut chunk = pipe.read_some().await;
         if chunk.is_empty() {
             break;
+        }
+        if let Some(file) = &output_file {
+            file.append(&chunk).await;
         }
         // Sandbox output caps apply to byte delivery as well as capture. A
         // smaller explicit capture limit never limits the sink itself.
