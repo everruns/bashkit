@@ -423,9 +423,12 @@ async fn ls_recursive_and_tree_use_one_bulk_walk() {
 async fn ls_recursive_and_tree_skip_hidden_directories() {
     async fn add_hidden(fs: &dyn FileSystem) {
         for i in 0..20 {
-            fs.mkdir(Path::new(&format!("/workspace/tree/.git/objects/{i}")), true)
-                .await
-                .unwrap();
+            fs.mkdir(
+                Path::new(&format!("/workspace/tree/.git/objects/{i}")),
+                true,
+            )
+            .await
+            .unwrap();
         }
     }
     let (fs, mut bash) = setup(CountingFs::new()).await;
