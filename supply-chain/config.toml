@@ -280,7 +280,7 @@ criteria = "safe-to-deploy"
 notes = "Reviewed the slice-to-FFI stream wrapper, buffer accounting, drop paths, and pure-Rust backend selection; no ambient capabilities."
 
 [[exemptions.calamine]]
-version = "0.37.0"
+version = "0.38.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.cast]]
@@ -304,7 +304,7 @@ version = "1.4.3"
 criteria = "safe-to-deploy"
 
 [[exemptions.cfb]]
-version = "0.15.0"
+version = "0.16.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.cfg-if]]
@@ -1202,11 +1202,11 @@ version = "0.11.4"
 criteria = "safe-to-deploy"
 
 [[exemptions.markkit]]
-version = "0.3.0"
+version = "0.3.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.markkit-cli]]
-version = "0.3.0"
+version = "0.3.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.markup5ever]]
