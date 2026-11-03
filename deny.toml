@@ -51,6 +51,11 @@ ignore = [
     # atomic-polyfill: transitive via monty -> postcard -> heapless
     # Unmaintained but no security vulnerability; upstream dep we can't control
     "RUSTSEC-2023-0089",
+    # lru 0.16 `pop()` panic safety: only in the wasm coreutils guest
+    # lockfile (num-prime ^0.16.3, no patched release in range). The guest
+    # is built with panic = "abort", so the advisory's unwind path cannot
+    # occur. See "Suppressed advisories" in knowledge/security/threat-model.md.
+    "RUSTSEC-2026-0253",
 ]
 
 [bans]

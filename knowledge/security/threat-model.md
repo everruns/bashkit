@@ -1884,6 +1884,7 @@ checks.
 |----------|-------|----------------|-------------|
 | RUSTSEC-2023-0071 | `rsa` | Marvin timing sidechannel (TM-CRY-002). No patched version exists; reachable only via the opt-in `ssh` feature | `rsa` ships a constant-time release |
 | RUSTSEC-2023-0089 | `atomic-polyfill` | Unmaintained, no known vulnerability; transitive via `monty` → `postcard` → `heapless` (pinned at 0.7, which still requires it) | Upstream drops the dependency |
+| RUSTSEC-2026-0253 | `lru` | `pop()` not panic-safe (UB only after `catch_unwind` of a panicking key `Drop`). Only in the wasm coreutils guest lockfile via `num-prime` ^0.16.3 (`factor`); the fix (0.18.2) is outside that range. The guest builds with `panic = "abort"` and runs inside the wasm sandbox (TM-WCU-001), so the path cannot occur | uucore's `num-prime` accepts `lru` >= 0.18.2; then rebuild the guest |
 
 A suppression that stops matching is not evidence that it can be dropped.
 `cargo deny check advisories` currently warns `advisory-not-detected` for

@@ -49,8 +49,15 @@ set -uo pipefail
 # (0.10.0-rc.18) and RustSec ranges skip pre-releases. That is not a fix (the
 # advisory still has `patched = []`), so keep the flag — matching resumes when
 # `rsa` ships a stable release.
+#
+# RUSTSEC-2026-0253 — `lru` 0.16 `pop()` is not panic-safe. Only in the wasm
+# coreutils guest lockfile (`num-prime` -> `lru` ^0.16.3, used by `factor`);
+# the fix is 0.18.2, outside that range. The guest builds with
+# `panic = "abort"`, so the unwind-and-reuse path cannot occur, and the code
+# runs inside the wasm sandbox. Drop once uucore's num-prime accepts lru 0.18.
 IGNORED_ADVISORIES=(
     RUSTSEC-2023-0071
+    RUSTSEC-2026-0253
 )
 
 # npm advisories, by GHSA/CVE id. No active exceptions. The previous
