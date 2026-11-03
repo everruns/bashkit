@@ -344,4 +344,6 @@ async fn retained_search_provider_fails_after_completion() {
     let provider = retained.lock().unwrap().pop().unwrap();
     let error = provider.search(&search_query()).unwrap_err();
     assert_eq!(error.to_string(), "io error: execution capability revoked");
+    // Capabilities carry no answer either once the lease is gone.
+    assert!(!provider.capabilities().content_search);
 }

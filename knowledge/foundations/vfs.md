@@ -433,9 +433,15 @@ and measured by `benches/remote_fs.rs` over the bashkit checkout:
   walk would read more than today.
 - **`SearchCapable` reaches builtins.** `MountableFs` forwards the provider of
   the backend that serves the whole requested subtree (none if another mount
-  sits below it) and maps result paths back under the mount point.
+  sits below it) and maps result paths back under the mount point. A mount
+  or unmount after the provider was handed out makes its `search` fail, so
+  callers walk instead of trusting an index that no longer covers the
+  subtree. Index answers must be complete for the queried root (an empty
+  answer is "no match"); a backend with a possibly stale index returns no
+  provider.
   `ExecutionFileSystem` hands out a lease-checked provider (TM-ISO-027): each
-  `search` fails once the execution's capability is revoked. Before this both
+  `search` fails, and `capabilities` reports none, once the execution's
+  capability is revoked. Before this both
   layers returned `None`, so indexed search never ran in a default session.
 - **`rg` keeps the index with ignore rules on.** Index matches are filtered
   through the walk's rules, loaded only along the directories leading to a

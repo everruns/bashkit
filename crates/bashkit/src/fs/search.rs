@@ -130,7 +130,10 @@ pub trait SearchCapable: super::FileSystem {
     ///
     /// A provider is authoritative for `path`: builtins read only the files
     /// it reports and treat an empty answer as "no match" without walking
-    /// the tree. Return `None` when the index may be stale for this subtree.
+    /// the tree, so answers must be complete for the queried root. Return
+    /// `None` when the index may be stale or partial for this subtree; a
+    /// provider that finds out later returns an error from `search`, and
+    /// `rg`/`grep -r` then walk.
     fn search_provider(&self, path: &Path) -> Option<Box<dyn SearchProvider>>;
 }
 

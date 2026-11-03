@@ -517,6 +517,10 @@ impl crate::SearchProvider for LeasedSearchProvider {
     }
 
     fn capabilities(&self) -> crate::SearchCapabilities {
+        // A revoked lease answers nothing, capabilities included.
+        if self.scope.ensure_active().is_err() {
+            return crate::SearchCapabilities::default();
+        }
         self.inner.capabilities()
     }
 }

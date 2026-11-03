@@ -12,6 +12,7 @@ use async_trait::async_trait;
 use std::collections::BTreeMap;
 use std::io::Error as IoError;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 
 use super::limits::{FsLimits, FsUsage};
@@ -156,6 +157,10 @@ pub struct MountableFs {
     /// Mount points: path -> filesystem
     /// BTreeMap ensures iteration in path order
     mounts: RwLock<BTreeMap<PathBuf, Arc<dyn FileSystem>>>,
+    /// Bumped on every mount and unmount; search providers handed out before
+    /// a change refuse to answer, so callers walk instead of trusting an index
+    /// that no longer covers the whole subtree.
+    generation: Arc<AtomicU64>,
 }
 
 enum CrossMountEntry {
@@ -293,6 +298,7 @@ impl MountableFs {
         Self {
             root,
             mounts: RwLock::new(BTreeMap::new()),
+            generation: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -353,6 +359,7 @@ impl MountableFs {
         let path = Self::normalize_path(path.as_ref());
         let mut mounts = self.mounts.write().unwrap();
         mounts.insert(path, fs);
+        self.generation.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
 
@@ -399,6 +406,7 @@ impl MountableFs {
         mounts
             .remove(&path)
             .ok_or_else(|| IoError::other("mount not found"))?;
+        self.generation.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
 
@@ -502,10 +510,19 @@ fn under_mount(mount: Option<&Path>, inner: &Path) -> PathBuf {
 struct MountedSearchProvider {
     inner: Box<dyn super::SearchProvider>,
     mount: Option<PathBuf>,
+    /// Mount table generation when the provider was handed out.
+    generation: u64,
+    current: Arc<AtomicU64>,
 }
 
 impl super::SearchProvider for MountedSearchProvider {
     fn search(&self, query: &super::SearchQuery) -> Result<super::SearchResults> {
+        // A mount added or removed since `search_provider` may sit below the
+        // root: the index would no longer cover the subtree. Erroring makes
+        // callers fall back to the walk instead of trusting a partial answer.
+        if self.current.load(Ordering::SeqCst) != self.generation {
+            return Err(IoError::other("mount table changed during search").into());
+        }
         let Some(mount) = &self.mount else {
             return self.inner.search(query);
         };
@@ -540,13 +557,21 @@ impl super::SearchCapable for MountableFs {
     fn search_provider(&self, path: &Path) -> Option<Box<dyn super::SearchProvider>> {
         self.validate_path(path).ok()?;
         let path = Self::normalize_path(path);
+        // Read before checking the table: a change after this read fails the
+        // provider's `search`.
+        let generation = self.generation.load(Ordering::SeqCst);
         if self.has_mount_below(&path) {
             return None;
         }
         let mount = self.mount_point_of(&path);
         let (fs, resolved) = self.resolve(&path);
         let inner = fs.as_search_capable()?.search_provider(&resolved)?;
-        Some(Box::new(MountedSearchProvider { inner, mount }))
+        Some(Box::new(MountedSearchProvider {
+            inner,
+            mount,
+            generation,
+            current: Arc::clone(&self.generation),
+        }))
     }
 }
 
@@ -771,6 +796,35 @@ impl FileSystemExt for MountableFs {
 
 #[cfg(test)]
 mod tests {
+
+    /// A mount added after a provider was handed out fails its search, so
+    /// callers walk instead of trusting an index that no longer covers the
+    /// subtree.
+    #[tokio::test]
+    async fn search_provider_refuses_after_mount_table_changes() {
+        use crate::fs::SearchCapable;
+        let indexed = Arc::new(crate::testing::CountingFs::new().with_index());
+        indexed.mkdir(Path::new("/a"), true).await.unwrap();
+        indexed
+            .write_file(Path::new("/a/f.txt"), b"needle")
+            .await
+            .unwrap();
+        let fs = MountableFs::new(indexed);
+        let provider = fs.search_provider(Path::new("/")).expect("indexed root");
+        let query = super::super::SearchQuery {
+            pattern: "needle".into(),
+            is_regex: false,
+            case_insensitive: false,
+            root: "/".into(),
+            glob_filter: None,
+            max_results: None,
+        };
+        assert_eq!(provider.search(&query).unwrap().matches.len(), 1);
+        fs.mount("/a/m", Arc::new(InMemoryFs::new())).unwrap();
+        assert!(provider.search(&query).is_err());
+        // A fresh provider sees the mount below the root and is withheld.
+        assert!(fs.search_provider(Path::new("/")).is_none());
+    }
     use super::*;
     use crate::fs::InMemoryFs;
 

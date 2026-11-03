@@ -97,7 +97,11 @@ methods cut the count further:
 
 - `as_search_capable()`: a content index (`SearchCapable`). `rg` and `grep -r`
   then make one `search` call and read only the matching files, with
-  `.gitignore`/`.ignore` rules still applied.
+  `.gitignore`/`.ignore` rules still applied. An answer is taken as
+  complete for the queried root, and an empty answer means no match: a
+  provider whose index may be stale or partial must return `None` from
+  `search_provider` or an error from `search`, and the command walks the
+  tree instead.
 - `walk(root, WalkOptions)`: the directory listings below `root` in one call
   (for example one path-prefix query), up to `max_entries` entries per answer
   (10,000 by default) so huge trees are fetched in bounded batches. The
