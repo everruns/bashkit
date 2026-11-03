@@ -29,6 +29,7 @@ The backend exposes file operations on the same VFS used by bash::
 from __future__ import annotations
 
 import asyncio
+import base64
 import posixpath
 import threading
 import time
@@ -56,6 +57,27 @@ _MAX_OPERATION_FILES = 10_000
 _MAX_OPERATION_BYTES = 10_000_000
 _DEFAULT_GREP_MATCHES = 1_000
 _MAX_GREP_RESULT_BYTES = 100_000
+# Mirrors deepagents' sandbox binary read cap (`MAX_BINARY_BYTES`): images, PDFs
+# and other binary files are returned base64-encoded up to this size.
+_MAX_BINARY_READ_BYTES = 500 * 1024
+
+
+def _file_error_code(exc: Exception) -> str:
+    """Map a native VFS error to deepagents' `FileOperationError` codes.
+
+    The protocol standardizes these so the model can act on them; anything
+    unrecognized keeps the native message.
+    """
+    message = str(exc).lower()
+    if "is a directory" in message:
+        return "is_directory"
+    if "not found" in message or "no such file" in message or "not a directory" in message:
+        return "file_not_found"
+    if "permission" in message or "read-only" in message or "readonly" in message:
+        return "permission_denied"
+    if "invalid path" in message or "path traversal" in message:
+        return "invalid_path"
+    return str(exc)
 
 
 class _BudgetExceeded(Exception):
@@ -103,7 +125,7 @@ try:
         SandboxBackendProtocol,
         WriteResult,
     )
-    from deepagents.backends.utils import compile_grep_include_glob
+    from deepagents.backends.utils import _get_backend_read_file_type, compile_grep_include_glob
     from langchain.agents.middleware.types import AgentMiddleware
     from langchain_core.tools import StructuredTool
 
@@ -304,15 +326,24 @@ if DEEPAGENTS_AVAILABLE:
         # parsing must never silently corrupt file contents or discovered paths.
         # Async protocol defaults dispatch these sync methods off the event loop.
 
-        # Deep Agents explicitly detects backends without per-call timeout support.
-        # Keep the keyword absent so the framework uses our constructor timeout.
-        def execute(self, command: str) -> ExecuteResponse:  # type: ignore[override]
-            result = self._bash.execute_sync(command)
+        # Decision: a per-call `timeout` only tightens the constructor
+        # `timeout_seconds` (native `ExecOptions::timeout` takes the minimum),
+        # so a model-chosen value can never extend the sandbox budget. `None`
+        # and `0` (Deep Agents' "no timeout" hint) both keep the configured
+        # limit.
+        @staticmethod
+        def _timeout_seconds(timeout: int | None) -> float | None:
+            if timeout is None or timeout <= 0:
+                return None
+            return float(timeout)
+
+        def execute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:
+            result = self._bash.execute_sync(command, timeout_seconds=self._timeout_seconds(timeout))
             return self._execute_response(result)
 
-        async def aexecute(self, command: str) -> ExecuteResponse:  # type: ignore[override]
+        async def aexecute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:  # noqa: ASYNC109
             # Preserve caller-loop clients and ContextVars in runtime callbacks.
-            result = await self._bash.execute(command)
+            result = await self._bash.execute(command, timeout_seconds=self._timeout_seconds(timeout))
             return self._execute_response(result)
 
         @staticmethod
@@ -362,6 +393,8 @@ if DEEPAGENTS_AVAILABLE:
             try:
                 path = self._path(file_path)
                 metadata = self._bash.stat(path)
+                if _get_backend_read_file_type(path) != "text":
+                    return self._read_binary(file_path, path, metadata["size"])
                 budget = self._budget(_cancelled)
                 self._charge(budget, files=1, size=metadata["size"])
                 selected = []
@@ -373,7 +406,13 @@ if DEEPAGENTS_AVAILABLE:
                         selected.append(line)
             except _BudgetExceeded:
                 return ReadResult(error="read resource budget exceeded")
+            except UnicodeDecodeError:
+                # Text-by-extension file holding non-UTF-8 bytes: return it as
+                # base64 like Deep Agents' own backends instead of failing.
+                return self._read_binary(file_path, path, metadata["size"])
             except (RuntimeError, ValueError) as exc:
+                if "utf-8" in str(exc).lower():
+                    return self._read_binary(file_path, path, metadata["size"])
                 return ReadResult(error=str(exc))
             start_line = end_line = total_lines = next_offset = None
             if selected:
@@ -388,6 +427,19 @@ if DEEPAGENTS_AVAILABLE:
                 total_lines=total_lines,
                 next_offset=next_offset,
             )
+
+        def _read_binary(self, file_path: str, path: str, size: int) -> ReadResult:
+            """Return a whole binary file base64-encoded (multimodal reads)."""
+            if size > _MAX_BINARY_READ_BYTES:
+                limit = _MAX_BINARY_READ_BYTES
+                return ReadResult(
+                    error=f"File '{file_path}': Binary file exceeds maximum preview size of {limit} bytes"
+                )
+            try:
+                raw = self._bash.fs().read_file(path)
+            except (RuntimeError, ValueError) as exc:
+                return ReadResult(error=str(exc))
+            return ReadResult(file_data={"content": base64.b64encode(raw).decode("ascii"), "encoding": "base64"})
 
         async def aread(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
             return await self._run_cancellable(self.read, file_path, offset, limit)
@@ -533,7 +585,7 @@ if DEEPAGENTS_AVAILABLE:
                     content = self._bash.fs().read_file(self._path(path))
                     responses.append(FileDownloadResponse(path=path, content=content))
                 except (RuntimeError, ValueError) as exc:
-                    responses.append(FileDownloadResponse(path=path, error=str(exc)))
+                    responses.append(FileDownloadResponse(path=path, error=_file_error_code(exc)))
             return responses
 
         def upload_files(self, files: list[tuple[str, bytes]]) -> list[FileUploadResponse]:
@@ -545,7 +597,7 @@ if DEEPAGENTS_AVAILABLE:
                     self._bash.fs().write_file(absolute, content)
                     responses.append(FileUploadResponse(path=path))
                 except (RuntimeError, ValueError) as exc:
-                    responses.append(FileUploadResponse(path=path, error=str(exc)))
+                    responses.append(FileUploadResponse(path=path, error=_file_error_code(exc)))
             return responses
 
         # === Utility ===

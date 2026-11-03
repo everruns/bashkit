@@ -1,5 +1,10 @@
 # Bashkit Knowledge Update Log
 
+## 2026-11-02
+
+* **Per-call execution timeout**: `ExecOptions::timeout` caps one `exec_with_options` call at the smaller of it and `ExecutionLimits::timeout`; Python `execute*` methods expose it as `timeout_seconds`. See [Architecture](foundations/architecture.md#per-invocation-exec-state).
+* **Deep Agents backend refresh**: `BashkitBackend` targets Deep Agents 0.7.32+, accepts the per-command `timeout`, reads binary files as base64, and returns protocol error codes for transfers. See [Python Package](runtimes/python-package.md#deep-agents-backend).
+
 ## 2026-11-01
 
 * **CI nightly pin**: Every nightly job (fuzz compile check, scheduled fuzz, Miri, ASan build-std) is pinned to `nightly-2026-10-30`. Nightly 2026-10-31 (rustc f9ceb4a4d) rejects the `bashkit` lib with E0391, an async-drop query cycle on `parser::ast::CommandList`; reproduced on unmodified `main`, and the 2026-10-30 nightly builds it. Unpin when a later nightly passes `cargo +nightly check -p bashkit --lib`.

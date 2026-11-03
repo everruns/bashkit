@@ -4379,6 +4379,7 @@ async fn exec_bash_with_optional_output(
     commands: &str,
     on_output: Option<PyOutputHandler>,
     builtin_session: Option<Arc<PyCallbackSession>>,
+    timeout: Option<Duration>,
 ) -> PyResult<ExecResult> {
     let mut execution_extensions = ExecutionExtensions::new();
     if let Some(session) = builtin_session {
@@ -4398,9 +4399,13 @@ async fn exec_bash_with_optional_output(
             callback_requested_cancel.clone(),
             callback_error.clone(),
         );
-        let result = bash
-            .exec_streaming_with_extensions(commands, output_callback, execution_extensions)
-            .await;
+        let mut options = bashkit::ExecOptions::new()
+            .streaming(output_callback)
+            .extensions(execution_extensions);
+        if let Some(timeout) = timeout {
+            options = options.timeout(timeout);
+        }
+        let result = bash.exec_with_options(commands, options).await;
         if let Some(err) = take_output_handler_error(&callback_error) {
             if callback_requested_cancel.load(Ordering::Relaxed) {
                 cancelled.store(false, Ordering::Relaxed);
@@ -4409,8 +4414,11 @@ async fn exec_bash_with_optional_output(
         }
         result
     } else {
-        bash.exec_with_extensions(commands, execution_extensions)
-            .await
+        let mut options = bashkit::ExecOptions::new().extensions(execution_extensions);
+        if let Some(timeout) = timeout {
+            options = options.timeout(timeout);
+        }
+        bash.exec_with_options(commands, options).await
     };
 
     let converted = py_exec_result_from_bash_result(result);
@@ -5147,7 +5155,9 @@ impl PyBash {
     /// pyo3-async-runtimes, which the WebAssembly (Pyodide) build omits. On wasm,
     /// use `execute_sync()`. See knowledge/runtimes/emscripten-wheels.md.
     #[cfg(not(target_arch = "wasm32"))]
-    #[pyo3(signature = (commands, on_output=None, *, capture=None, stdout=None, stderr=None))]
+    // Python keyword arguments map 1:1 onto parameters here.
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (commands, on_output=None, *, capture=None, stdout=None, stderr=None, timeout_seconds=None))]
     fn execute<'py>(
         &self,
         py: Python<'py>,
@@ -5156,7 +5166,9 @@ impl PyBash {
         capture: Option<usize>,
         stdout: Option<Py<PyAny>>,
         stderr: Option<Py<PyAny>>,
+        timeout_seconds: Option<f64>,
     ) -> PyResult<Bound<'py, PyAny>> {
+        let timeout = timeout_seconds.map(parse_timeout_seconds).transpose()?;
         self.reject_external_handler_reentry()?;
         let live_output = capture.is_some() || stdout.is_some() || stderr.is_some();
         if live_output && on_output.is_some() {
@@ -5196,11 +5208,18 @@ impl PyBash {
                     stdout,
                     stderr,
                     builtin_session.expect("live output session"),
+                    timeout,
                 )
                 .await
             } else {
-                exec_bash_with_optional_output(&mut bash, &commands, on_output, builtin_session)
-                    .await
+                exec_bash_with_optional_output(
+                    &mut bash,
+                    &commands,
+                    on_output,
+                    builtin_session,
+                    timeout,
+                )
+                .await
             }
         })?;
         if let Some(cancel_session) = cancel_session {
@@ -5224,13 +5243,15 @@ impl PyBash {
     /// same `Bash` instance. If the lock cannot be acquired within the timeout,
     /// a `RuntimeError` is raised. For concurrent workloads, use separate `Bash`
     /// instances per thread or use the async `execute()` method.
-    #[pyo3(signature = (commands, on_output=None))]
+    #[pyo3(signature = (commands, on_output=None, *, timeout_seconds=None))]
     fn execute_sync(
         &self,
         py: Python<'_>,
         commands: String,
         on_output: Option<Py<PyAny>>,
+        timeout_seconds: Option<f64>,
     ) -> PyResult<ExecResult> {
+        let timeout = timeout_seconds.map(parse_timeout_seconds).transpose()?;
         self.reject_external_handler_sync_access()?;
         let builtin_session = capture_custom_builtin_session(
             py,
@@ -5259,21 +5280,28 @@ impl PyBash {
                             ));
                         }
                     };
-                exec_bash_with_optional_output(&mut bash, &commands, on_output, builtin_session)
-                    .await
+                exec_bash_with_optional_output(
+                    &mut bash,
+                    &commands,
+                    on_output,
+                    builtin_session,
+                    timeout,
+                )
+                .await
             })
         })
     }
 
     /// Execute commands synchronously. Raises `BashError` on non-zero exit.
-    #[pyo3(signature = (commands, on_output=None))]
+    #[pyo3(signature = (commands, on_output=None, *, timeout_seconds=None))]
     fn execute_sync_or_throw(
         &self,
         py: Python<'_>,
         commands: String,
         on_output: Option<Py<PyAny>>,
+        timeout_seconds: Option<f64>,
     ) -> PyResult<ExecResult> {
-        let result = self.execute_sync(py, commands, on_output)?;
+        let result = self.execute_sync(py, commands, on_output, timeout_seconds)?;
         if result.exit_code != 0 {
             return Err(raise_bash_error(&result));
         }
@@ -5284,13 +5312,15 @@ impl PyBash {
     ///
     /// Native-only (see `execute`). Use `execute_sync_or_throw()` on wasm.
     #[cfg(not(target_arch = "wasm32"))]
-    #[pyo3(signature = (commands, on_output=None))]
+    #[pyo3(signature = (commands, on_output=None, *, timeout_seconds=None))]
     fn execute_or_throw<'py>(
         &self,
         py: Python<'py>,
         commands: String,
         on_output: Option<Py<PyAny>>,
+        timeout_seconds: Option<f64>,
     ) -> PyResult<Bound<'py, PyAny>> {
+        let timeout = timeout_seconds.map(parse_timeout_seconds).transpose()?;
         self.reject_external_handler_reentry()?;
         let builtin_session = capture_custom_builtin_session(
             py,
@@ -5304,9 +5334,14 @@ impl PyBash {
         let cancel_session = builtin_session.clone();
         let future = future_into_py(py, async move {
             let mut bash = inner.lock().await;
-            let result =
-                exec_bash_with_optional_output(&mut bash, &commands, on_output, builtin_session)
-                    .await?;
+            let result = exec_bash_with_optional_output(
+                &mut bash,
+                &commands,
+                on_output,
+                builtin_session,
+                timeout,
+            )
+            .await?;
             if result.exit_code != 0 {
                 return Err(raise_bash_error(&result));
             }
@@ -6359,7 +6394,9 @@ impl BashTool {
 
     /// Native-only (see `Bash.execute`). Use `execute_sync()` on wasm.
     #[cfg(not(target_arch = "wasm32"))]
-    #[pyo3(signature = (commands, on_output=None, *, capture=None, stdout=None, stderr=None))]
+    // Python keyword arguments map 1:1 onto parameters here.
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (commands, on_output=None, *, capture=None, stdout=None, stderr=None, timeout_seconds=None))]
     fn execute<'py>(
         &self,
         py: Python<'py>,
@@ -6368,7 +6405,9 @@ impl BashTool {
         capture: Option<usize>,
         stdout: Option<Py<PyAny>>,
         stderr: Option<Py<PyAny>>,
+        timeout_seconds: Option<f64>,
     ) -> PyResult<Bound<'py, PyAny>> {
+        let timeout = timeout_seconds.map(parse_timeout_seconds).transpose()?;
         self.reject_external_handler_reentry()?;
         let live_output = capture.is_some() || stdout.is_some() || stderr.is_some();
         if live_output && on_output.is_some() {
@@ -6408,11 +6447,18 @@ impl BashTool {
                     stdout,
                     stderr,
                     builtin_session.expect("live output session"),
+                    timeout,
                 )
                 .await
             } else {
-                exec_bash_with_optional_output(&mut bash, &commands, on_output, builtin_session)
-                    .await
+                exec_bash_with_optional_output(
+                    &mut bash,
+                    &commands,
+                    on_output,
+                    builtin_session,
+                    timeout,
+                )
+                .await
             }
         })?;
         if let Some(cancel_session) = cancel_session {
@@ -6428,13 +6474,15 @@ impl BashTool {
     ///
     /// Acquires async mutex with 30-second timeout. For concurrent workloads,
     /// use separate `BashTool` instances per thread or the async `execute()`.
-    #[pyo3(signature = (commands, on_output=None))]
+    #[pyo3(signature = (commands, on_output=None, *, timeout_seconds=None))]
     fn execute_sync(
         &self,
         py: Python<'_>,
         commands: String,
         on_output: Option<Py<PyAny>>,
+        timeout_seconds: Option<f64>,
     ) -> PyResult<ExecResult> {
+        let timeout = timeout_seconds.map(parse_timeout_seconds).transpose()?;
         self.reject_external_handler_sync_access()?;
         let builtin_session = capture_custom_builtin_session(
             py,
@@ -6462,21 +6510,28 @@ impl BashTool {
                             ));
                         }
                     };
-                exec_bash_with_optional_output(&mut bash, &commands, on_output, builtin_session)
-                    .await
+                exec_bash_with_optional_output(
+                    &mut bash,
+                    &commands,
+                    on_output,
+                    builtin_session,
+                    timeout,
+                )
+                .await
             })
         })
     }
 
     /// Execute commands synchronously. Raises `BashError` on non-zero exit.
-    #[pyo3(signature = (commands, on_output=None))]
+    #[pyo3(signature = (commands, on_output=None, *, timeout_seconds=None))]
     fn execute_sync_or_throw(
         &self,
         py: Python<'_>,
         commands: String,
         on_output: Option<Py<PyAny>>,
+        timeout_seconds: Option<f64>,
     ) -> PyResult<ExecResult> {
-        let result = self.execute_sync(py, commands, on_output)?;
+        let result = self.execute_sync(py, commands, on_output, timeout_seconds)?;
         if result.exit_code != 0 {
             return Err(raise_bash_error(&result));
         }
@@ -6487,13 +6542,15 @@ impl BashTool {
     ///
     /// Native-only (see `Bash.execute`). Use `execute_sync_or_throw()` on wasm.
     #[cfg(not(target_arch = "wasm32"))]
-    #[pyo3(signature = (commands, on_output=None))]
+    #[pyo3(signature = (commands, on_output=None, *, timeout_seconds=None))]
     fn execute_or_throw<'py>(
         &self,
         py: Python<'py>,
         commands: String,
         on_output: Option<Py<PyAny>>,
+        timeout_seconds: Option<f64>,
     ) -> PyResult<Bound<'py, PyAny>> {
+        let timeout = timeout_seconds.map(parse_timeout_seconds).transpose()?;
         self.reject_external_handler_reentry()?;
         let builtin_session = capture_custom_builtin_session(
             py,
@@ -6507,9 +6564,14 @@ impl BashTool {
         let cancel_session = builtin_session.clone();
         let future = future_into_py(py, async move {
             let mut bash = inner.lock().await;
-            let result =
-                exec_bash_with_optional_output(&mut bash, &commands, on_output, builtin_session)
-                    .await?;
+            let result = exec_bash_with_optional_output(
+                &mut bash,
+                &commands,
+                on_output,
+                builtin_session,
+                timeout,
+            )
+            .await?;
             if result.exit_code != 0 {
                 return Err(raise_bash_error(&result));
             }

@@ -41,8 +41,16 @@ See `crates/bashkit/src/lib.rs` for the full public API surface.
 ### Per-invocation exec state
 
 `ExecOptions` carries everything scoped to a single `exec_with_options`
-call: streaming callback, builtin extensions, `arg0`, `positional`, and
-`stdin`. All of it is per-call by construction, not session state.
+call: streaming callback, builtin extensions, `arg0`, `positional`,
+`stdin`, and `timeout`. All of it is per-call by construction, not session
+state.
+
+- `timeout` only tightens `ExecutionLimits::timeout`: the call runs under
+  the smaller of the two, enforced by the same host-backed wrapper and
+  reported as the same `LimitExceeded::Timeout`, so a caller-chosen value
+  (an LLM tool argument) can never extend the sandbox budget. The
+  `ExecutionDeadline` extension handed to builtins carries the effective
+  value.
 
 - Positional parameters exist only inside a call frame, so the host
   boundary pushes a synthetic top-level frame before

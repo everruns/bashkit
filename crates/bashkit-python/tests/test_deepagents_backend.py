@@ -1,5 +1,8 @@
 """Exercise the real Deep Agents protocol against Bashkit's native VFS."""
 
+import base64
+import time
+
 import pytest
 
 pytest.importorskip("deepagents")
@@ -7,6 +10,10 @@ pytest.importorskip("deepagents")
 from deepagents.backends.protocol import GrepResult, ReadResult, SandboxBackendProtocol  # noqa: E402
 
 from bashkit.deepagents import BashkitBackend  # noqa: E402
+
+_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+)
 
 
 @pytest.fixture
@@ -160,6 +167,8 @@ def test_framework_filesystem_tools(backend):
         ("glob", {"pattern": "*.py", "path": "/tmp"}),
         ("ls", {"path": "/tmp"}),
         ("execute", {"command": "echo framework-execute"}),
+        ("execute", {"command": "sleep 5; echo late", "timeout": 1}),
+        ("read_file", {"file_path": "/tmp/pixel.png"}),
     ]
     model = ScriptedModel(
         responses=[
@@ -168,17 +177,25 @@ def test_framework_filesystem_tools(backend):
         ]
         + [AIMessage(content="done")]
     )
+    backend.upload_files([("/tmp/pixel.png", _PNG)])
     agent = create_deep_agent(model=model, backend=backend)
     response = agent.invoke({"messages": [{"role": "user", "content": "Exercise filesystem tools"}]})
     messages = [message for message in response["messages"] if message.type == "tool"]
     assert len(messages) == len(calls)
-    assert all(message.status == "success" for message in messages)
+    assert all(message.status == "success" for message in messages[:6])
     assert "needle" in str(messages[1].content)
     assert "/tmp/protocol.py" in str(messages[2].content)
-    assert "framework-execute" in str(messages[-1].content)
+    assert "framework-execute" in str(messages[5].content)
+    # Per-call timeout is honored, not rejected as unsupported.
+    assert "per-command timeout" not in str(messages[6].content)
+    assert "late" not in str(messages[6].content)
+    assert "timeout" in str(messages[6].content)
+    # Images reach the model as multimodal content, not a UTF-8 error.
+    assert "Invalid UTF-8" not in str(messages[7].content)
+    assert "image" in str(messages[7].content)
     from deepagents.backends.protocol import execute_accepts_timeout
 
-    assert not execute_accepts_timeout(type(backend))
+    assert execute_accepts_timeout(type(backend))
 
 
 def test_binary_transfers_and_large_exact_file(backend):
@@ -195,3 +212,45 @@ def test_binary_transfers_and_large_exact_file(backend):
     assert backend.read("/tmp/large.txt").file_data["content"] == text
     assert backend.edit("/tmp/large.txt", text, "short").error is None
     assert backend.download_files(["/tmp/large.txt"])[0].content == b"short"
+
+
+def test_execute_per_call_timeout_only_tightens():
+    backend = BashkitBackend(timeout_seconds=0.5)
+    started = time.monotonic()
+    response = backend.execute("export KEPT=1; sleep 5; echo late", timeout=60)
+    # The model's larger value cannot extend the configured 0.5 s budget.
+    assert time.monotonic() - started < 3
+    assert "late" not in response.output and response.exit_code != 0
+    assert "timeout" in response.output
+    started = time.monotonic()
+    response = BashkitBackend().execute("sleep 5; echo late", timeout=1)
+    assert time.monotonic() - started < 3 and "late" not in response.output
+    # 0 / None keep the configured limit; state survives a timed-out call.
+    assert backend.execute("echo $KEPT", timeout=0).output == "1\n"
+    assert backend.execute("echo ok", timeout=None).output == "ok\n"
+
+
+async def test_aexecute_per_call_timeout(backend):
+    response = await backend.aexecute("sleep 5; echo late", timeout=1)
+    assert "late" not in response.output and response.exit_code != 0
+    assert (await backend.aexecute("echo ok", timeout=5)).output == "ok\n"
+
+
+def test_read_binary_files_as_base64(backend):
+    assert backend.upload_files([("/tmp/pixel.png", _PNG)])[0].error is None
+    result = backend.read("/tmp/pixel.png")
+    assert result.error is None
+    assert result.file_data == {"content": base64.b64encode(_PNG).decode("ascii"), "encoding": "base64"}
+    # Text-by-extension file with invalid UTF-8 falls back to base64.
+    backend.upload_files([("/tmp/latin1.txt", b"caf\xe9")])
+    assert backend.read("/tmp/latin1.txt").file_data["encoding"] == "base64"
+    # Oversized binaries return an error instead of a huge payload.
+    backend.upload_files([("/tmp/big.png", b"\x89" * (500 * 1024 + 1))])
+    assert "exceeds maximum preview size" in backend.read("/tmp/big.png").error
+    assert backend.read("/tmp/missing.png").error
+
+
+def test_transfer_errors_use_protocol_codes(backend):
+    assert backend.download_files(["/missing"])[0].error == "file_not_found"
+    assert backend.download_files(["/tmp"])[0].error == "is_directory"
+    assert backend.upload_files([("/tmp", b"no")])[0].error == "is_directory"

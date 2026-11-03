@@ -94,7 +94,7 @@ Register a live byte command; requires native async execute().
 ### `execute`
 
 ```python
-Bash.execute(commands: str, on_output: OutputHandler | None = None, capture: int | None = None, stdout: ByteSink | None = None, stderr: ByteSink | None = None) -> ExecResult
+Bash.execute(commands: str, on_output: OutputHandler | None = None, capture: int | None = None, stdout: ByteSink | None = None, stderr: ByteSink | None = None, timeout_seconds: float | None = None) -> ExecResult
 ```
 
 Execute bash commands asynchronously.
@@ -103,6 +103,7 @@ Execute bash commands asynchronously.
 
 - **`commands`** — Bash script to run (like ``bash -c "commands"``).
 - **`on_output`** — Optional callback receiving chunked ``(stdout, stderr)`` pairs during execution. Must be synchronous.
+- **`timeout_seconds`** — Optional wall-clock cap for this call only. It can only tighten the constructor ``timeout_seconds``, never extend it.
 
 Async ``custom_builtins`` callbacks run on the caller's active asyncio
 loop.
@@ -122,7 +123,7 @@ world
 ### `execute_sync`
 
 ```python
-Bash.execute_sync(commands: str, on_output: OutputHandler | None = None) -> ExecResult
+Bash.execute_sync(commands: str, on_output: OutputHandler | None = None, timeout_seconds: float | None = None) -> ExecResult
 ```
 
 Execute bash commands synchronously (blocking).
@@ -147,7 +148,7 @@ Example:
 ### `execute_or_throw`
 
 ```python
-Bash.execute_or_throw(commands: str, on_output: OutputHandler | None = None) -> ExecResult
+Bash.execute_or_throw(commands: str, on_output: OutputHandler | None = None, timeout_seconds: float | None = None) -> ExecResult
 ```
 
 Execute commands asynchronously; raise ``BashError`` on non-zero exit.
@@ -169,7 +170,7 @@ BashError: ...
 ### `execute_sync_or_throw`
 
 ```python
-Bash.execute_sync_or_throw(commands: str, on_output: OutputHandler | None = None) -> ExecResult
+Bash.execute_sync_or_throw(commands: str, on_output: OutputHandler | None = None, timeout_seconds: float | None = None) -> ExecResult
 ```
 
 Execute commands synchronously; raise ``BashError`` on non-zero exit.
@@ -668,7 +669,7 @@ Register a live byte command; requires native async execute().
 ### `execute`
 
 ```python
-BashTool.execute(commands: str, on_output: OutputHandler | None = None, capture: int | None = None, stdout: ByteSink | None = None, stderr: ByteSink | None = None) -> ExecResult
+BashTool.execute(commands: str, on_output: OutputHandler | None = None, capture: int | None = None, stdout: ByteSink | None = None, stderr: ByteSink | None = None, timeout_seconds: float | None = None) -> ExecResult
 ```
 
 Execute bash commands asynchronously.
@@ -690,7 +691,7 @@ True
 ### `execute_sync`
 
 ```python
-BashTool.execute_sync(commands: str, on_output: OutputHandler | None = None) -> ExecResult
+BashTool.execute_sync(commands: str, on_output: OutputHandler | None = None, timeout_seconds: float | None = None) -> ExecResult
 ```
 
 Execute bash commands synchronously (blocking).
@@ -715,7 +716,7 @@ Example:
 ### `execute_or_throw`
 
 ```python
-BashTool.execute_or_throw(commands: str, on_output: OutputHandler | None = None) -> ExecResult
+BashTool.execute_or_throw(commands: str, on_output: OutputHandler | None = None, timeout_seconds: float | None = None) -> ExecResult
 ```
 
 Execute commands asynchronously; raise ``BashError`` on non-zero exit.
@@ -734,7 +735,7 @@ True
 ### `execute_sync_or_throw`
 
 ```python
-BashTool.execute_sync_or_throw(commands: str, on_output: OutputHandler | None = None) -> ExecResult
+BashTool.execute_sync_or_throw(commands: str, on_output: OutputHandler | None = None, timeout_seconds: float | None = None) -> ExecResult
 ```
 
 Execute commands synchronously; raise ``BashError`` on non-zero exit.
