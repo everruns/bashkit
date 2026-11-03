@@ -2,6 +2,7 @@
 
 ## 2026-11-03
 
+* **Walk order**: the default `walk` visits directories in path order. It used `read_dir` order (hash order for `InMemoryFs`), so a batch cut short by `max_entries` prefetched listings `tree` never printed and `tree_prefetch_stays_within_entry_budget` read 8-15 directories run to run. See [Virtual Filesystem](foundations/vfs.md#remote-backends-round-trips).
 * **Large-tree stress tests**: `tests/large_tree_stress_tests.rs` measures heap peaks of tree walkers over a 200k-file procedural tree (2M with `BASHKIT_STRESS_FILES`). It found `rg` collecting every candidate path before reading (~70 MB for 200k files); its walk now streams in path order. See [Testing](operations/testing.md).
 * **ls -R / tree bulk walk**: `ls -R` and `tree` list through bounded `walk` batches (`WalkCache`) like `find`/`du`. New `WalkOptions::skip_hidden` keeps the default walk out of dot directories they do not print; `tree` caps batches at its remaining entry budget and keeps `read_dir` under `-I`. See [Virtual Filesystem](foundations/vfs.md#remote-backends-round-trips).
 

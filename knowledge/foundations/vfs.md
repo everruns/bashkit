@@ -417,9 +417,11 @@ and measured by `benches/remote_fs.rs` over the bashkit checkout:
   the listings of `root` and the directories below it in one call, as a
   bounded batch: it stops once the answer holds `max_entries` entries
   (default 10k; at most one listing over, never a split listing). The
-  default is one `read_dir` per directory, depth first, reading a directory
-  only when popped (`walk_with_read_dir`); bulk backends override it with a
-  prefix query and a row limit. Wrappers forward it when they map the subtree one-to-one
+  default is one `read_dir` per directory, depth first in path order (the
+  order tree/ls -R/find consume, so a cut-short batch holds the next listings
+  they need), reading a directory only when popped (`walk_with_read_dir`);
+  bulk backends override it with a prefix query and a row limit, and should
+  answer in path order too. Wrappers forward it when they map the subtree one-to-one
   (`FollowFs` rebases a linked root, `MountableFs` when no mount lies below the
   root, `RootFs` outside system trees, `ReadOnlyFs`, per-execution wrappers);
   otherwise they fall back to the default. Callers use it only when they would

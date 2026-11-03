@@ -539,12 +539,19 @@ pub async fn walk_with_read_dir<F: FileSystem + ?Sized>(
         };
         let child_depth = depth + 1;
         if opts.max_depth.is_none_or(|m| child_depth < m) {
-            for entry in &entries {
-                if entry.metadata.file_type.is_dir()
-                    && !(opts.skip_hidden && entry.name.starts_with('.'))
-                {
-                    pending.push((super::vfs_join(&path, &entry.name), child_depth, None));
-                }
+            // Visit children in name order (pushed reversed, popped first),
+            // the order tree/ls -R/find consume them: a batch cut short by
+            // `max_entries` then holds the next listings the caller needs.
+            let mut dirs: Vec<&str> = entries
+                .iter()
+                .filter(|e| {
+                    e.metadata.file_type.is_dir() && !(opts.skip_hidden && e.name.starts_with('.'))
+                })
+                .map(|e| e.name.as_str())
+                .collect();
+            dirs.sort_unstable_by(|a, b| b.cmp(a));
+            for name in dirs {
+                pending.push((super::vfs_join(&path, name), child_depth, None));
             }
         }
         held = held.saturating_add(entries.len());
